@@ -323,8 +323,9 @@ a guard test now covers it. Watch for it on the inventory routes.
 `inventory-log` (GET); `inventory-merge-conflicts` (GET) +
 `.../[id]/resolve` (POST); `provisional-items` (GET/POST);
 `received-inventory-deltas` (GET); `received-org-events` (GET); `system-data`
-(GET) — all **human** routes (`isInventoryViewer` read / `INVENTORY_MANAGER`
-write). The source's `global-catalog/items*` proxy routes are **not registered** —
+(GET) — all **human** routes: read gate `authorize: 'catalog-viewer'` (reused
+verbatim — the inventory gate ≡ catalog's, §6), write gate `INVENTORY_MANAGER`.
+The source's `global-catalog/items*` proxy routes are **not registered** —
 dropped for an in-process catalog read (§8b). The `/api/internal/*` +
 `/api/inventory/apply` **machine** surface is **not registered and not hosted** —
 checkin has no way to gate a machine-bearer route (§8c); the apply crossing is
@@ -355,11 +356,24 @@ guards map cleanly:
 
 **No role-foundation change is needed for local-inventory** — `INVENTORY_MANAGER`
 already lands in #1286's track 2. This doc's implementation simply *depends on*
-that role existing. Define a thin `isInventoryViewer(session)` predicate (same
-composition as #1286's `isCatalogViewer`) as the single read chokepoint, or reuse
-`isCatalogViewer` directly if the eligibility sets are identical (they are — both
-are "any legitimate operational user reads; managers write"). **Prefer reusing
-the one predicate** over a near-duplicate.
+that role existing. **Track 2 as-built (`claude/nostalgic-wilbur-ddc7e8`):
+inventory read-eligibility is verified ≡ catalog's exactly** — same legs (RBAC
+role / program leader / volunteer, incl. `isInventoryManager` + the volunteer
+claim) on both the server `catalog-viewer` resolver and client
+`isCatalogViewerClient`. So it **reuses `isCatalogViewer` verbatim — no
+`isInventoryViewer*` fork** (a forward-ref comment marks the reuse at the
+predicate). No divergence, so the "define a thin predicate" alternative is moot.
+
+**Naming call-out for T3/T4** (chosen tradeoff, not a surprise): a server-side
+*inventory-named* gate cannot be introduced in Track 2/4 scope — a new resolver
+case lives in `core.ts` / `access-resolvers.ts`, which are **boundary files
+(Track 3)**. So inventory routes register **`authorize: 'catalog-viewer'`** — a
+catalog-named authz string on inventory routes. **Functionally correct** (byte-
+identical gate). If the design later wants an inventory-named boundary symbol for
+call-site clarity, that is a **deliberate Track 3 registry/grammar decision**
+(add an `inventory-viewer` resolver alias in the boundary layer), never a Track 4
+route-level change. Default: reuse `catalog-viewer`; only fork the name if a
+reviewer finds the catalog-named string on inventory routes genuinely confusing.
 
 **Client mirror uses #1286's claim — no new session field.** The volunteer input
 to the gate is email-keyed `VolunteerDesignation` with no session flag; #1286
@@ -472,7 +486,7 @@ auth via `useSession` client-side + the checkin session in the route handlers.
   section. Whether that becomes a long single tab row or the section grows
   sub-grouping is a checkin-shell UI call, not this port's — the port just
   contributes its `NavLink[]`.
-- **Gate: `isInventoryViewer`** (= `isCatalogViewer`, §6) — the same broad gate as
+- **Gate: `catalog-viewer` / `isCatalogViewerClient`** (reused verbatim, §6) — the same broad gate as
   the catalog tabs, broader than the board-only `*-Ops` items. Intended.
 - **Badges** (e.g. open merge-conflicts / provisional count) use checkin's
   existing `navBadges` keyed on the tab href — optional, not first-landing. A
@@ -767,21 +781,28 @@ local-inventory consumes, and local-inventory reuses catalog's vendored packages
    and `utils` are **not imported by any Track-1 file** (confirmed in build), so
    they defer (`org-events-poller` → track 6 with the S5 consumer; `utils` → the
    track that first needs it), §2. No UI, no checkin wiring. Green in isolation.
-2. **Roles** — **none new**; depends on #1286 track 2 having landed the interim
-   `INVENTORY_MANAGER` (which references #1316 and does not close it — the
-   strategic Catalog/Org split stays open). Define `isInventoryViewer` (or reuse
-   `isCatalogViewer`). No separate PR unless the viewer predicate diverges. (When
-   #1316 lands, a mechanical follow-up moves writes → `ORG_MANAGER`; §6.)
+2. **Roles — done as a reuse decision** (`claude/nostalgic-wilbur-ddc7e8`).
+   **None new**: `INVENTORY_MANAGER` + the `hasVolunteerDesignation` claim already
+   on the base (untouched); inventory read-eligibility verified ≡ catalog's, so it
+   **reuses `catalog-viewer` / `isCatalogViewerClient` verbatim — no
+   `isInventoryViewer*` fork** (forward-ref comment at the predicate). Folds into
+   track 4; no separate PR. (When #1316 lands, a mechanical follow-up moves writes
+   → `ORG_MANAGER`; §6.)
 3. **Security boundary** — `@sensitivity` annotations, `generator security` for
    the inventory schema (cross-package wiring, §5), registry route entries —
    **no scopeBindings** (inventory FKs aren't scopable; §5). Own PR track,
-   **registry-first**.
+   **registry-first**. **Optional here (and only here):** if an inventory-named
+   read gate is wanted for call-site clarity, add an `inventory-viewer` resolver
+   alias in the boundary layer (`core.ts`/`access-resolvers.ts`) — a deliberate
+   boundary decision, not a track-4 route change; default is to reuse
+   `catalog-viewer` (§6).
 4. **Routes + auth + seams** — library route factories + a next-free
    `src/routes/_shared.ts` (parse/validate via injected `httpError`, no
    `next/server` — the source `validate` is not ported) + `contract.ts` (the three
    crossing ports: `CatalogEventSource` §8a, `CatalogReader` §8b, the apply port
    §8c) + `configureLocalInventory` wired in `instrumentation.ts`; **human**
-   `/api/…` stubs (`isInventoryViewer`/`INVENTORY_MANAGER`) + security guards; drop
+   `/api/…` stubs (`authorize: 'catalog-viewer'` read / `INVENTORY_MANAGER` write —
+   reused, §6/track 2) + security guards; drop
    the source `/api/global-catalog/items*` proxy routes (§8b). **The machine
    surface (`/api/internal/*`, org-bearer `/api/inventory/apply`) is NOT built —
    checkin can't host it (§8c); apply is in-process only.** Watch the
