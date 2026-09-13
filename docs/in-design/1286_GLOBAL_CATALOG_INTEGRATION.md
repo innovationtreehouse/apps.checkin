@@ -78,7 +78,7 @@ defined at each crossing so the temporary seam is explicit and removable.
 | Question | Decision |
 |---|---|
 | DB topology | **Own dedicated database** (`CATALOG_DATABASE_URL`) on the **same Postgres server** — separate `schema.prisma` + own Prisma client + own migrations. Precedent: `@inventory/monitoring-db` (own `MONITORING_DATABASE_URL`). A dedicated DB namespaces the generic tables, so no renames. |
-| Security regime | **Adopt checkin's** registry + `@sensitivity` generator + stripper + scopeBindings **over the separate schema/routes**, even though the schema file stays separate. |
+| Security regime | **Adopt checkin's** registry + `@sensitivity` generator + stripper **over the separate schema/routes**, even though the schema file stays separate. (scopeBindings: catalog needs none — its actor FKs aren't scopable; §5.) |
 | Auth | **Retire** `global-catalog-app`'s `@inventory/auth` + `@inventory/web-auth`. checkin next-auth session is the only auth. |
 | Roles | One **new** checkin role: `INVENTORY_MANAGER` (source's global- and org-manager collapse into it for now). Viewer = any RBAC-role holder, program leader, or volunteer (not any authenticated user). See §6. |
 | Scope | **Full port**, including receipt-facing pieces, with temporary shims at not-yet-migrated app boundaries. |
@@ -187,7 +187,8 @@ checkin/
     src/app/(catalog)/**/{page,route}.tsx  re-export stubs — human /api/catalog/* (see below)
     src/app/api/internal/[...path]/route.ts  org-bearer machine surface stub (§8)
     src/components/AppFrame.tsx            + one NAV_ITEMS entry (Inventory), from the library descriptor
-    src/security/{registry,scopeBindings}.ts   + catalog entries (boundary is checkin's)
+    src/security/registry.ts               + catalog route entries (boundary is checkin's; scopeBindings: none — §5)
+    src/security/core.ts                   + spread the catalog classifications into the merge
     next.config.ts                         + transpilePackages (if tsx needs it — verify, §3)
 ```
 
@@ -231,8 +232,9 @@ Everything a catalog change touches lives in `packages/global-catalog`.
 **Honest residue** — three things structurally cannot leave checkin-app, all
 mechanical/config, none "meat": (1) the FS-routing stub files; (2) their
 `pageRegistry` entries (checkin's drift guard fails otherwise — project memory);
-(3) the security registry/scopeBindings entries (checkin centralizes the
-boundary on purpose — do not fight it). Adding a *new* catalog route touches all
+(3) the security registry entries (checkin centralizes the boundary on purpose —
+do not fight it; catalog adds no scopeBindings, §5). Adding a *new* catalog route
+touches all
 three; editing catalog behavior touches none.
 
 ---
@@ -300,7 +302,12 @@ To bring the catalog under the same regime **without merging schemas**:
      `transitionedByUserId` (who did what).
    - **Free text** — `rejectionReason`, `reason`, `note` (may carry incidental
      sensitive text).
-   - **Cross-app plumbing** — `OrgEvent.payload`, `receiptId`.
+   - **Cross-app plumbing** — `OrgEvent.payload`, `receiptId`, and
+     `ReferenceConflict.lineItemId` (Track 3: same group as `receiptId`).
+
+   Two more calls made in build (Track 3), beyond the illustrative list:
+   `ReferenceConflict.resolution` → **`public`** (an outcome code, not one of the
+   named free-text fields); `ReferenceConflict.lineItemId` → `internal` (above).
 
    **No `pii` tier is needed** — the catalog schema has no email/DOB/address
    fields (the one email lives on checkin's `VolunteerDesignation`, outside the
@@ -308,12 +315,24 @@ To bring the catalog under the same regime **without merging schemas**:
    the viewer tier; the `internal` attribution/plumbing stays behind
    `everyones:internal`.
 2. **Add a `generator security` block to the catalog schema** so
-   `prisma generate` emits a **second classifications file** for catalog models
-   (e.g. `src/security/generated/catalog-classifications.ts`). Merge/import both
-   in the security core.
-3. **Register every catalog route** in `src/security/registry.ts` with the
-   right scope/tier tokens, and add **scopeBindings** for catalog access
-   resolvers.
+   `prisma generate` emits a **second classifications file** for catalog models.
+   Wiring **as built (Track 3)**: the generator's `provider` path is **CWD-relative
+   to the package dir** (`node ../../checkin-app/scripts/security-generator.js`)
+   and its output is relative to the schema dir. Consequence: the catalog
+   package's `prisma generate` (including its `postinstall`) writes **cross-package
+   into `checkin-app/src/security/generated/`** and **depends on checkin-app's
+   generator script existing** — fine in the monorepo, but it **breaks if the
+   package is ever built in isolation** (a real constraint if `global-catalog` is
+   later extracted). Merge point is a **spread in `core.ts`** (not a new aggregator
+   file); `stripper` and `outbound` repoint to `core`.
+3. **Register every catalog route** in `src/security/registry.ts` with the right
+   scope/tier tokens. **scopeBindings: none needed (Track 3).** Every catalog
+   actor FK is `localUserId` / `*ByUserId`, none of which is in checkin's
+   `SCOPABLE_FIELDS` — so the binding validator auto-classes all catalog models
+   **un-scopable / admin-only by construction**, and their `internal` fields stay
+   behind `everyones:internal` with **no per-row binding**. (The earlier "add
+   scopeBindings" wording overstated it — the registry entries are the work; the
+   bindings are zero.)
 4. Route responses go through checkin's **stripper** like any other route.
 
 **Boundary-isolation process applies** (`AGENTS.md` + the
@@ -694,7 +713,9 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
    Catalog+Org split stays open) +
    roles.ts + next-auth types + grant UI. Own PR (role-system change).
 3. **Security boundary** — `@sensitivity` annotations, second `generator
-   security`, registry + scopeBindings entries. Own PR track, **registry-first**.
+   security` (cross-package wiring, §5), registry route entries — **no
+   scopeBindings** (catalog FKs aren't scopable; §5). Own PR track,
+   **registry-first**.
 4. **Routes + auth** — library route-handler factories + `contract.ts` +
    `configureCatalog` wired in checkin-app `instrumentation.ts`; API stub tree +
    security guards; `lib/validate` (route-layer). **Includes the full rewrite of
