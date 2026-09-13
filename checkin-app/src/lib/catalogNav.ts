@@ -13,12 +13,11 @@ export { CATALOG_TOP_NAV };
 export const CATALOG_NAV_LINKS_CHECKIN: readonly NavLink[] = CATALOG_NAV_LINKS;
 
 /**
- * Client-visible approximation of the server `catalog-viewer` gate (§6). The
- * full predicate also admits volunteers via a VolunteerDesignation email
- * lookup, but the session carries no volunteer flag, so nav visibility uses only
- * the session-available legs: any RBAC role, or leading ≥1 program. A volunteer
- * with no role still reaches every catalog route (the routes run the full gate);
- * they just do not see the nav entry — over-narrow here is safe, never a grant.
+ * Client mirror of the server `catalog-viewer` gate (§6): authenticated AND any
+ * of — an RBAC role, leading ≥1 program, or a VolunteerDesignation. Every leg is
+ * on the session (the volunteer leg rides in as `hasVolunteerDesignation`, set by
+ * the JWT callback), so the nav matches server admission exactly — no leg the
+ * client can't see. Kept in lockstep with access-resolvers' 'catalog-viewer'.
  */
 export function isCatalogViewerClient(user: SessionUser | undefined): boolean {
   if (!user) return false;
@@ -29,6 +28,7 @@ export function isCatalogViewerClient(user: SessionUser | undefined): boolean {
     !!user.isBackgroundCheckReviewer ||
     !!user.isOperations ||
     !!user.isInventoryManager ||
-    (user.programsLed?.length ?? 0) > 0
+    (user.programsLed?.length ?? 0) > 0 ||
+    !!user.hasVolunteerDesignation
   );
 }

@@ -43,6 +43,8 @@ jest.mock('@/lib/prisma', () => ({
     default: {
         person: { findUnique: jest.fn(), update: jest.fn(), create: jest.fn() },
         household: { create: jest.fn() },
+        // #1286: the jwt callback resolves the catalog-viewer volunteer leg.
+        volunteerDesignation: { findUnique: jest.fn() },
         // createParticipantWithHousehold mints the person id through
         // mintPersonId(tx), which is one $queryRaw on the tx client (#1693).
         $queryRaw: jest.fn().mockResolvedValue([{ value: 2503 }]),
