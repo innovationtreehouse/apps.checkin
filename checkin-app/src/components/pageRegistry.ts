@@ -12,8 +12,11 @@ export type RegistryUser = {
   isSysadmin?: boolean;
   isBoardMember?: boolean;
   isKeyholder?: boolean;
+  isBackgroundCheckReviewer?: boolean;
   isOperations?: boolean;
+  isInventoryManager?: boolean;
   householdLead?: boolean;
+  programsLed?: number[];
   toolStatuses?: Array<{ level: string }>;
 };
 
@@ -41,6 +44,19 @@ const SHOP: Visible = (u) =>
   !!u?.isSysadmin ||
   !!u?.isBoardMember ||
   !!u?.toolStatuses?.some((ts) => ts.level === 'MAY_CERTIFY_OTHERS');
+// Global catalog (#1286 §7). Mirrors isCatalogViewerClient — any RBAC role or a
+// program leader. The volunteer-by-email leg of the server gate can't be seen
+// from the session, so this is intentionally narrow (over-listing is never a
+// grant; every catalog route re-runs the full gate).
+const CATALOG_VIEWER: Visible = (u, signedIn) =>
+  signedIn &&
+  (!!u?.isSysadmin ||
+    !!u?.isBoardMember ||
+    !!u?.isKeyholder ||
+    !!u?.isBackgroundCheckReviewer ||
+    !!u?.isOperations ||
+    !!u?.isInventoryManager ||
+    (u?.programsLed?.length ?? 0) > 0);
 
 export type PageEntry = {
   href: string;
@@ -92,6 +108,14 @@ export const PAGES: PageEntry[] = [
   { href: '/shop-ops/create', label: 'Create', section: 'Shop Ops', visible: SHOP },
   { href: '/shop-ops/live', label: 'Live', section: 'Shop Ops', visible: SHOP },
   { href: '/shop-ops/manage', label: 'Manage', section: 'Shop Ops', visible: SHOP },
+
+  // Inventory (global catalog, #1286) — any catalog viewer. The index redirects
+  // to Items. Write controls within each screen are INVENTORY_MANAGER-gated.
+  { href: '/catalog', label: 'Inventory', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: CATALOG_VIEWER },
+  { href: '/catalog/items', label: 'Items', section: 'Inventory', keywords: 'catalog parts gtin', visible: CATALOG_VIEWER },
+  { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: CATALOG_VIEWER },
+  { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: CATALOG_VIEWER },
+  { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: CATALOG_VIEWER },
 
   // Facility Ops — board, plus operations on the two aggregate tools (#1633:
   // operations reach attendance in aggregate only). Visits, Badges (the raw

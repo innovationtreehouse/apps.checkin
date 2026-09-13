@@ -21,12 +21,25 @@
     "./routes": {
       "types": "./src/routes/index.ts",
       "import": "./src/routes/index.ts"
+    },
+    "./components": {
+      "types": "./src/components/index.ts",
+      "import": "./src/components/index.ts"
+    },
+    "./pages/*": {
+      "types": "./src/pages/*.tsx",
+      "import": "./src/pages/*.tsx"
+    },
+    "./nav": {
+      "types": "./src/nav.ts",
+      "import": "./src/nav.ts"
     }
   },
   "scripts": {
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
     "db:deploy": "node --env-file=.env node_modules/.bin/prisma migrate deploy",
+    "db:seed": "tsx prisma/seed.ts",
     "test": "vitest run"
   },
   "dependencies": {

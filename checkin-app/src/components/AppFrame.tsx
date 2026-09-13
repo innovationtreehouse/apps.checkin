@@ -29,6 +29,7 @@ import {
   IconLogout,
   IconMail,
   IconMoon,
+  IconPackage,
   IconSettings,
   IconShieldCheck,
   IconSun,
@@ -52,6 +53,7 @@ import { navBadgeFor, leadsAnyProgram } from '@/components/navBadges';
 import { CountBadge, badgeIntentFor } from '@/components/ui/CountBadge';
 import type { SessionUser } from '@/types/auth';
 import { FACILITY_SECTION_ROLES } from '@/lib/facilityNav';
+import { CATALOG_TOP_NAV, isCatalogViewerClient } from '@/lib/catalogNav';
 
 type NavItem = {
   href: string;
@@ -98,6 +100,16 @@ const NAV_ITEMS: NavItem[] = [
       !!u?.isSysadmin ||
       !!u?.isBoardMember ||
       !!u?.toolStatuses?.some((ts) => ts.level === 'MAY_CERTIFY_OTHERS'),
+  },
+  {
+    // Global catalog (#1286 §7). Broader gate than the *-Ops items around it —
+    // any RBAC role or program leader sees it (isCatalogViewerClient). The
+    // routes run the full catalog-viewer gate, incl. the volunteer leg the
+    // session can't see, so a volunteer-without-role still reaches the pages.
+    href: CATALOG_TOP_NAV.href,
+    label: CATALOG_TOP_NAV.label,
+    icon: <IconPackage size={18} />,
+    visible: (u, signedIn) => signedIn && isCatalogViewerClient(u),
   },
   {
     href: '/facility-ops',
