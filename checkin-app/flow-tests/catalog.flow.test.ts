@@ -28,6 +28,21 @@ describe("global catalog", () => {
     expect(roborio!.subcategory.number).toBe(10);
   });
 
+  it("paginates items with a lookahead row (no total needed)", async () => {
+    // The repo takes limit+1 so the client can detect a next page without a
+    // count (a total can't ride the model-bag response, §7). With two seeded
+    // items, limit=1 returns 2 rows (the page + the lookahead); page 2 returns
+    // the remaining one.
+    const viewer = await loginAs("boardmember@example.com");
+    const p1 = await api<ItemRow[]>(viewer, "/api/catalog/items?limit=1&page=1&sortBy=name&sortDir=asc");
+    expect(p1.status).toBe(200);
+    expect(p1.json.length).toBe(2); // 1 shown + 1 lookahead → a next page exists
+    const p2 = await api<ItemRow[]>(viewer, "/api/catalog/items?limit=1&page=2&sortBy=name&sortDir=asc");
+    expect(p2.status).toBe(200);
+    expect(p2.json.length).toBe(1); // last page, no further lookahead
+    expect(p2.json[0].gtin13).not.toBe(p1.json[0].gtin13); // page 2 ≠ page 1
+  });
+
   it("server-renders the Items page (proves the library tsx transpiles via transpilePackages)", async () => {
     // The API routes never touch the library's .tsx; only rendering a catalog
     // page does. An authenticated GET reaches the page render (middleware admits

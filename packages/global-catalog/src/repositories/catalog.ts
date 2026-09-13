@@ -117,6 +117,12 @@ export function createCatalogRepository(db: PrismaClient) {
     listAllItemsFlat: () =>
       db.item.findMany({ where: { archivedAt: null }, include: ITEM_INCLUDE, orderBy: { name: "asc" } }),
 
+    // Offset pagination with a one-row lookahead: `take: limit + 1` so the caller
+    // can tell there's a next page without a total (a table-wide count can't ride
+    // checkin's model-bag response — the stripper drops non-model scalars, #1286
+    // §7). skip stays keyed to `limit`, so the (limit+1)th "peek" row becomes the
+    // first row of the next page — no gap, no overlap. `total` is still returned
+    // for server-side callers/tests; the HTTP route omits it (can't cross the bag).
     async listItemsPaginated(params: {
       where: Prisma.ItemWhereInput;
       orderBy: Prisma.ItemOrderByWithRelationInput[];
@@ -130,7 +136,7 @@ export function createCatalogRepository(db: PrismaClient) {
           where,
           include: ITEM_INCLUDE,
           orderBy,
-          take: limit,
+          take: limit + 1,
           skip: (page - 1) * limit,
         }),
       ]);
