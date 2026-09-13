@@ -4,5 +4,5 @@
 import { handler } from "@/security/handler";
 import { itemReferences } from "@inventory/global-catalog/routes";
 
-export const GET = handler("GET /api/item-references", itemReferences.list);
-export const POST = handler("POST /api/item-references", itemReferences.create);
+export const GET = handler("GET /api/catalog/item-references", itemReferences.list);
+export const POST = handler("POST /api/catalog/item-references", itemReferences.create);

@@ -4,4 +4,4 @@
 import { handler } from "@/security/handler";
 import { conversionChallenges } from "@inventory/global-catalog/routes";
 
-export const GET = handler("GET /api/conversion-challenges", conversionChallenges.list);
+export const GET = handler("GET /api/catalog/conversion-challenges", conversionChallenges.list);

@@ -4,4 +4,4 @@
 import { handler } from "@/security/handler";
 import { itemReferences } from "@inventory/global-catalog/routes";
 
-export const POST = handler("POST /api/item-references/[id]/unarchive", itemReferences.unarchive);
+export const POST = handler("POST /api/catalog/item-references/[id]/unarchive", itemReferences.unarchive);

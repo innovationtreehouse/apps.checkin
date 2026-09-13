@@ -4,4 +4,4 @@
 import { handler } from "@/security/handler";
 import { provisionalItems } from "@inventory/global-catalog/routes";
 
-export const POST = handler("POST /api/provisional-items/[id]/map-to-existing", provisionalItems.mapToExisting);
+export const POST = handler("POST /api/catalog/provisional-items/[id]/map-to-existing", provisionalItems.mapToExisting);

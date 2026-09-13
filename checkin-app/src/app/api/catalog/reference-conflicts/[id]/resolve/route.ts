@@ -4,4 +4,4 @@
 import { handler } from "@/security/handler";
 import { referenceConflicts } from "@inventory/global-catalog/routes";
 
-export const PUT = handler("PUT /api/reference-conflicts/[id]/resolve", referenceConflicts.resolve);
+export const PUT = handler("PUT /api/catalog/reference-conflicts/[id]/resolve", referenceConflicts.resolve);
