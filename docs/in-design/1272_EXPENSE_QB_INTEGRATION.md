@@ -531,10 +531,12 @@ drive the pipeline correct. Both fold onto `FINANCE`:
    FE2/#1273). This is what routes each line to the *right* budget owner — the
    approval itself stays the owner's.
 
-Both curation tasks are **`FINANCE`'s**. (A later duty-modeling pass under GC-ROLES
-could attach owner-assignment to a program's Treasurer / Assistant Lead, who know
-their own budget owners — but that is GC-ROLES relationship work, not a question
-this port leaves open.)
+Both curation tasks are **`FINANCE`'s** — and this is a deliberate ownership
+principle, not an interim simplification: **owner-assignment is an org-level
+decision that `FINANCE` makes.** A program Treasurer / Assistant Lead **reacts** to
+those assignments (they sign off the lines assigned to their people), but does not
+**make** them — assignment is owned by the org, not the program. So there is no
+program-treasurer split to leave open here.
 
 ### Reads are narrow — the port's main divergence from #1286/#1287
 
@@ -1221,9 +1223,12 @@ and invariants only, no mechanism:
   writes/checkoffs = `FINANCE`/`BOARD` — *cite `principles.md` least-privilege* (§6).
 - **Org-stamping invariant:** every row carries the one injected org identity (§6).
 - **Role decision:** the finance actor is a **distinct `FINANCE` role** (RB2 /
-  #1314, kept role; owner-decided); it owns account-mapping + owner-assignment
-  curation. #1314 keeps only the sub-actor designation detail — cross-ref, do not
-  restate.
+  #1314, kept role; owner-decided). #1314 keeps only the sub-actor designation
+  detail — cross-ref, do not restate.
+- **Owner-assignment is an org-level `FINANCE` decision** — `FINANCE` *makes*
+  budget-owner assignments; a program Treasurer / Assistant Lead *reacts* to them
+  (signs off their assigned lines) but does not make them. Assignment is owned by
+  the org, not the program (§6).
 
 **(2) Architecture/ops reference that stays true → `docs/designs/EXPENSE_QB.md`**
 (§4 "operational reference → move, don't delete"). Later finance/QB work (FE6–FE8,
