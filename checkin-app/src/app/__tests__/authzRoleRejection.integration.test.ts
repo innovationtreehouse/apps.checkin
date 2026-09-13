@@ -25,6 +25,7 @@ import { POST as PARTICIPANT_HH_POST } from '@/app/api/membership-ops/participan
 import { POST as IMPORT_POST } from '@/app/api/membership-ops/participants/import/route';
 import { POST as MERGE_POST } from '@/app/api/membership-ops/participants/merge/route';
 import { GET as MERGE_ANALYZE_GET } from '@/app/api/membership-ops/participants/merge/analyze/route';
+import { GET as TOMBSTONES_GET } from '@/app/api/membership-ops/participants/tombstones/route';
 import { POST as IMPORT_PREVIEW_POST } from '@/app/api/membership-ops/participants/import/preview/route';
 import { GET as SYSTEM_HEALTH_GET } from '@/app/api/system-status/health/route';
 import { GET as TRENDS_GET } from '@/app/api/facility/trends/route';
@@ -164,6 +165,7 @@ describe('Protected-route role rejection', () => {
         { name: 'POST /api/membership-ops/participants/import', invoke: () => IMPORT_POST(nreq('http://localhost/api/membership-ops/participants/import', 'POST')) },
         { name: 'POST /api/membership-ops/participants/merge', invoke: () => MERGE_POST(nreq('http://localhost/api/membership-ops/participants/merge', 'POST', {})) },
         { name: 'GET /api/membership-ops/participants/merge/analyze', invoke: () => MERGE_ANALYZE_GET(nreq('http://localhost/api/membership-ops/participants/merge/analyze')) },
+        { name: 'GET /api/membership-ops/participants/tombstones', invoke: () => TOMBSTONES_GET(nreq('http://localhost/api/membership-ops/participants/tombstones')) },
         { name: 'POST /api/membership-ops/participants/import/preview', invoke: () => IMPORT_PREVIEW_POST(nreq('http://localhost/api/membership-ops/participants/import/preview', 'POST')) },
         { name: 'GET /api/system-status/health', invoke: () => SYSTEM_HEALTH_GET(nreq('http://localhost/api/system-status/health')) },
         { name: 'GET /api/facility/trends', invoke: () => TRENDS_GET(nreq('http://localhost/api/facility/trends')) },
