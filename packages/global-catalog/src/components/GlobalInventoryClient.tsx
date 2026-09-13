@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import {
-  ActionIcon, Badge, Button, Checkbox, Group, Modal, Select,
+  ActionIcon, Badge, Button, Checkbox, Group, Modal, Pagination, Select,
   Stack, Table, Tabs, Text, TextInput, Title, Tooltip,
 } from "@mantine/core";
 import { useDisclosure, useDebouncedValue } from "@mantine/hooks";
@@ -16,12 +16,12 @@ import { USAGE_BEHAVIORS } from "./viewTypes";
 import type { CategoryRow, ItemRow, ItemReferenceRow, ReferenceConflictRow, SubcategoryRow, UsageBehavior } from "./viewTypes";
 import ItemReferencesModal from "./ItemReferencesModal";
 
-// Items use real server pagination: the route can't carry a total (checkin's
-// stripper drops non-model scalars — design §7), so the repo fetches PAGE_SIZE+1
-// and the client uses the extra row as the "has next page" signal (Prev/Next,
-// every row reachable, ≤PAGE_SIZE+1 rows per request). The other lists here are
-// naturally bounded (a manager's learned references, unresolved conflicts), so
-// they pull one capped page.
+// Items use real server pagination: one PAGE_SIZE page of rows plus a separate
+// count endpoint for the total (a scalar total can't ride the list's model-bag
+// response — the stripper drops non-model keys, design §7 — so it rides the
+// synthetic CatalogItemCount model). The other lists here are naturally bounded
+// (a manager's learned references, unresolved conflicts), so they pull one
+// capped page.
 const PAGE_SIZE = 50;
 const PAGE_LIMIT = 200;
 const EMPTY_FORM = { name: "", categoryId: "", subcategoryId: "", usageBehavior: "" as UsageBehavior | "" };
@@ -188,7 +188,7 @@ export default function GlobalInventoryClient() {
 
   const [items, setItems] = useState<ItemRow[]>([]);
   const [page, setPage] = useState(1);
-  const [hasNext, setHasNext] = useState(false);
+  const [total, setTotal] = useState(0);
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState("");
@@ -213,13 +213,16 @@ export default function GlobalInventoryClient() {
 
   const loadItems = useCallback(async (q: string, sb: string, sd: string, sa: boolean, p: number) => {
     const params = new URLSearchParams({ page: String(p), limit: String(PAGE_SIZE), sortBy: sb, sortDir: sd });
-    if (q) params.set("q", q);
-    if (sa) params.set("includeArchived", "true");
+    const countParams = new URLSearchParams();
+    if (q) { params.set("q", q); countParams.set("q", q); }
+    if (sa) { params.set("includeArchived", "true"); countParams.set("includeArchived", "true"); }
     try {
-      const rows = await api<ItemRow[]>(`/items?${params}`);
-      // The route returns PAGE_SIZE+1 when a next page exists (repo lookahead).
-      setHasNext(rows.length > PAGE_SIZE);
-      setItems(rows.slice(0, PAGE_SIZE));
+      const [rows, count] = await Promise.all([
+        api<ItemRow[]>(`/items?${params}`),
+        api<{ total: number }>(`/items/count?${countParams}`),
+      ]);
+      setItems(rows);
+      setTotal(count.total);
     } catch (e) { console.error("[GlobalInventoryClient] failed to load items", e); }
   }, []);
 
@@ -318,6 +321,7 @@ export default function GlobalInventoryClient() {
   const subcategoryOptions = subcategories.map((s) => ({ value: String(s.id), label: `${String(s.number).padStart(2, "0")} — ${s.name}` }));
   const usageBehaviorOptions = USAGE_BEHAVIORS.map((v) => ({ value: v, label: v }));
   const colSpan = 5 + (canEdit ? 1 : 0) + (showArchived ? 1 : 0);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <>
@@ -381,11 +385,10 @@ export default function GlobalInventoryClient() {
               ))}
             </Table.Tbody>
           </Table>
-          {(page > 1 || hasNext) && (
-            <Group justify="center" mt="md" gap="sm">
-              <Button variant="default" size="xs" disabled={page <= 1} onClick={() => goToPage(page - 1)}>Previous</Button>
-              <Text size="sm" c="dimmed">Page {page}</Text>
-              <Button variant="default" size="xs" disabled={!hasNext} onClick={() => goToPage(page + 1)}>Next</Button>
+          {totalPages > 1 && (
+            <Group justify="space-between" mt="md">
+              <Text size="sm" c="dimmed">{total} item{total === 1 ? "" : "s"}</Text>
+              <Pagination value={page} onChange={goToPage} total={totalPages} />
             </Group>
           )}
         </Tabs.Panel>
