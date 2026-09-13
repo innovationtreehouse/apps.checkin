@@ -232,7 +232,7 @@ vendors `money`.** Expense **reuses** those. New to expense: `service-client` an
 | `@inventory/money` | Reuse | Already in checkin `packages/money` (cents math). |
 | `@inventory/receipt-types`, `receipt-contract-fixtures` | Reuse (temporary) | Vendored by #1286 as temporary copies. Expense imports the same copy — it needs `CompletedReceiptSchema` (receipt intake, §8) and the S5 `parseOrgEvent` union (provisional events, §8). |
 | `@inventory/org-events-poller` | Reuse | `packages/org-events-poller`, vendored by #1287. But **drop the wall-clock timer** — the S5 consumer is push-driven exactly as #1287 §8a decided; expense is a **second consumer** of catalog events (provisional resolution). |
-| `@inventory/service-client` | **Yes — new `packages/service-client`** (if not already vendored) | The typed HTTP client the source uses for the catalog crossing (pathPrefix `/api/internal`, org-bearer). Standalone shared package (receipt/orchestrator use it too). It is the **`http` fallback** side of a crossing port — but the catalog read is **in-process** in checkin (catalog co-resident, §8b), so `service-client` is **not** bound for that crossing; it stays for the still-remote receipt seam. Check whether #1286/#1287 already vendored it before adding a second copy. |
+| `@inventory/service-client` | **Only if a remote crossing is ever bound** | The typed HTTP client the source uses for the catalog crossing (pathPrefix `/api/internal`, org-bearer). In checkin **every** expense crossing is in-process or not-hosted (catalog read in-process §8b; receipt intake in-process §8a; inventory-load in-process §8c; QB is its own outbound client §9), so `service-client` is the **unused `http` fallback** — **not bound at first landing.** Vendor it only if a genuinely remote crossing ever appears; check whether #1286/#1287 already vendored it first. |
 | `@inventory/quickbooks` | **Yes — new `packages/quickbooks`, NET-NEW to checkin** | The first QuickBooks code in checkin. Read client + OAuth2 (three `fetch` calls, no SDK) + types **already built**; write path + checkin token storage + the outbox-drain terminus are net-new (§9). Standalone shared package — donations (GC-DONOR) and program-finance (GC-PROGRAM-FINANCE) consume it later. |
 | `@inventory/pg-test-harness` | n/a | Already present in checkin. Reuse. |
 
@@ -257,12 +257,13 @@ checkin/
         components/                        ALL expense UI (Mantine, reskinned)
         pages/                             page components — client
         routes/                            route-handler factories (GET/POST/…)
+        routes/_shared.ts                  next-free parse/validate (injected httpError; replaces source route-auth, §6)
         nav.ts                             section-tab links (NavLink[]) for the finance area (§7)
         runtime.ts                         configureExpense() + getPrincipal()/db/org/crossing accessors
         contract.ts                        ExpenseAuth / ExpensePrincipal / OrgIdentity + crossing ports (§8) + QB port (§9)
       package.json
     quickbooks/                           NEW — @inventory/quickbooks (first QB code in checkin, §9)
-    service-client/                       NEW — the http-adapter client for still-remote crossings
+    service-client/                       http-fallback client — only if a remote crossing is ever bound (§2; not at first landing)
     gtin/  workflows/  receipt-types/  org-events-poller/  money/   REUSED (vendored by #1286/#1287 / already present)
   checkin-app/                            ← WIRING ONLY, no expense logic
     src/instrumentation.ts                + one configureExpense({...}) call at boot (+ QB outbox drain, §9)
@@ -344,10 +345,24 @@ checkin/expense database, and the app never writes a secret. See §9 QB-0.
 
 ## 5. Adopting checkin's security regime over a separate schema
 
-Same mechanism as #1286 §5 / #1287 §5 (a `generator security` block emitting an
-`expense-classifications.ts`, merged in the security core; registry +
-scopeBindings entries; responses through checkin's stripper). Two things are
-**different from the prior ports**, and both matter:
+Same mechanism as #1286 §5 / #1287 §5: a `generator security` block for the
+expense schema, **merged into `core.ts` by a spread** (not a new aggregator file);
+registry route entries; responses through checkin's stripper. Carry over two
+as-built wiring facts the prior ports settled (Track 3/4):
+
+- **Generator wiring** (#1286 Track 3): the generator `provider` path is
+  **CWD-relative to the package dir** (`node ../../checkin-app/scripts/security-generator.js`)
+  and its output writes **cross-package into `checkin-app/src/security/generated/`**,
+  so the package's `prisma generate` (incl. `postinstall`) depends on checkin-app's
+  generator script — fine in the monorepo, breaks only if the package is later
+  extracted. `stripper`/`outbound` repoint to `core`.
+- **Route-endpoint-string gotcha** (#1286 Track 4): the `endpoint` string each
+  handler passes to `handler()` must be the **full registered path including its
+  prefix** — a string that drops a segment makes `getRoute()` miss the registry and
+  the route 500s at runtime (tsc-green). Every catalog route hit this; a guard test
+  now covers it. Watch for it on the expense routes.
+
+Two things are **different from the prior ports**, and both matter:
 
 ### Expense data is genuinely sensitive — this is not public reference data
 
@@ -383,38 +398,67 @@ handling if it is ever joined to a name in a response; default to `internal` +
 the narrow read gate, and raise it to `pii` if a route ever returns the person's
 contact details alongside.
 
+### No scopeBindings — but the narrow read is a route+query concern, not a field scope
+
+Both prior ports found they needed **zero scopeBindings**: every actor FK
+(`localUserId` / `*ByUserId`) is absent from checkin's `SCOPABLE_FIELDS`, so the
+binding validator auto-classes every model **un-scopable / admin-only** and their
+`internal` fields sit behind `everyones:internal` with no per-row binding. **Expense
+inherits the same** — its actor FKs are `submitterId` / `ownerId` /
+`budgetOwnerUserId` / `decidedByUserId` / `userId`, none scopable — so **no
+scopeBindings**, registry entries are the whole boundary work.
+
+But expense wants something the prior ports did not: a **per-row narrow read** (a
+budget owner sees only their own lines, §6). Do **not** try to express that as a
+per-row field scope (it would need a new `SCOPABLE_FIELD` — a boundary change).
+Instead the narrow read is enforced **at the handler**: the route guard decides
+*who may call* (finance/board vs owner), and for an owner the handler **filters the
+query** to their own expenses/lines (a `WHERE owner = principal.id`), returning a
+`FINANCE`-tier response shape over a restricted row set. So the field tiers stay
+flat (`internal` behind the finance/board reader), scopeBindings stay zero, and the
+row-narrowing lives in the handler — consistent with catalog/inventory's
+registry-only boundary.
+
 ### QB adds no new app auth surface — it is read-only on one secret
 
 The QB tokens never enter a guarded DB (§4/§9), and the app hosts **no OAuth
 route** — consent is an operator CLI step (§9). So QB's only security footprint is
 the app's **read-only IAM grant** to the access-token secret, provisioned by Infra
-(§10). The registry/scopeBindings still ship **registry-first** per
-`AGENTS.md` + the `security-boundary-isolation` workflow for the *expense* routes
-below; QB-0 itself adds no registered app route. This keeps QB-0's security half
-trivial — the real controls are the Infra secret's access policy and the refresher
-owning the write side.
+(§10). The registry entries still ship **registry-first** per `AGENTS.md` + the
+`security-boundary-isolation` workflow for the *expense* routes below; QB-0 itself
+adds no registered app route. This keeps QB-0's security half trivial — the real
+controls are the Infra secret's access policy and the refresher owning the write
+side.
 
-**Route inventory to register** (~20 registry entries, one per verb×route family):
-`expenses` (GET/POST-intake) + `expenses/[id]` (+ `capital-review`,
+**Route inventory to register** (~18 registry entries, one per verb×route family) —
+**all human routes** (`FINANCE`/`BOARD`, or budget-owner-filtered per above):
+`expenses` (GET list) + `expenses/[id]` (+ `capital-review`,
 `set-depreciation-cycle`, `line-item-approvals[/*]` approve/reject/assign-owner/
 finance-assign/raise-exception/resolve-unknown); `expense-holds[/*]` resolve +
 resubmit + line-item account; `account-mapping[/*]` + `/catalog`; `qb-accounts[/*]`;
-`capital-assets/seed`; `local-owners`; `ownership-map`; `provisional-items`;
-`org-settings`; `system-data`; `queue`; `counts`; `expense-events`;
-`received-expense-payloads`. The **inbound** machine seams — `POST /api/expenses`
-(receipt intake, org-bearer) and `POST /api/capital-assets/seed` (capital seed,
-service/finance token) — are registered with a **service/bearer token grant**, not
-the read gate (§8). **QB adds no app route to register** — consent is an operator
-CLI step and token refresh is the Infra refresher's job (§9).
+`capital-assets/seed` (finance user session); `local-owners`; `ownership-map`;
+`provisional-items`; `org-settings`; `system-data`; `queue`; `counts`;
+`expense-events`; `received-expense-payloads`.
+**Not registered / not hosted:** the source's `POST /api/expenses` **receipt-intake
+machine route (org-bearer)** — checkin can't host a machine-bearer route (§8a), so
+intake is in-process only, not a registered surface. `POST /api/capital-assets/seed`
+**is** registered — it is a normal `FINANCE` **user-session** route (JWT-as-cookie),
+not a machine bearer (§8a/§9 QB-1). **QB adds no app route to register** — consent
+is an operator CLI step and token refresh is the Infra refresher's job (§9).
 
 ---
 
 ## 6. Auth and roles
 
 **Retire the source auth entirely.** Delete `lib/auth.ts`, `auth-shared.ts`,
-`route-auth.ts` (except the pieces re-expressed below), the login page, and
-`/api/auth/{login,logout}`. checkin already owns login and session. Every
-route/page guard is re-expressed against the checkin session.
+`route-auth.ts`, the login page, and `/api/auth/{login,logout}`. checkin already
+owns login and session. Every route/page guard is re-expressed against the checkin
+session. The source's `route-auth`/`web-auth` **parse+error helpers**
+(`parseBody`/`parseQuery`/`unauthorized`/…) go with it — they import `next/server`;
+the library route layer instead uses a **next-free `src/routes/_shared.ts`**
+(parse/validate throwing via an injected `httpError` factory = checkin's
+`ApiResponseError`), the exact pattern #1286/#1287 established (Track 4), so the
+library imports **no `next/server`**.
 
 ### Role mapping — a new `FINANCE` role, existing `BOARD`, budget owner as data
 
@@ -432,11 +476,28 @@ mapping:
 | board-level threshold / COI escalation (net-new, GC-FIN-CONTROL) | **`BOARD`** (existing) | The escalation target for threshold-crossed and conflict flags. |
 
 **Adding `FINANCE`** touches checkin's role foundation (all in checkin's own
-schema, not the expense schema) exactly as #1286 §6 added `INVENTORY_MANAGER`:
-`PersonRoleKind` enum, `src/lib/roles.ts` `FLAG_TO_KIND`, `src/types/next-auth.d.ts`,
-`RoleBadge` + the `/api/roles` grant UI. This is **its own PR track** (§11). It is
-independent of #1286's `INVENTORY_MANAGER` — expense is finance, not inventory
-management, so it does **not** reuse that role.
+schema, not the expense schema) — the **exact surface #1286 Track-2 built** for
+`INVENTORY_MANAGER`, so follow it literally:
+
+- `PersonRoleKind` enum — add `FINANCE`; PersonRole-table-only, **no legacy mirror
+  column** (`FLAG_TO_KIND` only, **not** `KIND_TO_MIRROR`), per the `isOperations`
+  precedent.
+- **Migration:** additive `ALTER TYPE "PersonRoleKind" ADD VALUE IF NOT EXISTS
+  'FINANCE'` — **not** transaction-wrapped (Postgres forbids using a new enum value
+  in the same txn that adds it).
+- `src/lib/roles.ts` `FLAG_TO_KIND` (derives `ROLE_FLAGS`, `rolesToFlags`).
+- `src/types/next-auth.d.ts` — the new flag in **3** spots (JWT / Session / user).
+- `RoleBadge` `ROLE_META`.
+- The **`ROLE_FLAGS`-indexed row-type interfaces** tsc forces the optional
+  `isFinance?` onto (catalog found three for its flag — expect the same set of
+  membership-ops/roles page + roles-edit-modal row types).
+- **No `/api/roles` code change** and **no `DevLoginPicker` change** — the route
+  iterates `ROLE_FLAGS` and `setRoleFlag`'s authority matrix already lets
+  sysadmin/board grant any flag, so `FINANCE` is grantable automatically. (An
+  earlier "grant UI" line here overstated the surface — corrected per #1286 Track-2.)
+
+This is **its own PR track** (§11), independent of #1286's `INVENTORY_MANAGER` —
+expense is finance, not inventory management, so it does **not** reuse that role.
 
 **What `isOrgManager` folds into `FINANCE` — two curation task-sets, not
 per-expense approval.** The source's org-manager role does not *approve* expenses
@@ -542,10 +603,18 @@ component-level reskin, not a rewrite. **Keep the source's `"use client"` +
 `NavbarLogout` / `AuthContext`; pages render inside checkin's shell and read
 `useSession` client-side + the checkin session in the route handlers.
 
+**List-route shape (carry over #1286 Track-4/5).** checkin's `handler()` stripper
+drops non-model bag keys, so a list route returns a **bare model-bag array**, not a
+`{items,total,page}` envelope — a table-wide `total` scalar can't ride the response
+without a boundary change. So expense's list/queue routes ship bare arrays and
+paginate with **offset + one-row lookahead** (fetch `limit+1`, use the extra row for
+Prev/Next), **not** a count endpoint. Don't chase a count endpoint — it's a dead end
+without a boundary PR.
+
 Pages, each an A13 surface / exception screen:
 
-- `expenses` (list, filtered by the `queue` view) + `expenses/[id]` (detail with
-  `LineItemOwnerApprovals`) — surfaces 1/2.
+- `expenses` (list, filtered by the `queue` view; bare-array + offset/lookahead per
+  above) + `expenses/[id]` (detail with `LineItemOwnerApprovals`) — surfaces 1/2.
 - `expense-holds` **exception screen** — `NO_MATCH` / `MULTIPLE_MATCHES` /
   `NO_PART_NUMBER` account-mapping holds; resolve + resubmit (surface 5).
 - `account-mapping` + `qb-accounts` — the rules that map a resolved item to one QB
@@ -591,32 +660,64 @@ one area with the Inventory ports is a checkin-shell IA decision, not this port'
 ## 8. Pipeline couplings — expense is the money-side tail
 
 Expense sits mid-pipeline: **receipt → expense → (catalog lookups) → inventory
-load → QuickBooks**. Four crossings, all designed with the **same per-crossing
-rule #1286 §8 set**: *keep the JSON/contract shapes; convert transport, not
-architecture; every crossing sits behind a port with an `http` adapter (today) and
-an `in-process` adapter (after co-residence); converting a crossing = swap one
-adapter binding in `configureExpense()`, zero call-site churn; trigger =
-co-residence.*
+load → QuickBooks**. Four crossings, all designed with the **same per-crossing rule
+#1286 §8 set**: *keep the JSON/contract shapes; convert transport, not architecture;
+every crossing sits behind a port; converting = swap one adapter binding in
+`configureExpense()`, zero call-site churn; trigger = co-residence.* **One
+correction the prior ports' as-built forced:** the `http` adapter is **not a live
+option inside checkin** — checkin cannot host a new machine-bearer route (§8a,
+#1286 Track-4), so the crossings that were HTTP in the source (R receipt intake, I
+inventory-load) are **in-process only** here; `http` survives only as the source's
+transport for reference / a hypothetical remote peer, never bound in checkin.
 
 | Crossing | Direction | Kind | Contract | Today's transport |
 |---|---|---|---|---|
-| **R — receipt intake** | receipt-app → expense | **sync RPC — callee** | `CompletedReceiptSchema` (`@inventory/receipt-types`) | `POST /api/expenses`, org-bearer; idempotent on `receiptId` via `ReceivedExpensePayload` |
+| **R — receipt intake** | receipt-app → expense | **in-process only** (callee; machine route not hostable, §8a) | `CompletedReceiptSchema` (`@inventory/receipt-types`) | source: `POST /api/expenses`, org-bearer; idempotent on `receiptId` via `ReceivedExpensePayload`. checkin hosts no such route — in-process when receipt co-resides |
 | **C — catalog lookups** | expense → catalog | **sync read — caller** | `catalog-schemas` (categories, subcategories, item info, item lookup) | `service-client` (pathPrefix `/api/internal`) → catalog's org-bearer **machine** surface `/api/internal/[...path]` (#1286 Track-4) |
 | **I — inventory load** | expense → local-inventory | **sync RPC — caller** (new co-resident wiring) | `ResolvedInventoryDeltaSchema` (local-inventory's apply surface, #1287 §8c) | today mediated by the orchestrator; in checkin, an in-process call into local-inventory's apply port |
 | **QB — post** | expense → QuickBooks | **async outbox** | `QbExpenseEventSchema` / `QbLineItemSchema` (schemaVersion 1) | `ExpenseEvent` outbox row; drained by the write path (§9) |
 
-### 8a. Receipt intake (R) — sync RPC, expense is callee
+### 8a. Receipt intake (R) — in-process only; checkin cannot host the org-bearer route
 
 The receipt's **money side** (total / tax / shipping / discount / vendor / lines)
-arrives as a `CompletedReceipt` at `POST /api/expenses` (org-bearer), is stored
-idempotently in `ReceivedExpensePayload` (keyed on `receiptId` — a re-push is a
-safe retry), and `processCompletedReceipt` creates the `Expense` + lines and calls
-`initFinancialFlow`. **Idempotency is part of the contract**, preserve it exactly.
-At co-residence (when receipt-app migrates) bind the in-process adapter — receipt
-calls `processCompletedReceipt` **directly via the port** — and **retire the
-org-bearer route last**, after the final remote caller flips. First landing: keep
-the `http` route **live** (checkin org-bearer) so a still-remote receipt-app can
-drive intake during the overlap.
+arrives as a `CompletedReceipt`; `processCompletedReceipt` stores it idempotently
+in `ReceivedExpensePayload` (keyed on `receiptId` — a re-push is a safe retry),
+creates the `Expense` + lines, and calls `initFinancialFlow`. **Idempotency is part
+of the contract**, preserve it exactly. In the source this is `POST /api/expenses`
+gated by `requireOrgBearer`.
+
+**checkin cannot host that org-bearer route — #1286 §8 Track-4 finding, same wall
+local-inventory's apply surface hit (#1287 §8c).** checkin has **no sanctioned way
+to land a new machine-bearer HTTP route**: (1) `requireOrgBearer` /
+`@inventory/web-auth` is retired (§6) with no checkin-side org-bearer validator;
+(2) checkin's `authenticateRequest` / `handler()` pipeline has no org-bearer auth
+path and the registry `authorize` grammar can't express one; (3)
+`scripts/legacy-authz-routes.txt` is frozen; (4) a new `src/app/api/internal/…` (or
+any new machine-bearer) route trips `check-route-coverage`'s `new-route-old-authz`
+ratchet (blocking). And expense **can't lean on "the old server carries it during
+overlap"** — the migration **moves the write target**: once expenses live in
+checkin's expense DB, a remote receipt-app pushing to the *old* expense-app server
+would split-brain the ledger.
+
+**Resolution — receipt intake is in-process only.** The crossing sits behind a port
+(`ReceiptIntake { ingest(receipt): void }`) bound in `configureExpense()`; when
+receipt-app (A10) co-resides, receipt calls `processCompletedReceipt` **directly via
+the port**, no HTTP. **No inbound HTTP receipt route is built in checkin** (nothing
+to keep "live" and nothing to "retire last" — the earlier wording assumed checkin
+could host it; corrected per #1286).
+
+**First-landing consequence (honest):** receipt-app is a separate, not-yet-migrated
+port, so at expense's first landing there is **no automated receipt feed**. The
+human surfaces (approval queues, holds, capital review, account mapping) and the
+manual expense-entry path work; the high-volume receipt→expense pipeline goes live
+**only when receipt-app co-resides**. Until then, expenses are entered by hand /
+seeded (§12). If a genuinely *remote* receipt-app must push intake into checkin
+before it co-resides, that needs a boundary PR extending checkin auth with an
+inbound service-key/org-bearer variant (#1286's option A) — a §12 item, not
+first-landing work. **Same disposition for `POST /api/capital-assets/seed`?** No —
+that route is gated by `requireRole(isFinance)` (a normal **user session**, the
+finance user's JWT forwarded as the cookie), **not** a machine bearer, so it is a
+normal `FINANCE`-gated route and **is** hostable (§9 QB-1).
 
 ### 8b. Catalog lookups (C) — in-process read, no repoint (mirrors #1287 §8b)
 
@@ -665,14 +766,15 @@ an **explicit port from expense into local-inventory's apply surface** (defined 
 #1287 §8c): on owner-signoff, expense hands the resolved delta to
 `receiptService.applyReceipt` / `enqueueItem` via the port, preserving
 `ResolvedInventoryDeltaSchema` and its **idempotency on `receiptId`** (a re-push is
-a safe retry — that is why the orchestrator can "retry-apply"). Bind the
-in-process adapter once local-inventory is co-resident (it will be — #1287 lands
-before this); keep the orchestrator's HTTP contract as the `http` fallback for the
-overlap window while receipt/orchestrator are still remote. **Do not assume the
-orchestrator "collapses away"** — only its transport changes; the apply call is
-real and stays behind the port. The known fulfill/apply concurrency hazard
-(#1287 §8c, CONCURRENCY.md #2) is *local-inventory's* to close — track it there,
-do not re-solve it in expense.
+a safe retry — that is why the orchestrator can "retry-apply"). **This is
+in-process only — there is no HTTP fallback.** #1287 §8c decided local-inventory's
+apply surface is **not hosted over HTTP in checkin** (same machine-bearer wall as
+§8a, and a remote push would split-brain the stock), so expense reaches it as a
+direct in-process call once local-inventory is co-resident (it will be — #1287
+lands before this). **Do not assume the orchestrator "collapses away"** — its
+calls into local-inventory are real; expense's signoff→load call sits behind the
+same in-process apply port. The known fulfill/apply concurrency hazard (#1287 §8c,
+CONCURRENCY.md #2) is *local-inventory's* to close — track it there, not in expense.
 
 ### 8d. Provisional resolution (S5) — async, second consumer of catalog events
 
@@ -690,13 +792,13 @@ signal, no `setInterval`. Land the consumer **inert** until catalog emits.
 
 - Reuse the temporary vendored `receipt-types` / `receipt-contract-fixtures`
   (#1286's copies).
-- **R (receipt intake)**: keep the `http` `POST /api/expenses` route **live**
-  (org-bearer) for a still-remote receipt-app; exercisable via seeded
-  `CompletedReceipt` fixtures.
+- **R (receipt intake)**: **no HTTP route** (checkin can't host org-bearer, §8a) —
+  in-process only when receipt-app co-resides; until then exercised via seeded
+  `CompletedReceipt` fixtures and manual entry.
 - **C (catalog)**: bind in-process immediately (catalog co-resident).
-- **I (inventory load)**: bind in-process once #1287 is merged (it is a dependency,
-  §11); keep the orchestrator HTTP contract as the fallback until receipt/
-  orchestrator co-reside.
+- **I (inventory load)**: bind in-process once #1287 + the orchestrator co-reside;
+  the apply crossing is **in-process only** (checkin can't host it either — #1287
+  §8c) and goes live with the orchestrator, not before.
 - **S5**: in-process push adapter, inert until catalog emits.
 
 All temporary duplication is **< 2 weeks, dev-only** — acceptable, tracked.
@@ -896,40 +998,53 @@ existing container. Same as #1286 §9 / #1287 §9, plus the QB specifics:
 
 **Dependency gate.** Expense implementation **follows both prior ports**: it
 consumes the catalog's item/account lookups and S5 events (**#1286 must land**),
-and it calls local-inventory's apply surface (**#1287 must land** — its §8b apply
+and it calls local-inventory's apply surface (**#1287 must land** — its §8c apply
 port is expense's crossing I target). Track 1 can start once #1286 track 1 (catalog
 library skeleton + shared packages) has landed; the inventory-load crossing (track
 6) gates on #1287.
 
-1. **Library skeleton** — `packages/expense` (+ new `packages/service-client`;
-   reuse `gtin`/`workflows`/`receipt-types`/`org-events-poller`/`money`), expense
-   schema + client + migrations, domain (repositories / services / the xstate
-   machine / QB processor / capital register / financial-flow) ported,
-   unit/integration tests. No UI, no QB write, no checkin wiring. Green in
-   isolation.
+1. **Library skeleton** — `packages/expense` (reuse
+   `gtin`/`workflows`/`receipt-types`/`org-events-poller`/`money`; `service-client`
+   only if a remote crossing is ever bound — §2), expense schema + client +
+   migrations, domain (repositories / services / the xstate machine / QB processor /
+   capital register / financial-flow) ported, **unit tests only** (the source's
+   route+auth-bound integration tier → flow tests in track 5, §12). Package stays
+   `next`-free (next-free `_shared.ts`; source `validate`/`route-auth` not ported).
+   No UI, no QB write, no checkin wiring. Green in isolation.
 2. **`FINANCE` role foundation** — add the `FINANCE` `PersonRoleKind` (RB2, a kept
    role — **references #1314 without closing it**; the label/scope stays #1314's
-   DECISION) + `roles.ts` + next-auth types + grant UI. Own PR (role-system
-   change). Defines the budget-owner per-row predicate + the household-COI
-   predicate over checkin's household graph.
+   DECISION), the **exact #1286 Track-2 surface** (non-txn `ADD VALUE` migration,
+   `FLAG_TO_KIND`, next-auth in 3 spots, `RoleBadge`, the 3 `ROLE_FLAGS`-indexed row
+   types; **no `/api/roles` and no `DevLoginPicker` change** — grantable
+   automatically, §6). Own PR (role-system change). Defines the budget-owner per-row
+   predicate + the household-COI predicate over checkin's household graph.
 3. **Security boundary** — `@sensitivity` annotations (`internal` for money /
    vendor / attribution / plumbing; **no `secret` field — QB tokens are external**,
-   §5/§9), `generator security` for the expense schema, registry + scopeBindings
-   entries. **QB adds no app route to register** (consent is operator CLI; the app
-   is read-only on the access-token secret — §5/§9). Own PR track, **registry-first**.
-4. **Routes + auth + inbound seams** — library route-handler factories +
-   `contract.ts` (incl. the crossing ports + the read-only QB `AccessTokenSource` port) +
-   `configureExpense` wired in `instrumentation.ts`; API stub tree + narrow read
-   guards + the household-COI flag; the `R` (receipt intake, org-bearer) and
-   capital-seed inbound surfaces with their `http` adapters live; the `C` (catalog)
-   crossing bound in-process. Depends on 1–3.
-5. **UI + nav** — reskinned pages/components (in the library), page stub tree +
-   `pageRegistry` entries, the library's `NavLink[]` in a **finance area** gated by
-   `FINANCE`/`BOARD` (not the Inventory area — §7), `transpilePackages` (if tsx
-   needs it — verify), A13 flow test.
+   §5/§9), `generator security` for the expense schema (cross-package wiring, §5),
+   registry route entries — **no scopeBindings** (expense FKs aren't scopable; the
+   narrow read is a handler query-filter, not a field scope — §5). **QB adds no app
+   route to register** (consent is operator CLI; the app is read-only on the
+   access-token secret — §5/§9). Own PR track, **registry-first**.
+4. **Routes + auth + in-process seams** — library route factories + a next-free
+   `src/routes/_shared.ts` (parse/validate via injected `httpError`, no
+   `next/server`) + `contract.ts` (crossing ports + the read-only QB
+   `AccessTokenSource` port) + `configureExpense` wired in `instrumentation.ts`;
+   **human** `/api/…` stubs (`FINANCE`/`BOARD`, budget-owner query-filter) + guards +
+   the household-COI flag; the `capital-assets/seed` finance route; the `C` (catalog)
+   crossing bound in-process. **No receipt-intake machine route — checkin can't host
+   it (§8a); intake is in-process only.** Watch the route-endpoint-string gotcha (§5);
+   list routes return bare arrays (pagination → track 5). Depends on 1–3.
+5. **UI + nav + flow tests + pagination** — reskinned pages/components (library),
+   page stub tree + `pageRegistry` entries, the library's `NavLink[]` in a **finance
+   area** gated by `FINANCE`/`BOARD` (not the Inventory area — §7),
+   `transpilePackages` (if tsx needs it — verify). **Flow tests carry the source's
+   integration journeys** (route+auth+DB e2e via persona-mint), incl. the A13
+   journey (§12). **Adds list pagination** (offset + one-row lookahead — no count
+   endpoint, §7).
 6. **Inventory-load crossing (I)** — bind the in-process call into local-inventory's
-   apply port on owner-signoff (#1287 §8c), keeping the orchestrator HTTP contract
-   as the `http` fallback. Depends on #1287 landed.
+   apply port on owner-signoff (#1287 §8c). **In-process only — no HTTP fallback**
+   (local-inventory hosts no apply route in checkin; §8c). Depends on #1287 landed
+   and, for the live pipeline, on the orchestrator co-residing.
 7. **S5 provisional consumer** — bind the in-process catalog-events adapter
    (push-driven, no timer), inert until catalog emits. Depends on #1286's
    post-commit signal hook.
@@ -955,10 +1070,13 @@ library skeleton + shared packages) has landed; the inventory-load crossing (tra
 8. **Infra** — deploy sequence + expense DB provisioning + QB env/secrets + the
    consent runbook step.
 9. **(Deferred — each a tracked follow-up issue vs the FE issues, not prose
-   "later")** retire the `http`-adapter routes when receipt-app / orchestrator
-   co-reside and flip to in-process; drop the dead `SettingsData` poll fields;
-   FE6 (membership→QB, #1277), FE7 (shop-hour journals, #1278), FE8
-   (budget-vs-actual, #1279); QB-3 drift-queue polish. File these at merge.
+   "later")** the in-process receipt-intake + inventory-load crossings go **live**
+   when receipt-app / the orchestrator co-reside (no route to retire — none was
+   hosted, §8a/§8c); drop the dead `SettingsData` poll fields; a boundary PR only
+   **if** a genuinely remote receipt-app / orchestrator must push into checkin
+   before co-residing (#1286 option A, §12); FE6 (membership→QB, #1277), FE7
+   (shop-hour journals, #1278), FE8 (budget-vs-actual, #1279); QB-3 drift-queue
+   polish. File these at merge.
 
 ---
 
@@ -993,14 +1111,25 @@ library skeleton + shared packages) has landed; the inventory-load crossing (tra
 - **`reimbursementFor` / reimbursee identity tiering** — defaulted to `internal`
   behind the narrow gate; raise to `pii` if a route ever returns the person's
   contact details alongside (§5). Assumption, not a blocker.
-- **Catalog reads are in-process — no consumer repoint needed** (§8b, syncs with
-  #1286 Track-4 + #1287 §8b). #1286's Track-4 finding names `expense-app` among the
-  still-**remote** consumers of catalog's `/api/internal/[...path]` and files a
-  follow-up for them to repoint `/api/catalog/items` → `/api/internal/items`. This
-  design does **not** inherit that: checkin's expense reads catalog via the
-  in-process `CatalogReader` port, touching neither catalog HTTP route. The
-  `/api/catalog/*` (human) vs `/api/internal/*` (machine) split is an HTTP concern
-  expense sidesteps. The old remote server's repoint stays #1286's follow-up.
+- **RESOLVED — no machine-bearer HTTP surface is hosted in checkin** (#1286 Track-4,
+  §8a/§8c). checkin has no sanctioned way to land a new org-bearer/service-key route
+  (org-bearer auth retired; registry `authorize` grammar can't express it;
+  `legacy-authz-routes.txt` frozen; `new-route-old-authz` ratchet blocks it). This
+  hits **two** expense crossings — receipt intake (R, §8a) and inventory-load (I,
+  §8c) — and both resolve the same way: **in-process only, not hosted.** Receipt
+  intake goes live when receipt-app co-resides; inventory-load when the orchestrator
+  co-resides. `capital-assets/seed` is unaffected (a `FINANCE` **user-session**
+  route, not a machine bearer). **Residual:** if a genuinely *remote* receipt-app /
+  orchestrator must push into checkin **before** co-residing, that needs a boundary
+  PR extending checkin auth with an inbound service-key/org-bearer variant (#1286
+  option A) — sequence to avoid it; not first-landing work. (#1286's own eventual
+  remote model is a periodic **file export** to AWS disk, not a live endpoint —
+  another reason the machine surface is likely never built.)
+- **Catalog reads are in-process — no consumer repoint needed** (§8b). #1286's
+  Track-4 names `expense-app` among the still-**remote** consumers of
+  `/api/internal/[...path]`; that repoint does **not** apply here — checkin's expense
+  reads catalog via the in-process `CatalogReader` port, touching neither catalog
+  HTTP route. The old remote server's repoint stays #1286's follow-up.
 - **Nav IA — finance area vs shared Inventory area.** Expense lands in a
   finance-gated area next to Finance Ops (§7). Whether checkin later unifies the
   finance-side and inventory-side surfaces into one IA is a checkin-shell decision,
@@ -1012,7 +1141,8 @@ library skeleton + shared packages) has landed; the inventory-load crossing (tra
   or >1 — so no STOP-AND-ASK: ambiguity is handled in-band by a human, not guessed.
 - **Production data: none to migrate; existing QB is reconciled, not imported.**
   There is no expense data to import. Expenses arrive **by receipt intake** (the
-  R crossing, §8) — the high-volume path — or by hand for reimbursements. The
+  R crossing, §8a — the high-volume path, live once receipt-app co-resides) or by
+  hand for reimbursements / before receipt-app lands. The
   **existing 3 years of QuickBooks** are **reconciled against, not clobbered**
   (GC-QB): QB-1's ground-truth pull + the `backfill`/`qb_skipped` path recognize
   already-booked transactions; the capital register is seeded from QB memos
@@ -1034,10 +1164,21 @@ library skeleton + shared packages) has landed; the inventory-load crossing (tra
 
 ### Testing (posture; mirrors #1286 §10 / #1287 §10)
 
-- **Unit/integration — keep vitest, port ~verbatim.** `expense` is a `packages/`
-  package → keeps vitest (jest is checkin-app's convention). Reuse
-  `@inventory/pg-test-harness`. **CI wiring is not automatic** — add an explicit
-  root run (or extend the aggregation #1286/#1287 added) so its suites execute.
+- **Keep vitest; unit ports ~verbatim, source integration → flow tests** (#1286
+  Track-1/4/5 finding). `expense` is a `packages/` package → keeps vitest (jest is
+  checkin-app's convention). The **unit** tests (services/validation, no route/auth)
+  port near-as-is in track 1. The source's **integration** tier is route+auth-bound
+  (its `app-compat` HTTP shim + `@inventory/auth` seeding), so it does **not** port
+  verbatim — in checkin that coverage **is flow tests** (route+auth+DB e2e via
+  persona-mint), landing in track 5, not a separate integration rewrite. Reuse
+  `@inventory/pg-test-harness`.
+- **CI wiring — mostly already there** (#1286 Track-1 finding): the root
+  `test:packages` script globs `npm run test -w ./packages --if-present`, so the
+  expense package's vitest runs **automatically** — no new root script. One wiring:
+  add expense client generation to `db:generate:test` (run by `pretest:packages`).
+  **Ops gotcha** (project memory): the DB integration tier **silently skips unless
+  `DOCKER_HOST` reaches the container runtime** — a green run isn't coverage
+  otherwise.
 - **Security tests** — registry/stripper coverage for expense routes lives in
   `checkin-app/src/security/__tests__` (jest — checkin boundary wiring). Companion
   to the track-3 boundary PR. There is **no QB token test** — the tokens are not in
@@ -1054,23 +1195,33 @@ library skeleton + shared packages) has landed; the inventory-load crossing (tra
   CI run (they need external creds + network) exactly as the Inventory monorepo's
   `*.shopify-live.ts` are (`AGENTS.md` shopify-live precedent). **No CI tier posts
   to production QuickBooks.**
-- **Coupling tests** — the crossing ports (R/C/I) get contract tests on both
-  adapters (`http` and `in-process` produce identical results for the same input).
+- **Coupling tests** — the crossing ports get contract tests that the **in-process**
+  adapter (R receipt intake, C catalog read, I inventory-load, S5 events) behaves
+  identically to the source's HTTP shapes for the same input — the cheapest guard
+  that a transport flip is behavior-preserving. (There is no live `http` adapter to
+  test — those surfaces aren't hosted, §8a/§8c.)
 
-**Resolved by reuse of #1286/#1287:** own dedicated database
-(`EXPENSE_DATABASE_URL`); checkin security regime over a separate schema; retire
-source auth for checkin next-auth; org+user identity from the checkin-owned `Org`
-registry row injected as an accessor; keep-JSON-contracts / convert-transport
-crossing rule; vitest + flow-tests (no Playwright); no table renames; no in-app
-timers.
-**New to this port (resolved here):** the `FINANCE` role + narrow read gate;
-the household-aware COI flag (port gets better); QuickBooks as `@inventory/quickbooks`
-brought into checkin on the QB-0…QB-3 ladder with **Infra-managed secret handling** —
-static creds as env vars; an **Infra-owned refresher** (rotation Lambda) owns the
-rotating refresh token and publishes the current access token; the **app reads it
-read-only and never writes a secret**; **no token in Postgres**.
-**Left open (non-blocking):** the `FINANCE`-vs-`TREASURER` label nod; the finance/
-inventory nav IA question; the tracked deferrals (track 9) and FE6–FE8.
+**Resolved by reuse of #1286/#1287 (incl. their as-built findings):** own dedicated
+database (`EXPENSE_DATABASE_URL`); checkin security regime over a separate schema
+(cross-package generator wiring, endpoint-string gotcha, **no scopeBindings**);
+retire source auth for checkin next-auth (next-free `_shared.ts`, no `next/server`);
+org+user identity from the checkin-owned `Org` registry row injected as an accessor;
+**no machine-bearer HTTP route hostable in checkin — receipt intake + inventory-load
+are in-process only** (§8a/§8c); list routes ship bare model-bag arrays →
+offset/lookahead pagination; keep-JSON-contracts / convert-transport crossing rule;
+vitest + flow-tests, source integration → flow tests, CI auto via `test:packages`
+(no Playwright); no table renames; no in-app timers.
+**New to this port (resolved here):** the `FINANCE` role (#1286 Track-2 surface) +
+narrow read gate (a handler query-filter, not a field scope); the household-aware
+COI flag (port gets better); QuickBooks as `@inventory/quickbooks` on the QB-0…QB-3
+ladder with **Infra-managed secret handling** — static creds as env vars; an
+**Infra-owned refresher** (rotation Lambda) owns the rotating refresh token and
+publishes the current access token; the **app reads it read-only and never writes a
+secret**; **no token in Postgres**.
+**Left open (non-blocking):** the `FINANCE`-vs-`TREASURER` label nod (#1314); the
+owner-assignment role split (#1273); the finance/inventory nav IA question; a
+boundary PR **only if** a remote receipt-app/orchestrator must push before
+co-residing (#1286 option A); the tracked deferrals (track 9) and FE6–FE8.
 
 ---
 
