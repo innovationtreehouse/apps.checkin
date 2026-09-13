@@ -344,7 +344,11 @@ To bring the catalog under the same regime **without merging schemas**:
    behind `everyones:internal` with **no per-row binding**. (The earlier "add
    scopeBindings" wording overstated it — the registry entries are the work; the
    bindings are zero.)
-4. Route responses go through checkin's **stripper** like any other route.
+4. Route responses go through checkin's **stripper** like any other route. To
+   return a **bare scalar** (a count/total/badge) — which the stripper otherwise
+   drops as a non-model bag key — hand-author a small **synthetic public
+   classification** for its shape and merge it in `core.ts` (Track 5's
+   `CatalogItemCount { total: public }` is the reference example; §7 pattern).
 
 **Boundary-isolation process applies** (`AGENTS.md` + the
 `security-boundary-isolation` workflow): registry/scopeBindings/generator
@@ -522,11 +526,20 @@ there is no client→server conversion to do, now or later.
   count endpoint was a dead end — that was **wrong** and is replaced.) A
   table-wide total *can't* ride the item model-bag (stripper drops non-model
   scalars), but the clean fix is small and is exactly the **registry-first
-  boundary commit**: declare a synthetic **`CatalogItemCount` (public) response
-  model** so its scalar `total` passes the stripper as a model field, and register
-  **`GET /api/catalog/items/count`**. The boundary piece (synthetic classification
-  + registry entry) lands first; the count route factory + stub follow. This gives
-  real **numbered pagination** with a true total — no lookahead workaround.
+  boundary commit**: hand-author a synthetic **`CatalogItemCount { total: public }`
+  classification**, merge it in `core.ts`, and register
+  **`GET /api/catalog/items/count`** — now the scalar `total` rides the stripper
+  **legitimately** as a model field. Boundary piece (classification + registry
+  entry) lands first; the count route factory + stub follow. Real **numbered
+  pagination** with a true total — no lookahead workaround.
+- **Reusable pattern — "synthetic public-scalar classification" (Track 5).** This
+  is the **sanctioned way to let a scalar cross `handler()`'s stripper** (which
+  otherwise drops non-model bag keys). It resolves the "scalars can't cross the
+  boundary" wall noted above, and is how **any future count or badge** — receipt
+  totals, open-proposal counts, nav badges (§7 nav) — should ship: a small
+  hand-authored public classification for the scalar shape, merged in `core.ts`,
+  behind its own registered endpoint. Prefer this over inventing envelope
+  workarounds.
 
 **No server-component migration is planned.** A full server-driven rewrite would
 make the catalog *more* server-driven than checkin itself — a checkin-wide
