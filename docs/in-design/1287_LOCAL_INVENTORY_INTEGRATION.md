@@ -270,9 +270,22 @@ Implications (same as #1286 §4, plus):
 
 ## 5. Adopting checkin's security regime over a separate schema
 
-Same mechanism as #1286 §5 (a second/third `generator security` block emitting a
-`local-inventory-classifications.ts`, merged in the security core; registry +
-scopeBindings entries; responses through checkin's stripper).
+Same mechanism as #1286 §5 (a third `generator security` block emitting a
+classifications file, merged in the security core; registry entries; responses
+through checkin's stripper). **As #1286 built it (Track 3):** the generator's
+`provider` path is CWD-relative to the package dir
+(`node ../../checkin-app/scripts/security-generator.js`) and writes **cross-package
+into `checkin-app/src/security/generated/`**, so the package's `prisma generate`
+(incl. `postinstall`) depends on checkin-app's generator script — fine in the
+monorepo, breaks only if the package is later extracted. Merge point is a **spread
+in `core.ts`**, not a new aggregator file.
+
+**No scopeBindings needed** (#1286 Track-3 finding, applies identically here).
+Every inventory actor FK is `userId` / `*ByUserId` / `performedBy` — **none is in
+checkin's `SCOPABLE_FIELDS`** — so the binding validator auto-classes all
+inventory models **un-scopable / admin-only by construction**, and their
+`internal` fields sit behind `everyones:internal` with **no per-row binding**. The
+registry entries are the work; the bindings are zero.
 
 **Field tiering** — inventory reference/quantity data is largely operational, not
 personal. The schema has **no email/DOB/address fields → no `pii` tier**.
@@ -292,23 +305,30 @@ personal. The schema has **no email/DOB/address fields → no `pii` tier**.
   `ReceivedInventoryDelta.deltaJson`, `sourceEventId`, `lineItemId`.
 
 **Boundary-isolation process applies** (`AGENTS.md` + the
-`security-boundary-isolation` workflow): registry / scopeBindings / generator
-changes ship in their **own PR(s)**, ahead of the route code — **registry-first**
-(an unused `defineRoute` is inert). This is the most process-heavy part; plan it
-as its own PR track (§11).
+`security-boundary-isolation` workflow): registry / generator changes ship in
+their **own PR(s)**, ahead of the route code — **registry-first** (an unused
+`defineRoute` is inert). This is the most process-heavy part; plan it as its own
+PR track (§11).
+
+**Route-endpoint-string gotcha** (#1286 Track-4): the `endpoint` string each
+handler passes to `handler()` must be the **full registered path including its
+prefix** — a string that drops a segment makes `getRoute()` miss the registry and
+the route 500s at runtime (tsc-green). Every catalog route hit this until fixed;
+a guard test now covers it. Watch for it on the inventory routes.
 
 **Route inventory to register** (~13 registry entries, one per verb×route family):
 `locations` (GET/POST) + `locations/[id]` (PATCH/DELETE) + `locations/[id]/reassign`
 (POST); `org-items` (GET) + `org-items/[gtin13]` (PATCH); `receive-queue` (GET) +
-`receive-queue/[id]` + `.../fulfill` (POST); `inventory/apply` (POST);
+`receive-queue/[id]` + `.../fulfill` (POST);
 `inventory-log` (GET); `inventory-merge-conflicts` (GET) +
 `.../[id]/resolve` (POST); `provisional-items` (GET/POST);
 `received-inventory-deltas` (GET); `received-org-events` (GET); `system-data`
-(GET). The source's `global-catalog/items*` proxy routes are **not registered** —
-they are dropped in favor of an in-process catalog read (§8c). The
-`/api/internal/*` and `/api/inventory/apply` **inbound** surfaces are the
-machine-to-machine seam (§8c) — registered with a service/bearer token grant, not
-the viewer gate.
+(GET) — all **human** routes (`isInventoryViewer` read / `INVENTORY_MANAGER`
+write). The source's `global-catalog/items*` proxy routes are **not registered** —
+dropped for an in-process catalog read (§8b). The `/api/internal/*` +
+`/api/inventory/apply` **machine** surface is **not registered and not hosted** —
+checkin has no way to gate a machine-bearer route (§8c); the apply crossing is
+in-process only.
 
 ---
 
@@ -317,7 +337,11 @@ the viewer gate.
 **Retire the source auth entirely.** Delete `lib/auth.ts`, `auth-shared.ts`,
 `route-auth.ts` (except the pieces re-expressed below), `LoginForm`/`login` page,
 `AuthProvider`, and `/api/auth/{login,logout,me}`. checkin already owns login and
-session.
+session. The source's `route-auth`/`web-auth` parse+error helpers
+(`parseBody`/`parseQuery`/`unauthorized`/…) go with it; the library route layer
+uses a **next-free `src/routes/_shared.ts`** (parse/validate throwing via an
+injected `httpError` factory — checkin's `ApiResponseError`), mirroring #1286's
+Track-4 pattern, so the library imports **no `next/server`**.
 
 Every route/page guard is re-expressed against the checkin session. The source's
 guards map cleanly:
@@ -571,7 +595,10 @@ server — that is #1286's follow-up, not this design's surface.)
 scope) drives the "apply / retry-apply / proceed" surface. local-inventory
 **exposes** it. The contract local-inventory must preserve:
 
-| Operation | Today's route | Payload contract | checkin auth |
+The contract (payload shapes preserved as the in-process port's types; the source
+routes/auth are shown for reference — checkin hosts none of them, §8c):
+
+| Operation | Source route | Payload contract | Source auth (not hosted in checkin) |
 |---|---|---|---|
 | **apply / retry-apply delta** | `POST /api/inventory/apply` | `ResolvedInventoryDeltaSchema` (`orgId`, `receiptId`, `retailer?`, `lineItems[]` with `gtin13`, `quantityDelta`, `isDelayed`, `lineItemId`, `isProvisional`, `provisionalName`, `conversionFactor`, `conversionVersion`) | org-bearer |
 | **apply (service variant)** | `POST /api/internal/inventory/apply` | `ApplyInventorySchema` (items[]) | X-Service-Key |
@@ -584,14 +611,41 @@ upserts `ReceivedInventoryDelta` keyed on `receiptId` and re-applies — a re-pu
 of the same `receiptId` is a safe retry (that is *why* the orchestrator can
 "retry-apply"). Preserve this exact idempotent shape when the transport flips.
 
-**Conversion at co-residence:** when workflow-mapping migrates (CI4), bind the
-**in-process** adapter — the orchestrator imports `receiptService.applyReceipt` /
-`enqueueItem` / `createProvisional` **directly via the port** instead of the HTTP
-stub. Keep the zod schemas as the function param types. **Retire the
-`/api/internal/*` route + org-bearer `/api/inventory/apply` LAST** — during the
-overlap window a still-remote receipt-app / workflow-mapping may still call them.
-**Do not assume workflow-mapping "collapses away"** — only its transport changes;
-its calls into local-inventory are real and must stay behind the port.
+**checkin cannot host this as an HTTP machine surface — #1286 §8 Track-4
+finding.** The source guards it with `requireOrgBearer` (org-bearer) / an
+`X-Service-Key`, and #1286 found checkin has **no sanctioned way to land a new
+machine-bearer route**: (1) `requireOrgBearer`/`@inventory/web-auth` is retired
+(§6) with no checkin-side org-bearer validator; (2) checkin's
+`authenticateRequest`/`handler()` pipeline has no org-bearer/service-key auth path
+and the registry `authorize` grammar can't express one; (3)
+`scripts/legacy-authz-routes.txt` is frozen; (4) a new `src/app/api/internal/…`
+route trips `check-route-coverage`'s `new-route-old-authz` ratchet (blocking). So
+the inbound `/api/internal/*` + org-bearer `/api/inventory/apply` surface **cannot
+be hosted in checkin as-is** — same wall the catalog machine surface hit.
+
+**Unlike catalog, local-inventory cannot lean on "the old server carries it during
+overlap."** The migration **moves the write target**: once org-items live in
+checkin's inventory DB, a remote orchestrator pushing apply to the *old*
+local-inventory server would split-brain the stock. So the apply crossing must be
+**in-process, from a co-resident orchestrator** — it does not survive a remote
+producer.
+
+**Resolution — apply is in-process only; sequence it with the orchestrator.**
+
+- When workflow-mapping (CI4) co-resides, bind the **in-process** adapter — the
+  orchestrator imports `receiptService.applyReceipt` / `enqueueItem` /
+  `createProvisional` **directly via the port**, no HTTP. Zod schemas stay the
+  function param types. **Do not assume workflow-mapping "collapses away"** — only
+  its transport changes; its calls into local-inventory are real and stay behind
+  the port.
+- **No inbound HTTP machine surface is built in checkin.** There is nothing to
+  keep "live during overlap" and nothing to "retire last" (the earlier wording
+  assumed checkin could host it — corrected per #1286).
+- **Consequence for first landing:** the pipeline apply path is live **only once
+  the orchestrator co-resides**. If a genuinely *remote* orchestrator must push
+  apply into checkin before then, that needs a boundary PR extending checkin auth
+  with a service-key/org-bearer inbound variant (#1286's option A) — a §12 open
+  item, not first-landing work.
 
 **Known concurrency hazard to carry across** (CONCURRENCY.md #2): concurrent
 `fulfill` of one receive-queue item, and concurrent `apply` of one receipt, have
@@ -609,10 +663,13 @@ first).
   **inert** (flag-gated) until catalog emits provisional events; the local ledger
   + merge-conflict path are exercisable via seeded events / the catalog's own
   manual resolution routes.
-- **S3 apply surface**: keep the HTTP `/api/inventory/apply` + `/api/internal/*`
-  routes **live** (checkin org-bearer / service-key) so a still-remote
-  receipt-app / workflow-mapping can drive apply during the overlap. They flip to
-  in-process per the rule when those apps co-reside; retire last.
+- **S3 apply surface**: **not hosted over HTTP** (checkin can't; §8c). At first
+  landing the pipeline apply path is dormant — the human UI, catalog reads (§8b),
+  and S5 provisional consumption (§8a) all work, but receipt-driven apply only
+  goes live when the orchestrator co-resides and calls in-process. Manual UI edits
+  cover org-item/quantity setup until then. (Do **not** point a remote orchestrator
+  at the old local-inventory server once checkin holds the data — it split-brains
+  the stock, §8c.)
 
 All temporary duplication is **< 2 weeks, dev-only** — acceptable, tracked.
 
@@ -647,15 +704,24 @@ existing container. Same as #1286 §9, plus:
 
 Same posture as #1286 §10:
 
-- **Unit/integration — keep vitest, port ~verbatim.** `local-inventory` is a
-  `packages/` package → keeps vitest (jest is checkin-app's convention, not the
-  packages'). Its `src/__tests__/{unit,api,components}` port with little change,
-  reusing `@inventory/pg-test-harness`. **CI wiring is not automatic** (#1286 §10):
-  the root `test` scripts only run `-w checkin-app` and there is no package-test
-  aggregation — so add an explicit run for this package (a root script, e.g.
-  `npm -w @inventory/local-inventory run test`, its `test:integration`
-  counterpart, and/or a CI job) so its vitest suites actually execute. If #1286
-  already added a package-test aggregation, extend it rather than duplicating.
+- **Keep vitest** — `local-inventory` is a `packages/` package (jest is
+  checkin-app's convention, not the packages'). No jest conversion.
+- **Unit tier ports ~verbatim; the source's route+auth-bound integration tier
+  becomes checkin FLOW tests** (#1286 Track-4/5 finding). Source **unit** tests
+  (services/validation, no route/auth) port near-as-is (Track 1). The source's
+  **integration** tests are route+auth-bound (its `app-compat` HTTP shim +
+  `@inventory/auth` seeding), so they don't port near-verbatim — in checkin that
+  coverage **is flow tests** (route+auth+DB e2e over HTTP with persona-mint),
+  which land in **track 5**, not a separate integration rewrite. The apply-path
+  journeys those cover can only run once the orchestrator co-resides (§8c) or via
+  a seeded in-process apply.
+- **CI wiring — mostly already there** (#1286 Track-1 finding): the root
+  `test:packages` script globs `npm run test -w ./packages --if-present`, so this
+  package's vitest runs **automatically** — no new root script or CI job. The one
+  wiring needed: add the inventory client generation to `db:generate:test` (run by
+  `pretest:packages`). **Ops gotcha** (project memory): the inventory DB
+  integration tier **silently skips unless `DOCKER_HOST` reaches the container
+  runtime** — a green run isn't coverage otherwise.
 - **Security tests**: registry/stripper coverage for inventory routes lives in
   `checkin-app/src/security/__tests__` (jest — checkin-app boundary wiring).
   Companion to the boundary PR (track 3).
@@ -664,9 +730,10 @@ Same posture as #1286 §10:
   real HTTP journeys against a running dev server. Priority journey: **A12 end to
   end** — enqueue → fulfill → apply delta → provisional resolution → uom_mismatch
   merge-conflict → resolve. Land in track 5.
-- **Coupling tests**: the two ports (§8) get contract tests on both adapters
-  (`http` and `in-process` produce identical results for the same input) —
-  the cheapest guard that a transport flip is behavior-preserving.
+- **Coupling tests**: the three ports (§8) get contract tests — for the in-process
+  adapters (§8a catalog events, §8b catalog reads, §8c apply) that they behave
+  identically to the source's HTTP shapes for the same input — the cheapest guard
+  that a transport flip is behavior-preserving.
 - **Concurrency**: the CONCURRENCY.md #2 fulfill/apply race is a **tracked
   follow-up** (§8c), not blocking the port.
 
@@ -682,28 +749,37 @@ local-inventory consumes, and local-inventory reuses catalog's vendored packages
 
 1. **Library skeleton** — `packages/local-inventory` (+ new `packages/org-events-poller`,
    `packages/utils`), inventory schema + client + migrations (port the six),
-   domain services/repositories/workflows ported, unit/integration tests. No UI,
-   no checkin wiring. Green in isolation.
+   domain services/repositories/workflows ported, **unit tests only** (the source's
+   route+auth-bound integration tier → flow tests in track 5, §10). Package stays
+   `next`-free. No UI, no checkin wiring. Green in isolation.
 2. **Roles** — **none new**; depends on #1286 track 2 having landed the interim
    `INVENTORY_MANAGER` (which references #1316 and does not close it — the
    strategic Catalog/Org split stays open). Define `isInventoryViewer` (or reuse
    `isCatalogViewer`). No separate PR unless the viewer predicate diverges. (When
    #1316 lands, a mechanical follow-up moves writes → `ORG_MANAGER`; §6.)
 3. **Security boundary** — `@sensitivity` annotations, `generator security` for
-   the inventory schema, registry + scopeBindings entries. Own PR track,
+   the inventory schema (cross-package wiring, §5), registry route entries —
+   **no scopeBindings** (inventory FKs aren't scopable; §5). Own PR track,
    **registry-first**.
-4. **Routes + auth + seams** — library route-handler factories + `contract.ts`
-   (the three crossing ports: `CatalogEventSource` §8a, `CatalogReader` §8b bound
-   in-process, the inbound apply port §8c) + `configureLocalInventory` wired in
-   checkin-app `instrumentation.ts`; API stub tree + security guards; the
-   `/api/internal/*` + `/api/inventory/apply` inbound surface with the `http`
-   adapter live; drop the source `/api/global-catalog/items*` proxy routes (§8b).
-   Depends on 1–3 (and, for `CatalogReader`, on #1286's catalog service being
-   importable).
-5. **UI + nav** — reskinned pages/components (in the library), page stub tree +
-   `pageRegistry` entries, the library's `NavLink[]` **appended to the existing
-   `Inventory` section tabs** #1286 created (no new top-level entry — §7),
-   `transpilePackages` (if tsx needs it — verify), A12 flow test.
+4. **Routes + auth + seams** — library route factories + a next-free
+   `src/routes/_shared.ts` (parse/validate via injected `httpError`, no
+   `next/server` — the source `validate` is not ported) + `contract.ts` (the three
+   crossing ports: `CatalogEventSource` §8a, `CatalogReader` §8b, the apply port
+   §8c) + `configureLocalInventory` wired in `instrumentation.ts`; **human**
+   `/api/…` stubs (`isInventoryViewer`/`INVENTORY_MANAGER`) + security guards; drop
+   the source `/api/global-catalog/items*` proxy routes (§8b). **The machine
+   surface (`/api/internal/*`, org-bearer `/api/inventory/apply`) is NOT built —
+   checkin can't host it (§8c); apply is in-process only.** Watch the
+   route-endpoint-string gotcha (§5). Human list routes return bare model-bag
+   arrays (pagination → track 5). Depends on 1–3 (and, for `CatalogReader`, on
+   #1286's catalog service being importable).
+5. **UI + nav + flow tests + pagination** — reskinned pages/components (library),
+   page stub tree + `pageRegistry` entries, the library's `NavLink[]` **appended to
+   the existing `Inventory` section tabs** #1286 created (no new top-level entry —
+   §7), `transpilePackages` (if tsx needs it — verify). **Flow tests carry the
+   source's integration journeys** (route+auth+DB e2e via persona-mint), incl. the
+   A12 journey. **Adds list pagination** (count endpoint or client-side) since the
+   human routes ship bare arrays (§10).
 6. **S5 consumer** — bind the in-process catalog-events adapter (push-driven, §8a:
    boot drain + drain-on-emit, **no timer**); wired from `instrumentation.ts`,
    inert until catalog emits. Requires #1286's `emitOrgEvent` to expose the
@@ -772,6 +848,22 @@ local-inventory consumes, and local-inventory reuses catalog's vendored packages
   neither catalog HTTP route. The `/api/catalog/*` (human) vs `/api/internal/items`
   (machine) split is an HTTP concern local-inventory sidesteps. The old remote
   server's repoint stays #1286's follow-up, not this doc's.
+- **RESOLVED — inbound apply machine surface: in-process only, not hosted.**
+  #1286 Track-4 found checkin has **no sanctioned way to land a new machine-bearer
+  route** (org-bearer retired; registry `authorize` grammar can't express it;
+  `legacy-authz-routes.txt` frozen; `new-route-old-authz` ratchet blocks it). Same
+  wall applies to local-inventory's inbound `/api/internal/*` + org-bearer
+  `/api/inventory/apply`. And local-inventory can't fall back on "old server
+  during overlap" — the migration moves the write target, so a remote push would
+  split-brain the stock (§8c). **Resolution: don't host it.** There are **no
+  remote producers at first landing** (receipt/orchestrator not migrated), and once
+  the orchestrator co-resides the apply crossing is **in-process** via the port. So
+  checkin never hosts the inventory machine surface. **Residual open item:** if the
+  migration order ever puts a *remote* orchestrator against checkin's
+  local-inventory (orchestrator not yet co-resident but local-inventory live), that
+  needs a boundary PR extending checkin auth with a service-key/org-bearer inbound
+  variant (#1286's option A) — sequence to avoid it (co-reside apply with CI4), or
+  open that follow-up. Not first-landing work.
 - **Deferral discipline.** Anything past the first landing (track 8) is a
   **GitHub follow-up issue referencing #1287**, filed at merge — never a bare
   "later" in prose or a code comment.
@@ -784,10 +876,14 @@ retire source auth for checkin next-auth; interim `INVENTORY_MANAGER` for writes
 stable id) injected as an accessor through `configureLocalInventory()` — not env,
 not a settings row, not cross-DB; nav = **section tabs under the existing
 `Inventory` area** #1286 created (no second top-level entry, §7);
-keep-JSON-contracts / convert-transport crossing rule; vitest + flow-tests
-(no Playwright); no table renames.
-**Left open:** nothing blocking — only the tracked deferrals (§11 track 8) and the
-strategic role split (#1316).
+keep-JSON-contracts / convert-transport crossing rule; **catalog reads +
+apply are in-process, no machine-bearer route hosted in checkin** (§8b/§8c);
+vitest + flow-tests (no Playwright); no table renames.
+**Left open:** no hard blocker for first landing. One **sequencing constraint**:
+the pipeline apply path (§8c) is in-process only, so it goes live when the
+orchestrator (CI4) co-resides — landing local-inventory against a *remote*
+orchestrator would need a checkin-auth boundary PR (#1286 option A). Plus the
+tracked deferrals (§11 track 8) and the strategic role split (#1316).
 
 ---
 
