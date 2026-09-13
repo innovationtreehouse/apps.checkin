@@ -1,5 +1,5 @@
-import { db } from "@/db";
-import { createCatalogRepository } from "@/repositories/catalog";
+import { db } from "../db";
+import { createCatalogRepository } from "../repositories/catalog";
 
 const catalogRepo = createCatalogRepository(db);
 

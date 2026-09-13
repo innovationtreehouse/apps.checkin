@@ -49,9 +49,9 @@ export type {
   ProvisionalItemMappingLog,
   WorkflowTransitionLog,
   OrgEvent,
-} from "@/generated/prisma/client";
+} from "../generated/prisma/client";
 
-import type { Prisma } from "@/generated/prisma/client";
+import type { Prisma } from "../generated/prisma/client";
 export type NewItem = Prisma.ItemUncheckedCreateInput;
 export type NewItemReferenceProposal = Prisma.ItemReferenceProposalUncheckedCreateInput;
 export type NewConversionChallenge = Prisma.ConversionChallengeUncheckedCreateInput;

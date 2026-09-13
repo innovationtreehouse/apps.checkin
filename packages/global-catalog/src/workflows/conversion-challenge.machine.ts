@@ -1,5 +1,5 @@
 import { setup } from "xstate";
-import type { ConversionChallengeStatus } from "@/db/schema";
+import type { ConversionChallengeStatus } from "../db/schema";
 import type { ConversionChallengeEvent, ConversionChallengeEventType } from "./conversion-challenge.events";
 import { makeWorkflowInvariants } from '@inventory/workflows';
 

@@ -26,7 +26,7 @@ vi.mock("@prisma/adapter-pg", () => ({
   },
 }));
 
-vi.mock("@/generated/prisma/client", () => ({
+vi.mock("../../generated/prisma/client", () => ({
   PrismaClient: class {
     constructor(public opts: unknown) {}
   },
@@ -34,7 +34,7 @@ vi.mock("@/generated/prisma/client", () => ({
 }));
 
 const ENV = "CATALOG_DATABASE_URL";
-const CLIENT = "@/db";
+const CLIENT = "../../db";
 let saved: string | undefined;
 
 beforeEach(() => {

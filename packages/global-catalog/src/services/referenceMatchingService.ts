@@ -1,10 +1,10 @@
-import { db } from "@/db";
-import { createItemReferenceRepository } from "@/repositories/itemReference";
-import { createCatalogRepository } from "@/repositories/catalog";
+import { db } from "../db";
+import { createItemReferenceRepository } from "../repositories/itemReference";
+import { createCatalogRepository } from "../repositories/catalog";
 
 const itemRefRepo = createItemReferenceRepository(db);
 const catalogRepo = createCatalogRepository(db);
-import { normalizeDescription } from "@/lib/normalizeDescription";
+import { normalizeDescription } from "../lib/normalizeDescription";
 
 export interface LookupEntry {
   index: number;

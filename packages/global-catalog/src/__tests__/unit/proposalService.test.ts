@@ -1,12 +1,12 @@
 import { beforeAll, expect, it } from "vitest";
-import { describeDb } from "@/__tests__/helpers/db";
-import { initDb, prisma } from "@/db";
-import { resetDb } from "@/__tests__/helpers/db";
+import { describeDb } from "../helpers/db";
+import { initDb, prisma } from "../../db";
+import { resetDb } from "../helpers/db";
 import {
   createItemReferenceProposal,
   approveItemReferenceProposal,
   rejectItemReferenceProposal,
-} from "@/services/proposalService";
+} from "../../services/proposalService";
 import { randomUUID } from "crypto";
 
 beforeAll(async () => { await initDb(); });

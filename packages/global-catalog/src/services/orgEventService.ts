@@ -1,8 +1,8 @@
-import { Prisma } from "@/generated/prisma/client";
-import { db } from "@/db";
-import { createOrgEventRepository } from "@/repositories/orgEvent";
-import type { WorkflowType } from "@/db/schema";
-import { orgEventPayloadSchema, type OrgEventPayload } from "@/types/orgEvents";
+import { Prisma } from "../generated/prisma/client";
+import { db } from "../db";
+import { createOrgEventRepository } from "../repositories/orgEvent";
+import type { WorkflowType } from "../db/schema";
+import { orgEventPayloadSchema, type OrgEventPayload } from "../types/orgEvents";
 
 type Tx = Prisma.TransactionClient;
 

@@ -1,17 +1,17 @@
-import { Prisma } from "@/generated/prisma/client";
-import { db } from "@/db";
-import { createProposalRepository } from "@/repositories/proposal";
-import { createCatalogRepository } from "@/repositories/catalog";
-import { createItemReferenceRepository } from "@/repositories/itemReference";
-import type { ItemReferenceProposal, ItemReferenceProposalStatus } from "@/db/schema";
+import { Prisma } from "../generated/prisma/client";
+import { db } from "../db";
+import { createProposalRepository } from "../repositories/proposal";
+import { createCatalogRepository } from "../repositories/catalog";
+import { createItemReferenceRepository } from "../repositories/itemReference";
+import type { ItemReferenceProposal, ItemReferenceProposalStatus } from "../db/schema";
 
 const proposalRepo = createProposalRepository(db);
 const catalogRepo = createCatalogRepository(db);
 const itemRefRepo = createItemReferenceRepository(db);
 import { ServiceError } from "./categoryService";
-import { assertItemReferenceProposalTransition } from "@/workflows/item-reference-proposal.machine";
+import { assertItemReferenceProposalTransition } from "../workflows/item-reference-proposal.machine";
 import { WorkflowTransitionError } from "@inventory/workflows";
-import { normalizeDescription } from "@/lib/normalizeDescription";
+import { normalizeDescription } from "../lib/normalizeDescription";
 import { emitOrgEvent, recordTransition } from "./orgEventService";
 
 export interface CreateItemReferenceProposalParams {

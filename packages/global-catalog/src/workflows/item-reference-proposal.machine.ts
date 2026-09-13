@@ -1,5 +1,5 @@
 import { setup } from "xstate";
-import type { ItemReferenceProposalStatus } from "@/db/schema";
+import type { ItemReferenceProposalStatus } from "../db/schema";
 import type { ItemReferenceProposalEvent, ItemReferenceProposalEventType } from "./item-reference-proposal.events";
 import { makeWorkflowInvariants } from '@inventory/workflows';
 

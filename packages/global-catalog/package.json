@@ -9,6 +9,18 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./runtime": {
+      "types": "./src/runtime.ts",
+      "import": "./src/runtime.ts"
+    },
+    "./contract": {
+      "types": "./src/contract.ts",
+      "import": "./src/contract.ts"
+    },
+    "./routes": {
+      "types": "./src/routes/index.ts",
+      "import": "./src/routes/index.ts"
     }
   },
   "scripts": {

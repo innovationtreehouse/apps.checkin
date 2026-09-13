@@ -1,16 +1,16 @@
-import { db } from "@/db";
-import { createProposalRepository } from "@/repositories/proposal";
-import { createCatalogRepository } from "@/repositories/catalog";
-import { nextProvisionalSequenceId } from "@/db/sequence";
-import { usageBehaviorEnum } from "@/db/schema";
-import type { ProvisionalItem, ProvisionalItemStatus, UsageBehavior } from "@/db/schema";
-import { buildProvisionalGtin13 } from "@/lib/gtin";
+import { db } from "../db";
+import { createProposalRepository } from "../repositories/proposal";
+import { createCatalogRepository } from "../repositories/catalog";
+import { nextProvisionalSequenceId } from "../db/sequence";
+import { usageBehaviorEnum } from "../db/schema";
+import type { ProvisionalItem, ProvisionalItemStatus, UsageBehavior } from "../db/schema";
+import { buildProvisionalGtin13 } from "../lib/gtin";
 import { ServiceError } from "./categoryService";
 import { allocateAndInsertItem, resolveItemContext } from "./itemService";
 import { emitOrgEvent, recordTransition } from "./orgEventService";
 import { getCanonicalConversion } from "./referenceMatchingService";
-import { assertProvisionalProposalTransition } from "@/workflows/provisional-proposal.machine";
-import type { ProvisionalProposalContext } from "@/workflows/provisional-proposal.machine";
+import { assertProvisionalProposalTransition } from "../workflows/provisional-proposal.machine";
+import type { ProvisionalProposalContext } from "../workflows/provisional-proposal.machine";
 import { WorkflowTransitionError } from "@inventory/workflows";
 
 const proposalRepo = createProposalRepository(db);
