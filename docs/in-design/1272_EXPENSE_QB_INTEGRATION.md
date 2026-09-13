@@ -232,7 +232,7 @@ vendors `money`.** Expense **reuses** those. New to expense: `service-client` an
 | `@inventory/money` | Reuse | Already in checkin `packages/money` (cents math). |
 | `@inventory/receipt-types`, `receipt-contract-fixtures` | Reuse (temporary) | Vendored by #1286 as temporary copies. Expense imports the same copy — it needs `CompletedReceiptSchema` (receipt intake, §8) and the S5 `parseOrgEvent` union (provisional events, §8). |
 | `@inventory/org-events-poller` | Reuse | `packages/org-events-poller`, vendored by #1287. But **drop the wall-clock timer** — the S5 consumer is push-driven exactly as #1287 §8a decided; expense is a **second consumer** of catalog events (provisional resolution). |
-| `@inventory/service-client` | **Yes — new `packages/service-client`** | The typed HTTP client the source uses for the catalog crossings (`/api/internal/*`, org-bearer). Standalone shared package (receipt/orchestrator use it too). It is the **`http` adapter** side of the catalog crossing; once catalog is co-resident the call goes in-process and this is used only for still-remote callees (§8). Check whether #1286/#1287 already vendored it before adding a second copy. |
+| `@inventory/service-client` | **Yes — new `packages/service-client`** (if not already vendored) | The typed HTTP client the source uses for the catalog crossing (pathPrefix `/api/internal`, org-bearer). Standalone shared package (receipt/orchestrator use it too). It is the **`http` fallback** side of a crossing port — but the catalog read is **in-process** in checkin (catalog co-resident, §8b), so `service-client` is **not** bound for that crossing; it stays for the still-remote receipt seam. Check whether #1286/#1287 already vendored it before adding a second copy. |
 | `@inventory/quickbooks` | **Yes — new `packages/quickbooks`, NET-NEW to checkin** | The first QuickBooks code in checkin. Read client + OAuth2 (three `fetch` calls, no SDK) + types **already built**; write path + checkin token storage + the outbox-drain terminus are net-new (§9). Standalone shared package — donations (GC-DONOR) and program-finance (GC-PROGRAM-FINANCE) consume it later. |
 | `@inventory/pg-test-harness` | n/a | Already present in checkin. Reuse. |
 
@@ -601,8 +601,8 @@ co-residence.*
 | Crossing | Direction | Kind | Contract | Today's transport |
 |---|---|---|---|---|
 | **R — receipt intake** | receipt-app → expense | **sync RPC — callee** | `CompletedReceiptSchema` (`@inventory/receipt-types`) | `POST /api/expenses`, org-bearer; idempotent on `receiptId` via `ReceivedExpensePayload` |
-| **C — catalog lookups** | expense → catalog | **sync RPC — caller** | `catalog-schemas` (categories, subcategories, item info, item lookup) | `service-client` → catalog `/api/internal/*`, org-bearer |
-| **I — inventory load** | expense → local-inventory | **sync RPC — caller** (new co-resident wiring) | `ResolvedInventoryDeltaSchema` (local-inventory's apply surface, #1287 §8b) | today mediated by the orchestrator; in checkin, an in-process call into local-inventory's apply port |
+| **C — catalog lookups** | expense → catalog | **sync read — caller** | `catalog-schemas` (categories, subcategories, item info, item lookup) | `service-client` (pathPrefix `/api/internal`) → catalog's org-bearer **machine** surface `/api/internal/[...path]` (#1286 Track-4) |
+| **I — inventory load** | expense → local-inventory | **sync RPC — caller** (new co-resident wiring) | `ResolvedInventoryDeltaSchema` (local-inventory's apply surface, #1287 §8c) | today mediated by the orchestrator; in checkin, an in-process call into local-inventory's apply port |
 | **QB — post** | expense → QuickBooks | **async outbox** | `QbExpenseEventSchema` / `QbLineItemSchema` (schemaVersion 1) | `ExpenseEvent` outbox row; drained by the write path (§9) |
 
 ### 8a. Receipt intake (R) — sync RPC, expense is callee
@@ -618,16 +618,41 @@ org-bearer route last**, after the final remote caller flips. First landing: kee
 the `http` route **live** (checkin org-bearer) so a still-remote receipt-app can
 drive intake during the overlap.
 
-### 8b. Catalog lookups (C) — sync RPC, expense is caller, catalog already co-resident
+### 8b. Catalog lookups (C) — in-process read, no repoint (mirrors #1287 §8b)
 
-The QB processor resolves each line's account by calling the catalog:
+The QB processor resolves each line's account by reading the catalog:
 `lookupItems` (3-pass matcher) → `getItem` → `listCategories` / `listSubcategories`
-(`inventory-client.ts`). **Catalog is already ported (#1286) and co-resident from
-expense's first day**, so this crossing binds the **in-process** adapter
-immediately — the caller imports the catalog library's service functions via the
-port instead of the `service-client` HTTP stub. Keep the `catalog-schemas` zod
-shapes as the function param/return types. The `http`/`service-client` adapter
-stays in the port only as the fallback for a *remote* catalog (not the case here).
+(`inventory-client.ts`). In the source these go over `service-client`
+(pathPrefix `/api/internal`) to the catalog's **org-bearer machine surface** —
+`/api/internal/{items/lookup, items/[gtin13], categories, subcategories}`. #1286's
+**Track-4 finding** explicitly names **`expense-app`'s inventory-client** as a live
+remote consumer of catalog's `/api/internal/[...path]`, and settles that catalog's
+org-bearer machine reads live under **`/api/internal`** (not the human
+`/api/catalog/*`), with a one-line `pathPrefix` repoint for still-**remote**
+consumers.
+
+**For checkin's expense that repoint is moot — it reads catalog in-process**, the
+exact pattern #1287 §8b established for local-inventory. Catalog is co-resident
+from day one (dependency gate, §1), so:
+
+- Add a **`CatalogReader` port** (`contract.ts`: `lookupItems()`, `getItem(gtin13)`,
+  `listCategories()`, `listSubcategories()` — broader than local-inventory's
+  reader because expense also needs category/subcategory + the 3-pass lookup) bound
+  in `configureExpense()` to the **in-process** catalog library service — a direct
+  call into `@inventory/global-catalog`, **no HTTP, no `globalServerUrl`, no
+  org-bearer token**. It touches **neither** catalog's `/api/catalog/*` (human) nor
+  `/api/internal/*` (machine) — the human/machine route split (#1286 §7/§8) is an
+  HTTP concern expense sidesteps by reading the service.
+- The source's `service-client` HTTP path is **dropped** for this crossing;
+  `SettingsData.globalServerUrl` (which pointed at the old catalog server) is dead
+  (§7). Keep the `catalog-schemas` zod shapes as the port's param/return types.
+- The `http`/`service-client` adapter stays in the port only as the fallback for a
+  hypothetical *remote* catalog; since catalog lands first it is never bound here.
+  (`service-client` is still vendored — §2 — for the receipt/QB-remote seams, just
+  not for this crossing.)
+
+So the repoint #1286 tracks for *other* still-remote consumers does not apply to
+checkin's expense.
 
 ### 8c. Inventory load (I) — sync RPC into local-inventory's apply surface
 
@@ -637,7 +662,7 @@ into org inventory. In the source monorepo the **orchestrator** (workflow-mappin
 CI4/#1289 — out of scope here) mediates this; expense does not call
 local-inventory directly. In checkin, co-resident, the pipeline step is realized as
 an **explicit port from expense into local-inventory's apply surface** (defined in
-#1287 §8b): on owner-signoff, expense hands the resolved delta to
+#1287 §8c): on owner-signoff, expense hands the resolved delta to
 `receiptService.applyReceipt` / `enqueueItem` via the port, preserving
 `ResolvedInventoryDeltaSchema` and its **idempotency on `receiptId`** (a re-push is
 a safe retry — that is why the orchestrator can "retry-apply"). Bind the
@@ -646,7 +671,7 @@ before this); keep the orchestrator's HTTP contract as the `http` fallback for t
 overlap window while receipt/orchestrator are still remote. **Do not assume the
 orchestrator "collapses away"** — only its transport changes; the apply call is
 real and stays behind the port. The known fulfill/apply concurrency hazard
-(#1287 §8b, CONCURRENCY.md #2) is *local-inventory's* to close — track it there,
+(#1287 §8c, CONCURRENCY.md #2) is *local-inventory's* to close — track it there,
 do not re-solve it in expense.
 
 ### 8d. Provisional resolution (S5) — async, second consumer of catalog events
@@ -903,7 +928,7 @@ library skeleton + shared packages) has landed; the inventory-load crossing (tra
    `FINANCE`/`BOARD` (not the Inventory area — §7), `transpilePackages` (if tsx
    needs it — verify), A13 flow test.
 6. **Inventory-load crossing (I)** — bind the in-process call into local-inventory's
-   apply port on owner-signoff (#1287 §8b), keeping the orchestrator HTTP contract
+   apply port on owner-signoff (#1287 §8c), keeping the orchestrator HTTP contract
    as the `http` fallback. Depends on #1287 landed.
 7. **S5 provisional consumer** — bind the in-process catalog-events adapter
    (push-driven, no timer), inert until catalog emits. Depends on #1286's
@@ -968,6 +993,14 @@ library skeleton + shared packages) has landed; the inventory-load crossing (tra
 - **`reimbursementFor` / reimbursee identity tiering** — defaulted to `internal`
   behind the narrow gate; raise to `pii` if a route ever returns the person's
   contact details alongside (§5). Assumption, not a blocker.
+- **Catalog reads are in-process — no consumer repoint needed** (§8b, syncs with
+  #1286 Track-4 + #1287 §8b). #1286's Track-4 finding names `expense-app` among the
+  still-**remote** consumers of catalog's `/api/internal/[...path]` and files a
+  follow-up for them to repoint `/api/catalog/items` → `/api/internal/items`. This
+  design does **not** inherit that: checkin's expense reads catalog via the
+  in-process `CatalogReader` port, touching neither catalog HTTP route. The
+  `/api/catalog/*` (human) vs `/api/internal/*` (machine) split is an HTTP concern
+  expense sidesteps. The old remote server's repoint stays #1286's follow-up.
 - **Nav IA — finance area vs shared Inventory area.** Expense lands in a
   finance-gated area next to Finance Ops (§7). Whether checkin later unifies the
   finance-side and inventory-side surfaces into one IA is a checkin-shell decision,
