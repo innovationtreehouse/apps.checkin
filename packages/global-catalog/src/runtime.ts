@@ -45,7 +45,7 @@ export async function getPrincipal(): Promise<CatalogPrincipal> {
 }
 
 /** Org identity for the current request (#1286 §6). */
-export function getOrg(): OrgIdentity {
+export function getOrg(): Promise<OrgIdentity> {
   return requireRuntime().org();
 }
 

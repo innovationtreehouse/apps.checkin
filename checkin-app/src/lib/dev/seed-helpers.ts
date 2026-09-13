@@ -44,6 +44,15 @@ async function seedRole(prisma: Db, personId: number, flag: RoleFlag): Promise<v
 export async function seedBaseline(prisma: Db): Promise<void> {
     console.log("🌱 Seeding database with debug personas...\n");
 
+    // 0. The org registry row (#1286 §6). The stable well-known id "treehouse" is
+    // stamped as org_id on catalog rows and is the row configure.ts resolves,
+    // so dev/test/prod all resolve the same org identity.
+    await prisma.org.upsert({
+        where: { id: "treehouse" },
+        update: { name: "Treehouse" },
+        create: { id: "treehouse", name: "Treehouse" },
+    });
+
     // 1. Households (participants require one, so these come first)
     let household1 = await prisma.household.findFirst({ where: { name: "Family" } });
     if (!household1) {
