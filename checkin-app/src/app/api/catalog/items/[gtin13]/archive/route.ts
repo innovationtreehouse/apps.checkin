@@ -4,4 +4,4 @@
 import { handler } from "@/security/handler";
 import { items } from "@inventory/global-catalog/routes";
 
-export const POST = handler("POST /api/items/[gtin13]/archive", items.archive);
+export const POST = handler("POST /api/catalog/items/[gtin13]/archive", items.archive);

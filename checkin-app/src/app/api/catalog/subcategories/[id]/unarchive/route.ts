@@ -4,4 +4,4 @@
 import { handler } from "@/security/handler";
 import { subcategories } from "@inventory/global-catalog/routes";
 
-export const POST = handler("POST /api/subcategories/[id]/unarchive", subcategories.unarchive);
+export const POST = handler("POST /api/catalog/subcategories/[id]/unarchive", subcategories.unarchive);

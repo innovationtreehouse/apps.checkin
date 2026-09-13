@@ -4,4 +4,4 @@
 import { handler } from "@/security/handler";
 import { referenceConflicts } from "@inventory/global-catalog/routes";
 
-export const GET = handler("GET /api/reference-conflicts", referenceConflicts.list);
+export const GET = handler("GET /api/catalog/reference-conflicts", referenceConflicts.list);

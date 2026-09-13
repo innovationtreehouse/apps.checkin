@@ -4,4 +4,4 @@
 import { handler } from "@/security/handler";
 import { proposals } from "@inventory/global-catalog/routes";
 
-export const POST = handler("POST /api/proposals/item-references/[id]/reject", proposals.reject);
+export const POST = handler("POST /api/catalog/proposals/item-references/[id]/reject", proposals.reject);
