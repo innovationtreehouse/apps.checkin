@@ -52,6 +52,10 @@ import {
     classifications as catalogClassifications,
     relations as catalogRelations,
 } from './generated/catalog-classifications';
+import {
+    classifications as catalogSyntheticClassifications,
+    relations as catalogSyntheticRelations,
+} from './catalogSyntheticClassifications';
 import type { BusinessRole } from '@/types/auth';
 import { assertNever } from '@/lib/lifecycle/classify';
 
@@ -61,8 +65,11 @@ import { assertNever } from '@/lib/lifecycle/classify';
 // classification map every boundary consumer (stripper, outbound, registry)
 // reads through. This is the single merge point — import `classifications` /
 // `relations` from here, not from either generated file.
-export const classifications = { ...checkinClassifications, ...catalogClassifications } as const;
-export const relations = { ...checkinRelations, ...catalogRelations } as const;
+// The synthetic map adds non-Prisma response models (e.g. CatalogItemCount, a
+// count endpoint's scalar total — #1286 §7); its keys are disjoint from both
+// generated maps, so the flat merge stays unambiguous.
+export const classifications = { ...checkinClassifications, ...catalogClassifications, ...catalogSyntheticClassifications } as const;
+export const relations = { ...checkinRelations, ...catalogRelations, ...catalogSyntheticRelations } as const;
 
 export type Models = keyof typeof classifications;
 export type FieldsOf<M extends Models> = keyof (typeof classifications)[M];

@@ -820,6 +820,10 @@ const CATALOG_MANAGER_VIEW: readonly OrderedViewEntry[] = [
 defineRoute({ endpoint: 'GET /api/catalog/categories', authorize: 'catalog-viewer', envelope: null, returns: ['Category'], orderedView: CATALOG_VIEW });
 defineRoute({ endpoint: 'GET /api/catalog/subcategories', authorize: 'catalog-viewer', envelope: null, returns: ['Subcategory'], orderedView: CATALOG_VIEW });
 defineRoute({ endpoint: 'GET /api/catalog/items', authorize: 'catalog-viewer', envelope: null, returns: ['Item', 'Category', 'Subcategory'], orderedView: CATALOG_VIEW });
+// Item count for the paginated list UI (#1286 §7). Returns the synthetic
+// CatalogItemCount model ({ total } — public); a scalar total can't ride a Prisma
+// model bag, so it is declared in catalogSyntheticClassifications.ts.
+defineRoute({ endpoint: 'GET /api/catalog/items/count', authorize: 'catalog-viewer', envelope: null, returns: ['CatalogItemCount'], orderedView: CATALOG_VIEW });
 defineRoute({ endpoint: 'GET /api/catalog/items/[gtin13]', authorize: 'catalog-viewer', envelope: null, returns: ['Item', 'Category', 'Subcategory'], orderedView: CATALOG_VIEW });
 defineRoute({ endpoint: 'GET /api/catalog/item-references', authorize: 'catalog-viewer', envelope: null, returns: ['ItemReference', 'Item'], orderedView: CATALOG_VIEW });
 defineRoute({ endpoint: 'GET /api/catalog/audit', authorize: 'catalog-viewer', envelope: null, returns: ['Item', 'ItemReference'], orderedView: CATALOG_VIEW });
