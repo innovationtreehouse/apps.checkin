@@ -361,6 +361,14 @@ composition as #1286's `isCatalogViewer`) as the single read chokepoint, or reus
 are "any legitimate operational user reads; managers write"). **Prefer reusing
 the one predicate** over a near-duplicate.
 
+**Client mirror uses #1286's claim — no new session field.** The volunteer input
+to the gate is email-keyed `VolunteerDesignation` with no session flag; #1286
+Track-5 added a **`hasVolunteerDesignation` JWT/session claim** so a client-side
+`isCatalogViewerClient` mirrors the server gate without a DB call. local-inventory
+**reuses that claim** — it adds no new claim. (The server resolver still does a
+per-request DB lookup; deduping it to read the claim is #1286's tracked boundary
+follow-up, not this port's.)
+
 **Interim role — strategic split is #1316's, not this port's.** The source's write
 tier is `organization_manager`, which in the strategic two-role model (RB4,
 [#1316](https://github.com/innovationtreehouse/checkin/issues/1316)) becomes a
@@ -778,8 +786,11 @@ local-inventory consumes, and local-inventory reuses catalog's vendored packages
    the existing `Inventory` section tabs** #1286 created (no new top-level entry —
    §7), `transpilePackages` (if tsx needs it — verify). **Flow tests carry the
    source's integration journeys** (route+auth+DB e2e via persona-mint), incl. the
-   A12 journey. **Adds list pagination** (count endpoint or client-side) since the
-   human routes ship bare arrays (§10).
+   A12 journey. **Numbered pagination where a list needs it** (inventory-log
+   especially) via the #1286 Track-5 pattern — a `.../count` endpoint enabled by a
+   registry-first boundary commit declaring a synthetic **public count response
+   model** so the scalar total passes the stripper (a bare model-bag can't carry a
+   total). Not offset+lookahead. Apply per-list, only where the volume warrants it.
 6. **S5 consumer** — bind the in-process catalog-events adapter (push-driven, §8a:
    boot drain + drain-on-emit, **no timer**); wired from `instrumentation.ts`,
    inert until catalog emits. Requires #1286's `emitOrgEvent` to expose the
@@ -884,6 +895,59 @@ the pipeline apply path (§8c) is in-process only, so it goes live when the
 orchestrator (CI4) co-resides — landing local-inventory against a *remote*
 orchestrator would need a checkin-auth boundary PR (#1286 option A). Plus the
 tracked deferrals (§11 track 8) and the strategic role split (#1316).
+
+---
+
+## 13. Distillation at merge (`DOCUMENTATION_STANDARD.md` §4)
+
+This doc lives in `docs/in-design/` — **deleted at merge**. Planned split, so the
+extract step is a file move (not a months-later judgement call over every
+paragraph, §4.2). Content splits three ways:
+
+**(1) Standing domain rules → new register file `docs/rules/inventory.md`.**
+On-hand holdings are a new domain the eight existing register files don't cover;
+#1286 §13 explicitly reserves `inventory.md` for exactly this, kept distinct from
+`catalog.md` (the reference/definitional domain — *what items are* — vs. this one,
+*what we hold*). Create it **at merge**, not before (empty-in-advance is
+forbidden, §3). Written as Policy / Assumptions / Procedure — decisions and
+invariants only, no mechanism. Ask §3.9 of each (*could a later change violate
+this?*); seeds that qualify:
+- **Access invariant:** on-hand inventory is operational reference data, **no
+  PII**; **read** = broad viewer gate (any RBAC role / program leader /
+  volunteer), **write** = `INVENTORY_MANAGER` — cite `principles.md`
+  least-privilege (§6).
+- **Org-stamping invariant:** every row carries the one injected org identity
+  (§6).
+- **Apply idempotency invariant:** a receipt-driven apply is keyed on `receiptId`
+  and safely re-appliable (that is what makes "retry-apply" correct) — §8c.
+- **Shrinkflation is forward-only:** a conversion-factor change is **never**
+  back-propagated to already-counted stock; a provisional/real factor mismatch is
+  **parked as a `uom_mismatch` merge-conflict** for a human, not auto-rescaled
+  (BYDESIGN; §8a).
+- **Apply is in-process, not a hosted endpoint:** checkin hosts no machine-bearer
+  route; the receive/apply crossing is driven in-process by the co-resident
+  orchestrator (§8c) — the decision, not the wiring.
+- **Role decision:** writes use interim `INVENTORY_MANAGER`; strategic `ORG_MANAGER`
+  split stays open in RB4 (cross-ref [#1316](https://github.com/innovationtreehouse/checkin/issues/1316)).
+
+**(2) Architecture/ops reference that stays true → `docs/designs/LOCAL_INVENTORY.md`**
+(§4 "operational reference → move, don't delete"). What later Inventory tracks
+(receipt-app, CI4) rely on: the three-crossing **port model** and its in-process
+adapters (events §8a, catalog read §8b, apply §8c), the **push-driven consumer**
+(boot drain + drain-on-emit, no timer, §8a), own-DB / third-Prisma-client
+packaging (§4), and the **machine-surface-not-hosted decision + the CI4
+co-residence sequencing constraint** (§8c/§12). Runnable-ops bits (the dev seed
+recipe, the `DOCKER_HOST` skip gotcha) go to `docs/ops/` if worth keeping.
+
+**(3) Pure mechanism now in the code → deleted** with the working doc (route
+mounting, stub tree, `NavLink[]` splice, `_shared.ts`, security-generator wiring,
+handler-endpoint gotcha, poller drain wiring, test tiers, pagination mechanics) —
+a reader derives it from the source (§3).
+
+**Cross-doc note:** because catalog (#1286) distills first, its
+`docs/rules/catalog.md` and `docs/designs/GLOBAL_CATALOG.md` will exist by the
+time local-inventory merges. `inventory.md` **references** catalog rules (org
+identity, the viewer gate, the shared crossing rule) rather than restating them.
 
 ---
 
