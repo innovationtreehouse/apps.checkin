@@ -877,5 +877,46 @@ sub-screens as `SectionTabs` (§7).
 
 ---
 
+## 13. Distillation at merge (`DOCUMENTATION_STANDARD.md` §4)
+
+This doc lives in `docs/in-design/` — **deleted at merge**. Its content splits
+three ways:
+
+**(1) Standing domain rules → new register file `docs/rules/catalog.md`.** The
+catalog is a new domain the six existing register files don't cover
+(`tools-certification.md` is tool *levels/shop access*, not the parts catalog).
+Create it **at merge**, not before (empty-in-advance is forbidden, §3). Written
+as Policy / Assumptions / Procedure — decisions and invariants only, no
+mechanism. Seeds:
+- GTIN identity + uniqueness; category-letter / subcategory-number scheme;
+  integer conversion-factor rule.
+- Proposal → supersession lifecycle; provisional-GTIN allocation;
+  reference-conflict resolution.
+- **Access invariant:** catalog is **public reference data, no PII**; **read** =
+  broad viewer gate (any RBAC role / program leader / volunteer), **write** =
+  `INVENTORY_MANAGER` — cite `principles.md` least-privilege (§6).
+- **Org-stamping invariant:** every row carries the one injected org identity
+  (§6).
+- **Role decision:** `INVENTORY_MANAGER` is the interim reduction of RB4
+  (cross-ref [#1316](https://github.com/innovationtreehouse/checkin/issues/1316));
+  strategic Catalog+Org split stays open.
+
+Named `catalog.md` (the reference/definitional domain — *what items are*), kept
+distinct from a future holdings/`inventory.md` (local-inventory on-hand) so the
+two domains don't collide when local-inventory migrates.
+
+**(2) Architecture/ops reference that stays true → move to
+`docs/designs/GLOBAL_CATALOG.md`** (§4 "operational reference → move, don't
+delete"). The later Inventory tracks rely on it: the library-isolation model +
+injection seam (`configureCatalog`), own-DB / second-Prisma-client packaging,
+the security-generator cross-package coupling, the machine-surface **A/B/C → C**
+decision, and the **file-export** remote-communication future.
+
+**(3) Pure mechanism now in the code → deleted** with the working doc (route
+mounting, stub tree, test tiers, handler-endpoint gotcha, pagination
+mechanics) — a reader derives it from the source (§3.1).
+
+---
+
 *Design for #1286. Whole-Inventory migration context: this is the first app to
 move; temporary duplication at receipt-app boundaries is expected and tracked.*
