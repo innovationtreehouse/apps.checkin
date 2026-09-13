@@ -492,12 +492,18 @@ rewrite.
 - **Consistency across libraries is preserved by injection, not shared reads.**
   checkin-app reads its own `Org` table and passes org identity into
   `configureCatalog({ auth, db, org })`. `org` is an **accessor**
-  (`getOrg(): OrgIdentity`), not a frozen value: single-org returns the one row;
-  multi-org later resolves the current org per request (from session / tenant /
-  route) — same seam, no library change. **No library ever reaches cross-DB into
-  checkin's `Org` table** — this is what the earlier "no settings-table row"
-  objection was really about (cross-DB per-library reads), and injection avoids
-  it while still using a table.
+  (`getOrg(): OrgIdentity`), so single-org returns the one row and the library
+  never reaches cross-DB into checkin's `Org` table — which is what the earlier
+  "no settings-table row" objection was really about (cross-DB per-library
+  reads), and injection avoids it while still using a table.
+  - **Build note (Track 6) — the accessor is *synchronous* as built** (`getOrg():
+    OrgIdentity`, per Track 4's `contract.ts`), and Track 6 satisfies it by
+    **reading the `Org` row once at boot and closing over the value**. Fine for
+    single-org. **The multi-org future ("resolve the current org per request")
+    cannot use this sync seam as-is** — per-request resolution from a DB row needs
+    an **async accessor (`getOrg(): Promise<OrgIdentity>`) or a per-request
+    cache**. Multi-org is thus a contract change (sync → async), not just "add
+    rows"; noted so it isn't a surprise later.
 - **Keep the `org_id` / `org_name` columns** (String) — do not drop them. They
   already match a registry id; single-org just stamps every row with the one
   seeded org, and multi-org fills them from the resolved accessor.
@@ -746,10 +752,26 @@ The catalog adds **no new service**. It compiles into `checkin-app`'s build and
 ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
 `Caddyfile`; Infra `checkin-bootstrap` module). Deploy changes:
 
-- Build the new `packages/*` (workspace build already covers `packages/*`).
+- **Build note (Track 6) — the prod image needs real Dockerfile work; it is NOT
+  free.** "The workspace build covers `packages/*`" was wrong for the container.
+  As built:
+  - The **deps stage must copy** the catalog package **plus its `@inventory/*`
+    dependency manifests** and the **catalog schema/config** — not just
+    checkin-app's.
+  - The catalog **`postinstall` shells out to
+    `checkin-app/scripts/security-generator.js`** — §5's cross-package generator
+    coupling **bites the monorepo image build too**, not only a future
+    extraction. The build stage must have that script present when the catalog
+    installs.
+  - The **runner must ship the catalog Prisma** (client + migrations) **and a
+    zero-import deploy config** for the migrate task (a Prisma config that pulls
+    in no app code), so `migrate deploy` runs in the image.
 - **Provision the dedicated catalog database** on the existing Postgres server
-  and its `CATALOG_DATABASE_URL` secret — mirroring how `MONITORING_DATABASE_URL`
-  / the monitoring DB is provisioned in the Infra database module.
+  and its `CATALOG_DATABASE_URL` secret. (The own-DB *shape* follows the
+  monitoring DB, but **not** its provisioning idiom: **Build note (Track 6)** —
+  Infra `main` has **removed the staged two-phase secret idiom**, so the catalog
+  secrets use **standalone secret shells + explicit two-branch phasing** instead.
+  Don't take any "mirror `MONITORING_DATABASE_URL` / staged" wording literally.)
 - Add **catalog `prisma migrate deploy`** (against `CATALOG_DATABASE_URL`) to the
   deploy sequence, ordered with checkin's own migration step.
 - **Seed the `Org` registry row** for Treehouse (stable well-known id) in the
@@ -926,9 +948,15 @@ two domains don't collide when local-inventory migrates.
 **(2) Architecture/ops reference that stays true → move to
 `docs/designs/GLOBAL_CATALOG.md`** (§4 "operational reference → move, don't
 delete"). The later Inventory tracks rely on it: the library-isolation model +
-injection seam (`configureCatalog`), own-DB / second-Prisma-client packaging,
-the security-generator cross-package coupling, the machine-surface **A/B/C → C**
-decision, and the **file-export** remote-communication future.
+injection seam (`configureCatalog`, incl. the **sync-accessor / multi-org async
+constraint**, §6), own-DB / second-Prisma-client packaging, the
+security-generator cross-package coupling, the machine-surface **A/B/C → C**
+decision, the **file-export** remote-communication future, and the **prod-image
+build reality** (§9 Build note: deps-stage copies of the catalog + its
+`@inventory/*` manifests + schema/config; the `postinstall` generator shell-out;
+the runner's catalog Prisma + zero-import deploy config; the standalone-secret /
+two-branch Infra phasing) — the container is not free and later Inventory apps
+share the pattern.
 
 **(3) Pure mechanism now in the code → deleted** with the working doc (route
 mounting, stub tree, test tiers, handler-endpoint gotcha, pagination
