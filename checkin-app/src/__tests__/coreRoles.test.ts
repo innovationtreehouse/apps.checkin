@@ -17,6 +17,7 @@ const BUSINESS_ROLES: BusinessRole[] = [
     'isKeyholder',
     'isBackgroundCheckReviewer',
     'isOperations',
+    'isInventoryManager',
 ];
 
 describe('BusinessRole ⊆ VALID_ROLES', () => {

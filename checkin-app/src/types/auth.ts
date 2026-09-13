@@ -14,7 +14,7 @@ export type SessionUser = NonNullable<Session['user']>;
  * Business role field names from the Person model.
  * Used by withAuth() to check roles directly via user[role] === true.
  */
-export type BusinessRole = 'isSysadmin' | 'isBoardMember' | 'isKeyholder' | 'isBackgroundCheckReviewer' | 'isOperations';
+export type BusinessRole = 'isSysadmin' | 'isBoardMember' | 'isKeyholder' | 'isBackgroundCheckReviewer' | 'isOperations' | 'isInventoryManager';
 
 /**
  * A session user as resolved by the auth boundary (`lib/auth.ts`

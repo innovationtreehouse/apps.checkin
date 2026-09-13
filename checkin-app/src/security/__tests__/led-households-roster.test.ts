@@ -51,6 +51,7 @@ function sessionAuth(id: number, householdLeadClaim: boolean): AuthResult {
             isKeyholder: false,
             isBackgroundCheckReviewer: false,
             isOperations: false,
+            isInventoryManager: false,
             householdLead: householdLeadClaim,
         },
     };
