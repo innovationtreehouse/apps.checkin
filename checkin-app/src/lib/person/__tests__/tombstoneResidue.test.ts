@@ -1,4 +1,4 @@
-import { summarizeResidue } from "../route";
+import { summarizeResidue } from "../tombstoneResidue";
 
 describe("summarizeResidue", () => {
   it("drops zero-count relations", () => {

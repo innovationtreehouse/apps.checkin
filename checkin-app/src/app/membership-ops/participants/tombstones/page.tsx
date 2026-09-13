@@ -5,38 +5,29 @@ import { Badge, Group, Stack, Table, Text, Title, Tooltip } from "@mantine/core"
 import { AlertBanner } from "@/components/admin/AlertBanner";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { PageLoader } from "@/components/ui/PageLoader";
+import { summarizeResidue, type Disposition } from "@/lib/person/tombstoneResidue";
 
-interface Residue {
-  key: string;
-  label: string;
-  disposition: "route" | "cascade" | "none";
-  hint?: string;
-  count: number;
-}
-
-interface Tombstone {
+// The census route returns model bags — the stripper drops any non-model key, so
+// the residue report is derived here from each tombstone's _count.
+interface PersonRow {
   id: number;
   name?: string | null;
   email?: string | null;
-  survivorId: number | null;
-  survivorName: string | null;
-  hasArchive: boolean;
-  residue: Residue[];
-  noPathwayRows: number;
+  mergedInto?: { id: number; name?: string | null } | null;
+  _count?: Record<string, number>;
+}
+interface CensusBag {
+  Person?: PersonRow[];
+  PersonMerge?: { fromId: number }[];
 }
 
-interface Census {
-  tombstones: Tombstone[];
-  totals: { tombstones: number; withResidue: number; withoutArchive: number; noPathwayRows: number };
-}
-
-const DISPOSITION_COLOR: Record<Residue["disposition"], string> = {
+const DISPOSITION_COLOR: Record<Disposition, string> = {
   route: "blue",
   cascade: "orange",
   none: "red",
 };
 
-const DISPOSITION_TOOLTIP: Record<Residue["disposition"], string> = {
+const DISPOSITION_TOOLTIP: Record<Disposition, string> = {
   route: "Self-serve cleanup exists",
   cascade: "Cascades on delete — removed silently (data loss, not resolution)",
   none: "No self-serve pathway — resolve in the DB or build a route",
@@ -44,18 +35,35 @@ const DISPOSITION_TOOLTIP: Record<Residue["disposition"], string> = {
 
 export default function TombstoneCensus() {
   const { ready, loading: authLoading } = useRequireRole(["isSysadmin", "isBoardMember"]);
-  const [census, setCensus] = useState<Census | null>(null);
+  const [bag, setBag] = useState<CensusBag | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!ready) return;
     fetch("/api/membership-ops/participants/tombstones")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Failed to load census."))))
-      .then(setCensus)
+      .then(setBag)
       .catch((e) => setError(e.message));
   }, [ready]);
 
   if (authLoading || !ready) return <PageLoader />;
+
+  const archivedIds = new Set((bag?.PersonMerge ?? []).map((a) => a.fromId));
+  const rows = (bag?.Person ?? []).map((p) => ({
+    id: p.id,
+    name: p.name,
+    email: p.email,
+    survivorId: p.mergedInto?.id ?? null,
+    survivorName: p.mergedInto?.name ?? null,
+    hasArchive: archivedIds.has(p.id),
+    ...summarizeResidue(p._count ?? {}),
+  }));
+  const totals = {
+    tombstones: rows.length,
+    withResidue: rows.filter((r) => r.residue.length > 0).length,
+    withoutArchive: rows.filter((r) => !r.hasArchive).length,
+    noPathwayRows: rows.reduce((sum, r) => sum + r.noPathwayRows, 0),
+  };
 
   return (
     <Stack>
@@ -69,16 +77,16 @@ export default function TombstoneCensus() {
 
       {error && <AlertBanner tone="error" message={error} />}
 
-      {census && (
+      {bag && (
         <>
           <Group gap="xl">
-            <Stat label="Tombstones" value={census.totals.tombstones} />
-            <Stat label="With residue" value={census.totals.withResidue} />
-            <Stat label="Missing archive" value={census.totals.withoutArchive} danger={census.totals.withoutArchive > 0} />
-            <Stat label="No-pathway rows" value={census.totals.noPathwayRows} danger={census.totals.noPathwayRows > 0} />
+            <Stat label="Tombstones" value={totals.tombstones} />
+            <Stat label="With residue" value={totals.withResidue} />
+            <Stat label="Missing archive" value={totals.withoutArchive} danger={totals.withoutArchive > 0} />
+            <Stat label="No-pathway rows" value={totals.noPathwayRows} danger={totals.noPathwayRows > 0} />
           </Group>
 
-          {census.tombstones.length === 0 ? (
+          {rows.length === 0 ? (
             <AlertBanner tone="success" message="No tombstones. LIVE_PERSON has nothing left to exclude." />
           ) : (
             <Table striped withTableBorder>
@@ -91,7 +99,7 @@ export default function TombstoneCensus() {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {census.tombstones.map((t) => (
+                {rows.map((t) => (
                   <Table.Tr key={t.id}>
                     <Table.Td>
                       <Text size="sm">{t.name || "—"}</Text>
