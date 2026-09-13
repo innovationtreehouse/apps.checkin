@@ -49,6 +49,25 @@ single role; the strategic two-role model (RB4/#1316) stays open.
 viewer gate in §6 widens read access and is justified there); the
 security-boundary and migration-order rules cited inline in §5 and §4.
 
+**How to read this doc — design vs. build notes.** The design is being
+implemented **speculatively, in parallel tracks (§11), while the design is still
+open** — so the build hits reality early and feeds it back. Two kinds of text,
+deliberately separated:
+
+- **Design** (the default): the intended architecture and decisions. This is what
+  the doc *proposes*.
+- **Build note (Track N)** — call-outs (this bold marker) recording what a track
+  actually built or learned — as-built specifics, corrections, and constraints
+  hit in code. These
+  are **feedback into the design, not extra commitments**; commit SHAs in them
+  are provenance, not part of the design. **Where a build note and the surrounding
+  design differ, the build note is the newer truth**, and the design text is being
+  reconciled to it. All of this distils per §13 at merge; nothing here is
+  load-bearing history.
+
+If you are reviewing the *design*, read the design text; the build notes tell you
+how far reality has confirmed it.
+
 ---
 
 ## 1. Goal and shape
@@ -327,7 +346,7 @@ To bring the catalog under the same regime **without merging schemas**:
    `everyones:internal`.
 2. **Add a `generator security` block to the catalog schema** so
    `prisma generate` emits a **second classifications file** for catalog models.
-   Wiring **as built (Track 3)**: the generator's `provider` path is **CWD-relative
+   Wiring — **Build note (Track 3):** the generator's `provider` path is **CWD-relative
    to the package dir** (`node ../../checkin-app/scripts/security-generator.js`)
    and its output is relative to the schema dir. Consequence: the catalog
    package's `prisma generate` (including its `postinstall`) writes **cross-package
@@ -396,7 +415,7 @@ Source tiers → checkin:
 | **viewer** | any RBAC-role holder, program leader, or volunteer — not any authenticated user (least-privilege note below) | (unchanged) |
 
 **Adding the role** touches checkin's role foundation (all in checkin's own
-schema, not the catalog schema). The exact surface, **as built (Track 2)**:
+schema, not the catalog schema). The exact surface — **Build note (Track 2):**
 
 - `PersonRoleKind` enum in `prisma/schema.prisma` — add `INVENTORY_MANAGER`.
   Following the `isOperations` precedent, it is **PersonRole-table-only, no legacy
@@ -422,7 +441,7 @@ any of — holds `INVENTORY_MANAGER`, holds **any** `PersonRole` (RBAC role),
 `programsLed` non-empty (program leader), or has a `VolunteerDesignation` (keyed
 by email; volunteer). This is the single chokepoint for read access.
 
-**Volunteer signal reaches the client via a claim (Track 5 as-built).** The
+**Build note (Track 5) — volunteer signal reaches the client via a claim.** The
 first three inputs are already on the session, but `VolunteerDesignation` is
 email-keyed with **no session flag** — so nav/UI can't mirror the gate without a
 DB call. Track 5 added a **`hasVolunteerDesignation` JWT/session claim** (a new
@@ -517,11 +536,11 @@ there is no client→server conversion to do, now or later.
   `INVENTORY_MANAGER`). The **org-bearer** machine reads would live under
   **`/api/internal`**, not `/api/catalog` — kept separate by auth + response
   shape (§8; that surface is deferred).
-- **Response shape (Track 4 as-built):** the human `GET /api/catalog/items` ships
+- **Build note (Track 4) — response shape:** the human `GET /api/catalog/items` ships
   a **bare model-bag array**, *not* a `{items,total,page,…}` envelope —
   `handler()`'s stripper drops non-model bag keys, so pagination meta can't ride
   the response. Any earlier "paginated envelope" wording is superseded by this.
-- **Pagination (Track 5 as-built): numbered pagination via a count endpoint.**
+- **Build note (Track 5) — pagination: numbered pagination via a count endpoint.**
   (An earlier Track 5 attempt built offset + one-row lookahead on the belief a
   count endpoint was a dead end — that was **wrong** and is replaced.) A
   table-wide total *can't* ride the item model-bag (stripper drops non-model
