@@ -347,8 +347,8 @@ checkin/expense database, and the app never writes a secret. See §9 QB-0.
 
 Same mechanism as #1286 §5 / #1287 §5: a `generator security` block for the
 expense schema, **merged into `core.ts` by a spread** (not a new aggregator file);
-registry route entries; responses through checkin's stripper. Carry over two
-as-built wiring facts the prior ports settled (Track 3/4):
+registry route entries; responses through checkin's stripper. Carry over three
+as-built facts the prior ports settled (Track 3/4/5):
 
 - **Generator wiring** (#1286 Track 3): the generator `provider` path is
   **CWD-relative to the package dir** (`node ../../checkin-app/scripts/security-generator.js`)
@@ -356,6 +356,12 @@ as-built wiring facts the prior ports settled (Track 3/4):
   so the package's `prisma generate` (incl. `postinstall`) depends on checkin-app's
   generator script — fine in the monorepo, breaks only if the package is later
   extracted. `stripper`/`outbound` repoint to `core`.
+- **Synthetic public-scalar classification** (#1286 Track 5): to return a **bare
+  scalar** (a count/total/badge) — which the stripper otherwise drops as a
+  non-model bag key — hand-author a small **synthetic public classification** for
+  its shape and merge it in `core.ts`, behind its own registered endpoint. This is
+  the sanctioned way any count/badge crosses the boundary (expense list counts §7,
+  QB queue depth, nav badges §7); prefer it over envelope workarounds.
 - **Route-endpoint-string gotcha** (#1286 Track 4): the `endpoint` string each
   handler passes to `handler()` must be the **full registered path including its
   prefix** — a string that drops a segment makes `getRoute()` miss the registry and
@@ -603,18 +609,26 @@ component-level reskin, not a rewrite. **Keep the source's `"use client"` +
 `NavbarLogout` / `AuthContext`; pages render inside checkin's shell and read
 `useSession` client-side + the checkin session in the route handlers.
 
-**List-route shape (carry over #1286 Track-4/5).** checkin's `handler()` stripper
-drops non-model bag keys, so a list route returns a **bare model-bag array**, not a
-`{items,total,page}` envelope — a table-wide `total` scalar can't ride the response
-without a boundary change. So expense's list/queue routes ship bare arrays and
-paginate with **offset + one-row lookahead** (fetch `limit+1`, use the extra row for
-Prev/Next), **not** a count endpoint. Don't chase a count endpoint — it's a dead end
-without a boundary PR.
+**List-route shape + numbered pagination (carry over #1286 Track-5, corrected).**
+checkin's `handler()` stripper drops non-model bag keys, so a list route returns a
+**bare model-bag array**, not a `{items,total,page}` envelope. A table-wide `total`
+scalar therefore can't ride the list response — but that does **not** kill numbered
+pagination: the sanctioned fix is the **synthetic public-scalar classification**
+pattern (#1286 Track-5). Hand-author a small public response model for the scalar
+(e.g. `ExpenseListCount { total: public }`), merge it in `core.ts`, and register a
+separate **`.../count` endpoint** — now `total` crosses the stripper legitimately as
+a model field, giving real numbered pagination. It is a **registry-first boundary
+commit** (classification + registry entry first; the count route factory + stub
+follow). Apply it per-list where volume warrants (the audit/`expense-events` and
+`queue` lists especially) — **not** an offset+lookahead workaround. (An earlier
+draft here called the count endpoint a dead end, mirroring #1286's since-reversed
+Track-5 attempt; corrected.)
 
 Pages, each an A13 surface / exception screen:
 
-- `expenses` (list, filtered by the `queue` view; bare-array + offset/lookahead per
-  above) + `expenses/[id]` (detail with `LineItemOwnerApprovals`) — surfaces 1/2.
+- `expenses` (list, filtered by the `queue` view; bare-array + numbered pagination
+  via a `.../count` endpoint per above) + `expenses/[id]` (detail with
+  `LineItemOwnerApprovals`) — surfaces 1/2.
 - `expense-holds` **exception screen** — `NO_MATCH` / `MULTIPLE_MATCHES` /
   `NO_PART_NUMBER` account-mapping holds; resolve + resubmit (surface 5).
 - `account-mapping` + `qb-accounts` — the rules that map a resolved item to one QB
@@ -1039,8 +1053,9 @@ library skeleton + shared packages) has landed; the inventory-load crossing (tra
    area** gated by `FINANCE`/`BOARD` (not the Inventory area — §7),
    `transpilePackages` (if tsx needs it — verify). **Flow tests carry the source's
    integration journeys** (route+auth+DB e2e via persona-mint), incl. the A13
-   journey (§12). **Adds list pagination** (offset + one-row lookahead — no count
-   endpoint, §7).
+   journey (§12). **Adds numbered pagination** via a `.../count` endpoint, enabled
+   by a registry-first boundary commit declaring a synthetic public count response
+   model so the scalar total crosses the stripper (§7) — not offset+lookahead.
 6. **Inventory-load crossing (I)** — bind the in-process call into local-inventory's
    apply port on owner-signoff (#1287 §8c). **In-process only — no HTTP fallback**
    (local-inventory hosts no apply route in checkin; §8c). Depends on #1287 landed
@@ -1208,7 +1223,8 @@ retire source auth for checkin next-auth (next-free `_shared.ts`, no `next/serve
 org+user identity from the checkin-owned `Org` registry row injected as an accessor;
 **no machine-bearer HTTP route hostable in checkin — receipt intake + inventory-load
 are in-process only** (§8a/§8c); list routes ship bare model-bag arrays →
-offset/lookahead pagination; keep-JSON-contracts / convert-transport crossing rule;
+numbered pagination via a synthetic public-scalar `.../count` endpoint (§5/§7);
+keep-JSON-contracts / convert-transport crossing rule;
 vitest + flow-tests, source integration → flow tests, CI auto via `test:packages`
 (no Playwright); no table renames; no in-app timers.
 **New to this port (resolved here):** the `FINANCE` role (#1286 Track-2 surface) +
@@ -1222,6 +1238,71 @@ secret**; **no token in Postgres**.
 owner-assignment role split (#1273); the finance/inventory nav IA question; a
 boundary PR **only if** a remote receipt-app/orchestrator must push before
 co-residing (#1286 option A); the tracked deferrals (track 9) and FE6–FE8.
+
+---
+
+## 13. Distillation at merge (`DOCUMENTATION_STANDARD.md` §4)
+
+This doc lives in `docs/in-design/` — **deleted at merge**. Planning the split now
+keeps the extract step a file move, not a months-later judgement call over every
+paragraph (§4.2). Content splits three ways.
+
+**(1) Standing domain rules → the EXISTING `docs/rules/finance-payments.md`.**
+Unlike catalog (which created `docs/rules/catalog.md`) and local-inventory
+(`inventory.md`), expense is **not** a new domain — `finance-payments.md` already
+covers *"fees, refunds, payment plans, and reconciliation,"* and expense→QB is
+reconciliation's core. So **add rules to that file, do not create a new one**
+(creating a near-duplicate finance file would fragment the register). Run the §3.9
+test (*could a later change violate this?*) on each; seeds that qualify — decisions
+and invariants only, no mechanism:
+- **Flag / checkoff / audit, not enforcement:** the app **surfaces** procurement/
+  finance flags (tax-attached, threshold-crossed, missing-receipt, non-Everyday,
+  COI) to a human for checkoff + audit; it does **not** enforce approval tiers,
+  segregation-of-duties, or thresholds — *cite GC-FIN-CONTROL* (§6). Threshold
+  numbers ($500/$2k/$50) are *awareness*, from Procurement Policy H.
+- **COI is household-aware:** an approver in the submitter's household is a
+  conflict → flag to `BOARD` (buildable because checkin has households; §6).
+- **One QB account per expense line — no category splits** (§7/§9 QB-2).
+- **QB reconciliation is idempotent, sync-not-clobber:** never double-book on
+  retry; reconcile against existing QuickBooks rather than overwrite; an
+  already-booked expense is recognized (`backfill`/`qb_skipped`), not re-posted —
+  *cite GC-QB* (§9).
+- **QB ambiguity is resolved by a human, never guessed:** an unmatched/multi-match
+  vendor or account parks in the QB queue for finance (§9 QB-2).
+- **Capital register invariant:** one ITFA row per physical asset; numbers minted
+  here or seeded from QB memos; `(orgId, assetNumber)` unique (§9 QB-1).
+- **Access invariant (divergence from catalog/inventory):** expense is **financial,
+  person-linked data — reads are narrow** (finance/board, or the row's own budget
+  owner via a handler query-filter), **not** the broad Inventory viewer gate;
+  writes/checkoffs = `FINANCE`/`BOARD` — *cite `principles.md` least-privilege* (§6).
+- **Org-stamping invariant:** every row carries the one injected org identity (§6).
+- **Role decision:** the finance actor is `FINANCE` (RB2 / #1314, kept role);
+  owner-assignment interim on `FINANCE`, program-treasurer split open (#1273);
+  strategic role split stays #1314's — cross-ref, do not restate.
+
+**(2) Architecture/ops reference that stays true → `docs/designs/EXPENSE_QB.md`**
+(§4 "operational reference → move, don't delete"). Later finance/QB work (FE6–FE8,
+GC-DONOR, GC-PROGRAM-FINANCE) relies on it: the library-isolation + `configureExpense`
+injection seam; own-DB / fourth-Prisma-client packaging; **the QuickBooks
+connection foundation** — `@inventory/quickbooks`, the read-only-app + Infra-owned
+refresher token model, the `secret`-never-in-DB decision, sandbox→prod; the QB-2
+write-path + ambiguity-queue + outbox-drain design; the four crossings' in-process
+port model and the **machine-surface-not-hosted** decision (§8/#1286 option C).
+This is the reusable QB substrate donations and program-finance build on — GC-QB's
+"settle the connection first." Runnable-ops bits (dev seed recipe, `DOCKER_HOST`
+skip gotcha, the one-time consent runbook step) go to `docs/ops/` if worth keeping.
+
+**(3) Pure mechanism now in the code → deleted** with the working doc (route
+mounting, stub tree, `NavLink[]` splice, `_shared.ts`, security-generator wiring,
+handler-endpoint gotcha, pagination/count mechanics, outbox-drain wiring, test
+tiers) — a reader derives it from the source (§3).
+
+**Cross-doc note:** catalog (#1286) and local-inventory (#1287) distill first, so
+`docs/rules/{catalog,inventory}.md` and their `docs/designs/*` will exist by the
+time expense merges. The finance rules here **reference** the shared decisions
+(org identity, the crossing rule, the security regime) rather than restating them;
+`EXPENSE_QB.md` references `GLOBAL_CATALOG.md`/`LOCAL_INVENTORY.md` for the shared
+library-isolation and DB-topology substrate.
 
 ---
 
