@@ -25,6 +25,9 @@ services:
       - ../.env
     environment:
       DATABASE_URL: postgresql://prisma:${DB_PASSWORD}@db:5432/checkmein?schema=public
+      # #1286 §4/§9: the global catalog has its own dedicated database on the same
+      # Postgres server (created by prod-initdb/, migrated by prisma migrate deploy).
+      CATALOG_DATABASE_URL: postgresql://prisma:${DB_PASSWORD}@db:5432/catalog?schema=public
     depends_on:
       - db
 
@@ -37,6 +40,8 @@ services:
       POSTGRES_DB: checkmein
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # #1286: create the catalog's dedicated database on first init (design §4).
+      - ./prod-initdb:/docker-entrypoint-initdb.d:ro
 
 volumes:
   postgres_data:

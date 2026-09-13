@@ -6,9 +6,24 @@
 FROM node:24-alpine AS deps
 WORKDIR /app
 # Copy only the manifests + lockfile first for a cache-friendly `npm ci` layer.
-# Add packages/*/package.json here when @checkin/* packages land (item 4).
+# The app imports @inventory/global-catalog (#1286), so its manifest and its
+# workspace-dep manifests must be present for `npm ci` to install/link the
+# catalog and hoist its deps — without them `next build` fails module-not-found.
 COPY package.json package-lock.json* ./
 COPY checkin-app/package.json ./checkin-app/package.json
+COPY packages/global-catalog/package.json ./packages/global-catalog/package.json
+COPY packages/gtin/package.json ./packages/gtin/package.json
+COPY packages/workflows/package.json ./packages/workflows/package.json
+COPY packages/receipt-types/package.json ./packages/receipt-types/package.json
+COPY packages/pg-test-harness/package.json ./packages/pg-test-harness/package.json
+# The catalog's postinstall is `prisma generate`: it needs its schema + config on
+# disk, and its `security` generator shells out to checkin-app's generator script
+# (provider path is package-CWD-relative — #1286 §5), so that must be present too.
+# These change rarely, so the cache layer stays useful; the builder regenerates
+# the client after the full source copy.
+COPY packages/global-catalog/prisma ./packages/global-catalog/prisma
+COPY packages/global-catalog/prisma.config.ts ./packages/global-catalog/prisma.config.ts
+COPY checkin-app/scripts ./checkin-app/scripts
 RUN npm ci
 
 # Stage 2: Build the app
@@ -25,6 +40,10 @@ COPY . .
 # (its schema lives at checkin-app/prisma; the security generator resolves its
 # script + output paths relative to the app cwd).
 RUN npm -w checkin-app exec -- prisma generate
+# The catalog library ships its own Prisma client (#1286 §4); regenerate it into
+# packages/global-catalog/src/generated (gitignored, so not in the source copy)
+# so `next build` can trace + bundle it into the standalone output.
+RUN npm -w @inventory/global-catalog exec -- prisma generate
 # Build stamp surfaced in the app footer: the deployed commit SHA, passed via
 # --build-arg by the deploy workflow and inlined into the bundle (NEXT_PUBLIC_*,
 # build-time). Empty in local/ad-hoc builds -> the footer shows "dev".
@@ -105,6 +124,17 @@ COPY --from=builder /app/checkin-app/prisma.config.deploy.ts ./checkin-app/prism
 # command's cwd resolves it without touching the standalone /app/node_modules.
 # CI's deploy-build smoke asserts it with `npx --no-install prisma --version`.
 COPY --from=builder /prisma-cli/node_modules ./checkin-app/node_modules
+
+# Catalog migrate task (#1286 §9): the migrate ECS task also runs `prisma migrate
+# deploy` against the catalog's own database (CATALOG_DATABASE_URL). Ship its
+# schema + migrations, a zero-import deploy config (as prisma.config.ts, same
+# reason checkin's is not shipped), and the lockfile-exact prisma CLI under the
+# package so `cd packages/global-catalog && npx prisma migrate deploy` resolves
+# without a registry fetch. The runtime client itself is already in the traced
+# standalone bundle; these files are only for the migrate command.
+COPY --from=builder /app/packages/global-catalog/prisma ./packages/global-catalog/prisma
+COPY --from=builder /app/packages/global-catalog/prisma.config.deploy.ts ./packages/global-catalog/prisma.config.ts
+COPY --from=builder /prisma-cli/node_modules ./packages/global-catalog/node_modules
 
 EXPOSE 4000
 ENV PORT=4000
