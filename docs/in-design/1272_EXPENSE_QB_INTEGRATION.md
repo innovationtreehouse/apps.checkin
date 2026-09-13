@@ -133,7 +133,7 @@ path on an explicit phase ladder (§9).
 | Security regime | **Adopt checkin's** registry + `@sensitivity` generator + stripper + scopeBindings over the separate schema (§5). **QBO OAuth tokens never touch a checkin/expense DB** — they live in an external secret backend owned by an Infra refresher (§9), so there is no `secret`-tier schema field to guard; the app reads the access token **read-only** and hosts **no OAuth route** (consent is an operator CLI step, §9). |
 | Auth | **Retire** `expense-app`'s `@inventory/auth` + `@inventory/web-auth` (+ `jose`, the login page, `/api/auth/{login,logout}`). checkin next-auth session is the only auth (§6). |
 | Roles | **New `FINANCE` role** (RB2 "Finance" umbrella — a role `docs/backlog/TOPDOWN.md` GC-ROLES explicitly *keeps*, not a net-new invention) for the checkoff/queue actor; **existing `BOARD`** for threshold/COI escalation; per-line approval routes to the line's **budget owner** (a `Person`, a data relationship not an RBAC role). **Reads narrow** — no broad viewer gate (§6). This is the port's main divergence from #1286/#1287. |
-| Scope | **Full port** of the A13 / FE1–FE5 surface (§ below), with temporary shims at the not-yet-migrated receipt-app / orchestrator boundaries (§8). FE6–FE8 noted, not designed (§9, §12). |
+| Scope | **Full port** of the A13 / FE1–FE5 surface (§ below), with temporary shims at the not-yet-migrated receipt-app / orchestrator boundaries (§8). FE6–FE8 noted, not designed (§9, §13). |
 | UI location | **All UI in the library** — components, pages, route handlers. checkin-app only re-exports and mounts (§3). |
 | UI style | **Keep the client pattern** — `"use client"` pages + `/api/*` routes; re-auth + re-theme only. Matches checkin's dominant pattern, same as #1286 §7 / #1287 §7. |
 | `orgId` / user identity | **Keep the columns; inject the values** — resolved by #1286 §6. Org identity comes from the **checkin-owned `Org` registry table** (seeded on the initial migration with a stable well-known id), injected as an accessor `getOrg(): OrgIdentity` — **not** an env scalar, **not** a `SettingsData` row, **not** a cross-DB read. The heavy user-id columns (`submitterId`, `ownerId`, `budgetOwnerUserId`, `decidedByUserId`, `capitalOwnerId`, `userId`) map to checkin **`Person.id`** via the injected principal. Both flow through the single `configureExpense()` injection (§6). |
@@ -534,7 +534,7 @@ Owner-assignment (task 2) is the one with a real candidate elsewhere: a program'
 **Treasurer / Assistant Lead** (relationship-attached, GC-ROLES) knows their own
 budget owners better than central finance. First landing keeps it on `FINANCE` (no
 second role); whether owner-assignment should route to the program treasurer
-instead is an **open item** (§12).
+instead is an **open item** (§13).
 
 ### Reads are narrow — the port's main divergence from #1286/#1287
 
@@ -667,7 +667,7 @@ the port just contributes its `NavLink[]` and the `FINANCE`/`BOARD` gate. Badges
 
 *(Open question — whether finance-side Inventory surfaces should eventually share
 one area with the Inventory ports is a checkin-shell IA decision, not this port's;
-§12.)*
+§13.)*
 
 ---
 
@@ -725,9 +725,9 @@ port, so at expense's first landing there is **no automated receipt feed**. The
 human surfaces (approval queues, holds, capital review, account mapping) and the
 manual expense-entry path work; the high-volume receipt→expense pipeline goes live
 **only when receipt-app co-resides**. Until then, expenses are entered by hand /
-seeded (§12). If a genuinely *remote* receipt-app must push intake into checkin
+seeded (§13). If a genuinely *remote* receipt-app must push intake into checkin
 before it co-resides, that needs a boundary PR extending checkin auth with an
-inbound service-key/org-bearer variant (#1286's option A) — a §12 item, not
+inbound service-key/org-bearer variant (#1286's option A) — a §13 item, not
 first-landing work. **Same disposition for `POST /api/capital-assets/seed`?** No —
 that route is gated by `requireRole(isFinance)` (a normal **user session**, the
 finance user's JWT forwarded as the cookie), **not** a machine bearer, so it is a
@@ -1089,95 +1089,15 @@ library skeleton + shared packages) has landed; the inventory-load crossing (tra
    when receipt-app / the orchestrator co-reside (no route to retire — none was
    hosted, §8a/§8c); drop the dead `SettingsData` poll fields; a boundary PR only
    **if** a genuinely remote receipt-app / orchestrator must push into checkin
-   before co-residing (#1286 option A, §12); FE6 (membership→QB, #1277), FE7
+   before co-residing (#1286 option A, §13); FE6 (membership→QB, #1277), FE7
    (shop-hour journals, #1278), FE8 (budget-vs-actual, #1279); QB-3 drift-queue
    polish. File these at merge.
 
 ---
 
-## 12. Open items / assumptions
+## 12. Testing
 
-- **`FINANCE` role naming — the one open DECISION (RB2 / #1314).** This design
-  introduces a `FINANCE` `PersonRoleKind` as the RB2 "Finance" umbrella actor.
-  RB2 is tracked as **[#1314](https://github.com/innovationtreehouse/checkin/issues/1314)
-  (readiness DECISION)** — the decision it names is exactly this: stand up a
-  finance role, and under what label. GC-ROLES keeps RB2 and says "no net-new RBAC
-  rows"; `FINANCE` is the *umbrella* row, with Treasurer / Bookkeeper / Accountant
-  as sub-actors that are **not** separate rows. If the owner wants a different
-  label (e.g. `TREASURER`) or wants finance folded onto `BOARD` instead of a
-  distinct row, that is a one-line change in track 2. The doc picks `FINANCE` as
-  the sensible default — **not a STOP-AND-ASK blocker** — but this is the product
-  choice worth the owner's nod, and it is #1314's to settle. Track 2 references
-  #1314 without closing it.
-- **Owner-assignment role — `FINANCE` for first landing, program-treasurer split
-  open.** §6 folds both source `isOrgManager` curation tasks (account-mapping +
-  owner-assignment) onto `FINANCE`. Account-mapping is unambiguously central
-  finance. **Owner-assignment** (curating `PartOwnerMap` + clearing unassigned
-  lines) is the one that arguably belongs to a program's **Treasurer / Assistant
-  Lead** (relationship-attached, GC-ROLES) — they know their own budget owners.
-  **Default: keep it on `FINANCE`** (no second role at first landing); routing
-  owner-assignment to the program treasurer instead is a later, mechanical duty
-  split, tracked against #1273 (FE2) and the GC-ROLES relationship work — not a
-  first-landing blocker.
-- **Narrow read gate is a deliberate divergence** from #1286/#1287's broad viewer
-  gate (§6). Confirmed by least-privilege + the sensitivity of financial data; if
-  the owner wants finance data more broadly visible (e.g. all board, all program
-  leads), that widens the gate — but the default is narrow. On the record here.
-- **`reimbursementFor` / reimbursee identity tiering** — defaulted to `internal`
-  behind the narrow gate; raise to `pii` if a route ever returns the person's
-  contact details alongside (§5). Assumption, not a blocker.
-- **RESOLVED — no machine-bearer HTTP surface is hosted in checkin** (#1286 Track-4,
-  §8a/§8c). checkin has no sanctioned way to land a new org-bearer/service-key route
-  (org-bearer auth retired; registry `authorize` grammar can't express it;
-  `legacy-authz-routes.txt` frozen; `new-route-old-authz` ratchet blocks it). This
-  hits **two** expense crossings — receipt intake (R, §8a) and inventory-load (I,
-  §8c) — and both resolve the same way: **in-process only, not hosted.** Receipt
-  intake goes live when receipt-app co-resides; inventory-load when the orchestrator
-  co-resides. `capital-assets/seed` is unaffected (a `FINANCE` **user-session**
-  route, not a machine bearer). **Residual:** if a genuinely *remote* receipt-app /
-  orchestrator must push into checkin **before** co-residing, that needs a boundary
-  PR extending checkin auth with an inbound service-key/org-bearer variant (#1286
-  option A) — sequence to avoid it; not first-landing work. (#1286's own eventual
-  remote model is a periodic **file export** to AWS disk, not a live endpoint —
-  another reason the machine surface is likely never built.)
-- **Catalog reads are in-process — no consumer repoint needed** (§8b). #1286's
-  Track-4 names `expense-app` among the still-**remote** consumers of
-  `/api/internal/[...path]`; that repoint does **not** apply here — checkin's expense
-  reads catalog via the in-process `CatalogReader` port, touching neither catalog
-  HTTP route. The old remote server's repoint stays #1286's follow-up.
-- **Nav IA — finance area vs shared Inventory area.** Expense lands in a
-  finance-gated area next to Finance Ops (§7). Whether checkin later unifies the
-  finance-side and inventory-side surfaces into one IA is a checkin-shell decision,
-  not this port's — noted, not resolved.
-- **QuickBooks account/vendor identity.** QB-2's account-name → QBO-account-ref and
-  vendor-name → QBO-vendor-ref mapping assumes the QBO chart of accounts + vendor
-  list are the authority; QB-1's ground-truth pull bootstraps the mapping tables.
-  The **ambiguity queue** (QB-2) is the designed escape hatch when a name matches 0
-  or >1 — so no STOP-AND-ASK: ambiguity is handled in-band by a human, not guessed.
-- **Production data: none to migrate; existing QB is reconciled, not imported.**
-  There is no expense data to import. Expenses arrive **by receipt intake** (the
-  R crossing, §8a — the high-volume path, live once receipt-app co-resides) or by
-  hand for reimbursements / before receipt-app lands. The
-  **existing 3 years of QuickBooks** are **reconciled against, not clobbered**
-  (GC-QB): QB-1's ground-truth pull + the `backfill`/`qb_skipped` path recognize
-  already-booked transactions; the capital register is seeded from QB memos
-  (FE4). "No bulk expense import" and "reconcile existing QB" do not conflict —
-  different mechanisms.
-- **Dev/test seed.** Lift the expense baseline (org settings / account mappings /
-  a `CompletedReceipt` fixture / a capital-seed sample) from the Inventory
-  monorepo's `scripts/setup-test-data.sh` + the QB `.ground-truth.json` sample;
-  **drop the transport** (the checkin seed writes directly via the expense library
-  services / Prisma client against `EXPENSE_DATABASE_URL`). Stamp rows with the
-  same seeded `Org` id (§6). Add `VolunteerDesignation` / household rows (project
-  memory: seed has 0 volunteer designations) so the household-COI flag and the
-  budget-owner per-row gate are exercisable in dev and flow tests. **QB tests use
-  the sandbox company, never live production QB** (§ testing below) — no test tier
-  posts to a real books.
-- **Deferral discipline.** Anything past the first landing (track 9) is a **GitHub
-  follow-up issue referencing the relevant FE issue**, filed at merge — never a
-  bare "later" in prose or a code comment.
-
-### Testing (posture; mirrors #1286 §10 / #1287 §10)
+Posture mirrors #1286 §10 / #1287 §10.
 
 - **Keep vitest; unit ports ~verbatim, source integration → flow tests** (#1286
   Track-1/4/5 finding). `expense` is a `packages/` package → keeps vitest (jest is
@@ -1216,32 +1136,62 @@ library skeleton + shared packages) has landed; the inventory-load crossing (tra
   that a transport flip is behavior-preserving. (There is no live `http` adapter to
   test — those surfaces aren't hosted, §8a/§8c.)
 
-**Resolved by reuse of #1286/#1287 (incl. their as-built findings):** own dedicated
-database (`EXPENSE_DATABASE_URL`); checkin security regime over a separate schema
-(cross-package generator wiring, endpoint-string gotcha, **no scopeBindings**);
-retire source auth for checkin next-auth (next-free `_shared.ts`, no `next/server`);
-org+user identity from the checkin-owned `Org` registry row injected as an accessor;
-**no machine-bearer HTTP route hostable in checkin — receipt intake + inventory-load
-are in-process only** (§8a/§8c); list routes ship bare model-bag arrays →
-numbered pagination via a synthetic public-scalar `.../count` endpoint (§5/§7);
-keep-JSON-contracts / convert-transport crossing rule;
-vitest + flow-tests, source integration → flow tests, CI auto via `test:packages`
-(no Playwright); no table renames; no in-app timers.
-**New to this port (resolved here):** the `FINANCE` role (#1286 Track-2 surface) +
-narrow read gate (a handler query-filter, not a field scope); the household-aware
-COI flag (port gets better); QuickBooks as `@inventory/quickbooks` on the QB-0…QB-3
-ladder with **Infra-managed secret handling** — static creds as env vars; an
-**Infra-owned refresher** (rotation Lambda) owns the rotating refresh token and
-publishes the current access token; the **app reads it read-only and never writes a
-secret**; **no token in Postgres**.
-**Left open (non-blocking):** the `FINANCE`-vs-`TREASURER` label nod (#1314); the
-owner-assignment role split (#1273); the finance/inventory nav IA question; a
-boundary PR **only if** a remote receipt-app/orchestrator must push before
-co-residing (#1286 option A); the tracked deferrals (track 9) and FE6–FE8.
+---
+
+## 13. Open items
+
+Only genuinely open work lives here. Resolved decisions are recorded in the
+sections they belong to (§3–§9) — this section does not recap them.
+
+### Open follow-ups (file as GitHub issues referencing the relevant FE issue at merge)
+
+- **`FINANCE` role label — RB2 / #1314's DECISION.** The doc's default is a
+  `FINANCE` `PersonRoleKind` (§6). Still owner's to settle: the label
+  (`FINANCE` vs `TREASURER`) or whether finance folds onto `BOARD` instead of a
+  distinct row. A one-line change in track 2; #1314's to close, not this port's.
+- **Owner-assignment role split (#1273 / GC-ROLES).** Owner-assignment sits on
+  `FINANCE` for first landing (§6); whether it should route to a program's
+  **Treasurer / Assistant Lead** instead is an open duty-split.
+- **Nav IA — finance area vs shared Inventory area.** Expense lands in a
+  finance-gated area (§7); whether checkin later unifies the finance- and
+  inventory-side surfaces into one IA is an unresolved checkin-shell decision.
+- **Inbound machine surface — only if a remote peer must push first (#1286 option A).**
+  Receipt intake and inventory-load are in-process only (§8a/§8c). If the migration
+  order ever puts a *remote* receipt-app / orchestrator against checkin before it
+  co-resides, that needs a boundary PR extending checkin auth with an inbound
+  service-key/org-bearer variant. Sequence to avoid it; open the follow-up only if
+  forced.
+- **Later QB phases + track-9 deferrals:** FE6 (membership→QB, #1277), FE7
+  (shop-hour journals, #1278), FE8 (budget-vs-actual, #1279), QB-3 drift-queue
+  polish; drop the dead `SettingsData` poll fields.
+
+**Deferral discipline:** each of the above is filed as a tracked issue at merge —
+never a bare "later" in prose or a code comment. The issue tracker remembers, not
+this doc.
+
+### Assumptions
+
+- **No production expense data to migrate; existing QB is reconciled, not clobbered.**
+  Expenses arrive by receipt intake (§8a, live once receipt-app co-resides) or by
+  hand; the existing 3 years of QuickBooks are reconciled against (GC-QB) via QB-1's
+  pull + the `backfill`/`qb_skipped` path, not overwritten (§9).
+- **Dev/test seed to build.** Lift the baseline (org settings / account mappings /
+  a `CompletedReceipt` fixture / a capital-seed sample) from Inventory's
+  `scripts/setup-test-data.sh` + the QB `.ground-truth.json` sample; drop the
+  curl+retired-auth transport (write via the expense Prisma client against
+  `EXPENSE_DATABASE_URL`); stamp the one seeded `Org` id (§6); add
+  `VolunteerDesignation` / household rows (seed has 0) so the COI flag and
+  budget-owner gate are exercisable.
+- **`reimbursementFor` / reimbursee tiering** defaults to `internal` behind the
+  narrow gate; raise to `pii` if a route ever returns the person's contact details
+  alongside (§5).
+- **QuickBooks account/vendor identity:** the QBO chart of accounts + vendor list
+  are the authority (QB-1 bootstraps the mapping tables); a 0-or-many match is
+  resolved by the QB ambiguity queue, never guessed (§9 QB-2).
 
 ---
 
-## 13. Distillation at merge (`DOCUMENTATION_STANDARD.md` §4)
+## 14. Distillation at merge (`DOCUMENTATION_STANDARD.md` §4)
 
 This doc lives in `docs/in-design/` — **deleted at merge**. Planning the split now
 keeps the extract step a file move, not a months-later judgement call over every
