@@ -117,12 +117,10 @@ export function createCatalogRepository(db: PrismaClient) {
     listAllItemsFlat: () =>
       db.item.findMany({ where: { archivedAt: null }, include: ITEM_INCLUDE, orderBy: { name: "asc" } }),
 
-    // Offset pagination with a one-row lookahead: `take: limit + 1` so the caller
-    // can tell there's a next page without a total (a table-wide count can't ride
-    // checkin's model-bag response — the stripper drops non-model scalars, #1286
-    // §7). skip stays keyed to `limit`, so the (limit+1)th "peek" row becomes the
-    // first row of the next page — no gap, no overlap. `total` is still returned
-    // for server-side callers/tests; the HTTP route omits it (can't cross the bag).
+    // One page of items. The matching total is served separately (countItems) via
+    // the count route, so the list itself never over-counts — a table-wide total
+    // can't ride checkin's model-bag response (the stripper drops non-model
+    // scalars, #1286 §7), so the paginated UI reads the count endpoint for it.
     async listItemsPaginated(params: {
       where: Prisma.ItemWhereInput;
       orderBy: Prisma.ItemOrderByWithRelationInput[];
@@ -130,18 +128,18 @@ export function createCatalogRepository(db: PrismaClient) {
       limit: number;
     }) {
       const { where, orderBy, page, limit } = params;
-      const [total, rows] = await Promise.all([
-        db.item.count({ where }),
-        db.item.findMany({
-          where,
-          include: ITEM_INCLUDE,
-          orderBy,
-          take: limit + 1,
-          skip: (page - 1) * limit,
-        }),
-      ]);
-      return { total, rows };
+      const rows = await db.item.findMany({
+        where,
+        include: ITEM_INCLUDE,
+        orderBy,
+        take: limit,
+        skip: (page - 1) * limit,
+      });
+      return { rows };
     },
+
+    /** Count items matching the same filter the list uses (drives page count). */
+    countItems: (where: Prisma.ItemWhereInput) => db.item.count({ where }),
 
     aggregateItemMaxSequence: (categoryId: number, subcategoryId: number) =>
       db.item.aggregate({

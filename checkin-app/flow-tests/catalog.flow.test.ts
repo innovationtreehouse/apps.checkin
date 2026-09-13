@@ -28,19 +28,26 @@ describe("global catalog", () => {
     expect(roborio!.subcategory.number).toBe(10);
   });
 
-  it("paginates items with a lookahead row (no total needed)", async () => {
-    // The repo takes limit+1 so the client can detect a next page without a
-    // count (a total can't ride the model-bag response, §7). With two seeded
-    // items, limit=1 returns 2 rows (the page + the lookahead); page 2 returns
-    // the remaining one.
+  it("serves an item count for pagination and pages the list", async () => {
+    // The list can't carry a total (the stripper drops non-model scalars, §7),
+    // so the count rides the synthetic CatalogItemCount model at a dedicated
+    // endpoint. Two items seeded → total 2; limit=1 pages one row at a time.
     const viewer = await loginAs("boardmember@example.com");
+    const count = await api<{ total: number }>(viewer, "/api/catalog/items/count");
+    expect(count.status).toBe(200);
+    expect(count.json.total).toBe(2);
+
     const p1 = await api<ItemRow[]>(viewer, "/api/catalog/items?limit=1&page=1&sortBy=name&sortDir=asc");
-    expect(p1.status).toBe(200);
-    expect(p1.json.length).toBe(2); // 1 shown + 1 lookahead → a next page exists
     const p2 = await api<ItemRow[]>(viewer, "/api/catalog/items?limit=1&page=2&sortBy=name&sortDir=asc");
-    expect(p2.status).toBe(200);
-    expect(p2.json.length).toBe(1); // last page, no further lookahead
+    expect(p1.json.length).toBe(1);
+    expect(p2.json.length).toBe(1);
     expect(p2.json[0].gtin13).not.toBe(p1.json[0].gtin13); // page 2 ≠ page 1
+  });
+
+  it("denies the item count to a non-viewer", async () => {
+    const member = await loginAs("parent.family@example.com");
+    const { status } = await api(member, "/api/catalog/items/count");
+    expect(status).toBe(403);
   });
 
   it("server-renders the Items page (proves the library tsx transpiles via transpilePackages)", async () => {
