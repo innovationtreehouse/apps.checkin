@@ -475,7 +475,10 @@ auth via `useSession` client-side + the checkin session in the route handlers.
 - **Gate: `isInventoryViewer`** (= `isCatalogViewer`, §6) — the same broad gate as
   the catalog tabs, broader than the board-only `*-Ops` items. Intended.
 - **Badges** (e.g. open merge-conflicts / provisional count) use checkin's
-  existing `navBadges` keyed on the tab href — optional, not first-landing.
+  existing `navBadges` keyed on the tab href — optional, not first-landing. A
+  server-sourced count crosses `handler()`'s stripper via the **synthetic
+  public-scalar classification** pattern (#1286 Track-5) — same mechanism as the
+  count endpoint (§11 track 5), not an envelope workaround.
 
 ---
 
@@ -805,96 +808,52 @@ local-inventory consumes, and local-inventory reuses catalog's vendored packages
 
 ---
 
-## 12. Open items / assumptions
+## 12. Open items
 
-- **`orgId` value — RESOLVED by #1286 §6** (was this doc's one open question).
-  Org identity is a **checkin-owned `Org` registry row** (seeded on the initial
-  migration with a stable well-known id), injected into `configureLocalInventory()`
-  as an accessor `getOrg()` — not an env scalar, not a `SettingsData` row, no
-  cross-DB read. checkin-app injects the **same** id into catalog and
-  local-inventory, so the two apps' `orgId` agree by construction (required for the
-  S5 events and cross-DB uniques to line up). Multi-org later = more rows + a
-  per-request accessor, no library change. Columns kept. **No STOP-AND-ASK
-  remains.**
-- **Production data: none to migrate. Two orthogonal population paths — not
-  alternatives** (mirrors #1286 §12). There is no existing inventory to import.
-  - **Direct** (this design): org-items / locations / quantities are set **by
-    hand through the UI** or corrected there. There is **no *direct* bulk-import
-    endpoint** — the source has none and none is wanted.
-  - **Indirect** (receipt-driven, later — and this is *local-inventory's* load
-    path, not a side effect): `docs/backlog/TOPDOWN.md` GC-INVENTORY (Q22/Q30)
-    describes replaying 1,000–2,000 stored **receipts** to load inventory. That
-    replay flows through the **orchestrator → local-inventory apply/enqueue
-    surface (§8c)** — each receipt line becomes a delta-apply or a receive-queue
-    entry, which is exactly how on-hand stock is meant to arrive. It **triggers**
-    catalog growth upstream (provisional GTINs, item-reference proposals — §8's S4
-    crossings) as a side effect. This design **builds the inbound apply surface
-    that receives the replay** (§8c) but does not drive it — the replay is the
-    receipt pipeline's job and arrives **when receipt-app migrates**.
+Only genuinely open work lives here. Resolved decisions are recorded in the
+sections they belong to (§1–§11) and are **not** recapped here — org/user identity
+(§1/§6), the in-process apply + no-hosted-machine-surface decision (§8c), catalog
+reads in-process with no repoint (§8b), the push-driven no-timer consumer (§8a),
+roles/viewer gate (§6), DB/security/nav/testing (§4/§5/§7/§10). Nothing there is
+a STOP-AND-ASK; there is no hard blocker for first landing.
 
-  So "no bulk load" (direct hand-entry) and receipt-replay (the real inventory
-  load) do not conflict — different mechanisms, different sources; §8c is the seam
-  the replay lands on.
-- **Dev/test seed — lift from `scripts/setup-test-data.sh`** (Inventory monorepo),
-  the same script #1286 §12 draws catalog rows from. It seeds locations, org-items,
-  and a receive-queue entry over `curl` + the retired `/api/auth/login`; **lift
-  the data/shape, drop the transport** — the checkin seed writes directly via the
-  inventory library services / Prisma client against `LOCAL_INVENTORY_DATABASE_URL`.
-  Add `VolunteerDesignation` rows (project memory: seed has 0) so the viewer gate
-  and inventory pages are exercisable in dev and flow tests. Both seeds stamp rows
-  with the same seeded `Org` id (§6) and must agree on the GTINs a provisional
-  resolves to (so the S5 merge path is exercisable end-to-end).
-- **No in-app S5 timer** (§8a) — the consumer is push-driven (boot drain +
-  drain-on-emit), so nothing keeps the container awake. This requires **#1286's
-  `emitOrgEvent` to expose a post-commit signal hook** the consumer subscribes to
-  via the injected port — a coordination point with the catalog design; if #1286
-  ships without that hook, add it there (its own PR) before track 6. `SettingsData`
-  poll fields (`pollIntervalMinutes` / `globalServerUrl`) are dead on arrival;
-  drop them with the track-8 cleanup.
-- **Catalog reads are in-process — no consumer repoint needed** (§8b). #1286's
-  Track-4 finding files a follow-up for still-**remote** consumers of
-  `/api/catalog/items` (incl. the old local-inventory-app server) to repoint to
-  `/api/internal/items`. This design does **not** inherit that: checkin's
-  local-inventory reads catalog via the in-process `CatalogReader` port, touching
-  neither catalog HTTP route. The `/api/catalog/*` (human) vs `/api/internal/items`
-  (machine) split is an HTTP concern local-inventory sidesteps. The old remote
-  server's repoint stays #1286's follow-up, not this doc's.
-- **RESOLVED — inbound apply machine surface: in-process only, not hosted.**
-  #1286 Track-4 found checkin has **no sanctioned way to land a new machine-bearer
-  route** (org-bearer retired; registry `authorize` grammar can't express it;
-  `legacy-authz-routes.txt` frozen; `new-route-old-authz` ratchet blocks it). Same
-  wall applies to local-inventory's inbound `/api/internal/*` + org-bearer
-  `/api/inventory/apply`. And local-inventory can't fall back on "old server
-  during overlap" — the migration moves the write target, so a remote push would
-  split-brain the stock (§8c). **Resolution: don't host it.** There are **no
-  remote producers at first landing** (receipt/orchestrator not migrated), and once
-  the orchestrator co-resides the apply crossing is **in-process** via the port. So
-  checkin never hosts the inventory machine surface. **Residual open item:** if the
-  migration order ever puts a *remote* orchestrator against checkin's
-  local-inventory (orchestrator not yet co-resident but local-inventory live), that
-  needs a boundary PR extending checkin auth with a service-key/org-bearer inbound
-  variant (#1286's option A) — sequence to avoid it (co-reside apply with CI4), or
-  open that follow-up. Not first-landing work.
-- **Deferral discipline.** Anything past the first landing (track 8) is a
-  **GitHub follow-up issue referencing #1287**, filed at merge — never a bare
-  "later" in prose or a code comment.
+### Open follow-ups (file as GitHub issues referencing #1287 at merge)
 
-**Resolved by reuse of #1286:** own dedicated database
-(`LOCAL_INVENTORY_DATABASE_URL`); checkin security regime over a separate schema;
-retire source auth for checkin next-auth; interim `INVENTORY_MANAGER` for writes
-(strategic Org/Catalog split stays open in #1316) + broad viewer gate for reads
-(no new role); org+user identity from a checkin-owned `Org` registry row (seeded,
-stable id) injected as an accessor through `configureLocalInventory()` — not env,
-not a settings row, not cross-DB; nav = **section tabs under the existing
-`Inventory` area** #1286 created (no second top-level entry, §7);
-keep-JSON-contracts / convert-transport crossing rule; **catalog reads +
-apply are in-process, no machine-bearer route hosted in checkin** (§8b/§8c);
-vitest + flow-tests (no Playwright); no table renames.
-**Left open:** no hard blocker for first landing. One **sequencing constraint**:
-the pipeline apply path (§8c) is in-process only, so it goes live when the
-orchestrator (CI4) co-resides — landing local-inventory against a *remote*
-orchestrator would need a checkin-auth boundary PR (#1286 option A). Plus the
-tracked deferrals (§11 track 8) and the strategic role split (#1316).
+- **`emitOrgEvent` signal hook — cross-doc dependency on #1286.** The push-driven
+  S5 consumer (§8a) needs #1286's `emitOrgEvent` to expose a post-commit in-process
+  signal the consumer subscribes to. If #1286 ships without it, add it there (its
+  own PR) **before track 6**. This is the one live dependency, not just a deferral.
+- **Remote-orchestrator apply — boundary PR only if sequencing forces it (§8c).**
+  Apply is in-process only. If local-inventory ever lands while the orchestrator is
+  still remote, checkin needs a service-key/org-bearer inbound auth variant (#1286
+  option A). Preferred: sequence apply to co-reside with CI4 so this never arises.
+- **Concurrency: fulfill/apply race (§8c; CONCURRENCY.md #2).** Unverified
+  read-check-then-write window on concurrent fulfill / concurrent apply. File a
+  concurrent-drive test (write the failing test first) + fix if real.
+- **Track 8 deferrals:** UNFINISHED #5 provisional-quantity auto-correction (the
+  uom_mismatch queue is the accepted interim); drop the dead `SettingsData` poll
+  fields (§7); browser-only UI test coverage if a real gap appears (§10).
+
+**Deferral discipline:** each of the above is filed as a tracked issue at merge —
+never a bare "later" in prose or a code comment. The issue tracker remembers, not
+this doc.
+
+### Assumptions
+
+- **No production inventory to migrate; loaded by pipeline + hand.** No existing
+  data to import and no direct bulk-import endpoint (the source has none). The real
+  load path is **receipt-replay** — replaying stored receipts (TOPDOWN GC-INVENTORY
+  Q22/Q30) through the orchestrator → apply/enqueue surface (§8c), which arrives
+  when receipt-app co-resides; manual UI edits cover setup until then.
+- **Dev/test seed to build.** No reusable seed exists — lift the baseline
+  locations/org-items/receive-queue shape from Inventory's
+  `scripts/setup-test-data.sh` (drop its curl + retired-auth transport; write via
+  the inventory Prisma client against `LOCAL_INVENTORY_DATABASE_URL`), and add
+  `VolunteerDesignation` rows (seed has **0**) so the viewer gate and pages are
+  exercisable.
+- **Seed org-id agreement.** The catalog and inventory seeds must stamp rows with
+  the **same** injected `Org` id (§6) and agree on the GTINs a provisional resolves
+  to, so the S5 merge path is exercisable end-to-end.
 
 ---
 
