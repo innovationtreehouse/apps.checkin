@@ -158,8 +158,8 @@ catalog is a *producer* and never needed it) and `utils`.
 | `@inventory/gtin` | Reuse | Already `packages/gtin` (vendored by #1286). No second copy. |
 | `@inventory/workflows` | Reuse | Already `packages/workflows` (vendored by #1286). Shared xstate helpers. |
 | `@inventory/receipt-types`, `receipt-contract-fixtures` | Reuse (temporary) | Already vendored by #1286 as temporary copies — local-inventory imports the same copy. Endgame: the permanent shared contract when receipt-app lands. |
-| `@inventory/org-events-poller` | **Yes — new `packages/org-events-poller`** | Shared S5 outbox-consumer machinery (cursor, ledger write, `assertTransition`, `onEvent` dispatch). Consumed by local-inventory/expense/workflow-mapping — a cross-app utility, **standalone package**, not folded into `local-inventory`. **Drive its drain from the in-process signal + boot, not its `setInterval`** (§8a) — expose/extract a one-shot `drainOnce` if the package only ships the timer-start today; the wall-clock loop is not used in checkin. |
-| `@inventory/utils` | **Yes — new `packages/utils`** (or reuse if #1286 already needed it) | Generic helpers. Standalone shared package; check whether #1286 already vendored it before adding a second copy. |
+| `@inventory/org-events-poller` | **Yes — new `packages/org-events-poller`, deferred to track 6** | Shared S5 outbox-consumer machinery (cursor, ledger write, `assertTransition`, `onEvent` dispatch). Consumed by local-inventory/expense/workflow-mapping — a cross-app utility, **standalone package**, not folded into `local-inventory`. **Drive its drain from the in-process signal + boot, not its `setInterval`** (§8a) — expose/extract a one-shot `drainOnce` if the package only ships the timer-start today; the wall-clock loop is not used in checkin. **Confirmed in build: no Track-1 domain/unit file imports it**, so it lands with the S5 consumer (track 6), not the library skeleton. |
+| `@inventory/utils` | **Yes — new `packages/utils`, only if/when imported** | Generic helpers. Standalone shared package. **Confirmed in build: no Track-1 domain/unit file imports it** — vendor it in the track that first needs it (reuse #1286's copy if it vendored one by then), not in track 1. |
 | `@inventory/pg-test-harness` | n/a | Already present in checkin. Reuse. |
 
 Only genuinely inventory-specific helpers (`lib/gtin.ts` is a thin re-export;
@@ -691,8 +691,9 @@ All temporary duplication is **< 2 weeks, dev-only** — acceptable, tracked.
 Adds **no new service** — compiles into `checkin-app`'s build, ships in checkin's
 existing container. Same as #1286 §9, plus:
 
-- Build the new `packages/*` (`local-inventory`, `org-events-poller`, `utils`);
-  the workspace build already covers `packages/*`.
+- Build the new `packages/*` (`local-inventory`, and `org-events-poller` once the
+  S5 consumer lands, `utils` if a track pulls it in); the workspace build already
+  covers `packages/*`.
 - **Provision the dedicated inventory database** + `LOCAL_INVENTORY_DATABASE_URL`
   secret (monitoring-db pattern in the Infra database module).
 - **Org registry** — the checkin-owned `Org` table + its seeded Treehouse row
@@ -758,11 +759,14 @@ local-inventory consumes, and local-inventory reuses catalog's vendored packages
 (§2). Track 1 below can start once #1286 track 1 (catalog library skeleton +
 `packages/gtin,workflows,receipt-types`) has landed.
 
-1. **Library skeleton** — `packages/local-inventory` (+ new `packages/org-events-poller`,
-   `packages/utils`), inventory schema + client + migrations (port the six),
-   domain services/repositories/workflows ported, **unit tests only** (the source's
-   route+auth-bound integration tier → flow tests in track 5, §10). Package stays
-   `next`-free. No UI, no checkin wiring. Green in isolation.
+1. **Library skeleton** — `packages/local-inventory`: inventory schema + client +
+   migrations (port the six), domain services/repositories/workflows ported,
+   **unit tests only** (the source's route+auth-bound integration tier → flow tests
+   in track 5, §10). Package stays `next`-free. **No new shared packages here** —
+   reuses #1286's `packages/{gtin,workflows,receipt-types}`; `org-events-poller`
+   and `utils` are **not imported by any Track-1 file** (confirmed in build), so
+   they defer (`org-events-poller` → track 6 with the S5 consumer; `utils` → the
+   track that first needs it), §2. No UI, no checkin wiring. Green in isolation.
 2. **Roles** — **none new**; depends on #1286 track 2 having landed the interim
    `INVENTORY_MANAGER` (which references #1316 and does not close it — the
    strategic Catalog/Org split stays open). Define `isInventoryViewer` (or reuse
