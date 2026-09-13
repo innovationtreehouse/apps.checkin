@@ -211,9 +211,16 @@ export { default } from '@inventory/global-catalog/pages/items'
 export { GET, POST } from '@inventory/global-catalog/routes/items'
 ```
 
-These stubs mirror the library's route map (~20 files). They are generated once
-(a small script can emit them from a route manifest, or hand-write them — they
-change only when a *new* route is added, which is a deliberate act anyway).
+These stubs mirror the library's route map (34 human endpoints as built). They
+are generated once (a small script can emit them from a route manifest, or
+hand-write them — they change only when a *new* route is added, which is a
+deliberate act anyway).
+
+**Route-authoring gotcha (Track 4):** the `endpoint` string each handler passes
+to `handler()` must be the **full registered path including `/catalog`** — an
+endpoint string that drops the segment makes `getRoute()` miss the registry and
+the route 500s at runtime (tsc-green). This bit every catalog route until fixed
+(`2ce67cb21`); a guard test now covers it.
 
 **Auth + DB + org injection without the library importing checkin:** the library
 declares interfaces in `contract.ts` (`CatalogPrincipal`, `CatalogAuth` with
@@ -756,7 +763,10 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
    surface (`/api/internal`) is NOT built — deferred, blocked (§8); needs a
    boundary decision A/B/C.** Human `GET /api/catalog/items` returns a bare
    model-bag array (pagination → Track 5). Depends on 1–3. *(Built locally: Track
-   4, `b893d90b7` + `221022be7`.)*
+   4, `b893d90b7` + `221022be7`; human surface **verified working** — a stub bug
+   where `handler()` endpoint strings dropped the `/catalog` segment made
+   `getRoute()` miss the registry and every catalog route 500'd; fixed +
+   guard-tested in `2ce67cb21`, caught by a Track 5 flow test.)*
 5. **UI + nav + flow tests + pagination** — reskinned pages/components (library),
    page stub tree + `pageRegistry` entries, `Inventory` entry in `AppFrame`
    `NAV_ITEMS` + section `NavLink[]` tabs, `transpilePackages` (if tsx needs it —
