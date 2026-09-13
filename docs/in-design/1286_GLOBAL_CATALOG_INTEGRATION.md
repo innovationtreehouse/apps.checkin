@@ -593,14 +593,16 @@ real constraints:
    `check-route-coverage`'s **`new-route-old-authz` ratchet — a blocking error**.
 
 So there is currently **no sanctioned way to land a new machine-bearer route** in
-checkin. It needs one of these owner/boundary decisions (see §12):
+checkin. The options were (A) extend checkin's auth with an org-bearer
+`AuthResult`/`Authorize` variant (own boundary PR); (B) a scoped exception to the
+frozen `legacy-authz-routes.txt` baseline; (C) never host it in checkin.
 
-- **(A)** Extend checkin's auth with an org-bearer `AuthResult` + `Authorize`
-  variant — its **own boundary PR**, then the route.
-- **(B)** A scoped exception to the frozen `legacy-authz-routes.txt` baseline.
-- **(C)** Confirm the **old global-catalog-app server serves the remote consumers
-  for the whole overlap**, so checkin **never hosts `/api/internal`** — then the
-  machine surface is simply never built here.
+**Resolved: (C) (§12).** There are **no remote users at first landing**, so
+checkin never hosts `/api/internal` and A/B are not needed. Longer term the
+remote-communication model is expected to be a **periodic file export** (catalog
+dumped to AWS disk, consumers read the file), not a live endpoint — so hosting
+`/api/internal` is likely never built. A design follow-up issue (§12) works the
+export format/cadence/contract.
 
 **The folded `/items` flat-list branch depends on the same decision — also not
 built.** Disposition of the source's other org-bearer routes (unchanged):
@@ -651,11 +653,10 @@ handler.
   **temporary copies** (mark with a `ponytail:` removal note + tracking
   follow-up). Endgame: promote to a shared `packages/` contract when receipt
   arrives.
-- **Machine surface (`/api/internal`, org-bearer) is NOT hosted by checkin at
-  first landing** — it is blocked/deferred (above). The **old global-catalog-app
-  server serves the remote consumers** (`workflow-mapping-app`, `expense-app`,
-  `local-inventory-app`) for the overlap (option C is the de-facto first-landing
-  state). checkin hosting it needs decision A or B first.
+- **Machine surface (`/api/internal`, org-bearer) is NOT hosted by checkin** —
+  option C (§12), since there are **no remote users at first landing**. Nothing to
+  serve; the old server covers any residual consumer during overlap. The eventual
+  remote-communication model is a **file export** (§12 follow-up), not this route.
 - **Consumer repoint (only if checkin ever hosts A/B):** `local-inventory-app`
   and `workflow-mapping-app` read `/api/catalog/items` (+ `/[gtin13]`) on the old
   server. If/when checkin hosts the machine surface, they repoint to
@@ -811,19 +812,21 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
   reusable.) Add `VolunteerDesignation` rows too (seed currently has **0** —
   project memory) so the viewer gate and catalog pages are exercisable in dev
   and flow tests.
-- **DECISION NEEDED — org-bearer machine surface (Track 4 blocker).** checkin has
-  **no sanctioned way to host a new org-bearer route** (retired `requireOrgBearer`;
-  no org-bearer path in `authenticateRequest`/`resolveAccess`/`handler()` and the
-  registry `authorize` grammar can't express one; frozen
-  `legacy-authz-routes.txt`; `check-route-coverage` `new-route-old-authz` ratchet
-  blocks it). So `/api/internal` (+ folded `/items`) is **not built** (§8). Pick:
-  **(A)** extend checkin auth with an org-bearer `AuthResult`/`Authorize` variant
-  (own boundary PR); **(B)** a scoped exception to the frozen baseline; or **(C)**
-  the old global-catalog-app server serves the remote consumers for the whole
-  overlap, so checkin never hosts `/api/internal`. **(C) is the de-facto
-  first-landing state** and needs only confirmation; A/B are real boundary work.
-  This gates the S4 crossing's checkin-side transport (§8) and the consumer
-  repoint below.
+- **RESOLVED — org-bearer machine surface: option (C).** **No remote users at
+  first landing**, so checkin **never hosts `/api/internal`** — the machine
+  surface is not built (§8), and there is nothing to gate, ratchet, or repoint.
+  Options A/B (extend checkin auth / baseline exception) are **not needed now**.
+  This closes the Track 4 blocker for the port. **Future direction (below):** the
+  remote-communication story is expected to become a **periodic file export**, not
+  a live endpoint at all.
+- **FUTURE / follow-up issue — "how do we communicate global catalog items
+  remotely?"** The eventual model is a **file export**: the global catalog is
+  dumped to **AWS disk (S3/EFS) on a schedule**, and remote consumers read the
+  file rather than calling a live endpoint. This replaces the org-bearer
+  live-endpoint model (A/B) entirely, and is why hosting `/api/internal` in
+  checkin is likely never worth building. **Open a design follow-up issue
+  referencing #1286** at end of the conversion to work the export format, cadence,
+  location, and consumer-read contract.
 - **Consumer repoint (only under A/B).** `local-inventory-app` and
   `workflow-mapping-app` read the old server's `/api/catalog/items` (+
   `/[gtin13]`). checkin does **not** serve those paths at first landing; the old
