@@ -101,7 +101,7 @@ src/
                   conflictResolutionService, orgEventService                          (domain logic)
   workflows/      xstate state machines (proposal/supersession lifecycle)
   lib/            gtin, normalizeDescription  (next-free domain — portable)
-                  validate  (ROUTE-LAYER — imports next/server/NextResponse; lands in track 4)
+                  validate  (source imports next/server — NOT ported; replaced by next-free src/routes/_shared.ts in track 4)
                   auth, auth-shared, auth-predicates, route-auth  (RETIRE — see §5)
   app/api/…       route handlers (thin: parse → service → response)
   components/…    *Client.tsx client components (Mantine)
@@ -143,9 +143,13 @@ Two things to keep straight:
   contracts (receipt-app and future Inventory apps consume them), so burying them
   inside the catalog library would recreate the coupling we're trying to remove.
   Only genuinely catalog-specific helpers live inside `global-catalog/src/lib`:
-  `normalizeDescription` (next-free domain). **`validate` is a route-layer helper,
-  not domain** — it imports `next/server` (`NextResponse`), so it ships with the
-  routes in **track 4**, keeping the track-1 package free of a `next` dependency.
+  `normalizeDescription` (next-free domain). The source's `validate` imports
+  `next/server`, so it was **not ported** — Track 4 replaced it with a **next-free
+  `src/routes/_shared.ts`** (`parseId`/`readJson`/`parseBody`/`query`) that throws
+  host-rendered errors via an **injected `httpError` factory** (checkin's
+  `ApiResponseError`). Net: the library route layer imports **no `next/server`** —
+  the package stays `next`-free **through Track 4**, cleaner than shipping a
+  route-layer `validate`.
 
 ---
 
@@ -184,8 +188,8 @@ checkin/
     receipt-types/                         TEMPORARY vendored copy
   checkin-app/                             ← WIRING ONLY, no catalog logic
     src/instrumentation.ts                 + one configureCatalog({...}) call at boot
-    src/app/(catalog)/**/{page,route}.tsx  re-export stubs — human /api/catalog/* (see below)
-    src/app/api/internal/[...path]/route.ts  org-bearer machine surface stub (§8)
+    src/app/(catalog)/**/{page,route}.tsx  re-export stubs — human /api/catalog/* (34 endpoints, built)
+    # src/app/api/internal/[...path]       org-bearer machine surface — DEFERRED, blocked (§8)
     src/components/AppFrame.tsx            + one NAV_ITEMS entry (Inventory), from the library descriptor
     src/security/registry.ts               + catalog route entries (boundary is checkin's; scopeBindings: none — §5)
     src/security/core.ts                   + spread the catalog classifications into the merge
@@ -490,10 +494,14 @@ there is no client→server conversion to do, now or later.
   library factories). Wire auth via `useSession` client-side + `getServerSession`
   in the route handlers, exactly as checkin's own client pages do.
 - **`/api/catalog/*` is the human surface only** (`catalog-viewer` /
-  `INVENTORY_MANAGER`, paginated shapes). The **org-bearer** machine reads
-  (flat/single item lists) live under **`/api/internal`**, not `/api/catalog` —
-  they share a path in the source but differ in auth and response shape, so they
-  are kept separate (§8).
+  `INVENTORY_MANAGER`). The **org-bearer** machine reads would live under
+  **`/api/internal`**, not `/api/catalog` — kept separate by auth + response
+  shape (§8; that surface is deferred).
+- **Response shape (Track 4 as-built):** the human `GET /api/catalog/items` ships
+  a **bare model-bag array**, *not* a `{items,total,page,…}` envelope —
+  `handler()`'s stripper drops non-model bag keys, so pagination meta can't ride
+  the response. **Pagination is Track 5 work** (a count endpoint, or client-side).
+  Any earlier "paginated envelope" wording is superseded by this.
 
 **No server-component migration is planned.** A full server-driven rewrite would
 make the catalog *more* server-driven than checkin itself — a checkin-wide
@@ -554,29 +562,51 @@ vocabulary — remove a schema only if a field genuinely dies); convert
 
 These convert **differently** — that is the whole point of deciding now.
 
-### The org-bearer machine surface — as built (Track 4)
+### The org-bearer machine surface — DEFERRED, blocked (Track 4)
 
 The source has **more org-bearer routes than the S4 row above enumerates**, and
-two of them collided with the human `/api/catalog/*` namespace (§3/§7). Verified
+two of them collide with the human `/api/catalog/*` namespace (§3/§7). Verified
 against `global-catalog-app/src/app/api/**` at `innovationtreehouse/Inventory@main`
-plus the live remote consumers across the Inventory monorepo. Resolution
-(owner-approved during Track 4):
+plus the live remote consumers.
 
-| Source org-bearer route | Live remote consumers | Built as |
-|---|---|---|
-| `GET/POST /api/internal/[...path]` | `workflow-mapping-app` catalog-client; `expense-app` inventory-client | **ported verbatim** — the single machine surface |
-| `GET /api/catalog/items` (flat array) | `local-inventory-app`, `workflow-mapping-app` | **folded** into `/api/internal` as a `/items` flat-list GET branch |
-| `GET /api/catalog/items/[gtin13]` (single) | `local-inventory-app` | already on `/api/internal` as `/items/{gtin13}` |
-| `GET /api/catalog` (bare flat list) | none | **dropped** (dead; dup of the flat list) |
-| `POST /api/conversion-challenges` (org-token create) | none | **dropped** (dead machine endpoint; reintroduce under `/api/internal` only if a receipt producer needs it) |
+**Track 4 did NOT build the machine surface — it is deferred, pending a boundary
+decision.** (An earlier planning note called it "ported verbatim / owner-approved";
+that did not survive contact with checkin's auth boundary. This is the corrected
+as-built.) The org-bearer route `/api/internal/[...path]` is **blocked** by four
+real constraints:
 
-**Why fold, not co-locate:** the org-bearer `GET /api/catalog/items` (flat array)
-and the human `GET /api/catalog/items` (paginated `{items,total,page,…}`,
-`catalog-viewer`) share a path but differ in **auth and response shape** — they
-cannot be one handler. So `/api/catalog/*` stays **human-only**; every org-bearer
-read lives under `/api/internal`. Folding is a path change, not a query change
-(same `listAllItemsFlat()` repo call/SQL), and it preserves §8's
-single-org-bearer-surface model.
+1. Its gate is `requireOrgBearer` from the **retired** `@inventory/web-auth`
+   (§6 deletes it) — **no checkin-side org-bearer validator is specified**.
+2. checkin's `authenticateRequest`/`resolveAccess`/`handler()` pipeline has **no
+   org-bearer auth path**, and the registry `authorize` grammar **cannot express
+   one**.
+3. `scripts/legacy-authz-routes.txt` (where every other machine route lives) is
+   **frozen** — no new entries.
+4. Placing it at `src/app/api/internal/[...path]/route.ts` trips
+   `check-route-coverage`'s **`new-route-old-authz` ratchet — a blocking error**.
+
+So there is currently **no sanctioned way to land a new machine-bearer route** in
+checkin. It needs one of these owner/boundary decisions (see §12):
+
+- **(A)** Extend checkin's auth with an org-bearer `AuthResult` + `Authorize`
+  variant — its **own boundary PR**, then the route.
+- **(B)** A scoped exception to the frozen `legacy-authz-routes.txt` baseline.
+- **(C)** Confirm the **old global-catalog-app server serves the remote consumers
+  for the whole overlap**, so checkin **never hosts `/api/internal`** — then the
+  machine surface is simply never built here.
+
+**The folded `/items` flat-list branch depends on the same decision — also not
+built.** Disposition of the source's other org-bearer routes (unchanged):
+`GET /api/catalog` (bare) and org-token `POST /api/conversion-challenges` are
+**dropped** (dead — no consumers); `GET /api/catalog/items` (+`/[gtin13]`) flat
+reads still have remote consumers, served today by the **old** server (option C
+is their de-facto first-landing state).
+
+**Human vs machine split (built):** `/api/catalog/*` is **human-only**
+(`catalog-viewer` / `INVENTORY_MANAGER`). The org-bearer reads, *if* checkin ever
+hosts them (A/B), go under `/api/internal`, not `/api/catalog` — they share a
+path in the source but differ in auth and response shape, so they cannot be one
+handler.
 
 ### Conversion rule (per crossing)
 
@@ -591,9 +621,10 @@ single-org-bearer-surface model.
 3. **Synchronous RPC (S4):** at co-residence, bind the in-process adapter — the
    caller imports the catalog service function directly (via the port) instead of
    the `catalog-client` HTTP stub. Keep the zod schemas as the function
-   param/return types. **Retire the `/api/internal/*` route + org-bearer auth
-   last** — only after the final remote caller has flipped (during the overlap
-   window a remote receipt-app may still call it).
+   param/return types. (This rule assumes an S4 HTTP server exists to retire; per
+   the deferred-machine-surface finding above, checkin may **never host
+   `/api/internal`** — under option C the old server carries S4 for the whole
+   overlap and there is nothing checkin-side to retire.)
 4. **Async outbox (S5):** **do NOT collapse to a direct call.** The outbox
    (durable `OrgEvent` rows, in-transaction write, retry/ordering/audit) has
    value independent of transport. At co-residence the consumer stops
@@ -613,18 +644,16 @@ single-org-bearer-surface model.
   **temporary copies** (mark with a `ponytail:` removal note + tracking
   follow-up). Endgame: promote to a shared `packages/` contract when receipt
   arrives.
-- Keep the **`/api/internal/[...path]` route live** (org-bearer, GET+POST,
-  incl. the folded `/items` flat-list branch) so still-remote consumers
-  (`workflow-mapping-app`, `expense-app`, `local-inventory-app`) call it during
-  the overlap — it is the `http` adapter's server side. It flips off per rule 3
-  when they co-reside.
-- **Consumer repoint at cutover (follow-up, not now):** `local-inventory-app`
-  and `workflow-mapping-app` today read `/api/catalog/items` (+ `/[gtin13]`) on
-  the **old** global-catalog-app server (their `globalServerUrl`). checkin does
-  **not** serve those exact paths; the old server answers them during overlap.
-  When those apps migrate / the old server is cut over, they repoint
-  `/api/catalog/items` → `/api/internal/items` (one-line pathPrefix change). File
-  as a follow-up issue referencing #1286 at merge (§12).
+- **Machine surface (`/api/internal`, org-bearer) is NOT hosted by checkin at
+  first landing** — it is blocked/deferred (above). The **old global-catalog-app
+  server serves the remote consumers** (`workflow-mapping-app`, `expense-app`,
+  `local-inventory-app`) for the overlap (option C is the de-facto first-landing
+  state). checkin hosting it needs decision A or B first.
+- **Consumer repoint (only if checkin ever hosts A/B):** `local-inventory-app`
+  and `workflow-mapping-app` read `/api/catalog/items` (+ `/[gtin13]`) on the old
+  server. If/when checkin hosts the machine surface, they repoint to
+  `/api/internal/items`. Until then they keep pointing at the old server; no
+  checkin change. Tracked as a #1286 follow-up.
 - The **S5 consumer / org-events poller** has no producer in checkin yet: land
   it **inert** (no scheduled invocation) behind a flag until receipt-app
   migrates. The outbox producer (`emitOrgEvent`) can run from day one — rows
@@ -664,15 +693,19 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
   monitoring-db, pg-test-harness, s-ingest-core, telemetry) run `vitest`.
   `global-catalog` is a package, so it keeps vitest. **No jest conversion** (jest
   is checkin-app's convention, not the packages').
-- **Unit tier ports ~verbatim; the integration tier is a rewrite (Track 1
-  finding).** The **unit** tests (services/validation with no route/auth) port
-  with almost no change — Track 1 took them as-is. The **21 integration tests do
-  not**: every one is route+auth-bound, driving the app through the source's
-  `app-compat` HTTP shim + `@inventory/auth` token seeding
-  (`seedGlobalManager`/`seedOrg`). They must be **rewritten against checkin auth**,
-  and that happens **in track 4** (where the routes + `configureCatalog` land),
-  not track 1. **This makes track 4 larger than "port the routes" implies** — it
-  carries the full integration-test rewrite.
+- **Unit tier ports ~verbatim (Track 1); the source's integration tier becomes
+  checkin FLOW tests in Track 5 (Track 4 finding).** The **unit** tests
+  (services/validation, no route/auth) port with almost no change — Track 1 took
+  them as-is. The source's **21 integration tests are route+auth-bound** (source
+  `app-compat` HTTP shim + `@inventory/auth` `seedGlobalManager`/`seedOrg`), so
+  they don't port near-verbatim. In checkin's world that coverage **is flow
+  tests** — route+auth+DB e2e over HTTP with persona-mint — which §10 assigns to
+  **Track 5**, not a separate "Track 4 integration rewrite." (Earlier wording put
+  a "21 integration rewrite" in Track 4; Track 4 as-built was library
+  contract/runtime + route factories + `configureCatalog` + 34 human stubs only.
+  The integration rewrite and the flow tests are **the same work** here.) The
+  catalog journeys those 21 source tests covered must be carried by the Track 5
+  flow suite so they don't fall through.
 - **CI wiring — mostly already there (Track 1 finding).** The root
   `test:packages` script already globs `npm run test -w ./packages --if-present`,
   so the catalog package's vitest runs **automatically** — no new root script or
@@ -704,10 +737,10 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
 
 1. **Library skeleton** — `packages/global-catalog` (+ vendored `gtin`,
    `workflows`, temporary `receipt-types`), catalog schema + client + migrations,
-   domain services/repositories/workflows ported, **unit tests only** (the
-   integration tier is route+auth-bound → track 4; `lib/validate` is route-layer →
-   track 4). Package stays `next`-free. No UI, no checkin wiring. Green in
-   isolation.
+   domain services/repositories/workflows ported, **unit tests only** (88 vitest
+   pass; the source's integration tier → Track 5 flow tests; source `validate`
+   not ported — Track 4 uses a next-free `_shared.ts`). Package stays `next`-free.
+   No UI, no checkin wiring. Green in isolation. *(Built: Track 1.)*
 2. **Roles foundation** — add the `INVENTORY_MANAGER` `PersonRoleKind` value (the
    interim reduction; references #1316, does **not** close it — strategic
    Catalog+Org split stays open) +
@@ -716,16 +749,21 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
    security` (cross-package wiring, §5), registry route entries — **no
    scopeBindings** (catalog FKs aren't scopable; §5). Own PR track,
    **registry-first**.
-4. **Routes + auth** — library route-handler factories + `contract.ts` +
-   `configureCatalog` wired in checkin-app `instrumentation.ts`; API stub tree +
-   security guards; `lib/validate` (route-layer). **Includes the full rewrite of
-   the 21 integration tests against checkin auth** (the source's are
-   `app-compat`/`@inventory/auth`-bound) — this is the biggest single chunk of the
-   port, not a thin add-on. Depends on 1–3.
-5. **UI + nav** — reskinned pages/components (in the library), page stub tree +
-   `pageRegistry` entries, `Inventory` entry added to `AppFrame` `NAV_ITEMS` +
-   section `NavLink[]` tabs, `transpilePackages` (if tsx needs it — verify), flow
-   test.
+4. **Routes + auth** — library route factories + `contract.ts` + `configureCatalog`
+   wired in `instrumentation.ts`; **34 human `/api/catalog/*` stubs**
+   (`catalog-viewer`/`INVENTORY_MANAGER`); next-free `src/routes/_shared.ts` (no
+   `next/server` — replaces the source `validate`). **The org-bearer machine
+   surface (`/api/internal`) is NOT built — deferred, blocked (§8); needs a
+   boundary decision A/B/C.** Human `GET /api/catalog/items` returns a bare
+   model-bag array (pagination → Track 5). Depends on 1–3. *(Built locally: Track
+   4, `b893d90b7` + `221022be7`.)*
+5. **UI + nav + flow tests + pagination** — reskinned pages/components (library),
+   page stub tree + `pageRegistry` entries, `Inventory` entry in `AppFrame`
+   `NAV_ITEMS` + section `NavLink[]` tabs, `transpilePackages` (if tsx needs it —
+   verify). **Flow tests carry the source's 21 integration journeys** (route+auth+DB
+   e2e via persona-mint) — the "integration rewrite" lands here, not Track 4.
+   **Adds list pagination** (count endpoint or client-side) since the human route
+   ships a bare model-bag array (§7).
 6. **Infra** — deploy sequence + DB provisioning.
 7. **(Deferred — each a tracked follow-up issue vs #1286, not prose "later")**
    removal of temporary receipt shims when receipt-app migrates; browser-only UI
@@ -763,15 +801,27 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
   reusable.) Add `VolunteerDesignation` rows too (seed currently has **0** —
   project memory) so the viewer gate and catalog pages are exercisable in dev
   and flow tests.
-- **Consumer repoint at cutover (Track 4 finding).** `local-inventory-app` and
+- **DECISION NEEDED — org-bearer machine surface (Track 4 blocker).** checkin has
+  **no sanctioned way to host a new org-bearer route** (retired `requireOrgBearer`;
+  no org-bearer path in `authenticateRequest`/`resolveAccess`/`handler()` and the
+  registry `authorize` grammar can't express one; frozen
+  `legacy-authz-routes.txt`; `check-route-coverage` `new-route-old-authz` ratchet
+  blocks it). So `/api/internal` (+ folded `/items`) is **not built** (§8). Pick:
+  **(A)** extend checkin auth with an org-bearer `AuthResult`/`Authorize` variant
+  (own boundary PR); **(B)** a scoped exception to the frozen baseline; or **(C)**
+  the old global-catalog-app server serves the remote consumers for the whole
+  overlap, so checkin never hosts `/api/internal`. **(C) is the de-facto
+  first-landing state** and needs only confirmation; A/B are real boundary work.
+  This gates the S4 crossing's checkin-side transport (§8) and the consumer
+  repoint below.
+- **Consumer repoint (only under A/B).** `local-inventory-app` and
   `workflow-mapping-app` read the old server's `/api/catalog/items` (+
-  `/[gtin13]`); in checkin those org-bearer reads live under `/api/internal`
-  (§8). When those apps migrate / the old server is cut over, they repoint
-  `/api/catalog/items` → `/api/internal/items` (one-line pathPrefix change).
-  **Follow-up issue referencing #1286**, filed at merge (alongside receipt-shim
-  removal). Also: `POST /api/conversion-challenges` (org-token create) was found
-  **unused and dropped** — reintroduce under `/api/internal` only if a receipt
-  producer needs it.
+  `/[gtin13]`). checkin does **not** serve those paths at first landing; the old
+  server answers them. Only if checkin later hosts the machine surface (A/B) do
+  they repoint `/api/catalog/items` → `/api/internal/items`. **Follow-up issue
+  referencing #1286**. Also: `POST /api/conversion-challenges` (org-token) and
+  bare `GET /api/catalog` were **unused and dropped** — reintroduce under
+  `/api/internal` only if a receipt producer needs it.
 - **Deferral discipline.** Anything this design pushes past the first landing
   (track 7) becomes a **GitHub follow-up issue referencing #1286**, filed at
   merge — never a bare "later" in prose or a code comment. That is how we
