@@ -100,7 +100,8 @@ src/
                   provisionalGtinService, conversionChallengeService,
                   conflictResolutionService, orgEventService                          (domain logic)
   workflows/      xstate state machines (proposal/supersession lifecycle)
-  lib/            gtin, normalizeDescription, validate  (portable)
+  lib/            gtin, normalizeDescription  (next-free domain — portable)
+                  validate  (ROUTE-LAYER — imports next/server/NextResponse; lands in track 4)
                   auth, auth-shared, auth-predicates, route-auth  (RETIRE — see §5)
   app/api/…       route handlers (thin: parse → service → response)
   components/…    *Client.tsx client components (Mantine)
@@ -141,8 +142,10 @@ Two things to keep straight:
   of `global-catalog`, **not folded into it.** They are cross-app utilities/
   contracts (receipt-app and future Inventory apps consume them), so burying them
   inside the catalog library would recreate the coupling we're trying to remove.
-  Only genuinely catalog-specific helpers (`validate`, `normalizeDescription`)
-  live inside `global-catalog/src/lib`.
+  Only genuinely catalog-specific helpers live inside `global-catalog/src/lib`:
+  `normalizeDescription` (next-free domain). **`validate` is a route-layer helper,
+  not domain** — it imports `next/server` (`NextResponse`), so it ships with the
+  routes in **track 4**, keeping the track-1 package free of a `next` dependency.
 
 ---
 
@@ -628,17 +631,27 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
 
 ## 10. Testing
 
-- **Unit/integration — keep vitest, port ~verbatim.** The source uses vitest,
-  and so does **every checkin `packages/` package** (money, monitoring-db,
-  pg-test-harness, s-ingest-core, telemetry all run `vitest`). `global-catalog`
-  is a package, so it **keeps vitest** — its `src/__tests__/{unit,integration}`
-  port with almost no change, run by the package's own `test` / `test:integration`
-  scripts, reusing `@inventory/pg-test-harness`. **No jest conversion** (jest is
-  checkin-app's convention, not the packages'). **CI wiring is not automatic:**
-  the root `test` scripts only run `-w checkin-app`, and there is no
-  package-test aggregation today — so add an explicit run for the catalog package
-  (a root script, e.g. `npm -w @inventory/global-catalog run test`, plus its
-  integration counterpart, and/or a CI job) so its vitest suites actually run.
+- **Keep vitest** — the source and **every checkin `packages/` package** (money,
+  monitoring-db, pg-test-harness, s-ingest-core, telemetry) run `vitest`.
+  `global-catalog` is a package, so it keeps vitest. **No jest conversion** (jest
+  is checkin-app's convention, not the packages').
+- **Unit tier ports ~verbatim; the integration tier is a rewrite (Track 1
+  finding).** The **unit** tests (services/validation with no route/auth) port
+  with almost no change — Track 1 took them as-is. The **21 integration tests do
+  not**: every one is route+auth-bound, driving the app through the source's
+  `app-compat` HTTP shim + `@inventory/auth` token seeding
+  (`seedGlobalManager`/`seedOrg`). They must be **rewritten against checkin auth**,
+  and that happens **in track 4** (where the routes + `configureCatalog` land),
+  not track 1. **This makes track 4 larger than "port the routes" implies** — it
+  carries the full integration-test rewrite.
+- **CI wiring — mostly already there (Track 1 finding).** The root
+  `test:packages` script already globs `npm run test -w ./packages --if-present`,
+  so the catalog package's vitest runs **automatically** — no new root script or
+  CI job. The one wiring needed: add the catalog client generation to
+  `db:generate:test` (run by `pretest:packages`). **Ops gotcha:** the catalog DB
+  integration tier **silently skips unless `DOCKER_HOST` reaches the container
+  runtime** (the pg-test-harness container) — document this so a green run isn't
+  mistaken for coverage.
 - **Security tests**: registry/stripper coverage for catalog routes lives in
   `checkin-app/src/security/__tests__` (jest — it tests checkin-app's boundary
   wiring). Companion to the boundary PR (track 3).
@@ -662,8 +675,10 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
 
 1. **Library skeleton** — `packages/global-catalog` (+ vendored `gtin`,
    `workflows`, temporary `receipt-types`), catalog schema + client + migrations,
-   domain services/repositories/workflows ported, unit/integration tests. No UI,
-   no checkin wiring. Green in isolation.
+   domain services/repositories/workflows ported, **unit tests only** (the
+   integration tier is route+auth-bound → track 4; `lib/validate` is route-layer →
+   track 4). Package stays `next`-free. No UI, no checkin wiring. Green in
+   isolation.
 2. **Roles foundation** — add the `INVENTORY_MANAGER` `PersonRoleKind` value (the
    interim reduction; references #1316, does **not** close it — strategic
    Catalog+Org split stays open) +
@@ -672,7 +687,10 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
    security`, registry + scopeBindings entries. Own PR track, **registry-first**.
 4. **Routes + auth** — library route-handler factories + `contract.ts` +
    `configureCatalog` wired in checkin-app `instrumentation.ts`; API stub tree +
-   security guards. Depends on 1–3.
+   security guards; `lib/validate` (route-layer). **Includes the full rewrite of
+   the 21 integration tests against checkin auth** (the source's are
+   `app-compat`/`@inventory/auth`-bound) — this is the biggest single chunk of the
+   port, not a thin add-on. Depends on 1–3.
 5. **UI + nav** — reskinned pages/components (in the library), page stub tree +
    `pageRegistry` entries, `Inventory` entry added to `AppFrame` `NAV_ITEMS` +
    section `NavLink[]` tabs, `transpilePackages` (if tsx needs it — verify), flow
