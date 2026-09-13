@@ -377,6 +377,33 @@ defineRoute({
     ],
 });
 
+// Tombstone census (#1456 §2a). Lists merged-away Person rows and, per tombstone,
+// the residue still parked on it — the surface a sysadmin/board uses to triage the
+// existing stock before the LIVE_PERSON removal deletes those rows. The bag is
+// { Person } (each tombstone's id/name/email + its survivor via mergedInto, plus a
+// _count of the residue relations) and { PersonMerge } (fromId only, so the page
+// can flag a legacy tombstone that has no archive row). Exposes tombstone identity,
+// so isSysadmin/board only — the same band that already sees applicant PII.
+//
+// The grant is pii + public: email is the one pii field, name/id/mergedInto are
+// public, and every _count rides its relation's public id, so a broad band is not
+// needed to keep the residue counts intact.
+//
+// Landed registry-first, ahead of the route, per the AGENTS.md boundary-isolation
+// rule: an unused defineRoute is inert, so the grant is reviewable on its own.
+defineRoute({
+    endpoint: 'GET /api/membership-ops/participants/tombstones',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: null,
+    // Bag: { Person } (tombstones, with mergedInto Person for the survivor and a
+    // _count of the residue relations) and { PersonMerge } (archive rows, fromId).
+    returns: ['Person', 'PersonMerge'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:pii', 'public']],
+        ['isBoardMember', ['everyones:pii', 'public']],
+    ],
+});
+
 // Background-check reviewers' queue. Reviewers must see applicant parents' names
 // + emails (to look them up on Averity) but NOT internal/personal fields — so the
 // grant is deliberately limited to pii + public. Board members are implicit
