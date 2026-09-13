@@ -44,12 +44,28 @@
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
-import { classifications, type Models, type FieldsOf } from './generated/classifications';
+import {
+    classifications as checkinClassifications,
+    relations as checkinRelations,
+} from './generated/classifications';
+import {
+    classifications as catalogClassifications,
+    relations as catalogRelations,
+} from './generated/catalog-classifications';
 import type { BusinessRole } from '@/types/auth';
 import { assertNever } from '@/lib/lifecycle/classify';
 
-export type { Models, FieldsOf };
-export { classifications };
+// checkin and the global catalog (#1286 §5) keep separate Prisma schemas, each
+// with its own `generator security` map. Their model names are disjoint
+// (enforced by having no shared schema), so a flat merge is the whole-system
+// classification map every boundary consumer (stripper, outbound, registry)
+// reads through. This is the single merge point — import `classifications` /
+// `relations` from here, not from either generated file.
+export const classifications = { ...checkinClassifications, ...catalogClassifications } as const;
+export const relations = { ...checkinRelations, ...catalogRelations } as const;
+
+export type Models = keyof typeof classifications;
+export type FieldsOf<M extends Models> = keyof (typeof classifications)[M];
 
 export type SensitiveTier = 'pii' | 'personal' | 'internal';
 export type Tier = 'public' | 'member' | SensitiveTier | 'secret';
