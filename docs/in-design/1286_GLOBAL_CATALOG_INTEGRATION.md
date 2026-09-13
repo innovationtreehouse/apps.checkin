@@ -362,16 +362,26 @@ Source tiers → checkin:
 | **viewer** | any RBAC-role holder, program leader, or volunteer — not any authenticated user (least-privilege note below) | (unchanged) |
 
 **Adding the role** touches checkin's role foundation (all in checkin's own
-schema, not the catalog schema):
+schema, not the catalog schema). The exact surface, **as built (Track 2)**:
 
-- `PersonRoleKind` enum in `prisma/schema.prisma` (currently SYSADMIN, BOARD,
-  KEYHOLDER, BG_REVIEWER, OPERATIONS) — add `INVENTORY_MANAGER`. Following the
-  `isOperations` precedent, it is **PersonRole-table-only, no legacy mirror
-  column**.
-- `src/lib/roles.ts` `FLAG_TO_KIND` map (+ derived `ROLE_FLAGS`, `rolesToFlags`).
-- `src/types/next-auth.d.ts` JWT/Session interfaces (surface the new flag).
-- `RoleBadge` + the `/api/roles` grant UI (grantable by sysadmin, matching the
-  existing matrix).
+- `PersonRoleKind` enum in `prisma/schema.prisma` — add `INVENTORY_MANAGER`.
+  Following the `isOperations` precedent, it is **PersonRole-table-only, no legacy
+  mirror column** (so `FLAG_TO_KIND` only, **not** `KIND_TO_MIRROR`).
+- **Migration:** additive `ALTER TYPE "PersonRoleKind" ADD VALUE IF NOT EXISTS
+  'INVENTORY_MANAGER'` — **not** transaction-wrapped (Postgres forbids using a
+  new enum value in the same txn that adds it).
+- `src/lib/roles.ts` `FLAG_TO_KIND` (derives `ROLE_FLAGS`, `rolesToFlags`).
+- `src/types/next-auth.d.ts` — the new flag in **3** spots (JWT/Session/user).
+- `RoleBadge` `ROLE_META`.
+- **Three `ROLE_FLAGS`-indexed row-type interfaces** that tsc forces the optional
+  `isInventoryManager?` onto: `src/app/membership-ops/participants/page.tsx`,
+  `src/app/membership-ops/roles/page.tsx` (via `RolesEditTarget`),
+  `src/components/roles/RolesEditModal.tsx`.
+- **No `/api/roles` code change** — the route iterates `ROLE_FLAGS` and
+  `setRoleFlag`'s authority matrix already lets sysadmin/board grant any flag, so
+  the new role is grantable automatically. (The earlier "grant UI" line
+  overstated the surface.) **No `DevLoginPicker` change** either (it renders a
+  fixed badge subset, already omitting OPERATIONS).
 
 **Viewer predicate**: a new `isCatalogViewer(session)` = authenticated **and**
 any of — holds `INVENTORY_MANAGER`, holds **any** `PersonRole` (RBAC role),
