@@ -1,0 +1,192 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  runtime      = "nodejs"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Location {
+  id     Int    @id @default(autoincrement())
+  name   String
+  orgId  String @map("org_id")
+
+  primaryItems   OrgItem[] @relation("PrimaryLocation")
+  backstockItems OrgItem[] @relation("BackstockLocation")
+
+  @@map("locations")
+}
+
+model OrgItem {
+  id                  Int  @id @default(autoincrement())
+  orgId               String @map("org_id")
+  gtin13              String
+  existingQuantity    Int    @default(0) @map("existing_quantity")
+  desiredQuantity     Int    @default(0) @map("desired_quantity")
+  locationId          Int?   @map("location_id")
+  backstockLocationId Int?   @map("backstock_location_id")
+
+  location        Location? @relation("PrimaryLocation", fields: [locationId], references: [id], onDelete: Restrict)
+  backstockLocation Location? @relation("BackstockLocation", fields: [backstockLocationId], references: [id], onDelete: Restrict)
+
+  @@unique([orgId, gtin13], name: "orgGtin", map: "org_items_org_gtin_idx")
+  @@map("org_items")
+}
+
+model InventoryLog {
+  id           Int      @id @default(autoincrement())
+  orgId        String   @map("org_id")
+  userId       Int?     @map("user_id")
+  username     String?  @map("username")
+  changedAt    DateTime @map("changed_at")
+  changeType   String   @map("change_type")
+  gtin13       String
+  fieldChanged String   @map("field_changed")
+  valueBefore  String?  @map("value_before")
+  valueAfter   String?  @map("value_after")
+  receiptId    String?  @map("receipt_id")
+  // Quantity provenance for applied deltas: the live OrgItem stores only the
+  // total, so raw receipt qty + the conversion factor + the derived units that
+  // were added are recorded here (null for manual edits with no conversion).
+  rawQuantity       Int? @map("raw_quantity")
+  conversionFactor  Int? @map("conversion_factor")
+  conversionVersion Int? @map("conversion_version")
+
+  @@map("inventory_log")
+}
+
+model ReceiveQueue {
+  id          Int       @id @default(autoincrement())
+  orgId       String    @map("org_id")
+  gtin13      String
+  // RAW receipt quantity; multiplied by conversionFactor when fulfilled so the
+  // queued unit definition is preserved until it actually lands in inventory.
+  quantity    Int
+  conversionFactor  Int @default(1) @map("conversion_factor")
+  conversionVersion Int @default(1) @map("conversion_version")
+  retailer    String    @default("")
+  receiptId   String    @map("receipt_id")
+  lineItemId  Int       @map("line_item_id")
+  queuedAt    DateTime  @default(now()) @map("queued_at")
+  fulfilledAt DateTime? @map("fulfilled_at")
+
+  @@map("receive_queue")
+}
+
+model SettingsData {
+  id                  Int     @id
+  globalServerUrl     String? @map("global_server_url")
+  pollIntervalMinutes Int     @default(3) @map("poll_interval_minutes")
+  pollWindowStart     String  @default("00:00") @map("poll_window_start")
+  pollWindowEnd       String  @default("23:59") @map("poll_window_end")
+
+  @@map("settings_data")
+}
+
+model ProvisionalItem {
+  id                    Int       @id @default(autoincrement())
+  provisionalGtin13     String    @unique @map("provisional_gtin13")
+  name                  String
+  proposedCategoryId    Int?      @map("proposed_category_id")
+  proposedSubcategoryId Int?      @map("proposed_subcategory_id")
+  usageBehavior         String    @map("usage_behavior")
+  proposedByUserId      Int?      @map("proposed_by_user_id")
+  orgId                 String    @map("org_id")
+  proposedAt            DateTime  @default(now()) @map("proposed_at")
+  status                String    @default("pending")
+  reviewedAt            DateTime? @map("reviewed_at")
+  rejectionReason       String?   @map("rejection_reason")
+  resolvedToGtin13      String?   @map("resolved_to_gtin13")
+  // The conversion factor this provisional's stock was counted under (from the
+  // S3 delta's human-entered factor). Compared against the resolved real item's
+  // canonical factor at merge time to detect a uom_mismatch. Integer.
+  conversionFactor      Int       @default(1) @map("conversion_factor")
+
+  @@map("provisional_items")
+}
+
+model InventoryMergeConflict {
+  id                          Int       @id @default(autoincrement())
+  orgId                       String    @map("org_id")
+  provisionalGtin13           String    @map("provisional_gtin13")
+  realGtin13                  String    @map("real_gtin13")
+  conflictType                String    @map("conflict_type")
+  provisionalConversionFactor Int       @default(1) @map("provisional_conversion_factor")
+  existingConversionFactor    Int       @default(1) @map("existing_conversion_factor")
+  status                      String    @default("pending")
+  resolvedByUserId            Int?      @map("resolved_by_user_id")
+  resolvedAt                  DateTime? @map("resolved_at")
+  resolution                  String?
+  sourceEventId               Int       @unique @map("source_event_id")
+
+  @@map("inventory_merge_conflicts")
+}
+
+model ProvisionalResolution {
+  id                Int      @id @default(autoincrement())
+  orgId             String   @map("org_id")
+  provisionalGtin13 String   @map("provisional_gtin13")
+  kind              String   // "approved" | "mapped_to_existing" | "rejected"
+  realGtin13        String?  @map("real_gtin13")
+  rejectionReason   String?  @map("rejection_reason")
+  recordedAt        DateTime @default(now()) @map("recorded_at")
+  sourceEventId     Int?     @map("source_event_id")
+
+  @@unique([orgId, provisionalGtin13], name: "provisional_resolution_org_gtin_unique")
+  @@map("provisional_resolutions")
+}
+
+model ReceivedOrgEvent {
+  id            Int      @id @default(autoincrement())
+  orgId         String   @map("org_id")
+  eventType     String   @map("event_type")
+  payload       String
+  receivedAt    DateTime @map("received_at")
+  status        String   @default("pending")
+  failureReason String?  @map("failure_reason")
+
+  @@map("received_org_events")
+}
+
+model ProvisionalItemLog {
+  id                Int      @id @default(autoincrement())
+  orgId             String   @map("org_id")
+  provisionalItemId Int?     @map("provisional_item_id")
+  gtin13            String
+  eventType         String   @map("event_type")
+  notes             String?
+  performedBy       Int?     @map("performed_by")
+  performedByUsername String? @map("performed_by_username")
+  createdAt         DateTime @map("created_at")
+
+  @@map("provisional_item_log")
+}
+
+model ReceivedInventoryDelta {
+  id            Int      @id @default(autoincrement())
+  orgId         String   @map("org_id")
+  receiptId     String   @unique @map("receipt_id")
+  deltaJson     String   @map("delta_json")
+  status        String
+  failureReason String?  @map("failure_reason")
+  receivedAt    DateTime @default(now()) @map("received_at")
+
+  @@map("received_inventory_deltas")
+}
+
+model LocationLog {
+  id         Int      @id @default(autoincrement())
+  orgId      String   @map("org_id")
+  locationId Int      @map("location_id")
+  userId     Int?     @map("user_id")
+  username   String?  @map("username")
+  changedAt  DateTime @map("changed_at")
+  eventType  String   @map("event_type")
+  nameBefore String?  @map("name_before")
+  nameAfter  String?  @map("name_after")
+
+  @@map("location_log")
+}
