@@ -16,11 +16,13 @@ import { USAGE_BEHAVIORS } from "./viewTypes";
 import type { CategoryRow, ItemRow, ItemReferenceRow, ReferenceConflictRow, SubcategoryRow, UsageBehavior } from "./viewTypes";
 import ItemReferencesModal from "./ItemReferencesModal";
 
-// The list routes return a page of rows with no total (the server-side envelope
-// was dropped in track 4). Until a count endpoint lands (design §7, deferred),
-// the UI pulls a single capped page and paginates in-memory.
-// ponytail: 200-row ceiling; add a count endpoint / server pagination if the
-// catalog outgrows one page.
+// Items use real server pagination: the route can't carry a total (checkin's
+// stripper drops non-model scalars — design §7), so the repo fetches PAGE_SIZE+1
+// and the client uses the extra row as the "has next page" signal (Prev/Next,
+// every row reachable, ≤PAGE_SIZE+1 rows per request). The other lists here are
+// naturally bounded (a manager's learned references, unresolved conflicts), so
+// they pull one capped page.
+const PAGE_SIZE = 50;
 const PAGE_LIMIT = 200;
 const EMPTY_FORM = { name: "", categoryId: "", subcategoryId: "", usageBehavior: "" as UsageBehavior | "" };
 const THEAD_STYLE = { position: "sticky" as const, top: 0, background: "var(--mantine-color-body)", zIndex: 1 };
@@ -185,6 +187,8 @@ export default function GlobalInventoryClient() {
   const canEdit = useCanManage();
 
   const [items, setItems] = useState<ItemRow[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasNext, setHasNext] = useState(false);
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState("");
@@ -207,16 +211,25 @@ export default function GlobalInventoryClient() {
   const [conflicts, setConflicts] = useState<ReferenceConflictRow[]>([]);
   const [conflictsLoaded, setConflictsLoaded] = useState(false);
 
-  const loadItems = useCallback(async (q: string, sb: string, sd: string, sa: boolean) => {
-    const params = new URLSearchParams({ page: "1", limit: String(PAGE_LIMIT), sortBy: sb, sortDir: sd });
+  const loadItems = useCallback(async (q: string, sb: string, sd: string, sa: boolean, p: number) => {
+    const params = new URLSearchParams({ page: String(p), limit: String(PAGE_SIZE), sortBy: sb, sortDir: sd });
     if (q) params.set("q", q);
     if (sa) params.set("includeArchived", "true");
     try {
-      setItems(await api<ItemRow[]>(`/items?${params}`));
+      const rows = await api<ItemRow[]>(`/items?${params}`);
+      // The route returns PAGE_SIZE+1 when a next page exists (repo lookahead).
+      setHasNext(rows.length > PAGE_SIZE);
+      setItems(rows.slice(0, PAGE_SIZE));
     } catch (e) { console.error("[GlobalInventoryClient] failed to load items", e); }
   }, []);
 
-  useEffect(() => { loadItems(debouncedSearch, sortBy, sortDir, showArchived); }, [loadItems, debouncedSearch, sortBy, sortDir, showArchived]);
+  // Filter/sort change → back to page 1. Prev/Next call loadItems directly.
+  useEffect(() => { setPage(1); loadItems(debouncedSearch, sortBy, sortDir, showArchived, 1); }, [loadItems, debouncedSearch, sortBy, sortDir, showArchived]);
+
+  function goToPage(p: number) {
+    setPage(p);
+    loadItems(debouncedSearch, sortBy, sortDir, showArchived, p);
+  }
   useEffect(() => { api<CategoryRow[]>("/categories").then(setCategories).catch((e) => console.error("[GlobalInventoryClient] failed to load categories", e)); }, []);
 
   async function loadSubcategories(categoryId: string) {
@@ -272,7 +285,7 @@ export default function GlobalInventoryClient() {
         notifications.show({ message: "Item created", color: "green" });
       }
       close();
-      await loadItems(debouncedSearch, sortBy, sortDir, showArchived);
+      await loadItems(debouncedSearch, sortBy, sortDir, showArchived, page);
     } catch (err) {
       notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red" });
     } finally { setSubmitting(false); }
@@ -284,7 +297,7 @@ export default function GlobalInventoryClient() {
     try {
       await api(`/items/${archiveTarget.gtin13}/archive`, { method: "POST" });
       closeArchive();
-      await loadItems(debouncedSearch, sortBy, sortDir, showArchived);
+      await loadItems(debouncedSearch, sortBy, sortDir, showArchived, page);
       notifications.show({ message: "Item archived", color: "orange" });
     } catch (err) {
       notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red" });
@@ -294,7 +307,7 @@ export default function GlobalInventoryClient() {
   async function handleUnarchive(gtin13: string) {
     try {
       await api(`/items/${gtin13}/unarchive`, { method: "POST" });
-      await loadItems(debouncedSearch, sortBy, sortDir, showArchived);
+      await loadItems(debouncedSearch, sortBy, sortDir, showArchived, page);
       notifications.show({ message: "Item unarchived", color: "green" });
     } catch (err) {
       notifications.show({ message: err instanceof Error ? err.message : "Error", color: "red" });
@@ -368,6 +381,13 @@ export default function GlobalInventoryClient() {
               ))}
             </Table.Tbody>
           </Table>
+          {(page > 1 || hasNext) && (
+            <Group justify="center" mt="md" gap="sm">
+              <Button variant="default" size="xs" disabled={page <= 1} onClick={() => goToPage(page - 1)}>Previous</Button>
+              <Text size="sm" c="dimmed">Page {page}</Text>
+              <Button variant="default" size="xs" disabled={!hasNext} onClick={() => goToPage(page + 1)}>Next</Button>
+            </Group>
+          )}
         </Tabs.Panel>
 
         {canEdit && <Tabs.Panel value="associations"><ReferencesTab /></Tabs.Panel>}
