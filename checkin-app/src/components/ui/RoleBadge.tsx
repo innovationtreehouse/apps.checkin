@@ -18,6 +18,7 @@ export type ParticipantRole =
   | 'isKeyholder'
   | 'isBackgroundCheckReviewer'
   | 'isOperations'
+  | 'isInventoryManager'
   | 'coreVolunteer';
 
 export const ROLE_META: Record<ParticipantRole, RoleMeta> = {
@@ -26,6 +27,7 @@ export const ROLE_META: Record<ParticipantRole, RoleMeta> = {
   isKeyholder: { label: 'Keyholder', color: 'treehousePurple' },
   isBackgroundCheckReviewer: { label: 'BG Reviewer', color: 'treehousePurple' },
   isOperations: { label: 'Operations', color: 'treehousePurple' },
+  isInventoryManager: { label: 'Inventory Manager', color: 'treehousePurple' },
   coreVolunteer: { label: 'Core Volunteer', color: 'treehousePurple' },
 };
 
