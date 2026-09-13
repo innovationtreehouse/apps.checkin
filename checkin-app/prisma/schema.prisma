@@ -229,6 +229,7 @@ enum PersonRoleKind {
   KEYHOLDER
   BG_REVIEWER
   OPERATIONS
+  INVENTORY_MANAGER
 }
 
 /// Source of truth for role grants (expand phase of the boolean-column -> table
