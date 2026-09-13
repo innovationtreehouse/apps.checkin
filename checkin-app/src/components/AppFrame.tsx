@@ -107,9 +107,8 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     // Global catalog (#1286 §7). Broader gate than the *-Ops items around it —
-    // any RBAC role or program leader sees it (isCatalogViewerClient). The
-    // routes run the full catalog-viewer gate, incl. the volunteer leg the
-    // session can't see, so a volunteer-without-role still reaches the pages.
+    // any RBAC role, program leader, or volunteer sees it (isCatalogViewerClient,
+    // which mirrors the server catalog-viewer gate exactly via the session).
     href: CATALOG_TOP_NAV.href,
     label: CATALOG_TOP_NAV.label,
     icon: <IconPackage size={18} />,

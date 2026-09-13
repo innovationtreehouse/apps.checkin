@@ -22,6 +22,7 @@ export type RegistryUser = {
   isInventoryManager?: boolean;
   householdLead?: boolean;
   programsLed?: number[];
+  hasVolunteerDesignation?: boolean;
   toolStatuses?: Array<{ level: string }>;
 };
 
@@ -55,10 +56,9 @@ const SHOP_ADMIN: Visible = (u) => shopRoles(u).isAdmin;
 // Membership Ops gates per tab (Review admits reviewers, Participants admits
 // operations, the rest are admin-only). One definition in membershipOpsNav.
 const MOPS = (href: string): Visible => (u) => membershipOpsRouteVisible(href, u);
-// Global catalog (#1286 §7). Mirrors isCatalogViewerClient — any RBAC role or a
-// program leader. The volunteer-by-email leg of the server gate can't be seen
-// from the session, so this is intentionally narrow (over-listing is never a
-// grant; every catalog route re-runs the full gate).
+// Global catalog (#1286 §7). Mirrors isCatalogViewerClient / the server
+// 'catalog-viewer' gate: any RBAC role, a program leader, or a volunteer
+// (hasVolunteerDesignation, set on the session by the JWT callback).
 const CATALOG_VIEWER: Visible = (u, signedIn) =>
   signedIn &&
   (!!u?.isSysadmin ||
@@ -67,7 +67,8 @@ const CATALOG_VIEWER: Visible = (u, signedIn) =>
     !!u?.isBackgroundCheckReviewer ||
     !!u?.isOperations ||
     !!u?.isInventoryManager ||
-    (u?.programsLed?.length ?? 0) > 0);
+    (u?.programsLed?.length ?? 0) > 0 ||
+    !!u?.hasVolunteerDesignation);
 
 export type PageEntry = {
   href: string;
