@@ -15,8 +15,7 @@
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
-import { fieldVisible, type Scope, type Tier, type Token } from './core';
-import { classifications, relations } from './generated/classifications';
+import { classifications, relations, fieldVisible, type Scope, type Tier, type Token } from './core';
 import { scopesHeld, type CallerContext } from './access-resolvers';
 
 export function stripBag(
