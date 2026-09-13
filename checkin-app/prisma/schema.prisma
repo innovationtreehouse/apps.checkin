@@ -1653,3 +1653,17 @@ model BulkSendItem {
 
   @@index([bulkSendId, status])
 }
+
+/// The organization registry (#1286 §6). checkin is single-org today — one row,
+/// the seeded Treehouse org with a stable well-known id — but this is a table,
+/// not an env scalar, so multi-org later is more rows, no schema/config rewrite.
+/// checkin-app reads its own row and injects the identity into each migrated
+/// Inventory library via configureCatalog({ org }); no library reaches cross-DB
+/// into this table. Non-personal reference data — both fields public.
+model Org {
+  /// Stable well-known id, stamped as org_id on catalog rows (#1286 §6).
+  /// @sensitivity:public
+  id   String @id
+  /// @sensitivity:public
+  name String
+}
