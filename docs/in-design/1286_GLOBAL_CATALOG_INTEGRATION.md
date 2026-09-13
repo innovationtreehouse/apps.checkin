@@ -636,11 +636,24 @@ dumped to AWS disk, consumers read the file), not a live endpoint — so hosting
 export format/cadence/contract.
 
 **The folded `/items` flat-list branch depends on the same decision — also not
-built.** Disposition of the source's other org-bearer routes (unchanged):
-`GET /api/catalog` (bare) and org-token `POST /api/conversion-challenges` are
-**dropped** (dead — no consumers); `GET /api/catalog/items` (+`/[gtin13]`) flat
-reads still have remote consumers, served today by the **old** server (option C
-is their de-facto first-landing state).
+built.** Disposition of the source's other org-bearer routes:
+- `GET /api/catalog` (bare flat list) — **dropped, genuinely dead** (duplicate of
+  the flat list, no consumer, no future need).
+- **`POST /api/conversion-challenges` (submit a challenge) — DEFERRED, not dead.**
+  This is the **dispute path**: a consuming org flags that an item-reference's
+  conversion factor is wrong (proposed factor + reason); the manager's
+  GET/accept/reject queue reviews it. It is org-token because the *challenger* is
+  a remote org's app, so it hit the **same machine-surface wall** as the other S4
+  crossings and simply has **no caller yet** — it returns when a challenger
+  (receipt / local-inventory) co-resides, as an **in-process service call** (like
+  the S4 conversions in this section), or via the machine-surface decision. Do
+  **not** treat it as removed capability. *(If a **human**-raised challenge is
+  ever wanted — a manager/staff flagging a bad factor from the UI — that is a
+  checkin-native `catalog-viewer`/`INVENTORY_MANAGER` route, **not** blocked by
+  the org-bearer wall; net-new, flag it if desired.)*
+- `GET /api/catalog/items` (+`/[gtin13]`) flat reads still have remote consumers,
+  served today by the **old** server (option C is their de-facto first-landing
+  state).
 
 **Human vs machine split (built):** `/api/catalog/*` is **human-only**
 (`catalog-viewer` / `INVENTORY_MANAGER`). The org-bearer reads, *if* checkin ever
@@ -697,8 +710,9 @@ handler.
   it **inert** (no scheduled invocation) behind a flag until receipt-app
   migrates. The outbox producer (`emitOrgEvent`) can run from day one — rows
   simply accumulate until a consumer is enabled. `conversion-challenges` ships
-  **manager GET/accept/reject only**; its list stays empty until a receipt
-  producer exists.
+  **manager GET/accept/reject only** at first landing — the **submit path (raise
+  a challenge) is deferred, not dropped** (§8): it returns when a challenger
+  (receipt / local-inventory) co-resides, so the queue stays empty until then.
 - Provisional-from-receipt paths stay reachable via the catalog's own manual
   routes (as the source already supports) until the receipt producer exists.
 
@@ -864,9 +878,10 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
   `/[gtin13]`). checkin does **not** serve those paths at first landing; the old
   server answers them. Only if checkin later hosts the machine surface (A/B) do
   they repoint `/api/catalog/items` → `/api/internal/items`. **Follow-up issue
-  referencing #1286**. Also: `POST /api/conversion-challenges` (org-token) and
-  bare `GET /api/catalog` were **unused and dropped** — reintroduce under
-  `/api/internal` only if a receipt producer needs it.
+  referencing #1286**. Note: bare `GET /api/catalog` was **dropped as genuinely
+  dead**; but **`POST /api/conversion-challenges` (submit) is DEFERRED, not
+  dropped** — it is the challenge-raising path and returns when a challenger
+  co-resides (in-process) or under the machine-surface decision (§8).
 - **Viewer-gate DB dedup (Track 5 follow-up, boundary PR).** The client now reads
   a `hasVolunteerDesignation` JWT/session claim (§6), but the **server** resolver
   still does its own per-request `VolunteerDesignation` DB lookup. Deduping the
