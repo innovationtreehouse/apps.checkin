@@ -517,14 +517,16 @@ there is no client→server conversion to do, now or later.
   a **bare model-bag array**, *not* a `{items,total,page,…}` envelope —
   `handler()`'s stripper drops non-model bag keys, so pagination meta can't ride
   the response. Any earlier "paginated envelope" wording is superseded by this.
-- **Pagination (Track 5 as-built): offset + one-row-lookahead, NOT a count
-  endpoint.** A table-wide total can't ride the model-bag response (same stripper
-  wall as above; the `_count` precedent is a *relation* count inside a row, not a
-  standalone scalar), so a clean count endpoint **isn't available without a
-  security-boundary change — treat it as a dead end.** Track 5 built **offset +
-  one-row lookahead** (fetch `limit+1`, use the extra row to decide Prev/Next):
-  every row reachable, bounded pulls, no total. A later track should **not chase a
-  count endpoint** unless a boundary PR makes one possible.
+- **Pagination (Track 5 as-built): numbered pagination via a count endpoint.**
+  (An earlier Track 5 attempt built offset + one-row lookahead on the belief a
+  count endpoint was a dead end — that was **wrong** and is replaced.) A
+  table-wide total *can't* ride the item model-bag (stripper drops non-model
+  scalars), but the clean fix is small and is exactly the **registry-first
+  boundary commit**: declare a synthetic **`CatalogItemCount` (public) response
+  model** so its scalar `total` passes the stripper as a model field, and register
+  **`GET /api/catalog/items/count`**. The boundary piece (synthetic classification
+  + registry entry) lands first; the count route factory + stub follow. This gives
+  real **numbered pagination** with a true total — no lookahead workaround.
 
 **No server-component migration is planned.** A full server-driven rewrite would
 make the catalog *more* server-driven than checkin itself — a checkin-wide
@@ -789,8 +791,9 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
    `NAV_ITEMS` + section `NavLink[]` tabs, `transpilePackages` (if tsx needs it —
    verify). **Flow tests carry the source's 21 integration journeys** (route+auth+DB
    e2e via persona-mint) — the "integration rewrite" lands here, not Track 4.
-   **Adds list pagination** — offset + one-row-lookahead (Prev/Next, no total); a
-   count endpoint is a dead end without a boundary change (§7).
+   **Adds numbered pagination** via a `GET /api/catalog/items/count` endpoint,
+   enabled by a registry-first boundary commit (synthetic public `CatalogItemCount`
+   response model so the scalar total passes the stripper) — §7.
 6. **Infra** — deploy sequence + DB provisioning.
 7. **(Deferred — each a tracked follow-up issue vs #1286, not prose "later")**
    removal of temporary receipt shims when receipt-app migrates; browser-only UI
