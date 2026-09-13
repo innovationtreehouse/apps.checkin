@@ -418,6 +418,15 @@ any of — holds `INVENTORY_MANAGER`, holds **any** `PersonRole` (RBAC role),
 `programsLed` non-empty (program leader), or has a `VolunteerDesignation` (keyed
 by email; volunteer). This is the single chokepoint for read access.
 
+**Volunteer signal reaches the client via a claim (Track 5 as-built).** The
+first three inputs are already on the session, but `VolunteerDesignation` is
+email-keyed with **no session flag** — so nav/UI can't mirror the gate without a
+DB call. Track 5 added a **`hasVolunteerDesignation` JWT/session claim** (a new
+`next-auth.d.ts` field) so `isCatalogViewerClient` mirrors the server gate
+exactly. **Follow-up (boundary PR):** the server resolver still does its own
+per-request DB lookup for the designation — it could be deduped to read the
+claim instead; tracked in §12.
+
 **Least-privilege note** (`docs/rules/principles.md`): this gate *widens* read
 access — a broad set of staff can read the whole catalog. That is deliberate and
 proportionate: the catalog is reference data, tiered `public`/`internal` with
@@ -507,8 +516,15 @@ there is no client→server conversion to do, now or later.
 - **Response shape (Track 4 as-built):** the human `GET /api/catalog/items` ships
   a **bare model-bag array**, *not* a `{items,total,page,…}` envelope —
   `handler()`'s stripper drops non-model bag keys, so pagination meta can't ride
-  the response. **Pagination is Track 5 work** (a count endpoint, or client-side).
-  Any earlier "paginated envelope" wording is superseded by this.
+  the response. Any earlier "paginated envelope" wording is superseded by this.
+- **Pagination (Track 5 as-built): offset + one-row-lookahead, NOT a count
+  endpoint.** A table-wide total can't ride the model-bag response (same stripper
+  wall as above; the `_count` precedent is a *relation* count inside a row, not a
+  standalone scalar), so a clean count endpoint **isn't available without a
+  security-boundary change — treat it as a dead end.** Track 5 built **offset +
+  one-row lookahead** (fetch `limit+1`, use the extra row to decide Prev/Next):
+  every row reachable, bounded pulls, no total. A later track should **not chase a
+  count endpoint** unless a boundary PR makes one possible.
 
 **No server-component migration is planned.** A full server-driven rewrite would
 make the catalog *more* server-driven than checkin itself — a checkin-wide
@@ -773,8 +789,8 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
    `NAV_ITEMS` + section `NavLink[]` tabs, `transpilePackages` (if tsx needs it —
    verify). **Flow tests carry the source's 21 integration journeys** (route+auth+DB
    e2e via persona-mint) — the "integration rewrite" lands here, not Track 4.
-   **Adds list pagination** (count endpoint or client-side) since the human route
-   ships a bare model-bag array (§7).
+   **Adds list pagination** — offset + one-row-lookahead (Prev/Next, no total); a
+   count endpoint is a dead end without a boundary change (§7).
 6. **Infra** — deploy sequence + DB provisioning.
 7. **(Deferred — each a tracked follow-up issue vs #1286, not prose "later")**
    removal of temporary receipt shims when receipt-app migrates; browser-only UI
@@ -835,6 +851,11 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
   referencing #1286**. Also: `POST /api/conversion-challenges` (org-token) and
   bare `GET /api/catalog` were **unused and dropped** — reintroduce under
   `/api/internal` only if a receipt producer needs it.
+- **Viewer-gate DB dedup (Track 5 follow-up, boundary PR).** The client now reads
+  a `hasVolunteerDesignation` JWT/session claim (§6), but the **server** resolver
+  still does its own per-request `VolunteerDesignation` DB lookup. Deduping the
+  server to read the claim instead is a possible **boundary PR** — tracked, not
+  first-landing.
 - **Deferral discipline.** Anything this design pushes past the first landing
   (track 7) becomes a **GitHub follow-up issue referencing #1286**, filed at
   merge — never a bare "later" in prose or a code comment. That is how we
