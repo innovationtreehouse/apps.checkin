@@ -830,78 +830,49 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
 
 ---
 
-## 12. Open items / assumptions
+## 12. Open items
 
-- **Production data: none to migrate. Two orthogonal population paths — not
-  alternatives.** There is no existing catalog data to import.
-  - **Direct** (this design): catalog entries are entered **by hand through the
-    UI**, from a Google Sheet. There is **no *direct* bulk-import endpoint or
-    script** — the source has none (items are created singly) and none is wanted.
-  - **Indirect** (receipt-driven, later): `docs/backlog/TOPDOWN.md` GC-INVENTORY
-    (Q22/Q30) describes replaying 1,000–2,000 stored **receipts** to load
-    inventory, which **triggers** catalog growth as a side effect (provisional
-    GTIN allocation, item-reference proposals — the S4 crossings in §8). That is
-    the **receipt pipeline's** job, not a catalog import, and it arrives **when
-    receipt-app migrates** into the process. This design neither builds nor
-    supersedes it; §8 is where the catalog receives those triggered actions.
+Only genuinely open work lives here. Resolved decisions are recorded in the
+sections they belong to (§3–§9); this section does not recap them.
 
-  So "no bulk load" (direct) and receipt-replay (indirect) do not conflict — they
-  are different mechanisms populating the catalog from different sources.
-- **Dev/test seed — pull from `scripts/setup-test-data.sh`.** Inventory's
-  `scripts/setup-test-data.sh` carries the baseline catalog rows (category
-  `Electronics`/`N`, subcategory `Control System`/`10`, items `Roborio v2` +
-  `Power Distribution Hub`, one item-reference). **Lift that data/shape**; drop
-  its transport — the script drives the catalog over `curl` + the retired
-  `/api/auth/login`, whereas the checkin seed writes **directly via the catalog
-  Prisma client / library services** against `CATALOG_DATABASE_URL`. (The
-  gc-app `src/__tests__/helpers/seed.ts` is auth-token seeding only — not
-  reusable.) Add `VolunteerDesignation` rows too (seed currently has **0** —
-  project memory) so the viewer gate and catalog pages are exercisable in dev
-  and flow tests.
-- **RESOLVED — org-bearer machine surface: option (C).** **No remote users at
-  first landing**, so checkin **never hosts `/api/internal`** — the machine
-  surface is not built (§8), and there is nothing to gate, ratchet, or repoint.
-  Options A/B (extend checkin auth / baseline exception) are **not needed now**.
-  This closes the Track 4 blocker for the port. **Future direction (below):** the
-  remote-communication story is expected to become a **periodic file export**, not
-  a live endpoint at all.
-- **FUTURE / follow-up issue — "how do we communicate global catalog items
-  remotely?"** The eventual model is a **file export**: the global catalog is
-  dumped to **AWS disk (S3/EFS) on a schedule**, and remote consumers read the
-  file rather than calling a live endpoint. This replaces the org-bearer
-  live-endpoint model (A/B) entirely, and is why hosting `/api/internal` in
-  checkin is likely never worth building. **Open a design follow-up issue
-  referencing #1286** at end of the conversion to work the export format, cadence,
-  location, and consumer-read contract.
-- **Consumer repoint (only under A/B).** `local-inventory-app` and
-  `workflow-mapping-app` read the old server's `/api/catalog/items` (+
-  `/[gtin13]`). checkin does **not** serve those paths at first landing; the old
-  server answers them. Only if checkin later hosts the machine surface (A/B) do
-  they repoint `/api/catalog/items` → `/api/internal/items`. **Follow-up issue
-  referencing #1286**. Note: bare `GET /api/catalog` was **dropped as genuinely
-  dead**; but **`POST /api/conversion-challenges` (submit) is DEFERRED, not
-  dropped** — it is the challenge-raising path and returns when a challenger
-  co-resides (in-process) or under the machine-surface decision (§8).
-- **Viewer-gate DB dedup (Track 5 follow-up, boundary PR).** The client now reads
-  a `hasVolunteerDesignation` JWT/session claim (§6), but the **server** resolver
-  still does its own per-request `VolunteerDesignation` DB lookup. Deduping the
-  server to read the claim instead is a possible **boundary PR** — tracked, not
-  first-landing.
-- **Deferral discipline.** Anything this design pushes past the first landing
-  (track 7) becomes a **GitHub follow-up issue referencing #1286**, filed at
-  merge — never a bare "later" in prose or a code comment. That is how we
-  remember: the issue tracker, not this doc.
+### Open follow-ups (file as GitHub issues referencing #1286 at merge)
 
-**Resolved in Q&A:** single `INVENTORY_MANAGER` role (managers collapsed); viewer
-= any RBAC role / program leader / volunteer; catalog gets its **own dedicated
-database** on the shared Postgres server (`CATALOG_DATABASE_URL`,
-monitoring-db pattern) — no table renames needed; **org identity from an `Org`
-registry row (checkin-owned, seeded on initial migration with a stable id),
-injected via `configureCatalog` as an accessor — multi-org-ready, not an env
-scalar or a cross-DB settings read** (§6); UI stays `"use client"` (no
-server-component migration); nav = one `Inventory` entry in `AppFrame`'s
-`NAV_ITEMS`, default slot right after `Shop Ops`, gated by `isCatalogViewer`,
-sub-screens as `SectionTabs` (§7).
+- **Remote catalog communication — file export (design).** The eventual model is
+  a **periodic file export** (catalog dumped to AWS disk / S3, consumers read the
+  file), not a live endpoint — the reason checkin need not host `/api/internal`
+  (§8). Open a design follow-up to work export format, cadence, location, and the
+  consumer-read contract.
+- **Deferred capabilities returning when a challenger/consumer co-resides.** The
+  `POST /api/conversion-challenges` **submit** path (raise a challenge) and the
+  S4 crossings are not built at first landing (§8); track their return as an
+  in-process capability when receipt / local-inventory migrate. *(A human-raised
+  challenge path is a checkin-native option, not org-bearer-blocked — flag if
+  wanted.)*
+- **Viewer-gate DB dedup (boundary PR).** The server resolver still does its own
+  per-request `VolunteerDesignation` lookup though the client reads the
+  `hasVolunteerDesignation` claim (§6); dedup the server to read the claim.
+- **Consumer repoint — only if checkin ever hosts the machine surface (A/B).**
+  `local-inventory-app` / `workflow-mapping-app` would repoint
+  `/api/catalog/items` → `/api/internal/items`. Not expected under option C +
+  file export; kept only as a contingency.
+- **Track 7 deferrals:** removal of the temporary receipt shims when receipt-app
+  migrates; browser-only UI test coverage if a real gap appears (§10).
+
+**Deferral discipline:** each of the above is filed as a tracked issue at merge —
+never a bare "later" in prose or a code comment. The issue tracker remembers,
+not this doc.
+
+### Assumptions
+
+- **No production catalog data to migrate; seeded by hand.** Initial prod is
+  entered by hand through the UI from a Google Sheet (no direct bulk import; §8).
+  Receipt-replay is a *separate, later* indirect path (via receipt-app), not a
+  contradiction.
+- **Dev/test seed to build.** No reusable catalog data seed exists — lift the
+  baseline rows/shape from Inventory's `scripts/setup-test-data.sh` (drop its
+  curl + retired-auth transport; write via the catalog Prisma client against
+  `CATALOG_DATABASE_URL`), and add `VolunteerDesignation` rows (seed has **0**)
+  so the viewer gate and pages are exercisable.
 
 ---
 
