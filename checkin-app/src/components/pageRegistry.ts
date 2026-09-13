@@ -6,12 +6,18 @@
 // worst shows a link that 403s. See docs/designs/INDEX_PAGE_SCOPING.md.
 
 import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
+import type { BusinessRole } from '@/types/auth';
 import { leadsAnyProgram } from '@/components/navBadges';
+import { shopRoles } from '@/lib/shopNav';
+import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
+import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
+import { membershipOpsRouteVisible } from '@/lib/membershipOpsNav';
 
 export type RegistryUser = {
   isSysadmin?: boolean;
   isBoardMember?: boolean;
   isKeyholder?: boolean;
+  isBackgroundCheckReviewer?: boolean;
   isOperations?: boolean;
   householdLead?: boolean;
   toolStatuses?: Array<{ level: string }>;
@@ -33,14 +39,20 @@ const BOARD: Visible = (u) => !!u?.isSysadmin || !!u?.isBoardMember;
 // directory + add-contact) — see membership-ops/layout.tsx's nav gate. Outreach is
 // the one settings/* page operations can also reach (see settings/layout.tsx).
 const BOARD_OR_OPS: Visible = (u) => !!u?.isSysadmin || !!u?.isBoardMember || !!u?.isOperations;
-// Finance Ops is board-only — sysadmin has no access (issue #1083).
-const BOARD_ONLY: Visible = (u) => !!u?.isBoardMember;
 const SYSADMIN: Visible = (u) => !!u?.isSysadmin;
-const SAFETY: Visible = (u) => !!u?.isSysadmin || !!u?.isBoardMember || !!u?.isKeyholder;
-const SHOP: Visible = (u) =>
-  !!u?.isSysadmin ||
-  !!u?.isBoardMember ||
-  !!u?.toolStatuses?.some((ts) => ts.level === 'MAY_CERTIFY_OTHERS');
+// Section gates read from the module that owns the section, never a second copy
+// (#1569). A role-list gate becomes a Visible via roleGate; sections with a
+// richer predicate (Shop resolves toolStatuses, Membership Ops gates per tab)
+// call their own exported function.
+const roleGate = (roles: BusinessRole[]): Visible => (u) => roles.some((r) => !!u?.[r]);
+const SAFETY = roleGate(SAFETY_SECTION_ROLES);
+// Finance Ops is board-only — sysadmin has no access (issue #1083).
+const FINANCE = roleGate(FINANCE_SECTION_ROLES);
+const SHOP: Visible = (u) => shopRoles(u).isCertifier;
+const SHOP_ADMIN: Visible = (u) => shopRoles(u).isAdmin;
+// Membership Ops gates per tab (Review admits reviewers, Participants admits
+// operations, the rest are admin-only). One definition in membershipOpsNav.
+const MOPS = (href: string): Visible => (u) => membershipOpsRouteVisible(href, u);
 
 export type PageEntry = {
   href: string;
@@ -89,7 +101,7 @@ export const PAGES: PageEntry[] = [
 
   // Shop Ops — board or certifier
   { href: '/shop-ops', label: 'Shop Ops', section: 'Shop Ops', visible: SHOP },
-  { href: '/shop-ops/create', label: 'Create', section: 'Shop Ops', visible: SHOP },
+  { href: '/shop-ops/create', label: 'Create', section: 'Shop Ops', visible: SHOP_ADMIN },
   { href: '/shop-ops/live', label: 'Live', section: 'Shop Ops', visible: SHOP },
   { href: '/shop-ops/manage', label: 'Manage', section: 'Shop Ops', visible: SHOP },
 
@@ -105,17 +117,18 @@ export const PAGES: PageEntry[] = [
   { href: '/facility-ops/visits', label: 'Visits', section: 'Facility Ops', visible: BOARD },
   { href: '/facility-ops/corrections', label: 'Corrections', section: 'Facility Ops', keywords: 'audit attendance edit delete flagged significance review', visible: BOARD },
 
-  // Membership Ops — board
-  { href: '/membership-ops', label: 'Membership Ops', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/applications', label: 'Applications', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/households', label: 'Households', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/volunteer-memberships', label: 'Volunteers', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/participants', label: 'Participants', section: 'Membership Ops', visible: BOARD_OR_OPS },
-  { href: '/membership-ops/participants/new', label: 'New Participant', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/participants/import', label: 'Import Participants', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/participants/merge', label: 'Merge Participants', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/review', label: 'Membership Review', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/roles', label: 'Roles', section: 'Membership Ops', visible: BOARD },
+  // Membership Ops — admin tools, plus operations (Participants) and background-check
+  // reviewers (Review). Gates read from membershipOpsNav, not retyped here.
+  { href: '/membership-ops', label: 'Membership Ops', section: 'Membership Ops', visible: MOPS('/membership-ops') },
+  { href: '/membership-ops/applications', label: 'Applications', section: 'Membership Ops', visible: MOPS('/membership-ops/applications') },
+  { href: '/membership-ops/households', label: 'Households', section: 'Membership Ops', visible: MOPS('/membership-ops/households') },
+  { href: '/membership-ops/volunteer-memberships', label: 'Volunteers', section: 'Membership Ops', visible: MOPS('/membership-ops/volunteer-memberships') },
+  { href: '/membership-ops/participants', label: 'Participants', section: 'Membership Ops', visible: MOPS('/membership-ops/participants') },
+  { href: '/membership-ops/participants/new', label: 'New Participant', section: 'Membership Ops', visible: MOPS('/membership-ops/participants/new') },
+  { href: '/membership-ops/participants/import', label: 'Import Participants', section: 'Membership Ops', visible: MOPS('/membership-ops/participants/import') },
+  { href: '/membership-ops/participants/merge', label: 'Merge Participants', section: 'Membership Ops', visible: MOPS('/membership-ops/participants/merge') },
+  { href: '/membership-ops/review', label: 'Membership Review', section: 'Membership Ops', visible: MOPS('/membership-ops/review') },
+  { href: '/membership-ops/roles', label: 'Roles', section: 'Membership Ops', visible: MOPS('/membership-ops/roles') },
 
   // Membership Audit — board
   { href: '/membership-audit', label: 'Membership Audit', section: 'Membership Audit', visible: BOARD },
@@ -135,11 +148,11 @@ export const PAGES: PageEntry[] = [
   { href: '/program-ops/sessions/new', label: 'New Session', section: 'Program Ops', visible: BOARD },
 
   // Finance Ops — board
-  { href: '/finance-ops', label: 'Finance Ops', section: 'Finance Ops', visible: BOARD_ONLY },
-  { href: '/finance-ops/payment-plan', label: 'Program Payment Plan', section: 'Finance Ops', visible: BOARD_ONLY },
-  { href: '/finance-ops/membership-payment-plan', label: 'Membership Payment Plan', section: 'Finance Ops', visible: BOARD_ONLY },
-  { href: '/finance-ops/shopify-holds', label: 'Shopify Hold Reconciliation', section: 'Finance Ops', keywords: 'seat hold failed inventory scholarship manual reconcile shopify', visible: BOARD_ONLY },
-  { href: '/finance-ops/payments', label: 'Payment problems', section: 'Finance Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: BOARD_ONLY },
+  { href: '/finance-ops', label: 'Finance Ops', section: 'Finance Ops', visible: FINANCE },
+  { href: '/finance-ops/payment-plan', label: 'Program Payment Plan', section: 'Finance Ops', visible: FINANCE },
+  { href: '/finance-ops/membership-payment-plan', label: 'Membership Payment Plan', section: 'Finance Ops', visible: FINANCE },
+  { href: '/finance-ops/shopify-holds', label: 'Shopify Hold Reconciliation', section: 'Finance Ops', keywords: 'seat hold failed inventory scholarship manual reconcile shopify', visible: FINANCE },
+  { href: '/finance-ops/payments', label: 'Payment problems', section: 'Finance Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: FINANCE },
 
   // System Status — board
   { href: '/system-status', label: 'System Status', section: 'System Status', visible: BOARD },

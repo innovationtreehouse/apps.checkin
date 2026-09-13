@@ -3,14 +3,14 @@
 import { Box, Center, Loader, Stack, Text } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
-import { FINANCE_NAV_LINKS } from "@/lib/financeNav";
+import { FINANCE_NAV_LINKS, FINANCE_SECTION_ROLES } from "@/lib/financeNav";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { tabBadgeFor } from "@/components/navBadges";
 import { CountBadge } from "@/components/ui/CountBadge";
 
 export default function FinanceOpsLayout({ children }: { children: React.ReactNode }) {
-  const { loading, ready } = useRequireRole(["isBoardMember"]);
+  const { loading, ready } = useRequireRole(FINANCE_SECTION_ROLES);
   const counts = useTodoCounts(true);
 
   if (loading) {
