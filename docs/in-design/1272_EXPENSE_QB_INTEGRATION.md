@@ -28,7 +28,7 @@ QuickBooks brought in as an **incremental phase ladder** grounded in the real
 
 ## Executive summary
 
-- **Finance staff** reach expense as a new finance area in the existing nav;
+- **Finance staff** reach expense in the existing **Finance** nav area;
   checkoffs and holds route to a new `FINANCE` role and (for escalations) the
   existing `BOARD` role, per-line approval routes to the line's **budget owner**,
   and — unlike the catalog/inventory ports — **reads are narrow, not broad**:
@@ -62,11 +62,12 @@ reconciliation), and the later
 (FE6–FE8) — are referenced **without any closing keyword**: this is a design-doc
 PR, and a closing link here would auto-close them on merge with nothing built.
 Relates to **RB2 "Role: Finance"**
-([#1314](https://github.com/innovationtreehouse/checkin/issues/1314), open,
-readiness DECISION) — the canonical backlog issue for the finance role this port
-stands up (§6); referenced **without a closing keyword** and left open (the port
-partially addresses it with the interim `FINANCE` role; the label/scope decision
-stays #1314's, exactly as #1286 relates to RB4/#1316).
+([#1314](https://github.com/innovationtreehouse/checkin/issues/1314), open) — the
+canonical backlog issue for the finance role this port stands up (§6). **Owner
+decision: `FINANCE` is a distinct `PersonRoleKind` row** (not folded onto `BOARD`),
+so #1314's core question is settled here. Still referenced **without a closing
+keyword** (design-doc rule); #1314 tracks only the residual sub-actor detail
+(Treasurer / Bookkeeper / Accountant designations under the role).
 
 **Status:** design. No board decision gates the mechanics below. This doc is the
 **third in a series** and **reuses the base architecture** established by the
@@ -258,7 +259,7 @@ checkin/
         pages/                             page components — client
         routes/                            route-handler factories (GET/POST/…)
         routes/_shared.ts                  next-free parse/validate (injected httpError; replaces source route-auth, §6)
-        nav.ts                             section-tab links (NavLink[]) for the finance area (§7)
+        nav.ts                             section-tab links (NavLink[]) for the Finance nav section (§7)
         runtime.ts                         configureExpense() + getPrincipal()/db/org/crossing accessors
         contract.ts                        ExpenseAuth / ExpensePrincipal / OrgIdentity + crossing ports (§8) + QB port (§9)
       package.json
@@ -475,7 +476,7 @@ mapping:
 
 | Source guard | checkin (this port) | Notes |
 |---|---|---|
-| `isFinance` (hold resolution, capital seed/review, QB queues, account/vendor mapping, owner-map management, finance-assign, resolve-unknown, raise-exception) | **`FINANCE`** — new `PersonRoleKind` | **RB2 "Role: Finance"** ([#1314](https://github.com/innovationtreehouse/checkin/issues/1314), readiness DECISION) — the umbrella (Treasurer / Bookkeeper / Accountant) GC-ROLES **explicitly keeps**, a kept role not a net-new invention. This port is where #1314 gets stood up; it **partially addresses #1314** (interim single row) **without closing it** — the label/sub-actor split stays #1314's, mirroring #1286↔RB4/#1316. Follows the `isOperations` precedent: PersonRole-table-only, **no legacy mirror column**. |
+| `isFinance` (hold resolution, capital seed/review, QB queues, account/vendor mapping, owner-map management, finance-assign, resolve-unknown, raise-exception) | **`FINANCE`** — a **distinct** new `PersonRoleKind` row (owner-decided) | **RB2 "Role: Finance"** ([#1314](https://github.com/innovationtreehouse/checkin/issues/1314)) — the umbrella GC-ROLES **explicitly keeps**, a kept role not a net-new invention. This port stands it up as a distinct row (not folded onto `BOARD`); #1314 keeps only the sub-actor detail (Treasurer / Bookkeeper / Accountant designations). Referenced without a closing keyword. Follows the `isOperations` precedent: PersonRole-table-only, **no legacy mirror column**. |
 | `isOrgManager` (account-mapping + owner-assignment management) | **`FINANCE`** (collapsed) | The source's org-manager is finance-staff pipeline management; collapse onto `FINANCE` rather than standing up a second role. Split later only if a real duty boundary appears. |
 | `isBudgetOwner` (approve/reject *your own* lines) | **budget-owner predicate on `Person`** — a data relationship, not an RBAC role | The line's owner is a `Person` (resolved via `PartOwnerMap`, FE2); "is this session the owner of this line?" is a per-row check, not a global role. Program Treasurer / Assistant Lead map here too (relationship-attached, GC-ROLES). |
 | `isAdmin` (a few admin-only ops) | **`SYSADMIN`** (existing) | Direct. |
@@ -530,11 +531,10 @@ drive the pipeline correct. Both fold onto `FINANCE`:
    FE2/#1273). This is what routes each line to the *right* budget owner — the
    approval itself stays the owner's.
 
-Owner-assignment (task 2) is the one with a real candidate elsewhere: a program's
-**Treasurer / Assistant Lead** (relationship-attached, GC-ROLES) knows their own
-budget owners better than central finance. First landing keeps it on `FINANCE` (no
-second role); whether owner-assignment should route to the program treasurer
-instead is an **open item** (§13).
+Both curation tasks are **`FINANCE`'s**. (A later duty-modeling pass under GC-ROLES
+could attach owner-assignment to a program's Treasurer / Assistant Lead, who know
+their own budget owners — but that is GC-ROLES relationship work, not a question
+this port leaves open.)
 
 ### Reads are narrow — the port's main divergence from #1286/#1287
 
@@ -651,23 +651,16 @@ Pages, each an A13 surface / exception screen:
   timer to configure. Keep the row (the model ports cleaner intact); drop the
   fields with the deferred cleanup, exactly as #1287 §7 decided.
 
-### Nav placement — a finance area, gated by finance/board (not the Inventory area)
+### Nav placement — the Finance part of the navbar (owner-decided)
 
-Unlike local-inventory (which joined the catalog's **Inventory** section, #1287
-§7), **expense is finance-facing, not inventory-facing**, and its read gate is
-narrow (§6). So expense's screens go in a **finance area**, next to checkin's
-existing **Finance Ops**, gated by `FINANCE` / `BOARD` — **not** under the
-Inventory nav and **not** behind the broad Inventory viewer gate. The library
-exports its `NavLink[]` descriptor; checkin-app places it (order is a
-checkin-shell concern). Whether this is a new `Expense` / `Finance` section tab
-group or folds into the existing Finance Ops tabs is a checkin-shell UI call —
-the port just contributes its `NavLink[]` and the `FINANCE`/`BOARD` gate. Badges
-(open holds, pending checkoffs, QB queue depth) use checkin's existing `navBadges`
-— optional, not first-landing.
-
-*(Open question — whether finance-side Inventory surfaces should eventually share
-one area with the Inventory ports is a checkin-shell IA decision, not this port's;
-§13.)*
+**Expense lives in checkin's Finance nav area** — not the Inventory area the
+catalog/inventory ports created (#1287 §7), and not a new top-level area. Unlike
+those ports, expense is finance-facing with a narrow read gate (§6), so its screens
+are **section tabs under Finance** (alongside the existing Finance Ops surfaces),
+gated by `FINANCE` / `BOARD`. The library exports its `NavLink[]` descriptor;
+checkin-app appends it to the Finance section (order is a checkin-shell concern).
+Badges (open holds, pending checkoffs, QB queue depth) use checkin's existing
+`navBadges` — optional, not first-landing.
 
 ---
 
@@ -681,8 +674,10 @@ every crossing sits behind a port; converting = swap one adapter binding in
 correction the prior ports' as-built forced:** the `http` adapter is **not a live
 option inside checkin** — checkin cannot host a new machine-bearer route (§8a,
 #1286 Track-4), so the crossings that were HTTP in the source (R receipt intake, I
-inventory-load) are **in-process only** here; `http` survives only as the source's
-transport for reference / a hypothetical remote peer, never bound in checkin.
+inventory-load) are **in-process only** here; `http` is shown only as the source's
+transport for reference, **never bound in checkin** — the Inventory apps all move
+into checkin and none runs remotely (owner decision, on security grounds), so there
+is no remote peer to serve.
 
 | Crossing | Direction | Kind | Contract | Today's transport |
 |---|---|---|---|---|
@@ -725,11 +720,13 @@ port, so at expense's first landing there is **no automated receipt feed**. The
 human surfaces (approval queues, holds, capital review, account mapping) and the
 manual expense-entry path work; the high-volume receipt→expense pipeline goes live
 **only when receipt-app co-resides**. Until then, expenses are entered by hand /
-seeded (§13). If a genuinely *remote* receipt-app must push intake into checkin
-before it co-resides, that needs a boundary PR extending checkin auth with an
-inbound service-key/org-bearer variant (#1286's option A) — a §13 item, not
-first-landing work. **Same disposition for `POST /api/capital-assets/seed`?** No —
-that route is gated by `requireRole(isFinance)` (a normal **user session**, the
+seeded. **There is no remote-receipt fallback, ever, by decision:** receipt-app
+(and every other Inventory app) is being *moved into* checkin and will not run
+outside it — an open inbound machine surface is an unacceptable security exposure,
+so checkin never grows one and no "option A" boundary variant is pursued. Receipt
+intake is in-process, full stop. **Same disposition for
+`POST /api/capital-assets/seed`?** No — that route is gated by
+`requireRole(isFinance)` (a normal **user session**, the
 finance user's JWT forwarded as the cookie), **not** a machine bearer, so it is a
 normal `FINANCE`-gated route and **is** hostable (§9 QB-1).
 
@@ -951,7 +948,12 @@ reconciliation queue. **Exists:** the read/pull path (QB-1). **Net-new:** the
 diff + drift queue. Grounds on GC-QB's "reverse-reconcile against existing QB to
 enumerate what the system still can't model."
 
-### Later — noted, not designed
+### Out of scope for this work — noted, not designed (followups)
+
+FE6–FE8 are **not part of this landing.** This work is FE1–FE5 on the QB-0…QB-3
+ladder; the items below are separate future epics that build on the QB substrate
+QB-0…QB-2 establishes.
+
 
 - **FE6** membership/plan payment → QB sync (primary adult; conflict → Financial
   Ambiguity Record; retry → manual queue). Reuses QB-0's connection + the QB-2
@@ -1025,9 +1027,9 @@ library skeleton + shared packages) has landed; the inventory-load crossing (tra
    route+auth-bound integration tier → flow tests in track 5, §12). Package stays
    `next`-free (next-free `_shared.ts`; source `validate`/`route-auth` not ported).
    No UI, no QB write, no checkin wiring. Green in isolation.
-2. **`FINANCE` role foundation** — add the `FINANCE` `PersonRoleKind` (RB2, a kept
-   role — **references #1314 without closing it**; the label/scope stays #1314's
-   DECISION), the **exact #1286 Track-2 surface** (non-txn `ADD VALUE` migration,
+2. **`FINANCE` role foundation** — add the `FINANCE` `PersonRoleKind` as a
+   **distinct row** (RB2, a kept role; owner-decided — **references #1314 without
+   closing it**), the **exact #1286 Track-2 surface** (non-txn `ADD VALUE` migration,
    `FLAG_TO_KIND`, next-auth in 3 spots, `RoleBadge`, the 3 `ROLE_FLAGS`-indexed row
    types; **no `/api/roles` and no `DevLoginPicker` change** — grantable
    automatically, §6). Own PR (role-system change). Defines the budget-owner per-row
@@ -1087,11 +1089,9 @@ library skeleton + shared packages) has landed; the inventory-load crossing (tra
 9. **(Deferred — each a tracked follow-up issue vs the FE issues, not prose
    "later")** the in-process receipt-intake + inventory-load crossings go **live**
    when receipt-app / the orchestrator co-reside (no route to retire — none was
-   hosted, §8a/§8c); drop the dead `SettingsData` poll fields; a boundary PR only
-   **if** a genuinely remote receipt-app / orchestrator must push into checkin
-   before co-residing (#1286 option A, §13); FE6 (membership→QB, #1277), FE7
-   (shop-hour journals, #1278), FE8 (budget-vs-actual, #1279); QB-3 drift-queue
-   polish. File these at merge.
+   hosted, §8a/§8c); drop the dead `SettingsData` poll fields; FE6 (membership→QB,
+   #1277), FE7 (shop-hour journals, #1278), FE8 (budget-vs-actual, #1279); QB-3
+   drift-queue polish. File these at merge.
 
 ---
 
@@ -1143,27 +1143,21 @@ Posture mirrors #1286 §10 / #1287 §10.
 Only genuinely open work lives here. Resolved decisions are recorded in the
 sections they belong to (§3–§9) — this section does not recap them.
 
-### Open follow-ups (file as GitHub issues referencing the relevant FE issue at merge)
+**Scope line:** this work is **FE1–FE5** (the A13 surface) on the **QB-0…QB-3**
+ladder. **FE6–FE8 are out of scope** — future epics, not this landing.
 
-- **`FINANCE` role label — RB2 / #1314's DECISION.** The doc's default is a
-  `FINANCE` `PersonRoleKind` (§6). Still owner's to settle: the label
-  (`FINANCE` vs `TREASURER`) or whether finance folds onto `BOARD` instead of a
-  distinct row. A one-line change in track 2; #1314's to close, not this port's.
-- **Owner-assignment role split (#1273 / GC-ROLES).** Owner-assignment sits on
-  `FINANCE` for first landing (§6); whether it should route to a program's
-  **Treasurer / Assistant Lead** instead is an open duty-split.
-- **Nav IA — finance area vs shared Inventory area.** Expense lands in a
-  finance-gated area (§7); whether checkin later unifies the finance- and
-  inventory-side surfaces into one IA is an unresolved checkin-shell decision.
-- **Inbound machine surface — only if a remote peer must push first (#1286 option A).**
-  Receipt intake and inventory-load are in-process only (§8a/§8c). If the migration
-  order ever puts a *remote* receipt-app / orchestrator against checkin before it
-  co-resides, that needs a boundary PR extending checkin auth with an inbound
-  service-key/org-bearer variant. Sequence to avoid it; open the follow-up only if
-  forced.
-- **Later QB phases + track-9 deferrals:** FE6 (membership→QB, #1277), FE7
-  (shop-hour journals, #1278), FE8 (budget-vs-actual, #1279), QB-3 drift-queue
-  polish; drop the dead `SettingsData` poll fields.
+- **Out-of-scope future epics (followups, NOT this landing):** FE6
+  (membership→QB, #1277), FE7 (shop-hour inter-class journals, #1278), FE8
+  (budget-vs-actual view, #1279). They reuse this work's QB connection + write /
+  ambiguity-queue substrate (§9), but are separate work — noted, not designed here.
+- **In-scope post-first-landing deferrals (this work):** the in-process
+  receipt-intake / inventory-load crossings go live when receipt-app / the
+  orchestrator co-reside (§8a/§8c); drop the dead `SettingsData` poll fields;
+  QB-3 drift-queue polish.
+
+*(No inbound-machine-surface item: the Inventory apps all move into checkin and
+never run remotely — owner decision, on security grounds — so checkin never hosts a
+machine-bearer route and there is nothing left open there. §8a/§8c.)*
 
 **Deferral discipline:** each of the above is filed as a tracked issue at merge —
 never a bare "later" in prose or a code comment. The issue tracker remembers, not
@@ -1226,9 +1220,10 @@ and invariants only, no mechanism:
   owner via a handler query-filter), **not** the broad Inventory viewer gate;
   writes/checkoffs = `FINANCE`/`BOARD` — *cite `principles.md` least-privilege* (§6).
 - **Org-stamping invariant:** every row carries the one injected org identity (§6).
-- **Role decision:** the finance actor is `FINANCE` (RB2 / #1314, kept role);
-  owner-assignment interim on `FINANCE`, program-treasurer split open (#1273);
-  strategic role split stays #1314's — cross-ref, do not restate.
+- **Role decision:** the finance actor is a **distinct `FINANCE` role** (RB2 /
+  #1314, kept role; owner-decided); it owns account-mapping + owner-assignment
+  curation. #1314 keeps only the sub-actor designation detail — cross-ref, do not
+  restate.
 
 **(2) Architecture/ops reference that stays true → `docs/designs/EXPENSE_QB.md`**
 (§4 "operational reference → move, don't delete"). Later finance/QB work (FE6–FE8,
