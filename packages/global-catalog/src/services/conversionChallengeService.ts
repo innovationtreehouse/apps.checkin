@@ -1,12 +1,12 @@
-import { db } from "@/db";
-import { createConversionChallengeRepository } from "@/repositories/conversionChallenge";
-import { createItemReferenceRepository } from "@/repositories/itemReference";
-import type { ConversionChallenge, ConversionChallengeStatus } from "@/db/schema";
+import { db } from "../db";
+import { createConversionChallengeRepository } from "../repositories/conversionChallenge";
+import { createItemReferenceRepository } from "../repositories/itemReference";
+import type { ConversionChallenge, ConversionChallengeStatus } from "../db/schema";
 
 const challengeRepo = createConversionChallengeRepository(db);
 const itemRefRepo = createItemReferenceRepository(db);
 import { ServiceError } from "./categoryService";
-import { assertConversionChallengeTransition } from "@/workflows/conversion-challenge.machine";
+import { assertConversionChallengeTransition } from "../workflows/conversion-challenge.machine";
 import { WorkflowTransitionError } from "@inventory/workflows";
 import { emitOrgEvent, recordTransition } from "./orgEventService";
 

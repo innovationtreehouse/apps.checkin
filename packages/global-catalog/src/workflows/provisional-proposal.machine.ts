@@ -1,5 +1,5 @@
 import { setup } from "xstate";
-import type { ProvisionalItemStatus } from "@/db/schema";
+import type { ProvisionalItemStatus } from "../db/schema";
 import type { ProvisionalProposalEvent, ProvisionalProposalEventType } from "./provisional-proposal.events";
 import { makeWorkflowInvariants } from '@inventory/workflows';
 
