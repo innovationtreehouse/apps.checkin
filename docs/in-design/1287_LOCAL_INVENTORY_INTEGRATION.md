@@ -17,9 +17,10 @@ its value once the pieces upstream of it move too.
 Org inventory is available inside the existing staff application as ordinary
 navigation, under the same **Inventory** area as the catalog, using the same
 sign-in and look and feel, deployed and operated as one system — with the
-inventory logic kept cleanly separable, and the two upstream couplings (catalog
-org-events in, orchestrator delta-apply in) designed as explicit, swappable
-seams so the rest of the pipeline can land on them rather than around them.
+inventory logic kept cleanly separable, and its catalog/orchestrator couplings
+(catalog org-events in, orchestrator delta-apply in, catalog item reads out)
+designed as explicit, swappable seams so the rest of the pipeline can land on
+them rather than around them.
 
 ## Executive summary
 
@@ -140,7 +141,7 @@ prisma/schema.prisma  14 models (own migrations)
 plus the two Prisma-generated join/relation surfaces on `Location`↔`OrgItem`.)
 
 The domain layer is framework-light and ports almost verbatim. The friction is
-**auth wiring and the two upstream couplings** (§8), not the domain.
+**auth wiring and the catalog/orchestrator crossings** (§8), not the domain.
 
 ### Workspace dependencies — reuse #1286's vendored packages, add two
 
@@ -303,9 +304,11 @@ as its own PR track (§11).
 `inventory-log` (GET); `inventory-merge-conflicts` (GET) +
 `.../[id]/resolve` (POST); `provisional-items` (GET/POST);
 `received-inventory-deltas` (GET); `received-org-events` (GET); `system-data`
-(GET); `global-catalog/items*` (read-through — see §8). The `/api/internal/*`
-and `/api/inventory/apply` **inbound** surfaces are the machine-to-machine seam
-(§8) — registered with a service/bearer token grant, not the viewer gate.
+(GET). The source's `global-catalog/items*` proxy routes are **not registered** —
+they are dropped in favor of an in-process catalog read (§8c). The
+`/api/internal/*` and `/api/inventory/apply` **inbound** surfaces are the
+machine-to-machine seam (§8c) — registered with a service/bearer token grant, not
+the viewer gate.
 
 ---
 
@@ -409,12 +412,12 @@ Eight pages, each an A12 surface / exception screen:
   `received-org-events`). **local-inventory is the org-facing consumer that
   surfaces these** — workflow-mapping deliberately does not (BYDESIGN, §10).
 - `system-data` — settings (`SettingsData`: poll interval/window, global server
-  URL). Poll-config only — **org identity is not here** (it comes from the injected
-  `Org` accessor, §6).
-  These poll fields are **dead on arrival**: the S5 crossing is in-process and
-  push-driven from day one (§8a), so there is no timer to configure. Keep the row
-  (harmless, and the model ports cleaner intact); drop the fields with the
-  track-8 cleanup rather than wiring UI to them.
+  URL). **org identity is not here** (it comes from the injected `Org` accessor,
+  §6). Every field is **dead on arrival**: `pollInterval*` had a timer that no
+  longer exists (S5 is in-process push, §8a); `globalServerUrl` pointed at the old
+  catalog server that local-inventory no longer calls (catalog reads are
+  in-process, §8b). Keep the row (harmless, model ports cleaner intact); drop the
+  fields with the track-8 cleanup rather than wiring UI to them.
 
 Drop the source `AppShell`/nav shell; pages render inside checkin's shell. Wire
 auth via `useSession` client-side + the checkin session in the route handlers.
@@ -444,10 +447,13 @@ auth via `useSession` client-side + the checkin session in the route handlers.
 
 ---
 
-## 8. Upstream couplings — the two crossings that make local-inventory a sink
+## 8. Upstream couplings — three crossings (two inbound, one read)
 
-local-inventory is a **terminal SINK** in the E-PIPELINE. Two upstream couplings
-must be designed explicitly, using the **same per-crossing rule #1286 §8 set**:
+local-inventory is a **terminal SINK** in the E-PIPELINE: two crossings flow
+**into** it (S5 events, §8a; S3 apply, §8c) — these are what make it a sink. A
+third is an outbound **read** (§8b): it reads catalog item data to display and
+resolve its stock. All three must be designed explicitly, using the **same
+per-crossing rule #1286 §8 set**:
 *keep the JSON/contract shapes; convert transport, not architecture; every
 crossing sits behind a port with an `http` adapter (today) and an `in-process`
 adapter (after co-residence); converting a crossing = swap one adapter binding in
@@ -458,6 +464,7 @@ adapter (after co-residence); converting a crossing = swap one adapter binding i
 | Crossing | Direction | Kind | Contract | Today's transport |
 |---|---|---|---|---|
 | **S5 org-events** — provisional resolution events (`provisional_approved` / `_rejected` / `_mapped_to_existing`) | **catalog → local-inventory** | **async outbox — consumer side** | shared S5 union (`parseOrgEvent`, `@inventory/receipt-types`) | catalog's OrgEvent table, **HTTP-polled** by `startOrgEventsPoller`, persisted to local `received_org_events`, reacted to via `provisionalItemService` |
+| **Catalog item reads** — item list + single-item lookup (display / resolution) | **local-inventory → catalog** | **synchronous read — consumer side** | catalog item shape | local-inventory's `/api/global-catalog/items*` routes **proxy** to the old catalog server (`globalServerUrl` + `signOrgToken` → catalog's `/api/catalog/items`) |
 | **S3 delta-apply + provisional/enqueue** — `inventory/apply`, `provisional-items`, `receive-queue`, `GET org-items` | **workflow-mapping orchestrator → local-inventory** | **synchronous RPC — callee side** | `ResolvedInventoryDeltaSchema` (org-bearer) + the `/api/internal/*` zod schemas (service-key) | `POST /api/inventory/apply` (org-bearer) and `POST/GET /api/internal/[...path]` (X-Service-Key) |
 
 These convert **differently** — that is the whole point of deciding now.
@@ -524,7 +531,40 @@ boot drain.
   stock counted at factor 1 vs. the real item's canonical factor is reconciled by
   the **uom_mismatch merge-conflict path**, not by silent rescaling. Keep it.
 
-### 8b. workflow-mapping orchestrator → local-inventory (S3, apply surface)
+### 8b. local-inventory → catalog (item reads — in-process, no repoint)
+
+The source reads catalog item data (list + single lookup) to display and resolve
+its org-items: `local-inventory-app/src/app/api/global-catalog/items*` **proxy**
+to the old catalog server — `orgSettingsService.globalServerUrl` + a minted
+`signOrgToken` → catalog's `GET /api/catalog/items` (+ `/[gtin13]`). #1286 §8's
+Track-4 finding names local-inventory as exactly this remote consumer, and notes
+those org-bearer reads live under catalog's **`/api/internal`** (not the human
+`/api/catalog/*`) in checkin, with a one-line `pathPrefix` repoint for **still-
+remote** consumers.
+
+**For checkin's local-inventory that repoint is moot — it reads catalog
+in-process.** Catalog is co-resident from day one (dependency gate, §1), so:
+
+- Add a **`CatalogReader` port** (`contract.ts`: `listItems()`, `getItem(gtin13)`)
+  bound in `configureLocalInventory()` to the **in-process** catalog library
+  service — a direct call into `@inventory/global-catalog`, **no HTTP, no
+  `globalServerUrl`, no `signOrgToken`**. It never touches catalog's `/api/catalog/*`
+  *or* `/api/internal/items` — the human/machine route split (#1286 §7/§8) is an
+  HTTP concern local-inventory sidesteps by reading the service.
+- The source's `/api/global-catalog/items*` proxy routes are **dropped** (or become
+  thin re-reads of the port for any UI that still fetches a local path). `signOrgToken`
+  / `@inventory/auth` go with the retired auth (§6); `SettingsData.globalServerUrl`
+  is dead (§7) — it pointed at the old catalog server, which local-inventory no
+  longer calls.
+- `http` fallback exists in the port only for a hypothetical remote catalog; since
+  catalog lands first it is never bound here.
+
+So the repoint #1286 tracks for *other* still-remote consumers does not apply to
+checkin's local-inventory. (Only the **old** local-inventory-app server, if it
+runs remote during overlap before this port lands, still hits the old catalog
+server — that is #1286's follow-up, not this design's surface.)
+
+### 8c. workflow-mapping orchestrator → local-inventory (S3, apply surface)
 
 **This is synchronous RPC, and local-inventory is the callee.** The orchestrator
 (CI4, #1289 — **out of scope here**; only its calls *into* local-inventory are in
@@ -628,7 +668,7 @@ Same posture as #1286 §10:
   (`http` and `in-process` produce identical results for the same input) —
   the cheapest guard that a transport flip is behavior-preserving.
 - **Concurrency**: the CONCURRENCY.md #2 fulfill/apply race is a **tracked
-  follow-up** (§8b), not blocking the port.
+  follow-up** (§8c), not blocking the port.
 
 ---
 
@@ -652,11 +692,14 @@ local-inventory consumes, and local-inventory reuses catalog's vendored packages
 3. **Security boundary** — `@sensitivity` annotations, `generator security` for
    the inventory schema, registry + scopeBindings entries. Own PR track,
    **registry-first**.
-4. **Routes + auth + inbound seam** — library route-handler factories +
-   `contract.ts` (incl. the two crossing ports) + `configureLocalInventory`
-   wired in checkin-app `instrumentation.ts`; API stub tree + security guards;
-   the `/api/internal/*` + `/api/inventory/apply` inbound surface with the
-   `http` adapter live. Depends on 1–3.
+4. **Routes + auth + seams** — library route-handler factories + `contract.ts`
+   (the three crossing ports: `CatalogEventSource` §8a, `CatalogReader` §8b bound
+   in-process, the inbound apply port §8c) + `configureLocalInventory` wired in
+   checkin-app `instrumentation.ts`; API stub tree + security guards; the
+   `/api/internal/*` + `/api/inventory/apply` inbound surface with the `http`
+   adapter live; drop the source `/api/global-catalog/items*` proxy routes (§8b).
+   Depends on 1–3 (and, for `CatalogReader`, on #1286's catalog service being
+   importable).
 5. **UI + nav** — reskinned pages/components (in the library), page stub tree +
    `pageRegistry` entries, the library's `NavLink[]` **appended to the existing
    `Inventory` section tabs** #1286 created (no new top-level entry — §7),
@@ -695,15 +738,15 @@ local-inventory consumes, and local-inventory reuses catalog's vendored packages
     path, not a side effect): `docs/backlog/TOPDOWN.md` GC-INVENTORY (Q22/Q30)
     describes replaying 1,000–2,000 stored **receipts** to load inventory. That
     replay flows through the **orchestrator → local-inventory apply/enqueue
-    surface (§8b)** — each receipt line becomes a delta-apply or a receive-queue
+    surface (§8c)** — each receipt line becomes a delta-apply or a receive-queue
     entry, which is exactly how on-hand stock is meant to arrive. It **triggers**
     catalog growth upstream (provisional GTINs, item-reference proposals — §8's S4
     crossings) as a side effect. This design **builds the inbound apply surface
-    that receives the replay** (§8b) but does not drive it — the replay is the
+    that receives the replay** (§8c) but does not drive it — the replay is the
     receipt pipeline's job and arrives **when receipt-app migrates**.
 
   So "no bulk load" (direct hand-entry) and receipt-replay (the real inventory
-  load) do not conflict — different mechanisms, different sources; §8b is the seam
+  load) do not conflict — different mechanisms, different sources; §8c is the seam
   the replay lands on.
 - **Dev/test seed — lift from `scripts/setup-test-data.sh`** (Inventory monorepo),
   the same script #1286 §12 draws catalog rows from. It seeds locations, org-items,
@@ -721,6 +764,14 @@ local-inventory consumes, and local-inventory reuses catalog's vendored packages
   ships without that hook, add it there (its own PR) before track 6. `SettingsData`
   poll fields (`pollIntervalMinutes` / `globalServerUrl`) are dead on arrival;
   drop them with the track-8 cleanup.
+- **Catalog reads are in-process — no consumer repoint needed** (§8b). #1286's
+  Track-4 finding files a follow-up for still-**remote** consumers of
+  `/api/catalog/items` (incl. the old local-inventory-app server) to repoint to
+  `/api/internal/items`. This design does **not** inherit that: checkin's
+  local-inventory reads catalog via the in-process `CatalogReader` port, touching
+  neither catalog HTTP route. The `/api/catalog/*` (human) vs `/api/internal/items`
+  (machine) split is an HTTP concern local-inventory sidesteps. The old remote
+  server's repoint stays #1286's follow-up, not this doc's.
 - **Deferral discipline.** Anything past the first landing (track 8) is a
   **GitHub follow-up issue referencing #1287**, filed at merge — never a bare
   "later" in prose or a code comment.
