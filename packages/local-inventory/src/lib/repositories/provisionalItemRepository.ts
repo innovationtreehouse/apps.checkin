@@ -1,28 +1,28 @@
 import type { Prisma } from "@/generated/prisma/client";
 import type { Db } from "../db/index";
-import type { ProvisionalItem, InventoryMergeConflict, ProvisionalItemLog } from "../db/schema";
+import type { InventoryProvisionalItem, InventoryMergeConflict, ProvisionalItemLog } from "../db/schema";
 
 export function createProvisionalItemRepository(db: Db) {
   return {
-    async findByGtin(orgId: string, gtin13: string): Promise<ProvisionalItem | null> {
-      return db.provisionalItem.findFirst({
+    async findByGtin(orgId: string, gtin13: string): Promise<InventoryProvisionalItem | null> {
+      return db.inventoryProvisionalItem.findFirst({
         where: { provisionalGtin13: gtin13, orgId },
       });
     },
 
-    async findManyByOrg(orgId: string): Promise<ProvisionalItem[]> {
-      return db.provisionalItem.findMany({
+    async findManyByOrg(orgId: string): Promise<InventoryProvisionalItem[]> {
+      return db.inventoryProvisionalItem.findMany({
         where: { orgId },
         orderBy: { proposedAt: "desc" },
       });
     },
 
-    async create(data: Prisma.ProvisionalItemCreateInput): Promise<ProvisionalItem> {
-      return db.provisionalItem.create({ data });
+    async create(data: Prisma.InventoryProvisionalItemCreateInput): Promise<InventoryProvisionalItem> {
+      return db.inventoryProvisionalItem.create({ data });
     },
 
-    async updateStatus(id: number, data: Prisma.ProvisionalItemUpdateInput): Promise<void> {
-      await db.provisionalItem.update({ where: { id }, data });
+    async updateStatus(id: number, data: Prisma.InventoryProvisionalItemUpdateInput): Promise<void> {
+      await db.inventoryProvisionalItem.update({ where: { id }, data });
     },
 
     async createConflict(data: Prisma.InventoryMergeConflictCreateInput): Promise<void> {

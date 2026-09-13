@@ -86,7 +86,11 @@ model SettingsData {
   @@map("settings_data")
 }
 
-model ProvisionalItem {
+// Named InventoryProvisionalItem (not the source's `ProvisionalItem`) so it does not
+// collide with the catalog schema's own `ProvisionalItem` in checkin's security
+// classification map, which is a flat merge keyed by model name across schemas. The
+// dedicated database still namespaces the table, so `@@map("provisional_items")` is kept.
+model InventoryProvisionalItem {
   id                    Int       @id @default(autoincrement())
   provisionalGtin13     String    @unique @map("provisional_gtin13")
   name                  String

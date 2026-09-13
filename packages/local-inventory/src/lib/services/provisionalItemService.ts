@@ -49,7 +49,7 @@ export function createProvisionalItemService({
             data: { gtin13: realGtin13 },
           });
         }
-        await tx.provisionalItem.update({
+        await tx.inventoryProvisionalItem.update({
           where: { id: provisionalId },
           data: { status: finalStatus, resolvedToGtin13: realGtin13, reviewedAt: now },
         });
@@ -80,7 +80,7 @@ export function createProvisionalItemService({
       const conflictType = "uom_mismatch";
 
       await db.$transaction(async (tx) => {
-        await tx.provisionalItem.update({
+        await tx.inventoryProvisionalItem.update({
           where: { id: provisionalId },
           data: { status: finalStatus, resolvedToGtin13: realGtin13, reviewedAt: now },
         });
@@ -116,7 +116,7 @@ export function createProvisionalItemService({
       if (provisionalRow) {
         await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
       }
-      await tx.provisionalItem.update({
+      await tx.inventoryProvisionalItem.update({
         where: { id: provisionalId },
         data: { status: finalStatus, resolvedToGtin13: realGtin13, reviewedAt: now },
       });
@@ -225,7 +225,7 @@ export function createProvisionalItemService({
 
       const now = new Date();
       await db.$transaction(async (tx) => {
-        await tx.provisionalItem.update({
+        await tx.inventoryProvisionalItem.update({
           where: { id: provisional.id },
           data: { status: nextStatus, rejectionReason: rejectionReason ?? null, reviewedAt: now },
         });

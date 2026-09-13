@@ -7,7 +7,7 @@ export type {
   LocationLog,
   ReceiveQueue,
   SettingsData,
-  ProvisionalItem,
+  InventoryProvisionalItem,
   ProvisionalResolution,
   InventoryMergeConflict,
   ReceivedOrgEvent,

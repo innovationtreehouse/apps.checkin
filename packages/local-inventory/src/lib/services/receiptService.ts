@@ -1,5 +1,5 @@
 import type { Db } from "../db/index";
-import type { ProvisionalItem, OrgItem } from "../db/schema";
+import type { InventoryProvisionalItem, OrgItem } from "../db/schema";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
 import type { ProvisionalItemRepository } from "../repositories/provisionalItemRepository";
 import type { ReceiveQueueRepository } from "../repositories/receiveQueueRepository";
@@ -106,11 +106,11 @@ export function createReceiptService({
         receiptId: string;
         conversionFactor?: number;
       },
-    ): Promise<{ provisionalItem: ProvisionalItem; orgItem: OrgItem }> {
+    ): Promise<{ provisionalItem: InventoryProvisionalItem; orgItem: OrgItem }> {
       const now = new Date();
 
       const result = await db.$transaction(async (tx) => {
-        const provisionalItem = await tx.provisionalItem.create({
+        const provisionalItem = await tx.inventoryProvisionalItem.create({
           data: {
             provisionalGtin13: data.provisionalGtin13,
             name: data.name,

@@ -23,7 +23,7 @@ export async function resetDb(): Promise<void> {
   await db.receivedOrgEvent.deleteMany({});
   await db.receivedInventoryDelta.deleteMany({});
   await db.provisionalResolution.deleteMany({});
-  await db.provisionalItem.deleteMany({});
+  await db.inventoryProvisionalItem.deleteMany({});
   await db.orgItem.deleteMany({});
   await db.location.deleteMany({});
   // Reset settings to defaults without deleting the row (avoids AUTOINCREMENT id reuse issue)
