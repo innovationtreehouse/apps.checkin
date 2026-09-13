@@ -135,7 +135,10 @@ prisma/schema.prisma  14 models (own migrations)
 ```
 
 **Prisma models** (own schema, `@@map` to snake_case tables): `Location`,
-`OrgItem`, `InventoryLog`, `ReceiveQueue`, `SettingsData`, `ProvisionalItem`,
+`OrgItem`, `InventoryLog`, `ReceiveQueue`, `SettingsData`,
+`InventoryProvisionalItem` (renamed from the source's `ProvisionalItem` to avoid a
+merged-classifications name collision with catalog's `ProvisionalItem`; table
+`provisional_items` preserved via `@@map` — §4),
 `InventoryMergeConflict`, `ProvisionalResolution`, `ReceivedOrgEvent`,
 `ProvisionalItemLog`, `ReceivedInventoryDelta`, `LocationLog`. (12 declared;
 plus the two Prisma-generated join/relation surfaces on `Location`↔`OrgItem`.)
@@ -244,9 +247,18 @@ until the catalog producer emits (§8, §11).
 Own dedicated database (`LOCAL_INVENTORY_DATABASE_URL`) on the same Postgres
 server as checkin — separate `schema.prisma`, separate Prisma client, own
 migration history. Identical rationale and precedent to #1286 §4
-(`@inventory/monitoring-db`). A dedicated DB namespaces the generic tables
-(`org_items`, `locations`, `inventory_log`, …) so **no model/table renames** are
-needed.
+(`@inventory/monitoring-db`). A dedicated DB namespaces the generic **tables**
+(`org_items`, `locations`, `inventory_log`, …) so **no table renames** are needed.
+
+**One model-*name* rename is required, though** (Track-3 finding — corrects the
+"model names disjoint" claim inherited from #1286). Catalog and inventory both
+declare a `ProvisionalItem` Prisma model, and the two `generator security`
+classifications **merge into one `core.ts`**, so the model *names* collide there
+even though the tables don't. Resolution: rename the **inventory** model to
+**`InventoryProvisionalItem`**, with `@@map("provisional_items")` preserving the
+table (no migration/data impact). This is a **Track-1** change (the model name +
+every library consumer of it) that must land **with or before** the Track-3
+boundary PR — otherwise the merged classifications have a duplicate key.
 
 Implications (same as #1286 §4, plus):
 
@@ -280,12 +292,16 @@ into `checkin-app/src/security/generated/`**, so the package's `prisma generate`
 monorepo, breaks only if the package is later extracted. Merge point is a **spread
 in `core.ts`**, not a new aggregator file.
 
-**No scopeBindings needed** (#1286 Track-3 finding, applies identically here).
-Every inventory actor FK is `userId` / `*ByUserId` / `performedBy` — **none is in
-checkin's `SCOPABLE_FIELDS`** — so the binding validator auto-classes all
-inventory models **un-scopable / admin-only by construction**, and their
-`internal` fields sit behind `everyones:internal` with **no per-row binding**. The
-registry entries are the work; the bindings are zero.
+**No scopeBindings, but two opt-outs** (Track-3 as-built — corrects the earlier
+"bindings are zero, nothing else" wording). The `*ByUserId` / `performedBy` FKs
+are **not** in checkin's `SCOPABLE_FIELDS`, so the validator auto-classes those
+models un-scopable / admin-only. **But bare `userId` IS in `SCOPABLE_FIELDS`** —
+and `InventoryLog` + `LocationLog` both carry a bare `userId`. That `userId` is a
+**foreign id space** (a snapshot of the acting user, not a checkin `Person` scope
+to bind on), and admin-only is the intended visibility, so the two models are
+added to **`OPT_OUT_PENDING_ROUTE`** (an explicit opt-out, **not** a scopeBinding).
+Net: **two `OPT_OUT_PENDING_ROUTE` entries, zero scopeBindings** — the registry
+entries + those two opt-outs are the work.
 
 **Field tiering** — inventory reference/quantity data is largely operational, not
 personal. The schema has **no email/DOB/address fields → no `pii` tier**.
@@ -309,6 +325,17 @@ personal. The schema has **no email/DOB/address fields → no `pii` tier**.
 their **own PR(s)**, ahead of the route code — **registry-first** (an unused
 `defineRoute` is inert). This is the most process-heavy part; plan it as its own
 PR track (§11).
+
+**CI gap the multi-schema regime forces (Track-3 finding).** The
+`security-boundary-isolation` workflow's `is_companion` check **hardcoded only
+`checkin-app/prisma/schema.prisma`** as an allowed companion to a boundary PR. A
+boundary PR that also ships a **package** schema (`packages/local-inventory/…/schema.prisma`)
+is therefore flagged a violation — catalog #1286's own Track-3 PR would trip it on
+a clean `main` base (it apparently landed via a non-`main` base / admin merge).
+Track 3 must extend `is_companion` to accept `packages/global-catalog` **and**
+`packages/local-inventory` schemas as explicit companions. Without that fix the
+inventory boundary PR cannot ship the `@sensitivity`-annotated package schema
+alongside the registry/generator changes.
 
 **Route-endpoint-string gotcha** (#1286 Track-4): the `endpoint` string each
 handler passes to `handler()` must be the **full registered path including its
@@ -776,7 +803,11 @@ local-inventory consumes, and local-inventory reuses catalog's vendored packages
 1. **Library skeleton** — `packages/local-inventory`: inventory schema + client +
    migrations (port the six), domain services/repositories/workflows ported,
    **unit tests only** (the source's route+auth-bound integration tier → flow tests
-   in track 5, §10). Package stays `next`-free. **No new shared packages here** —
+   in track 5, §10). **Rename the source `ProvisionalItem` model →
+   `InventoryProvisionalItem`** (`@@map` keeps the table) and update every library
+   consumer — required to avoid the merged-classifications collision with catalog;
+   it is a Track-1 change that must land **with/before** the Track-3 boundary PR
+   (§4). Package stays `next`-free. **No new shared packages here** —
    reuses #1286's `packages/{gtin,workflows,receipt-types}`; `org-events-poller`
    and `utils` are **not imported by any Track-1 file** (confirmed in build), so
    they defer (`org-events-poller` → track 6 with the S5 consumer; `utils` → the
@@ -789,13 +820,16 @@ local-inventory consumes, and local-inventory reuses catalog's vendored packages
    track 4; no separate PR. (When #1316 lands, a mechanical follow-up moves writes
    → `ORG_MANAGER`; §6.)
 3. **Security boundary** — `@sensitivity` annotations, `generator security` for
-   the inventory schema (cross-package wiring, §5), registry route entries —
-   **no scopeBindings** (inventory FKs aren't scopable; §5). Own PR track,
-   **registry-first**. **Optional here (and only here):** if an inventory-named
-   read gate is wanted for call-site clarity, add an `inventory-viewer` resolver
-   alias in the boundary layer (`core.ts`/`access-resolvers.ts`) — a deliberate
-   boundary decision, not a track-4 route change; default is to reuse
-   `catalog-viewer` (§6).
+   the inventory schema (cross-package wiring, §5), registry route entries,
+   **two `OPT_OUT_PENDING_ROUTE` entries** (`InventoryLog`/`LocationLog`, whose
+   bare `userId` is scopable), **zero scopeBindings** (§5). Extend the
+   `security-boundary-isolation` workflow's `is_companion` to accept the
+   `packages/local-inventory` schema as a companion (§5 CI gap) — else this PR is
+   flagged. Own PR track, **registry-first**. **Optional here (and only here):**
+   if an inventory-named read gate is wanted for call-site clarity, add an
+   `inventory-viewer` resolver alias in the boundary layer
+   (`core.ts`/`access-resolvers.ts`) — a deliberate boundary decision, not a
+   track-4 route change; default is to reuse `catalog-viewer` (§6).
 4. **Routes + auth + seams** — library route factories + a next-free
    `src/routes/_shared.ts` (parse/validate via injected `httpError`, no
    `next/server` — the source `validate` is not ported) + `contract.ts` (the three
