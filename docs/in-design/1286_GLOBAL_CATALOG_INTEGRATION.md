@@ -181,7 +181,8 @@ checkin/
     receipt-types/                         TEMPORARY vendored copy
   checkin-app/                             ← WIRING ONLY, no catalog logic
     src/instrumentation.ts                 + one configureCatalog({...}) call at boot
-    src/app/(catalog)/**/{page,route}.tsx  re-export stubs (see below)
+    src/app/(catalog)/**/{page,route}.tsx  re-export stubs — human /api/catalog/* (see below)
+    src/app/api/internal/[...path]/route.ts  org-bearer machine surface stub (§8)
     src/components/AppFrame.tsx            + one NAV_ITEMS entry (Inventory), from the library descriptor
     src/security/{registry,scopeBindings}.ts   + catalog entries (boundary is checkin's)
     next.config.ts                         + transpilePackages (if tsx needs it — verify, §3)
@@ -456,6 +457,11 @@ there is no client→server conversion to do, now or later.
   point their `fetch` calls at the `/api/catalog/*` routes (whose handlers are
   library factories). Wire auth via `useSession` client-side + `getServerSession`
   in the route handlers, exactly as checkin's own client pages do.
+- **`/api/catalog/*` is the human surface only** (`catalog-viewer` /
+  `INVENTORY_MANAGER`, paginated shapes). The **org-bearer** machine reads
+  (flat/single item lists) live under **`/api/internal`**, not `/api/catalog` —
+  they share a path in the source but differ in auth and response shape, so they
+  are kept separate (§8).
 
 **No server-component migration is planned.** A full server-driven rewrite would
 make the catalog *more* server-driven than checkin itself — a checkin-wide
@@ -516,6 +522,30 @@ vocabulary — remove a schema only if a field genuinely dies); convert
 
 These convert **differently** — that is the whole point of deciding now.
 
+### The org-bearer machine surface — as built (Track 4)
+
+The source has **more org-bearer routes than the S4 row above enumerates**, and
+two of them collided with the human `/api/catalog/*` namespace (§3/§7). Verified
+against `global-catalog-app/src/app/api/**` at `innovationtreehouse/Inventory@main`
+plus the live remote consumers across the Inventory monorepo. Resolution
+(owner-approved during Track 4):
+
+| Source org-bearer route | Live remote consumers | Built as |
+|---|---|---|
+| `GET/POST /api/internal/[...path]` | `workflow-mapping-app` catalog-client; `expense-app` inventory-client | **ported verbatim** — the single machine surface |
+| `GET /api/catalog/items` (flat array) | `local-inventory-app`, `workflow-mapping-app` | **folded** into `/api/internal` as a `/items` flat-list GET branch |
+| `GET /api/catalog/items/[gtin13]` (single) | `local-inventory-app` | already on `/api/internal` as `/items/{gtin13}` |
+| `GET /api/catalog` (bare flat list) | none | **dropped** (dead; dup of the flat list) |
+| `POST /api/conversion-challenges` (org-token create) | none | **dropped** (dead machine endpoint; reintroduce under `/api/internal` only if a receipt producer needs it) |
+
+**Why fold, not co-locate:** the org-bearer `GET /api/catalog/items` (flat array)
+and the human `GET /api/catalog/items` (paginated `{items,total,page,…}`,
+`catalog-viewer`) share a path but differ in **auth and response shape** — they
+cannot be one handler. So `/api/catalog/*` stays **human-only**; every org-bearer
+read lives under `/api/internal`. Folding is a path change, not a query change
+(same `listAllItemsFlat()` repo call/SQL), and it preserves §8's
+single-org-bearer-surface model.
+
 ### Conversion rule (per crossing)
 
 1. **Trigger = co-residence.** Convert a crossing only once **both** libraries
@@ -551,13 +581,24 @@ These convert **differently** — that is the whole point of deciding now.
   **temporary copies** (mark with a `ponytail:` removal note + tracking
   follow-up). Endgame: promote to a shared `packages/` contract when receipt
   arrives.
-- Keep the **S4 `/api/internal/*` route live** (org-bearer) so a still-remote
-  receipt-app can call it during the overlap — it is the `http` adapter's
-  server side. It flips off per rule 3 when receipt co-resides.
+- Keep the **`/api/internal/[...path]` route live** (org-bearer, GET+POST,
+  incl. the folded `/items` flat-list branch) so still-remote consumers
+  (`workflow-mapping-app`, `expense-app`, `local-inventory-app`) call it during
+  the overlap — it is the `http` adapter's server side. It flips off per rule 3
+  when they co-reside.
+- **Consumer repoint at cutover (follow-up, not now):** `local-inventory-app`
+  and `workflow-mapping-app` today read `/api/catalog/items` (+ `/[gtin13]`) on
+  the **old** global-catalog-app server (their `globalServerUrl`). checkin does
+  **not** serve those exact paths; the old server answers them during overlap.
+  When those apps migrate / the old server is cut over, they repoint
+  `/api/catalog/items` → `/api/internal/items` (one-line pathPrefix change). File
+  as a follow-up issue referencing #1286 at merge (§12).
 - The **S5 consumer / org-events poller** has no producer in checkin yet: land
   it **inert** (no scheduled invocation) behind a flag until receipt-app
   migrates. The outbox producer (`emitOrgEvent`) can run from day one — rows
-  simply accumulate until a consumer is enabled.
+  simply accumulate until a consumer is enabled. `conversion-challenges` ships
+  **manager GET/accept/reject only**; its list stays empty until a receipt
+  producer exists.
 - Provisional-from-receipt paths stay reachable via the catalog's own manual
   routes (as the source already supports) until the receipt producer exists.
 
@@ -673,6 +714,15 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
   reusable.) Add `VolunteerDesignation` rows too (seed currently has **0** —
   project memory) so the viewer gate and catalog pages are exercisable in dev
   and flow tests.
+- **Consumer repoint at cutover (Track 4 finding).** `local-inventory-app` and
+  `workflow-mapping-app` read the old server's `/api/catalog/items` (+
+  `/[gtin13]`); in checkin those org-bearer reads live under `/api/internal`
+  (§8). When those apps migrate / the old server is cut over, they repoint
+  `/api/catalog/items` → `/api/internal/items` (one-line pathPrefix change).
+  **Follow-up issue referencing #1286**, filed at merge (alongside receipt-shim
+  removal). Also: `POST /api/conversion-challenges` (org-token create) was found
+  **unused and dropped** — reintroduce under `/api/internal` only if a receipt
+  producer needs it.
 - **Deferral discipline.** Anything this design pushes past the first landing
   (track 7) becomes a **GitHub follow-up issue referencing #1286**, filed at
   merge — never a bare "later" in prose or a code comment. That is how we
