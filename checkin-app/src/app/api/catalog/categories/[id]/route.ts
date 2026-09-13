@@ -4,4 +4,4 @@
 import { handler } from "@/security/handler";
 import { categories } from "@inventory/global-catalog/routes";
 
-export const PUT = handler("PUT /api/categories/[id]", categories.update);
+export const PUT = handler("PUT /api/catalog/categories/[id]", categories.update);

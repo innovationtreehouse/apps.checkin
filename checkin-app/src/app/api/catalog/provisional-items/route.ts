@@ -4,4 +4,4 @@
 import { handler } from "@/security/handler";
 import { provisionalItems } from "@inventory/global-catalog/routes";
 
-export const GET = handler("GET /api/provisional-items", provisionalItems.list);
+export const GET = handler("GET /api/catalog/provisional-items", provisionalItems.list);
