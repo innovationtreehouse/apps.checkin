@@ -9,6 +9,7 @@ import { MAX_VISIT_MS } from "@/lib/visitTimes";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, youthIsPresent } from "@/lib/supervision";
 import { isYouth } from "@/lib/time";
 import { getKioskDisplayName } from "@/lib/kiosk-names";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 /**
@@ -98,6 +99,7 @@ export async function processCheckin(participant: Person, authType: string, db: 
             associatedEventId: eventId
         },
     });
+    invalidateAttendanceCache();
 
     // Fire-and-forget: send check-in notifications
     sendCheckinNotifications(participant.id, 'checkin', 'SCANNER').catch(err =>
@@ -389,6 +391,7 @@ async function closeAllOpenVisits(db: DbClient) {
             ),
             "departedVia" = 'FACILITY_CLOSE'::"VisitSource"
         WHERE "departedAt" IS NULL AND "deletedAt" IS NULL`;
+    invalidateAttendanceCache();
 }
 
 /** Fire-and-forget post-event email run on facility close. The dynamic import

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withAuth, getOptionalSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { getKioskPublicKeys, verifyKioskSignature } from "@/lib/verify-kiosk";
-import { getFullAttendance } from "@/lib/getFullAttendance";
+import { getFullAttendance, invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
 import { lastKeyholderGuard, runFacilityClose } from "@/lib/scan-service";
 import { lockFacility } from "@/lib/facilityLock";
@@ -298,6 +298,7 @@ export const POST = withAuth({}, async (req, auth) => {
                 logger.error('Checkin notification error:', err)
             );
 
+            invalidateAttendanceCache();
             return NextResponse.json({ success: true, visit: result.visit });
         }
 

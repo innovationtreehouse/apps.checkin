@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { isYouth } from "@/lib/time";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits } from "@/lib/supervision";
+import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
 
 /**
  * Current-attendance feed.
@@ -26,10 +27,33 @@ import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits }
  *   certifications grid (#329).
  *
  * `counts`/`safety` are identical either way — they are aggregates.
+ *
+ * Per-process cache: a GET hits the DB only on a cold miss. Visit writes
+ * (check-in / check-out / facility close) call `invalidateAttendanceCache`
+ * so the next read refills. One ECS task; a scale-to-zero relaunch starts empty.
  */
+type AttendancePayload = Awaited<ReturnType<typeof computeFullAttendance>>;
+let kioskCache: AttendancePayload | null = null;
+let fullCache: AttendancePayload | null = null;
+
+export function invalidateAttendanceCache(): void {
+    kioskCache = null;
+    fullCache = null;
+    // Present-limited cert grid is occupancy; a check-in/out must refresh it too.
+    invalidateKioskCertificationsCache();
+}
+
 export async function getFullAttendance(opts: { kiosk?: boolean } = {}) {
     const kiosk = opts.kiosk === true;
+    if (kiosk) {
+        if (!kioskCache) kioskCache = await computeFullAttendance(true);
+        return kioskCache;
+    }
+    if (!fullCache) fullCache = await computeFullAttendance(false);
+    return fullCache;
+}
 
+async function computeFullAttendance(kiosk: boolean) {
     const activeVisits = await prisma.visit.findMany({
         where: { departedAt: null, deletedAt: null, person: LIVE_PERSON },
         include: {

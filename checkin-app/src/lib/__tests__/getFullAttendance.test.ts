@@ -18,7 +18,7 @@ jest.mock("@/lib/supervision", () => ({
     supervisingAdultCount: () => 1,
 }));
 
-import { getFullAttendance } from "@/lib/getFullAttendance";
+import { getFullAttendance, invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 // Age fixtures are relative to now so they never age past the youth boundary the
 // way a hardcoded year would; the day step keeps the age unambiguous mid-year.
@@ -51,6 +51,7 @@ const rows = [
 ];
 
 beforeEach(() => {
+    invalidateAttendanceCache();
     findMany.mockReset();
     findMany.mockResolvedValue(rows);
     supervisingAdultVisits.mockClear();
@@ -162,5 +163,21 @@ describe("two-deep calc fails closed on unknown DOB (#300)", () => {
         // No unaccompanied youth, so the flag is false either way — the poll must
         // not pay for the supervision queries to learn that.
         expect(supervisingAdultVisits).not.toHaveBeenCalled();
+    });
+});
+
+describe("attendance cache", () => {
+    it("hits the DB once per shape until a write invalidates", async () => {
+        await getFullAttendance({ kiosk: true });
+        await getFullAttendance({ kiosk: true });
+        expect(findMany).toHaveBeenCalledTimes(1);
+
+        await getFullAttendance();
+        await getFullAttendance();
+        expect(findMany).toHaveBeenCalledTimes(2);
+
+        invalidateAttendanceCache();
+        await getFullAttendance({ kiosk: true });
+        expect(findMany).toHaveBeenCalledTimes(3);
     });
 });
