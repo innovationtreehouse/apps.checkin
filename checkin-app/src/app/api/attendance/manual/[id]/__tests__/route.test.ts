@@ -135,11 +135,11 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         const res = await PATCH(req("PATCH", { arrivedAt: "2026-07-20T14:05:00Z" }), ctx as never);
 
         expect(res.status).toBe(200);
-        // #1631: arrivedVia is never restamped on correction — correction
-        // significance weights it, so overwriting a LEAD_MARKED source would
-        // silently downgrade how the edit is scored and reviewed.
+        // A corrected arrival becomes a typed clock (arrivedVia TYPED). The
+        // edit's own significance already read the pre-edit source, so this only
+        // sets what the NEXT correction overwrites.
         expect(tx.visit.update).toHaveBeenCalledWith(expect.objectContaining({
-            data: { arrivedAt: new Date("2026-07-20T14:05:00Z") },
+            data: { arrivedAt: new Date("2026-07-20T14:05:00Z"), arrivedVia: "TYPED" },
         }));
         const audit = auditCreate.mock.calls[0][0].data;
         expect(audit).toMatchObject({
@@ -151,10 +151,12 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         expect(emailBoardMembers).not.toHaveBeenCalled();
     });
 
-    // #1631 pin: a LEAD_MARKED (staff-asserted) arrival must keep that source
-    // through a correction, or the member's edit stops reading as an overwrite
-    // of someone else's observation and scores as an ordinary self-report.
-    it("keeps a LEAD_MARKED arrival's source on correction (does not restamp WEB)", async () => {
+    // The bug this fixes: a corrected arrival must be restamped to the current
+    // typed-form source (TYPED), so a SECOND correction of the same time is
+    // weighed as overwriting a self-report, not the original measurement
+    // (docs/rules/attendance-checkin.md, visit-record). The edit's own
+    // significance was already computed from the pre-edit source above the update.
+    it("restamps a corrected arrival's source to TYPED", async () => {
         const leadMarked = { ...baseVisit, arrivedVia: "LEAD_MARKED", departedVia: "LEAD_MARKED" };
         visitFindUnique.mockResolvedValue(leadMarked);
         // A real update returns the row's untouched columns as-is, not a static
@@ -164,13 +166,13 @@ describe("PATCH /api/attendance/manual/[id]", () => {
 
         expect(res.status).toBe(200);
         expect(tx.visit.update).toHaveBeenCalledWith(expect.objectContaining({
-            data: { arrivedAt: new Date("2026-07-20T14:05:00Z") }, // no arrivedVia key at all
+            data: { arrivedAt: new Date("2026-07-20T14:05:00Z"), arrivedVia: "TYPED" },
         }));
         const { visit } = await res.json();
-        expect(visit.arrivedVia).toBe("LEAD_MARKED");
+        expect(visit.arrivedVia).toBe("TYPED");
     });
 
-    it("still restamps departedVia to WEB on a departure correction (an edited departure is a self-report)", async () => {
+    it("still restamps departedVia to TYPED on a departure correction (an edited departure is a self-report)", async () => {
         visitFindUnique.mockResolvedValue({ ...baseVisit, arrivedVia: "LEAD_MARKED", departedVia: "LEAD_MARKED" });
         const res = await PATCH(req("PATCH", { departedAt: "2026-07-20T16:30:00Z" }), ctx as never);
 

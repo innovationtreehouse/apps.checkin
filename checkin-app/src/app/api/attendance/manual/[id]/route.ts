@@ -131,15 +131,16 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
                 select: { id: true },
             });
             if (!live) return null;
-            // arrivedVia is left as-is: it records how the arrival was measured,
-            // and correction significance weights it (a member overwriting a staff
-            // observation scores higher than editing their own self-report), so
-            // restamping TYPED here would erase the very signal review reads.
-            // departedVia becomes TYPED — an edited departure is a typed clock.
+            // A corrected time becomes a typed clock: an edited arrival stamps
+            // arrivedVia TYPED, an edited departure stamps departedVia TYPED.
+            // Significance already read the pre-edit source above, so restamping
+            // here only sets what the NEXT correction overwrites — a second
+            // correction of the same time weighs it as a self-report, not a
+            // measurement (docs/rules/attendance-checkin.md, visit-record).
             return tx.visit.update({
                 where: { id: visitId },
                 data: {
-                    ...(arrivedAt ? { arrivedAt: nextArrived } : {}),
+                    ...(arrivedAt ? { arrivedAt: nextArrived, arrivedVia: "TYPED" } : {}),
                     ...(departedAt && !closingOpenVisit ? { departedAt: nextDeparted, departedVia: "TYPED" } : {}),
                 },
             });

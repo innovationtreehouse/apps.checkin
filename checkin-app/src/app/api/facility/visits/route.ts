@@ -86,11 +86,13 @@ export const PATCH = withAuth(
                     visit: await tx.visit.update({
                         where: { id: visitId },
                         data: {
-                            // `arrivedVia` is left alone, as on the `events/[id]` update
-                            // branch: a correction re-times a visit, it does not change
-                            // how the arrival was measured, and correction significance
-                            // weights that source. A departure staff typed is theirs.
-                            ...(parsedArrived ? { arrivedAt: nextArrived } : {}),
+                            // A corrected time becomes a typed clock: an edited
+                            // arrival stamps arrivedVia TYPED, a departure staff typed
+                            // stamps departedVia TYPED. Significance already read the
+                            // pre-edit source (editSignificance below), so restamping
+                            // only sets what the NEXT correction overwrites — a second
+                            // correction weighs the value as a self-report.
+                            ...(parsedArrived ? { arrivedAt: nextArrived, arrivedVia: "TYPED" } : {}),
                             ...(parsedDeparted ? { departedAt: nextDeparted, departedVia: "TYPED" } : {}),
                         },
                     })
