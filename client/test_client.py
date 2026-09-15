@@ -16,7 +16,9 @@ from client import (
     DEFAULT_KIOSK_PATH,
     CLOSED_HOLD_COPY,
     CLOSED_HOLD_DWELL_S,
+    OFFLINE_HOLD_COPY,
     FORCE_CLOSE_CONFIRM_SECONDS,
+    _saved_banner_html,
     _scan_result_banner_html,
     attendance_poller,
     handle_scan,
@@ -255,6 +257,81 @@ class TestParkedScanBanner(unittest.TestCase):
         handle_scan(backend, state, Outbox(":memory:"), 7)
 
         self.assertEqual(pushed[-1]["dwell"], CLOSED_HOLD_DWELL_S)
+
+
+class TestOfflineClosedHoldBanner(unittest.TestCase):
+    """A scan queued while disconnected shows a hedged hold — not a confident
+    'CHECKED IN' the server will actually park — when the last poll knew of no
+    keyholder. Hedged, not the server's CLOSED_HOLD_COPY: offline the kiosk can't
+    tell an arriving keyholder (who opens the building) from a member."""
+
+    def test_offline_in_with_no_keyholder_shows_the_hedged_hold(self):
+        html_out, dwell = _saved_banner_html(2, "IN", facility_closed=True)
+
+        self.assertIn("banner-warning", html_out)
+        self.assertNotIn("banner-saved", html_out)
+        self.assertNotIn("CHECKED IN", html_out)
+        self.assertIn(OFFLINE_HOLD_COPY, html_out)
+        # Hedged copy, never the server's "waiting for key holder" claim — wrong
+        # for a keyholder arriving to open, whom the client can't detect offline.
+        self.assertNotIn(CLOSED_HOLD_COPY, html_out)
+        # Still tells the operator it is queued, and holds as long as the online hold.
+        self.assertIn("2 waiting", html_out)
+        self.assertEqual(dwell, CLOSED_HOLD_DWELL_S)
+
+    def test_offline_in_with_a_keyholder_present_is_the_ordinary_saved_banner(self):
+        html_out, dwell = _saved_banner_html(1, "IN", facility_closed=False)
+
+        self.assertIn("banner-saved", html_out)
+        self.assertIn("CHECKED IN", html_out)
+        self.assertNotIn(OFFLINE_HOLD_COPY, html_out)
+        self.assertEqual(dwell, 0)
+
+    def test_offline_out_is_never_a_closed_hold(self):
+        # Leaving a closed building is not a hold — only an IN can be held.
+        html_out, dwell = _saved_banner_html(1, "OUT", facility_closed=True)
+
+        self.assertIn("banner-saved", html_out)
+        self.assertIn("CHECKED OUT", html_out)
+        self.assertNotIn(OFFLINE_HOLD_COPY, html_out)
+        self.assertEqual(dwell, 0)
+
+    def test_facility_closed_is_unknown_not_closed_before_the_first_poll(self):
+        # Zeroed startup counts must not read as closed, or every offline IN
+        # before the first poll would wrongly show the hold.
+        state = AttendanceState()
+        self.assertFalse(state.facility_closed())
+        # A poll flips attendance_seen; facility_closed then keys off the counts.
+        state.seed_from_attendance({"attendance": []})
+        self.assertTrue(state.facility_closed())
+        state.current_counts = {"keyholders": 1}
+        self.assertFalse(state.facility_closed())
+
+    def test_unreachable_server_renders_the_hold_when_last_poll_had_no_keyholder(self):
+        state = AttendanceState()
+        state.attendance_seen = True
+        state.current_counts = {"total": 0, "keyholders": 0, "volunteers": 0, "students": 0}
+        pushed = []
+        state.push_event = pushed.append
+        backend = Mock(attendance_path=None)
+        backend.post_scan.return_value = ({}, 0, None)  # status 0 -> retry (unreachable)
+
+        handle_scan(backend, state, Outbox(":memory:"), 7)
+
+        self.assertIn(OFFLINE_HOLD_COPY, pushed[-1]["html"])
+        self.assertEqual(pushed[-1]["dwell"], CLOSED_HOLD_DWELL_S)
+
+    def test_unreachable_server_before_first_poll_is_the_ordinary_saved_banner(self):
+        state = AttendanceState()  # attendance_seen defaults False
+        pushed = []
+        state.push_event = pushed.append
+        backend = Mock(attendance_path=None)
+        backend.post_scan.return_value = ({}, 0, None)
+
+        handle_scan(backend, state, Outbox(":memory:"), 7)
+
+        self.assertNotIn(OFFLINE_HOLD_COPY, pushed[-1]["html"])
+        self.assertIn("banner-saved", pushed[-1]["html"])
 
 
 class TestBackendClient(unittest.TestCase):

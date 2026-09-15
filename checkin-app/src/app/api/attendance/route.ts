@@ -80,7 +80,7 @@ export async function GET(req: NextRequest) {
         // (personal), no phone (pii), no emergency contacts (personal) — none of
         // which it renders. A signed-in keyholder on a non-kiosk browser still
         // gets the full payload (pickup/emergency lookups).
-        const { attendance, counts, safety } = await getFullAttendance({ kiosk: isKiosk });
+        const { attendance, held, counts, safety } = await getFullAttendance({ kiosk: isKiosk });
 
         // Determine access level
         const isAdmin = isKiosk || user?.isSysadmin || user?.isBoardMember || user?.isKeyholder;
@@ -95,6 +95,7 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({
                 access: "full",
                 attendance,
+                held,
                 counts: { ...counts, needReview },
                 safety,
                 signedRequest: isKiosk,

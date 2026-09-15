@@ -51,6 +51,9 @@ class FakeState:
     def offline_supervision_warning(self):
         return None
 
+    def facility_closed(self):
+        return False
+
 
 class TestOutboxDurability(unittest.TestCase):
     def test_pending_rows_survive_process_restart(self):
@@ -712,8 +715,9 @@ class TestHandleScanQueuesOnFailure(unittest.TestCase):
 
 class TestSavedBanner(unittest.TestCase):
     def test_banner_text_includes_queue_count(self):
-        self.assertIn("3 waiting", _saved_banner_html(3))
-        self.assertIn("banner-saved", _saved_banner_html(0))
+        # _saved_banner_html returns (html, dwell); the banner text is the first.
+        self.assertIn("3 waiting", _saved_banner_html(3)[0])
+        self.assertIn("banner-saved", _saved_banner_html(0)[0])
 
 
 if __name__ == "__main__":

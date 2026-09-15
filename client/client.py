@@ -247,6 +247,9 @@ class AttendanceState:
         # Offline these decide whether a keyholder's OUT is a last-out-with-others
         # close, and whether to show a (yellow-only) supervision caution.
         self.keyholder_ids = set()
+        # False until the first successful attendance poll: before that the
+        # zeroed counts must not read as a closed facility.
+        self.attendance_seen = False
         self.last_two_deep_violation = False
         self.clock_watch = ClockWatch()
 
@@ -375,6 +378,16 @@ class AttendanceState:
             self.present_ids = present
             self.keyholder_ids = keyholders
             self.last_two_deep_violation = bool(safety.get("isTwoDeepViolation"))
+            self.attendance_seen = True
+
+    def facility_closed(self):
+        """Best-effort local view of whether the facility is closed (no keyholder
+        present), from the last successful attendance poll. Never claims closed
+        before the first poll — zeroed startup counts are unknown, not closed.
+        Offline it can't tell an arriving keyholder from a member (keyholder_ids
+        holds only present keyholders); the offline hold copy is hedged for that."""
+        with self.lock:
+            return self.attendance_seen and self.current_counts.get("keyholders", 0) == 0
 
 # ---------------------------------------------------------------------------
 # Transparent Signing Proxy & Kiosk Handler
@@ -600,7 +613,7 @@ class KioskHandler(BaseHTTPRequestHandler):
       const iframe = document.querySelector("iframe");
       if (iframe && iframe.contentWindow) {{
         if (data.attendance) {{
-          iframe.contentWindow.postMessage({{type: "refresh-attendance", attendance: data.attendance, counts: data.counts, safety: data.safety}}, "*");
+          iframe.contentWindow.postMessage({{type: "refresh-attendance", attendance: data.attendance, held: data.held, counts: data.counts, safety: data.safety}}, "*");
         }} else {{
           iframe.contentWindow.postMessage("refresh-attendance", "*");
         }}
@@ -858,6 +871,11 @@ def stdin_scanner_listener(backend, state, outbox):
 # event replaces it early.
 CLOSED_HOLD_DWELL_S = 30
 CLOSED_HOLD_COPY = "Scan successful, waiting for key holder before opening the building"
+# Offline hold copy. The kiosk can't tell whether the scanner is a keyholder
+# (keyholder_ids holds only PRESENT keyholders), so — unlike the server-gated
+# CLOSED_HOLD_COPY — this must read true for a keyholder arriving to open too:
+# no "waiting for key holder" claim, just a hedged not-yet-checked-in.
+OFFLINE_HOLD_COPY = "Scan saved — you'll be checked in once the building is open"
 
 # Offline force-close: the kiosk runs the last-keyholder warning + two-scan
 # confirm itself when the server is unreachable. Same window as the server's.
@@ -936,12 +954,22 @@ def _scan_result_banner_html(body, status):
         return f'<div class="banner banner-ok">✓ {who} — {msg}</div>', 0, 0
     return f'<div class="banner banner-ok">✓ {who} — {label}</div>', 0, 0
 
-def _saved_banner_html(queued, intent=None):
+def _saved_banner_html(queued, intent=None, facility_closed=False):
     # A queued scan reads as done and safe to walk away from -- distinct
     # from the red "not saved" state. The displayed direction is the intent
     # of record even when the server has not acked yet.
+    # Returns (html, dwell_seconds); dwell 0 means the default dwell.
+    if facility_closed and intent == "IN":
+        # No keyholder present per the last poll, so an offline IN is held, not an
+        # open — amber and hedged rather than a confident check-in. Hedged copy,
+        # not CLOSED_HOLD_COPY: this also fires for a keyholder arriving to open,
+        # whom the client can't distinguish offline.
+        return (
+            f'<div class="banner banner-warning">✓ {OFFLINE_HOLD_COPY} (will sync, {queued} waiting)</div>',
+            CLOSED_HOLD_DWELL_S,
+        )
     label = "CHECKED IN" if intent == "IN" else "CHECKED OUT" if intent == "OUT" else "Saved"
-    return f'<div class="banner banner-saved">✓ {label} — will sync ({queued} waiting)</div>'
+    return f'<div class="banner banner-saved">✓ {label} — will sync ({queued} waiting)</div>', 0
 
 def handle_scan(backend, state, outbox, participant_id):
     client_event_id = new_event_id()
@@ -980,8 +1008,11 @@ def handle_scan(backend, state, outbox, participant_id):
         queued = outbox.pending_count()
         # The offline force-close confirm normally lands here: its own warning
         # scan is still pending ahead of it. Queue the close behind it and say so.
-        banner = _offline_close_saved_html(queued) if force_close_confirmed else _saved_banner_html(queued, intent)
-        state.push_event({"html": banner, "queued": queued})
+        if force_close_confirmed:
+            state.push_event({"html": _offline_close_saved_html(queued), "queued": queued})
+        else:
+            banner_html, dwell = _saved_banner_html(queued, intent, facility_closed=state.facility_closed())
+            state.push_event({"html": banner_html, "queued": queued, "dwell": dwell})
         log.info(f"Queued (predecessor pending): participant {participant_id} {intent}")
         return
 
@@ -1018,7 +1049,8 @@ def handle_scan(backend, state, outbox, participant_id):
             state.push_event({"html": _offline_close_saved_html(queued), "queued": queued})
             log.warning(f"Offline force-close CONFIRMED, queued: keyholder {participant_id}")
         else:
-            state.push_event({"html": _saved_banner_html(queued, intent), "queued": queued})
+            banner_html, dwell = _saved_banner_html(queued, intent, facility_closed=state.facility_closed())
+            state.push_event({"html": banner_html, "queued": queued, "dwell": dwell})
             log.warning(f"Scan queued (server unreachable/warming): participant {participant_id} {intent}")
         return
 
@@ -1042,7 +1074,7 @@ def handle_scan(backend, state, outbox, participant_id):
         if att_status == 200:
             state.seed_from_attendance(att_data)
             event_payload = {"html": ""}
-            for key in ("attendance", "counts", "safety"):
+            for key in ("attendance", "held", "counts", "safety"):
                 if key in att_data:
                     event_payload[key] = att_data[key]
             if "counts" in att_data:

@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { isYouth } from "@/lib/time";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { PresenceClass } from "@/lib/presence/events";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits } from "@/lib/supervision";
 
 /**
@@ -26,6 +27,16 @@ import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits }
  *   certifications grid (#329).
  *
  * `counts`/`safety` are identical either way — they are aggregates.
+ *
+ * `held` is the PARKED_CLOSED backlog: non-keyholder scans accepted while the
+ * facility is closed, captured as PresenceEvents but not yet projected into a
+ * Visit ({@link flushParkedClosed} does that once a keyholder arrives). We show
+ * them so the room reflects who has actually badged in — trust what we see — but
+ * they stay OUT of `counts`/`safety`: held scans exist ONLY when no keyholder is
+ * present, so the supervision math is already failing, and folding unsupervised
+ * bodies into it would mask that rather than expose it. The held DTO carries only
+ * id/name/time — no `personal`/`pii` field — so it is safe on the kiosk path
+ * without a separate projection.
  */
 export async function getFullAttendance(opts: { kiosk?: boolean } = {}) {
     const kiosk = opts.kiosk === true;
@@ -158,5 +169,22 @@ export async function getFullAttendance(opts: { kiosk?: boolean } = {}) {
         };
     });
 
-    return { attendance, counts, safety };
+    // Held scans: badged IN while the facility was closed, awaiting a keyholder.
+    // Ordered as they occurred (the order the flush will project them). Only the
+    // display name resolves out — email is read for the same fallback the roster
+    // uses and never ships. nickname rides along so the kiosk shows the name the
+    // person goes by, same as the roster (#1813). LIVE_PERSON drops tombstones.
+    const heldEvents = await prisma.presenceEvent.findMany({
+        where: { classification: PresenceClass.PARKED_CLOSED, direction: "IN", person: LIVE_PERSON },
+        orderBy: { occurredAt: "asc" },
+        include: { person: { select: { name: true, nickname: true, email: true } } },
+    });
+    const held = heldEvents.map((ev) => ({
+        id: ev.id,
+        occurredAt: ev.occurredAt,
+        name: ev.person.name?.trim() || ev.person.email?.split("@")[0] || null,
+        nickname: ev.person.nickname,
+    }));
+
+    return { attendance, held, counts, safety };
 }
