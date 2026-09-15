@@ -73,7 +73,12 @@ whole drain window.
 8. Interface: required start on the create form
    (`checkin-app/src/app/program-ops/new/page.tsx`) and the program settings form,
    plus the conditional membership-year select on both. Label the select so it
-   reads as looking up the budget's answer, not as making a call.
+   reads as looking up the budget's answer, not as making a call. Render every
+   year in the `2026-2027` span form via the shipped `membershipYearCycle(...).label`
+   (parsed back by `membershipYearCycleForLabel`) in
+   `checkin-app/src/lib/membership/renewal.ts` — the same helper the settlement-year
+   work (`1655_MEMBERSHIP_YEAR_DECLARED`) uses, so a member sees one label
+   everywhere. Do not add a separate formatter.
 
 ## Left alone deliberately
 
