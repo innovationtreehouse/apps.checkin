@@ -227,6 +227,9 @@ class AttendanceState:
         self.lock = threading.Lock()
         self.subscribers = []  # list of queue.Queue for SSE clients
         self.current_counts = {"total": 0, "keyholders": 0, "volunteers": 0, "students": 0}
+        # False until a successful fetch. Distinguishes "unknown" from "known empty"
+        # so boot (and the first tick after overnight) still polls.
+        self.counts_known = False
         self.confirm_token = None    # force-close confirm token, if a countdown is running
         self.confirm_deadline = 0.0  # monotonic clock, end of that countdown
         # Offline force-close: the server mints no token while disconnected, so
@@ -375,6 +378,7 @@ class AttendanceState:
             self.present_ids = present
             self.keyholder_ids = keyholders
             self.last_two_deep_violation = bool(safety.get("isTwoDeepViolation"))
+            self.counts_known = True
 
 # ---------------------------------------------------------------------------
 # Transparent Signing Proxy & Kiosk Handler
@@ -1058,10 +1062,17 @@ def attendance_poller(backend, state, interval=30, sleep_fn=time.sleep,
     """Background thread that polls attendance counts periodically.
     Pushes SSE status events when counts change so the blackout
     logic works on display-only kiosks without a scanner. §3.1/Q17: a
-    24/7 kiosk must not defeat the overnight curfew with signed GETs."""
+    24/7 kiosk must not defeat the overnight curfew with signed GETs.
+    Also skip while the last known roster is empty — those polls are the
+    same ALB keep-alive, and a scan on this Pi refetches immediately."""
     while True:
         sleep_fn(interval)
         if in_closed_window_fn():
+            # Forget occupancy so the first daytime tick fetches again
+            # (otherwise total=0 would keep skipping after 06:45).
+            state.counts_known = False
+            continue
+        if state.counts_known and state.current_counts.get("total", 0) == 0:
             continue
         att_data, att_status = backend.get_attendance()
         if att_status == 200 and "counts" in att_data:
@@ -1241,14 +1252,17 @@ def main():
 
     # Fetch initial attendance state (only if attendance_path is configured)
     if attendance_path:
-        log.info("Fetching initial attendance state...")
-        att_data, att_status = backend.get_attendance()
-        if att_status == 200 and "counts" in att_data:
-            state.current_counts = att_data["counts"]
-            state.seed_from_attendance(att_data)
-            log.info(f"Initial state: {state.current_counts['total']} people present")
+        if in_closed_window():
+            log.info("Skipping initial attendance fetch (overnight idle)")
         else:
-            log.warning("Could not fetch initial attendance state")
+            log.info("Fetching initial attendance state...")
+            att_data, att_status = backend.get_attendance()
+            if att_status == 200 and "counts" in att_data:
+                state.current_counts = att_data["counts"]
+                state.seed_from_attendance(att_data)
+                log.info(f"Initial state: {state.current_counts['total']} people present")
+            else:
+                log.warning("Could not fetch initial attendance state")
 
         # Start background poller for blackout updates
         poller = threading.Thread(target=attendance_poller, args=(backend, state), daemon=True)

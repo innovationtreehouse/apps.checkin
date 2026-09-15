@@ -488,6 +488,41 @@ class TestAttendancePollerClosedWindow(unittest.TestCase):
         backend = self._run(lambda: in_closed_window(datetime(2026, 8, 18, 12, 0)))
         backend.get_attendance.assert_called()
 
+    def test_skips_when_the_building_is_known_empty(self):
+        backend = Mock(attendance_path="/api/attendance")
+        backend.get_attendance.return_value = ({"counts": {"total": 0}}, 200)
+        state = AttendanceState()
+        state.current_counts = {"total": 0}
+        state.counts_known = True
+        calls = {"n": 0}
+
+        def fake_sleep(_secs):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise _StopLoop()
+
+        with self.assertRaises(_StopLoop):
+            attendance_poller(backend, state, sleep_fn=fake_sleep,
+                               in_closed_window_fn=lambda: False)
+        backend.get_attendance.assert_not_called()
+
+    def test_unknown_occupancy_still_polls_during_the_day(self):
+        backend = Mock(attendance_path="/api/attendance")
+        backend.get_attendance.return_value = ({"counts": {"total": 0}}, 200)
+        state = AttendanceState()
+        self.assertFalse(state.counts_known)
+        calls = {"n": 0}
+
+        def fake_sleep(_secs):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise _StopLoop()
+
+        with self.assertRaises(_StopLoop):
+            attendance_poller(backend, state, sleep_fn=fake_sleep,
+                               in_closed_window_fn=lambda: False)
+        backend.get_attendance.assert_called()
+
 
 class TestOfflineForceClose(unittest.TestCase):
     """Offline the server mints no token, so the kiosk runs the last-keyholder
