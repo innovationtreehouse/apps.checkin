@@ -24,6 +24,13 @@ jest.mock('@/lib/getFullAttendance', () => ({
     }),
 }));
 
+// This suite runs DB-less (it exercises signature wiring, not data); the
+// route's needReview count is the one live query on the kiosk path.
+jest.mock('@/lib/prisma', () => ({
+    __esModule: true,
+    default: { rawBadgeLog: { count: jest.fn().mockResolvedValue(0) } },
+}));
+
 function makeKeypair() {
     const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
     const rawPublicHex = (publicKey.export({ type: 'spki', format: 'der' }) as Buffer)

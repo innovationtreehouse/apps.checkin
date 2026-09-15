@@ -86,11 +86,16 @@ export async function GET(req: NextRequest) {
         const isAdmin = isKiosk || user?.isSysadmin || user?.isBoardMember || user?.isKeyholder;
 
         if (isAdmin) {
+            // ⚠ corner count for the door display (§2 D7): parked scans awaiting
+            // a human. An aggregate only — names and reasons stay on the panel.
+            const needReview = await prisma.rawBadgeLog.count({
+                where: { reviewReason: { not: null }, reviewedAt: null },
+            });
             // Full roster access: all visits + counts (kiosk gets the reduced rows above)
             return NextResponse.json({
                 access: "full",
                 attendance,
-                counts,
+                counts: { ...counts, needReview },
                 safety,
                 signedRequest: isKiosk,
             });

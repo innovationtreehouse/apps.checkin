@@ -171,6 +171,41 @@ describe("attendance/current page", () => {
     expect(screen.queryByText("Household Check-ins")).not.toBeInTheDocument();
   });
 
+  it("kiosk mode shows the ⚠ need-review corner count when parked scans await a human", async () => {
+    setSearchParams("mode=kiosk");
+    setSession({ id: 999 });
+    mockRoutes({
+      "/api/attendance": { ...attendanceData, counts: { ...attendanceData.counts, needReview: 4 } },
+    });
+    renderWithProviders(<KioskDisplay />);
+
+    expect(await screen.findByText("⚠ 4 need review")).toBeInTheDocument();
+    // A number only — nothing clickable that invites a login at the door.
+    expect(screen.queryByRole("link", { name: /need review/ })).not.toBeInTheDocument();
+  });
+
+  it("hides the need-review count off-kiosk and when the queue is empty", async () => {
+    setSearchParams("mode=kiosk");
+    setSession({ id: 999 });
+    mockRoutes({
+      "/api/attendance": { ...attendanceData, counts: { ...attendanceData.counts, needReview: 0 } },
+    });
+    const { unmount } = renderWithProviders(<KioskDisplay />);
+    expect(await screen.findByText("People Present: 3")).toBeInTheDocument();
+    expect(screen.queryByText(/need review/)).not.toBeInTheDocument();
+    unmount();
+    resetRtl();
+
+    // Same non-zero count, but not a kiosk display — the badge stays off.
+    setAdminSession();
+    mockRoutes({
+      "/api/attendance": { ...attendanceData, counts: { ...attendanceData.counts, needReview: 4 } },
+    });
+    renderWithProviders(<KioskDisplay />);
+    expect(await screen.findByText("People Present: 3")).toBeInTheDocument();
+    expect(screen.queryByText(/need review/)).not.toBeInTheDocument();
+  });
+
   it("limited access shows the household roster and hides admin controls", async () => {
     setSession({ id: 42, householdId: 8 });
     mockFetchJson({

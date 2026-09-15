@@ -45,7 +45,7 @@ type Visit = {
   event?: { program?: { id: number; name: string } };
 };
 
-type Counts = { keyholders: number; volunteers: number; youth: number; total: number };
+type Counts = { keyholders: number; volunteers: number; youth: number; total: number; needReview?: number };
 type SafetyFlags = { isLastKeyholder: boolean; isTwoDeepViolation: boolean };
 type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags };
 type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; self: Visit | null; household: Visit[] };
@@ -421,6 +421,11 @@ function KioskDisplayInner() {
               </Button>
             )}
             <CountBadge intent="info" size="lg">People Present: {data ? counts.total : "—"}</CountBadge>
+            {/* A number only — no names, no reasons, no link that invites a
+                login on the kiosk. The panel is the copy of record. */}
+            {isKioskDisplay && (counts.needReview ?? 0) > 0 && (
+              <CountBadge intent="alert" size="lg">⚠ {counts.needReview} need review</CountBadge>
+            )}
           </Group>
         </Group>
 
