@@ -53,7 +53,7 @@ Moot now:
 
 - **The payment hold.** `advanceExternalIfComplete` no longer inspects the note;
   the predicate that held a noted process at `PENDING_BG_REVIEW` is deleted, not
-  moved. The symbol survives only in the prose of `docs/in-design/MERGE_BG_CARRYOVER.md`.
+  moved.
 - **The redundant background check.** Neither `submitIntake` nor `beginRenewal`
   disqualifies the fresh-check shortcut on a note any more. Both bind their
   shortcut unconditionally. A family no longer buys a check with a sentence.
