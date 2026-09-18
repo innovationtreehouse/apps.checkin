@@ -1115,8 +1115,12 @@ def attendance_poller(backend, state, interval=30, sleep_fn=time.sleep,
     Pushes SSE status events when counts change so the blackout
     logic works on display-only kiosks without a scanner. §3.1/Q17: a
     24/7 kiosk must not defeat the overnight curfew with signed GETs.
-    Also skip while the last known roster is empty — the iframe GET still
-    forwards in daytime so a display-only kiosk sees other-entrance check-ins."""
+    Also skip while the last known roster is empty. Accepted trade-off: an
+    empty, asleep kiosk does NOT wake for occupancy created off this Pi (a
+    manual/web check-in, or a scan at another entrance). The next local scan
+    refetches /api/attendance and re-syncs to the live roster — only when that
+    refetch is online; an offline scan wakes the screen via the banner but
+    counts stay stale until connectivity returns."""
     while True:
         sleep_fn(interval)
         if in_closed_window_fn():
