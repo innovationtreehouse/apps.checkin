@@ -12,7 +12,7 @@
  * (getFullAttendance).
  */
 import prisma from '@/lib/prisma';
-import { getFullAttendance, invalidateAttendanceCache } from '@/lib/getFullAttendance';
+import { getFullAttendance } from '@/lib/getFullAttendance';
 import { processCheckin, processCheckout } from '@/lib/scan-service';
 import { supervisingAdultCount, supervisingAdultVisits } from '@/lib/supervision';
 import type { Person } from '@/generated/prisma/client';
