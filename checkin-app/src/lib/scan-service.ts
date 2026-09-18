@@ -262,7 +262,9 @@ export async function processCheckout(
             // under the route's tx client the route runs both AFTER it commits
             // (see finalizeFacilityClose / route.ts).
             if (isRootClient(db)) {
-                await runFacilityClose();
+                await withFacilityLock(db, (tx) => closeAllOpenVisits(tx));
+                invalidateAttendanceCache();
+                kickPostEventEmails();
             }
         }
     }
