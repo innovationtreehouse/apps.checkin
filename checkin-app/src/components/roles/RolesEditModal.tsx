@@ -16,6 +16,7 @@ export type RolesEditTarget = {
   isKeyholder?: boolean;
   isBackgroundCheckReviewer?: boolean;
   isOperations?: boolean;
+  isInventoryManager?: boolean;
   // ops-stg access gate escape hatch. NOT one of the five ROLE_FLAGS above —
   // sysadmin-settable only (see PATCH /api/roles), so it is edited separately
   // below rather than folded into the ROLE_FLAGS loop's board-symmetric switches.
