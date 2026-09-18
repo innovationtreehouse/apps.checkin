@@ -38,7 +38,10 @@ describe('PUT /api/settings/membership — devSigningTarget', () => {
     });
 
     afterAll(async () => {
-        if (prev) await prisma.boardSettings.updateMany({ where: { id: 1 }, data: prev });
+        // Restore prior settings, or null the field these tests set when no row existed
+        // yet: signingMockActive() reads devSigningTarget, so a leaked 'debug' forces the
+        // signing mock provider on every later integration suite sharing this DB.
+        await prisma.boardSettings.updateMany({ where: { id: 1 }, data: prev ?? { devSigningTarget: null } });
         await prisma.person.deleteMany({ where: { id: boardId } });
         await prisma.household.deleteMany({ where: { id: householdId } });
         process.env.CHECKIN_ENV = ORIGINAL_CHECKIN_ENV;
