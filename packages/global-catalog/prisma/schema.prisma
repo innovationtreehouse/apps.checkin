@@ -5,14 +5,27 @@ generator client {
   moduleFormat = "cjs"
 }
 
+// Brings the catalog schema under checkin's security regime (design #1286 §5):
+// the same generator emits a second classifications map, merged in
+// checkin-app/src/security/core.ts. Output lands beside checkin's own
+// generated map; paths are relative to this schema file.
+generator security {
+  provider = "node ../../checkin-app/scripts/security-generator.js"
+  output   = "../../../checkin-app/src/security/generated/catalog-classifications.ts"
+}
+
 datasource db {
   provider = "postgresql"
 }
 
 model Category {
+  /// @sensitivity:public
   id         Int       @id @default(autoincrement())
+  /// @sensitivity:public
   name       String
+  /// @sensitivity:public
   letter     String
+  /// @sensitivity:public
   archivedAt DateTime? @map("archived_at")
 
   subcategories            Subcategory[]
@@ -23,10 +36,15 @@ model Category {
 }
 
 model Subcategory {
+  /// @sensitivity:public
   id         Int       @id @default(autoincrement())
+  /// @sensitivity:public
   name       String
+  /// @sensitivity:public
   number     Int
+  /// @sensitivity:public
   categoryId Int       @map("category_id")
+  /// @sensitivity:public
   archivedAt DateTime? @map("archived_at")
 
   category         Category         @relation(fields: [categoryId], references: [id], onDelete: Cascade)
@@ -37,18 +55,31 @@ model Subcategory {
 }
 
 model Item {
+  /// @sensitivity:public
   gtin13          String    @id
+  /// @sensitivity:public
   name            String
+  /// @sensitivity:public
   categoryId      Int       @map("category_id")
+  /// @sensitivity:public
   subcategoryId   Int       @map("subcategory_id")
+  /// @sensitivity:public
   sequence        Int
+  /// @sensitivity:public
   usageBehavior   String    @map("usage_behavior")
+  /// @sensitivity:public
   createdAt       DateTime  @default(now()) @map("created_at")
+  /// @sensitivity:public
   updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+  /// @sensitivity:internal
   createdByUserId Int?      @map("created_by_user_id")
+  /// @sensitivity:internal
   updatedByUserId Int?      @map("updated_by_user_id")
+  /// @sensitivity:internal
   createdByUsername String? @map("created_by_username")
+  /// @sensitivity:internal
   updatedByUsername String? @map("updated_by_username")
+  /// @sensitivity:public
   archivedAt      DateTime? @map("archived_at")
 
   category               Category                @relation(fields: [categoryId], references: [id])
@@ -61,22 +92,38 @@ model Item {
 }
 
 model ItemReference {
+  /// @sensitivity:public
   id                    Int       @id @default(autoincrement())
+  /// @sensitivity:public
   gtin13                String
+  /// @sensitivity:public
   partNumber            String?   @map("part_number")
+  /// @sensitivity:public
   descriptionNormalized String?   @map("description_normalized")
+  /// @sensitivity:public
   manufacturer          String?
+  /// @sensitivity:public
   retailer              String?
+  /// @sensitivity:public
   url                   String?
   // Integer system-wide: inventory units per receipt-line unit (no fractional packs).
+  /// @sensitivity:public
   conversionFactor      Int       @default(1) @map("conversion_factor")
+  /// @sensitivity:public
   conversionVersion     Int       @default(1) @map("conversion_version")
+  /// @sensitivity:public
   createdAt             DateTime  @default(now()) @map("created_at")
+  /// @sensitivity:public
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at")
+  /// @sensitivity:internal
   createdByUserId       Int?      @map("created_by_user_id")
+  /// @sensitivity:internal
   updatedByUserId       Int?      @map("updated_by_user_id")
+  /// @sensitivity:internal
   createdByUsername     String?   @map("created_by_username")
+  /// @sensitivity:internal
   updatedByUsername     String?   @map("updated_by_username")
+  /// @sensitivity:public
   archivedAt            DateTime? @map("archived_at")
 
   item                 Item                  @relation(fields: [gtin13], references: [gtin13], onDelete: Cascade)
@@ -87,19 +134,35 @@ model ItemReference {
 }
 
 model ReferenceConflict {
+  /// @sensitivity:public
   id               Int       @id @default(autoincrement())
+  /// @sensitivity:public
   itemReferenceId  Int       @map("item_reference_id")
+  /// @sensitivity:public
   existingGtin13   String    @map("existing_gtin13")
+  /// @sensitivity:public
   proposedGtin13   String    @map("proposed_gtin13")
+  /// @sensitivity:public
   manufacturer     String?
+  /// @sensitivity:public
   retailer         String?
+  /// @sensitivity:public
   partNumber       String?   @map("part_number")
+  /// @sensitivity:public
   description      String?
+  // Cross-app plumbing: identifies the source receipt + line, meaningless
+  // inside the catalog and never reference data — same group as OrgEvent.payload.
+  /// @sensitivity:internal
   receiptId        String    @map("receipt_id")
+  /// @sensitivity:internal
   lineItemId       Int       @map("line_item_id")
+  /// @sensitivity:public
   createdAt        DateTime  @default(now()) @map("created_at")
+  /// @sensitivity:public
   resolvedAt       DateTime? @map("resolved_at")
+  /// @sensitivity:public
   resolution       String?
+  /// @sensitivity:internal
   resolvedByUserId Int?      @map("resolved_by_user_id")
 
   itemReference ItemReference @relation(fields: [itemReferenceId], references: [id], onDelete: Cascade)
@@ -109,21 +172,37 @@ model ReferenceConflict {
 }
 
 model ItemReferenceProposal {
+  /// @sensitivity:public
   id                     Int       @id @default(autoincrement())
+  /// @sensitivity:public
   partNumber             String?   @map("part_number")
+  /// @sensitivity:public
   description            String?
+  /// @sensitivity:public
   retailer               String?
+  /// @sensitivity:public
   manufacturer           String?
+  /// @sensitivity:public
   gtin13                 String
+  /// @sensitivity:public
   orgId                  String    @map("org_id")
+  /// @sensitivity:public
   orgName                String    @default("") @map("org_name")
+  /// @sensitivity:internal
   localUserId            Int       @map("local_user_id")
+  /// @sensitivity:public
   proposedAt             DateTime  @default(now()) @map("proposed_at")
+  /// @sensitivity:public
   status                 String    @default("pending")
+  /// @sensitivity:internal
   reviewedByUserId       Int?      @map("reviewed_by_user_id")
+  /// @sensitivity:public
   reviewedAt             DateTime? @map("reviewed_at")
+  /// @sensitivity:internal
   rejectionReason        String?   @map("rejection_reason")
+  /// @sensitivity:public
   supersededByProposalId Int?      @map("superseded_by_proposal_id")
+  /// @sensitivity:public
   conversionFactor       Int       @default(1) @map("conversion_factor")
 
   item Item @relation(fields: [gtin13], references: [gtin13], onDelete: Cascade)
@@ -132,17 +211,29 @@ model ItemReferenceProposal {
 }
 
 model ConversionChallenge {
+  /// @sensitivity:public
   id               Int       @id @default(autoincrement())
+  /// @sensitivity:public
   itemReferenceId  Int       @map("item_reference_id")
+  /// @sensitivity:internal
   localUserId      Int       @map("local_user_id")
+  /// @sensitivity:public
   orgId            String    @map("org_id")
+  /// @sensitivity:public
   orgName          String    @default("") @map("org_name")
+  /// @sensitivity:public
   currentFactor    Int       @map("current_factor")
+  /// @sensitivity:public
   proposedFactor   Int       @map("proposed_factor")
+  /// @sensitivity:internal
   reason           String
+  /// @sensitivity:public
   status           String    @default("pending")
+  /// @sensitivity:internal
   reviewedByUserId Int?      @map("reviewed_by_user_id")
+  /// @sensitivity:public
   reviewedAt       DateTime? @map("reviewed_at")
+  /// @sensitivity:public
   createdAt        DateTime  @default(now()) @map("created_at")
 
   itemReference ItemReference @relation(fields: [itemReferenceId], references: [id], onDelete: Cascade)
@@ -151,32 +242,52 @@ model ConversionChallenge {
 }
 
 model ProvisionalPartSequence {
+  /// @sensitivity:public
   id Int @id @default(autoincrement())
 
   @@map("provisional_part_sequence")
 }
 
 model ProvisionalItem {
+  /// @sensitivity:public
   id                    Int       @id @default(autoincrement())
+  /// @sensitivity:public
   provisionalGtin13     String    @unique @map("provisional_gtin13")
+  /// @sensitivity:public
   orgId                 String    @map("org_id")
+  /// @sensitivity:public
   orgName               String    @default("") @map("org_name")
+  /// @sensitivity:internal
   localUserId           Int       @map("local_user_id")
+  /// @sensitivity:public
   proposedName          String    @map("proposed_name")
+  /// @sensitivity:public
   proposedCategoryId    Int?      @map("proposed_category_id")
+  /// @sensitivity:public
   proposedSubcategoryId Int?      @map("proposed_subcategory_id")
+  /// @sensitivity:public
   proposedUsageBehavior String    @map("proposed_usage_behavior")
+  /// @sensitivity:public
   partNumber            String?   @map("part_number")
+  /// @sensitivity:public
   manufacturer          String?
+  /// @sensitivity:public
   retailer              String?
+  /// @sensitivity:public
   proposedAt            DateTime  @default(now()) @map("proposed_at")
+  /// @sensitivity:public
   status                String    @default("pending")
+  /// @sensitivity:internal
   reviewedByUserId      Int?      @map("reviewed_by_user_id")
+  /// @sensitivity:public
   reviewedAt            DateTime? @map("reviewed_at")
+  /// @sensitivity:internal
   rejectionReason       String?   @map("rejection_reason")
+  /// @sensitivity:public
   resultGtin13          String?   @map("result_gtin13")
   // Human-entered at intake (units per receipt-line unit). Becomes the new
   // item's canonical factor on approve; emitted on the S5 provisional event.
+  /// @sensitivity:public
   conversionFactor      Int       @default(1) @map("conversion_factor")
 
   proposedCategory    Category?    @relation(fields: [proposedCategoryId], references: [id])
@@ -187,35 +298,57 @@ model ProvisionalItem {
 }
 
 model ProvisionalItemMappingLog {
+  /// @sensitivity:public
   id                Int      @id @default(autoincrement())
+  /// @sensitivity:public
   orgId             String   @map("org_id")
+  /// @sensitivity:public
   provisionalGtin13 String   @map("provisional_gtin13")
+  /// @sensitivity:public
   realGtin13        String   @map("real_gtin13")
+  /// @sensitivity:public
   mappedAt          DateTime @default(now()) @map("mapped_at")
+  /// @sensitivity:internal
   mappedByUserId    Int      @map("mapped_by_user_id")
+  /// @sensitivity:public
   mappingType       String   @map("mapping_type")
 
   @@map("provisional_part_mapping_log")
 }
 
 model WorkflowTransitionLog {
+  /// @sensitivity:public
   id                   Int       @id @default(autoincrement())
+  /// @sensitivity:public
   workflowType         String    @map("workflow_type")
+  /// @sensitivity:public
   recordId             Int       @map("record_id")
+  /// @sensitivity:public
   fromStatus           String    @map("from_status")
+  /// @sensitivity:public
   toStatus             String    @map("to_status")
+  /// @sensitivity:internal
   transitionedByUserId Int?      @map("transitioned_by_user_id")
+  /// @sensitivity:public
   transitionedAt       DateTime  @default(now()) @map("transitioned_at")
+  /// @sensitivity:internal
   note                 String?
 
   @@map("workflow_transition_log")
 }
 
 model OrgEvent {
+  /// @sensitivity:public
   id        Int      @id @default(autoincrement())
+  /// @sensitivity:public
   orgId     String   @map("org_id")
+  /// @sensitivity:public
   eventType String   @map("event_type")
+  // Cross-app outbox payload (S5) — opaque serialized event body, not
+  // reference data; may carry receipt-side detail.
+  /// @sensitivity:internal
   payload   String
+  /// @sensitivity:public
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("org_events")
