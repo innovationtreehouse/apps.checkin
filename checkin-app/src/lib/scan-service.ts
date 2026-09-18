@@ -262,8 +262,7 @@ export async function processCheckout(
             // under the route's tx client the route runs both AFTER it commits
             // (see finalizeFacilityClose / route.ts).
             if (isRootClient(db)) {
-                await withFacilityLock(db, (tx) => closeAllOpenVisits(tx));
-                kickPostEventEmails();
+                await runFacilityClose();
             }
         }
     }
@@ -391,7 +390,6 @@ async function closeAllOpenVisits(db: DbClient) {
             ),
             "departedVia" = 'FACILITY_CLOSE'::"VisitSource"
         WHERE "departedAt" IS NULL AND "deletedAt" IS NULL`;
-    invalidateAttendanceCache();
 }
 
 /** Fire-and-forget post-event email run on facility close. The dynamic import
@@ -410,6 +408,9 @@ function kickPostEventEmails() {
  */
 export async function runFacilityClose(): Promise<void> {
     await withFacilityLock(prisma, (tx) => closeAllOpenVisits(tx));
+    // After the lock/tx commits so a concurrent kiosk GET cannot refill the
+    // cache from still-open rows (READ COMMITTED).
+    invalidateAttendanceCache();
     kickPostEventEmails();
 }
 
