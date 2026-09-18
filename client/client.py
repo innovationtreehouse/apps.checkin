@@ -24,40 +24,44 @@ from nacl.signing import SigningKey
 import requests
 
 from outbox import Outbox, classify_response, replay_drain, new_event_id, now_iso, in_closed_window
+from health import health_monitor
 
 # Browser iframe polls these with idleStopMs unset. Swallowing them overnight
-# / when empty is what actually lets prod's 5-minute curfew fire — the Python
-# attendance_poller alone is not enough.
+# is what lets prod's 5-minute curfew fire — the Python attendance_poller
+# alone is not enough. Empty-building skip stays on the poller only, so a
+# display-only / other-entrance check-in still lands via this proxied GET.
 KIOSK_KEEPALIVE_PATHS = ("/api/attendance", "/api/kioskdisplay/certifications")
 
 
 def is_kiosk_keepalive_path(path):
-    return path == "/api/attendance" or path.startswith("/api/kioskdisplay/certifications")
+    return any(
+        path == p or path.startswith(p + "?") or path.startswith(p + "/")
+        for p in KIOSK_KEEPALIVE_PATHS
+    )
 
 
 def skip_kiosk_keepalive(state, method, path, in_closed_window_fn=in_closed_window):
-    """True when a proxied GET must not hit the ALB."""
+    """True when a proxied GET must not hit the ALB (overnight only)."""
     if method != "GET" or not is_kiosk_keepalive_path(path):
         return False
-    if in_closed_window_fn():
-        return True
-    if state is None:
-        return False
-    with state.lock:
-        return bool(state.counts_known and (state.current_counts or {}).get("total", 0) == 0)
+    return bool(in_closed_window_fn())
 
 
 def synthetic_keepalive_body(path, state):
-    """JSON the iframe already knows how to parse, without a backend round-trip."""
-    if path.startswith("/api/kioskdisplay/certifications"):
+    """JSON the iframe already knows how to parse, without a backend round-trip.
+
+    Must include `safety` (and `access`/`youth`): a missing safety object is
+    treated as UNKNOWN and paints the orange supervision fail-safe even on
+    an empty overnight board.
+    """
+    if is_kiosk_keepalive_path(path) and path.startswith("/api/kioskdisplay/certifications"):
         return json.dumps({"participants": [], "tools": []})
-    counts = {"total": 0, "keyholders": 0, "volunteers": 0, "students": 0}
-    if state is not None:
-        with state.lock:
-            if state.current_counts:
-                counts = dict(state.current_counts)
-    return json.dumps({"counts": counts, "attendance": []})
-from health import health_monitor
+    return json.dumps({
+        "access": "full",
+        "counts": {"total": 0, "keyholders": 0, "volunteers": 0, "youth": 0},
+        "safety": {"isLastKeyholder": False, "isTwoDeepViolation": False},
+        "attendance": [],
+    })
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -1111,8 +1115,8 @@ def attendance_poller(backend, state, interval=30, sleep_fn=time.sleep,
     Pushes SSE status events when counts change so the blackout
     logic works on display-only kiosks without a scanner. §3.1/Q17: a
     24/7 kiosk must not defeat the overnight curfew with signed GETs.
-    Also skip while the last known roster is empty — those polls are the
-    same ALB keep-alive, and a scan on this Pi refetches immediately."""
+    Also skip while the last known roster is empty — the iframe GET still
+    forwards in daytime so a display-only kiosk sees other-entrance check-ins."""
     while True:
         sleep_fn(interval)
         if in_closed_window_fn():

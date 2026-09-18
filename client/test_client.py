@@ -537,11 +537,12 @@ class TestProxyKeepaliveSkip(unittest.TestCase):
                                  in_closed_window_fn=lambda: True)
         )
 
-    def test_skips_certs_get_when_known_empty(self):
+    def test_forwards_certs_get_when_known_empty_during_the_day(self):
+        """Display-only / other-entrance occupancy comes back on this GET."""
         state = AttendanceState()
         state.counts_known = True
         state.current_counts = {"total": 0}
-        self.assertTrue(
+        self.assertFalse(
             skip_kiosk_keepalive(state, "GET", "/api/kioskdisplay/certifications",
                                  in_closed_window_fn=lambda: False)
         )
@@ -563,10 +564,10 @@ class TestProxyKeepaliveSkip(unittest.TestCase):
         )
 
     def test_synthetic_attendance_body_is_json_the_iframe_parses(self):
-        state = AttendanceState()
-        state.current_counts = {"total": 0, "keyholders": 0}
-        body = json.loads(synthetic_keepalive_body("/api/attendance", state))
-        self.assertIn("counts", body)
+        body = json.loads(synthetic_keepalive_body("/api/attendance", AttendanceState()))
+        self.assertEqual(body["access"], "full")
+        self.assertEqual(body["counts"]["youth"], 0)
+        self.assertEqual(body["safety"], {"isLastKeyholder": False, "isTwoDeepViolation": False})
         self.assertEqual(body["attendance"], [])
 
 
