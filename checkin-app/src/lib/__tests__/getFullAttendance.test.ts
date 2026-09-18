@@ -5,7 +5,11 @@
  * — that grant is deliberate (registry.ts `keyholders:personal`, pickup/emergency).
  */
 const findMany = jest.fn();
-jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { visit: { findMany: (...a: unknown[]) => findMany(...a) } } }));
+const heldFindMany = jest.fn();
+jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {
+    visit: { findMany: (...a: unknown[]) => findMany(...a) },
+    presenceEvent: { findMany: (...a: unknown[]) => heldFindMany(...a) },
+} }));
 
 // Who counts as a supervising adult is lib/supervision's rule and is tested there
 // (#1436/#1550). Pinned at 1 — short of two-deep — so what this file asserts is its
@@ -53,6 +57,8 @@ const rows = [
 beforeEach(() => {
     findMany.mockReset();
     findMany.mockResolvedValue(rows);
+    heldFindMany.mockReset();
+    heldFindMany.mockResolvedValue([]);
     supervisingAdultVisits.mockClear();
 });
 
@@ -117,6 +123,47 @@ describe("getFullAttendance() — privileged caller (unchanged)", () => {
     it("never ships the raw email on either path", async () => {
         const { attendance } = await getFullAttendance();
         expect(JSON.stringify(attendance)).not.toContain("@example.com");
+    });
+});
+
+describe("held PARKED_CLOSED scans (#1782)", () => {
+    const heldRows = [
+        { id: 900, occurredAt: new Date("2026-07-01T09:00:00Z"), person: { name: "Held Person", nickname: "Hp", email: "held@example.com" } },
+        { id: 901, occurredAt: new Date("2026-07-01T09:05:00Z"), person: { name: null, nickname: null, email: "noname@example.com" } },
+    ];
+
+    it("queries only unprojected closed-facility IN scans, oldest first, LIVE persons", async () => {
+        heldFindMany.mockResolvedValue(heldRows);
+        await getFullAttendance();
+        expect(heldFindMany.mock.calls[0][0]).toMatchObject({
+            where: { classification: "PARKED_CLOSED", direction: "IN", person: { mergedIntoId: null } },
+            orderBy: { occurredAt: "asc" },
+        });
+    });
+
+    it("ships id/name/nickname/time only — no email — on both the privileged and kiosk paths", async () => {
+        heldFindMany.mockResolvedValue(heldRows);
+        for (const kiosk of [false, true]) {
+            const { held } = await getFullAttendance({ kiosk });
+            expect(held).toEqual([
+                { id: 900, occurredAt: heldRows[0].occurredAt, name: "Held Person", nickname: "Hp" },
+                { id: 901, occurredAt: heldRows[1].occurredAt, name: "noname", nickname: null },
+            ]);
+            expect(JSON.stringify(held)).not.toContain("@example.com");
+        }
+    });
+
+    it("never folds held scans into counts or safety", async () => {
+        heldFindMany.mockResolvedValue(heldRows);
+        const { counts, safety } = await getFullAttendance();
+        // Identical to the no-held baseline: two visits, unchanged flags.
+        expect(counts).toEqual({ keyholders: 1, volunteers: 0, youth: 1, total: 2 });
+        expect(safety).toEqual({ isLastKeyholder: true, isTwoDeepViolation: true });
+    });
+
+    it("is an empty array when nothing is held", async () => {
+        const { held } = await getFullAttendance();
+        expect(held).toEqual([]);
     });
 });
 
