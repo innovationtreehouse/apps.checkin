@@ -127,6 +127,7 @@ export const PAGES: PageEntry[] = [
   { href: '/membership-ops/participants/new', label: 'New Participant', section: 'Membership Ops', visible: MOPS('/membership-ops/participants/new') },
   { href: '/membership-ops/participants/import', label: 'Import Participants', section: 'Membership Ops', visible: MOPS('/membership-ops/participants/import') },
   { href: '/membership-ops/participants/merge', label: 'Merge Participants', section: 'Membership Ops', visible: MOPS('/membership-ops/participants/merge') },
+  { href: '/membership-ops/participants/tombstones', label: 'Tombstone Census', section: 'Membership Ops', visible: MOPS('/membership-ops/participants/tombstones') },
   { href: '/membership-ops/review', label: 'Membership Review', section: 'Membership Ops', visible: MOPS('/membership-ops/review') },
   { href: '/membership-ops/roles', label: 'Roles', section: 'Membership Ops', visible: MOPS('/membership-ops/roles') },
 
