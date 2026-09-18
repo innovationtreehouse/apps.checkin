@@ -10,6 +10,7 @@ import { advanceHouseholdBgAfterMerge, householdBgFresh } from "@/lib/membership
 import { LIVE_PERSON } from "@/lib/person/filters";
 import type { TxClient } from "@/lib/db-client";
 import { KIND_TO_MIRROR } from "@/lib/roles";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock } from "./membershipGuard";
 
 export const dynamic = 'force-dynamic';
@@ -769,6 +770,7 @@ export const POST = withAuth(
                 await advanceHouseholdBgAfterMerge(keepParticipant.householdId, auth.user.id, mergeId, bgFreshBeforeMerge);
             }
 
+            invalidateAttendanceCache();
             return NextResponse.json({ success: true });
         } catch (error: unknown) {
             if (error instanceof AlreadyMergedError) {

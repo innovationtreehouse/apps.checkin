@@ -8,6 +8,7 @@ import { applyPresenceIntent, flushParkedClosed } from "@/lib/presence/project";
 import { config } from "@/lib/config";
 import { withKiosk } from "@/lib/kioskAuth";
 import { SCAN_PROTOCOL_VERSION } from "@/lib/scanProtocol";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 // A merged-away badge should still get its owner through the door — an admin
 // tidying up dupes must not be the reason a member gets rejected at the
@@ -457,6 +458,9 @@ export const POST = withKiosk(
         // blocks concurrent scans for other participants. No-op unless the
         // response reports facilityClosed.
         await finalizeFacilityClose(res);
+        // After the tx (+ optional facility sweep) commits, so a concurrent
+        // GET cannot refill the cache from uncommitted rows.
+        invalidateAttendanceCache();
 
         return res;
     } finally {

@@ -7,6 +7,7 @@ import { apiError } from "@/lib/api-response";
 import { parseVisitTime, departureAfterArrival, withinMaxDuration } from "@/lib/visitTimes";
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 import { handler } from "@/security/handler";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 // Registry-governed (GET /api/facility/visits): admission anyRole
 // sysadmin/board; envelope 'visits'. Nested person carries email (pii) —
@@ -100,6 +101,7 @@ export const PATCH = withAuth(
             }, { maxWait: 5000, timeout: 15000 });
 
             if ('error' in result) return apiError(result.error, result.status);
+            invalidateAttendanceCache();
             const { visit: updatedVisit, previous } = result;
 
             // Log the manual edit in the audit trail. secondaryAffectedEntity =
@@ -168,6 +170,7 @@ export const DELETE = withAuth(
             }, { maxWait: 5000, timeout: 15000 });
 
             if (!removed) return apiError("Visit not found.", 404);
+            invalidateAttendanceCache();
 
             // Log the manual deletion in the audit trail — oldData carries the
             // pre-delete row so the review needs no join.

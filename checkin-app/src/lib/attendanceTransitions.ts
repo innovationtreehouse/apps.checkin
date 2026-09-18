@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import { MAX_VISIT_MS } from "@/lib/visitTimes";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 /**
  * Finds all program IDs that a participant is associated with
@@ -104,10 +105,12 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
 
     if (relevantProgramIds.length === 0) {
         // No programs enrolled, just close the visit normally
-        return [await db.visit.update({
+        const closed = await db.visit.update({
             where: { id: visitId },
             data: { departedAt: departure, departedVia: source }
-        })];
+        });
+        invalidateAttendanceCache();
+        return [closed];
     }
 
     // Find all events in these programs that fall between arrival and departure
@@ -123,10 +126,12 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
 
     if (eventsDuringStay.length === 0) {
         // No relevant events during their stay, just close normally
-        return [await db.visit.update({
+        const closed = await db.visit.update({
             where: { id: visitId },
             data: { departedAt: departure, departedVia: source }
-        })];
+        });
+        invalidateAttendanceCache();
+        return [closed];
     }
 
     // We have at least one event. We need to chunk the visit by deleting the
@@ -214,5 +219,7 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
     // the scan route's per-participant lock), run the chunking on it directly:
     // Postgres has no nested transactions and the tx client has no `$transaction`.
     // Otherwise open our own transaction so the delete + recreates stay atomic.
-    return withTx(db, chunk);
+    const created = await withTx(db, chunk);
+    invalidateAttendanceCache();
+    return created;
 }
