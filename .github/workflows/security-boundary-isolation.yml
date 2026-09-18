@@ -153,6 +153,10 @@ jobs:
               checkin-app/tests/security/*) return 0 ;;
               */__tests__/*|*.test.ts|*.test.tsx|*.spec.ts) return 0 ;;
               checkin-app/prisma/schema.prisma) return 0 ;;          # @sensitivity annotations
+              # Vendored Inventory libraries adopt this regime over their own
+              # separate schemas (#1286 §5): those schemas carry @sensitivity +
+              # a `generator security` block feeding the merged classifications.
+              packages/*/prisma/schema.prisma) return 0 ;;           # @sensitivity annotations
               docs/*|*/docs/*|*.md) return 0 ;;
               .github/CODEOWNERS) return 0 ;;
               .github/workflows/security-boundary-isolation.yml) return 0 ;;
