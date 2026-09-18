@@ -13,7 +13,7 @@
     "build:prisma-layer": "node scripts/build-prisma-layer.mjs",
     "lint": "npm -w checkin-app run lint",
     "test": "npm -w checkin-app run test",
-    "db:generate:test": "npm run db:generate -w @inventory/s-ingest-core && npm run db:generate -w @inventory/monitoring-db",
+    "db:generate:test": "npm run db:generate -w @inventory/s-ingest-core && npm run db:generate -w @inventory/monitoring-db && npm run db:generate -w @inventory/global-catalog",
     "pretest:packages": "npm run db:generate:test",
     "test:packages": "npm run test -w ./packages --if-present",
     "pretest:functions": "npm run db:generate:test",

@@ -1,0 +1,222 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  runtime      = "nodejs"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Category {
+  id         Int       @id @default(autoincrement())
+  name       String
+  letter     String
+  archivedAt DateTime? @map("archived_at")
+
+  subcategories            Subcategory[]
+  items                    Item[]
+  provisionalItems ProvisionalItem[]
+
+  @@map("categories")
+}
+
+model Subcategory {
+  id         Int       @id @default(autoincrement())
+  name       String
+  number     Int
+  categoryId Int       @map("category_id")
+  archivedAt DateTime? @map("archived_at")
+
+  category         Category         @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  items            Item[]
+  provisionalItems ProvisionalItem[]
+
+  @@map("subcategories")
+}
+
+model Item {
+  gtin13          String    @id
+  name            String
+  categoryId      Int       @map("category_id")
+  subcategoryId   Int       @map("subcategory_id")
+  sequence        Int
+  usageBehavior   String    @map("usage_behavior")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+  createdByUserId Int?      @map("created_by_user_id")
+  updatedByUserId Int?      @map("updated_by_user_id")
+  createdByUsername String? @map("created_by_username")
+  updatedByUsername String? @map("updated_by_username")
+  archivedAt      DateTime? @map("archived_at")
+
+  category               Category                @relation(fields: [categoryId], references: [id])
+  subcategory            Subcategory             @relation(fields: [subcategoryId], references: [id])
+  itemReferences         ItemReference[]
+  itemReferenceProposals ItemReferenceProposal[]
+  provisionalResults     ProvisionalItem[] @relation("ResultItem")
+
+  @@map("items")
+}
+
+model ItemReference {
+  id                    Int       @id @default(autoincrement())
+  gtin13                String
+  partNumber            String?   @map("part_number")
+  descriptionNormalized String?   @map("description_normalized")
+  manufacturer          String?
+  retailer              String?
+  url                   String?
+  // Integer system-wide: inventory units per receipt-line unit (no fractional packs).
+  conversionFactor      Int       @default(1) @map("conversion_factor")
+  conversionVersion     Int       @default(1) @map("conversion_version")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at")
+  createdByUserId       Int?      @map("created_by_user_id")
+  updatedByUserId       Int?      @map("updated_by_user_id")
+  createdByUsername     String?   @map("created_by_username")
+  updatedByUsername     String?   @map("updated_by_username")
+  archivedAt            DateTime? @map("archived_at")
+
+  item                 Item                  @relation(fields: [gtin13], references: [gtin13], onDelete: Cascade)
+  referenceConflicts   ReferenceConflict[]
+  conversionChallenges ConversionChallenge[]
+
+  @@map("item_references")
+}
+
+model ReferenceConflict {
+  id               Int       @id @default(autoincrement())
+  itemReferenceId  Int       @map("item_reference_id")
+  existingGtin13   String    @map("existing_gtin13")
+  proposedGtin13   String    @map("proposed_gtin13")
+  manufacturer     String?
+  retailer         String?
+  partNumber       String?   @map("part_number")
+  description      String?
+  receiptId        String    @map("receipt_id")
+  lineItemId       Int       @map("line_item_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  resolvedAt       DateTime? @map("resolved_at")
+  resolution       String?
+  resolvedByUserId Int?      @map("resolved_by_user_id")
+
+  itemReference ItemReference @relation(fields: [itemReferenceId], references: [id], onDelete: Cascade)
+
+  @@unique([itemReferenceId, receiptId, lineItemId])
+  @@map("reference_conflicts")
+}
+
+model ItemReferenceProposal {
+  id                     Int       @id @default(autoincrement())
+  partNumber             String?   @map("part_number")
+  description            String?
+  retailer               String?
+  manufacturer           String?
+  gtin13                 String
+  orgId                  String    @map("org_id")
+  orgName                String    @default("") @map("org_name")
+  localUserId            Int       @map("local_user_id")
+  proposedAt             DateTime  @default(now()) @map("proposed_at")
+  status                 String    @default("pending")
+  reviewedByUserId       Int?      @map("reviewed_by_user_id")
+  reviewedAt             DateTime? @map("reviewed_at")
+  rejectionReason        String?   @map("rejection_reason")
+  supersededByProposalId Int?      @map("superseded_by_proposal_id")
+  conversionFactor       Int       @default(1) @map("conversion_factor")
+
+  item Item @relation(fields: [gtin13], references: [gtin13], onDelete: Cascade)
+
+  @@map("item_reference_proposals")
+}
+
+model ConversionChallenge {
+  id               Int       @id @default(autoincrement())
+  itemReferenceId  Int       @map("item_reference_id")
+  localUserId      Int       @map("local_user_id")
+  orgId            String    @map("org_id")
+  orgName          String    @default("") @map("org_name")
+  currentFactor    Int       @map("current_factor")
+  proposedFactor   Int       @map("proposed_factor")
+  reason           String
+  status           String    @default("pending")
+  reviewedByUserId Int?      @map("reviewed_by_user_id")
+  reviewedAt       DateTime? @map("reviewed_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  itemReference ItemReference @relation(fields: [itemReferenceId], references: [id], onDelete: Cascade)
+
+  @@map("conversion_challenges")
+}
+
+model ProvisionalPartSequence {
+  id Int @id @default(autoincrement())
+
+  @@map("provisional_part_sequence")
+}
+
+model ProvisionalItem {
+  id                    Int       @id @default(autoincrement())
+  provisionalGtin13     String    @unique @map("provisional_gtin13")
+  orgId                 String    @map("org_id")
+  orgName               String    @default("") @map("org_name")
+  localUserId           Int       @map("local_user_id")
+  proposedName          String    @map("proposed_name")
+  proposedCategoryId    Int?      @map("proposed_category_id")
+  proposedSubcategoryId Int?      @map("proposed_subcategory_id")
+  proposedUsageBehavior String    @map("proposed_usage_behavior")
+  partNumber            String?   @map("part_number")
+  manufacturer          String?
+  retailer              String?
+  proposedAt            DateTime  @default(now()) @map("proposed_at")
+  status                String    @default("pending")
+  reviewedByUserId      Int?      @map("reviewed_by_user_id")
+  reviewedAt            DateTime? @map("reviewed_at")
+  rejectionReason       String?   @map("rejection_reason")
+  resultGtin13          String?   @map("result_gtin13")
+  // Human-entered at intake (units per receipt-line unit). Becomes the new
+  // item's canonical factor on approve; emitted on the S5 provisional event.
+  conversionFactor      Int       @default(1) @map("conversion_factor")
+
+  proposedCategory    Category?    @relation(fields: [proposedCategoryId], references: [id])
+  proposedSubcategory Subcategory? @relation(fields: [proposedSubcategoryId], references: [id])
+  resultItem          Item?        @relation("ResultItem", fields: [resultGtin13], references: [gtin13])
+
+  @@map("provisional_items")
+}
+
+model ProvisionalItemMappingLog {
+  id                Int      @id @default(autoincrement())
+  orgId             String   @map("org_id")
+  provisionalGtin13 String   @map("provisional_gtin13")
+  realGtin13        String   @map("real_gtin13")
+  mappedAt          DateTime @default(now()) @map("mapped_at")
+  mappedByUserId    Int      @map("mapped_by_user_id")
+  mappingType       String   @map("mapping_type")
+
+  @@map("provisional_part_mapping_log")
+}
+
+model WorkflowTransitionLog {
+  id                   Int       @id @default(autoincrement())
+  workflowType         String    @map("workflow_type")
+  recordId             Int       @map("record_id")
+  fromStatus           String    @map("from_status")
+  toStatus             String    @map("to_status")
+  transitionedByUserId Int?      @map("transitioned_by_user_id")
+  transitionedAt       DateTime  @default(now()) @map("transitioned_at")
+  note                 String?
+
+  @@map("workflow_transition_log")
+}
+
+model OrgEvent {
+  id        Int      @id @default(autoincrement())
+  orgId     String   @map("org_id")
+  eventType String   @map("event_type")
+  payload   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("org_events")
+}
