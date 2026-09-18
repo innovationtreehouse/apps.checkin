@@ -23,6 +23,8 @@ from client import (
     latest_release_tag,
     main,
     resolve_update_target,
+    skip_kiosk_keepalive,
+    synthetic_keepalive_body,
 )
 from outbox import Outbox, in_closed_window
 
@@ -522,6 +524,50 @@ class TestAttendancePollerClosedWindow(unittest.TestCase):
             attendance_poller(backend, state, sleep_fn=fake_sleep,
                                in_closed_window_fn=lambda: False)
         backend.get_attendance.assert_called()
+
+
+class TestProxyKeepaliveSkip(unittest.TestCase):
+    """Iframe polls /api/attendance every 60s with idleStopMs unset. The proxy
+    must swallow those GETs overnight and when empty or ALB never goes quiet."""
+
+    def test_skips_attendance_get_overnight(self):
+        state = AttendanceState()
+        self.assertTrue(
+            skip_kiosk_keepalive(state, "GET", "/api/attendance",
+                                 in_closed_window_fn=lambda: True)
+        )
+
+    def test_skips_certs_get_when_known_empty(self):
+        state = AttendanceState()
+        state.counts_known = True
+        state.current_counts = {"total": 0}
+        self.assertTrue(
+            skip_kiosk_keepalive(state, "GET", "/api/kioskdisplay/certifications",
+                                 in_closed_window_fn=lambda: False)
+        )
+
+    def test_forwards_scan_posts(self):
+        state = AttendanceState()
+        self.assertFalse(
+            skip_kiosk_keepalive(state, "POST", "/api/scan",
+                                 in_closed_window_fn=lambda: True)
+        )
+
+    def test_forwards_when_occupied(self):
+        state = AttendanceState()
+        state.counts_known = True
+        state.current_counts = {"total": 3}
+        self.assertFalse(
+            skip_kiosk_keepalive(state, "GET", "/api/attendance",
+                                 in_closed_window_fn=lambda: False)
+        )
+
+    def test_synthetic_attendance_body_is_json_the_iframe_parses(self):
+        state = AttendanceState()
+        state.current_counts = {"total": 0, "keyholders": 0}
+        body = json.loads(synthetic_keepalive_body("/api/attendance", state))
+        self.assertIn("counts", body)
+        self.assertEqual(body["attendance"], [])
 
 
 class TestOfflineForceClose(unittest.TestCase):

@@ -24,6 +24,39 @@ from nacl.signing import SigningKey
 import requests
 
 from outbox import Outbox, classify_response, replay_drain, new_event_id, now_iso, in_closed_window
+
+# Browser iframe polls these with idleStopMs unset. Swallowing them overnight
+# / when empty is what actually lets prod's 5-minute curfew fire — the Python
+# attendance_poller alone is not enough.
+KIOSK_KEEPALIVE_PATHS = ("/api/attendance", "/api/kioskdisplay/certifications")
+
+
+def is_kiosk_keepalive_path(path):
+    return path == "/api/attendance" or path.startswith("/api/kioskdisplay/certifications")
+
+
+def skip_kiosk_keepalive(state, method, path, in_closed_window_fn=in_closed_window):
+    """True when a proxied GET must not hit the ALB."""
+    if method != "GET" or not is_kiosk_keepalive_path(path):
+        return False
+    if in_closed_window_fn():
+        return True
+    if state is None:
+        return False
+    with state.lock:
+        return bool(state.counts_known and (state.current_counts or {}).get("total", 0) == 0)
+
+
+def synthetic_keepalive_body(path, state):
+    """JSON the iframe already knows how to parse, without a backend round-trip."""
+    if path.startswith("/api/kioskdisplay/certifications"):
+        return json.dumps({"participants": [], "tools": []})
+    counts = {"total": 0, "keyholders": 0, "volunteers": 0, "students": 0}
+    if state is not None:
+        with state.lock:
+            if state.current_counts:
+                counts = dict(state.current_counts)
+    return json.dumps({"counts": counts, "attendance": []})
 from health import health_monitor
 
 # ---------------------------------------------------------------------------
@@ -694,6 +727,21 @@ class KioskHandler(BaseHTTPRequestHandler):
                 
         sig_headers = sign_request(self.backend.signing_key, method, sign_path, body_str)
         req_headers.update(sig_headers)
+
+        if skip_kiosk_keepalive(self.state, method, sign_path):
+            # Chromium is still up; don't let last_browser_seen look like a crash.
+            if self.state is not None:
+                self.state.last_browser_seen = time.monotonic()
+            body = synthetic_keepalive_body(sign_path, self.state).encode()
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            return
         
         try:
             # Use requests.request (stateless) so cookies flow directly between browser and backend
@@ -1070,9 +1118,12 @@ def attendance_poller(backend, state, interval=30, sleep_fn=time.sleep,
         if in_closed_window_fn():
             # Forget occupancy so the first daytime tick fetches again
             # (otherwise total=0 would keep skipping after 06:45).
-            state.counts_known = False
+            with state.lock:
+                state.counts_known = False
             continue
-        if state.counts_known and state.current_counts.get("total", 0) == 0:
+        with state.lock:
+            empty = state.counts_known and state.current_counts.get("total", 0) == 0
+        if empty:
             continue
         att_data, att_status = backend.get_attendance()
         if att_status == 200 and "counts" in att_data:
