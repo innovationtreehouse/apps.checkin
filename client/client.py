@@ -26,6 +26,43 @@ import requests
 from outbox import Outbox, classify_response, replay_drain, new_event_id, now_iso, in_closed_window
 from health import health_monitor
 
+# Browser iframe polls these with idleStopMs unset. Swallowing them overnight
+# is what lets prod's 5-minute curfew fire — the Python attendance_poller
+# alone is not enough. Empty-building skip stays on the poller only, so a
+# display-only / other-entrance check-in still lands via this proxied GET.
+KIOSK_KEEPALIVE_PATHS = ("/api/attendance", "/api/kioskdisplay/certifications")
+
+
+def is_kiosk_keepalive_path(path):
+    return any(
+        path == p or path.startswith(p + "?") or path.startswith(p + "/")
+        for p in KIOSK_KEEPALIVE_PATHS
+    )
+
+
+def skip_kiosk_keepalive(state, method, path, in_closed_window_fn=in_closed_window):
+    """True when a proxied GET must not hit the ALB (overnight only)."""
+    if method != "GET" or not is_kiosk_keepalive_path(path):
+        return False
+    return bool(in_closed_window_fn())
+
+
+def synthetic_keepalive_body(path, state):
+    """JSON the iframe already knows how to parse, without a backend round-trip.
+
+    Must include `safety` (and `access`/`youth`): a missing safety object is
+    treated as UNKNOWN and paints the orange supervision fail-safe even on
+    an empty overnight board.
+    """
+    if is_kiosk_keepalive_path(path) and path.startswith("/api/kioskdisplay/certifications"):
+        return json.dumps({"participants": [], "tools": []})
+    return json.dumps({
+        "access": "full",
+        "counts": {"total": 0, "keyholders": 0, "volunteers": 0, "youth": 0},
+        "safety": {"isLastKeyholder": False, "isTwoDeepViolation": False},
+        "attendance": [],
+    })
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -227,6 +264,9 @@ class AttendanceState:
         self.lock = threading.Lock()
         self.subscribers = []  # list of queue.Queue for SSE clients
         self.current_counts = {"total": 0, "keyholders": 0, "volunteers": 0, "students": 0}
+        # False until a successful fetch. Distinguishes "unknown" from "known empty"
+        # so boot (and the first tick after overnight) still polls.
+        self.counts_known = False
         self.confirm_token = None    # force-close confirm token, if a countdown is running
         self.confirm_deadline = 0.0  # monotonic clock, end of that countdown
         # Offline force-close: the server mints no token while disconnected, so
@@ -375,6 +415,7 @@ class AttendanceState:
             self.present_ids = present
             self.keyholder_ids = keyholders
             self.last_two_deep_violation = bool(safety.get("isTwoDeepViolation"))
+            self.counts_known = True
 
 # ---------------------------------------------------------------------------
 # Transparent Signing Proxy & Kiosk Handler
@@ -690,6 +731,21 @@ class KioskHandler(BaseHTTPRequestHandler):
                 
         sig_headers = sign_request(self.backend.signing_key, method, sign_path, body_str)
         req_headers.update(sig_headers)
+
+        if skip_kiosk_keepalive(self.state, method, sign_path):
+            # Chromium is still up; don't let last_browser_seen look like a crash.
+            if self.state is not None:
+                self.state.last_browser_seen = time.monotonic()
+            body = synthetic_keepalive_body(sign_path, self.state).encode()
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            return
         
         try:
             # Use requests.request (stateless) so cookies flow directly between browser and backend
@@ -1058,10 +1114,24 @@ def attendance_poller(backend, state, interval=30, sleep_fn=time.sleep,
     """Background thread that polls attendance counts periodically.
     Pushes SSE status events when counts change so the blackout
     logic works on display-only kiosks without a scanner. §3.1/Q17: a
-    24/7 kiosk must not defeat the overnight curfew with signed GETs."""
+    24/7 kiosk must not defeat the overnight curfew with signed GETs.
+    Also skip while the last known roster is empty. Accepted trade-off: an
+    empty, asleep kiosk does NOT wake for occupancy created off this Pi (a
+    manual/web check-in, or a scan at another entrance). The next local scan
+    refetches /api/attendance and re-syncs to the live roster — only when that
+    refetch is online; an offline scan wakes the screen via the banner but
+    counts stay stale until connectivity returns."""
     while True:
         sleep_fn(interval)
         if in_closed_window_fn():
+            # Forget occupancy so the first daytime tick fetches again
+            # (otherwise total=0 would keep skipping after 06:45).
+            with state.lock:
+                state.counts_known = False
+            continue
+        with state.lock:
+            empty = state.counts_known and state.current_counts.get("total", 0) == 0
+        if empty:
             continue
         att_data, att_status = backend.get_attendance()
         if att_status == 200 and "counts" in att_data:
@@ -1241,14 +1311,17 @@ def main():
 
     # Fetch initial attendance state (only if attendance_path is configured)
     if attendance_path:
-        log.info("Fetching initial attendance state...")
-        att_data, att_status = backend.get_attendance()
-        if att_status == 200 and "counts" in att_data:
-            state.current_counts = att_data["counts"]
-            state.seed_from_attendance(att_data)
-            log.info(f"Initial state: {state.current_counts['total']} people present")
+        if in_closed_window():
+            log.info("Skipping initial attendance fetch (overnight idle)")
         else:
-            log.warning("Could not fetch initial attendance state")
+            log.info("Fetching initial attendance state...")
+            att_data, att_status = backend.get_attendance()
+            if att_status == 200 and "counts" in att_data:
+                state.current_counts = att_data["counts"]
+                state.seed_from_attendance(att_data)
+                log.info(f"Initial state: {state.current_counts['total']} people present")
+            else:
+                log.warning("Could not fetch initial attendance state")
 
         # Start background poller for blackout updates
         poller = threading.Thread(target=attendance_poller, args=(backend, state), daemon=True)
