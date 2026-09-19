@@ -3,7 +3,7 @@ import { personActor, systemActor, type AuditActor } from "@/lib/auditActor";
 import { escapeHtml } from "@/lib/email-templates/base";
 import { emailBoardMembers, emailHouseholdLeads } from "@/lib/emailRecipients";
 import { isTrustedAdultConflict } from "@/lib/trusted-adult/conflict";
-import { AUTHORIZED_REVIEW } from "@/lib/trusted-adult/filters";
+import { AUTHORIZED_REVIEW, expiringApprovals } from "@/lib/trusted-adult/filters";
 import { config } from "@/lib/config";
 import { validateContact } from "@/lib/trusted-adult/contact";
 import type { TxClient } from "@/lib/db-client";
@@ -534,10 +534,29 @@ export async function overrideReview(
 export async function runExpirySweep(now: Date) {
     const warnThreshold = daysFromNow(now, WARN_LEAD_DAYS);
 
-    const expiring = await prisma.trustedAdultReview.findMany({
-        where: { status: "APPROVED", expiryWarningSentAt: null, reviewBy: { not: null, lte: warnThreshold, gt: now } },
-        select: { id: true, trustedAdultId: true, householdId: true, reviewBy: true },
-    });
+    // "Expiring" is per adult, not per review: an adult who renewed early carries a
+    // stale APPROVED row inside the window plus a live renewal that outlives it. Scope
+    // to adults with a candidate row, load ALL their approvals, and let expiringApprovals
+    // collapse each to its current authorization (latest reviewBy) — the stale row drops
+    // out because the renewal now outlives it. Skip rows already warned once.
+    const candidateAdultIds = [
+        ...new Set(
+            (
+                await prisma.trustedAdultReview.findMany({
+                    where: { status: "APPROVED", reviewBy: { not: null, lte: warnThreshold, gt: now } },
+                    select: { trustedAdultId: true },
+                })
+            ).map((r) => r.trustedAdultId),
+        ),
+    ];
+    const approvals = candidateAdultIds.length
+        ? await prisma.trustedAdultReview.findMany({
+              where: { trustedAdultId: { in: candidateAdultIds }, status: "APPROVED", reviewBy: { not: null } },
+              select: { id: true, trustedAdultId: true, householdId: true, reviewBy: true, expiryWarningSentAt: true },
+              orderBy: { id: "asc" },
+          })
+        : [];
+    const expiring = expiringApprovals(approvals, now, warnThreshold).filter((r) => r.expiryWarningSentAt === null);
     let warned = 0;
     for (const r of expiring) {
         const due = r.reviewBy ? r.reviewBy.toISOString().slice(0, 10) : "soon";

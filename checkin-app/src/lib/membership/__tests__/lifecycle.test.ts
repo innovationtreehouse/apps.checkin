@@ -104,14 +104,18 @@ describe('grantableRenewalWhere / settledThisCycleWhere', () => {
         expect(grantableRenewalWhere).toEqual({ kind: 'RENEWAL', status: 'PENDING_PAYMENT' });
     });
 
-    test('settledThisCycleWhere (money) is kind-agnostic and ACTIVE-only', () => {
+    test('settledThisCycleWhere (money) is kind-agnostic: ACTIVE or paid-awaiting-clearance', () => {
         // A family that joins during the renewal window (INITIAL) buys the coming
-        // year exactly as a renewer does, so no kind clause. ARCHIVED never
-        // completed payment (archive refuses ACTIVE) and must not extend a horizon.
-        const windowStart = new Date('2026-06-01T00:00:00.000Z');
-        expect(settledThisCycleWhere(windowStart)).toEqual({
-            status: 'ACTIVE',
-            stageEnteredAt: { gte: windowStart },
+        // year exactly as a renewer does, so no kind clause. Paid and waiting on the
+        // board's clearance is settled money too. ARCHIVED never completed payment
+        // (archive refuses ACTIVE) and must not extend a horizon.
+        const settledSince = new Date('2026-06-01T00:00:00.000Z');
+        expect(settledThisCycleWhere(settledSince)).toEqual({
+            OR: [
+                { status: 'ACTIVE' },
+                { status: { in: ['PENDING_BG_CLEARANCE'] }, paidAt: { not: null } },
+            ],
+            stageEnteredAt: { gte: settledSince },
         });
     });
 

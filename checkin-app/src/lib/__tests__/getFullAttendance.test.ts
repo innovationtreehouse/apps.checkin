@@ -18,7 +18,7 @@ jest.mock("@/lib/supervision", () => ({
     supervisingAdultCount: () => 1,
 }));
 
-import { getFullAttendance } from "@/lib/getFullAttendance";
+import { getFullAttendance, invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 // Age fixtures are relative to now so they never age past the youth boundary the
 // way a hardcoded year would; the day step keeps the age unambiguous mid-year.
@@ -33,7 +33,7 @@ const rows = [
     {
         id: 201, arrivedAt: new Date("2026-07-01T14:00:00Z"), departedAt: null, personId: 50,
         person: {
-            id: 50, email: "karen@example.com", name: "Karen Keyholder", isKeyholder: true,
+            id: 50, email: "karen@example.com", name: "Karen Keyholder", nickname: "Kay", isKeyholder: true,
             dateOfBirth: new Date("1985-01-01"), householdId: 6, phone: "5551234567",
             household: { id: 6, emergencyContacts: [{ id: 1, name: "Con One", phone: "5559990001", relationship: "Aunt" }] },
         },
@@ -51,6 +51,7 @@ const rows = [
 ];
 
 beforeEach(() => {
+    invalidateAttendanceCache();
     findMany.mockReset();
     findMany.mockResolvedValue(rows);
     supervisingAdultVisits.mockClear();
@@ -69,7 +70,7 @@ describe("getFullAttendance({ kiosk: true })", () => {
         expect(attendance[0]).toEqual({
             id: 201,
             arrivedAt: rows[0].arrivedAt,
-            participant: { id: 50, name: "Karen Keyholder", isKeyholder: true, isYouth: false },
+            participant: { id: 50, name: "Karen Keyholder", nickname: "Kay", isKeyholder: true, isYouth: false },
             event: { program: { id: 3, name: "Robotics" } },
         });
     });
@@ -79,6 +80,8 @@ describe("getFullAttendance({ kiosk: true })", () => {
 
         // name-or-email-prefix resolved server-side; raw address never ships
         expect(attendance[1].participant.name).toBe("stu");
+        // the kiosk renders the nickname over the first name, so it has to ship
+        expect(attendance[0].participant.nickname).toBe("Kay");
         expect(JSON.stringify(attendance)).not.toContain("@example.com");
         // youth column still populates without dateOfBirth
         expect(attendance[1].participant.isYouth).toBe(true);
@@ -102,6 +105,7 @@ describe("getFullAttendance() — privileged caller (unchanged)", () => {
         expect(attendance[0].participant).toMatchObject({
             id: 50,
             name: "Karen Keyholder",
+            nickname: "Kay",
             isKeyholder: true,
             dateOfBirth: rows[0].person.dateOfBirth,
             householdId: 6,
@@ -159,5 +163,21 @@ describe("two-deep calc fails closed on unknown DOB (#300)", () => {
         // No unaccompanied youth, so the flag is false either way — the poll must
         // not pay for the supervision queries to learn that.
         expect(supervisingAdultVisits).not.toHaveBeenCalled();
+    });
+});
+
+describe("attendance cache", () => {
+    it("hits the DB once per shape until a write invalidates", async () => {
+        await getFullAttendance({ kiosk: true });
+        await getFullAttendance({ kiosk: true });
+        expect(findMany).toHaveBeenCalledTimes(1);
+
+        await getFullAttendance();
+        await getFullAttendance();
+        expect(findMany).toHaveBeenCalledTimes(2);
+
+        invalidateAttendanceCache();
+        await getFullAttendance({ kiosk: true });
+        expect(findMany).toHaveBeenCalledTimes(3);
     });
 });

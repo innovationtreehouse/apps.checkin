@@ -10,6 +10,7 @@ import { advanceHouseholdBgAfterMerge, householdBgFresh } from "@/lib/membership
 import { LIVE_PERSON } from "@/lib/person/filters";
 import type { TxClient } from "@/lib/db-client";
 import { KIND_TO_MIRROR } from "@/lib/roles";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock } from "./membershipGuard";
 
 export const dynamic = 'force-dynamic';
@@ -599,6 +600,7 @@ export const POST = withAuth(
                 // Both sides can have owed a check — the survivor keeps exactly one.
                 moved.personBgArchived = await archiveDuplicatePersonBg(tx, keepId, auth.type === 'session' ? auth.user.id : 0);
                 await tx.program.updateMany({ where: { leadMentorId: mergeId }, data: { leadMentorId: keepId } });
+                await tx.programInstance.updateMany({ where: { leadMentorId: mergeId }, data: { leadMentorId: keepId } });
                 await tx.trustedAdult.updateMany({ where: { trustedAdultPersonId: mergeId }, data: { trustedAdultPersonId: keepId } });
                 await tx.trustedAdult.updateMany({ where: { disclosedById: mergeId }, data: { disclosedById: keepId } });
 
@@ -768,6 +770,7 @@ export const POST = withAuth(
                 await advanceHouseholdBgAfterMerge(keepParticipant.householdId, auth.user.id, mergeId, bgFreshBeforeMerge);
             }
 
+            invalidateAttendanceCache();
             return NextResponse.json({ success: true });
         } catch (error: unknown) {
             if (error instanceof AlreadyMergedError) {

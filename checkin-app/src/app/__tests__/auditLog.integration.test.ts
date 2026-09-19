@@ -65,6 +65,7 @@ describe('AuditLog Integration Tests', () => {
         await prisma.programParticipant.deleteMany({});
         await prisma.programVolunteer.deleteMany({});
         await prisma.event.deleteMany({});
+        await prisma.programInstance.deleteMany({});
         await prisma.program.deleteMany({});
         await prisma.person.deleteMany({
             where: { email: { contains: 'audit-test' } }
@@ -107,6 +108,7 @@ describe('AuditLog Integration Tests', () => {
         if (testProgramId !== undefined) {
             await prisma.event.deleteMany({ where: { programId: testProgramId } });
             await prisma.programParticipant.deleteMany({ where: { programId: testProgramId } });
+            await prisma.programInstance.deleteMany({ where: { programId: testProgramId } });
             await prisma.program.deleteMany({ where: { id: testProgramId } });
         }
 

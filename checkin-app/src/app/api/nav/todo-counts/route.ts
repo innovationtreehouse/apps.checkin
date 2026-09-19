@@ -12,6 +12,7 @@ import { PROGRAM_CHECKOUT_BROKEN_WHERE } from "@/lib/programCheckout";
 import { apiError } from "@/lib/api-response";
 import { BROKEN_HOUSEHOLD_WHERE, UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { expiringApprovals } from "@/lib/trusted-adult/filters";
 
 /**
  * Aggregate "things to do" counts for the left-nav badges. Every count is scoped
@@ -131,7 +132,8 @@ export const GET = withAuth({}, async (_req, auth) => {
     }
     const user = auth.user;
 
-    const warnThreshold = new Date();
+    const now = new Date();
+    const warnThreshold = new Date(now);
     warnThreshold.setUTCDate(warnThreshold.getUTCDate() + WARN_LEAD_DAYS);
 
     // ---- Member surface (scoped to the caller's household) ----
@@ -156,7 +158,7 @@ export const GET = withAuth({}, async (_req, auth) => {
                 select: { id: true },
             })) !== null;
 
-        const [hh, leadsMissingPhone, membersMissingAge, membershipProcs, trustedAdultAction, trustedAdultExpiring, pendingPrograms] = await Promise.all([
+        const [hh, leadsMissingPhone, membersMissingAge, membershipProcs, trustedAdultAction, trustedAdultApprovals, pendingPrograms] = await Promise.all([
             isLead
                 ? prisma.household.findUnique({
                       where: { id: householdId },
@@ -201,12 +203,14 @@ export const GET = withAuth({}, async (_req, auth) => {
             prisma.trustedAdultReview.count({
                 where: { householdId, status: "PENDING_SUBJECT_ACTION" },
             }),
-            prisma.trustedAdultReview.count({
-                where: {
-                    householdId,
-                    status: { in: APPROVED_STATUSES },
-                    reviewBy: { not: null, lte: warnThreshold },
-                },
+            // ALL of the household's approvals, not just the ones in the window:
+            // expiringApprovals collapses each adult to their current authorization
+            // (latest reviewBy) so an adult renewed early — a live renewal outliving a
+            // stale in-window row — isn't nagged to renew someone they already renewed.
+            prisma.trustedAdultReview.findMany({
+                where: { householdId, status: { in: APPROVED_STATUSES }, reviewBy: { not: null } },
+                select: { trustedAdultId: true, reviewBy: true, id: true },
+                orderBy: { id: "asc" },
             }),
             prisma.programParticipant.findMany({
                 where: { personId: { in: memberIds }, status: "PENDING", person: LIVE_PERSON },
@@ -236,6 +240,7 @@ export const GET = withAuth({}, async (_req, auth) => {
         for (let i = 0; i < trustedAdultAction; i++) {
             householdTodos.push({ key: `trusted-adult-action-${i}`, label: "Respond to the board's request on a trusted adult", href: "/trusted-adults" });
         }
+        const trustedAdultExpiring = expiringApprovals(trustedAdultApprovals, now, warnThreshold).length;
         for (let i = 0; i < trustedAdultExpiring; i++) {
             householdTodos.push({ key: `trusted-adult-expiring-${i}`, label: "Renew an expiring trusted adult", href: "/trusted-adults" });
         }

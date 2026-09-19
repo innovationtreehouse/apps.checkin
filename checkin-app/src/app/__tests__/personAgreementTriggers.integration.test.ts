@@ -6,7 +6,7 @@
  * per-cycle dedup, the manual board open, and the signature completing the obligation.
  *
  * These run against a real DB on purpose. The population is a nested relation filter
- * (household -> orgMembership -> status, spread with PROGRAM_ATTACHED_WHERE), which
+ * (household -> orgMembership -> status, spread with programAttachedWhere), which
  * type-checks whatever it selects — only a real query proves it picks the right people.
  *
  * Modeled on personBgTriggers.integration.test.ts.

@@ -231,9 +231,8 @@ describe("MembershipSettingsPage", () => {
     );
   });
 
-  // The signing-target radio is a CHECKIN_ENV=dev knob: the API 400s devSigningTarget on
-  // any other env, and one rejected field rejects the whole PUT — so sending it on 'local'
-  // made every membership setting unsaveable. tsc can't see this (both predicates are
+  // The signing-target radio is a CHECKIN_ENV=dev knob: the API only honours it on a dev
+  // instance, so the client sends it only there. tsc can't see this (both predicates are
   // boolean), so the env gate needs a real assertion on the PUT body.
   it.each([
     ["local" as const, false],

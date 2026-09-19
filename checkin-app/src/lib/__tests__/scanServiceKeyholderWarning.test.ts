@@ -228,3 +228,38 @@ describe("F1 (narrowed by #1669): a replay force-closes only with a valid token"
         expect(db.visit.update).not.toHaveBeenCalled();
     });
 });
+
+describe("offline force-close: a client-confirmed replay closes without a server token (§5.23a extended)", () => {
+    // The kiosk ran the two-scan warning+confirm locally while disconnected, so no
+    // server token was ever minted. The confirmed flag rides the queued close and
+    // stands in for the token -- honored ONLY on a replay, and only inside the same
+    // isKeyholder / no-other-keyholder / others-present guards (fakeDb models one).
+    const present = [{ name: "Someone Inside", email: "inside@example.com" }];
+
+    it("closes on a token-less replay carrying forceCloseConfirmed", async () => {
+        const db = fakeDb(present, null);
+        const res = await processCheckout(keyholder, 42, "kiosk", db, null, new Date(), "evt-offline-1", true);
+
+        expect(res.status).toBe(200);
+        expect((await res.json()).facilityClosed).toBe(true);
+        // Confirmed at the door -> it closes, never parks for review.
+        expect(db.rawBadgeLog.update).not.toHaveBeenCalled();
+        expect(db.visit.update).toHaveBeenCalledWith({
+            where: { id: 42 },
+            data: { forceCloseWarnedAt: null, forceCloseToken: null },
+        });
+    });
+
+    it("still warns (server-authoritative) when forceCloseConfirmed rides a LIVE scan, not a replay", async () => {
+        const db = fakeDb(present, null);
+        const res = await processCheckout(keyholder, 42, "kiosk", db, null, new Date(), null, true);
+
+        expect(res.status).toBe(400);
+        expect((await res.json()).type).toBe("warning");
+        expect(db.visit.update).toHaveBeenCalledWith({
+            where: { id: 42 },
+            data: { forceCloseWarnedAt: expect.any(Date), forceCloseToken: expect.any(String) },
+        });
+        expect(db.rawBadgeLog.update).not.toHaveBeenCalled();
+    });
+});

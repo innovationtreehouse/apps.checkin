@@ -8,7 +8,7 @@ import { rolesToFlags } from "@/lib/roles";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 import { leaderAgeCutoff } from "@/lib/programAge";
-import { badgeYearCycle, badgeYearCycleForLabel, MAX_DATE } from "@/lib/membership/renewal";
+import { membershipYearCycle, membershipYearCycleForLabel, MAX_DATE } from "@/lib/membership/renewal";
 
 export const dynamic = 'force-dynamic';
 
@@ -36,13 +36,13 @@ export const GET = withAuth(
                     return NextResponse.json({ years: [], current: null });
                 }
                 const boundary = settings.orgMembershipYearBoundary;
-                const current = badgeYearCycle(boundary, new Date());
+                const current = membershipYearCycle(boundary, new Date());
                 // Look back 5 years from the current cycle.
                 const currentEndYear = parseInt(current.label.split('-')[1], 10);
                 const years: string[] = [];
                 for (let end = currentEndYear; end >= currentEndYear - 5; end--) {
                     const label = `${end - 1}-${end}`;
-                    const cycle = badgeYearCycleForLabel(boundary, label);
+                    const cycle = membershipYearCycleForLabel(boundary, label);
                     if (!cycle) continue;
                     const count = await prisma.orgMembershipProcess.count({
                         where: {
@@ -69,8 +69,8 @@ export const GET = withAuth(
                 const requestedYear = url.searchParams.get('year');
                 const cycle = settings?.orgMembershipYearBoundary
                     ? (requestedYear
-                        ? badgeYearCycleForLabel(settings.orgMembershipYearBoundary, requestedYear)
-                        : badgeYearCycle(settings.orgMembershipYearBoundary, new Date()))
+                        ? membershipYearCycleForLabel(settings.orgMembershipYearBoundary, requestedYear)
+                        : membershipYearCycle(settings.orgMembershipYearBoundary, new Date()))
                     : null;
                 // A household earns `year` by settling THIS cycle, not by being ACTIVE —
                 // nothing revokes a membership at the boundary, so ACTIVE outlives the

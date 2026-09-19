@@ -15,7 +15,7 @@ jest.mock('@/lib/email', () => ({
 }));
 
 import { notifyNewProgramAnnounced } from '@/lib/notifications';
-import { nextBoundary } from '@/lib/membership/renewal';
+import { membershipYearCycle } from '@/lib/membership/renewal';
 import { sendEmail } from '@/lib/email';
 import prisma from '@/lib/prisma';
 
@@ -118,18 +118,18 @@ describe('notifyNewProgramAnnounced recipient set (#1153 covered-member audience
         expect(recipients).not.toContain(`tombstone-${TAG}@example.com`);
     });
 
-    // #1061 "full duration" gate: a covered household with NO settled renewal is only
-    // valid through the current membership-year boundary. One boundary config (Aug 1,
-    // via BoardSettings row 1, which the outer beforeAll leaves unset) exercises both
-    // sides: a program ending after the boundary excludes the household, a program
-    // ending before it includes the SAME household.
+    // #1061 "full duration" gate: a household settled for the live membership year
+    // (#1811) is valid only through the boundary that closes it. One boundary config
+    // (Aug 1, via BoardSettings row 1, which the outer beforeAll leaves unset)
+    // exercises both sides: a program ending after that boundary excludes the
+    // household, a program ending before it includes the SAME household.
     describe('expired-at-midyear boundary', () => {
         let prevBoardSettings: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number } | null = null;
-        const AUG1 = new Date(Date.UTC(2020, 7, 1)); // only month/day matter to nextBoundary()
+        const AUG1 = new Date(Date.UTC(2020, 7, 1)); // only month/day matter to membershipYearCycle()
         // Both program dates are derived from the boundary the code will actually
         // compute, never hardcoded: a literal date silently swaps the two cases
         // once the real clock passes it.
-        const boundary = nextBoundary(AUG1, new Date());
+        const boundary = membershipYearCycle(AUG1, new Date()).cycleEnd;
         const ENDS_AFTER_BOUNDARY = new Date(boundary.getTime() + 30 * 24 * 60 * 60 * 1000);
         const ENDS_BEFORE_BOUNDARY = new Date((Date.now() + boundary.getTime()) / 2);
 
@@ -142,6 +142,15 @@ describe('notifyNewProgramAnnounced recipient set (#1153 covered-member audience
                 where: { id: 1 },
                 create: { id: 1, orgMembershipYearBoundary: AUG1 },
                 update: { orgMembershipYearBoundary: AUG1 },
+            });
+            // Settle the covered household for the live year (paid now ⇒ on or after
+            // settledSince in either season); without a paid process it has bought
+            // nothing and reads as lapsed once the boundary passes.
+            await prisma.orgMembershipProcess.create({
+                data: {
+                    kind: 'INITIAL', status: 'ACTIVE', paidAt: new Date(), stageEnteredAt: new Date(),
+                    orgMembership: { connect: { householdId: (await prisma.household.findFirstOrThrow({ where: { name: `Covered HH ${TAG}` }, select: { id: true } })).id } },
+                },
             });
         });
 

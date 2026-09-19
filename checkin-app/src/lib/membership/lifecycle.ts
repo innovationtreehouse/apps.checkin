@@ -195,19 +195,21 @@ export const grantableRenewalWhere: Where = {
 };
 
 /**
- * "Settled for the coming membership year" — the MONEY question: a process that
- * COMPLETED (terminal ACTIVE: paid and, where required, cleared) inside the
- * current renewal window, INITIAL and RENEWAL alike, because a family that joins
- * during the window buys the coming year exactly as a renewer does
- * (docs/rules/membership.md). ARCHIVED is deliberately absent: archive refuses
- * ACTIVE processes, so every ARCHIVED row never completed payment and must not
- * extend a horizon. Read by the households valid-until and membershipValidThrough.
+ * "Settled for the live membership year" — the MONEY question: a process whose
+ * dues are paid — terminal ACTIVE, or paid and only waiting on background
+ * clearance ({@link duesSettledAwaitingBg}) — stamped on or after the live
+ * cycle's `settledSince` (membershipYearCycle), INITIAL and RENEWAL alike,
+ * because a family that joins during the window buys the coming year exactly as
+ * a renewer does (docs/rules/membership.md). ARCHIVED is deliberately absent:
+ * archive refuses ACTIVE processes, so every ARCHIVED row never completed
+ * payment and must not extend a horizon. Read by the households valid-until,
+ * membershipValidThrough and the outreach audiences.
  * KNOWN LIMIT: settlement time is stageEnteredAt (stage completion), so a
  * pre-window payment whose review clears in-window reads as coming-year.
  */
-export const settledThisCycleWhere = (windowStart: Date): Where => ({
-    status: "ACTIVE",
-    stageEnteredAt: { gte: windowStart },
+export const settledThisCycleWhere = (settledSince: Date): Where => ({
+    OR: [{ status: "ACTIVE" }, duesSettledAwaitingBg.where],
+    stageEnteredAt: { gte: settledSince },
 });
 
 /**

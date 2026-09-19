@@ -6,7 +6,7 @@ import { Badge, Button, Card, Group, Stack, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { PageLoader } from "@/components/ui/PageLoader";
-import { formatDateOnly } from "@/lib/time";
+import { formatDateOnly, orgCalendarDay } from "@/lib/time";
 
 type Enrollment = {
   status: "PENDING" | "ACTIVE";
@@ -91,6 +91,8 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
         <Title order={3}>{household.name || `Household #${household.id}`}</Title>
         {status === "DENIED" ? (
           <Badge color="red">Denied</Badge>
+        ) : status === "ACTIVE" && validUntil && new Date(validUntil).getTime() < orgCalendarDay().getTime() ? (
+          <Badge color="orange">Member (lapsed)</Badge>
         ) : status === "ACTIVE" ? (
           <Badge>Member</Badge>
         ) : (

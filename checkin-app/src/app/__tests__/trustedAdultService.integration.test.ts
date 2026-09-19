@@ -657,6 +657,39 @@ describe('runExpirySweep edge cases', () => {
         expect(sendEmail).not.toHaveBeenCalled();
     });
 
+    // Regression (#1618): "expiring" is per adult, not per review. An adult who renewed
+    // early carries a stale in-window approval PLUS a live renewal that outlives it — the
+    // renewal is their current authorization, so the stale row must NOT trigger a warning.
+    // A genuinely single expiring approval still must.
+    it('warns once per ADULT on the current authorization: a live renewal suppresses the stale in-window row', async () => {
+        const now = new Date();
+        const soon = new Date(now.getTime() + 10 * DAY); // inside the 30-day warn window
+        const far = new Date(now.getTime() + 300 * DAY); // well past it
+
+        // Adult A: renewed early — stale approval in the window, renewal far out.
+        const renewedTa = await prisma.trustedAdult.create({
+            data: { householdId, trustedAdultName: `Renewed ${SWEEP_TAG}`, trustedAdultEmail: 'r@example.com', familyContext: 'ctx', disclosedById: leadId },
+        });
+        const staleRow = await prisma.trustedAdultReview.create({
+            data: { householdId, trustedAdultId: renewedTa.id, kind: 'INITIAL', status: 'APPROVED', reviewBy: soon },
+        });
+        await prisma.trustedAdultReview.create({
+            data: { householdId, trustedAdultId: renewedTa.id, kind: 'RENEWAL', status: 'APPROVED', reviewBy: far },
+        });
+
+        // Adult B: one approval, in the window, nothing behind it — genuinely expiring.
+        const lone = await seedReview('APPROVED', soon);
+
+        const run = await runExpirySweep(now);
+
+        // Only adult B is warned. Adult A's stale row is superseded — not warned, not stamped.
+        expect(run.warned).toBe(1);
+        expect((await prisma.trustedAdultReview.findUnique({ where: { id: staleRow.id } }))!.expiryWarningSentAt).toBeNull();
+        expect((await prisma.trustedAdultReview.findUnique({ where: { id: lone.id } }))!.expiryWarningSentAt).not.toBeNull();
+        expect(sendEmail).toHaveBeenCalledTimes(1);
+        expect(sendEmail).toHaveBeenCalledWith(`sweeplead-${SWEEP_TAG}@ex.com`, expect.stringContaining('expiring'), expect.any(String));
+    });
+
     it('expires at the boundary: reviewBy == now and reviewBy in the past both EXPIRE, never warn', async () => {
         const now = new Date();
         const atNow = await seedReview('APPROVED', new Date(now.getTime())); // reviewBy === now → lte:now, not gt:now

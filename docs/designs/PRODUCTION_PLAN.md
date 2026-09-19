@@ -83,7 +83,7 @@ Only upload (`aws s3 cp ...`) if missing.
 - Enable **Require review from Code Owners** on `main` (security review L2 —
   currently OFF; CODEOWNERS covers `.github/` so promotion workflows can't be
   quietly weakened once this is on).
-- Consider adding the `s-read tests` job (#993) to required status checks.
+- Consider adding the `Package & function tests (Vitest)` job (#993, broadened in #228) to required status checks.
 
 ### 6. One-time in-AWS verification (with `aws login`)
 

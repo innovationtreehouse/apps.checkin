@@ -9,7 +9,7 @@ import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { AdminEditHouseholdModal } from '@/components/admin/AdminEditHouseholdModal';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
-import { formatDateOnly } from '@/lib/time';
+import { formatDateOnly, orgCalendarDay } from '@/lib/time';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 import { householdQueryMatcher, personQueryMatcher } from "@/lib/searchId";
@@ -31,6 +31,10 @@ type Household = {
 // date at UTC midnight, so it must be read UTC-pinned or it shows the day before.
 const fmtDate = (s?: string | null) =>
   s ? formatDateOnly(s, { year: "numeric", month: "short", day: "numeric" }) : "—";
+// An ACTIVE membership whose derived valid-until day is already behind today's org
+// calendar day: dues for the live year were never settled. Status is untouched —
+// revoking is a person's call.
+const isLapsed = (validUntil?: string | null) => !!validUntil && new Date(validUntil).getTime() < orgCalendarDay().getTime();
 
 export default function AdminHouseholdsPage() {
   const { user: me, ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
@@ -275,6 +279,10 @@ export default function AdminHouseholdsPage() {
                   <Table.Td>
                     {isDenied ? (
                       <Text c="red" fw={700}>Denied</Text>
+                    ) : hasActiveMembership && isLapsed(household.validUntil) ? (
+                      <Tooltip label="Active, but no dues for the current membership year are recorded here">
+                        <Text c="orange" fw={700} style={{ cursor: "default" }}>Lapsed</Text>
+                      </Tooltip>
                     ) : hasActiveMembership ? (
                       <Text c="green" fw={700}>Yes</Text>
                     ) : (
@@ -282,7 +290,11 @@ export default function AdminHouseholdsPage() {
                     )}
                   </Table.Td>
                   <Table.Td>{fmtDate(household.orgMembership?.memberSince)}</Table.Td>
-                  <Table.Td>{fmtDate(household.validUntil)}</Table.Td>
+                  <Table.Td>
+                    <Text c={isLapsed(household.validUntil) ? "red" : undefined} fw={isLapsed(household.validUntil) ? 700 : undefined}>
+                      {fmtDate(household.validUntil)}
+                    </Text>
+                  </Table.Td>
                   <Table.Td>{fmtDate(household.bgValidUntil)}</Table.Td>
                   <Table.Td>
                     <Stack gap="xs" align="flex-start">

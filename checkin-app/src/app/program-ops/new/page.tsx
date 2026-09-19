@@ -30,6 +30,7 @@ export default function CreateProgramPage() {
   const [nonMemberPrice, setNonMemberPrice] = useState("");
   const [maxParticipants, setMaxParticipants] = useState("50");
   const [orgMemberOnly, setMemberOnly] = useState(false);
+  const [publiclyVisible, setPubliclyVisible] = useState(false);
   const [saving, setSaving] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [message, setMessage] = useState("");
@@ -57,6 +58,7 @@ export default function CreateProgramPage() {
           startAt,
           endAt,
           orgMemberOnly,
+          publiclyVisible: orgMemberOnly && publiclyVisible,
           minAge: minAge ? parseInt(minAge) : null,
           maxAge: maxAge ? parseInt(maxAge) : null,
           memberPrice: (!isFree && memberPrice) ? memberPrice : null,
@@ -85,8 +87,8 @@ export default function CreateProgramPage() {
   const isDirty =
     !submitted &&
     !shallowEqual(
-      { name: "", startAt: "", endAt: "", minAge: "", maxAge: "", isFree: true, memberPrice: "", nonMemberPrice: "", maxParticipants: "50", orgMemberOnly: false, leadMentorId: "" },
-      { name, startAt, endAt, minAge, maxAge, isFree, memberPrice, nonMemberPrice, maxParticipants, orgMemberOnly, leadMentorId },
+      { name: "", startAt: "", endAt: "", minAge: "", maxAge: "", isFree: true, memberPrice: "", nonMemberPrice: "", maxParticipants: "50", orgMemberOnly: false, publiclyVisible: false, leadMentorId: "" },
+      { name, startAt, endAt, minAge, maxAge, isFree, memberPrice, nonMemberPrice, maxParticipants, orgMemberOnly, publiclyVisible, leadMentorId },
     );
   useUnsavedGuard(isDirty);
 
@@ -203,8 +205,18 @@ export default function CreateProgramPage() {
               checked={orgMemberOnly}
               onChange={(e) => setMemberOnly(e.currentTarget.checked)}
               label="Treehouse Members-Only Program"
-              description="If checked, this program will only be visible to logged-in users with active memberships."
+              description="If checked, only Treehouse Members can enroll."
             />
+
+            {orgMemberOnly && (
+              <Checkbox
+                ml="lg"
+                checked={publiclyVisible}
+                onChange={(e) => setPubliclyVisible(e.currentTarget.checked)}
+                label="Show to non-members"
+                description="List this members-only program publicly so non-members can see it. They still must be a member to enroll."
+              />
+            )}
 
             {message && (
               <Alert color="red" variant="light" title="Couldn't create program">{message}</Alert>

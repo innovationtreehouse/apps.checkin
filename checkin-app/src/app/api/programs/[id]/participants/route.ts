@@ -105,13 +105,11 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             }
 
             // Members-only, judged on the PERSON being enrolled (a household lead
-            // enrolling a dependent is judged on the dependent's household). The
-            // sibling read routes only HIDE such a program; the id is a small
-            // integer and a program can flip to orgMemberOnly after it was public,
-            // so the write path needs its own gate. Dues-settled, not ACTIVE —
-            // it must admit exactly who the read gates show the program to (#1397),
-            // or a paid household awaiting clearance is offered a program it is
-            // then refused at enrollment.
+            // enrolling a dependent is judged on the dependent's household). This is
+            // the authoritative join gate: a publiclyVisible members-only program is
+            // shown to non-members, so a non-member can reach the enroll button and
+            // must be refused here. Dues-settled, not ACTIVE — it admits a paid
+            // household awaiting background clearance, matching the read gates.
             if (currentProgram.orgMemberOnly && !(await isDuesSettled(participantId))) {
                 return NextResponse.json({ error: "This program is for Treehouse Members only.", requiresOverride: true }, { status: 400 });
             }
@@ -297,8 +295,8 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
             }
         }
 
-        // Hold-ledger (product decision 2026-07-06): withdrawal is one of the
-        // three release paths — if this PENDING participant was holding a
+        // Hold-ledger: withdrawal is one of the three release paths — if this
+        // PENDING participant was holding a
         // scholarship seat (inventoryHeldAt set), releasing it back to
         // Shopify (+1) happens with the removal, exactly once (see
         // withdrawAndReleaseHold).
@@ -326,8 +324,8 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
 
         // Advise a manual Shopify restock only when an ACTIVE removal freed a
         // tracked seat; `released` already handles the PENDING hold path (+1).
-        // Staff-only (#1519): a lead mentor or self-removing parent can't act on
-        // Shopify inventory, so the advisory is noise (and a foot-gun) for them.
+        // Staff-only: a lead mentor or self-removing parent can't act on Shopify
+        // inventory, so the advisory is noise (and a foot-gun) for them.
         const hasShopifyVariant = !!currentProgram.shopifyVariantId;
         if (isSysAdminOrBoard && !released && enrollment.status === 'ACTIVE' && currentProgram.maxParticipants !== null && hasShopifyVariant) {
             responseObj.notice = "Seat freed. This enrollment held a seat in Shopify; it was NOT put back on sale automatically. If you want it available for a paying family, add +1 to this program's inventory in Shopify.";

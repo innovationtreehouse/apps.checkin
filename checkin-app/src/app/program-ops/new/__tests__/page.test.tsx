@@ -154,6 +154,7 @@ describe("CreateProgramPage", () => {
             startAt: "2026-01-15",
             endAt: "2026-06-15",
             orgMemberOnly: true,
+            publiclyVisible: false,
             minAge: 10,
             maxAge: 18,
             memberPrice: null,
@@ -165,6 +166,36 @@ describe("CreateProgramPage", () => {
       ),
     );
     expect(router.push).toHaveBeenCalledWith("/program-ops/programs/42");
+  });
+
+  it("reveals 'Show to non-members' only for a members-only program and sends publiclyVisible", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({
+      "/api/people/search": { people: [mentor] },
+      "/api/programs": { program: { id: 42 } },
+    });
+    renderWithProviders(<CreateProgramPage />);
+    const nameInput = await screen.findByLabelText("Program Name", { exact: false });
+    fireEvent.change(nameInput, { target: { value: "FRC Robotics 2026" } });
+    await pickMentor();
+    fireEvent.change(screen.getByLabelText("Start Date", { exact: false }), { target: { value: "2026-01-15" } });
+    fireEvent.change(screen.getByLabelText("End Date", { exact: false }), { target: { value: "2026-06-15" } });
+
+    // Hidden until the program is members-only.
+    expect(screen.queryByLabelText("Show to non-members")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Treehouse Members-Only Program"));
+    fireEvent.click(screen.getByLabelText("Show to non-members"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Program" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/programs",
+        expect.objectContaining({
+          body: expect.stringContaining('"publiclyVisible":true'),
+        }),
+      ),
+    );
   });
 
   it("shows a server error message when creation fails", async () => {

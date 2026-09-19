@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withAuth, getOptionalSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { getKioskPublicKeys, verifyKioskSignature } from "@/lib/verify-kiosk";
-import { getFullAttendance } from "@/lib/getFullAttendance";
+import { getFullAttendance, invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
 import { lastKeyholderGuard, runFacilityClose } from "@/lib/scan-service";
 import { lockFacility } from "@/lib/facilityLock";
@@ -41,8 +41,9 @@ export async function GET(req: NextRequest) {
 
         let isKiosk = false;
 
-        // Minimization keys on the DISPLAY, not the credential (KIOSK_RESILIENCE
-        // §5.25 / B9). A valid kiosk signature means this request is the public
+        // Minimization keys on the DISPLAY, not the credential (see
+        // docs/rules/attendance-checkin.md, "The kiosk" — public-screen only).
+        // A valid kiosk signature means this request is the public
         // kiosk screen — even when a keyholder has signed in on that same
         // browser. The staff grant (`keyholders:personal`) stays on a session
         // request that is NOT kiosk-signed (a laptop, not the door display).
@@ -85,11 +86,16 @@ export async function GET(req: NextRequest) {
         const isAdmin = isKiosk || user?.isSysadmin || user?.isBoardMember || user?.isKeyholder;
 
         if (isAdmin) {
+            // ⚠ corner count for the door display (§2 D7): parked scans awaiting
+            // a human. An aggregate only — names and reasons stay on the panel.
+            const needReview = await prisma.rawBadgeLog.count({
+                where: { reviewReason: { not: null }, reviewedAt: null },
+            });
             // Full roster access: all visits + counts (kiosk gets the reduced rows above)
             return NextResponse.json({
                 access: "full",
                 attendance,
-                counts,
+                counts: { ...counts, needReview },
                 safety,
                 signedRequest: isKiosk,
             });
@@ -292,6 +298,7 @@ export const POST = withAuth({}, async (req, auth) => {
                 logger.error('Checkin notification error:', err)
             );
 
+            invalidateAttendanceCache();
             return NextResponse.json({ success: true, visit: result.visit });
         }
 

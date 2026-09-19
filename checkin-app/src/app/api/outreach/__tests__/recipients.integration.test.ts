@@ -15,6 +15,7 @@ const TAG = 'outreach-recipients-test';
 const BOUNDARY = new Date(Date.UTC(2000, 7, 1)); // Aug 1 (year is irrelevant — nextBoundary rolls it forward)
 const IN_SEASON_NOW = new Date(Date.UTC(2026, 6, 15)); // Jul 15 — inside the 2-month renewal window before Aug 1
 const OFF_SEASON_NOW = new Date(Date.UTC(2026, 0, 15)); // Jan 15 — well outside the window
+const PAST_BOUNDARY_NOW = new Date(Date.UTC(2026, 8, 15)); // Sep 15 — six weeks past the Aug 1 boundary
 
 async function setBoundary(date: Date | null) {
     await prisma.boardSettings.upsert({
@@ -83,7 +84,7 @@ describe('outreach recipient snapshot', () => {
         expect(memberItem?.status).toBe('queued');
     });
 
-    it('preset (a) excludes a settled member IN-SEASON, but includes them OFF-SEASON (nobody is settled)', async () => {
+    it('preset (a) excludes a settled member in season AND after the boundary; a member settled only for the prior year is renew', async () => {
         await setBoundary(BOUNDARY);
         const hh = await makeHousehold('Settled');
         const membership = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'ACTIVE' } });
@@ -97,8 +98,20 @@ describe('outreach recipient snapshot', () => {
         const inSeason = await computeRecipientSnapshot('a', IN_SEASON_NOW);
         expect(inSeason.items.find((i) => i.email === email)).toBeUndefined();
 
+        // The year they bought is now the live one: still settled, still left alone.
+        const pastBoundary = await computeRecipientSnapshot('a', PAST_BOUNDARY_NOW);
+        expect(pastBoundary.items.find((i) => i.email === email)).toBeUndefined();
+
+        // Off season, a household whose last settlement was for the PRIOR year is due.
+        const staleHh = await makeHousehold('SettledPriorYear');
+        const staleMembership = await prisma.orgMembership.create({ data: { householdId: staleHh.id, status: 'ACTIVE' } });
+        const staleEmail = `settled-prior-${TAG}@example.com`;
+        await makeLead(staleHh.id, staleEmail);
+        await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: staleMembership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date(Date.UTC(2024, 6, 15)) },
+        });
         const offSeason = await computeRecipientSnapshot('a', OFF_SEASON_NOW);
-        expect(offSeason.items.find((i) => i.email === email)?.variant).toBe('renew');
+        expect(offSeason.items.find((i) => i.email === staleEmail)?.variant).toBe('renew');
     });
 
     it('preset (b) additionally excludes in-flight RENEWAL and in-flight INITIAL households; preset (a) still includes them', async () => {

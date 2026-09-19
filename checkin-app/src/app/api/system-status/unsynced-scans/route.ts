@@ -4,7 +4,8 @@ import { handler } from "@/security/handler";
 // Registry-governed (GET /api/system-status/unsynced-scans): admission anyRole
 // sysadmin/board/keyholder (Q15; operations stay out — #1633); envelope 'scans'.
 //
-// The review queue from KIOSK_RESILIENCE §2 D7: RawBadgeLog rows a replay
+// The review queue (docs/rules/attendance-checkin.md, kiosk resilience):
+// RawBadgeLog rows a replay
 // PARKED instead of toggling (reviewReason set by /api/scan) and that nobody
 // has dismissed yet.
 //

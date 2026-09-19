@@ -1,6 +1,6 @@
 import type { OrgMembershipStatus, Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
-import { nextBoundary, renewalSeasonWindow, MAX_DATE } from "@/lib/membership/renewal";
+import { membershipYearCycle, coveredThrough } from "@/lib/membership/renewal";
 import { duesSettledAwaitingBg, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 
 /**
@@ -98,11 +98,13 @@ export function orgMembershipStatusBlocksLogin(
  * How far a household's dues currently cover, as a boundary date — or null when
  * no horizon can be computed (dues not settled, or the board hasn't set
  * {@link BoardSettings.orgMembershipYearBoundary}). A membership always runs
- * boundary-to-boundary: an un-renewed ACTIVE household is covered through the
- * UPCOMING boundary; one already "settled for the coming year" (a terminal
- * {@link OrgMembershipProcess} — INITIAL or RENEWAL — stamped inside this
- * cycle's renewal window, {@link settledThisCycleWhere}, the same probe
- * households-ops renders as valid-until) is covered one boundary further.
+ * boundary-to-boundary. A household settled for the live membership year
+ * ({@link settledThisCycleWhere} — a paid INITIAL or RENEWAL stamped since the
+ * year's renewal window opened) is covered to the boundary that closes the year;
+ * one that did not settle is covered only to the boundary that opened it, so off
+ * season it reads as lapsed. Coverage is what was bought: a membership with no
+ * dues-paid process (a bare manual grant, an import) has bought nothing the app
+ * can see. Same rule households-ops renders as valid-until.
  *
  * "Dues settled" here is {@link DUES_SETTLED_PERSON_WHERE}'s rule, so a paid
  * application still awaiting background clearance gets the same horizon. That
@@ -131,19 +133,13 @@ export async function membershipValidThrough(householdId: number, now = new Date
     });
     if (!settings?.orgMembershipYearBoundary) return null;
 
-    const boundary = nextBoundary(settings.orgMembershipYearBoundary, now);
-    const window = await renewalSeasonWindow(now);
+    const cycle = membershipYearCycle(settings.orgMembershipYearBoundary, now);
     const settled = (await prisma.orgMembershipProcess.findFirst({
-        where: {
-            orgMembershipId: membership.id,
-            ...settledThisCycleWhere(window?.windowStart ?? MAX_DATE),
-        },
+        where: { orgMembershipId: membership.id, ...settledThisCycleWhere(cycle.settledSince) },
         select: { id: true },
     })) !== null;
 
-    return settled
-        ? new Date(Date.UTC(boundary.getUTCFullYear() + 1, boundary.getUTCMonth(), boundary.getUTCDate()))
-        : boundary;
+    return coveredThrough(cycle, settled);
 }
 
 /**

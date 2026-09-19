@@ -46,8 +46,8 @@ export default function MembershipSettingsPage() {
   const [extracting, setExtracting] = useState(false);
   const [discountCode, setDiscountCode] = useState("");
   // Dev-instance-only: where contract signing requests go ('zoho' | 'debug').
-  // Strictly CHECKIN_ENV=dev, not useIsDevInstance()'s not-prod: the API rejects
-  // devSigningTarget on any other env, and one rejected field 400s the whole PUT.
+  // Strictly CHECKIN_ENV=dev, not useIsDevInstance()'s not-prod: the API only
+  // honours devSigningTarget on a dev instance, so only send it there.
   const isDev = useCheckinEnv() === "dev";
   const [signingTarget, setSigningTarget] = useState("zoho");
 

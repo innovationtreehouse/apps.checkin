@@ -64,6 +64,7 @@ describe('Program Age Bounds Integration Tests', () => {
         await prisma.programParticipant.deleteMany({});
         await prisma.programVolunteer.deleteMany({});
         await prisma.event.deleteMany({});
+        await prisma.programInstance.deleteMany({});
         await prisma.program.deleteMany({});
         await prisma.person.deleteMany({
             where: { email: { contains: 'age-test' } }
@@ -147,6 +148,7 @@ describe('Program Age Bounds Integration Tests', () => {
         // Clean up
         if (testProgramId !== undefined) {
             await prisma.programParticipant.deleteMany({ where: { programId: testProgramId } });
+            await prisma.programInstance.deleteMany({ where: { programId: testProgramId } });
             await prisma.program.deleteMany({ where: { id: testProgramId } });
         }
 

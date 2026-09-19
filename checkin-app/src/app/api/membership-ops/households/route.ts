@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
-import { renewalSeasonWindow, nextBoundary, bgValidUntilBoundary, grantRenewalPayment, MAX_DATE } from "@/lib/membership/renewal";
+import { renewalSeasonWindow, membershipYearCycle, coveredThrough, bgValidUntilBoundary, grantRenewalPayment, MAX_DATE } from "@/lib/membership/renewal";
 import { grantableRenewalWhere, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { PaymentError } from "@/lib/membership/payment";
 import { LIVE_PERSON } from "@/lib/person/filters";
@@ -18,15 +18,10 @@ export const dynamic = 'force-dynamic';
 // it inline (below) with this where/order so Prisma infers the result type.
 const PRIMARY_CONTACT_WHERE = { conflictParticipantId: null, name: { not: "" }, phone: { not: "" } };
 
-// "Valid until" is DERIVED, never stored (thpr's #1053 review): a membership is
-// exactly one year, so an active membership is valid until the UPCOMING year
-// boundary, and a household already settled for the coming cycle is valid until
-// the boundary after that. Deriving keeps it consistent with everything else the
-// boundary drives (renewal sweep, 60-day warnings) with nothing to hand-update.
-function derivedValidUntil(boundary: Date | null, settled: boolean): Date | null {
-    if (!boundary) return null;
-    return settled ? new Date(Date.UTC(boundary.getUTCFullYear() + 1, boundary.getUTCMonth(), boundary.getUTCDate())) : boundary;
-}
+// "Valid until" is DERIVED, never stored: coveredThrough over the live membership
+// year — the boundary closing it when the household settled for it, else the one
+// that opened it. Deriving keeps it consistent with everything else the boundary
+// drives (renewal sweep, badge years, pricing) with nothing to hand-update.
 function withFlatContact<T extends { emergencyContacts: { name: string; phone: string }[] }>(h: T) {
     const primary = h.emergencyContacts[0] ?? null;
     const { emergencyContacts: _drop, ...rest } = h;
@@ -77,22 +72,20 @@ export const GET = withAuth(
                 const settings = await prisma.boardSettings.findUnique({
                     where: { id: 1 }, select: { orgMembershipYearBoundary: true, bgRecheckMonths: true },
                 });
-                const detailWindow = await renewalSeasonWindow(new Date());
-                const detailBoundary = settings?.orgMembershipYearBoundary
-                    ? nextBoundary(settings.orgMembershipYearBoundary, new Date())
+                const detailCycle = settings?.orgMembershipYearBoundary
+                    ? membershipYearCycle(settings.orgMembershipYearBoundary, new Date())
                     : null;
-                // "Settled this cycle" = ANY process COMPLETED (terminal ACTIVE) inside
-                // the window (settledThisCycleWhere) — a family that JOINS in-window buys
-                // the coming year exactly as a renewer does, so INITIAL counts too.
+                // "Settled for the live year" = ANY dues-paid process (settledThisCycleWhere)
+                // stamped since the year's window opened — a family that JOINS in-window
+                // buys the coming year exactly as a renewer does, so INITIAL counts too.
                 // ARCHIVED never completed payment and does not extend the horizon (the
                 // sweep alone treats it as handled). Same test the list branch and
-                // membershipValidThrough use. Out of season the window start is "never"
-                // (matches nothing).
+                // membershipValidThrough use. No boundary ⇒ "never" (matches nothing).
                 const detailSettled = household.orgMembership
                     ? (await prisma.orgMembershipProcess.findFirst({
                           where: {
                               orgMembershipId: household.orgMembership.id,
-                              ...settledThisCycleWhere(detailWindow?.windowStart ?? MAX_DATE),
+                              ...settledThisCycleWhere(detailCycle?.settledSince ?? MAX_DATE),
                           },
                           select: { id: true },
                       })) !== null
@@ -116,7 +109,7 @@ export const GET = withAuth(
 
                 return NextResponse.json({
                     household: { ...withFlatContact(household), householdMembers: membersWithBg, householdLeads, bgValidUntil: householdBgValidUntil },
-                    validUntil: household.orgMembership?.status === "ACTIVE" ? derivedValidUntil(detailBoundary, detailSettled) : null,
+                    validUntil: household.orgMembership?.status === "ACTIVE" && detailCycle ? coveredThrough(detailCycle, detailSettled) : null,
                 });
             }
 
@@ -135,9 +128,13 @@ export const GET = withAuth(
                 ]
             } : {};
 
-            // Renewal-season probe input: the settled arm of the process include below
-            // matches inside this window; out of season it matches nothing.
+            // Renewal season drives the coming-year grant button; the live cycle drives
+            // the settled arm of the process include below (no boundary ⇒ matches nothing).
             const window = await renewalSeasonWindow(new Date());
+            const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
+            const cycle = settings?.orgMembershipYearBoundary
+                ? membershipYearCycle(settings.orgMembershipYearBoundary, new Date())
+                : null;
 
             const households = await prisma.household.findMany({
                 where: whereClause,
@@ -151,20 +148,19 @@ export const GET = withAuth(
                     },
                     // ONE probe serves both flags computed below, from the shared lifecycle
                     // definitions: grantableRenewalWhere (payable renewal → grantability)
-                    // and settledThisCycleWhere (ANY process — INITIAL or RENEWAL —
-                    // COMPLETED terminal ACTIVE inside the renewal window → coming year
-                    // settled, the same test membershipValidThrough uses; ARCHIVED never
-                    // paid, so it is the sweep's business only). Out of season the window
-                    // start is "never" (matches no row), keeping one query shape and one
-                    // inferred type. orgMembership's own scalars (status, memberSince)
-                    // still ride along via this include.
+                    // and settledThisCycleWhere (ANY dues-paid process — INITIAL or
+                    // RENEWAL — stamped since the live year's window opened → settled for
+                    // it, the same test membershipValidThrough uses; ARCHIVED never paid,
+                    // so it is the sweep's business only). No boundary ⇒ "never" (matches
+                    // no row), keeping one query shape and one inferred type.
+                    // orgMembership's own scalars (status, memberSince) still ride along.
                     orgMembership: {
                         include: {
                             processes: {
                                 where: {
                                     OR: [
                                         grantableRenewalWhere,
-                                        settledThisCycleWhere(window?.windowStart ?? MAX_DATE),
+                                        settledThisCycleWhere(cycle?.settledSince ?? MAX_DATE),
                                     ],
                                 },
                                 select: { id: true, status: true },
@@ -184,23 +180,19 @@ export const GET = withAuth(
                 ...(q && { take: 20 })
             });
 
-            const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-            const boundary = settings?.orgMembershipYearBoundary
-                ? nextBoundary(settings.orgMembershipYearBoundary, new Date())
-                : null;
             const recheckMonths = settings?.bgRecheckMonths ?? 0;
             const bgSettings = { orgMembershipYearBoundary: settings?.orgMembershipYearBoundary ?? null, bgRecheckMonths: recheckMonths };
 
             const withGrantable = households.map((h) => {
                 // Split the single OR probe by status: PENDING_PAYMENT = grantable renewal
                 // (grantableRenewalWhere — kind RENEWAL, so an in-flight INITIAL at
-                // payment never reads as grantable); a completed (ACTIVE) process of
-                // EITHER kind = the coming cycle is settled (settledThisCycleWhere:
+                // payment never reads as grantable); any other row is a dues-paid process
+                // of EITHER kind = the live year is settled (settledThisCycleWhere:
                 // finished renewal, admin override, or a family that joined inside
                 // the window).
                 const { processes = [], ...orgMembership } = h.orgMembership ?? {};
                 const renewalGrantable = processes.some((p) => p.status === "PENDING_PAYMENT");
-                const settledForComingYear = processes.some((p) => p.status === "ACTIVE");
+                const settledForComingYear = processes.some((p) => p.status !== "PENDING_PAYMENT");
                 // Household-level BG "valid until" — later lastBackgroundCheck among leads
                 // who passed; no per-member values in the list response.
                 const latestLeadBg = h.householdMembers
@@ -213,7 +205,7 @@ export const GET = withAuth(
                     renewalGrantable,
                     settledForComingYear,
                     bgValidUntil,
-                    validUntil: h.orgMembership?.status === "ACTIVE" ? derivedValidUntil(boundary, settledForComingYear) : null,
+                    validUntil: h.orgMembership?.status === "ACTIVE" && cycle ? coveredThrough(cycle, settledForComingYear) : null,
                 };
             });
 

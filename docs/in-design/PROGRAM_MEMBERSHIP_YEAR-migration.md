@@ -73,14 +73,19 @@ whole drain window.
 8. Interface: required start on the create form
    (`checkin-app/src/app/program-ops/new/page.tsx`) and the program settings form,
    plus the conditional membership-year select on both. Label the select so it
-   reads as looking up the budget's answer, not as making a call.
+   reads as looking up the budget's answer, not as making a call. Render every
+   year in the `2026-2027` span form via the shipped `membershipYearCycle(...).label`
+   (parsed back by `membershipYearCycleForLabel`) in
+   `checkin-app/src/lib/membership/renewal.ts` — the same helper the settlement-year
+   work (`1655_MEMBERSHIP_YEAR_DECLARED`) uses, so a member sees one label
+   everywhere. Do not add a separate formatter.
 
 ## Left alone deliberately
 
-`recentProgramWhere` in `checkin-app/src/lib/membership/personAgreementTriggers.ts`
-matches null dates on purpose, so an ongoing program is not silently dropped by
-SQL three-valued logic. It is not reading a bound, and legacy rows can still be
-null on either date. Do not "tidy" it as part of this.
+`recentProgramWhere` in `checkin-app/src/lib/person/filters.ts` bounds "recently
+attached" by the program's own window (`endAt >= now - lookback AND startAt <= now`).
+It is not reading the declared-year bound, so this change leaves it alone. `startAt`
+and `endAt` are NOT NULL, so there is no null-date case to handle.
 
 `landsNextYear` in `checkin-app/src/lib/programYear.ts` duplicates `nextBoundary`
 for the browser bundle, because the canonical one pulls in prisma. The declared

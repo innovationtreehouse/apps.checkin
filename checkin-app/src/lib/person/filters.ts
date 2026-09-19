@@ -11,22 +11,45 @@ import type { Prisma } from "@/generated/prisma/client";
  */
 export const LIVE_PERSON: Prisma.PersonWhereInput = { mergedIntoId: null };
 
+/** How far back a finished program still counts as "in the building". */
+export const ATTACHMENT_LOOKBACK_MONTHS = 12;
+
 /**
- * Person is attached to at least one program in any of the three roles — the shared
- * "who is in the building" population behind the PERSON_BG and PERSON_AGREEMENT
- * obligations and the board compliance lists.
+ * A program that is running, or ended within the lookback. Bounds "attached" by the
+ * program's own window: attachment rows are never cleared when a program ends, so an
+ * unbounded "any program ever" predicate would re-ask someone who took one class years
+ * ago every cycle forever.
+ */
+export function recentProgramWhere(now: Date): Prisma.ProgramWhereInput {
+    const since = new Date(now);
+    since.setUTCMonth(since.getUTCMonth() - ATTACHMENT_LOOKBACK_MONTHS);
+    return {
+        AND: [
+            { endAt: { gte: since } },
+            { startAt: { lte: now } },
+        ],
+    };
+}
+
+/**
+ * Person is attached to at least one program (in any of the three roles) whose window is
+ * current or ended within the lookback — the shared "who is in the building" population
+ * behind the PERSON_BG and PERSON_AGREEMENT obligations and the board compliance lists.
  *
  * Lives here rather than in either trigger module: both need it, and importing one
  * trigger from the other closes an import cycle (personBgTriggers → renewal → payment →
  * personAgreementTriggers → personBgTriggers) that fails at module init with a TDZ error.
  */
-export const PROGRAM_ATTACHED_WHERE: Prisma.PersonWhereInput = {
-    OR: [
-        { programParticipants: { some: {} } },
-        { programVolunteers: { some: {} } },
-        { programsLed: { some: {} } },
-    ],
-};
+export function programAttachedWhere(now: Date): Prisma.PersonWhereInput {
+    const program = recentProgramWhere(now);
+    return {
+        OR: [
+            { programParticipants: { some: { program } } },
+            { programVolunteers: { some: { program } } },
+            { programsLed: { some: program } },
+        ],
+    };
+}
 
 /**
  * Person who owes a background check of their own: program-attached, or a signing
@@ -44,6 +67,8 @@ export const PROGRAM_ATTACHED_WHERE: Prisma.PersonWhereInput = {
  * The PERSON_BG openers and the board's compliance worklist share it, so what the
  * triggers open is what the board can act on.
  */
-export const BG_OBLIGATED_WHERE: Prisma.PersonWhereInput = {
-    OR: [PROGRAM_ATTACHED_WHERE, { isHouseholdLead: true, household: { orgMembership: { status: "ACTIVE" } } }],
-};
+export function bgObligatedWhere(now: Date): Prisma.PersonWhereInput {
+    return {
+        OR: [programAttachedWhere(now), { isHouseholdLead: true, household: { orgMembership: { status: "ACTIVE" } } }],
+    };
+}

@@ -200,6 +200,7 @@ model Person {
   programVolunteers   ProgramVolunteer[]
   programParticipants ProgramParticipant[]
   programsLed         Program[]                    @relation("ProgramLeadMentor")
+  instancesLed        ProgramInstance[]            @relation("InstanceLeadMentor")
   rsvps               RSVP[]
   rawBadgeLogs        RawBadgeLog[]
   presenceEvents      PresenceEvent[]
@@ -228,6 +229,7 @@ enum PersonRoleKind {
   KEYHOLDER
   BG_REVIEWER
   OPERATIONS
+  INVENTORY_MANAGER
 }
 
 /// Source of truth for role grants (expand phase of the boolean-column -> table
@@ -940,7 +942,12 @@ model Program {
   enrollmentStatus               EnrollmentStatus @default(CLOSED)
   /// @sensitivity:public
   orgMemberOnly                  Boolean          @default(false)
-  /// Opt-in (#1153): when true, reaching UPCOMING+OPEN emails covered members once.
+  /// When an orgMemberOnly program is publiclyVisible, it appears in the public
+  /// catalogue and its detail page to non-members; enrollment still requires a
+  /// settled membership. Default false keeps a members-only program hidden.
+  /// @sensitivity:public
+  publiclyVisible                Boolean          @default(false)
+  /// Opt-in: when true, reaching UPCOMING+OPEN emails covered members once.
   /// Default false — no program announces unless a leader enables it.
   /// @sensitivity:public
   announceOnOpen                 Boolean          @default(false)
@@ -976,6 +983,56 @@ model Program {
   volunteers   ProgramVolunteer[]
   participants ProgramParticipant[]
   events       Event[]
+  instances    ProgramInstance[]
+}
+
+// Program → Instance → Event, PHASE 1 (additive tier + 1:1 backfill; nothing
+// reads it yet). See docs/designs/PROGRAM_INSTANCE_RESTRUCTURE.md §3/§7 P1.
+// The offering columns are mirrored here so a later phase can repoint the child
+// FKs (programId → instanceId) as a pure RENAME off the id-aliased backfill.
+// ponytail: two offering columns the design lists are deliberately deferred to a
+// later phase — leadMentorNotificationSettings (its `personal` tier would make
+// this model sensitive-and-scopable, forcing a scopeBindings entry that the
+// design itself only wants in the Phase 3 claim swap) and the retiring
+// @ignore'd shopify org/non-org variant pair. Nothing reads either in Phase 1;
+// the data stays on Program until Phase 5 drops it, so add them with their
+// readers/binding later.
+model ProgramInstance {
+  /// @sensitivity:public
+  id               Int              @id @default(autoincrement())
+  /// @sensitivity:public
+  programId        Int
+  program          Program          @relation(fields: [programId], references: [id])
+  /// Run label, e.g. "Fall 2026". Backfill seeds it from the parent name.
+  /// @sensitivity:public
+  name             String
+  /// @sensitivity:public
+  leadMentorId     Int?
+  leadMentor       Person?          @relation("InstanceLeadMentor", fields: [leadMentorId], references: [id])
+  /// @sensitivity:public
+  startAt          DateTime?        @db.Date
+  /// @sensitivity:public
+  endAt            DateTime?        @db.Date
+  /// @sensitivity:public
+  phase            ProgramPhase     @default(PLANNING)
+  /// @sensitivity:public
+  enrollmentStatus EnrollmentStatus @default(CLOSED)
+  /// @sensitivity:public
+  maxParticipants  Int?
+  /// Narrowing override (§3a): NULL = inherit the definition. A non-null value
+  /// may only make the band STRICTER — enforced at write time in a later phase.
+  /// @sensitivity:public
+  minAge           Int?
+  /// @sensitivity:public
+  maxAge           Int?
+  /// @sensitivity:public
+  orgMemberOnly    Boolean?
+  /// @sensitivity:public
+  shopifyProductId String?
+  /// @sensitivity:public
+  shopifyVariantId String?
+
+  events Event[]
 }
 
 model ProgramVolunteer {
@@ -1043,6 +1100,10 @@ model Event {
   id          Int      @id @default(autoincrement())
   /// @sensitivity:public
   programId   Int?
+  /// Phase 1 (additive): backfilled to the program's id-aliased instance; no
+  /// read consumer yet. programId stays authoritative until a later phase.
+  /// @sensitivity:public
+  instanceId  Int?
   /// @sensitivity:public
   name        String
   /// @sensitivity:public
@@ -1062,9 +1123,10 @@ model Event {
   /// @sensitivity:public
   recurringGroupId        String?
 
-  program Program? @relation(fields: [programId], references: [id])
-  rsvps   RSVP[]
-  visits  Visit[]
+  program  Program?         @relation(fields: [programId], references: [id])
+  instance ProgramInstance? @relation(fields: [instanceId], references: [id])
+  rsvps    RSVP[]
+  visits   Visit[]
 }
 
 model RSVP {
@@ -1121,8 +1183,9 @@ enum PresenceDirection {
   OUT
 }
 
-/// Stage-2 substrate (KIOSK_RESILIENCE §6): every presence-affecting surface
-/// appends an intent-carrying event; Visits project from the ordered log.
+/// Stage-2 substrate (docs/rules/attendance-checkin.md, kiosk resilience):
+/// every presence-affecting surface appends an intent-carrying event; Visits
+/// project from the ordered log.
 /// Expand-only — old writers never touch this table.
 model PresenceEvent {
   /// @sensitivity:internal

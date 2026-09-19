@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { isYouth } from "@/lib/time";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits } from "@/lib/supervision";
+import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
 
 /**
  * Current-attendance feed.
@@ -15,7 +16,8 @@ import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits }
  *   emergency-contact modal on /attendance/current.
  *
  * - `{ kiosk: true }` (a signature-verified kiosk): a display-only roster —
- *   id, display name, isKeyholder, isYouth, arrival time and the program badge.
+ *   id, display name, nickname, isKeyholder, isYouth, arrival time and the
+ *   program badge.
  *   The kiosk is an UNATTENDED device in a public room, and it forwards whatever
  *   it receives into an iframe with a wildcard postMessage origin
  *   (`client/client.py`), so no `personal`/`pii` field may reach it. It renders
@@ -25,10 +27,33 @@ import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits }
  *   certifications grid (#329).
  *
  * `counts`/`safety` are identical either way — they are aggregates.
+ *
+ * Per-process cache: a GET hits the DB only on a cold miss. Visit writes
+ * (check-in / check-out / facility close) call `invalidateAttendanceCache`
+ * so the next read refills. One ECS task; a scale-to-zero relaunch starts empty.
  */
+type AttendancePayload = Awaited<ReturnType<typeof computeFullAttendance>>;
+let kioskCache: AttendancePayload | null = null;
+let fullCache: AttendancePayload | null = null;
+
+export function invalidateAttendanceCache(): void {
+    kioskCache = null;
+    fullCache = null;
+    // Present-limited cert grid is occupancy; a check-in/out must refresh it too.
+    invalidateKioskCertificationsCache();
+}
+
 export async function getFullAttendance(opts: { kiosk?: boolean } = {}) {
     const kiosk = opts.kiosk === true;
+    if (kiosk) {
+        if (!kioskCache) kioskCache = await computeFullAttendance(true);
+        return kioskCache;
+    }
+    if (!fullCache) fullCache = await computeFullAttendance(false);
+    return fullCache;
+}
 
+async function computeFullAttendance(kiosk: boolean) {
     const activeVisits = await prisma.visit.findMany({
         where: { departedAt: null, deletedAt: null, person: LIVE_PERSON },
         include: {
@@ -40,6 +65,9 @@ export async function getFullAttendance(opts: { kiosk?: boolean } = {}) {
                     // grid (#329). googleId/isSysadmin aren't rendered anywhere downstream.
                     email: true,
                     name: true,
+                    // Worn on the badge and shown on the kiosk in place of the first
+                    // name; 'public' tier, same as name.
+                    nickname: true,
                     isKeyholder: true,
                     // dateOfBirth is read on both paths (it computes isYouth / the
                     // counts) but only SHIPS on the privileged path.
@@ -128,6 +156,7 @@ export async function getFullAttendance(opts: { kiosk?: boolean } = {}) {
                 participant: {
                     id: person.id,
                     name: displayName,
+                    nickname: person.nickname,
                     isKeyholder: person.isKeyholder,
                     // The kiosk splits the board into keyholder/volunteer/youth
                     // columns. It gets the classification, not the birth date.
@@ -142,6 +171,7 @@ export async function getFullAttendance(opts: { kiosk?: boolean } = {}) {
             participant: {
                 id: person.id,
                 name: displayName,
+                nickname: person.nickname,
                 isKeyholder: person.isKeyholder,
                 isYouth: youthMap.get(v.id)!,
                 dateOfBirth: person.dateOfBirth,

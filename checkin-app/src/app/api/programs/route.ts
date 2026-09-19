@@ -28,6 +28,7 @@ const PUBLIC_PROGRAM_SELECT = {
     phase: true,
     enrollmentStatus: true,
     orgMemberOnly: true,
+    publiclyVisible: true,
     announceOnOpen: true,
     minAge: true,
     maxAge: true,
@@ -39,24 +40,24 @@ const PUBLIC_PROGRAM_SELECT = {
 } as const;
 
 // GET is the PUBLIC program catalog — anonymous callers legitimately get the
-// non-draft, non-orgMemberOnly list (asserted by programsAPI.integration.test.ts),
-// so it can't move to withAuth (which 401s anonymous). getOptionalSessionUser
-// applies the shared denied-household gate: a denied member is locked out of
-// the whole app, so it collapses to undefined (anonymous) — they see only the
-// public list and never the orgMemberOnly programs isDuesSettled would otherwise
-// reveal (P0-C).
+// non-draft list minus the members-only-and-hidden programs (asserted by
+// programsAPI.integration.test.ts), so it can't move to withAuth (which 401s
+// anonymous). getOptionalSessionUser applies the shared denied-household gate: a
+// denied member is locked out of the whole app, so it collapses to undefined
+// (anonymous) — they see only the public list and never the hidden members-only
+// programs isDuesSettled would otherwise reveal.
 export async function GET(req: Request) {
     const user = await getOptionalSessionUser(req);
 
-    // ops-stg ACCESS GATE (finding 2026-07-20): getOptionalSessionUser collapses a
-    // gate-rejected caller (denied household, or on staging a non-org/
-    // non-canAccessStaging caller) to `undefined` — the SAME shape as a genuinely
-    // anonymous visitor, which is exactly the intended "public catalog" happy path
-    // in prod/dev. On staging this route serves the full prod-copied catalog
-    // (names, dates, prices, Shopify ids, live enrollment counts), so without this
-    // explicit check an anonymous curl reads it straight through the "public
-    // visitor" branch below. See tests/security/routeAuthDrift.test.ts rule 4,
-    // which fails any future getOptionalSessionUser caller that forgets this.
+    // ops-stg access gate: getOptionalSessionUser collapses a gate-rejected caller
+    // (denied household, or on staging a non-org/non-canAccessStaging caller) to
+    // `undefined` — the SAME shape as a genuinely anonymous visitor, which is the
+    // intended "public catalog" happy path in prod/dev. On staging this route
+    // serves the full prod-copied catalog (names, dates, prices, Shopify ids, live
+    // enrollment counts), so without this explicit check an anonymous curl reads it
+    // straight through the "public visitor" branch below. See
+    // tests/security/routeAuthDrift.test.ts rule 4, which fails any future
+    // getOptionalSessionUser caller that forgets this.
     if (config.isStaging() && !user) {
         return apiError("Unauthorized", 401);
     }
@@ -65,16 +66,16 @@ export async function GET(req: Request) {
         const { searchParams } = new URL(req.url);
         const activeOnly = searchParams.get("active") === "true";
 
-        // Determine if the user is allowed to see orgMemberOnly programs
-        let canSeeOrgMemberOnly = false;
+        // Determine if the user is allowed to see hidden members-only programs
+        let canSeeMembersOnly = false;
 
         if (user) {
             if (user.isSysadmin || user.isBoardMember) {
-                canSeeOrgMemberOnly = true;
+                canSeeMembersOnly = true;
             } else {
                 // Dues settled, not "is a member": a paid household awaiting
-                // background clearance sees members-only programs too (#1397).
-                canSeeOrgMemberOnly = await isDuesSettled(user.id);
+                // background clearance sees members-only programs too.
+                canSeeMembersOnly = await isDuesSettled(user.id);
             }
         }
 
@@ -84,8 +85,10 @@ export async function GET(req: Request) {
             andClauses.push({ endAt: { gte: new Date() } });
         }
 
-        if (!canSeeOrgMemberOnly) {
-            andClauses.push({ orgMemberOnly: false });
+        // A members-only program is hidden from non-members unless its leader opted
+        // it into the public catalogue (publiclyVisible) — enrollment stays gated.
+        if (!canSeeMembersOnly) {
+            andClauses.push({ OR: [{ orgMemberOnly: false }, { publiclyVisible: true }] });
         }
 
         let canSeeDrafts = false;
@@ -169,7 +172,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
     try {
         const body = await req.json();
-        const { name, leadMentorId, startAt, endAt, orgMemberOnly, minAge, maxAge, memberPrice, nonMemberPrice, maxParticipants } = body;
+        const { name, leadMentorId, startAt, endAt, orgMemberOnly, publiclyVisible, minAge, maxAge, memberPrice, nonMemberPrice, maxParticipants } = body;
 
         if (!name) {
             return apiError("Program name is required", 400);
@@ -211,9 +214,9 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         const mPrice = dollarsToCentsOrNull(memberPrice != null ? String(memberPrice) : undefined);
         const nmPrice = dollarsToCentsOrNull(nonMemberPrice != null ? String(nonMemberPrice) : undefined);
 
-        // Single-pool model (product decision 2026-07-06): ONE Shopify variant,
-        // priced at the base/non-member rate; member pricing is a checkout-time
-        // discount code, not a second variant. ponytail: falls back to the member
+        // Single-pool model: ONE Shopify variant, priced at the base/non-member
+        // rate; member pricing is a checkout-time discount code, not a second
+        // variant. ponytail: falls back to the member
         // price only when no non-member price is set (e.g. a members-only-priced
         // program with no listed non-member tier) — normally sells at the
         // non-member/base rate per the design.
@@ -229,6 +232,10 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 startAt: new Date(startAt),
                 endAt: new Date(endAt),
                 orgMemberOnly: orgMemberOnly || false,
+                // publiclyVisible only has meaning for a members-only program; a
+                // public one is already visible. Clamp so the nonsense state
+                // (not members-only, yet flagged publiclyVisible) can't be stored.
+                publiclyVisible: (orgMemberOnly || false) && (publiclyVisible || false),
                 minAge: minAge || null,
                 maxAge: maxAge || null,
                 orgMemberPriceCents: mPrice,
