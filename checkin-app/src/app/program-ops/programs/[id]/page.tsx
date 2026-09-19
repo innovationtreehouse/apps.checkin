@@ -26,6 +26,7 @@ export type ProgramDetail = {
   maxAge: number | null;
   maxParticipants: number | null;
   orgMemberOnly: boolean;
+  publiclyVisible: boolean;
   announceOnOpen: boolean;
   participants: {
     personId: number;
@@ -83,6 +84,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   const [phase, setPhase] = useState("PLANNING");
   const [enrollmentStatus, setEnrollmentStatus] = useState("CLOSED");
   const [orgMemberOnly, setMemberOnly] = useState(false);
+  const [publiclyVisible, setPubliclyVisible] = useState(false);
   const [announceOnOpen, setAnnounceOnOpen] = useState(false);
   const [leadMentorIdInput, setLeadMentorIdInput] = useState("");
   const [memberPrice, setMemberPrice] = useState("");
@@ -118,6 +120,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
         setPhase(data.phase || "PLANNING");
         setEnrollmentStatus(data.enrollmentStatus || "CLOSED");
         setMemberOnly(Boolean(data.orgMemberOnly));
+        setPubliclyVisible(Boolean(data.publiclyVisible));
         setAnnounceOnOpen(Boolean(data.announceOnOpen));
         setLeadMentorIdInput(data.leadMentorId !== null ? String(data.leadMentorId) : "");
         setMemberPrice(data.orgMemberPriceCents !== null ? String(data.orgMemberPriceCents / 100) : "");
@@ -164,7 +167,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
           minAge: minAge ? parseInt(minAge) : null,
           maxAge: maxAge ? parseInt(maxAge) : null,
           maxParticipants: maxParticipants ? parseInt(maxParticipants) : null,
-          phase, enrollmentStatus, orgMemberOnly, announceOnOpen,
+          phase, enrollmentStatus, orgMemberOnly, publiclyVisible: orgMemberOnly && publiclyVisible, announceOnOpen,
           leadMentorId: leadMentorIdInput ? parseInt(leadMentorIdInput) : null,
           memberPrice: memberPrice || null,
           nonMemberPrice: nonMemberPrice || null,
@@ -417,6 +420,16 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                 )}
 
                 <Checkbox checked={orgMemberOnly} onChange={e => setMemberOnly(e.currentTarget.checked)} label="Treehouse Members-Only Program" />
+
+                {orgMemberOnly && (
+                  <Checkbox
+                    ml="lg"
+                    checked={publiclyVisible}
+                    onChange={e => setPubliclyVisible(e.currentTarget.checked)}
+                    label="Show to non-members"
+                    description="List this members-only program publicly so non-members can see it. They still must be a member to enroll."
+                  />
+                )}
 
                 <Checkbox
                   checked={announceOnOpen}

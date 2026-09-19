@@ -357,10 +357,12 @@ describe('PATCH /api/events/[id] — cancel, manual attendance, past-event guard
 
     // ─── 2c. VISIT SOURCE ON A ROSTER MARK ──────────────────────────────────
 
-    // arrivedVia is how the arrival was MEASURED, so only a visit this mark
-    // creates is LEAD_MARKED. Stamping it unconditionally would relabel a real
-    // badge-in as staff-asserted, downgrading the trust weight that correction
-    // significance reads for exactly the people who did scan in.
+    // arrivedVia is how the arrival was MEASURED. A visit this mark creates is
+    // LEAD_MARKED; an adopted or edited visit keeps its measured source UNLESS
+    // the lead moves the arrival time, which restamps it to TYPED (a corrected
+    // time is a typed clock). Stamping it unconditionally would relabel a real
+    // badge-in on a departure-only edit, downgrading the trust weight that
+    // correction significance reads for the people who did scan in.
     describe('manualEditAttendance — arrivedVia/departedVia', () => {
         it('stamps LEAD_MARKED on both fields of a visit it creates', async () => {
             const event = await makeEvent('source-create', -3 * HOUR);
@@ -386,7 +388,7 @@ describe('PATCH /api/events/[id] — cancel, manual attendance, past-event guard
             expect(audit.newData).toMatchObject({ arrivedVia: 'LEAD_MARKED', departedVia: 'LEAD_MARKED' });
         });
 
-        it('leaves an adopted walk-in on its measured SCANNER arrival', async () => {
+        it('leaves an adopted walk-in on its measured SCANNER arrival when the time is unchanged', async () => {
             const event = await makeEvent('source-adopt', -1 * HOUR);
             const walkIn = await prisma.visit.create({
                 data: {
@@ -395,11 +397,12 @@ describe('PATCH /api/events/[id] — cancel, manual attendance, past-event guard
                 },
             });
 
+            // Pure adoption: same arrival time, so the source is not restamped.
             const res = await patch(event.id, {
                 action: 'manualEditAttendance',
                 participantId,
                 status: 'Present',
-                arrivedAt: new Date(Date.now() - 80 * MIN).toISOString(),
+                arrivedAt: walkIn.arrivedAt.toISOString(),
                 departedAt: null,
             });
             expect(res.status).toBe(200);
@@ -416,6 +419,30 @@ describe('PATCH /api/events/[id] — cancel, manual attendance, past-event guard
             expect(audit.newData).not.toHaveProperty('arrivedVia');
         });
 
+        it('restamps an adopted walk-in to TYPED when the lead moves its arrival', async () => {
+            const event = await makeEvent('source-adopt-corrected', -1 * HOUR);
+            const walkIn = await prisma.visit.create({
+                data: {
+                    personId: participantId, arrivedAt: new Date(Date.now() - 90 * MIN),
+                    departedAt: null, associatedEventId: null, arrivedVia: 'SCANNER',
+                },
+            });
+
+            // Adoption AND an arrival correction: the moved time is now a typed clock.
+            const res = await patch(event.id, {
+                action: 'manualEditAttendance',
+                participantId,
+                status: 'Present',
+                arrivedAt: new Date(Date.now() - 80 * MIN).toISOString(),
+                departedAt: null,
+            });
+            expect(res.status).toBe(200);
+
+            const after = await prisma.visit.findUniqueOrThrow({ where: { id: walkIn.id } });
+            expect(after.associatedEventId).toBe(event.id); // adopted
+            expect(after.arrivedVia).toBe('TYPED');         // arrival moved → typed clock
+        });
+
         it('keeps the arrival source but stamps the departure a lead types on an existing visit', async () => {
             const event = await makeEvent('source-edit-existing', -4 * HOUR);
             const existing = await prisma.visit.create({
@@ -425,11 +452,13 @@ describe('PATCH /api/events/[id] — cancel, manual attendance, past-event guard
                 },
             });
 
+            // Only the departure is added; the arrival time is resent unchanged,
+            // so its measured source survives.
             const res = await patch(event.id, {
                 action: 'manualEditAttendance',
                 participantId,
                 status: 'Present',
-                arrivedAt: new Date(Date.now() - 200 * MIN).toISOString(),
+                arrivedAt: existing.arrivedAt.toISOString(),
                 departedAt: new Date(Date.now() - 60 * MIN).toISOString(),
             });
             expect(res.status).toBe(200);

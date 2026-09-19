@@ -296,9 +296,9 @@ describe('POST /api/scan', () => {
         expect(json.message).toBe('Scan ignored due to debounce.');
     });
 
-    // §2 D2/D3/D4 (docs/designs/KIOSK_RESILIENCE.md) — replayed-scan idempotency.
-    // `replay: true` marks a redelivery; D4's try-first rule puts clientEventId
-    // on the live attempt too, so the id alone never implies a replay.
+    // Replayed-scan idempotency (docs/rules/attendance-checkin.md, kiosk
+    // resilience). `replay: true` marks a redelivery; the try-first rule puts
+    // clientEventId on the live attempt too, so the id alone never implies a replay.
     describe('replayed scans (clientEventId/scannedAt)', () => {
         function replayReq(overrides: Record<string, unknown> = {}) {
             return new Request('http://localhost/api/scan', {
@@ -576,7 +576,7 @@ describe('POST /api/scan', () => {
             const res = await POST(liveReq());
             expect((await res.json()).type).toBe('checkout');
             // Last arg null => processCheckout takes the live warn/confirm path.
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), null, expect.any(Date), null);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), null, expect.any(Date), null, false);
         });
 
         it('still dedups a clientEventId already recorded server-side', async () => {
@@ -610,7 +610,7 @@ describe('POST /api/scan', () => {
             const res = await POST(scanReq({ participantId: 1, forceCloseToken: 'tok-1' }));
 
             expect((await res.json()).facilityClosed).toBe(true);
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), 'tok-1', expect.any(Date), null);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), 'tok-1', expect.any(Date), null, false);
         });
 
         it('debounces a spent or unknown token, so a stray second read cannot re-toggle', async () => {
@@ -645,7 +645,7 @@ describe('POST /api/scan', () => {
 
             expect((await res.json()).facilityClosed).toBe(true);
             expect(processCheckout).toHaveBeenCalledWith(
-                { id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), 'tok-q', new Date(scannedAt), 'evt-q');
+                { id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), 'tok-q', new Date(scannedAt), 'evt-q', false);
         });
 
         // Precedence, pinned deliberately: §2's freshness window W runs BEFORE
@@ -713,7 +713,7 @@ describe('POST /api/scan', () => {
             const res = await POST(scanReq({ participantId: 1 }));
 
             expect((await res.json()).type).toBe('checkout');
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), null, expect.any(Date), null);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), null, expect.any(Date), null, false);
             expect(prisma.visit.count).toHaveBeenCalledWith(expect.objectContaining({
                 where: expect.objectContaining({
                     personId: 1,

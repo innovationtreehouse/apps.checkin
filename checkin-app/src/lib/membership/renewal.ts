@@ -103,13 +103,18 @@ export function renewalWindow(configuredBoundary: Date, now: Date): { boundary: 
 }
 
 /**
- * The membership year a badge printed at `now` advertises, and the date a household
- * must have settled on or after to have earned it. The label flips at windowStart, so
- * the badge starts advertising the coming year exactly when that year becomes
- * renewable and keeps advertising it until the next window opens. Pure, and driven by
- * the configured boundary rather than a hardcoded month.
+ * The membership year now in effect: its label, the boundary that opened it
+ * (`cycleStart`), the boundary that closes it (`cycleEnd`), and the date a household
+ * must have settled on or after to have bought it (`settledSince`). The year flips
+ * at windowStart — the coming year becomes "live" exactly when it becomes renewable
+ * and stays live until the next window opens — so in season the live year is the
+ * one about to begin, and off season it is the one that began at the last boundary.
+ * Drives badge years and every money horizon; pure, from the configured boundary.
  */
-export function badgeYearCycle(configuredBoundary: Date, now: Date): { label: string; settledSince: Date } {
+export function membershipYearCycle(
+    configuredBoundary: Date,
+    now: Date,
+): { label: string; settledSince: Date; cycleStart: Date; cycleEnd: Date } {
     const { boundary, windowStart, inSeason } = renewalWindow(configuredBoundary, now);
     // Off-season, `boundary` is already next year's, so the live cycle is the one that
     // opened at the previous windowStart.
@@ -117,15 +122,27 @@ export function badgeYearCycle(configuredBoundary: Date, now: Date): { label: st
     const settledSince = inSeason
         ? windowStart
         : new Date(Date.UTC(windowStart.getUTCFullYear() - 1, windowStart.getUTCMonth(), windowStart.getUTCDate()));
-    return { label: `${endYear - 1}-${endYear}`, settledSince };
+    const cycleEnd = new Date(Date.UTC(endYear, boundary.getUTCMonth(), boundary.getUTCDate()));
+    const cycleStart = new Date(Date.UTC(endYear - 1, boundary.getUTCMonth(), boundary.getUTCDate()));
+    return { label: `${endYear - 1}-${endYear}`, settledSince, cycleStart, cycleEnd };
+}
+
+/**
+ * How far a household's dues reach in the live cycle: the boundary that closes it
+ * when the household settled for it, else the boundary that opened it — which is
+ * already past off season, so an un-renewed household reads as lapsed from the
+ * boundary on. Status is untouched; only a person revokes.
+ */
+export function coveredThrough(cycle: { cycleStart: Date; cycleEnd: Date }, settled: boolean): Date {
+    return settled ? cycle.cycleEnd : cycle.cycleStart;
 }
 
 /**
  * Compute the settled-since window for a specific year label (e.g. "2025-2026").
- * Returns the same shape as badgeYearCycle but for an arbitrary cycle, plus an
+ * Returns settledSince as membershipYearCycle does, for an arbitrary cycle, plus an
  * upper bound so historical queries don't leak into later cycles.
  */
-export function badgeYearCycleForLabel(
+export function membershipYearCycleForLabel(
     configuredBoundary: Date,
     label: string,
 ): { label: string; settledSince: Date; settledBefore: Date } | null {

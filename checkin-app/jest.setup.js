@@ -228,3 +228,14 @@ failOnConsole({
   shouldFailOnWarn: false, // errors only this pass; warn (React act() noise) deferred
   allowMessage: (msg) => KNOWN_INTENTIONAL.some((re) => re.test(msg)),
 });
+
+// In-process attendance/certs cache survives across tests in a worker. Tests
+// that write visits via prisma (not processCheckin) would otherwise see a
+// stale roster from the previous case.
+afterEach(() => {
+  try {
+    require('@/lib/getFullAttendance').invalidateAttendanceCache();
+  } catch {
+    // Module not loaded in this file.
+  }
+});

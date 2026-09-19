@@ -3,8 +3,9 @@
  */
 /**
  * PUT /api/settings/membership — devSigningTarget (the dev-only signing radio).
- * The API must reject the field anywhere but a dev instance, and validate values,
- * so prod's BoardSettings row can never even hold a target.
+ * Off-dev the API IGNORES the field (the whole form still POSTs it) instead of
+ * 400'ing the batch, so prod's BoardSettings row can never hold a target while the
+ * rest of the update still saves. On dev the field validates and persists.
  */
 import { PUT } from '@/app/api/settings/membership/route';
 import prisma from '@/lib/prisma';
@@ -22,7 +23,7 @@ const ORIGINAL_CHECKIN_ENV = process.env.CHECKIN_ENV;
 describe('PUT /api/settings/membership — devSigningTarget', () => {
     let boardId: number;
     let householdId: number;
-    let prevTarget: string | null = null;
+    let prev: { devSigningTarget: string | null; bgRecheckMonths: number; standardMembershipFeeCents: number } | null = null;
 
     beforeAll(async () => {
         const board = await prisma.person.create({
@@ -31,11 +32,16 @@ describe('PUT /api/settings/membership — devSigningTarget', () => {
         boardId = board.id;
         householdId = board.householdId;
         const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevTarget = existing?.devSigningTarget ?? null;
+        prev = existing
+            ? { devSigningTarget: existing.devSigningTarget, bgRecheckMonths: existing.bgRecheckMonths, standardMembershipFeeCents: existing.standardMembershipFeeCents }
+            : null;
     });
 
     afterAll(async () => {
-        await prisma.boardSettings.updateMany({ where: { id: 1 }, data: { devSigningTarget: prevTarget } });
+        // Restore prior settings, or null the field these tests set when no row existed
+        // yet: signingMockActive() reads devSigningTarget, so a leaked 'debug' forces the
+        // signing mock provider on every later integration suite sharing this DB.
+        await prisma.boardSettings.updateMany({ where: { id: 1 }, data: prev ?? { devSigningTarget: null } });
         await prisma.person.deleteMany({ where: { id: boardId } });
         await prisma.household.deleteMany({ where: { id: householdId } });
         process.env.CHECKIN_ENV = ORIGINAL_CHECKIN_ENV;
@@ -61,16 +67,28 @@ describe('PUT /api/settings/membership — devSigningTarget', () => {
         expect(row?.devSigningTarget).toBe('debug');
     });
 
-    it('rejects the field on a non-dev instance (400, nothing written)', async () => {
+    it('off-dev, ignores devSigningTarget but persists the rest of the update', async () => {
         process.env.CHECKIN_ENV = 'local';
         mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
 
         const before = (await prisma.boardSettings.findUnique({ where: { id: 1 } }))?.devSigningTarget ?? null;
-        const res = await put({ devSigningTarget: 'zoho' });
+        const res = await put({ devSigningTarget: 'zoho', bgRecheckMonths: 18, standardMembershipFeeCents: 9900 });
+        expect(res.status).toBe(200);
+
+        const row = await prisma.boardSettings.findUnique({ where: { id: 1 } });
+        // The env-inapplicable field is dropped, not written...
+        expect(row?.devSigningTarget ?? null).toBe(before);
+        // ...while the applicable fields in the same PUT persist.
+        expect(row?.bgRecheckMonths).toBe(18);
+        expect(row?.standardMembershipFeeCents).toBe(9900);
+    });
+
+    it('off-dev, a genuinely invalid fee still 400s the whole update (all-or-nothing preserved)', async () => {
+        process.env.CHECKIN_ENV = 'local';
+        mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+
+        const res = await put({ devSigningTarget: 'zoho', standardMembershipFeeCents: -1 });
         expect(res.status).toBe(400);
-        expect((await res.json()).error).toMatch(/dev instance/);
-        const after = (await prisma.boardSettings.findUnique({ where: { id: 1 } }))?.devSigningTarget ?? null;
-        expect(after).toBe(before);
     });
 
     it('rejects values outside zoho/debug/null on dev', async () => {

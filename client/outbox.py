@@ -24,8 +24,9 @@ DRAIN_PACE_SECONDS = 1.0
 # evicted to enforce this -- it is a log-only warning, not a hard cap.
 WARN_QUEUE_SIZE = 50_000
 
-# docs/designs/KIOSK_RESILIENCE.md D4/Q17: the drain never sends during the
-# closed window -- a queued POST is non-GET and wakes the curfewed service.
+# docs/rules/attendance-checkin.md (kiosk resilience): the drain never sends
+# during the closed window -- a queued POST is non-GET and wakes the curfewed
+# service.
 # The window is 23:00-06:00 local.
 CLOSED_WINDOW_START_HOUR = 23  # local time, inclusive
 CLOSED_WINDOW_END_HOUR = 6     # local time, exclusive
@@ -69,7 +70,8 @@ class Outbox:
         force_close_token TEXT,
         last_attempt_at  TEXT,
         intent           TEXT,
-        clock_suspect    INTEGER NOT NULL DEFAULT 0
+        clock_suspect    INTEGER NOT NULL DEFAULT 0,
+        force_close_confirmed INTEGER NOT NULL DEFAULT 0
     )"""
 
     def _open(self, path):
@@ -98,6 +100,12 @@ class Outbox:
                     )
                 except sqlite3.OperationalError:
                     pass
+                try:
+                    conn.execute(
+                        "ALTER TABLE outbox ADD COLUMN force_close_confirmed INTEGER NOT NULL DEFAULT 0"
+                    )
+                except sqlite3.OperationalError:
+                    pass
                 conn.commit()
             except sqlite3.DatabaseError:
                 conn.close()
@@ -118,14 +126,14 @@ class Outbox:
             return connect_and_init()
 
     def enqueue(self, client_event_id, participant_id, scanned_at, force_close_token=None,
-                intent=None, clock_suspect=False):
+                intent=None, clock_suspect=False, force_close_confirmed=False):
         """Idempotent: a retried enqueue of the same event is a no-op."""
         with self._lock:
             self._conn.execute(
                 "INSERT OR IGNORE INTO outbox "
                 "(client_event_id, participant_id, scanned_at, created_at, force_close_token, "
-                " intent, clock_suspect) "
-                "VALUES (?,?,?,?,?,?,?)",
+                " intent, clock_suspect, force_close_confirmed) "
+                "VALUES (?,?,?,?,?,?,?,?)",
                 (
                     client_event_id,
                     str(participant_id),
@@ -134,6 +142,7 @@ class Outbox:
                     force_close_token,
                     intent,
                     1 if clock_suspect else 0,
+                    1 if force_close_confirmed else 0,
                 ),
             )
             self._conn.commit()
@@ -162,7 +171,7 @@ class Outbox:
         with self._lock:
             return self._conn.execute(
                 "SELECT client_event_id, participant_id, scanned_at, attempts, force_close_token, "
-                "intent, clock_suspect "
+                "intent, clock_suspect, force_close_confirmed "
                 "FROM outbox WHERE state='pending' ORDER BY scanned_at ASC"
             ).fetchall()
 
@@ -247,6 +256,11 @@ def classify_response(status, body):
         return "retry"  # clock skew / key mismatch -- re-signing can recover
     if status == 429:
         return "retry"
+    if status == 426:
+        # Version race: this instance does not speak the row's protocol
+        # generation yet (rolling deploy). The row is fine — hold and retry
+        # until an upgraded instance answers.
+        return "retry"
     if status == 400 and isinstance(body, dict) and body.get("type") == "warning":
         return "ack"  # force-close caution; the touch WAS recorded server-side
     if status in (400, 404, 409):
@@ -304,12 +318,14 @@ def _send_dead_row(outbox, send_fn, push_fn=None, backoff=MIN_BACKOFF_SECONDS):
     return _backoff_seconds(retry_after, backoff), min(backoff * 2, MAX_BACKOFF_SECONDS)
 
 
-def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, in_closed_window_fn=in_closed_window):
+def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, in_closed_window_fn=in_closed_window,
+                 protocol_ok_fn=lambda: True):
     """Single drain thread: pulls pending rows in scanned_at order,
     resubmits each one (send_fn re-signs per call), and applies the
     ack/retry/dead outcome. Runs forever; call in a background thread."""
     backoff = MIN_BACKOFF_SECONDS
     dead_backoff = MIN_BACKOFF_SECONDS
+    protocol_hold_logged = False
     while True:
         # D4: never send during the closed window -- a queued POST is
         # non-GET and would wake the curfewed service. Covers the dead
@@ -318,6 +334,20 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, in_closed_w
             sleep_fn(DRAIN_PACE_SECONDS)
             continue
 
+        # Deploy-order race: a server that hasn't advertised the replay
+        # generation would misread these rows as live toggles. Hold the
+        # queue (rows keep) until kiosk-version says it's safe. Logged on
+        # entry so ops can tell a held queue from an empty or offline one.
+        if not protocol_ok_fn():
+            if not protocol_hold_logged:
+                log.warning("Outbox drain held: server has not advertised the replay protocol")
+                protocol_hold_logged = True
+            sleep_fn(DRAIN_PACE_SECONDS)
+            continue
+        if protocol_hold_logged:
+            log.info("Outbox drain resumed: server advertises the replay protocol")
+            protocol_hold_logged = False
+
         rows = outbox.pending_rows()
         if not rows:
             backoff = MIN_BACKOFF_SECONDS
@@ -325,13 +355,15 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, in_closed_w
             sleep_fn(dead_wait if dead_wait is not None else DRAIN_PACE_SECONDS)
             continue
 
-        client_event_id, participant_id, scanned_at, attempts, force_close_token, intent, clock_suspect = rows[0]
+        client_event_id, participant_id, scanned_at, attempts, force_close_token, intent, clock_suspect, force_close_confirmed = rows[0]
         # replay=True is what tells the server this is a redelivery: the live
         # attempt already sent this clientEventId (D4 try-first), so only the
         # drain may trip the replay-only guards. The token rides along so a
         # confirm given before the outage still closes (§5.23a); a replay
-        # without one parks for review. Intent is the direction the kiosk
-        # displayed; the server must not re-toggle from live state.
+        # without one parks for review. force_close_confirmed rides along too:
+        # a close confirmed on the kiosk while offline had no server token to
+        # mint, so the flag is what closes on drain. Intent is the direction the
+        # kiosk displayed; the server must not re-toggle from live state.
         body, status, retry_after = send_fn(
             participant_id,
             force_close_token=force_close_token,
@@ -340,6 +372,7 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, in_closed_w
             replay=True,
             intent=intent,
             clock_suspect=bool(clock_suspect),
+            force_close_confirmed=bool(force_close_confirmed),
         )
         outcome = classify_response(status, body)
 

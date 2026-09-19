@@ -1,8 +1,9 @@
 /**
  * @jest-environment node
  *
- * Unit tests (mocked prisma) for the parked-scan review surface (
- * KIOSK_RESILIENCE §2 D7): the list's filter, both routes' role admission, and
+ * Unit tests (mocked prisma) for the parked-scan review surface
+ * (docs/rules/attendance-checkin.md, kiosk resilience): the list's filter, both
+ * routes' role admission, and
  * that the dismiss stamps reviewedAt AND reviewedBy and nothing else.
  *
  * The filter is the whole feature — `reviewReason != null AND reviewedAt = null`

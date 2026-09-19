@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { LIVE_PERSON } from "@/lib/person/filters";
-import { renewalSeasonWindow, MAX_DATE } from "@/lib/membership/renewal";
-import { IN_FLIGHT_RENEWAL, IN_FLIGHT_INITIAL } from "@/lib/membership/lifecycle";
+import { membershipYearCycle, MAX_DATE } from "@/lib/membership/renewal";
+import { IN_FLIGHT_RENEWAL, IN_FLIGHT_INITIAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { personRecordIsActiveOrgMember } from "@/lib/orgMembership";
 import type { OrgMembershipProcessStatus } from "@/generated/prisma/client";
 
@@ -29,8 +29,12 @@ const IN_FLIGHT_STATUSES = new Set<OrgMembershipProcessStatus>([...IN_FLIGHT_REN
  * candidate leads (with just enough of their household's membership to decide settled/
  * in-flight/variant in JS — no per-row N+1), one query for the without-email count. */
 export async function computeRecipientSnapshot(audience: Audience, now = new Date()): Promise<RecipientSnapshot> {
-    const window = await renewalSeasonWindow(now);
-    const windowStart = window?.windowStart ?? MAX_DATE;
+    // "Settled" = bought the live membership year (settledThisCycleWhere, the same test
+    // membershipValidThrough and households-ops use), so a renewed household is left
+    // alone after the boundary too. No boundary ⇒ nobody is settled.
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const cycle = settings?.orgMembershipYearBoundary ? membershipYearCycle(settings.orgMembershipYearBoundary, now) : null;
+    const settledSince = cycle?.settledSince ?? MAX_DATE;
 
     const [leadsWithoutEmail, leads] = await Promise.all([
         prisma.person.count({ where: { isHouseholdLead: true, email: null, ...LIVE_PERSON } }),
@@ -50,11 +54,11 @@ export async function computeRecipientSnapshot(audience: Audience, now = new Dat
                                 processes: {
                                     where: {
                                         OR: [
-                                            { status: "ACTIVE", stageEnteredAt: { gte: windowStart } },
+                                            settledThisCycleWhere(settledSince),
                                             { status: { in: [...IN_FLIGHT_STATUSES] } },
                                         ],
                                     },
-                                    select: { status: true, stageEnteredAt: true },
+                                    select: { status: true },
                                 },
                             },
                         },
@@ -72,9 +76,9 @@ export async function computeRecipientSnapshot(audience: Audience, now = new Dat
         const isMember = membership?.status === "ACTIVE";
 
         if (audience !== "c") {
-            const settled = (membership?.processes ?? []).some(
-                (p) => p.status === "ACTIVE" && p.stageEnteredAt != null && p.stageEnteredAt.getTime() >= windowStart.getTime(),
-            );
+            // Rows here are either settled-shape or in-flight; a paid-pending row is
+            // both, and reads as in-flight (a nudge mid-renewal is not wrong).
+            const settled = (membership?.processes ?? []).some((p) => p.status === "ACTIVE");
             if (isMember && settled) continue; // excluded from both (a) and (b)
 
             if (audience === "b") {

@@ -288,10 +288,11 @@ describe('Admin Visits API Integration Tests', () => {
                 .toEqual({ score: 0, flagged: false });
         });
 
-        // `arrivedVia` records how the arrival was measured, not who last touched
-        // the row, so correcting the time must not restamp it: this person did
-        // badge in, and correction significance weights a scan above a roster mark.
-        it('leaves arrivedVia alone when the board corrects a scanned arrival', async () => {
+        // Correcting a time replaces where it came from: a corrected badge
+        // arrival becomes a typed clock (arrivedVia TYPED). This edit's own
+        // significance still weighs the pre-edit SCANNER measurement, but the
+        // stored value is now a self-report, so a SECOND correction weighs TYPED.
+        it('restamps arrivedVia to TYPED when the board corrects a scanned arrival', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
                 user: { id: testAdminId, isSysadmin: true }
             });
@@ -317,7 +318,7 @@ describe('Admin Visits API Integration Tests', () => {
 
             const stored = await prisma.visit.findUnique({ where: { id: scanned.id } });
             expect(stored?.arrivedAt.toISOString()).toBe(corrected);
-            expect(stored?.arrivedVia).toBe('SCANNER');  // re-timed, still a badge reading
+            expect(stored?.arrivedVia).toBe('TYPED');    // re-timed → now a typed clock
             expect(stored?.departedVia).toBe('SCANNER'); // not sent — untouched
         });
     });

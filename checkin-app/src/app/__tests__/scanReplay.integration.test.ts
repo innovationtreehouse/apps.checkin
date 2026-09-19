@@ -2,8 +2,9 @@
  * @jest-environment node
  */
 /**
- * Kiosk replay idempotency against the real DB (docs/designs/KIOSK_RESILIENCE.md
- * §2): a queued scan carries clientEventId + scannedAt + `replay: true`, and
+ * Kiosk replay idempotency against the real DB (docs/rules/attendance-checkin.md,
+ * kiosk resilience): a queued scan carries clientEventId + scannedAt + `replay:
+ * true`, and
  * replay must dedup, toggle with the original scan time, and park instead of
  * toggling when stale or out-of-order. The live attempt carries the same
  * clientEventId (D4 try-first) but no flag, so none of those guards apply to it.
@@ -244,5 +245,48 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
         }));
         expect(res.status).toBe(400);
         expect(await prisma.rawBadgeLog.findUnique({ where: { clientEventId: 'evt-dead-and-replay' } })).toBeNull();
+    });
+
+    it('accepts a declared protocolVersion this server speaks, absent included', async () => {
+        for (const extra of [{}, { protocolVersion: 1 }, { protocolVersion: 2 }]) {
+            const res = await POST(scanReq({ participantId: member.id, ...extra }));
+            expect(res.status).toBe(200);
+            // Toggle back so each iteration starts checked out.
+            await prisma.visit.deleteMany({ where: { personId: member.id } });
+        }
+    });
+
+    it('accepts a LIVE scan declaring a newer protocolVersion — a version race must not block the door', async () => {
+        const res = await POST(scanReq({ participantId: member.id, protocolVersion: 3 }));
+        expect(res.status).toBe(200);
+        expect(await prisma.visit.findFirst({ where: { personId: member.id } })).not.toBeNull();
+        await prisma.visit.deleteMany({ where: { personId: member.id } });
+    });
+
+    it('426-bounces a replay declaring a newer protocolVersion, writing nothing', async () => {
+        const res = await POST(scanReq({
+            participantId: member.id, clientEventId: 'evt-too-new-replay',
+            scannedAt: new Date().toISOString(), replay: true, protocolVersion: 3,
+        }));
+        expect(res.status).toBe(426);
+        expect((await res.json()).error).toMatch(/protocolVersion/);
+        expect(await prisma.visit.findFirst({ where: { personId: member.id } })).toBeNull();
+        expect(await prisma.rawBadgeLog.findUnique({ where: { clientEventId: 'evt-too-new-replay' } })).toBeNull();
+    });
+
+    it('426-bounces a dead-letter declaring a newer protocolVersion, writing nothing', async () => {
+        const res = await POST(scanReq({
+            participantId: member.id, clientEventId: 'evt-too-new-dead',
+            scannedAt: new Date().toISOString(), dead: true, protocolVersion: 3,
+        }));
+        expect(res.status).toBe(426);
+        expect(await prisma.rawBadgeLog.findUnique({ where: { clientEventId: 'evt-too-new-dead' } })).toBeNull();
+    });
+
+    it('rejects a malformed protocolVersion', async () => {
+        for (const bad of ['2', 0, 1.5, null]) {
+            const res = await POST(scanReq({ participantId: member.id, protocolVersion: bad }));
+            expect(res.status).toBe(400);
+        }
     });
 });

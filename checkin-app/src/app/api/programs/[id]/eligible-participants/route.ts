@@ -48,8 +48,8 @@ export const GET = handler<{ id: string }>('GET /api/programs/[id]/eligible-part
     }
 
     // A household whose dues are paid and whose background check is still with the
-    // board is eligible for members-only programs (#1397) — same rule as the
-    // catalog and detail gates.
+    // board is eligible for members-only programs — same rule as the catalog,
+    // detail, and enrollment gates.
     if (currentProgram.orgMemberOnly) {
         andClauses.push(DUES_SETTLED_PERSON_WHERE);
     }

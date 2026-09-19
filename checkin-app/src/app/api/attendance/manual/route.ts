@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { logBackendError, logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
@@ -184,6 +185,8 @@ export const POST = withAuth({}, async (req, auth) => {
 
         // Fire-and-forget: notify only on a fresh active check-in (mirrors /api/scan).
         // A backfilled closed visit is a historical record, not a live arrival.
+        invalidateAttendanceCache();
+
         if (freshCheckin) {
             sendCheckinNotifications(Number(subjectId), 'checkin').catch(err =>
                 logger.error('Checkin notification error:', err)

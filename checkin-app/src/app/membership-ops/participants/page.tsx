@@ -32,6 +32,7 @@ type PersonRow = {
   isKeyholder?: boolean;
   isBackgroundCheckReviewer?: boolean;
   isOperations?: boolean;
+  isInventoryManager?: boolean;
   emailSuppressed?: boolean;
 };
 

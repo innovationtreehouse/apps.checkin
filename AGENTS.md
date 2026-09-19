@@ -50,6 +50,25 @@ pointing at, not the fact that it is pointing.
 - **Address the root cause** — the logic, the missing type, the interface that
   wasn't imported — rather than the message.
 
+## Test runners: Jest for the app, Vitest for everything else
+
+Two runners, split by workspace type — no file ever runs under both (issue #228):
+
+- **`checkin-app/` → Jest** (jsdom + RTL + ts-jest + next). The three classes
+  below are all Jest; run their commands from `checkin-app/`.
+- **`packages/*` and `*-function` → Vitest.** Each such workspace owns its own
+  `vitest.config.ts` + `vitest` devDep — no shared root config. Real-Postgres
+  integration tiers boot a throwaway container via `@inventory/pg-test-harness`
+  (testcontainers), so they need a running Docker daemon and self-skip without
+  one.
+
+Root aggregate scripts (run from the repo root): `test` (app Jest, the default),
+`test:packages` (`vitest run` across every `packages/*`), `test:functions`
+(across every `*-function`), `test:all` (all three). CI runs the Jest tiers and
+the Vitest tier (`package-tests` job) as separate path-filtered lanes. Jest's
+`rootDir` is `checkin-app/`, so it never collects a sibling workspace's
+`.test.ts` — a Vitest file cannot leak into the Jest run.
+
 ## Test classes
 
 There are **three** classes of tests. Run all commands from `checkin-app/`.

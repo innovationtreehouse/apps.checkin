@@ -301,6 +301,14 @@ Procedure below is built on them.
 
 - A membership stays active while its renewal is in progress.  [Decision]
 
+- Coverage is what was bought, not what the calendar says. A household settled
+  for the membership year now in effect — by joining, renewing, or a granted
+  year — is covered to the boundary that closes the year; one that did not
+  settle is covered only to the boundary that opened it, and reads as lapsed
+  from that day. A membership with no dues recorded in the app has bought
+  nothing it can see. Lapsing changes what the membership covers and nothing
+  else: status does not move, and only a person revokes.  [Decision — *Policy: Membership Policy, Art. III §III.1; Art. XI*; *Principle: people decide about people*]
+
 - Settling inside the renewal window buys the coming membership year — for a
   family joining (INITIAL) exactly as for one renewing. The derived valid-until,
   program-pricing coverage, and the renewal sweep's skip-test all read this one

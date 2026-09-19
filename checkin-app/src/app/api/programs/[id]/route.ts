@@ -40,7 +40,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     });
     // viewerIsMember answers "is this household a Treehouse Member" (ACTIVE only);
     // viewerMemberPricingEligible answers the pricing question, which also covers a
-    // paid household still awaiting background clearance (#1397).
+    // paid household still awaiting background clearance.
     const [viewerIsMember, viewerMemberPricingEligible] = await Promise.all([
         isActiveOrgMember(auth.user.id),
         isDuesSettledThrough(auth.user.id, coverageDate),
@@ -69,6 +69,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
             phase: true,
             enrollmentStatus: true,
             orgMemberOnly: true,
+            publiclyVisible: true,
             announceOnOpen: true,
             minAge: true,
             maxAge: true,
@@ -151,9 +152,11 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     const isCoreVolunteer = !!sessionUser && program.volunteers.some(v => v.personId === sessionUser.id && v.isCore);
     const isPrivileged = isSysAdminOrBoard || isLeadMentor || isCoreVolunteer;
 
-    // Dues settled, not "is a member": a paid household awaiting background
-    // clearance is admitted to members-only programs (#1397).
-    if (program.orgMemberOnly && !isPrivileged) {
+    // A members-only program is hidden unless its leader opted it into the public
+    // catalogue (publiclyVisible) — then anyone may view its detail, but the
+    // enrollment route still gates joining on a settled membership. Dues settled,
+    // not "is a member": a paid household awaiting background clearance is admitted.
+    if (program.orgMemberOnly && !program.publiclyVisible && !isPrivileged) {
         if (!sessionUser) throw notFound('Program not found');
         const duesSettled = await isDuesSettled(sessionUser.id);
         if (!duesSettled) throw forbidden('Forbidden: Member-Only Program');
@@ -166,7 +169,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     // the existence of the row + the public name = the enrollment fact (incl.
     // youth). Only admission can hide it. The registry `authorize` grammar can't
     // express "enrolled in THIS program" per-relation, so the gate lives here —
-    // mirrors events/[id] (#571); see docs/security/auth-consistency-analysis.md
+    // mirrors events/[id]; see docs/security/auth-consistency-analysis.md
     // §4 (principled exception) and §5.1a. The route stays `authorize: 'public'`
     // because the catalog metadata (name/price/dates/spots) drives the public
     // registration page; only the roster is gated.
@@ -192,9 +195,8 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
 });
 
 
-// withAuth rejects unauthenticated AND denied households at admission (closes
-// GAP-1: this PATCH previously had no denied check), so a denied lead mentor can
-// no longer edit their program.
+// withAuth rejects unauthenticated AND denied households at admission, so a
+// denied lead mentor cannot edit their program.
 export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
     const { id } = await ctx.params;
@@ -220,10 +222,13 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
 
         const body = await req.json();
         let { leadMentorId } = body;
-        const { name, startAt, endAt, orgMemberOnly, announceOnOpen, phase, enrollmentStatus, minAge, maxAge, maxParticipants, leadMentorNotificationSettings, memberPrice, nonMemberPrice, shopifyProductId, shopifyVariantId } = body;
+        const { name, startAt, endAt, orgMemberOnly, publiclyVisible, announceOnOpen, phase, enrollmentStatus, minAge, maxAge, maxParticipants, leadMentorNotificationSettings, memberPrice, nonMemberPrice, shopifyProductId, shopifyVariantId } = body;
 
         if (announceOnOpen !== undefined && typeof announceOnOpen !== "boolean") {
             return apiError("announceOnOpen must be a boolean", 400);
+        }
+        if (publiclyVisible !== undefined && typeof publiclyVisible !== "boolean") {
+            return apiError("publiclyVisible must be a boolean", 400);
         }
         if (phase !== undefined && !Object.values(ProgramPhase).includes(phase)) {
             return apiError("Invalid phase", 400);
@@ -300,7 +305,7 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             return apiError("End date is required", 400);
         }
 
-        // Variant⟺price invariant (#1520): a program has a Shopify variant iff it
+        // Variant⟺price invariant: a program has a Shopify variant iff it
         // has a price on some tier — the capacity/oversell math assumes this
         // everywhere. Compute the post-PATCH EFFECTIVE values (current row + body
         // deltas, undefined = "field not touched") and reject both illegal
@@ -332,6 +337,15 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             ...(startAt !== undefined && { startAt: parseDateOnly(startAt) }),
             ...(endAt !== undefined && { endAt: parseDateOnly(endAt) }),
             ...(orgMemberOnly !== undefined && { orgMemberOnly }),
+            // publiclyVisible only has meaning for a members-only program. Recompute
+            // it on the POST-PATCH effective state so neither flipping orgMemberOnly
+            // off (leaving a stale publiclyVisible) nor setting publiclyVisible on a
+            // public program can store the nonsense "public-but-publiclyVisible" row.
+            ...((orgMemberOnly !== undefined || publiclyVisible !== undefined) && {
+                publiclyVisible:
+                    (orgMemberOnly !== undefined ? orgMemberOnly : currentProgram.orgMemberOnly) &&
+                    (publiclyVisible !== undefined ? publiclyVisible : currentProgram.publiclyVisible),
+            }),
             ...(announceOnOpen !== undefined && { announceOnOpen }),
             ...(phase !== undefined && { phase }),
             ...(enrollmentStatus !== undefined && { enrollmentStatus }),
@@ -374,8 +388,8 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             actorId: auth.user.id,
         });
 
-        // Shopify is the source of truth for program capacity (product decision
-        // 2026-07-06): cap edits propagate as relative inventory adjustments.
+        // Shopify is the source of truth for program capacity: cap edits propagate
+        // as relative inventory adjustments.
         // Only fires when the program already has Shopify checkout wired up —
         // creation and sync-shopify set inventory absolutely and are unaffected.
         let warning: string | undefined;

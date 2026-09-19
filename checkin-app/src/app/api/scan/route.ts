@@ -7,6 +7,8 @@ import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/pre
 import { applyPresenceIntent, flushParkedClosed } from "@/lib/presence/project";
 import { config } from "@/lib/config";
 import { withKiosk } from "@/lib/kioskAuth";
+import { SCAN_PROTOCOL_VERSION } from "@/lib/scanProtocol";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 // A merged-away badge should still get its owner through the door — an admin
 // tidying up dupes must not be the reason a member gets rejected at the
@@ -14,9 +16,10 @@ import { withKiosk } from "@/lib/kioskAuth";
 // a corrupt/cyclic chain can't loop the lookup forever, and reissue instead.
 const MAX_MERGE_HOPS = 5;
 
-// docs/designs/KIOSK_RESILIENCE.md §2: a replayed scan older than this parks
-// for human review instead of toggling — state may have moved on while the
-// kiosk was offline, and a bare toggle can't tell entering from leaving.
+// docs/rules/attendance-checkin.md (kiosk resilience): a replayed scan older
+// than this parks for human review instead of toggling — state may have moved
+// on while the kiosk was offline, and a bare toggle can't tell entering from
+// leaving.
 const REPLAY_FRESHNESS_WINDOW_MS = 10 * 60 * 1000;
 
 // F7: the out-of-order guard needs the true latest activity across ALL of a
@@ -31,7 +34,7 @@ const maxDate = (a: Date | null, b: Date | null): Date | null =>
 // unauthenticated, and hands us the parsed body + actor. We own authorization.
 export const POST = withKiosk(
     { rateLimit: { name: "scan", limit: 300 } },
-    async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown }, auth) => {
+    async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; protocolVersion?: unknown }, auth) => {
     const startTime = Date.now();
 
     try {
@@ -105,6 +108,12 @@ export const POST = withKiosk(
                 ? body.forceCloseToken
                 : null;
 
+        // The kiosk ran the force-close warning+confirm locally while offline and
+        // has no server token to echo. Honored only on a replay (processCheckout),
+        // and only when the server independently sees a last-keyholder-with-others
+        // close — the flag bypasses the token, never the occupancy guards.
+        const forceCloseConfirmed = body.forceCloseConfirmed === true;
+
         // Displayed direction (invariant 5). Absent → legacy live-state toggle.
         if (body.intent !== undefined && body.intent !== 'IN' && body.intent !== 'OUT') {
             return apiError("intent must be IN or OUT.", 400);
@@ -114,6 +123,25 @@ export const POST = withKiosk(
             return apiError("clockSuspect must be a boolean.", 400);
         }
         const clockSuspect = body.clockSuspect === true;
+
+        // Contract bit (§2): a caller may declare the scan-body generation it
+        // speaks. A version newer than this server refuses only the bodies
+        // that can be misread — replay/dead rows, whose scannedAt semantics
+        // the newer generation may have changed. A LIVE scan is a bare toggle
+        // at server-now under every generation, so it always processes: a
+        // version race must degrade replay delivery, never door availability.
+        // 426 (not 400) so the kiosk drain holds the row and retries — this
+        // is also what closes the rolling-deploy race for future bumps: a
+        // too-new replay landing on a not-yet-upgraded instance bounces
+        // instead of being misread, whatever the advertised version said.
+        if (body.protocolVersion !== undefined) {
+            if (typeof body.protocolVersion !== 'number' || !Number.isInteger(body.protocolVersion) || body.protocolVersion < 1) {
+                return apiError("protocolVersion must be a positive integer.", 400);
+            }
+            if ((isReplay || isDead) && body.protocolVersion > SCAN_PROTOCOL_VERSION) {
+                return apiError(`Unsupported protocolVersion ${body.protocolVersion}; this server speaks ${SCAN_PROTOCOL_VERSION}.`, 426);
+            }
+        }
 
         // Web session: check if user can scan this participant
         let pendingHouseholdCheck = false;
@@ -371,11 +399,12 @@ export const POST = withKiosk(
                     clientEventId,
                     confirmToken,
                     replayEventId: isReplay ? clientEventId : null,
+                    forceCloseConfirmed,
                 });
             }
 
             const res = activeVisit
-                ? await processCheckout(participant, activeVisit.id, authType, tx, confirmToken, eventTime, isReplay ? clientEventId : null)
+                ? await processCheckout(participant, activeVisit.id, authType, tx, confirmToken, eventTime, isReplay ? clientEventId : null, forceCloseConfirmed)
                 : await processCheckin(participant, authType, tx, eventTime);
 
             // Classification comes from the ACTUAL outcome. Only a confirmed
@@ -429,6 +458,9 @@ export const POST = withKiosk(
         // blocks concurrent scans for other participants. No-op unless the
         // response reports facilityClosed.
         await finalizeFacilityClose(res);
+        // After the tx (+ optional facility sweep) commits, so a concurrent
+        // GET cannot refill the cache from uncommitted rows.
+        invalidateAttendanceCache();
 
         return res;
     } finally {

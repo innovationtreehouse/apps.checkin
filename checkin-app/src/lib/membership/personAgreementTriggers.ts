@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { calculateAge, orgCalendarDay } from "@/lib/time";
 import { renewalWindow } from "@/lib/membership/renewal";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { LIVE_PERSON, recentProgramWhere } from "@/lib/person/filters";
 import { personOrSystemActor } from "@/lib/auditActor";
 
 /**
@@ -148,31 +148,6 @@ export function findOpenPersonAgreement(personId: number) {
         where: { kind: "PERSON_AGREEMENT", subjectPersonId: personId, status: "PENDING_EXTERNAL_ACTION" },
         orderBy: { id: "desc" },
     });
-}
-
-/** How far back a finished program still counts as "in the building". */
-const ATTACHMENT_LOOKBACK_MONTHS = 12;
-
-/**
- * A program that is running, or ended within the lookback. NOT the shared
- * PROGRAM_ATTACHED_WHERE, which is attached-to-any-program-ever: attachment rows are
- * never cleared when a program ends, so the unbounded predicate would re-ask someone
- * who took one class at 18 every cycle until they age out of the band. The age band
- * bounds who is asked, not how many times.
- *
- * NULLs are open, not excluded — a naive `startAt <= now AND endAt >= since` silently
- * drops undated programs through SQL three-valued logic, and an ongoing program with no
- * endAt is precisely the case that should count.
- */
-function recentProgramWhere(now: Date) {
-    const since = new Date(now);
-    since.setUTCMonth(since.getUTCMonth() - ATTACHMENT_LOOKBACK_MONTHS);
-    return {
-        AND: [
-            { endAt: { gte: since } },
-            { startAt: { lte: now } },
-        ],
-    };
 }
 
 /**

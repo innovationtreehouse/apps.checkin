@@ -33,6 +33,8 @@ jest.mock("@/lib/prisma", () => ({
         // The supervising-adult test reads the board's background-check recheck
         // policy (#1436); unset here, which is the default.
         boardSettings: { findUnique: jest.fn() },
+        // Full-access attendance carries the needReview aggregate (D7).
+        rawBadgeLog: { count: jest.fn().mockResolvedValue(0) },
     },
 }));
 

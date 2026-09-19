@@ -230,13 +230,19 @@ Things the app takes as true because they are handled outside it.
 - A program's catalogue entry is public; its roster is visible only to the people
   running it — its leader, its core volunteers, the board and sysadmins — and to
   people enrolled in it. The catalogue filters rather than gates: an anonymous
-  caller reaches it and sees less, and is never told that a members-only program
-  exists.  [Decision — *Policy: Records Policy, Art. IV*]
+  caller reaches it and sees less, and is never told that a hidden members-only
+  program exists.  [Decision — *Policy: Records Policy, Art. IV*]
 
-- A members-only program's own page keeps that silence. An anonymous caller is
-  told there is no such program; a signed-in caller who is not a member is told it
-  exists and that it is members only. Signing in is what earns the reason for
-  being turned away.  [Decision — *Principle: no existence oracle*]
+- A members-only program is hidden by default and keeps that silence on its own
+  page: an anonymous caller is told there is no such program; a signed-in caller
+  who is not a member is told it exists and that it is members only. Signing in is
+  what earns the reason for being turned away.  [Decision — *Principle: no existence oracle*]
+
+- A program's leader may opt a members-only program into the public catalogue
+  (publiclyVisible). Such a program is listed and its detail page shown to everyone,
+  non-members included, so the offering can be understood; its roster stays hidden
+  from non-enrolled callers, and enrollment is still refused to anyone whose
+  membership is unsettled. Visibility and the right to join are separate.  [Decision]
 
 - A program leader is defined by the program they lead, not by a role they hold.
   They reach the programs they lead and no others; the board and sysadmins reach

@@ -26,6 +26,9 @@ export const GET = handler('GET /api/settings/membership', async () => {
  * Membership fees must be finite and >= 0; an invalid value rejects the whole update (400) so the
  * previous value survives rather than silently collapsing to zero. (The Averity consent
  * link is an env var, not a board setting. Email sender identity lives in /api/settings/email.)
+ *
+ * A field this environment has no use for is NOT a user-validation failure: it is dropped, not
+ * rejected, so it can't 400 the whole batch. Only genuinely malformed user values fail the save.
  */
 export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
@@ -73,13 +76,11 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         data.volunteerDiscountCode = body.volunteerDiscountCode?.trim() || null;
     }
     if (body.bgRecheckMonths !== undefined) data.bgRecheckMonths = Math.max(0, Math.round(body.bgRecheckMonths));
-    if (body.devSigningTarget !== undefined) {
-        // Dev-instance-only knob (signing target radio). Rejected outright on any
-        // other env so prod's DB can never even hold a value — the read side
-        // (signingMockActive) has its own hard fuse regardless.
-        if (config.checkinEnv() !== "dev") {
-            return apiError("devSigningTarget can only be set on a dev instance", 400);
-        }
+    // Dev-instance-only knob (signing target radio). Off-dev the whole form still
+    // POSTs it, so we IGNORE it rather than 400 — writing it never happens, so prod's
+    // DB can never hold a value, and the read side (signingMockActive) fuses regardless.
+    // Only on dev do we validate + persist.
+    if (body.devSigningTarget !== undefined && config.checkinEnv() === "dev") {
         if (body.devSigningTarget !== null && body.devSigningTarget !== "zoho" && body.devSigningTarget !== "debug") {
             return apiError("devSigningTarget must be 'zoho', 'debug', or null", 400);
         }

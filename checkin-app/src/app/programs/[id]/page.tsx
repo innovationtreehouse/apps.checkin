@@ -32,9 +32,8 @@ type ProgramDetail = {
   enrollmentStatus: string;
   orgMemberPriceCents: number | null;
   nonOrgMemberPriceCents: number | null;
-  // Single-pool model (product decision 2026-07-06): the ONE variant for both
-  // tiers — member pricing comes from a checkout-time discount code (see
-  // handleEnroll), not a separate variant.
+  // Single-pool model: the ONE variant for both tiers — member pricing comes
+  // from a checkout-time discount code (see handleEnroll), not a separate variant.
   shopifyVariantId: string | null;
   minAge: number | null;
   maxAge: number | null;

@@ -56,6 +56,7 @@ jobs:
     outputs:
       app: ${{ steps.detect.outputs.app }}
       client: ${{ steps.detect.outputs.client }}
+      packages: ${{ steps.detect.outputs.packages }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -94,6 +95,7 @@ jobs:
             echo "Non-PR event ($EVENT_NAME) — running full CI."
             echo "app=true" >> "$GITHUB_OUTPUT"
             echo "client=true" >> "$GITHUB_OUTPUT"
+            echo "packages=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed="$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA")"
@@ -120,6 +122,20 @@ jobs:
           else
             echo "No client/** change — skipping the Python tier."
             echo "client=false" >> "$GITHUB_OUTPUT"
+          fi
+          # The Vitest workspaces (packages/*, *-function) have their own tier
+          # (package-tests below). Run it when any of them — or this workflow —
+          # changes. A checkin-app change that consumes @inventory/money already
+          # sets app=true and runs the jest suite; that is a separate concern
+          # from re-running the package's own vitest suite. Root package.json /
+          # package-lock.json is included: a shared dep bump (vitest, prisma,
+          # testcontainers) can break these suites without touching a workspace.
+          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|\.github/workflows/ci\.yml$)'; then
+            echo "A package/function workspace (or this workflow) changed — running the Vitest tier."
+            echo "packages=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No packages/** or *-function/** change — skipping the Vitest tier."
+            echo "packages=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ---------------------------------------------------------------------------
@@ -565,56 +581,77 @@ jobs:
   # see) slipped through CI and broke the post-merge deploy. Building here gates the MR.
   # It ALSO boots the built image and probes `/` (smoke test) — `docker build` alone can't
   # catch a runtime crash on startup, which only surfaced post-merge as a hung ECS rollout.
-  # The s-read workspaces (s-read-function + s-ingest-core vitest suites) were
-  # invisible to CI — the `test` job runs only checkin-app's jest, so a failing
-  # s-read test could merge green (and nearly did: PR #992's first push carried
-  # a failing normalize test behind all-green checks). Same always-report
-  # pattern as `test` so this can be added as a required check.
-  s-read-tests:
-    name: s-read tests
+  # Every Vitest workspace (packages/*, *-function) — the non-app runner half of
+  # issue #228. These were invisible to CI: the jest jobs run only checkin-app,
+  # so a failing package/function test could merge green (and nearly did: PR
+  # #992's first push carried a failing s-ingest-core normalize test behind
+  # all-green checks). @inventory/money is imported by live app routes yet had no
+  # CI running its suite at all. This job runs the whole tier via the root
+  # test:packages / test:functions scripts.
+  #
+  # ubuntu-latest ships a running Docker daemon, so @inventory/pg-test-harness'
+  # testcontainers integration suites (monitoring-db, s-ingest-core) boot a
+  # throwaway Postgres and actually run here — off Docker they self-skip. This is
+  # the Docker-enabled integration lane #228 calls for; no extra service block is
+  # needed because the harness manages the container itself.
+  #
+  # Same always-report skip-notice pattern as the jest jobs so it can be added as
+  # a required check.
+  package-tests:
+    name: Package & function tests (Vitest)
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: Skip notice (client-only change)
-        if: needs.changes.outputs.app != 'true'
-        run: echo "Only client/** changed — nothing to test; reporting success."
+      - name: Skip notice (no package/function change)
+        if: needs.changes.outputs.packages != 'true'
+        run: echo "No packages/** or *-function/** change — nothing to test; reporting success."
 
       - name: Checkout code
-        if: needs.changes.outputs.app == 'true'
+        if: needs.changes.outputs.packages == 'true'
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}   # empty on push/PR = default ref; the tag when called by deploy-prod
 
       - name: Setup Node.js
-        if: needs.changes.outputs.app == 'true'
+        if: needs.changes.outputs.packages == 'true'
         uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: 'npm'
 
       - name: Install dependencies
-        if: needs.changes.outputs.app == 'true'
+        if: needs.changes.outputs.packages == 'true'
         run: npm ci
 
-      # prisma generate only writes clients — no database needed. Both s-read
-      # packages' generated clients are imported by the code under test.
+      # prisma generate only writes clients — no database needed. These two
+      # generated clients are imported (directly or transitively) by every DB
+      # workspace under test: monitoring-db feeds the relay/watchdog functions,
+      # s-ingest-core feeds the s-read/s-replay functions.
       - name: Generate Prisma clients
-        if: needs.changes.outputs.app == 'true'
+        if: needs.changes.outputs.packages == 'true'
         run: |
           npm run db:generate -w @inventory/s-ingest-core
           npm run db:generate -w @inventory/monitoring-db
 
-      - name: Typecheck s-read-function
-        if: needs.changes.outputs.app == 'true'
-        run: npm run typecheck -w s-read-function
+      # The functions bundle at deploy time (tsc --noEmit inside `build`), but
+      # that build isn't in the PR gate; typecheck them here so a type error
+      # can't merge green. Each imports a generated client, generated above.
+      - name: Typecheck functions
+        if: needs.changes.outputs.packages == 'true'
+        run: |
+          npm run typecheck -w s-read-function
+          npm run typecheck -w s-replay-function
+          npm run typecheck -w monitoring-relay-function
+          npm run typecheck -w monitoring-watchdog-function
 
-      - name: Test s-ingest-core
-        if: needs.changes.outputs.app == 'true'
-        run: npm test -w @inventory/s-ingest-core
+      - name: Test packages
+        if: needs.changes.outputs.packages == 'true'
+        run: npm run test:packages
 
-      - name: Test s-read-function
-        if: needs.changes.outputs.app == 'true'
-        run: npm test -w s-read-function
+      - name: Test functions
+        if: needs.changes.outputs.packages == 'true'
+        run: npm run test:functions
 
   # The Raspberry Pi kiosk client (client/**, Python). Its suite includes the
   # H1 guard that the signing proxy never binds 0.0.0.0, and the golden vector

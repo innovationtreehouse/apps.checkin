@@ -73,3 +73,42 @@ describe('Facility Ops directory agrees with the section gates', () => {
     expect(entry.visible({ isOperations: true }, true, null)).toBe(false);
   });
 });
+
+// #1569: the two divergences this change closed. Each row must match the section
+// gate it reads from, not the section's coarse "board" default.
+describe('Membership Ops directory agrees with the section gates', () => {
+  const entryFor = (href: string) => PAGES.find((p) => p.href === href)!;
+  const reviewer = { isBackgroundCheckReviewer: true };
+  const ops = { isOperations: true };
+
+  it('lists Review to a background-check reviewer', () => {
+    expect(entryFor('/membership-ops/review').visible(reviewer, true, null)).toBe(true);
+  });
+
+  it('does not list the admin-only tabs to a reviewer', () => {
+    for (const href of ['/membership-ops/applications', '/membership-ops/roles', '/membership-ops/households']) {
+      expect(entryFor(href).visible(reviewer, true, null)).toBe(false);
+    }
+  });
+
+  it('lists Participants (only) to operations', () => {
+    expect(entryFor('/membership-ops/participants').visible(ops, true, null)).toBe(true);
+    expect(entryFor('/membership-ops/review').visible(ops, true, null)).toBe(false);
+    expect(entryFor('/membership-ops/roles').visible(ops, true, null)).toBe(false);
+  });
+});
+
+describe('Shop Ops directory agrees with the section gates', () => {
+  const entryFor = (href: string) => PAGES.find((p) => p.href === href)!;
+  const certifier = { toolStatuses: [{ level: 'MAY_CERTIFY_OTHERS' }] };
+
+  it('hides Create from a certifier who is neither sysadmin nor board (gate is admin)', () => {
+    expect(entryFor('/shop-ops/create').visible(certifier, true, null)).toBe(false);
+    expect(entryFor('/shop-ops/create').visible({ isBoardMember: true }, true, null)).toBe(true);
+  });
+
+  it('still lists Manage and the hub to a certifier', () => {
+    expect(entryFor('/shop-ops/manage').visible(certifier, true, null)).toBe(true);
+    expect(entryFor('/shop-ops').visible(certifier, true, null)).toBe(true);
+  });
+});

@@ -1,0 +1,20 @@
+{
+  "name": "@inventory/workflows",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "xstate": "^5.32.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

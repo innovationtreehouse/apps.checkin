@@ -14,6 +14,7 @@ type Program = {
   phase?: string;
   enrollmentStatus?: "OPEN" | "CLOSED";
   orgMemberOnly?: boolean;
+  publiclyVisible?: boolean;
   startAt?: string | null;
   endAt?: string | null;
   orgMemberPriceCents?: number | null;
@@ -67,7 +68,7 @@ export default function AdminProgramsIndex() {
   const visiblePrograms = programs.filter(
     (p) =>
       (!activeOnly || p.phase !== "FINISHED") &&
-      (!publicOnly || (p.phase !== "PLANNING" && !p.orgMemberOnly)),
+      (!publicOnly || (p.phase !== "PLANNING" && (!p.orgMemberOnly || p.publiclyVisible))),
   );
 
   const columns: DataTableColumn<Program>[] = [
