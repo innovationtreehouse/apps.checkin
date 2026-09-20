@@ -24,6 +24,7 @@ describe('Auto-Association and Checkout Chunking Logic', () => {
         await prisma.visit.deleteMany();
         await prisma.programParticipant.deleteMany();
         await prisma.event.deleteMany();
+        await prisma.programInstance.deleteMany();
         await prisma.program.deleteMany();
         await prisma.person.deleteMany({
             where: { email: 'auto-assoc-test@example.com' }
@@ -107,6 +108,7 @@ describe('Auto-Association and Checkout Chunking Logic', () => {
         await prisma.visit.deleteMany();
         await prisma.programParticipant.deleteMany();
         await prisma.event.deleteMany();
+        await prisma.programInstance.deleteMany();
         await prisma.program.deleteMany();
         await prisma.person.deleteMany({
             where: { id: participantId }

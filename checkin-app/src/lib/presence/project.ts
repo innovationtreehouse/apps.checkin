@@ -30,6 +30,7 @@ export async function applyPresenceIntent(
         clientEventId?: string | null;
         confirmToken?: string | null;
         replayEventId?: string | null;
+        forceCloseConfirmed?: boolean;
     },
 ): Promise<Response> {
     const event = await appendPresenceEvent(db, {
@@ -90,6 +91,7 @@ export async function applyPresenceIntent(
         args.confirmToken ?? null,
         args.occurredAt,
         args.replayEventId ?? null,
+        args.forceCloseConfirmed ?? false,
     );
     // Mirror the IN branch: PROJECTED only when someone actually left. A
     // force-close warning or a review park leaves the visit open — the

@@ -1,5 +1,12 @@
-import type { Session } from "next-auth";
 import type { NavLink } from "@/lib/nav/types";
+
+/** The role fields shopRoles reads — satisfied by the NextAuth session user and
+ *  by the /index directory's RegistryUser alike, so both resolve the same gate. */
+type ShopRoleUser = {
+  isSysadmin?: boolean;
+  isBoardMember?: boolean;
+  toolStatuses?: Array<{ level: string }>;
+};
 
 /**
  * Single source of truth for the Shop Ops tabs. Rendered as the persistent top
@@ -25,7 +32,7 @@ export const SHOP_NAV_LINKS: ShopNavLink[] = [
   { name: "Live Certifications Center", href: "/shop-ops/live", icon: "📊", visible: () => true },
 ];
 
-export function shopRoles(user: Session["user"] | undefined): ShopRoles {
+export function shopRoles(user: ShopRoleUser | undefined): ShopRoles {
   const isAdmin = !!user?.isSysadmin || !!user?.isBoardMember;
   const isCertifier =
     isAdmin || !!user?.toolStatuses?.some((ts) => ts.level === "MAY_CERTIFY_OTHERS");

@@ -188,6 +188,38 @@ describe('Nav todo-counts API', () => {
         );
     });
 
+    // Regression (#1618): a household that renewed a trusted adult early carries a stale
+    // in-window approval PLUS a live renewal that outlives it. "Expiring" is per adult on
+    // the current authorization, so this adds NO "Renew an expiring trusted adult" todo —
+    // the household kept its 5, not 6.
+    it('does not add an expiring-trusted-adult todo for an adult with a live renewal', async () => {
+        const renewed = await prisma.trustedAdult.create({
+            data: {
+                householdId: householdAId,
+                trustedAdultName: 'Renewed Early',
+                trustedAdultEmail: 'renewed@example.com',
+                familyContext: 'renewed early',
+                disclosedById: leadId,
+                reviews: {
+                    create: [
+                        { householdId: householdAId, kind: 'INITIAL', status: 'APPROVED', sharedNote: 'note', effectiveFrom: daysFromNow(-355), reviewBy: daysFromNow(10) },
+                        { householdId: householdAId, kind: 'RENEWAL', status: 'APPROVED', sharedNote: 'note', effectiveFrom: daysFromNow(0), reviewBy: daysFromNow(300) },
+                    ],
+                },
+            },
+        });
+        try {
+            const res = await callAs({ id: leadId, householdId: householdAId });
+            const data = await res.json();
+            const expiring = data.member.household.filter((t: { label: string }) => t.label === 'Renew an expiring trusted adult');
+            // Only slExpiring's genuinely-expiring adult, not the renewed one.
+            expect(expiring).toHaveLength(1);
+        } finally {
+            await prisma.trustedAdultReview.deleteMany({ where: { trustedAdultId: renewed.id } });
+            await prisma.trustedAdult.delete({ where: { id: renewed.id } });
+        }
+    });
+
     it('drops the address todo once the household has a full valid address', async () => {
         await prisma.household.update({
             where: { id: householdAId },

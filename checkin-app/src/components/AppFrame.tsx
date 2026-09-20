@@ -52,6 +52,10 @@ import { navBadgeFor, leadsAnyProgram } from '@/components/navBadges';
 import { CountBadge, badgeIntentFor } from '@/components/ui/CountBadge';
 import type { SessionUser } from '@/types/auth';
 import { FACILITY_SECTION_ROLES } from '@/lib/facilityNav';
+import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
+import { MEMBERSHIP_OPS_SECTION_ROLES } from '@/lib/membershipOpsNav';
+import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
+import { SETTINGS_SECTION_ROLES } from '@/lib/settingsNav';
 
 type NavItem = {
   href: string;
@@ -74,7 +78,7 @@ const NAV_ITEMS: NavItem[] = [
     href: '/safety',
     label: 'Safety',
     icon: <IconShieldCheck size={18} />,
-    visible: (u) => !!u?.isSysadmin || !!u?.isBoardMember || !!u?.isKeyholder,
+    visible: (u) => SAFETY_SECTION_ROLES.some((r) => !!u?.[r]),
   },
   { href: '/my-activities', label: 'My Activities', icon: <IconActivity size={18} />, visible: (_u, signedIn) => signedIn },
   {
@@ -111,8 +115,9 @@ const NAV_ITEMS: NavItem[] = [
     href: '/membership-ops',
     label: 'Membership Ops',
     icon: <IconUsers size={18} />,
-    // Reviewers get in for the Background-check Review tab; other tabs 403 independently.
-    visible: (u) => !!u?.isSysadmin || !!u?.isBoardMember || !!u?.isBackgroundCheckReviewer,
+    // Reviewers get in for the Background-check Review tab, operations for Participants;
+    // other tabs 403 independently. The hub redirects each to their first visible tab.
+    visible: (u) => MEMBERSHIP_OPS_SECTION_ROLES.some((r) => !!u?.[r]),
     // Admins land on the hub (→ first tab); a reviewer-only user has just the Review tab.
     hrefFor: (u) =>
       !u?.isSysadmin && !u?.isBoardMember && u?.isBackgroundCheckReviewer
@@ -136,7 +141,7 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Finance Ops',
     icon: <IconCoin size={18} />,
     // Finance Ops is board-only — sysadmin has no access (issue #1083).
-    visible: (u) => !!u?.isBoardMember,
+    visible: (u) => FINANCE_SECTION_ROLES.some((r) => !!u?.[r]),
   },
   {
     href: '/system-status',
@@ -148,7 +153,7 @@ const NAV_ITEMS: NavItem[] = [
     href: '/settings',
     label: 'Settings',
     icon: <IconAdjustments size={18} />,
-    visible: (u) => !!u?.isSysadmin || !!u?.isBoardMember,
+    visible: (u) => SETTINGS_SECTION_ROLES.some((r) => !!u?.[r]),
   },
   { href: '/index', label: 'Index', icon: <IconList size={18} />, visible: (_u, signedIn) => signedIn },
   // Dev tools (dev instances only) — a single entry into the /dev tab section:

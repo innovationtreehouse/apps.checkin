@@ -13,6 +13,11 @@ const participants = [
     { id: 2, name: "Sam Jones", toolStatuses: [] },
 ];
 
+const nicknamed = [
+    { id: 1, name: "Alexander Smith", nickname: "Alex", toolStatuses: [{ toolId: 1, level: "CERTIFIED" }] },
+    { id: 2, name: "Samantha Jones", nickname: "Sam", toolStatuses: [] },
+];
+
 describe("KioskCertificationsDisplay", () => {
     it("loads and renders the live certifications grid", async () => {
         mockFetchJson({ "/api/kioskdisplay/certifications": { participants, tools } });
@@ -25,6 +30,16 @@ describe("KioskCertificationsDisplay", () => {
         expect(await screen.findByText("Sam")).toBeInTheDocument();
         expect(screen.getByText("3D Printer")).toBeInTheDocument();
         expect(screen.getByText("2 People Present")).toBeInTheDocument();
+    });
+
+    it("labels rows with the nickname the person goes by", async () => {
+        mockFetchJson({ "/api/kioskdisplay/certifications": { participants: nicknamed, tools } });
+        renderWithProviders(<KioskCertificationsDisplay />);
+
+        expect(await screen.findByText("Alex")).toBeInTheDocument();
+        expect(await screen.findByText("Sam")).toBeInTheDocument();
+        expect(screen.queryByText("Alexander")).not.toBeInTheDocument();
+        expect(screen.queryByText("Samantha")).not.toBeInTheDocument();
     });
 
     it("shows an error message when the fetch fails", async () => {

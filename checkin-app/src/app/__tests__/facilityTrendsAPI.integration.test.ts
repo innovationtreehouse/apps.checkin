@@ -393,12 +393,12 @@ describe('Facility trends API', () => {
         await prisma.program.delete({ where: { id: program.id } });
     });
 
-    // #1631 pin: PATCH /api/attendance/manual/[id] (member self-correction) must
-    // not restamp arrivedVia WEB. The source is the correction-significance
-    // weight — a staff observation overwritten by the member is a bigger deal
-    // than a self-report edited by its own author — so it has to survive the
-    // edit. The hours count either way; the stamp is what must not move.
-    it('keeps a self-corrected LEAD_MARKED visit counted, and its source intact', async () => {
+    // A member self-correction (PATCH /api/attendance/manual/[id]) restamps the
+    // corrected arrival to TYPED: after the edit the value is the member's own
+    // typed clock, so a second correction weighs it as a self-report, not the
+    // original LEAD_MARKED observation. bySource attributes the corrected hours
+    // to TYPED accordingly; the hours themselves count either way.
+    it('keeps a self-corrected visit counted, and restamps its source to TYPED', async () => {
         const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `SelfCorrectedLM ${TAG}` } });
         const event = await prisma.event.create({
             data: { programId: program.id, name: `SelfCorrectedLM event ${TAG}`, startAt: arrival(2), endAt: departure(2, 3) },
@@ -427,7 +427,7 @@ describe('Facility trends API', () => {
         }) as unknown as import('next/server').NextRequest, { params: Promise.resolve({ id: String(visit.id) }) } as never);
         expect(patch.status).toBe(200);
         const patched = await prisma.visit.findUnique({ where: { id: visit.id } });
-        expect(patched?.arrivedVia).toBe('LEAD_MARKED'); // not restamped WEB — the point of this test
+        expect(patched?.arrivedVia).toBe('TYPED'); // corrected arrival is now a typed clock — the point of this test
 
         // Counted before and after, at the corrected 1h.
         const after = await (await callAs({ id: adminId, isSysadmin: true }, `?period=month&programId=${program.id}`)).json();
@@ -441,9 +441,11 @@ describe('Facility trends API', () => {
         await prisma.program.delete({ where: { id: program.id } });
     });
 
-    // Control for the same fix: a WEB/SCANNER visit's self-correction is
-    // otherwise unchanged — it still applies and still counts, same as before.
-    it('keeps a self-corrected SCANNER visit counted after the manual PATCH route', async () => {
+    // Control: a SCANNER visit's self-correction restamps to TYPED too — the
+    // first correction weighs the badge measurement (SCANNER=3), and the row is
+    // left TYPED so the next correction weighs a self-report (TYPED=1). It still
+    // applies and still counts.
+    it('restamps a self-corrected SCANNER visit to TYPED after the manual PATCH route', async () => {
         const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `SelfCorrectedScanner ${TAG}` } });
         const event = await prisma.event.create({
             data: { programId: program.id, name: `SelfCorrectedScanner event ${TAG}`, startAt: arrival(2), endAt: departure(2, 3) },
@@ -468,7 +470,7 @@ describe('Facility trends API', () => {
         }) as unknown as import('next/server').NextRequest, { params: Promise.resolve({ id: String(visit.id) }) } as never);
         expect(patch.status).toBe(200);
         const patched = await prisma.visit.findUnique({ where: { id: visit.id } });
-        expect(patched?.arrivedVia).toBe('SCANNER'); // not restamped WEB either — just no longer restamped at all
+        expect(patched?.arrivedVia).toBe('TYPED'); // corrected badge arrival is now a typed clock
 
         const after = await (await callAs({ id: adminId, isSysadmin: true }, `?period=month&programId=${program.id}`)).json();
         expect(after.totals.uniqueVolunteers).toBe(1);

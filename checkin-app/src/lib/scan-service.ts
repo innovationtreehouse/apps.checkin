@@ -8,7 +8,20 @@ import { withFacilityLock } from "@/lib/facilityLock";
 import { MAX_VISIT_MS } from "@/lib/visitTimes";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, youthIsPresent } from "@/lib/supervision";
 import { isYouth } from "@/lib/time";
+import { getKioskDisplayName } from "@/lib/kiosk-names";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+
+/**
+ * What a scan response may say about who scanned: an id and the same
+ * nickname-else-first-name label the kiosk roster shows. The kiosk renders this on
+ * an unattended public screen and forwards it into an iframe with a wildcard
+ * postMessage origin (client/client.py), so the raw Person — email, phone, date of
+ * birth — never ships (docs/rules/attendance-checkin.md, "The kiosk").
+ */
+function scanParticipant(participant: Person) {
+    return { id: participant.id, name: getKioskDisplayName(participant) };
+}
 
 /** Seconds the kiosk counts down after showing the force-close warning. The
  *  countdown is display; the confirm is the token, which has no elapsed-time
@@ -86,6 +99,7 @@ export async function processCheckin(participant: Person, authType: string, db: 
             associatedEventId: eventId
         },
     });
+    invalidateAttendanceCache();
 
     // Fire-and-forget: send check-in notifications
     sendCheckinNotifications(participant.id, 'checkin', 'SCANNER').catch(err =>
@@ -107,7 +121,7 @@ export async function processCheckin(participant: Person, authType: string, db: 
         message: "Checked in successfully",
         type: "checkin" as const,
         warning: supervisionWarning,
-        participant,
+        participant: scanParticipant(participant),
         visit: newVisit,
         signedRequest: authType === "kiosk",
     });
@@ -130,7 +144,11 @@ export async function processCheckout(
     confirmToken: string | null = null,
     visitTime: Date = new Date(),
     /** clientEventId of a REPLAYED event (drain-delivered), null for a live scan. */
-    replayEventId: string | null = null
+    replayEventId: string | null = null,
+    /** The kiosk confirmed this close locally while offline — the two-scan
+     *  confirm ran on the kiosk, no server token was ever minted to echo.
+     *  Honored only on a replay; a live scan stays server-authoritative. */
+    forceCloseConfirmed: boolean = false
 ) {
     let facilityClosed = false;
 
@@ -173,11 +191,23 @@ export async function processCheckout(
                         createHash("sha256").update(confirmToken).digest()
                     );
 
-                if (!confirmForceClose && replayEventId) {
-                    // KIOSK_RESILIENCE.md §4 + §5.23a: validity is by issuance, so a
-                    // confirm queued through an outage still closes -- but only if it
-                    // carries the token (checked above). A replay WITHOUT one was
-                    // never confirmed by anyone, and nobody is at the reader hours
+                // Offline close: while disconnected the kiosk has no server token
+                // to mint, so it runs the two-scan warning+confirm locally and
+                // flags the confirmed close on the queued event. A force-close
+                // confirm is valid by issuance (docs/rules/attendance-checkin.md,
+                // kiosk resilience), extended here to a client-issued confirm -- a
+                // keyholder standing at the reader confirmed the room is clear.
+                // Honored only on a replay (the drain); a live scan carrying the
+                // flag falls through to the server-authoritative token flow below.
+                // This bypasses ONLY the token: the isKeyholder / no-other-keyholder
+                // / others-present guards above still bound it, so a client flag can
+                // never close a facility the server doesn't independently read as a
+                // last-keyholder-with-others close.
+                const offlineConfirmed = forceCloseConfirmed && replayEventId != null;
+
+                if (!confirmForceClose && !offlineConfirmed && replayEventId) {
+                    // A replay WITHOUT a token and WITHOUT the offline-confirmed flag
+                    // was never confirmed by anyone, and nobody is at the reader hours
                     // later to answer a warning, so park it for a human. Never mint
                     // or stamp on a replay: an unattended countdown is not a confirm.
                     await db.rawBadgeLog.update({
@@ -187,7 +217,7 @@ export async function processCheckout(
                     return apiJson({ type: 'parked', reason: 'force_close_review', message: 'Recorded for review.' });
                 }
 
-                if (!confirmForceClose) {
+                if (!confirmForceClose && !offlineConfirmed) {
                     // Mint a fresh token with the warning; the old one dies here, so
                     // an unconfirmed countdown cannot be redeemed later.
                     const token = randomUUID();
@@ -233,6 +263,7 @@ export async function processCheckout(
             // (see finalizeFacilityClose / route.ts).
             if (isRootClient(db)) {
                 await withFacilityLock(db, (tx) => closeAllOpenVisits(tx));
+                invalidateAttendanceCache();
                 kickPostEventEmails();
             }
         }
@@ -263,7 +294,7 @@ export async function processCheckout(
         message: facilityClosed ? "Checked out and Facility closed" : "Checked out successfully",
         type: "checkout" as const,
         warning: supervisionWarning,
-        participant,
+        participant: scanParticipant(participant),
         visit: updatedVisit,
         facilityClosed,
         signedRequest: authType === "kiosk",
@@ -379,6 +410,9 @@ function kickPostEventEmails() {
  */
 export async function runFacilityClose(): Promise<void> {
     await withFacilityLock(prisma, (tx) => closeAllOpenVisits(tx));
+    // After the lock/tx commits so a concurrent kiosk GET cannot refill the
+    // cache from still-open rows (READ COMMITTED).
+    invalidateAttendanceCache();
     kickPostEventEmails();
 }
 

@@ -16,6 +16,8 @@ type Person = {
   id: number;
   // Display name resolved server-side (real name, else email-prefix); never the raw email (#329).
   name: string;
+  // The name this person goes by; stands in for the first name in the grid.
+  nickname?: string | null;
   toolStatuses: {
     toolId: number;
     level: ToolStatusLevel;
@@ -102,18 +104,19 @@ function KioskCertificationsInner() {
     return name.split(/\s+/).map(word => (word.length > MAX_WORD_LEN ? word.slice(0, MAX_WORD_LEN - 1) + '.' : word));
   };
 
-  // Sort users alphabetically by first name (name is server-resolved, email-prefix included)
+  // Sort by the name the row actually shows — the nickname where there is one, else the
+  // first name (name is server-resolved, email-prefix included).
   const sortAlphabetically = (a: Person, b: Person) => {
-    const nameA = a.name;
-    const nameB = b.name;
-    const getFirstName = (name: string) => {
-      if (name.includes(',')) return name.split(',')[1].trim().toLowerCase();
-      return name.split(' ')[0].toLowerCase();
+    const getFirstName = (p: Person) => {
+      const nickname = p.nickname?.trim();
+      if (nickname) return nickname.toLowerCase();
+      if (p.name.includes(',')) return p.name.split(',')[1].trim().toLowerCase();
+      return p.name.split(' ')[0].toLowerCase();
     };
-    const firstA = getFirstName(nameA);
-    const firstB = getFirstName(nameB);
+    const firstA = getFirstName(a);
+    const firstB = getFirstName(b);
     if (firstA !== firstB) return firstA.localeCompare(firstB);
-    return nameA.localeCompare(nameB);
+    return a.name.localeCompare(b.name);
   };
 
   const sortedParticipants = [...participants].sort(sortAlphabetically);

@@ -31,6 +31,7 @@ const ORACLES = [
     'emergency-contact-program-scope.test.ts',
     'household-lead-program-scope.test.ts',
     'impersonatedBy-inertness.test.ts',
+    'led-households-roster.test.ts',
     'member-tier.test.ts',
     'payment-plans-strip.test.ts',
     'program-participant-pending-since-strip.test.ts',
@@ -40,6 +41,7 @@ const ORACLES = [
     'shop-org-members-strip.test.ts',
     'toolstatus-self-scope.test.ts',
     'visit-household-lead-scope.test.ts',
+    'visit-program-scope.test.ts',
 ] as const;
 
 describe('scope oracle set', () => {

@@ -1,5 +1,5 @@
 /**
- * In-memory kiosk last-seen stamp (KIOSK_RESILIENCE §3.4).
+ * In-memory kiosk last-seen stamp.
  *
  * Updated on every verified kiosk signature — zero new requests, zero DB
  * writes, so it cannot wake the curfewed service or pin Aurora. Dies with

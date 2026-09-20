@@ -101,6 +101,18 @@ export const SCOPE_BINDINGS = {
     Visit: {
         their_own: { field: 'personId', eqCtx: 'selfId' },
         led_households: { field: 'personId', inCtx: 'ledHouseholdMemberIds' },
+        // A visit AT one of the caller's program sessions. Visit has no
+        // programId column either, so this reaches a program the way RSVP does:
+        // associatedEventId → Event.programId (ctx.eventIdsInScopePrograms).
+        // Deliberately NOT personId ∈ participantIdsInScopePrograms — that would
+        // hand a program lead every facility visit their participants ever made,
+        // not just the ones at their own sessions. A route must select
+        // associatedEventId to get the grant; an unselected column fails closed
+        // (inCtx rejects a non-number).
+        their_program_participants: {
+            field: 'associatedEventId',
+            inCtx: 'eventIdsInScopePrograms',
+        },
         // deletedAt is a conjunct, not a nicety: a tombstoned visit keeps
         // departedAt null forever, so without it a deleted open visit reads as
         // an active one for the rest of time.

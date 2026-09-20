@@ -223,6 +223,32 @@ describe('General Attendance API Integration Tests', () => {
              expect(names).toContain('Common');
              expect(names).toContain('Household Child');
         });
+
+        it('carries the parked-scan review count in counts.needReview (D7 corner count)', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+             const before = await (async () => {
+                 const req = new Request(`http://localhost:4000/api/attendance`, { method: 'GET' });
+                 const res = await GET(req as unknown as import("next/server").NextRequest) as Response;
+                 return (await res.json()).counts.needReview as number;
+             })();
+
+             const parked = await prisma.rawBadgeLog.create({
+                 data: { personId: adminId, reviewReason: 'facility_closed' },
+             });
+             const dismissed = await prisma.rawBadgeLog.create({
+                 data: { personId: adminId, reviewReason: 'stale_replay', reviewedAt: new Date(), reviewedBy: adminId },
+             });
+             try {
+                 const req = new Request(`http://localhost:4000/api/attendance`, { method: 'GET' });
+                 const res = await GET(req as unknown as import("next/server").NextRequest) as Response;
+                 const data = await res.json();
+                 // Only the un-reviewed parked row moves the count.
+                 expect(data.counts.needReview).toBe(before + 1);
+             } finally {
+                 await prisma.rawBadgeLog.deleteMany({ where: { id: { in: [parked.id, dismissed.id] } } });
+             }
+        });
     });
 
     // ── ops-stg ACCESS GATE regression (Finding 2, 2026-07-20) ──────────────────

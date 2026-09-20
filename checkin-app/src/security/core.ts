@@ -244,7 +244,7 @@ function scopeNeeds(scope: Scope): Partial<CtxNeeds> {
             // householdId) reaches the household only through its members.
             return { ledHouseholdMembers: true };
         case 'their_program_participants':
-            // participantIds AND (RSVP-only) eventIds both hang off this scope;
+            // participantIds AND (RSVP/Visit) eventIds both hang off this scope;
             // the bag's models aren't statically known, so fetch both.
             return { programs: true, programEvents: true };
         case 'their_program_households':

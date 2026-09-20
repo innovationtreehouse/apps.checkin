@@ -1,9 +1,11 @@
 type NamedEntity = {
     id: number;
     name: string | null;
+    /** The name this person goes by; stands in for the first name when set. */
+    nickname?: string | null;
     // Optional: some feeds (e.g. the certifications grid) resolve the email-prefix
     // fallback server-side and omit the raw address entirely.
-    email?: string;
+    email?: string | null;
 };
 
 /** The last whitespace-separated word of a name, or "" when there isn't one. */
@@ -14,24 +16,27 @@ function finalWord(text: string): string {
 
 /**
  * Parse a full name into a first name and the last name the display abbreviates.
- * Handles "First Last", "Last, First", and email-prefix fallback.
+ * Handles "First Last", "Last, First", and email-prefix fallback. A nickname
+ * replaces the first name; the last name it disambiguates against still comes
+ * from `name`, matching the badge labels (components/admin/badgeNames.ts).
  *
  * The last name is the FINAL word, so "John Frank Doe" is a John D. and a
  * multi-word surname abbreviates on its last word. Anything between the first and
  * last word is a middle name, which the display never shows.
  */
 function parseName(entity: NamedEntity): { first: string; last: string } {
+    const nickname = entity.nickname?.trim();
     const raw = entity.name?.trim();
     if (!raw) {
         // Fallback to email prefix when present (may be omitted — see NamedEntity).
-        return { first: entity.email?.split("@")[0] ?? "", last: "" };
+        return { first: nickname || entity.email?.split("@")[0] || "", last: "" };
     }
 
     // Handle "Last, First" format
     if (raw.includes(",")) {
         const [lastPart, firstPart] = raw.split(",", 2);
         return {
-            first: (firstPart || "").trim(),
+            first: nickname || (firstPart || "").trim(),
             last: finalWord(lastPart || ""),
         };
     }
@@ -39,7 +44,7 @@ function parseName(entity: NamedEntity): { first: string; last: string } {
     // Standard "First Last" or single-word name
     const parts = raw.split(/\s+/);
     return {
-        first: parts[0],
+        first: nickname || parts[0],
         last: parts.length > 1 ? parts[parts.length - 1] : "",
     };
 }
@@ -48,8 +53,8 @@ function parseName(entity: NamedEntity): { first: string; last: string } {
  * Build a map of participant ID → privacy-friendly display name.
  *
  * Rules:
- * 1. Show first name only by default.
- * 2. If two people share the same first name (case-insensitive),
+ * 1. Show only the nickname, else only the first name, by default.
+ * 2. If two people share that displayed name (case-insensitive),
  *    append the first initial of the last name (e.g. "Sarah M.").
  * 3. If that still isn't unique, append the first two characters
  *    of the last name (e.g. "Sarah Mo.", "Sarah Ma.").
@@ -110,4 +115,13 @@ export function getKioskDisplayNames(entities: NamedEntity[]): Map<number, strin
     }
 
     return result;
+}
+
+/**
+ * The same label for one person standing alone — the scan banner, which confirms a
+ * single badge. Rules 2 and 3 cannot fire with nobody to collide with, so what this
+ * resolves is the nickname-else-first-name-else-email-prefix part of the rule.
+ */
+export function getKioskDisplayName(entity: NamedEntity): string {
+    return getKioskDisplayNames([entity]).get(entity.id) ?? "";
 }

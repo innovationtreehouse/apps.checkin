@@ -61,6 +61,13 @@ async function attachToProgram(slug: string, personId: number) {
     return program.id;
 }
 
+/** Attach a person to a program that ended well outside the 12-month lookback. */
+async function attachToStaleProgram(slug: string, personId: number) {
+    const program = await prisma.program.create({ data: { startAt: new Date('2020-01-01'), endAt: new Date('2020-12-31'), name: `${TAG} ${slug} program` } });
+    await prisma.programParticipant.create({ data: { programId: program.id, personId } });
+    return program.id;
+}
+
 function personBgCountFor(personId: number) {
     return prisma.orgMembershipProcess.count({ where: { kind: 'PERSON_BG', subjectPersonId: personId } });
 }
@@ -143,6 +150,15 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
         const rerun = await runPersonBgAnnualSweep(new Date());
         expect(rerun.opened).toBe(0);
         expect(await personBgCountFor(adult.id)).toBe(1);
+    });
+
+    it('Trigger A opens nothing for a person attached only to a program that ended before the lookback', async () => {
+        const hh = await makeHousehold('staleProg');
+        const adult = await makePerson('stale-adult', hh.id, { dateOfBirth: ADULT_DOB });
+        await attachToStaleProgram('stale', adult.id);
+
+        await runPersonBgAnnualSweep(new Date());
+        expect(await personBgCountFor(adult.id)).toBe(0);
     });
 
     it('Trigger A opens nothing when bgRecheckMonths <= 0 (policy unset)', async () => {

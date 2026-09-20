@@ -2,8 +2,8 @@
  * @jest-environment node
  */
 /**
- * Record-visit resolution against the real DB (KIOSK_RESILIENCE §5.26/B4,
- * ruled 2026-08-28): a parked RawBadgeLog row resolves into a Visit written at
+ * Record-visit resolution against the real DB (docs/rules/attendance-checkin.md,
+ * kiosk resilience): a parked RawBadgeLog row resolves into a Visit written at
  * the row's OWN timestamp — the manual tool's staleness bound deliberately
  * does not apply — with the open-IN outcome chosen by the reviewer. The
  * facility-closed 403 branch lives in the unit file: it reads a global

@@ -2,14 +2,14 @@ import prisma from "@/lib/prisma";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
 import { nextBoundary } from "@/lib/membership/renewal";
 import { personBgOpen } from "@/lib/membership/lifecycle";
-import { BG_OBLIGATED_WHERE, LIVE_PERSON } from "@/lib/person/filters";
+import { bgObligatedWhere, LIVE_PERSON } from "@/lib/person/filters";
 import { systemActor } from "@/lib/auditActor";
 
 /**
  * Triggers that OPEN a per-person background-check obligation (PERSON_BG process,
  * Phase 2 — warn-only). Two triggers, both keyed on the SAME "who needs a check"
  * rule as the compliance dashboard: personBgVerdict === "NEEDED" over
- * BG_OBLIGATED_WHERE (program-attached ∪ leads of ACTIVE member households — Trigger
+ * bgObligatedWhere (program-attached ∪ leads of ACTIVE member households — Trigger
  * A is a daily cron over all Persons, so that membership bound is what keeps it off
  * the leads of imports, abandoned intakes and denials). Deliberately NOT
  * triggered by role-assignment: age is judged as-of a boundary, so someone who
@@ -79,7 +79,7 @@ export async function runPersonBgAnnualSweep(now: Date) {
 
     const boundary = nextBoundary(settings.orgMembershipYearBoundary, now);
     const threshold = bgFreshThreshold(boundary, months);
-    const people = await prisma.person.findMany({ where: { ...BG_OBLIGATED_WHERE, ...LIVE_PERSON }, select: { id: true } });
+    const people = await prisma.person.findMany({ where: { ...bgObligatedWhere(now), ...LIVE_PERSON }, select: { id: true } });
 
     let opened = 0;
     for (const p of people) {
@@ -96,7 +96,7 @@ export async function runPersonBgAnnualSweep(now: Date) {
  * NOT the annual boundary — this is what catches a just-turned-18 joiner the
  * boundary run would still classify as a minor. The lead the INITIAL check named is
  * freshly stamped and skipped by the dedup guard; the lead it did not name is
- * exactly who this opens for. Population is BG_OBLIGATED_WHERE — the same set as
+ * exactly who this opens for. Population is bgObligatedWhere — the same set as
  * Trigger A / the dashboard (one source of "who needs a check"). No-op when
  * bgRecheckMonths is unset.
  */
@@ -106,7 +106,7 @@ export async function openPersonBgForNewMember(householdId: number, asOf: Date) 
     if (months <= 0) return;
     const threshold = bgFreshThreshold(asOf, months);
     const people = await prisma.person.findMany({
-        where: { householdId, ...BG_OBLIGATED_WHERE, ...LIVE_PERSON },
+        where: { householdId, ...bgObligatedWhere(asOf), ...LIVE_PERSON },
         select: { id: true },
     });
     for (const p of people) await openPersonBg(p.id, asOf, threshold);

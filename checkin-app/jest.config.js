@@ -122,6 +122,11 @@ module.exports = async () => {
     jestConfig.transformIgnorePatterns = [
         '/node_modules/(?!(@auth/prisma-adapter|@prisma/client)/)'
     ];
-    
+
     return jestConfig;
 }
+
+// Exposed for the runner-boundary guard (src/__tests__/workspaceRunnerIsolation.test.ts):
+// the default export runs next/jest, which throws when invoked inside a jest worker,
+// so the guard inspects this raw object's rootDir/roots instead.
+module.exports.customJestConfig = customJestConfig;

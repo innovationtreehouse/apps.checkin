@@ -67,7 +67,8 @@ variables go in `checkin-app/.env` — the setup guides list them.
 
 ### Testing
 
-- **[AGENTS.md](AGENTS.md)** defines the three test classes (unit / integration / flow) and their commands — run them from `checkin-app/`.
+- **Two runners by workspace type** — Jest for `checkin-app/`, Vitest for `packages/*` and `*-function` (see [AGENTS.md](AGENTS.md)). Root scripts: `npm run test` (app), `npm run test:packages`, `npm run test:functions`, `npm run test:all`.
+- **[AGENTS.md](AGENTS.md)** defines the three app test classes (unit / integration / flow) and their commands — run them from `checkin-app/`.
 - **[Test Coverage Plan](docs/test-coverage-plan.md)** — the path to 80% line coverage and how to re-measure.
 - **[pg-test-harness](packages/pg-test-harness/README.md)** — the fleet template for real-Postgres integration tiers.
 

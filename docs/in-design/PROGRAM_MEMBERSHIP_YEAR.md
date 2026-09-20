@@ -107,14 +107,29 @@ year exists.
 
 The board configures a boundary as a month and day; the year on the stored value
 is not read. A membership year is therefore the span between one occurrence of
-that boundary and the next, and the natural name for it is the calendar year of
-the boundary that opens it. With a 1 September boundary, membership year **2026**
-runs 1 September 2026 to 31 August 2027.
+that boundary and the next. Because it spans two calendar years, its **name is
+the spanning form, `2026-2027`** (both years in full) — the year the boundary
+opens in and the year it closes in — which is what a human sees and is unambiguous
+in a way a bare `2026` is not. With a 1 September boundary, membership year
+`2026-2027` runs 1 September 2026 to 31 August 2027. This is the exact label the
+shipped `membershipYearCycle(...).label` in
+`checkin-app/src/lib/membership/renewal.ts` produces, and `membershipYearCycleForLabel`
+parses back (its test rejects short forms) — so the four-digit form, not a
+`2026-27` variant.
 
-The name is an integer, not a date, and that is the whole reason the scheme
-survives the board moving the boundary. A stored date would be a second copy of a
-board setting, wrong from the moment the setting changed and silently so. An
-integer is re-resolved against the current boundary every time it is read.
+**Stored as a single integer — the opening-boundary year (`2026`).** The closing
+half is always the opening half plus one, so the `2026-2027` label is formatted
+from the one integer by the existing `membershipYearCycle` /
+`membershipYearCycleForLabel` pair, not stored. The integer, not a date, is
+the whole reason the scheme survives the board moving the boundary: a stored date
+would be a second copy of a board setting, wrong from the moment the setting
+changed and silently so. The integer re-resolves against the current boundary
+every time it is read.
+
+The membership year a settlement *buys* uses this identical scheme — see
+`1655_MEMBERSHIP_YEAR_DECLARED.md`. Both store the opening-year integer and render
+through the same shipped label helper, so a member reads the same `2026-2027` label
+for a program's year and for the year their own dues cover.
 
 ## Program dates
 
@@ -149,7 +164,7 @@ does not guess.
 ## What a program declares
 
 One nullable column on the program: the membership year it runs in, as that
-integer.
+opening-year integer (displayed as the `2026-2027` span).
 
 The value is **derived on write** whenever the dates decide it, and **required
 from the caller** when they do not:
@@ -303,17 +318,18 @@ a database query rather than a function call, so it is the one place the rule is
 restated rather than shared. It has to be, and that is a reason to test it
 directly.
 
-One further place treats absent dates as open on purpose: the sweep that decides
-who is recently attached to a program deliberately lets a null date match, so an
-ongoing program counts. That stays as it is. It is not reading a bound, it is
-avoiding a silent exclusion, and legacy rows can still be null for either date.
+One further place reads program dates: the sweep that decides who is recently
+attached to a program (`recentProgramWhere` in `src/lib/person/filters.ts`). It
+bounds attachment by the program's window, not by the declared year, so it stays
+as it is. `startAt`/`endAt` are NOT NULL, so there is no null-date case.
 
 ## Interface
 
 The create form gains a required start date. The membership-year field appears
 only when the dates fail to decide the year: a plain select of the two years the
-program's dates touch, with nothing chosen. When the dates decide it, the field is
-absent — not disabled, not pre-filled and read-only, absent.
+program's dates touch — each shown in the `2026-2027` span form — with nothing
+chosen. When the dates decide it, the field is absent — not disabled, not
+pre-filled and read-only, absent.
 
 Where the field does appear, its label points at the budget approval rather than
 asking for a judgement — the person filling it in is looking something up, and the

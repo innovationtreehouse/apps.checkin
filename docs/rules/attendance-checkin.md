@@ -124,12 +124,62 @@ Things the app takes as true because they are handled outside it.
   On the badge path the confirm is a second badge within the countdown; on web
   paths it is a server-minted token echoed back through a confirm dialog.  [Decision]
 
+- A force-close is triggered only by an explicit confirm — the second badge within
+  the visible countdown — never inferred from the spacing between two raw badge
+  reads. An ordinary double-tap cannot close the building over the people standing
+  in it, and an unattended countdown never becomes a confirm: the confirm is always
+  a human's second badge at the door. With a server present that confirm is the
+  echoed server-minted token; with no network the kiosk runs the same warning and
+  second-badge confirm itself, so a keyholder can still lock up offline. The queued
+  close carries the confirm, and the server honours it on the delayed replay only
+  where it independently reads a last keyholder leaving with others still present.
+  Offline the supervision close-guard can only warn, never hold a departure — the
+  kiosk cannot re-check two-deep without the server, so it leaves the call to the
+  keyholder at the reader.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII, §VIII.4*]
+
 ### The kiosk
 
 - The kiosk shows only what an unattended public screen may — no dates of birth,
   phone numbers, emergency contacts or email addresses. Where a person has no
   name recorded, what shows is the part of their address before the @, never the
   address itself.  [Decision — *Policy: Records Policy, Art. IV*]
+
+### Kiosk resilience
+
+The badge kiosk and its offline scan path. Infrastructure failure — WiFi loss for
+hours at a time — is a normal operating mode here, not an incident.
+
+- A badge scan, once read, is never lost. It survives to a durable server record
+  whatever the network or facility state. The system may decline to *display* or
+  *project* a scan — park it, defer it — but never discards one.  [Decision]
+
+- Every good-faith badge is acknowledged at the door — "checked in" or "checked
+  out" — even when the server's live math disagrees or the network is down.
+  Surfacing that the kiosk is out of sync is additive, never a substitute for the
+  acknowledgement.  [Decision]
+
+- The direction the kiosk displayed is the intent of record. When a queued scan is
+  delivered later, the server applies the in/out the person saw; it never re-infers
+  direction from its own live state at delivery, which would flip a replayed
+  check-in into a check-out.  [Decision]
+
+- A replayed scan applies at the time the badge was read, not the time it was
+  delivered. Within a short freshness window it toggles normally; older than that
+  it is held for a human, because once state has moved on a bare toggle cannot
+  tell entering from leaving.  [Decision]
+
+- A non-keyholder scan accepted while the facility is closed is held, not toggled,
+  until a keyholder visit exists; the held scans then project automatically in the
+  order they occurred. It never produces a roster with no keyholder present. A
+  household lead's manual *open* backfill is not on this path — it still requires a
+  keyholder already present (the facility-open guard).  [Decision]
+
+- The kiosk and attendance safety display reads a missing or incomplete safety
+  payload as *unknown*, never as an empty, compliant room: a failed fetch or a
+  half-populated object must not render as "no violation".  [Decision — *Principle: fail closed*]
+
+- Youth and two-deep math stay server-side, never computed on the kiosk. Resolving
+  a parked scan runs the same fail-closed safety math the live path does.  [Decision — *Principle: fail closed*]
 
 ### The visit record
 

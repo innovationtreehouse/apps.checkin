@@ -95,6 +95,7 @@ const DISPOSITIONS: Record<string, string> = {
     'PersonMerge.toId': 'repointed (RESTRICT) — an earlier merge\'s archive row naming this record as ITS survivor. Repointed, not chained: the archive answers "where is this person now", and RESTRICT means a row left here would pin the very Person that #1456 2b-3 exists to delete. Deliberately the opposite call from Person.mergedIntoId below, which keeps its chain for provenance — the archive already has mergedAt and the AuditLog for that.',
     'PersonRole.grantedById': 'repointed (SET NULL) — swept AFTER the holder pass, so a granter stamp on a row the dedupe just deleted is not counted as moved.',
     'Program.leadMentorId': 'repointed (SET NULL) — step 5 updateMany.',
+    'ProgramInstance.leadMentorId': 'repointed (SET NULL) — step 5 updateMany, same as Program.leadMentorId (the offering-tier lead of a run follows the survivor).',
     'RawBadgeLog.personId': 'repointed (RESTRICT) — the FK that makes a later Person delete possible at all. Plain updateMany; no unique constraint.',
     'TrustedAdult.disclosedById': 'repointed (RESTRICT) — step 5 updateMany.',
     'TrustedAdult.trustedAdultPersonId': 'repointed (SET NULL) — step 5 updateMany.',
