@@ -9,6 +9,7 @@ import { MAX_VISIT_MS } from "@/lib/visitTimes";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, youthIsPresent } from "@/lib/supervision";
 import { isYouth } from "@/lib/time";
 import { getKioskDisplayName } from "@/lib/kiosk-names";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 /**
@@ -98,6 +99,7 @@ export async function processCheckin(participant: Person, authType: string, db: 
             associatedEventId: eventId
         },
     });
+    invalidateAttendanceCache();
 
     // Fire-and-forget: send check-in notifications
     sendCheckinNotifications(participant.id, 'checkin', 'SCANNER').catch(err =>
@@ -261,6 +263,7 @@ export async function processCheckout(
             // (see finalizeFacilityClose / route.ts).
             if (isRootClient(db)) {
                 await withFacilityLock(db, (tx) => closeAllOpenVisits(tx));
+                invalidateAttendanceCache();
                 kickPostEventEmails();
             }
         }
@@ -407,6 +410,9 @@ function kickPostEventEmails() {
  */
 export async function runFacilityClose(): Promise<void> {
     await withFacilityLock(prisma, (tx) => closeAllOpenVisits(tx));
+    // After the lock/tx commits so a concurrent kiosk GET cannot refill the
+    // cache from still-open rows (READ COMMITTED).
+    invalidateAttendanceCache();
     kickPostEventEmails();
 }
 

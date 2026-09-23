@@ -352,9 +352,13 @@ export const PATCH = withAuth({}, async (req: Request, auth, { params }: { param
                 });
 
                 // arrivedVia records how the arrival was measured, not who last
-                // touched the row, so only a visit this mark creates is staff-
-                // asserted: an adopted walk-in keeps its SCANNER/WEB. A departure
-                // the lead typed is staff-asserted whatever the arrival was.
+                // touched the row. A visit this mark creates is staff-asserted
+                // (createTimes -> LEAD_MARKED); an adopted walk-in whose arrival
+                // is unchanged keeps its SCANNER/WEB. Only when a correction
+                // genuinely moves the arrival time does it become a typed clock —
+                // restamped TYPED on the update branch below, so the next
+                // correction weighs it as a self-report. A departure the lead
+                // typed is staff-asserted whatever the arrival was.
                 const times = {
                     arrivedAt: arrival!,
                     departedAt: dep,
@@ -373,9 +377,24 @@ export const PATCH = withAuth({}, async (req: Request, auth, { params }: { param
                 }
 
                 if (existingVisit) {
+                    // Restamp the arrival source only when the lead actually moved
+                    // the arrival time — a Present mark that only re-times the
+                    // departure (or purely adopts a walk-in) leaves the measured
+                    // arrival, and its source, untouched. Compare at minute
+                    // granularity: the client's datetime-local input is minute-
+                    // precision, so an untouched sub-minute arrival round-trips to a
+                    // slightly different value; only a whole-minute move is a real
+                    // correction. ponytail: minute granularity, tighten if a
+                    // finer-grained caller ever needs it.
+                    const arrivalChanged =
+                        Math.floor(arrival!.getTime() / 60000) !== Math.floor(existingVisit.arrivedAt.getTime() / 60000);
                     const updated = await tx.visit.update({
                         where: { id: existingVisit.id },
-                        data: { ...times, associatedEventId: eventId }
+                        data: {
+                            ...times,
+                            associatedEventId: eventId,
+                            ...(arrivalChanged ? { arrivedVia: "TYPED" } : {}),
+                        }
                     });
                     await tx.auditLog.create({
                         data: {

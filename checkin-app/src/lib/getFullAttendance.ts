@@ -3,6 +3,7 @@ import { isYouth } from "@/lib/time";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { PresenceClass } from "@/lib/presence/events";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits } from "@/lib/supervision";
+import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
 
 /**
  * Current-attendance feed.
@@ -37,10 +38,33 @@ import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits }
  * bodies into it would mask that rather than expose it. The held DTO carries only
  * id/name/time — no `personal`/`pii` field — so it is safe on the kiosk path
  * without a separate projection.
+ *
+ * Per-process cache: a GET hits the DB only on a cold miss. Visit writes
+ * (check-in / check-out / facility close) call `invalidateAttendanceCache`
+ * so the next read refills. One ECS task; a scale-to-zero relaunch starts empty.
  */
+type AttendancePayload = Awaited<ReturnType<typeof computeFullAttendance>>;
+let kioskCache: AttendancePayload | null = null;
+let fullCache: AttendancePayload | null = null;
+
+export function invalidateAttendanceCache(): void {
+    kioskCache = null;
+    fullCache = null;
+    // Present-limited cert grid is occupancy; a check-in/out must refresh it too.
+    invalidateKioskCertificationsCache();
+}
+
 export async function getFullAttendance(opts: { kiosk?: boolean } = {}) {
     const kiosk = opts.kiosk === true;
+    if (kiosk) {
+        if (!kioskCache) kioskCache = await computeFullAttendance(true);
+        return kioskCache;
+    }
+    if (!fullCache) fullCache = await computeFullAttendance(false);
+    return fullCache;
+}
 
+async function computeFullAttendance(kiosk: boolean) {
     const activeVisits = await prisma.visit.findMany({
         where: { departedAt: null, deletedAt: null, person: LIVE_PERSON },
         include: {
@@ -179,7 +203,16 @@ export async function getFullAttendance(opts: { kiosk?: boolean } = {}) {
         orderBy: { occurredAt: "asc" },
         include: { person: { select: { name: true, nickname: true, email: true } } },
     });
-    const held = heldEvents.map((ev) => ({
+    // Kiosk intent comes from present_ids (Visits only, client.py), so a second
+    // badge from the same person while still held (post-debounce re-scan) parks a
+    // second PARKED_CLOSED row for them. Ascending order means the first row seen
+    // per person is the earliest — keep that one and drop the rest, so the roster
+    // shows the person once until the flush resolves the duplicate.
+    const heldByPerson = new Map<number, (typeof heldEvents)[number]>();
+    for (const ev of heldEvents) {
+        if (!heldByPerson.has(ev.personId)) heldByPerson.set(ev.personId, ev);
+    }
+    const held = [...heldByPerson.values()].map((ev) => ({
         id: ev.id,
         occurredAt: ev.occurredAt,
         name: ev.person.name?.trim() || ev.person.email?.split("@")[0] || null,

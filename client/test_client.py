@@ -25,6 +25,8 @@ from client import (
     latest_release_tag,
     main,
     resolve_update_target,
+    skip_kiosk_keepalive,
+    synthetic_keepalive_body,
 )
 from outbox import Outbox, in_closed_window
 
@@ -333,6 +335,37 @@ class TestOfflineClosedHoldBanner(unittest.TestCase):
         self.assertNotIn(OFFLINE_HOLD_COPY, pushed[-1]["html"])
         self.assertIn("banner-saved", pushed[-1]["html"])
 
+    def test_facility_closed_survives_the_pollers_overnight_counts_known_reset(self):
+        """attendance_poller resets counts_known every overnight tick so the
+        first daytime tick still fetches (otherwise a known-empty roster would
+        keep skipping past 06:45) — facility_closed() must not go blind for that
+        same window, or an offline IN at 3am would show the confident
+        CHECKED-IN banner instead of the hold. The two fields are deliberately
+        separate: attendance_seen is the hold's latch and never resets."""
+        state = AttendanceState()
+        state.seed_from_attendance({"attendance": [], "safety": {}})
+        self.assertTrue(state.counts_known)
+        self.assertTrue(state.facility_closed())
+
+        backend = Mock(attendance_path="/api/attendance")
+        calls = {"n": 0}
+
+        def fake_sleep(_secs):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise _StopLoop()
+
+        with self.assertRaises(_StopLoop):
+            attendance_poller(backend, state, sleep_fn=fake_sleep,
+                               in_closed_window_fn=lambda: True)
+
+        # The poller forgot occupancy for its own wake-up bookkeeping...
+        self.assertFalse(state.counts_known)
+        backend.get_attendance.assert_not_called()
+        # ...but the hold decision is unaffected: it reads attendance_seen, not
+        # the poller's internal skip-tracking state.
+        self.assertTrue(state.facility_closed())
+
 
 class TestBackendClient(unittest.TestCase):
     def test_required_methods_exist(self):
@@ -564,6 +597,86 @@ class TestAttendancePollerClosedWindow(unittest.TestCase):
     def test_polls_at_1200(self):
         backend = self._run(lambda: in_closed_window(datetime(2026, 8, 18, 12, 0)))
         backend.get_attendance.assert_called()
+
+    def test_skips_when_the_building_is_known_empty(self):
+        backend = Mock(attendance_path="/api/attendance")
+        backend.get_attendance.return_value = ({"counts": {"total": 0}}, 200)
+        state = AttendanceState()
+        state.current_counts = {"total": 0}
+        state.counts_known = True
+        calls = {"n": 0}
+
+        def fake_sleep(_secs):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise _StopLoop()
+
+        with self.assertRaises(_StopLoop):
+            attendance_poller(backend, state, sleep_fn=fake_sleep,
+                               in_closed_window_fn=lambda: False)
+        backend.get_attendance.assert_not_called()
+
+    def test_unknown_occupancy_still_polls_during_the_day(self):
+        backend = Mock(attendance_path="/api/attendance")
+        backend.get_attendance.return_value = ({"counts": {"total": 0}}, 200)
+        state = AttendanceState()
+        self.assertFalse(state.counts_known)
+        calls = {"n": 0}
+
+        def fake_sleep(_secs):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise _StopLoop()
+
+        with self.assertRaises(_StopLoop):
+            attendance_poller(backend, state, sleep_fn=fake_sleep,
+                               in_closed_window_fn=lambda: False)
+        backend.get_attendance.assert_called()
+
+
+class TestProxyKeepaliveSkip(unittest.TestCase):
+    """Iframe polls /api/attendance every 60s with idleStopMs unset. The proxy
+    must swallow those GETs overnight and when empty or ALB never goes quiet."""
+
+    def test_skips_attendance_get_overnight(self):
+        state = AttendanceState()
+        self.assertTrue(
+            skip_kiosk_keepalive(state, "GET", "/api/attendance",
+                                 in_closed_window_fn=lambda: True)
+        )
+
+    def test_forwards_certs_get_when_known_empty_during_the_day(self):
+        """Display-only / other-entrance occupancy comes back on this GET."""
+        state = AttendanceState()
+        state.counts_known = True
+        state.current_counts = {"total": 0}
+        self.assertFalse(
+            skip_kiosk_keepalive(state, "GET", "/api/kioskdisplay/certifications",
+                                 in_closed_window_fn=lambda: False)
+        )
+
+    def test_forwards_scan_posts(self):
+        state = AttendanceState()
+        self.assertFalse(
+            skip_kiosk_keepalive(state, "POST", "/api/scan",
+                                 in_closed_window_fn=lambda: True)
+        )
+
+    def test_forwards_when_occupied(self):
+        state = AttendanceState()
+        state.counts_known = True
+        state.current_counts = {"total": 3}
+        self.assertFalse(
+            skip_kiosk_keepalive(state, "GET", "/api/attendance",
+                                 in_closed_window_fn=lambda: False)
+        )
+
+    def test_synthetic_attendance_body_is_json_the_iframe_parses(self):
+        body = json.loads(synthetic_keepalive_body("/api/attendance", AttendanceState()))
+        self.assertEqual(body["access"], "full")
+        self.assertEqual(body["counts"]["youth"], 0)
+        self.assertEqual(body["safety"], {"isLastKeyholder": False, "isTwoDeepViolation": False})
+        self.assertEqual(body["attendance"], [])
 
 
 class TestOfflineForceClose(unittest.TestCase):

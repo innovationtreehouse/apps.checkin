@@ -3,6 +3,7 @@ import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
+import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
 
 export const PATCH = withAuth(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -38,6 +39,7 @@ export const PATCH = withAuth(
             },
         });
 
+        invalidateKioskCertificationsCache();
         return NextResponse.json({ success: true, tool });
     } catch (error) {
         await logBackendError(error, "PATCH /api/shop/tools/[id]");

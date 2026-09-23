@@ -94,6 +94,35 @@ describe("editSignificance", () => {
         expect(machineClose.score).toBe(0);
     });
 
+    // The repeat-correction bug (docs/rules/attendance-checkin.md, visit-record:
+    // "Correcting the same time twice is weighed the second time as overwriting a
+    // self-report"). The route restamps arrivedVia to TYPED after the first
+    // correction, so the SECOND correction is weighed against TYPED, not the
+    // original SCANNER. Modelled here as the two pre-edit states the route feeds.
+    it("weighs a repeat arrival correction as a self-report, not the original measurement", () => {
+        // First correction: still overwriting the badge measurement (SCANNER=3).
+        const first = editSignificance(
+            { arrivedAt: at(14), departedAt: at(16), arrivedVia: "SCANNER", departedVia: "TYPED" },
+            { arrivedAt: at(14, 30), departedAt: at(16) },
+        );
+        expect(first).toEqual({ score: 90, flagged: true }); // 30 × 3
+
+        // After the restamp the row is TYPED; the next correction is a self-report.
+        const second = editSignificance(
+            { arrivedAt: at(14, 30), departedAt: at(16), arrivedVia: "TYPED", departedVia: "TYPED" },
+            { arrivedAt: at(15), departedAt: at(16) },
+        );
+        expect(second).toEqual({ score: 30, flagged: false }); // 30 × 1
+
+        // Proof of the bug: without the restamp the second correction would still
+        // weigh SCANNER and over-flag to the board.
+        const withoutRestamp = editSignificance(
+            { arrivedAt: at(14, 30), departedAt: at(16), arrivedVia: "SCANNER", departedVia: "TYPED" },
+            { arrivedAt: at(15), departedAt: at(16) },
+        );
+        expect(withoutRestamp).toEqual({ score: 90, flagged: true });
+    });
+
     it("closing an own open visit — the routine correction — does not flag", () => {
         const r = editSignificance(
             { arrivedAt: at(14), departedAt: null, arrivedVia: "WEB", departedVia: null },

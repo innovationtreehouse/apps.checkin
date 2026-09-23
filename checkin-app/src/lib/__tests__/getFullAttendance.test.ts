@@ -22,7 +22,7 @@ jest.mock("@/lib/supervision", () => ({
     supervisingAdultCount: () => 1,
 }));
 
-import { getFullAttendance } from "@/lib/getFullAttendance";
+import { getFullAttendance, invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 // Age fixtures are relative to now so they never age past the youth boundary the
 // way a hardcoded year would; the day step keeps the age unambiguous mid-year.
@@ -55,6 +55,7 @@ const rows = [
 ];
 
 beforeEach(() => {
+    invalidateAttendanceCache();
     findMany.mockReset();
     findMany.mockResolvedValue(rows);
     heldFindMany.mockReset();
@@ -128,8 +129,8 @@ describe("getFullAttendance() — privileged caller (unchanged)", () => {
 
 describe("held PARKED_CLOSED scans (#1782)", () => {
     const heldRows = [
-        { id: 900, occurredAt: new Date("2026-07-01T09:00:00Z"), person: { name: "Held Person", nickname: "Hp", email: "held@example.com" } },
-        { id: 901, occurredAt: new Date("2026-07-01T09:05:00Z"), person: { name: null, nickname: null, email: "noname@example.com" } },
+        { id: 900, personId: 501, occurredAt: new Date("2026-07-01T09:00:00Z"), person: { name: "Held Person", nickname: "Hp", email: "held@example.com" } },
+        { id: 901, personId: 502, occurredAt: new Date("2026-07-01T09:05:00Z"), person: { name: null, nickname: null, email: "noname@example.com" } },
     ];
 
     it("queries only unprojected closed-facility IN scans, oldest first, LIVE persons", async () => {
@@ -164,6 +165,21 @@ describe("held PARKED_CLOSED scans (#1782)", () => {
     it("is an empty array when nothing is held", async () => {
         const { held } = await getFullAttendance();
         expect(held).toEqual([]);
+    });
+
+    it("dedupes a re-scan of the same person while held, keeping the earlier event", async () => {
+        // Kiosk intent comes from present_ids (Visits only, client.py), so a
+        // debounced re-scan of the same person while still held sends a second
+        // IN and parks a second PARKED_CLOSED row — the roster must show them
+        // once, at the time they first badged in, not the later duplicate.
+        heldFindMany.mockResolvedValue([
+            { id: 900, personId: 501, occurredAt: new Date("2026-07-01T09:00:00Z"), person: { name: "Held Person", nickname: "Hp", email: "held@example.com" } },
+            { id: 902, personId: 501, occurredAt: new Date("2026-07-01T09:00:05Z"), person: { name: "Held Person", nickname: "Hp", email: "held@example.com" } },
+        ]);
+        const { held } = await getFullAttendance();
+        expect(held).toEqual([
+            { id: 900, occurredAt: new Date("2026-07-01T09:00:00Z"), name: "Held Person", nickname: "Hp" },
+        ]);
     });
 });
 
@@ -209,5 +225,21 @@ describe("two-deep calc fails closed on unknown DOB (#300)", () => {
         // No unaccompanied youth, so the flag is false either way — the poll must
         // not pay for the supervision queries to learn that.
         expect(supervisingAdultVisits).not.toHaveBeenCalled();
+    });
+});
+
+describe("attendance cache", () => {
+    it("hits the DB once per shape until a write invalidates", async () => {
+        await getFullAttendance({ kiosk: true });
+        await getFullAttendance({ kiosk: true });
+        expect(findMany).toHaveBeenCalledTimes(1);
+
+        await getFullAttendance();
+        await getFullAttendance();
+        expect(findMany).toHaveBeenCalledTimes(2);
+
+        invalidateAttendanceCache();
+        await getFullAttendance({ kiosk: true });
+        expect(findMany).toHaveBeenCalledTimes(3);
     });
 });

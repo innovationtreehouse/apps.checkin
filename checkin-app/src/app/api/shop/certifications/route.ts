@@ -7,6 +7,7 @@ import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { isActiveOrgMember } from "@/lib/orgMembership";
+import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
 
 // Cert status is PUBLIC BY DESIGN — certifications are physically posted in the
 // shop. This route runs on the @/security handler() runtime so that intent is
@@ -161,6 +162,7 @@ export const POST = withAuth({}, async (req, auth) => {
             }
         });
 
+        invalidateKioskCertificationsCache();
         return NextResponse.json({ success: true, certification: upsertedCert });
     } catch (error: unknown) {
         await logBackendError(error, "POST /api/shop/certifications");
