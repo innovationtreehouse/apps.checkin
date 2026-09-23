@@ -385,9 +385,13 @@ defineRoute({
 // can flag a legacy tombstone that has no archive row). Exposes tombstone identity,
 // so isSysadmin/board only — the same band that already sees applicant PII.
 //
-// The grant is pii + public: email is the one pii field, name/id/mergedInto are
-// public, and every _count rides its relation's public id, so a broad band is not
-// needed to keep the residue counts intact.
+// The grant is pii + internal + public: email is the one pii field; name/id/
+// mergedInto are public; PersonMerge.fromId and the `roles`/`rawBadgeLogs` relations
+// are internal-tier, and `_count` is gated per-relation on relationVisible (any
+// field of the target model visible under these tokens) — without everyones:internal
+// those two counts silently drop and PersonMerge always reads empty, understating
+// the census (#1823 review: every tombstone read "no archive" and the no-pathway
+// total under-reported).
 //
 // Landed registry-first, ahead of the route, per the AGENTS.md boundary-isolation
 // rule: an unused defineRoute is inert, so the grant is reviewable on its own.
@@ -399,8 +403,8 @@ defineRoute({
     // _count of the residue relations) and { PersonMerge } (archive rows, fromId).
     returns: ['Person', 'PersonMerge'],
     orderedView: [
-        ['isSysadmin',    ['everyones:pii', 'public']],
-        ['isBoardMember', ['everyones:pii', 'public']],
+        ['isSysadmin',    ['everyones:internal', 'everyones:pii', 'public']],
+        ['isBoardMember', ['everyones:internal', 'everyones:pii', 'public']],
     ],
 });
 
