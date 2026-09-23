@@ -39,6 +39,7 @@ const ORACLES = [
     'scopeValidators.test.ts',
     'shop-certifications-strip.test.ts',
     'shop-org-members-strip.test.ts',
+    'tombstone-census-strip.test.ts',
     'toolstatus-self-scope.test.ts',
     'visit-household-lead-scope.test.ts',
     'visit-program-scope.test.ts',
