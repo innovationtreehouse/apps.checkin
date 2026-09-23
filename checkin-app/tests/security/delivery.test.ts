@@ -32,8 +32,7 @@
  * route-specific INTEGRATION delivery assertion in the route's conversion PR.
  * This guard owns deny-all / stripper-blank / wrong-tier / secret-only views.
  */
-import { allRoutes, parseToken, type Token } from '@/security/core';
-import { classifications } from '@/security/generated/classifications';
+import { allRoutes, parseToken, type Token, classifications } from '@/security/core';
 import { stripValue } from '@/security/stripper';
 import { SCOPE_BINDINGS, ROW_SCOPE_KEY } from '@/security/scopeBindings';
 import type { Match, ScopeBindings, CtxSet } from '@/security/scopes';
