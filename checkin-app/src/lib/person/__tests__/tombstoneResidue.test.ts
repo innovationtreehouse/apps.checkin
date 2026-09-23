@@ -30,4 +30,16 @@ describe("summarizeResidue", () => {
     expect(residue).toEqual([]);
     expect(noPathwayRows).toBe(0);
   });
+
+  it("flags a chained tombstone (mergedFrom) as no-pathway", () => {
+    // A later merge repointed another tombstone's mergedIntoId at this row
+    // without repointing the original chain — a live FK the delete step
+    // would trip on, so it must count toward noPathwayRows like any other
+    // unresolved residue.
+    const { residue, noPathwayRows } = summarizeResidue({ mergedFrom: 1 });
+    expect(residue).toEqual([
+      expect.objectContaining({ key: "mergedFrom", count: 1, disposition: "none" }),
+    ]);
+    expect(noPathwayRows).toBe(1);
+  });
 });

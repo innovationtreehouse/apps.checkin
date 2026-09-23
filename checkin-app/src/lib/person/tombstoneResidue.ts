@@ -39,6 +39,11 @@ export const RESIDUE_RELATIONS: ReadonlyArray<ResidueRelation> = [
   { key: 'personBgProcesses', label: 'BG processes (as subject)', disposition: 'none' },
   { key: 'rawBadgeLogs', label: 'Raw badge logs', disposition: 'none' },
   { key: 'trustedAdultsDisclosed', label: 'Trusted-adult disclosures', disposition: 'none' },
+  // A chained merge: another tombstone still points its mergedIntoId at THIS
+  // row (merge/route.ts repoints only the row being merged, never earlier
+  // tombstones already pointing at it). No self-serve pathway — the FK must be
+  // repointed to the final survivor in the DB before either row can be deleted.
+  { key: 'mergedFrom', label: 'Chained tombstones (FK still points here)', disposition: 'none' },
 ] as const;
 
 // The relation names the census route counts, for its Prisma `_count` select.
