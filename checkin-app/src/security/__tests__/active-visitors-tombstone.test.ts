@@ -35,6 +35,7 @@ const keyholderAuth: AuthResult = {
         isKeyholder: true,
         isBackgroundCheckReviewer: false,
         isOperations: false,
+        isInventoryManager: false,
     },
 };
 

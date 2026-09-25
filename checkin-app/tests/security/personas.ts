@@ -66,6 +66,7 @@ export async function loadPersonas(): Promise<Record<string, Persona>> {
         isKeyholder: p.isKeyholder,
         isBackgroundCheckReviewer: p.isBackgroundCheckReviewer,
         isOperations: false,
+        isInventoryManager: false,
     });
 
     cached = {

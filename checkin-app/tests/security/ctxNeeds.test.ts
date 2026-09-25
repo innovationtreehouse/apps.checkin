@@ -39,9 +39,19 @@ import {
 import { stripValue } from '@/security/stripper';
 import { SCOPE_BINDINGS } from '@/security/scopeBindings';
 import type { AuthResult, AuthenticatedUser } from '@/types/auth';
+import prisma from '@/lib/prisma';
 // Side-effect import: registers every route via defineRoute() so allRoutes()
 // yields the real policy surface.
 import '@/security/registry';
+
+// The 'catalog-viewer' admission (access-resolvers) makes one inline DB read —
+// a VolunteerDesignation lookup keyed by email — for callers who hold no role
+// flag and lead no program. It's independent of CallerContext, so masked ≡ full
+// still holds; this stub just keeps the "no real DB" invariant (jest.setup
+// rejects the real client). Its result never varies with ctx, so null is fine.
+beforeAll(() => {
+    prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue(null);
+});
 
 // ─── Personas: fully-populated contexts + matching AuthResults ────────────────
 
@@ -70,6 +80,7 @@ function sessionUser(over: Partial<AuthenticatedUser> & { id: number }): Authent
         isKeyholder: false,
         isBackgroundCheckReviewer: false,
         isOperations: false,
+        isInventoryManager: false,
         ...over,
     };
 }

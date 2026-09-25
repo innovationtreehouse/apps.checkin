@@ -16,6 +16,7 @@ const session = (id: number): AuthResult => ({
         isKeyholder: false,
         isBackgroundCheckReviewer: false,
         isOperations: false,
+        isInventoryManager: false,
     },
 });
 
@@ -131,6 +132,7 @@ describe("resolveAccess 'certifier'", () => {
             isKeyholder: false,
             isBackgroundCheckReviewer: false,
             isOperations: false,
+            isInventoryManager: false,
             toolStatuses: [{ toolId: 1, level: 'MAY_CERTIFY_OTHERS' }],
         },
     });
@@ -192,6 +194,7 @@ describe("resolveAccess — ops-stg access gate (checked ahead of every `authori
             id: 1, email: 'org@innovationtreehouse.org',
             isSysadmin: false, isBoardMember: false, isKeyholder: false,
             isBackgroundCheckReviewer: false, isOperations: false,
+            isInventoryManager: false,
             hd: 'innovationtreehouse.org', emailVerified: true,
         },
     });
@@ -201,6 +204,7 @@ describe("resolveAccess — ops-stg access gate (checked ahead of every `authori
             id: 2, email: 'stranger@gmail.com',
             isSysadmin: false, isBoardMember: false, isKeyholder: false,
             isBackgroundCheckReviewer: false, isOperations: false,
+            isInventoryManager: false,
             hd: 'gmail.com', emailVerified: true, canAccessStaging,
         },
     });
