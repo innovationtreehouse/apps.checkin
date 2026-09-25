@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { proposalSupersedes } from "@/services/proposalService";
+import { proposalSupersedes } from "../../services/proposalService";
 
 type P = Parameters<typeof proposalSupersedes>[0];
 

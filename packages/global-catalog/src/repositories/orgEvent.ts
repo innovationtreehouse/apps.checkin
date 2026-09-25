@@ -1,6 +1,6 @@
-import type { PrismaClient, Prisma } from "@/generated/prisma/client";
-import type { WorkflowType } from "@/db/schema";
-import type { OrgEventPayload } from "@/types/orgEvents";
+import type { PrismaClient, Prisma } from "../generated/prisma/client";
+import type { WorkflowType } from "../db/schema";
+import type { OrgEventPayload } from "../types/orgEvents";
 
 type Tx = Prisma.TransactionClient;
 

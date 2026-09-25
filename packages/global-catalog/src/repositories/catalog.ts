@@ -1,4 +1,4 @@
-import type { PrismaClient, Prisma } from "@/generated/prisma/client";
+import type { PrismaClient, Prisma } from "../generated/prisma/client";
 
 const ITEM_INCLUDE = {
   category: { select: { name: true, letter: true } },

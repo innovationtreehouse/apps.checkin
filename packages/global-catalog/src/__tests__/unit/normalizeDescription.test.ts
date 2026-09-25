@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeDescription } from "@/lib/normalizeDescription";
+import { normalizeDescription } from "../../lib/normalizeDescription";
 
 describe("normalizeDescription", () => {
   it("normalizeDescription_lowercases_input", () => {

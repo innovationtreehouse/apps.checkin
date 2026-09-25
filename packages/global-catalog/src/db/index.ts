@@ -11,7 +11,7 @@
  * `datasource.url` itself. In production CATALOG_DATABASE_URL should route through RDS
  * Proxy / pgBouncer (`?pgbouncer=true&connection_limit=1`).
  */
-import { PrismaClient, Prisma } from "@/generated/prisma/client";
+import { PrismaClient, Prisma } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
 declare global {

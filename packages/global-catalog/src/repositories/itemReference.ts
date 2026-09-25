@@ -1,4 +1,4 @@
-import type { PrismaClient, Prisma } from "@/generated/prisma/client";
+import type { PrismaClient, Prisma } from "../generated/prisma/client";
 
 const REF_SELECT = { gtin13: true, id: true, conversionFactor: true, conversionVersion: true } as const;
 
