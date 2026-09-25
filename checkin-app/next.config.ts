@@ -3,6 +3,10 @@ import path from "node:path";
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  // The global catalog (#1286) is consumed as raw TS via subpath exports
+  // (@inventory/global-catalog/routes); Turbopack must transpile the package and
+  // honor its exports map to resolve those, so the catalog route stubs build.
+  transpilePackages: ['@inventory/global-catalog'],
   // Deps hoist to the repo-root node_modules and future @checkin/* packages live
   // in ../packages. Point standalone file tracing at the repo root so it follows
   // those symlinks and bundles the linked code into the image (otherwise Next

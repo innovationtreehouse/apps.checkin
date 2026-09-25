@@ -2,6 +2,6 @@
 // under /api/catalog/* through checkin's handler() (admission + stripper).
 // The endpoint string MUST match its src/security/registry.ts entry.
 import { handler } from "@/security/handler";
-import { provisionalItems } from "@inventory/global-catalog/routes";
+import { routes } from "@inventory/global-catalog";
 
-export const GET = handler("GET /api/catalog/provisional-items", provisionalItems.list);
+export const GET = handler("GET /api/catalog/provisional-items", routes.provisionalItems.list);

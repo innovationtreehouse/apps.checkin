@@ -2,6 +2,6 @@
 // under /api/catalog/* through checkin's handler() (admission + stripper).
 // The endpoint string MUST match its src/security/registry.ts entry.
 import { handler } from "@/security/handler";
-import { itemReferences } from "@inventory/global-catalog/routes";
+import { routes } from "@inventory/global-catalog";
 
-export const PUT = handler("PUT /api/catalog/item-references/[id]", itemReferences.update);
+export const PUT = handler("PUT /api/catalog/item-references/[id]", routes.itemReferences.update);
