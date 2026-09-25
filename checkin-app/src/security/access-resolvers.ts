@@ -212,6 +212,8 @@ export function callerHoldsRole(
             return auth.type === 'session' && auth.user.isBackgroundCheckReviewer;
         case 'isOperations':
             return auth.type === 'session' && auth.user.isOperations;
+        case 'isInventoryManager':
+            return auth.type === 'session' && auth.user.isInventoryManager === true;
         case 'certifier':
             return isCertifier(auth);
         case 'householdLead':
@@ -284,6 +286,36 @@ export async function resolveAccess(
             }
             case 'kiosk':
                 return { allowed: auth.type === 'kiosk' };
+            case 'catalog-viewer': {
+                // #1286 §6: read admission for the global catalog. Any staff
+                // relationship suffices — role flag, program leadership, or a
+                // volunteer designation — because the catalog is non-pii
+                // reference data (writes stay INVENTORY_MANAGER-only).
+                if (auth.type !== 'session') return { allowed: false };
+                const u = auth.user;
+                if (
+                    u.isSysadmin || u.isBoardMember || u.isKeyholder ||
+                    u.isBackgroundCheckReviewer || u.isOperations || u.isInventoryManager
+                ) {
+                    return { allowed: true };
+                }
+                if ((u.programsLed?.length ?? 0) > 0) return { allowed: true };
+                // ponytail: inline admission lookup — promote to CallerContext if
+                // a per-row catalog use appears. The session carries no volunteer
+                // flag, so this one leg needs a DB read (email is @unique).
+                if (u.email) {
+                    const designation = await prisma.volunteerDesignation.findFirst({
+                        where: { email: u.email },
+                        select: { id: true },
+                    });
+                    if (designation) return { allowed: true };
+                }
+                return { allowed: false };
+            }
+            case 'inventory-manager':
+                // #1286 §6: catalog WRITE admission — INVENTORY_MANAGER only (a
+                // sysadmin grants themselves the role; no admin auto-admit here).
+                return { allowed: auth.type === 'session' && auth.user.isInventoryManager === true };
             case 'certifier':
                 // Certifiers see the shop member roster; admins always may too.
                 return { allowed: isCertifier(auth) || isAdmin };
