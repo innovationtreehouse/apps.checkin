@@ -12,8 +12,8 @@
  * injected here.
  */
 import { getServerSession } from "next-auth";
-import { configureCatalog } from "@inventory/global-catalog/runtime";
-import type { CatalogPrincipal, OrgIdentity } from "@inventory/global-catalog/contract";
+import { configureCatalog } from "@inventory/global-catalog";
+import type { CatalogPrincipal, OrgIdentity } from "@inventory/global-catalog";
 import { authOptions } from "@/lib/auth-options";
 import { ApiResponseError } from "@/security/handler";
 
