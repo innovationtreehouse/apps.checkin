@@ -3,7 +3,7 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import AdminBadgesPage from "../page";
 
@@ -49,6 +49,29 @@ describe("facility-ops/badges page", () => {
 
     expect(await screen.findByText("Val Volunteer")).toBeInTheDocument();
     expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("filters rows by name, email, or location", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({
+      "/api/facility/badges": {
+        badges: [
+          { id: 1, timestamp: "2026-01-01T14:00:00.000Z", person: { name: "Val Volunteer", email: "val@example.com" }, location: "Side Door" },
+          { id: 2, timestamp: "2026-01-01T15:00:00.000Z", person: { name: "Pat Parent", email: "pat@example.com" } },
+        ],
+      },
+    });
+    renderWithProviders(<AdminBadgesPage />);
+
+    await screen.findByText("Val Volunteer");
+    const input = screen.getByPlaceholderText(/Filter by/);
+    fireEvent.change(input, { target: { value: "front" } });
+    expect(screen.queryByText("Val Volunteer")).not.toBeInTheDocument();
+    expect(screen.getByText("Pat Parent")).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "VAL@" } });
+    expect(screen.getByText("Val Volunteer")).toBeInTheDocument();
+    expect(screen.queryByText("Pat Parent")).not.toBeInTheDocument();
   });
 
   it("shows an error message when the fetch fails", async () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { Stack } from '@mantine/core';
+import { Stack, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { FACILITY_RECORD_ROLES } from '@/lib/facilityNav';
@@ -33,6 +33,7 @@ export default function AdminBadgesPage() {
   const [loading, setLoading] = useState(true);
   const [badges, setBadges] = useState<BadgeEvent[]>([]);
   const [message, setMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
   const fetchBadges = useCallback(async () => {
     try {
@@ -60,11 +61,26 @@ export default function AdminBadgesPage() {
 
   if (!ready) return null;
 
+  const term = searchTerm.trim().toLowerCase();
+  const visible = term
+    ? badges.filter((b) =>
+        [b.id, b.person?.name, b.person?.email, b.location || 'Front Door'].some((v) =>
+          String(v ?? '').toLowerCase().includes(term),
+        ),
+      )
+    : badges;
+
   return (
     <Stack>
       <AlertBanner message={message?.text} tone={message?.tone} />
 
-      <DataTable columns={COLUMNS} rows={badges} getRowKey={(b) => b.id} emptyMessage="No badge events." />
+      <TextInput
+        placeholder="Filter by name, email, location, or ID..."
+        value={searchTerm}
+        onChange={(e) => setSearchTerm(e.currentTarget.value)}
+      />
+
+      <DataTable columns={COLUMNS} rows={visible} getRowKey={(b) => b.id} emptyMessage="No badge events." />
     </Stack>
   );
 }
