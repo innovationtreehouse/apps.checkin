@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import { usePolling, POLL_IDLE_STOP_MS } from "@/hooks/usePolling";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
+import { IconHeartHandshake, IconKey, IconSchool, type Icon } from "@tabler/icons-react";
 import {
   Alert, Anchor, Badge, Box, Button, Card, Center, Group, Loader, Modal, Paper,
   SimpleGrid, Stack, Text, TextInput, Title,
@@ -384,10 +385,10 @@ function KioskDisplayInner() {
       visit.participant.householdId === currentUserHouseholdId)
   );
 
-  const renderColumn = (icon: string, count: number, label: string, color: string, list: Visit[]) => (
+  const renderColumn = (ColumnIcon: Icon, count: number, label: string, color: string, list: Visit[]) => (
     <div>
       <Group gap={8} mb="sm" pb="xs" style={{ borderBottom: `2px solid var(--mantine-color-${color}-5)` }}>
-        <Text fz="xl">{icon}</Text>
+        <ColumnIcon size={28} stroke={1.75} color={`var(--mantine-color-${color}-6)`} aria-hidden />
         <div>
           <Text fz="xl" fw={800} c={color} lh={1}>{count}</Text>
           <Text size="xs" tt="uppercase" c="dimmed">{label}</Text>
@@ -515,9 +516,9 @@ function KioskDisplayInner() {
           <Center py="xl"><Text c="dimmed">The facility is currently empty.</Text></Center>
         ) : (
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="lg">
-            {renderColumn("🔑", counts.keyholders, "Keyholders", "blue", isFull ? keyholderList : householdKeyholders)}
-            {renderColumn("🤝", counts.volunteers, "Volunteers/Adults", "teal", isFull ? volunteerList : householdVolunteers)}
-            {renderColumn("🎓", counts.youth, "Students", "grape", isFull ? youthList : householdYouth)}
+            {renderColumn(IconKey, counts.keyholders, "Keyholders", "blue", isFull ? keyholderList : householdKeyholders)}
+            {renderColumn(IconHeartHandshake, counts.volunteers, "Volunteers/Adults", "teal", isFull ? volunteerList : householdVolunteers)}
+            {renderColumn(IconSchool, counts.youth, "Students", "grape", isFull ? youthList : householdYouth)}
           </SimpleGrid>
         )}
 
