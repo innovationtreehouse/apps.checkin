@@ -320,6 +320,25 @@ describe('Membership BG review API', () => {
         }
     });
 
+    it('?mine=1 lists an application the reviewer approved until it clears', async () => {
+        const proc = await makeApplicantProcess('Mine');
+        const get = (url: string) => REVIEW_QUEUE(new Request(url) as never).then((r) => r.json());
+        const ids = (data: { queue: { id: number }[] }) => data.queue.map((q) => q.id);
+
+        as(rev1, { isBackgroundCheckReviewer: true });
+        await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
+        expect(ids(await get('http://localhost:4000/api/membership/reviews'))).not.toContain(proc.processId);
+        expect(ids(await get('http://localhost:4000/api/membership/reviews?mine=1'))).toContain(proc.processId);
+
+        // Another reviewer's approvals are not theirs to see here.
+        as(rev2, { isBackgroundCheckReviewer: true });
+        expect(ids(await get('http://localhost:4000/api/membership/reviews?mine=1'))).not.toContain(proc.processId);
+
+        await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
+        as(rev1, { isBackgroundCheckReviewer: true });
+        expect(ids(await get('http://localhost:4000/api/membership/reviews?mine=1'))).not.toContain(proc.processId);
+    });
+
     it('queue returns only parents (leads) and never exposes children', async () => {
         // Self-contained applicant household: one parent (lead) + one child (non-lead).
         const hh = await prisma.household.create({ data: { name: `ChildExcl ${TAG}` } });
