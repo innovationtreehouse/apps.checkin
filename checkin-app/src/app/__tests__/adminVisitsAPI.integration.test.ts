@@ -321,6 +321,41 @@ describe('Admin Visits API Integration Tests', () => {
             expect(stored?.arrivedVia).toBe('TYPED');    // re-timed → now a typed clock
             expect(stored?.departedVia).toBe('SCANNER'); // not sent — untouched
         });
+
+        it('leaves an arrival echoed back at minute precision untouched', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true }
+            });
+
+            const arrivedAt = new Date(Date.now() - 4 * 3600000);
+            arrivedAt.setUTCSeconds(45, 0);
+            const scanned = await prisma.visit.create({
+                data: {
+                    personId: testUserId,
+                    arrivedAt,
+                    departedAt: new Date(Date.now() - 2 * 3600000),
+                    arrivedVia: 'SCANNER',
+                    departedVia: 'SCANNER',
+                }
+            });
+
+            const echoed = new Date(arrivedAt);
+            echoed.setUTCSeconds(0, 0);
+            const departed = new Date(Date.now() - 3600000).toISOString();
+            const req = new Request('http://localhost:4000/api/facility/visits', {
+                method: 'PATCH',
+                body: JSON.stringify({ visitId: scanned.id, arrivedAt: echoed.toISOString(), departedAt: departed })
+            });
+
+            const res = await PATCH(req as unknown as import("next/server").NextRequest);
+            expect(res.status).toBe(200);
+
+            const stored = await prisma.visit.findUnique({ where: { id: scanned.id } });
+            expect(stored?.arrivedAt.toISOString()).toBe(arrivedAt.toISOString());
+            expect(stored?.arrivedVia).toBe('SCANNER');
+            expect(stored?.departedAt?.toISOString()).toBe(departed);
+            expect(stored?.departedVia).toBe('TYPED');
+        });
     });
 
     describe('DELETE /api/facility/visits', () => {
