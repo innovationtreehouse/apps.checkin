@@ -19,8 +19,9 @@ jest.mock("@react-pdf/renderer", () => ({
   pdf: jest.fn(() => ({ toBlob: async () => new Blob(["pdf"], { type: "application/pdf" }) })),
 }));
 
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { pdf } from "@react-pdf/renderer";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
 import { notifications } from "@mantine/notifications";
 import PrintBadgesPage from "../page";
@@ -468,6 +469,69 @@ describe("facility-ops/print-badges page", () => {
     );
     expect(printedNameCell("John Smith")).toBe("John S.");
     logged.mockRestore();
+  });
+
+  it("sends a nickname still in the debounce when the page unmounts", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({
+      ...johnRoutes,
+      "/api/membership-ops/participants/1": { participant: { id: 1, name: "John Smith", nickname: "Johnny" } },
+    });
+    const { unmount } = renderWithProviders(<PrintBadgesPage />);
+    await screen.findByText("John Smith");
+
+    fireEvent.change(nicknameBox("John Smith"), { target: { value: "Johnny" } });
+    unmount();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/membership-ops/participants/1",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ nickname: "Johnny" }), keepalive: true }),
+    );
+  });
+
+  it("sends a nickname still in the debounce when the tab closes", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({
+      ...johnRoutes,
+      "/api/membership-ops/participants/1": { participant: { id: 1, name: "John Smith", nickname: "Johnny" } },
+    });
+    renderWithProviders(<PrintBadgesPage />);
+    await screen.findByText("John Smith");
+
+    fireEvent.change(nicknameBox("John Smith"), { target: { value: "Johnny" } });
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/membership-ops/participants/1",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ nickname: "Johnny" }), keepalive: true }),
+    );
+  });
+
+  // Clicking a button does not blur the focused input in every browser, so Generate
+  // itself must save the nickname and print it.
+  it("saves and prints a nickname typed right before Generate, without leaving the box", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({
+      ...johnRoutes,
+      "/api/membership-ops/participants/1": { participant: { id: 1, name: "John Smith", nickname: "Johnny" } },
+    });
+    renderWithProviders(<PrintBadgesPage />);
+    await screen.findByText("John Smith");
+    await waitFor(() => expect(printedNameCell("John Smith")).toBe("John S."));
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select John Smith" }));
+    fireEvent.change(nicknameBox("John Smith"), { target: { value: "Johnny" } });
+    fireEvent.click(screen.getByRole("button", { name: "Generate Badge (1)" }));
+
+    await waitFor(() => expect(global.URL.createObjectURL).toHaveBeenCalled());
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/membership-ops/participants/1",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ nickname: "Johnny" }) }),
+    );
+    const doc = jest.mocked(pdf).mock.lastCall?.[0] as ReactElement<{ badges: { displayName: string }[] }>;
+    expect(doc.props.badges.map(b => b.displayName)).toEqual(["Johnny"]);
   });
 
   it("admits an operations user", async () => {
