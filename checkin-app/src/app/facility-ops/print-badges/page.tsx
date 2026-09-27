@@ -325,10 +325,11 @@ export default function PrintBadgesPage() {
         />
       ),
     },
-    { header: 'ID', render: (p) => <Text span c="dimmed">#{p.id}</Text> },
+    { header: 'ID', render: (p) => <Text span c="dimmed">#{p.id}</Text>, sortBy: (p) => p.id },
     {
       header: 'Name',
       render: (p) => <Text fw={600}>{p.name || 'N/A'}</Text>,
+      sortBy: (p) => p.name,
     },
     ...(canEditNickname ? [{
       header: 'Nickname',
@@ -343,19 +344,23 @@ export default function PrintBadgesPage() {
           onBlur={(e) => commitNickname(p.id, e.currentTarget.value)}
         />
       ),
+      sortBy: (p: ParticipantRow) => p.nickname || null,
     }] : []),
     {
       header: 'Printed Name',
       render: (p) => <Text>{printedName(p)}</Text>,
+      sortBy: printedName,
     },
     {
       header: 'Membership',
       render: (p) => (p.isMember ? <Text c="green">Active</Text> : <Text c="red">Inactive</Text>),
+      sortBy: (p) => (p.isMember ? 'Active' : 'Inactive'),
     },
     {
       // Blank here means blank on the badge — the renewal prompt, visible before printing.
       header: 'Year',
       render: (p) => <Text c={printedYears.get(p.id) ? undefined : 'dimmed'}>{printedYears.get(p.id) ?? 'Not renewed'}</Text>,
+      sortBy: (p) => printedYears.get(p.id),
     },
     {
       header: 'Roles',
