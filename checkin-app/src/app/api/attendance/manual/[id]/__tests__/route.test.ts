@@ -182,6 +182,25 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         }));
     });
 
+    it("leaves an arrival echoed back at minute precision untouched", async () => {
+        visitFindUnique.mockResolvedValue({ ...baseVisit, arrivedAt: new Date("2026-07-20T14:00:45Z"), arrivedVia: "SCANNER" });
+        const res = await PATCH(req("PATCH", { arrivedAt: "2026-07-20T14:00:00Z", departedAt: "2026-07-20T16:30:00Z" }), ctx as never);
+
+        expect(res.status).toBe(200);
+        expect(tx.visit.update).toHaveBeenCalledWith(expect.objectContaining({
+            data: { departedAt: new Date("2026-07-20T16:30:00Z"), departedVia: "TYPED" },
+        }));
+        expect(auditCreate.mock.calls[0][0].data.newData.arrivedAt).toEqual(new Date("2026-07-20T14:00:45Z"));
+    });
+
+    it("400s when every submitted time is unchanged", async () => {
+        visitFindUnique.mockResolvedValue(baseVisit);
+        const res = await PATCH(req("PATCH", { arrivedAt: "2026-07-20T14:00:00Z", departedAt: "2026-07-20T16:00:00Z" }), ctx as never);
+
+        expect(res.status).toBe(400);
+        expect(tx.visit.update).not.toHaveBeenCalled();
+    });
+
     it("flags a big move of a measured (SCANNER) arrival to the board", async () => {
         visitFindUnique.mockResolvedValue({ ...baseVisit, arrivedVia: "SCANNER", departedVia: "SCANNER" });
         const res = await PATCH(req("PATCH", { arrivedAt: "2026-07-20T12:00:00Z" }), ctx as never);
