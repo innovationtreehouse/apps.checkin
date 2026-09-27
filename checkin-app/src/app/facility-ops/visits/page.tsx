@@ -144,8 +144,7 @@ export default function AdminVisitsPage() {
     if (ready) fetchVisits();
   }, [ready, fetchVisits]);
 
-  // Search endpoint caps at 200 rows; the Select is searchable over what it
-  // returns, which is the whole directory at this org's size.
+  // The Select is searchable over the whole directory the search endpoint returns.
   const openAddModal = async () => {
     setAddError('');
     setAddForm({ personId: '', arrivedAt: '', departedAt: '' });
