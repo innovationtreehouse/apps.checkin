@@ -57,6 +57,29 @@ describe("facility-ops/badges page", () => {
       "/api/facility/badges": {
         badges: [
           { id: 1, timestamp: "2026-01-01T14:00:00.000Z", person: { name: "Val Volunteer", email: "val@example.com" }, location: "Side Door" },
+          { id: 2, timestamp: "2026-01-01T15:00:00.000Z", person: { name: "Pat Parent", email: "pat@example.com" }, location: "Shop" },
+        ],
+      },
+    });
+    renderWithProviders(<AdminBadgesPage />);
+
+    await screen.findByText("Val Volunteer");
+    const input = screen.getByPlaceholderText("Filter by name, email, location, or ID...");
+    fireEvent.change(input, { target: { value: "shop" } });
+    expect(screen.queryByText("Val Volunteer")).not.toBeInTheDocument();
+    expect(screen.getByText("Pat Parent")).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "VAL@" } });
+    expect(screen.getByText("Val Volunteer")).toBeInTheDocument();
+    expect(screen.queryByText("Pat Parent")).not.toBeInTheDocument();
+  });
+
+  it("leaves location out of the filter when rows carry at most one location", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({
+      "/api/facility/badges": {
+        badges: [
+          { id: 1, timestamp: "2026-01-01T14:00:00.000Z", person: { name: "Val Volunteer", email: "val@example.com" }, location: "Side Door" },
           { id: 2, timestamp: "2026-01-01T15:00:00.000Z", person: { name: "Pat Parent", email: "pat@example.com" } },
         ],
       },
@@ -64,14 +87,8 @@ describe("facility-ops/badges page", () => {
     renderWithProviders(<AdminBadgesPage />);
 
     await screen.findByText("Val Volunteer");
-    const input = screen.getByPlaceholderText(/Filter by/);
-    fireEvent.change(input, { target: { value: "front" } });
+    fireEvent.change(screen.getByPlaceholderText("Filter by name, email, or ID..."), { target: { value: "side" } });
     expect(screen.queryByText("Val Volunteer")).not.toBeInTheDocument();
-    expect(screen.getByText("Pat Parent")).toBeInTheDocument();
-
-    fireEvent.change(input, { target: { value: "VAL@" } });
-    expect(screen.getByText("Val Volunteer")).toBeInTheDocument();
-    expect(screen.queryByText("Pat Parent")).not.toBeInTheDocument();
   });
 
   it("shows an error message when the fetch fails", async () => {

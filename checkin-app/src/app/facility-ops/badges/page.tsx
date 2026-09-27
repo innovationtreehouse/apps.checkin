@@ -61,10 +61,11 @@ export default function AdminBadgesPage() {
 
   if (!ready) return null;
 
+  const multiLocation = new Set(badges.map((b) => b.location).filter(Boolean)).size > 1;
   const term = searchTerm.trim().toLowerCase();
   const visible = term
     ? badges.filter((b) =>
-        [b.id, b.person?.name, b.person?.email, b.location || 'Front Door'].some((v) =>
+        [b.id, b.person?.name, b.person?.email, multiLocation ? b.location : null].some((v) =>
           String(v ?? '').toLowerCase().includes(term),
         ),
       )
@@ -75,7 +76,7 @@ export default function AdminBadgesPage() {
       <AlertBanner message={message?.text} tone={message?.tone} />
 
       <TextInput
-        placeholder="Filter by name, email, location, or ID..."
+        placeholder={multiLocation ? "Filter by name, email, location, or ID..." : "Filter by name, email, or ID..."}
         value={searchTerm}
         onChange={(e) => setSearchTerm(e.currentTarget.value)}
       />
