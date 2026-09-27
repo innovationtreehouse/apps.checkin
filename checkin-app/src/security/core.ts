@@ -103,6 +103,9 @@ export type Role =
     | 'isKeyholder'
     | 'isBackgroundCheckReviewer'
     | 'isOperations'
+    // Curates the global catalog (#1286 §6). A Person role boolean, stamped on
+    // the session like the others; grants the manager view on catalog routes.
+    | 'isInventoryManager'
     // Holds a MAY_CERTIFY_OTHERS toolStatus (a shop certifier). Not a Person
     // role boolean — derived from session.user.toolStatuses (see callerHoldsRole).
     | 'certifier'
@@ -133,6 +136,7 @@ export const VALID_ROLES = new Set<Role>([
     'isKeyholder',
     'isBackgroundCheckReviewer',
     'isOperations',
+    'isInventoryManager',
     'certifier',
     'householdLead',
     'programLeadMentor',
@@ -162,6 +166,16 @@ export type Authorize =
     | 'authenticated'
     | 'self'
     | { anyRole: BusinessRole[] }
+    // Catalog read admission (#1286 §6): the single chokepoint for reading the
+    // global catalog — INVENTORY_MANAGER, any RBAC-role holder, a program leader,
+    // or a volunteer (keyed by email). Broader than the ops roles, deliberately:
+    // the catalog is non-pii reference data (writes stay INVENTORY_MANAGER-only).
+    | 'catalog-viewer'
+    // Catalog write admission (#1286 §6): INVENTORY_MANAGER only. A dedicated
+    // variant rather than `{ anyRole: ['isInventoryManager'] }` so the boundary
+    // does not depend on isInventoryManager being in BusinessRole (types/auth.ts)
+    // — keeping this a session-flag check resolved entirely inside resolveAccess.
+    | 'inventory-manager'
     // Shop certifier (a MAY_CERTIFY_OTHERS toolStatus). Admits certifiers OR
     // admins (isSysadmin/isBoardMember) — see resolveAccess. Backed by a
     // predicate because 'certifier' is not a Person role boolean.
@@ -283,6 +297,7 @@ function roleNeeds(role: Role): Partial<CtxNeeds> {
         case 'isKeyholder':
         case 'isBackgroundCheckReviewer':
         case 'isOperations':
+        case 'isInventoryManager':
         case 'certifier':
         case 'householdLead':
             // callerHoldsRole answers these from the session alone.
@@ -301,6 +316,8 @@ function authorizeNeeds(authorize: Authorize): Partial<CtxNeeds> {
         case 'public':
         case 'authenticated':
         case 'self':
+        case 'catalog-viewer':
+        case 'inventory-manager':
         case 'certifier':
         case 'household-lead':
         case 'household-member':

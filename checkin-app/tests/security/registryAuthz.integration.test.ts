@@ -36,7 +36,7 @@ const mockSession = require('next-auth/next').getServerSession;
 
 const TAG = 'registry-authz-test';
 
-type Gate = 'public' | 'session' | 'household-member' | 'anyRole' | 'certifier' | 'program-scoped' | 'unhandled';
+type Gate = 'public' | 'session' | 'household-member' | 'anyRole' | 'certifier' | 'program-scoped' | 'catalog-viewer' | 'inventory-manager' | 'unhandled';
 
 interface RoutePlan {
     endpoint: string;
@@ -60,6 +60,10 @@ function planAuthorize(authorize: Authorize): { gate: Gate; requiredRoles: Busin
     if (authorize === 'program-lead-mentor' || authorize === 'program-core-volunteer') {
         return { gate: 'program-scoped', requiredRoles: null };
     }
+    // Catalog (#1286 §6): 'catalog-viewer' admits any staff relationship (a plain
+    // authenticated user is rejected); 'inventory-manager' admits the role only.
+    if (authorize === 'catalog-viewer') return { gate: 'catalog-viewer', requiredRoles: null };
+    if (authorize === 'inventory-manager') return { gate: 'inventory-manager', requiredRoles: null };
     // household-lead / kiosk: not in the current registry. Surfaced as
     // 'unhandled' so a future route can't be silently skipped — it'll fail the
     // explicit guard test below.
@@ -114,6 +118,7 @@ describe('Registry route admission gates', () => {
             isKeyholder: false,
             isBackgroundCheckReviewer: false,
             isOperations: false,
+            isInventoryManager: false,
         };
 
         // For the public route's 2xx sanity (programs/[id]). orgMemberOnly defaults
@@ -216,6 +221,14 @@ describe('Registry route admission gates', () => {
                     expect((await call(plan)).status).toBe(403);
                 });
             }
+            if (plan.gate === 'catalog-viewer' || plan.gate === 'inventory-manager') {
+                itServed('rejects an authenticated caller with no catalog access with 403', async () => {
+                    // plainUser holds no role flag, leads no program, and has no
+                    // VolunteerDesignation — denied by both catalog gates.
+                    mockSession.mockResolvedValue({ user: plainUser });
+                    expect((await call(plan)).status).toBe(403);
+                });
+            }
             // session / household-member / public gates have no role-level
             // under-privileged caller — any authenticated (resp. any) caller is
             // admitted by design, so there is no 403 to assert. Field-level
@@ -233,6 +246,11 @@ describe('Registry route admission gates', () => {
                     // Both gates OR-admit isAdmin in resolveAccess, so an admin is the
                     // simplest allowed caller (no tool-status / lead-mentor seeding needed).
                     mockSession.mockResolvedValue({ user: { ...plainUser, isSysadmin: true } });
+                } else if (plan.gate === 'catalog-viewer') {
+                    // Any role flag admits the viewer gate; isKeyholder is the simplest.
+                    mockSession.mockResolvedValue({ user: { ...plainUser, isKeyholder: true } });
+                } else if (plan.gate === 'inventory-manager') {
+                    mockSession.mockResolvedValue({ user: { ...plainUser, isInventoryManager: true } });
                 } else if (plan.routePath.startsWith('/api/events/')) {
                     // events/[id] is authorize:'authenticated' (so gate 'session'), but the
                     // handler fn adds an inline staff-only roster gate the registry grammar
