@@ -92,19 +92,28 @@ export default function AdminVisitsPage() {
   const [adding, setAdding] = useState(false);
 
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'arrivedAt', dir: 'desc' });
+  const [searchTerm, setSearchTerm] = useState('');
   const [confirmEditOpened, { open: openConfirmEdit, close: closeConfirmEdit }] = useDisclosure(false);
   const [pendingEditVisit, setPendingEditVisit] = useState<Visit | null>(null);
   const [confirmDeleteOpened, { open: openConfirmDelete, close: closeConfirmDelete }] = useDisclosure(false);
   const [pendingDeleteVisit, setPendingDeleteVisit] = useState<Visit | null>(null);
 
   const sortedVisits = useMemo(() => {
-    return [...visits].sort((a, b) => {
+    const term = searchTerm.trim().toLowerCase();
+    const matching = term
+      ? visits.filter((v) =>
+          [v.id, v.person?.name, v.person?.email, v.event?.name || 'Open Facility'].some((f) =>
+            String(f ?? '').toLowerCase().includes(term),
+          ),
+        )
+      : visits;
+    return [...matching].sort((a, b) => {
       const av = sortValue(a, sort.key);
       const bv = sortValue(b, sort.key);
       const cmp = av < bv ? -1 : av > bv ? 1 : 0;
       return sort.dir === 'asc' ? cmp : -cmp;
     });
-  }, [visits, sort]);
+  }, [visits, sort, searchTerm]);
 
   const toggleSort = (key: SortKey) =>
     setSort((s) => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
@@ -286,7 +295,13 @@ export default function AdminVisitsPage() {
     <Stack>
       <AlertBanner message={message?.text} tone={message?.tone} />
 
-      <Group justify="flex-end">
+      <Group justify="space-between">
+        <TextInput
+          placeholder="Filter by name, email, event, or ID..."
+          style={{ flex: 1, minWidth: 200 }}
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.currentTarget.value)}
+        />
         <Button size="xs" fz={15} onClick={openAddModal}>Add Visit</Button>
       </Group>
 
