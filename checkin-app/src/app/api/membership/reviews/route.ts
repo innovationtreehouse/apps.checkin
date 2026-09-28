@@ -3,7 +3,7 @@ import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { handler, unauthorized } from "@/security/handler";
-import { eligibleReviewProcessIds, attest, subjectIds, ReviewError } from "@/lib/membership/review";
+import { eligibleReviewProcessIds, attestedUnclearedProcessIds, attest, subjectIds, ReviewError } from "@/lib/membership/review";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 
@@ -20,7 +20,8 @@ const STATUS_FOR: Record<ReviewError["code"], number> = {
 };
 
 /**
- * GET /api/membership/reviews — applications this reviewer may attest.
+ * GET /api/membership/reviews — applications this reviewer may attest, or with
+ * `?mine=1` the ones they already approved that have not cleared.
  *
  * Eligibility is computed in the service; the result is returned as model rows
  * so the security stripper governs field visibility (registry grants reviewers
@@ -41,9 +42,11 @@ const STATUS_FOR: Record<ReviewError["code"], number> = {
  * the stripper passes them for the reviewer grant; it stays defense-in-depth on top
  * of this narrowing, not the primary filter.
  */
-export const GET = handler("GET /api/membership/reviews", async ({ auth }) => {
+export const GET = handler("GET /api/membership/reviews", async ({ req, auth }) => {
     if (auth.type !== "session") throw unauthorized();
-    const ids = await eligibleReviewProcessIds(auth.user.id);
+    // ?mine=1: reviews this reviewer already approved that have not cleared.
+    const mine = new URL(req.url).searchParams.get("mine") === "1";
+    const ids = mine ? await attestedUnclearedProcessIds(auth.user.id) : await eligibleReviewProcessIds(auth.user.id);
     const queue = await prisma.orgMembershipProcess.findMany({
         where: { id: { in: ids } },
         orderBy: { stageEnteredAt: "asc" },

@@ -231,6 +231,26 @@ export async function eligibleReviewProcessIds(reviewerId: number): Promise<numb
         .map((p) => p.id);
 }
 
+/** Applications this reviewer has attested that have not cleared yet. */
+const attestedByAndUncleared = (reviewerId: number): Prisma.OrgMembershipProcessWhereInput => ({
+    ...awaitingBgReview.where,
+    ...QUEUE_EXCLUDES_UNSUBMITTED_PERSON_BG,
+    attestations: { some: { reviewerId } },
+});
+
+/**
+ * IDs of applications this reviewer already approved that are still awaiting
+ * clearance — waiting on a second reviewer, or stuck behind an approval that
+ * named nobody. They have left the reviewer's actionable queue; this lets a board
+ * member find them again to reset.
+ */
+export async function attestedUnclearedProcessIds(reviewerId: number): Promise<number[]> {
+    const reviewer = await loadReviewer(reviewerId);
+    if (!reviewer || !canReviewBackgroundChecks(reviewer)) return [];
+    const rows = await prisma.orgMembershipProcess.findMany({ where: attestedByAndUncleared(reviewerId), select: { id: true } });
+    return rows.map((r) => r.id);
+}
+
 /**
  * Reviewer-scoped badge counts for the Review tab / nav:
  *   - canActOn: applications this reviewer may attest right now (green).
@@ -244,7 +264,7 @@ export async function reviewQueueCounts(reviewerId: number): Promise<{ canActOn:
     if (!reviewer || !canReviewBackgroundChecks(reviewer)) return { canActOn: 0, approvedAwaitingSecond: 0 };
     const [canActOnIds, approvedAwaitingSecond] = await Promise.all([
         eligibleReviewProcessIds(reviewerId),
-        prisma.orgMembershipProcess.count({ where: { ...awaitingBgReview.where, ...QUEUE_EXCLUDES_UNSUBMITTED_PERSON_BG, attestations: { some: { reviewerId } } } }),
+        prisma.orgMembershipProcess.count({ where: attestedByAndUncleared(reviewerId) }),
     ]);
     return { canActOn: canActOnIds.length, approvedAwaitingSecond };
 }
