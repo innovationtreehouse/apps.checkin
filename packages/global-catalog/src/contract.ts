@@ -4,7 +4,6 @@
  * runtime. The dependency arrow points one way — the library NEVER imports the
  * host, so "understand the catalog" stays "read this package."
  */
-import type { PrismaClient } from "./generated/prisma/client";
 
 /** The acting host user, projected to what catalog rows stamp. */
 export interface CatalogPrincipal {
@@ -37,12 +36,6 @@ export interface CatalogRuntimeConfig {
    * per request — same seam, no library change.
    */
   org: () => OrgIdentity;
-  /**
-   * Optional Prisma client override. Defaults to the library's own catalog
-   * client (`@/db`, reading CATALOG_DATABASE_URL that the host provides), so
-   * single-DB deployments need not inject one; tests pass a throwaway client.
-   */
-  db?: PrismaClient;
   /**
    * Map a status + message to the host's API error. checkin passes its
    * `ApiResponseError`, so the error a route factory throws is caught and

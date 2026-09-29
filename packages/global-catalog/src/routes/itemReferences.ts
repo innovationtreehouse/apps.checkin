@@ -30,6 +30,20 @@ const createSchema = z
     message: "At least one of partNumber, description, manufacturer, retailer, or url is required",
   });
 
+// Same shape as create minus the (immutable) gtin13. Validates + trims the body
+// so a wrong-typed field is a 400, not a 500 at `.trim()`.
+const updateSchema = z
+  .object({
+    partNumber: optionalTrimmed,
+    description: optionalTrimmed,
+    manufacturer: optionalTrimmed,
+    retailer: optionalTrimmed,
+    url: optionalTrimmed,
+  })
+  .refine((b) => Boolean(b.partNumber || b.description || b.manufacturer || b.retailer || b.url), {
+    message: "At least one of partNumber, description, manufacturer, retailer, or url is required",
+  });
+
 export const list: CatalogRouteHandler = async ({ req }) => {
   const sp = query(req);
   const gtin13 = sp.get("gtin13");
@@ -105,33 +119,23 @@ export const update: CatalogRouteHandler = async ({ req, params }) => {
   const existing = await r.findById(id);
   if (!existing) throw catalogError(404, "Reference not found");
 
-  const body = (await readJson(req)) as {
-    partNumber?: string;
-    manufacturer?: string;
-    description?: string;
-    retailer?: string;
-    url?: string;
-  };
-  const rawDescription = body.description?.trim() || null;
+  const body = parseBody(updateSchema, await readJson(req));
   const fields: RefFields = {
-    partNumber: body.partNumber?.trim() || null,
-    description: rawDescription,
-    manufacturer: body.manufacturer?.trim() || null,
-    retailer: body.retailer?.trim() || null,
+    partNumber: body.partNumber,
+    description: body.description,
+    manufacturer: body.manufacturer,
+    retailer: body.retailer,
   };
-  if (!fields.partNumber && !fields.description && !fields.manufacturer && !fields.retailer && !body.url?.trim()) {
-    throw catalogError(400, "At least one of partNumber, description, manufacturer, retailer, or url is required");
-  }
   const conflict = await findAutoConflict(existing.gtin13, fields);
   if (conflict) throw catalogError(409, conflict);
 
   const principal = await getPrincipal();
   const updated = await r.updateItemReference(id, {
     partNumber: fields.partNumber,
-    descriptionNormalized: rawDescription ? normalizeDescription(rawDescription) : null,
+    descriptionNormalized: body.description ? normalizeDescription(body.description) : null,
     manufacturer: fields.manufacturer,
     retailer: fields.retailer,
-    url: body.url?.trim() || null,
+    url: body.url,
     updatedAt: new Date(),
     updatedByUserId: principal.id,
     updatedByUsername: principal.name,

@@ -9,13 +9,21 @@ import type { PrismaClient } from "./generated/prisma/client";
 import { ServiceError } from "./services/categoryService";
 import type { CatalogRuntimeConfig, CatalogPrincipal, OrgIdentity } from "./contract";
 
-let runtime: CatalogRuntimeConfig | undefined;
+// Stored on globalThis, not a module-scoped `let` — the same singleton pattern
+// the catalog Prisma client uses (`__gcPrisma`). It survives Turbopack HMR
+// re-evaluation in dev and removes any module-identity doubt in prod (the
+// instrumentation chunk that calls configureCatalog() and the route chunks that
+// read it must see one runtime).
+const globalForRuntime = globalThis as typeof globalThis & {
+  __gcRuntime?: CatalogRuntimeConfig;
+};
 
 export function configureCatalog(config: CatalogRuntimeConfig): void {
-  runtime = config;
+  globalForRuntime.__gcRuntime = config;
 }
 
 function requireRuntime(): CatalogRuntimeConfig {
+  const runtime = globalForRuntime.__gcRuntime;
   if (!runtime) {
     throw new Error(
       "global-catalog runtime not configured — the host must call configureCatalog() at boot",
@@ -42,12 +50,12 @@ export function getOrg(): OrgIdentity {
 }
 
 /**
- * The catalog Prisma client. Falls back to the library's own client (`@/db`)
- * when the host injects none — so it resolves even before configureCatalog()
- * runs (the library's services read `@/db` directly for the same reason).
+ * The catalog Prisma client — the library's own (`@/db`, reading
+ * CATALOG_DATABASE_URL). The route repos and the ported services both use this
+ * one client; there is no host-injected alternative (single catalog DB).
  */
 export function getDb(): PrismaClient {
-  return runtime?.db ?? defaultDb;
+  return defaultDb;
 }
 
 /**
@@ -56,7 +64,7 @@ export function getDb(): PrismaClient {
  * plain Error carrying `status` when unconfigured (tests).
  */
 export function catalogError(status: number, message: string): Error {
-  const make = runtime?.httpError;
+  const make = globalForRuntime.__gcRuntime?.httpError;
   if (make) return make(status, message);
   const err = new Error(message) as Error & { status: number };
   err.status = status;

@@ -11,7 +11,8 @@ import { parseId, readJson, parseBody, query } from "./_shared";
 const repo = () => createCatalogRepository(getDb());
 
 const bodySchema = z.object({
-  name: z.string().min(1),
+  // trim before min(1) so a whitespace-only name is rejected, not created empty.
+  name: z.string().trim().min(1),
   letter: z
     .string()
     .regex(/^[A-Z]$/i, "letter must be a single A-Z letter")

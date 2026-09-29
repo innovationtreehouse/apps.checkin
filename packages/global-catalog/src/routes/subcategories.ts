@@ -9,11 +9,12 @@ import { parseId, readJson, parseBody, query } from "./_shared";
 const repo = () => createCatalogRepository(getDb());
 
 const createSchema = z.object({
-  name: z.string().min(1),
+  // trim before min(1) so a whitespace-only name is rejected, not created empty.
+  name: z.string().trim().min(1),
   number: z.number().int().min(1).max(99),
   categoryId: z.number().int().positive(),
 });
-const updateSchema = z.object({ name: z.string().min(1) });
+const updateSchema = z.object({ name: z.string().trim().min(1) });
 
 export const list: CatalogRouteHandler = async ({ req }) => {
   const sp = query(req);

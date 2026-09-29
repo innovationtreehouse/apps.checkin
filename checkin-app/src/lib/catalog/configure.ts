@@ -47,16 +47,17 @@ function httpError(status: number, message: string): Error {
   return err;
 }
 
-export function configureCatalogRuntime(): void {
-  // Warm ApiResponseError off the boot AWAIT (register() does not await this).
-  // The .catch swallows the auth-options throw on a credential-less boot (the
-  // smoke test); in a real environment it resolves and warms apiErrorCtor.
-  void import("@/security/handler")
-    .then((m) => {
-      apiErrorCtor = m.ApiResponseError as unknown as ApiErrorCtor;
-    })
-    .catch(() => {
-      /* credential-less boot (smoke test) — warms on first real request instead */
-    });
+export async function configureCatalogRuntime(): Promise<void> {
+  // AWAIT the warm here (register() awaits this before Next serves any request),
+  // so apiErrorCtor is set before the first request — no cold-start window where
+  // a catalog 4xx degrades to 500. The try/catch keeps a credential-less boot
+  // (the deploy smoke test, no GOOGLE_CLIENT_ID) from crashing on the
+  // auth-options throw in @/security/handler's import chain.
+  try {
+    const m = await import("@/security/handler");
+    apiErrorCtor = m.ApiResponseError as unknown as ApiErrorCtor;
+  } catch {
+    /* credential-less boot (smoke test) — handler()/auth load per-request there */
+  }
   configureCatalog({ auth: { getPrincipal }, org: () => TREEHOUSE_ORG, httpError });
 }
