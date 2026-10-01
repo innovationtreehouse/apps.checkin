@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma";
 import type { Visit } from "@/generated/prisma/client";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
-import { parseVisitTime, departureAfterArrival, withinMaxDuration } from "@/lib/visitTimes";
+import { parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTime } from "@/lib/visitTimes";
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 import { handler } from "@/security/handler";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
@@ -68,8 +68,10 @@ export const PATCH = withAuth(
                 const current = await tx.visit.findUnique({ where: { id: visitId } });
                 if (!current || current.deletedAt) return { error: "Visit not found.", status: 404 as const };
 
-                const nextArrived = parsedArrived ?? current.arrivedAt;
-                const nextDeparted = parsedDeparted ?? current.departedAt;
+                const editedArrived = parsedArrived && !isUnchangedTime(parsedArrived, current.arrivedAt) ? parsedArrived : null;
+                const editedDeparted = parsedDeparted && !isUnchangedTime(parsedDeparted, current.departedAt) ? parsedDeparted : null;
+                const nextArrived = editedArrived ?? current.arrivedAt;
+                const nextDeparted = editedDeparted ?? current.departedAt;
 
                 // Result must be closed: can close an open visit, never reopen a closed one.
                 if (nextDeparted === null) {
@@ -80,6 +82,9 @@ export const PATCH = withAuth(
                 }
                 if (!withinMaxDuration(nextArrived, nextDeparted)) {
                     return { error: "A visit cannot be longer than 24 hours.", status: 400 as const };
+                }
+                if (!editedArrived && !editedDeparted) {
+                    return { error: "Nothing to change.", status: 400 as const };
                 }
 
                 return {
@@ -93,8 +98,8 @@ export const PATCH = withAuth(
                             // pre-edit source (editSignificance below), so restamping
                             // only sets what the NEXT correction overwrites — a second
                             // correction weighs the value as a self-report.
-                            ...(parsedArrived ? { arrivedAt: nextArrived, arrivedVia: "TYPED" } : {}),
-                            ...(parsedDeparted ? { departedAt: nextDeparted, departedVia: "TYPED" } : {}),
+                            ...(editedArrived ? { arrivedAt: nextArrived, arrivedVia: "TYPED" } : {}),
+                            ...(editedDeparted ? { departedAt: nextDeparted, departedVia: "TYPED" } : {}),
                         },
                     })
                 };

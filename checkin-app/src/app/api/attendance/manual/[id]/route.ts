@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { handler, ApiResponseError, badRequest, notFound, unauthorized } from "@/security/handler";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
-import { parseVisitTime, departureAfterArrival, withinMaxDuration } from "@/lib/visitTimes";
+import { parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTime } from "@/lib/visitTimes";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 import { lastKeyholderGuard, runFacilityClose } from "@/lib/scan-service";
 import type { CloseGuardResult } from "@/lib/scan-service";
@@ -73,17 +73,22 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
         const now = new Date();
         let nextArrived = visit.arrivedAt;
         let nextDeparted = visit.departedAt;
+        let arrivalEdited = false;
+        let departureEdited = false;
 
         if (arrivedAt) {
             const r = parseVisitTime(arrivedAt, "arrival", now);
             if (!r.ok) throw badRequest(r.error);
-            nextArrived = r.value;
+            arrivalEdited = !isUnchangedTime(r.value, visit.arrivedAt);
+            if (arrivalEdited) nextArrived = r.value;
         }
         if (departedAt) {
             const r = parseVisitTime(departedAt, "departure", now);
             if (!r.ok) throw badRequest(r.error);
-            nextDeparted = r.value;
+            departureEdited = !isUnchangedTime(r.value, visit.departedAt);
+            if (departureEdited) nextDeparted = r.value;
         }
+        if (!arrivalEdited && !departureEdited) throw badRequest("Nothing to change.");
 
         // A closed visit stays closed (same rule as the staff route): editing
         // must never turn a historical record back into "in the building".
@@ -140,8 +145,8 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
             return tx.visit.update({
                 where: { id: visitId },
                 data: {
-                    ...(arrivedAt ? { arrivedAt: nextArrived, arrivedVia: "TYPED" } : {}),
-                    ...(departedAt && !closingOpenVisit ? { departedAt: nextDeparted, departedVia: "TYPED" } : {}),
+                    ...(arrivalEdited ? { arrivedAt: nextArrived, arrivedVia: "TYPED" } : {}),
+                    ...(departureEdited && !closingOpenVisit ? { departedAt: nextDeparted, departedVia: "TYPED" } : {}),
                 },
             });
         });

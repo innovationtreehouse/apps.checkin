@@ -1,5 +1,5 @@
 import { describe } from "vitest";
-import { prisma, initDb } from "@/db";
+import { prisma, initDb } from "../../db";
 
 /**
  * DB-gate for the integration + DB-backed service tiers. `describeDb` is `describe` when

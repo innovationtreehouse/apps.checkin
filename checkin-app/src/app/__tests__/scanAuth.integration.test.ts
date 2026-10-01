@@ -72,6 +72,7 @@ function sessionUser(overrides: Partial<AuthenticatedUser> & { id: number }): Au
         isKeyholder: false,
         isBackgroundCheckReviewer: false,
         isOperations: false,
+        isInventoryManager: false,
         ...overrides,
     };
 }

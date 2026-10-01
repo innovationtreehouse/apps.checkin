@@ -3,6 +3,9 @@ client.key
 config.json
 .self_update_last_target
 
+# Health-monitor sentinel asking kiosk.sh to relaunch Chromium
+.chromium-bounce
+
 # Python
 __pycache__/
 *.pyc

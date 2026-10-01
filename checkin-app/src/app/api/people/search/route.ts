@@ -18,7 +18,7 @@ export const GET = withAuth(
         try {
             const url = new URL(req.url);
 
-            // Roster mode: every ACTIVE member org-wide, ignoring `q` and the 200-row cap.
+            // Roster mode: every ACTIVE member org-wide, ignoring `q`.
             // Badge display names have to disambiguate against the whole membership, not
             // against whichever rows the search box happened to return (#1625). A mode on
             // this route rather than a new one: `GET /api/people/search` is already on the
@@ -158,7 +158,8 @@ export const GET = withAuth(
                         }] : []),
                     ],
                 },
-                take: 200,
+                // ponytail: unbounded — every live person, so pages listing with no `q` (badges,
+                // visits, participants) see everyone. Paginate if the directory reaches thousands.
                 orderBy: { id: 'desc' },
                 include: {
                     household: {

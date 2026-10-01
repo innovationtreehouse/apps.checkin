@@ -31,6 +31,7 @@
     "@auth/prisma-adapter": "^2.11.1",
     "@aws-sdk/client-lambda": "^3.1075.0",
     "@aws-sdk/client-s3": "^3.1075.0",
+    "@inventory/global-catalog": "*",
     "@inventory/money": "*",
     "@mantine/core": "^7.17.8",
     "@mantine/form": "^7.17.8",

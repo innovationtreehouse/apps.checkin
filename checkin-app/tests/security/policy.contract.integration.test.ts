@@ -14,8 +14,7 @@
 jest.unmock('@/lib/prisma');
 
 import { getServerSession } from 'next-auth/next';
-import { allRoutes } from '@/security/core';
-import { classifications, relations } from '@/security/generated/classifications';
+import { allRoutes, classifications, relations } from '@/security/core';
 import { collectFieldKeys, tierIsGrantable } from './helpers';
 import { loadPersonas } from './personas';
 import '@/security/registry';

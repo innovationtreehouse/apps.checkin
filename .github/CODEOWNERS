@@ -12,6 +12,8 @@
 
 # Schema annotations — the source of truth for field sensitivity.
 /checkin-app/prisma/schema.prisma                 @dkaygithub @jee7s @thpr
+# Vendored packages adopting the same @sensitivity regime (#1286 §5).
+/packages/global-catalog/prisma/schema.prisma     @dkaygithub @jee7s @thpr
 
 # The policy layer itself.
 /checkin-app/src/security/                        @dkaygithub @jee7s @thpr

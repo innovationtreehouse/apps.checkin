@@ -191,4 +191,43 @@ describe("membership-ops/review page", () => {
     // So is naming a subject: the process already names the person it is about.
     expect(screen.queryByText("Whose check did you review?")).not.toBeInTheDocument();
   });
+
+  it("lists reviews I approved that have not cleared, and lets a board member start one over", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    // A legacy approval that named nobody: it counts toward nobody, so the review is stuck.
+    const stuck = { ...queue.queue[0], id: 300, attestations: [{ subjectPersonId: null }, { subjectPersonId: null }], _count: { attestations: 2 } };
+    const fetchMock = mockFetchJson({
+      "/api/membership/reviews?mine=1": { queue: [stuck] },
+      "/api/membership/reviews": { queue: [] },
+      "/api/membership-ops/applications/review-override": { outcome: { status: "PENDING_PAYMENT" } },
+    });
+    renderPage();
+    await screen.findByText("Nothing awaiting your review right now.");
+    expect(screen.queryByText("The Smiths")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show incomplete reviews I've already approved" }));
+    expect(await screen.findByText("The Smiths")).toBeInTheDocument();
+    expect(screen.getByText("names nobody", { exact: false })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start review over" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Start over" }));
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url]) => String(url).includes("review-override"));
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ processId: 300, action: "reset" });
+    });
+  });
+
+  it("does not offer a reset to a reviewer who is not on the board", async () => {
+    setSession({ id: 1, isBackgroundCheckReviewer: true });
+    mockFetchJson({
+      "/api/membership/reviews?mine=1": { queue: [{ ...queue.queue[0], id: 301 }] },
+      "/api/membership/reviews": { queue: [] },
+    });
+    renderPage();
+    await screen.findByText("Nothing awaiting your review right now.");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show incomplete reviews I've already approved" }));
+
+    expect(await screen.findByText("A board member can start this review over.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start review over" })).not.toBeInTheDocument();
+  });
 });

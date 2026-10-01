@@ -1,13 +1,13 @@
-import { db } from "@/db";
-import { createItemReferenceRepository } from "@/repositories/itemReference";
-import { createCatalogRepository } from "@/repositories/catalog";
-import type { ConflictResolution, ReferenceConflict } from "@/db/schema";
+import { db } from "../db";
+import { createItemReferenceRepository } from "../repositories/itemReference";
+import { createCatalogRepository } from "../repositories/catalog";
+import type { ConflictResolution, ReferenceConflict } from "../db/schema";
 
 const itemRefRepo = createItemReferenceRepository(db);
 const catalogRepo = createCatalogRepository(db);
-import type { ConflictResolutionStatus } from "@/workflows/conflict-resolution.machine";
+import type { ConflictResolutionStatus } from "../workflows/conflict-resolution.machine";
 import { ServiceError } from "./categoryService";
-import { assertConflictResolutionTransition } from "@/workflows/conflict-resolution.machine";
+import { assertConflictResolutionTransition } from "../workflows/conflict-resolution.machine";
 import { WorkflowTransitionError } from "@inventory/workflows";
 import { recordTransition } from "./orgEventService";
 

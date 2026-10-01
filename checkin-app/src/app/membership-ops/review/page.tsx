@@ -28,7 +28,8 @@ interface QueueItem {
 }
 
 export default function MembershipReviewPage() {
-  const { status: sessionStatus } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
+  const canReset = !!(session?.user?.isBoardMember || session?.user?.isSysadmin);
   // No h1 here: this page always renders inside the Membership Ops layout, whose
   // tab bar already labels it (the standalone /membership/review route is gone).
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -41,6 +42,9 @@ export default function MembershipReviewPage() {
   const [subjects, setSubjects] = useState<Record<number, number>>({});
   // Tagged with the acting row's processId so the result renders in that card, not off-screen at page top.
   const [message, setMessage] = useState<{ processId: number; text: string; tone: AlertTone } | undefined>();
+  const [showMine, setShowMine] = useState(false);
+  // Reviews this reviewer already approved that have not cleared.
+  const [mine, setMine] = useState<QueueItem[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -59,10 +63,58 @@ export default function MembershipReviewPage() {
     }
   }, []);
 
+  const loadMine = useCallback(async () => {
+    const res = await fetch("/api/membership/reviews?mine=1");
+    if (res.ok) setMine((await res.json()).queue || []);
+  }, []);
+
   useEffect(() => {
     if (sessionStatus === "authenticated") load();
     else if (sessionStatus === "unauthenticated") setLoading(false);
   }, [sessionStatus, load]);
+
+  useEffect(() => {
+    if (showMine) loadMine();
+  }, [showMine, loadMine]);
+
+  const resetReview = async (processId: number) => {
+    setBusyId(processId);
+    try {
+      const res = await fetch("/api/membership-ops/applications/review-override", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ processId, action: "reset" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        notifications.show({ message: "Review started over — reviewers have been notified." });
+        await Promise.all([load(), loadMine()]);
+        notifyNavRefresh();
+      } else {
+        notifications.show({ color: "red", message: data.error || "Could not reset this review.", autoClose: 4000 });
+        await loadMine();
+      }
+    } catch {
+      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const confirmReset = (item: QueueItem) =>
+    modals.openConfirmModal({
+      title: "Start this background-check review over?",
+      children: (
+        <Text size="sm">
+          This discards all {item._count.attestations} approval(s) recorded for{" "}
+          <strong>{applicantLabel(item)}</strong> — yours included — and asks the reviewers to start
+          again. The check has not cleared, so nothing else changes.
+        </Text>
+      ),
+      labels: { confirm: "Start over", cancel: "Cancel" },
+      confirmProps: { color: "orange" },
+      onConfirm: () => resetReview(item.id),
+    });
 
   const submit = async (processId: number, result: "APPROVE" | "REJECT") => {
     if (result === "REJECT" && !reviewNotes[processId]?.trim()) return;
@@ -189,6 +241,48 @@ export default function MembershipReviewPage() {
         concerning, choose <strong>Reject</strong> — the board is notified and the applicant is not
         told the reason.
       </Text>
+
+      <Checkbox
+        mt="md"
+        checked={showMine}
+        onChange={(e) => setShowMine(e.currentTarget.checked)}
+        label="Show incomplete reviews I've already approved"
+      />
+
+      {showMine && (
+        <Stack mt="md">
+          {mine.length === 0 ? (
+            <Text size="sm" c="dimmed">None — every review you approved has cleared.</Text>
+          ) : mine.map((item) => {
+            const settled = settledSubject(item);
+            // Only a household review names its subject; an unnamed approval there counts toward nobody.
+            const unnamed = !item.subjectPerson && item.attestations.some((a) => a.subjectPersonId === null);
+            return (
+              <Card key={item.id} withBorder radius="md" padding="lg" bg="var(--mantine-color-gray-0)">
+                <Text fw={700}>{applicantLabel(item)}</Text>
+                <Text size="xs" c="dimmed" mt={4}>
+                  You approved this. {item._count.attestations}/2 approvals so far
+                  {settled !== null ? ` · for ${leadName(item, settled)}` : ""}.
+                </Text>
+                {unnamed && (
+                  <Text size="sm" c="orange" mt={4}>
+                    An approval here names nobody, so it can never count toward clearance. Start the review over.
+                  </Text>
+                )}
+                {canReset ? (
+                  <Group mt="sm">
+                    <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmReset(item)}>
+                      Start review over
+                    </Button>
+                  </Group>
+                ) : (
+                  <Text size="xs" c="dimmed" mt="sm">A board member can start this review over.</Text>
+                )}
+              </Card>
+            );
+          })}
+        </Stack>
+      )}
 
       {queue.length === 0 ? (
         <Card withBorder radius="md" padding="xl" ta="center" mt="md">

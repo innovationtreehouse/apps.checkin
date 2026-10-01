@@ -45,9 +45,13 @@ type Visit = {
   event?: { program?: { id: number; name: string } };
 };
 
+// A PARKED_CLOSED scan: someone badged in while the facility was closed and has
+// no Visit yet. Display-only — id/name/nickname/time, never PII (the kiosk re-broadcasts it).
+type Held = { id: number; name: string | null; nickname?: string | null; occurredAt: string };
+
 type Counts = { keyholders: number; volunteers: number; youth: number; total: number; needReview?: number };
 type SafetyFlags = { isLastKeyholder: boolean; isTwoDeepViolation: boolean };
-type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags };
+type FullResponse = { access: "full"; attendance: Visit[]; held?: Held[]; counts: Counts; safety?: SafetyFlags };
 type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; self: Visit | null; household: Visit[] };
 type AttendanceResponse = FullResponse | LimitedResponse;
 
@@ -103,6 +107,9 @@ function KioskDisplayInner() {
   const visitIsYouth = (v: Visit) => v.participant.isYouth ?? isYouth(v.participant.dateOfBirth, { unknownIs: "youth" });
 
   const fullAttendance = isFull ? (data as FullResponse).attendance : [];
+  // Memoized so its reference is stable for the kioskHeldNames useMemo below —
+  // a bare ternary would be a new array every render (react-hooks/exhaustive-deps).
+  const heldList = useMemo(() => (isFull ? (data as FullResponse).held ?? [] : []), [isFull, data]);
   const matchesSignOutQuery = personQueryMatcher(searchSignOutQuery);
   const keyholderList = fullAttendance.filter(v => v.participant.isKeyholder);
   const volunteerList = fullAttendance.filter(v => !v.participant.isKeyholder && !visitIsYouth(v));
@@ -176,7 +183,7 @@ function KioskDisplayInner() {
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (typeof event.data === "object" && event.data?.type === "refresh-attendance" && event.data.attendance) {
-        setData({ access: "full", attendance: event.data.attendance, counts: event.data.counts, safety: event.data.safety });
+        setData({ access: "full", attendance: event.data.attendance, held: event.data.held, counts: event.data.counts, safety: event.data.safety });
         setLoading(false);
         if (event.data.signedRequest) setIsKioskMode(true);
       } else if (event.data === "refresh-attendance") {
@@ -326,6 +333,11 @@ function KioskDisplayInner() {
     const allVisits = [...keyholderList, ...volunteerList, ...youthList];
     return getKioskDisplayNames(allVisits.map(v => ({ id: v.participant.id, name: v.participant.name || null, nickname: v.participant.nickname, email: v.participant.email })));
   }, [isKioskMode, keyholderList, volunteerList, youthList]);
+
+  const kioskHeldNames = useMemo(() => {
+    if (!isKioskMode) return new Map<number, string>();
+    return getKioskDisplayNames(heldList.map(h => ({ id: h.id, name: h.name, nickname: h.nickname })));
+  }, [isKioskMode, heldList]);
 
   const canSeeNames = !isKioskMode && (currentUserIsKeyholder || currentUserIsSysadmin || currentUserIsBoardMember);
 
@@ -499,7 +511,7 @@ function KioskDisplayInner() {
           <Alert color="red">{error === "Unauthorized" ? "Access Denied: Please sign in to view attendance." : error}</Alert>
         ) : !data ? (
           <Alert color="red">Attendance is unavailable — the roster could not be loaded.</Alert>
-        ) : counts.total === 0 ? (
+        ) : counts.total === 0 && heldList.length === 0 ? (
           <Center py="xl"><Text c="dimmed">The facility is currently empty.</Text></Center>
         ) : (
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="lg">
@@ -507,6 +519,34 @@ function KioskDisplayInner() {
             {renderColumn("🤝", counts.volunteers, "Volunteers/Adults", "teal", isFull ? volunteerList : householdVolunteers)}
             {renderColumn("🎓", counts.youth, "Students", "grape", isFull ? youthList : householdYouth)}
           </SimpleGrid>
+        )}
+
+        {/* Held scans: badged in while closed, awaiting a keyholder. Shown so the
+            room reflects who has actually badged (trust what we see); kept out of
+            the counts/columns because no keyholder is present to supervise them. */}
+        {isFull && heldList.length > 0 && (
+          <Paper withBorder radius="md" p="md" mt="lg" style={{ borderStyle: "dashed", borderColor: "var(--mantine-color-orange-5)" }}>
+            <Group gap={8} mb="sm">
+              <Text fz="xl">⏳</Text>
+              <div>
+                <Text fz="xl" fw={800} c="orange" lh={1}>{heldList.length}</Text>
+                <Text size="xs" tt="uppercase" c="dimmed">Awaiting keyholder</Text>
+              </div>
+            </Group>
+            <Text size="xs" c="dimmed" mb="sm">
+              Badged in while the facility was closed. They join the roster automatically once a keyholder checks in.
+            </Text>
+            <SimpleGrid cols={heldList.length > 10 ? 2 : 1} spacing="xs">
+              {heldList.map(h => (
+                <Paper key={h.id} withBorder radius="sm" p="xs">
+                  <Text fw={500} size="sm" truncate>
+                    {isKioskMode ? (kioskHeldNames.get(h.id) || h.name || "—") : (h.name || "—")}
+                  </Text>
+                  <Text c="dimmed" size="xs">{formatTime(h.occurredAt)}</Text>
+                </Paper>
+              ))}
+            </SimpleGrid>
+          </Paper>
         )}
 
         {/* Privacy notice for limited access */}
