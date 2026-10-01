@@ -301,9 +301,11 @@ jobs:
 
             aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
 
-            EXIT_CODE=$(aws ecs describe-tasks \
+            # One call: exit code + stoppedReason (why ECS stopped it when the
+            # container never ran).
+            read -r EXIT_CODE STOP_REASON < <(aws ecs describe-tasks \
               --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
-              --query 'tasks[0].containers[0].exitCode' --output text)
+              --query 'tasks[0].[containers[0].exitCode, stoppedReason]' --output text)
             echo "Copy task exit code: $EXIT_CODE"
 
             # Surface the container's own output either way — without this, a
@@ -329,6 +331,11 @@ jobs:
             case "$EXIT_CODE" in
               0) break ;;
               2 | None | null | "")
+                # An image-pull failure is deterministic; retrying only hides it.
+                if [[ "$STOP_REASON" == *CannotPullContainerError* ]]; then
+                  echo "::error::Copy task could not pull its image — not retrying. $STOP_REASON"
+                  break
+                fi
                 echo "Copy task exit $EXIT_CODE — connection/placement failure (Aurora may be resuming); retrying in 20s"
                 sleep 20
                 ;;
@@ -467,9 +474,9 @@ jobs:
 
             aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
 
-            EXIT_CODE=$(aws ecs describe-tasks \
+            read -r EXIT_CODE STOP_REASON < <(aws ecs describe-tasks \
               --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
-              --query 'tasks[0].containers[0].exitCode' --output text)
+              --query 'tasks[0].[containers[0].exitCode, stoppedReason]' --output text)
             echo "Repoint task exit code: $EXIT_CODE"
 
             TASK_ID="${TASK_ARN##*/}"
@@ -478,6 +485,10 @@ jobs:
             echo "--- end repoint task logs ---"
 
             [ "$EXIT_CODE" = "0" ] && break
+            if [[ "$STOP_REASON" == *CannotPullContainerError* ]]; then
+              echo "::error::Repoint task could not pull its image — not retrying. $STOP_REASON"
+              break
+            fi
             echo "Repoint task failed (exit $EXIT_CODE) — DB may be resuming from auto-pause; retrying in 20s"
             sleep 20
           done

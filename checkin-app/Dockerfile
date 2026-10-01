@@ -25,6 +25,12 @@ COPY . .
 # (its schema lives at checkin-app/prisma; the security generator resolves its
 # script + output paths relative to the app cwd).
 RUN npm -w checkin-app exec -- prisma generate
+# The global catalog (#1286) ships its own Prisma schema + client; its generated
+# client (packages/global-catalog/src/generated) is gitignored, so it must be
+# generated in the image too or the catalog routes fail "Module not found:
+# ../generated/prisma/client". This also re-emits the committed catalog security
+# classifications (idempotent).
+RUN npm -w @inventory/global-catalog exec -- prisma generate
 # Build stamp surfaced in the app footer: the deployed commit SHA, passed via
 # --build-arg by the deploy workflow and inlined into the bundle (NEXT_PUBLIC_*,
 # build-time). Empty in local/ad-hoc builds -> the footer shows "dev".

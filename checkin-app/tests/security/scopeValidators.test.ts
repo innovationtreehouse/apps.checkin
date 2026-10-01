@@ -12,8 +12,7 @@ import {
     type RouteGrantSpec,
 } from '@/security/scopes';
 import { SCOPE_BINDINGS, OPT_OUT_PENDING_ROUTE } from '@/security/scopeBindings';
-import { classifications } from '@/security/generated/classifications';
-import { allRoutes } from '@/security/core';
+import { classifications, allRoutes } from '@/security/core';
 // Side-effect import: registers every route via defineRoute() so allRoutes()
 // yields the real policy surface for the CI gate below.
 import '@/security/registry';

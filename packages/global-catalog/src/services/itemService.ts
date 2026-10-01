@@ -1,10 +1,10 @@
-import { Prisma } from "@/generated/prisma/client";
-import { db, isUniqueConstraintError } from "@/db";
-import { createCatalogRepository } from "@/repositories/catalog";
-import type { UsageBehavior } from "@/db/schema";
+import { Prisma } from "../generated/prisma/client";
+import { db, isUniqueConstraintError } from "../db";
+import { createCatalogRepository } from "../repositories/catalog";
+import type { UsageBehavior } from "../db/schema";
 
 const catalogRepo = createCatalogRepository(db);
-import { buildGtin13 } from "@/lib/gtin";
+import { buildGtin13 } from "../lib/gtin";
 import { ServiceError } from "./categoryService";
 
 type Tx = Prisma.TransactionClient;

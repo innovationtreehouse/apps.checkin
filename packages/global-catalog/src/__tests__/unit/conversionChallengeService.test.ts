@@ -1,8 +1,8 @@
 import { beforeAll, expect, it } from "vitest";
-import { describeDb } from "@/__tests__/helpers/db";
-import { initDb, prisma } from "@/db";
-import { resetDb } from "@/__tests__/helpers/db";
-import { submitChallenge, acceptChallenge, rejectChallenge } from "@/services/conversionChallengeService";
+import { describeDb } from "../helpers/db";
+import { initDb, prisma } from "../../db";
+import { resetDb } from "../helpers/db";
+import { submitChallenge, acceptChallenge, rejectChallenge } from "../../services/conversionChallengeService";
 
 beforeAll(async () => {
   await initDb();

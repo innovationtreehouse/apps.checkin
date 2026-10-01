@@ -33,7 +33,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { relations } from '@/security/generated/classifications';
+import { relations } from '@/security/core';
 
 const API_DIR = path.resolve(__dirname, '../../src/app/api');
 

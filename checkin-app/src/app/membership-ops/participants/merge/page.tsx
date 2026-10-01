@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Alert, Box, Button, Card, Group, List, Paper, Radio, SimpleGrid, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Box, Button, Card, Group, List, Paper, Radio, SimpleGrid, Stack, Text, TextInput, Title } from "@mantine/core";
+import Link from "next/link";
 import { notifications } from "@mantine/notifications";
 import { AlertBanner } from "@/components/admin/AlertBanner";
 import { MergedBadge } from "@/components/ui/MergedBadge";
@@ -362,6 +363,9 @@ export default function MergeParticipants() {
           Combine two participant records. The data from the merged record (visits, programs, etc)
           will be moved to the kept record. The merged record will be tombstoned.
         </Text>
+        <Anchor component={Link} href="/membership-ops/participants/tombstones" size="sm">
+          View tombstone census
+        </Anchor>
       </div>
 
       {!previewMode && <AlertBanner message={error} tone="error" />}

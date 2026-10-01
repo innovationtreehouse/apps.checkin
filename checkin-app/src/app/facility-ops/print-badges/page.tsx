@@ -24,6 +24,8 @@ type ParticipantRow = {
   isKeyholder?: boolean;
 };
 
+type SavedNickname = { id: number; nickname: string | null };
+
 export default function PrintBadgesPage() {
   const { user, ready, loading: authLoading } = useRequireRole(FACILITY_AGGREGATE_ROLES);
   // Printing is board-or-operations, but a nickname is a write to the person's record
@@ -50,7 +52,10 @@ export default function PrintBadgesPage() {
   // What the admin has typed into a Nickname box, keyed by person. Held apart from
   // `participants` so a keystroke never waits on the save that follows it.
   const [nicknameDrafts, setNicknameDrafts] = useState<Record<number, string>>({});
-  const saveTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+  // Typed values still waiting out the debounce, and saves already sent. Printing and
+  // leaving the page both flush the first and wait on (or outlive) the second.
+  const pendingSaves = useRef<Record<number, { value: string; timer: ReturnType<typeof setTimeout> }>>({});
+  const inflightSaves = useRef(new Set<Promise<SavedNickname | null>>());
 
   const fetchParticipants = useCallback(async () => {
     setLoading(true);
@@ -111,12 +116,6 @@ export default function PrintBadgesPage() {
       });
   }, [ready, selectedYear]);
 
-  // Clear pending saves on unmount so a debounce cannot fire into a dead component.
-  useEffect(() => {
-    const timers = saveTimers.current;
-    return () => Object.values(timers).forEach(clearTimeout);
-  }, []);
-
   // The draft is dropped once the record holds its value, so the box goes back to
   // reading the person record and a nickname changed elsewhere is not shadowed by
   // stale local text. A draft that no longer matches is newer typing with its own
@@ -145,38 +144,66 @@ export default function PrintBadgesPage() {
 
   // A value that already matches the stored one is not an edit and writes nothing —
   // the debounce and blur paths both land here, and every accepted PUT writes an
-  // audit row.
-  const saveNickname = useCallback(async (id: number, raw: string) => {
+  // audit row. Resolves to the value written, or null when nothing was.
+  const saveNickname = useCallback(async (id: number, raw: string): Promise<SavedNickname | null> => {
     const nickname = raw.trim() || null;
     if (nickname === (participantsRef.current.find(p => p.id === id)?.nickname ?? null)) {
       dropSavedDraft(id, nickname);
-      return;
+      return null;
     }
     try {
+      // keepalive lets the write finish when the tab closes right after typing.
       const res = await fetch(`/api/membership-ops/participants/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname }),
+        keepalive: true,
       });
       if (!res.ok) throw new Error(`nickname save failed: ${res.status}`);
       applyNickname(id, nickname);
+      return { id, nickname };
     } catch (e) {
       console.error("Failed to save nickname:", e);
       notifications.show({ color: 'red', message: 'Could not save that nickname — it is not on the badge. Edit the box to retry.', autoClose: false });
+      return null;
     }
   }, [applyNickname, dropSavedDraft]);
 
+  // Leaving the box commits immediately rather than waiting out the debounce.
+  const commitNickname = useCallback((id: number, value: string) => {
+    clearTimeout(pendingSaves.current[id]?.timer);
+    delete pendingSaves.current[id];
+    const save = saveNickname(id, value);
+    inflightSaves.current.add(save);
+    save.finally(() => inflightSaves.current.delete(save));
+    return save;
+  }, [saveNickname]);
+
   const editNickname = (id: number, value: string) => {
     setNicknameDrafts(prev => ({ ...prev, [id]: value }));
-    clearTimeout(saveTimers.current[id]);
-    saveTimers.current[id] = setTimeout(() => saveNickname(id, value), 600);
+    clearTimeout(pendingSaves.current[id]?.timer);
+    pendingSaves.current[id] = { value, timer: setTimeout(() => commitNickname(id, value), 600) };
   };
 
-  // Leaving the box commits immediately rather than waiting out the debounce, so
-  // printing right after typing prints what is on screen.
-  const commitNickname = (id: number, value: string) => {
-    clearTimeout(saveTimers.current[id]);
-    saveNickname(id, value);
+  const flushPendingSaves = useCallback(() => {
+    Object.entries(pendingSaves.current).forEach(([id, { value }]) => commitNickname(Number(id), value));
+  }, [commitNickname]);
+
+  // Closing the tab or navigating away sends whatever is still waiting out the debounce.
+  useEffect(() => {
+    window.addEventListener('pagehide', flushPendingSaves);
+    return () => {
+      window.removeEventListener('pagehide', flushPendingSaves);
+      flushPendingSaves();
+    };
+  }, [flushPendingSaves]);
+
+  // Sends every unsaved nickname and waits for all saves, so a print never runs ahead of
+  // one. Returns the nicknames written, later writes winning.
+  const settleNicknames = async () => {
+    flushPendingSaves();
+    const saved = await Promise.all([...inflightSaves.current]);
+    return new Map(saved.flatMap(s => (s ? [[s.id, s.nickname] as const] : [])));
   };
 
   const printedNames = useMemo(() => computeDisplayNames(roster ?? []), [roster]);
@@ -190,8 +217,8 @@ export default function PrintBadgesPage() {
 
   // The badge name and this column read the same maps, so the column is proof of what
   // will print.
-  const printedName = (p: ParticipantRow) =>
-    printedNames.get(p.id) ?? (roster ? offRosterName(p) : `User #${p.id}`);
+  const printedName = (p: ParticipantRow, names = printedNames) =>
+    names.get(p.id) ?? (roster ? offRosterName(p) : `User #${p.id}`);
 
   const toggleSelection = (id: number) => {
     const newSet = new Set(selectedIds);
@@ -228,9 +255,15 @@ export default function PrintBadgesPage() {
     setIsGenerating(true);
 
     try {
+      // This render's roster predates any save settled here, so fold those in.
+      const saved = await settleNicknames();
+      const withSaved = <T extends { id: number; nickname: string | null }>(p: T): T =>
+        saved.has(p.id) ? { ...p, nickname: saved.get(p.id) ?? null } : p;
+      const names = saved.size ? computeDisplayNames((roster ?? []).map(withSaved)) : printedNames;
+
       // Add QR code data URIs
       const badgesWithQr = await Promise.all(
-        selectedVisible.map(async (p) => {
+        selectedVisible.map(withSaved).map(async (p) => {
           const qrDataUri = await QRCode.toDataURL(p.id.toString(), {
             width: 200,
             margin: 1,
@@ -241,7 +274,7 @@ export default function PrintBadgesPage() {
           return {
             id: p.id,
             name: p.name ?? '',
-            displayName: printedName(p),
+            displayName: printedName(p, names),
             year: printedYears.get(p.id) ?? null,
             qrDataUri,
           };
@@ -292,10 +325,11 @@ export default function PrintBadgesPage() {
         />
       ),
     },
-    { header: 'ID', render: (p) => <Text span c="dimmed">#{p.id}</Text> },
+    { header: 'ID', render: (p) => <Text span c="dimmed">#{p.id}</Text>, sortBy: (p) => p.id },
     {
       header: 'Name',
       render: (p) => <Text fw={600}>{p.name || 'N/A'}</Text>,
+      sortBy: (p) => p.name,
     },
     ...(canEditNickname ? [{
       header: 'Nickname',
@@ -310,19 +344,23 @@ export default function PrintBadgesPage() {
           onBlur={(e) => commitNickname(p.id, e.currentTarget.value)}
         />
       ),
+      sortBy: (p: ParticipantRow) => p.nickname || null,
     }] : []),
     {
       header: 'Printed Name',
       render: (p) => <Text>{printedName(p)}</Text>,
+      sortBy: printedName,
     },
     {
       header: 'Membership',
       render: (p) => (p.isMember ? <Text c="green">Active</Text> : <Text c="red">Inactive</Text>),
+      sortBy: (p) => (p.isMember ? 'Active' : 'Inactive'),
     },
     {
       // Blank here means blank on the badge — the renewal prompt, visible before printing.
       header: 'Year',
       render: (p) => <Text c={printedYears.get(p.id) ? undefined : 'dimmed'}>{printedYears.get(p.id) ?? 'Not renewed'}</Text>,
+      sortBy: (p) => printedYears.get(p.id),
     },
     {
       header: 'Roles',

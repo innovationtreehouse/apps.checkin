@@ -153,6 +153,10 @@ jobs:
               checkin-app/tests/security/*) return 0 ;;
               */__tests__/*|*.test.ts|*.test.tsx|*.spec.ts) return 0 ;;
               checkin-app/prisma/schema.prisma) return 0 ;;          # @sensitivity annotations
+              # Vendored Inventory libraries adopt this regime over their own
+              # separate schemas (#1286 §5): those schemas carry @sensitivity +
+              # a `generator security` block feeding the merged classifications.
+              packages/*/prisma/schema.prisma) return 0 ;;           # @sensitivity annotations
               docs/*|*/docs/*|*.md) return 0 ;;
               .github/CODEOWNERS) return 0 ;;
               .github/workflows/security-boundary-isolation.yml) return 0 ;;
@@ -172,11 +176,21 @@ jobs:
             if is_boundary "$f"; then BOUNDARY_TOUCHED=1; BOUNDARY_FILES+=("$f"); fi
           done
 
-          # Re-tier detection: an existing field moving between tiers in the
-          # generated classifications. Pure additions (new fields/models) pass.
+          # Re-tier detection: an existing field moving between tiers in a
+          # generated classifications map. Pure additions (new fields/models)
+          # pass. Every checked-in generator output under generated/ is a
+          # source of truth for some schema (checkin's own, or a vendored
+          # package's per #1286 §5) — loop over whichever of them changed
+          # rather than naming one, so a re-tier in any of them is caught.
           RETIER=""
-          CLS=checkin-app/src/security/generated/classifications.ts
-          if printf '%s\n' "${CHANGED[@]}" | grep -qx "$CLS"; then
+          GENERATED_CHANGED=()
+          for f in "${CHANGED[@]}"; do
+            case "$f" in
+              checkin-app/src/security/generated/*.ts) GENERATED_CHANGED+=("$f") ;;
+            esac
+          done
+          for CLS in "${GENERATED_CHANGED[@]:-}"; do
+            [ -z "$CLS" ] && continue
             DIFF=$(git diff "$BASE_SHA"..."$HEAD_SHA" -- "$CLS")
             # `|| true`: under set -euo pipefail, grep's exit 1 on zero matches
             # would kill the script mid-step with no verdict — which failed every
@@ -188,10 +202,10 @@ jobs:
               [ -z "$field" ] && continue
               newtier=$(echo "$ADDED" | awk -v f="$field" '$1 == f { print $2 }' | head -1)
               if [ -n "$newtier" ] && [ "$newtier" != "$oldtier" ]; then
-                RETIER="$RETIER $field:$oldtier->$newtier"
+                RETIER="$RETIER $field:$oldtier->$newtier (in $CLS)"
               fi
             done <<< "$REMOVED"
-          fi
+          done
           [ -n "$RETIER" ] && BOUNDARY_TOUCHED=1
 
           if [ "$BOUNDARY_TOUCHED" -eq 0 ]; then

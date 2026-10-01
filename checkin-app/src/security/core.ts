@@ -44,12 +44,35 @@
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
-import { classifications, type Models, type FieldsOf } from './generated/classifications';
+import {
+    classifications as checkinClassifications,
+    relations as checkinRelations,
+} from './generated/classifications';
+import {
+    classifications as catalogClassifications,
+    relations as catalogRelations,
+} from './generated/catalog-classifications';
+import {
+    classifications as catalogSyntheticClassifications,
+    relations as catalogSyntheticRelations,
+} from './catalogSyntheticClassifications';
 import type { BusinessRole } from '@/types/auth';
 import { assertNever } from '@/lib/lifecycle/classify';
 
-export type { Models, FieldsOf };
-export { classifications };
+// checkin and the global catalog (#1286 §5) keep separate Prisma schemas, each
+// with its own `generator security` map. Their model names are disjoint
+// (enforced by having no shared schema), so a flat merge is the whole-system
+// classification map every boundary consumer (stripper, outbound, registry)
+// reads through. This is the single merge point — import `classifications` /
+// `relations` from here, not from either generated file.
+// The synthetic map adds non-Prisma response models (e.g. CatalogItemCount, a
+// count endpoint's scalar total — #1286 §7); its keys are disjoint from both
+// generated maps, so the flat merge stays unambiguous.
+export const classifications = { ...checkinClassifications, ...catalogClassifications, ...catalogSyntheticClassifications } as const;
+export const relations = { ...checkinRelations, ...catalogRelations, ...catalogSyntheticRelations } as const;
+
+export type Models = keyof typeof classifications;
+export type FieldsOf<M extends Models> = keyof (typeof classifications)[M];
 
 export type SensitiveTier = 'pii' | 'personal' | 'internal';
 export type Tier = 'public' | 'member' | SensitiveTier | 'secret';
@@ -87,6 +110,9 @@ export type Role =
     | 'isKeyholder'
     | 'isBackgroundCheckReviewer'
     | 'isOperations'
+    // Curates the global catalog (#1286 §6). A Person role boolean, stamped on
+    // the session like the others; grants the manager view on catalog routes.
+    | 'isInventoryManager'
     // Holds a MAY_CERTIFY_OTHERS toolStatus (a shop certifier). Not a Person
     // role boolean — derived from session.user.toolStatuses (see callerHoldsRole).
     | 'certifier'
@@ -117,6 +143,7 @@ export const VALID_ROLES = new Set<Role>([
     'isKeyholder',
     'isBackgroundCheckReviewer',
     'isOperations',
+    'isInventoryManager',
     'certifier',
     'householdLead',
     'programLeadMentor',
@@ -146,6 +173,16 @@ export type Authorize =
     | 'authenticated'
     | 'self'
     | { anyRole: BusinessRole[] }
+    // Catalog read admission (#1286 §6): the single chokepoint for reading the
+    // global catalog — INVENTORY_MANAGER, any RBAC-role holder, a program leader,
+    // or a volunteer (keyed by email). Broader than the ops roles, deliberately:
+    // the catalog is non-pii reference data (writes stay INVENTORY_MANAGER-only).
+    | 'catalog-viewer'
+    // Catalog write admission (#1286 §6): INVENTORY_MANAGER only. A dedicated
+    // variant rather than `{ anyRole: ['isInventoryManager'] }` so the boundary
+    // does not depend on isInventoryManager being in BusinessRole (types/auth.ts)
+    // — keeping this a session-flag check resolved entirely inside resolveAccess.
+    | 'inventory-manager'
     // Shop certifier (a MAY_CERTIFY_OTHERS toolStatus). Admits certifiers OR
     // admins (isSysadmin/isBoardMember) — see resolveAccess. Backed by a
     // predicate because 'certifier' is not a Person role boolean.
@@ -267,6 +304,7 @@ function roleNeeds(role: Role): Partial<CtxNeeds> {
         case 'isKeyholder':
         case 'isBackgroundCheckReviewer':
         case 'isOperations':
+        case 'isInventoryManager':
         case 'certifier':
         case 'householdLead':
             // callerHoldsRole answers these from the session alone.
@@ -285,6 +323,8 @@ function authorizeNeeds(authorize: Authorize): Partial<CtxNeeds> {
         case 'public':
         case 'authenticated':
         case 'self':
+        case 'catalog-viewer':
+        case 'inventory-manager':
         case 'certifier':
         case 'household-lead':
         case 'household-member':

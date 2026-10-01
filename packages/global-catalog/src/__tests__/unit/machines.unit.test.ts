@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { itemReferenceProposalMachine, assertItemReferenceProposalTransition } from "@/workflows/item-reference-proposal.machine";
-import { provisionalProposalMachine, assertProvisionalProposalTransition } from "@/workflows/provisional-proposal.machine";
-import { conversionChallengeMachine, assertConversionChallengeTransition } from "@/workflows/conversion-challenge.machine";
-import { conflictResolutionMachine, assertConflictResolutionTransition } from "@/workflows/conflict-resolution.machine";
+import { itemReferenceProposalMachine, assertItemReferenceProposalTransition } from "../../workflows/item-reference-proposal.machine";
+import { provisionalProposalMachine, assertProvisionalProposalTransition } from "../../workflows/provisional-proposal.machine";
+import { conversionChallengeMachine, assertConversionChallengeTransition } from "../../workflows/conversion-challenge.machine";
+import { conflictResolutionMachine, assertConflictResolutionTransition } from "../../workflows/conflict-resolution.machine";
 import { WorkflowTransitionError } from '@inventory/workflows';
 
 // Helper: resolve a machine snapshot from a state value string

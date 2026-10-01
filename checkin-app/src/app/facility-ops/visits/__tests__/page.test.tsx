@@ -72,6 +72,22 @@ describe("facility-ops/visits page", () => {
     expect(rows[0]).toHaveTextContent("Stu Student");
   });
 
+  it("filters rows by participant or event", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/facility/visits": { visits } });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+
+    const input = screen.getByPlaceholderText(/Filter by/);
+    fireEvent.change(input, { target: { value: "open facility" } });
+    expect(screen.queryByText("Val Volunteer")).not.toBeInTheDocument();
+    expect(screen.getByText("Stu Student")).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "VAL" } });
+    expect(screen.getByText("Val Volunteer")).toBeInTheDocument();
+    expect(screen.queryByText("Stu Student")).not.toBeInTheDocument();
+  });
+
   it("edits and saves a visit's arrival/departure", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({ "/api/facility/visits": { visits } });

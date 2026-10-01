@@ -1,5 +1,4 @@
-import { classifications, relations } from '@/security/generated/classifications';
-import { parseToken, type Token, type Tier } from '@/security/core';
+import { classifications, relations, parseToken, type Token, type Tier } from '@/security/core';
 
 /**
  * Walk a response value, collecting every (Model.field, tier) pair encountered.
