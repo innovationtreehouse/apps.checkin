@@ -12,6 +12,7 @@ import { DataTable, type DataTableColumn } from "@/components/admin/DataTable";
 import BadgeDocument from "@/components/admin/BadgeDocument";
 import StickerDocument from "@/components/admin/StickerDocument";
 import { computeDisplayNames } from "@/components/admin/badgeNames";
+import { goesBy } from "@/lib/person/name";
 
 type ParticipantRow = {
   id: number;
@@ -209,11 +210,10 @@ export default function PrintBadgesPage() {
   const printedNames = useMemo(() => computeDisplayNames(roster ?? []), [roster]);
   const printedYears = useMemo(() => new Map((roster ?? []).map(m => [m.id, m.year])), [roster]);
 
-  // Off-roster people get a bare first name — no disambiguation. Running them through
-  // computeDisplayNames over the search results made names shift when the query changed
-  // (#1651). A bare first name can collide, but it is stable across searches.
-  const offRosterName = (p: ParticipantRow) =>
-    (p.nickname ?? '').trim() || (p.name ?? '').trim().split(/\s+/)[0] || `User #${p.id}`;
+  // Off-roster people get the bare name they go by — no disambiguation, which would run
+  // against the search results and change a printed name whenever the query changes. A
+  // bare name can collide, but it is stable across searches.
+  const offRosterName = (p: ParticipantRow) => goesBy(p) || `User #${p.id}`;
 
   // The badge name and this column read the same maps, so the column is proof of what
   // will print.

@@ -7,6 +7,7 @@ import { notifications } from "@mantine/notifications";
 import { useAutoCycle } from "../../../hooks/useAutoCycle";
 import { usePolling } from "@/hooks/usePolling";
 import { getKioskDisplayNames } from "@/lib/kiosk-names";
+import { goesBy } from "@/lib/person/name";
 import { ToolLevelBadge, toToolLevel, toolLevelDot } from "@/components/ToolLevelBadge";
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -104,17 +105,11 @@ function KioskCertificationsInner() {
     return name.split(/\s+/).map(word => (word.length > MAX_WORD_LEN ? word.slice(0, MAX_WORD_LEN - 1) + '.' : word));
   };
 
-  // Sort by the name the row actually shows — the nickname where there is one, else the
-  // first name (name is server-resolved, email-prefix included).
+  // Sort by the name the row actually shows — the name each person goes by (name is
+  // server-resolved, email-prefix included).
   const sortAlphabetically = (a: Person, b: Person) => {
-    const getFirstName = (p: Person) => {
-      const nickname = p.nickname?.trim();
-      if (nickname) return nickname.toLowerCase();
-      if (p.name.includes(',')) return p.name.split(',')[1].trim().toLowerCase();
-      return p.name.split(' ')[0].toLowerCase();
-    };
-    const firstA = getFirstName(a);
-    const firstB = getFirstName(b);
+    const firstA = goesBy(a).toLowerCase();
+    const firstB = goesBy(b).toLowerCase();
     if (firstA !== firstB) return firstA.localeCompare(firstB);
     return a.name.localeCompare(b.name);
   };
