@@ -6,7 +6,6 @@ export type {
   InventoryLog,
   LocationLog,
   ReceiveQueue,
-  InventorySettingsData,
   InventoryProvisionalItem,
   InventoryProvisionalResolution,
   InventoryMergeConflict,

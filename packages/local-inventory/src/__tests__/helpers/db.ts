@@ -1,5 +1,5 @@
 import { describe } from "vitest";
-import { db, initDb } from "../../lib/db/index";
+import { db } from "../../lib/db/index";
 
 /**
  * DB-gate for the integration tier. `describeDb` is `describe` when LOCAL_INVENTORY_DATABASE_URL
@@ -9,12 +9,9 @@ import { db, initDb } from "../../lib/db/index";
  */
 export const describeDb = process.env.LOCAL_INVENTORY_DATABASE_URL ? describe : describe.skip;
 
-// Delete all data in FK-safe order (children before parents), then re-seed.
+// Delete all data in FK-safe order (children before parents).
 // Using deleteMany avoids raw SQL and works regardless of connection pool behavior.
 export async function resetDb(): Promise<void> {
-  // Ensure schema is ready before we try to delete from it
-  await initDb();
-
   await db.provisionalItemLog.deleteMany({});
   await db.inventoryMergeConflict.deleteMany({});
   await db.inventoryLog.deleteMany({});
@@ -26,9 +23,4 @@ export async function resetDb(): Promise<void> {
   await db.inventoryProvisionalItem.deleteMany({});
   await db.orgItem.deleteMany({});
   await db.location.deleteMany({});
-  // Reset settings to defaults without deleting the row (avoids AUTOINCREMENT id reuse issue)
-  await db.inventorySettingsData.update({
-    where: { id: 1 },
-    data: { globalServerUrl: null, pollIntervalMinutes: 3, pollWindowStart: "00:00", pollWindowEnd: "23:59" },
-  });
 }

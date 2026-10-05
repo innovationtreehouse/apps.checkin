@@ -13,7 +13,6 @@ export * from "./lib/repositories/receiveQueueRepository";
 
 export * from "./lib/services/inventoryService";
 export * from "./lib/services/locationService";
-export * from "./lib/services/orgSettingsService";
 export * from "./lib/services/provisionalItemService";
 export * from "./lib/services/receiptService";
 export * from "./lib/services/receiveQueueService";

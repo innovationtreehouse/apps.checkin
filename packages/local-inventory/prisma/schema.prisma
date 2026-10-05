@@ -76,16 +76,6 @@ model ReceiveQueue {
   @@map("receive_queue")
 }
 
-model InventorySettingsData {
-  id                  Int     @id
-  globalServerUrl     String? @map("global_server_url")
-  pollIntervalMinutes Int     @default(3) @map("poll_interval_minutes")
-  pollWindowStart     String  @default("00:00") @map("poll_window_start")
-  pollWindowEnd       String  @default("23:59") @map("poll_window_end")
-
-  @@map("settings_data")
-}
-
 // Named InventoryProvisionalItem (not the source's `ProvisionalItem`) so it does not
 // collide with the catalog schema's own `ProvisionalItem` in checkin's security
 // classification map, which is a flat merge keyed by model name across schemas. The
