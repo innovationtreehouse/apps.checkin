@@ -20,12 +20,44 @@ export interface MirrorBalanceTxn {
   netCents: number;
 }
 
+/** One order line (shop_order_line). Amounts in cents; `variantId` is null for custom items. */
+export interface MirrorOrderLine {
+  orderGid: string;
+  variantId: string | null;
+  title: string;
+  sku: string | null;
+  quantity: number;
+  priceCents: number;
+  discountCents: number;
+}
+
+/** A variant the mirror has seen, with its latest title and SKU. */
+export interface MirrorItem {
+  variantId: string;
+  title: string;
+  sku: string | null;
+}
+
 /** Read-only view of the already-ingested Shopify mirror. Never selects customer columns. */
 export interface PayoutMirror {
   /** Payouts with status "paid" issued on or after `from`. */
   paidPayoutsSince(from: Date): Promise<MirrorPayout[]>;
   payout(gid: string): Promise<MirrorPayout | null>;
   transactions(payoutGid: string): Promise<MirrorBalanceTxn[]>;
+  orderLines(orderGids: string[]): Promise<MirrorOrderLine[]>;
+  itemsSeen(): Promise<MirrorItem[]>;
+}
+
+/** A budget-owner bucket (checkin's BudgetOwner), the QuickBooks category an item books to. */
+export interface OwnerInfo {
+  id: number;
+  name: string;
+  archivedAt: Date | null;
+}
+
+/** Read-only list of checkin's budget-owner buckets. Same port bulk donation declares. */
+export interface OwnerDirectory {
+  list(): Promise<OwnerInfo[]>;
 }
 
 /**

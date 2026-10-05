@@ -1,8 +1,9 @@
-import type { PayoutMirror, QbDepositSource } from "./contract";
+import type { OwnerDirectory, PayoutMirror, QbDepositSource } from "./contract";
 
 export interface IncomeConfig {
   mirror?: PayoutMirror;
   deposits?: QbDepositSource;
+  owners?: OwnerDirectory;
   /** Days after a payout within which its deposit must be booked. */
   windowDays?: number;
   /** Earliest payout date to reconcile. Defaults to the oldest payout in the mirror. */

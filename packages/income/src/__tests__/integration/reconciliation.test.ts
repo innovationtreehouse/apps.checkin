@@ -34,6 +34,8 @@ const mirror: PayoutMirror = {
   paidPayoutsSince: async (from) => payouts.filter((p) => p.status === "paid" && p.issuedAt >= from),
   payout: async (gid) => payouts.find((p) => p.payoutGid === gid) ?? null,
   transactions: async (gid) => txns[gid] ?? [],
+  orderLines: async () => [],
+  itemsSeen: async () => [],
 };
 
 function bind() {
@@ -395,6 +397,15 @@ describeDb("reconciliationService.resolve — retry and the pre-seated create st
     });
     await runReconcile(ORG_A, NOW);
     expect((await rowFor("P1")).status).toBe("WAITING");
+  });
+});
+
+describeDb("IncomeItemCategory", () => {
+  it("maps a variant to one bucket, with no FK to the bucket table", async () => {
+    await db.incomeItemCategory.create({ data: { variantId: "gid://shopify/ProductVariant/1", budgetOwnerId: 999 } });
+    await expect(
+      db.incomeItemCategory.create({ data: { variantId: "gid://shopify/ProductVariant/1", budgetOwnerId: 2 } }),
+    ).rejects.toMatchObject({ code: "P2002" });
   });
 });
 

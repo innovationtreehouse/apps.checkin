@@ -25,6 +25,17 @@ CREATE TABLE "payout_reconciliations" (
 );
 
 -- CreateTable
+CREATE TABLE "income_item_categories" (
+    "id" SERIAL NOT NULL,
+    "variant_id" TEXT NOT NULL,
+    "budget_owner_id" INTEGER NOT NULL,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "income_item_categories_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "audit_log" (
     "id" SERIAL NOT NULL,
     "org_id" TEXT NOT NULL,
@@ -50,4 +61,7 @@ CREATE UNIQUE INDEX "payout_reconciliations_org_id_payout_gid_key" ON "payout_re
 
 -- CreateIndex
 CREATE UNIQUE INDEX "payout_reconciliations_org_id_deposit_id_key" ON "payout_reconciliations"("org_id", "deposit_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "income_item_categories_variant_id_key" ON "income_item_categories"("variant_id");
 

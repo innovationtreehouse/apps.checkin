@@ -39,6 +39,19 @@ model PayoutReconciliation {
   @@map("payout_reconciliations")
 }
 
+// Finance's mapping of a Shopify variant to a budget-owner bucket (its QuickBooks category).
+// budget_owner_id is checkin's BudgetOwner.id in another database: no FK, validated through
+// the OwnerDirectory port. Unmapped variants book at organization level.
+model IncomeItemCategory {
+  id            Int      @id @default(autoincrement()) @map("id")
+  variantId     String   @unique @map("variant_id")
+  budgetOwnerId Int      @map("budget_owner_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("income_item_categories")
+}
+
 model IncomeAuditLog {
   id            Int      @id @default(autoincrement()) @map("id")
   orgId         String   @map("org_id")
