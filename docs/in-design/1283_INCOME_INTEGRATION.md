@@ -165,8 +165,9 @@ detectable. Every transition writes `IncomeAuditLog` in the same transaction. A
 run is idempotent and holds a Postgres advisory lock, so the cron and a manual
 "run now" cannot interleave. `window` (default 7 days) and `reconcileFrom`
 (default: the earliest CSV payout) are injected through `configureIncome()`.
-QBO's own history bounds how far back matching can reach; older payouts land as
-`NO_DEPOSIT` and are dismissed in bulk by finance if the ledger predates them.
+QuickBooks history predates the store's (owner-confirmed), so every payout
+should have a deposit to find. `NO_DEPOSIT` is always a real exception, never
+expected noise for old payouts, and there is no bulk dismiss.
 
 **Exception queues:** import conflicts (`pending`), unmatched details, and
 reconciliation rows in `OPEN` grouped by kind.
