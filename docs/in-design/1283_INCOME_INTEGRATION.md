@@ -147,7 +147,7 @@ source has none and this machine has six edges.
 | `OPEN` | a later run auto-matches (late booking) | `MATCHED` |
 | `OPEN` | finance: match to a chosen deposit | `RESOLVED` (manual match) |
 | `OPEN` | finance: dismiss with a required reason (e.g. booked as something other than a deposit) | `RESOLVED` (dismissed) |
-| `MATCHED` / `RESOLVED` | run: deposit gone or amount changed, or payout amount/status changed | `OPEN` + kind `DRIFT` |
+| `MATCHED` / `RESOLVED` | run: deposit gone or amount changed, or payout gone from the mirror or its amount/status changed | `OPEN` + kind `DRIFT` |
 
 Rules: payouts not yet paid are skipped, not queued. A deposit backs at most one
 payout (partial unique on the matched deposit id, so tests run `migrate deploy`,
