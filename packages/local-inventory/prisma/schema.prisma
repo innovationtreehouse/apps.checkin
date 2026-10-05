@@ -76,7 +76,7 @@ model ReceiveQueue {
   @@map("receive_queue")
 }
 
-model SettingsData {
+model InventorySettingsData {
   id                  Int     @id
   globalServerUrl     String? @map("global_server_url")
   pollIntervalMinutes Int     @default(3) @map("poll_interval_minutes")
@@ -129,7 +129,7 @@ model InventoryMergeConflict {
   @@map("inventory_merge_conflicts")
 }
 
-model ProvisionalResolution {
+model InventoryProvisionalResolution {
   id                Int      @id @default(autoincrement())
   orgId             String   @map("org_id")
   provisionalGtin13 String   @map("provisional_gtin13")
@@ -143,7 +143,7 @@ model ProvisionalResolution {
   @@map("provisional_resolutions")
 }
 
-model ReceivedOrgEvent {
+model InventoryReceivedOrgEvent {
   id            Int      @id @default(autoincrement())
   orgId         String   @map("org_id")
   eventType     String   @map("event_type")

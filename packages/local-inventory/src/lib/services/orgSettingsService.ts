@@ -1,10 +1,10 @@
 import type { Db } from "../db/index";
-import type { SettingsData } from "../db/schema";
+import type { InventorySettingsData } from "../db/schema";
 
 export function createOrgSettingsService({ db }: { db: Db }) {
   return {
-    async getConfig(): Promise<SettingsData> {
-      const row = await db.settingsData.findFirst({ where: { id: 1 } });
+    async getConfig(): Promise<InventorySettingsData> {
+      const row = await db.inventorySettingsData.findFirst({ where: { id: 1 } });
       return row ?? {
         id: 1,
         globalServerUrl: null,
@@ -19,8 +19,8 @@ export function createOrgSettingsService({ db }: { db: Db }) {
       pollIntervalMinutes: number;
       pollWindowStart: string;
       pollWindowEnd: string;
-    }): Promise<SettingsData> {
-      return db.settingsData.upsert({
+    }): Promise<InventorySettingsData> {
+      return db.inventorySettingsData.upsert({
         where: { id: 1 },
         create: { id: 1, ...data },
         update: data,

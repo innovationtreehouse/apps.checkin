@@ -20,14 +20,14 @@ export async function resetDb(): Promise<void> {
   await db.inventoryLog.deleteMany({});
   await db.locationLog.deleteMany({});
   await db.receiveQueue.deleteMany({});
-  await db.receivedOrgEvent.deleteMany({});
+  await db.inventoryReceivedOrgEvent.deleteMany({});
   await db.receivedInventoryDelta.deleteMany({});
-  await db.provisionalResolution.deleteMany({});
+  await db.inventoryProvisionalResolution.deleteMany({});
   await db.inventoryProvisionalItem.deleteMany({});
   await db.orgItem.deleteMany({});
   await db.location.deleteMany({});
   // Reset settings to defaults without deleting the row (avoids AUTOINCREMENT id reuse issue)
-  await db.settingsData.update({
+  await db.inventorySettingsData.update({
     where: { id: 1 },
     data: { globalServerUrl: null, pollIntervalMinutes: 3, pollWindowStart: "00:00", pollWindowEnd: "23:59" },
   });

@@ -94,7 +94,7 @@ async function _doInitDb(): Promise<void> {
   // both miss the row and both INSERT id=1, the loser throwing P2002. retryOnUniqueRace makes
   // the seed idempotent under any concurrency.
   await retryOnUniqueRace(() =>
-    db.settingsData.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
+    db.inventorySettingsData.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
   );
 }
 

@@ -1,6 +1,6 @@
 import type { Db } from "../db/index";
 import { isUniqueConstraintError } from "../db/index";
-import type { ProvisionalResolution } from "../db/schema";
+import type { InventoryProvisionalResolution } from "../db/schema";
 
 export interface ProvisionalResolutionInput {
   kind: string; // "approved" | "mapped_to_existing" | "rejected"
@@ -20,7 +20,7 @@ export function createProvisionalResolutionRepository(db: Db) {
       orgId: string,
       provisionalGtin13: string,
       data: ProvisionalResolutionInput,
-    ): Promise<ProvisionalResolution> {
+    ): Promise<InventoryProvisionalResolution> {
       const payload = {
         kind: data.kind,
         realGtin13: data.realGtin13 ?? null,
@@ -28,7 +28,7 @@ export function createProvisionalResolutionRepository(db: Db) {
         sourceEventId: data.sourceEventId ?? null,
       };
       try {
-        return await db.provisionalResolution.upsert({
+        return await db.inventoryProvisionalResolution.upsert({
           where: { provisional_resolution_org_gtin_unique: { orgId, provisionalGtin13 } },
           create: { orgId, provisionalGtin13, ...payload },
           update: payload,
@@ -47,8 +47,8 @@ export function createProvisionalResolutionRepository(db: Db) {
     async findByGtin(
       orgId: string,
       provisionalGtin13: string,
-    ): Promise<ProvisionalResolution | null> {
-      return db.provisionalResolution.findFirst({
+    ): Promise<InventoryProvisionalResolution | null> {
+      return db.inventoryProvisionalResolution.findFirst({
         where: { orgId, provisionalGtin13 },
       });
     },

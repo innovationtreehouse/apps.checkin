@@ -146,7 +146,7 @@ export function createProvisionalItemService({
      * Apply a previously-recorded catalog resolution to a provisional row that has just been
      * created (reconcile-on-ingest). Fixes the event-before-row ordering: when the S5
      * resolution arrived before this consumer had a provisional row, approve/map/reject
-     * persisted a durable ProvisionalResolution and no-op'd the apply. Once the row exists,
+     * persisted a durable InventoryProvisionalResolution and no-op'd the apply. Once the row exists,
      * call this to apply it now — passing the STORED sourceEventId so the merge-conflict
      * upsert stays keyed on the original event. Idempotent: the status early-returns inside
      * approve/map/reject guard against double-apply, and a missing resolution is a no-op.
