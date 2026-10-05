@@ -134,6 +134,10 @@ prisma/schema.prisma   11 models (own migrations)
 `ProvisionalItem`, `ProvisionalItemMappingLog`, `WorkflowTransitionLog`,
 `OrgEvent`.
 
+`ProvisionalItemMappingLog` and `WorkflowTransitionLog` record what happened
+(who mapped what, which transition ran), so they port intact as audit even
+though no screen reads them today.
+
 The domain layer is framework-light and ports almost verbatim. The friction is
 **auth and UI wiring**, not the domain.
 
@@ -201,14 +205,14 @@ checkin/
         routes/                            route-handler factories (GET/POST/…)
         nav.ts                             section-tab links (NavLink[]) + top-level entry descriptor
         runtime.ts                         configureCatalog() + getPrincipal()/db/org accessors
-        contract.ts                        CatalogAuth / CatalogPrincipal interfaces
+        contract.ts                        CatalogAuth / CatalogPrincipal interfaces + OrgEventConsumer port (§8 X1)
       package.json
     gtin/  workflows/                      vendored @inventory/* deps
     receipt-types/                         TEMPORARY vendored copy
   checkin-app/                             ← WIRING ONLY, no catalog logic
     src/instrumentation.ts                 + one configureCatalog({...}) call at boot
     src/app/(catalog)/**/{page,route}.tsx  re-export stubs — human /api/catalog/* (34 endpoints, built)
-    # src/app/api/internal/[...path]       org-bearer machine surface — DEFERRED, blocked (§8)
+    # src/app/api/internal/[...path]       org-bearer machine surface — not hosted (§8)
     src/components/AppFrame.tsx            + one NAV_ITEMS entry (Inventory), from the library descriptor
     src/security/registry.ts               + catalog route entries (boundary is checkin's; scopeBindings: none — §5)
     src/security/core.ts                   + spread the catalog classifications into the merge
@@ -506,7 +510,10 @@ rewrite.
     rows"; noted so it isn't a surprise later.
 - **Keep the `org_id` / `org_name` columns** (String) — do not drop them. They
   already match a registry id; single-org just stamps every row with the one
-  seeded org, and multi-org fills them from the resolved accessor.
+  seeded org, and multi-org fills them from the resolved accessor. `org_name` is
+  a point-in-time snapshot, like the username snapshots, and it travels with the
+  row because the catalog will serve remote orgs (the file export, §12) that are
+  not in this checkin's `Org` registry.
 - **User identity (`local_user_id`) maps to checkin `Person.id`**, supplied by
   the injected `CatalogPrincipal` (`getPrincipal()`), not a separate users table
   (the source's local-users table is gone with its auth). So **both org and user
@@ -607,114 +614,126 @@ sidebar order.
 
 ---
 
-## 8. Receipt-app crossings — when HTTP becomes an in-process call
+## 8. Crossings with the other Inventory libraries — in-process calls
 
-**Receipt-app also migrates into this same Next process** (later). So today's
-cross-app HTTP calls between catalog and receipt-app become **in-process
-cross-library calls**. This section fixes *when and how* each crossing converts.
-Guiding decisions: **keep the JSON/contract shapes** (they stay the shared
-vocabulary — remove a schema only if a field genuinely dies); convert
-**transport, not architecture**.
+Every other Inventory app (receipt, local inventory, expense, workflow-mapping,
+and the rest) also moves into this same Next process, each as its own library.
+So the source's cross-app HTTP calls between the catalog and its neighbours
+become **synchronous in-process calls between libraries**. No crossing has an
+HTTP adapter, and nothing polls. Guiding decision: **keep the JSON/contract
+shapes** (they stay the shared vocabulary; remove a schema only if a field
+genuinely dies) and change only the transport.
 
 ### The two crossing archetypes (from the source)
 
-| Crossing | Direction | Kind | Contract | Today's transport |
+| Crossing | Direction | Kind | Contract | Source transport |
 |---|---|---|---|---|
-| **S4** — `provisional-gtin/next`, `items/lookup` (3-pass matcher), `items/check-references`, item-reference / provisional-item proposals, conflict report | receipt → catalog | **synchronous RPC** | `@inventory/receipt-types` zod schemas | `POST /api/internal/[...path]`, org-bearer auth |
-| **S5** — `emitOrgEvent(tx, orgId, payload)` | catalog → world | **async outbox** — validated payload written to the `OrgEvent` table in-transaction, drained by a poller/consumer | `orgEventPayloadSchema` (S5) | table write + polled read |
+| **S4** — `provisional-gtin/next`, `items/lookup` (3-pass matcher), `items/check-references`, item-reference / provisional-item proposals, conflict report | workflow-mapping → catalog | **synchronous call** | `@inventory/receipt-types` zod schemas | `POST /api/internal/[...path]`, org-bearer auth |
+| **S5** — `emitOrgEvent(tx, orgId, payload)` | catalog → local-inventory, expense, workflow-mapping | **post-commit call-out (X1, below)** | `orgEventPayloadSchema` (S5) | `OrgEvent` row written in-transaction; consumers HTTP-polled it |
 
-These convert **differently** — that is the whole point of deciding now.
+In checkin both are in-process: S4 is a direct call into the catalog service
+through the caller's port, and S5 is the call-out defined in X1.
 
-### The org-bearer machine surface — DEFERRED, blocked (Track 4)
+### The org-bearer machine surface — not hosted
 
 The source has **more org-bearer routes than the S4 row above enumerates**, and
 two of them collide with the human `/api/catalog/*` namespace (§3/§7). Verified
-against `global-catalog-app/src/app/api/**` at `innovationtreehouse/Inventory@main`
-plus the live remote consumers.
+against `global-catalog-app/src/app/api/**` at `innovationtreehouse/Inventory@main`.
 
-**Track 4 did NOT build the machine surface — it is deferred, pending a boundary
-decision.** (An earlier planning note called it "ported verbatim / owner-approved";
-that did not survive contact with checkin's auth boundary. This is the corrected
-as-built.) The org-bearer route `/api/internal/[...path]` is **blocked** by four
-real constraints:
+checkin does **not** host the org-bearer route `/api/internal/[...path]`. Four
+constraints block it:
 
 1. Its gate is `requireOrgBearer` from the **retired** `@inventory/web-auth`
-   (§6 deletes it) — **no checkin-side org-bearer validator is specified**.
+   (§6 deletes it), and checkin has no org-bearer validator.
 2. checkin's `authenticateRequest`/`resolveAccess`/`handler()` pipeline has **no
    org-bearer auth path**, and the registry `authorize` grammar **cannot express
    one**.
 3. `scripts/legacy-authz-routes.txt` (where every other machine route lives) is
-   **frozen** — no new entries.
+   **frozen**; no new entries.
 4. Placing it at `src/app/api/internal/[...path]/route.ts` trips
-   `check-route-coverage`'s **`new-route-old-authz` ratchet — a blocking error**.
+   `check-route-coverage`'s **`new-route-old-authz` ratchet**, a blocking error.
 
-So there is currently **no sanctioned way to land a new machine-bearer route** in
-checkin. The options were (A) extend checkin's auth with an org-bearer
+The options were (A) extend checkin's auth with an org-bearer
 `AuthResult`/`Authorize` variant (own boundary PR); (B) a scoped exception to the
 frozen `legacy-authz-routes.txt` baseline; (C) never host it in checkin.
+**Resolved: (C).** Every caller of the machine surface is an Inventory app that
+moves into this process and calls the catalog service in-process, so there is no
+remote caller to serve. The remote-communication model for orgs outside this
+checkin is a **periodic file export** (catalog dumped to AWS disk, consumers read
+the file), not a live endpoint; a design follow-up (§12) works its format,
+cadence and contract.
 
-**Resolved: (C) (§12).** There are **no remote users at first landing**, so
-checkin never hosts `/api/internal` and A/B are not needed. Longer term the
-remote-communication model is expected to be a **periodic file export** (catalog
-dumped to AWS disk, consumers read the file), not a live endpoint — so hosting
-`/api/internal` is likely never built. A design follow-up issue (§12) works the
-export format/cadence/contract.
-
-**The folded `/items` flat-list branch depends on the same decision — also not
-built.** Disposition of the source's other org-bearer routes:
+Disposition of the source's other org-bearer routes:
 - `GET /api/catalog` (bare flat list) — **dropped, genuinely dead** (duplicate of
   the flat list, no consumer, no future need).
 - **`POST /api/conversion-challenges` (submit a challenge) — DEFERRED, not dead.**
   This is the **dispute path**: a consuming org flags that an item-reference's
   conversion factor is wrong (proposed factor + reason); the manager's
-  GET/accept/reject queue reviews it. It is org-token because the *challenger* is
-  a remote org's app, so it hit the **same machine-surface wall** as the other S4
-  crossings and simply has **no caller yet** — it returns when a challenger
-  (receipt / local-inventory) co-resides, as an **in-process service call** (like
-  the S4 conversions in this section), or via the machine-surface decision. Do
-  **not** treat it as removed capability. *(If a **human**-raised challenge is
-  ever wanted — a manager/staff flagging a bad factor from the UI — that is a
-  checkin-native `catalog-viewer`/`INVENTORY_MANAGER` route, **not** blocked by
-  the org-bearer wall; net-new, flag it if desired.)*
-- `GET /api/catalog/items` (+`/[gtin13]`) flat reads still have remote consumers,
-  served today by the **old** server (option C is their de-facto first-landing
-  state).
+  GET/accept/reject queue reviews it. Its challenger is a future receipt /
+  local-inventory surface, and it returns as an **in-process service call** when
+  that caller exists. Do **not** treat it as removed capability. *(If a
+  **human**-raised challenge is ever wanted — a manager/staff flagging a bad
+  factor from the UI — that is a checkin-native
+  `catalog-viewer`/`INVENTORY_MANAGER` route, net-new; flag it if desired.)*
+- `GET /api/catalog/items` (+`/[gtin13]`) flat reads — **not hosted.** Their
+  consumers (local inventory, expense, workflow-mapping) read through a
+  `CatalogReader` port bound in-process to the catalog service.
 
 **Human vs machine split (built):** `/api/catalog/*` is **human-only**
-(`catalog-viewer` / `INVENTORY_MANAGER`). The org-bearer reads, *if* checkin ever
-hosts them (A/B), go under `/api/internal`, not `/api/catalog` — they share a
-path in the source but differ in auth and response shape, so they cannot be one
-handler.
+(`catalog-viewer` / `INVENTORY_MANAGER`). Machine callers never reach the catalog
+over HTTP; they call its service in-process.
 
-### Conversion rule (per crossing)
+### Crossing rules
 
-1. **Trigger = co-residence.** Convert a crossing only once **both** libraries
-   run in the same process **and** the callee's service surface is importable.
-   Never depend on unlanded code; convert crossing-by-crossing, not big-bang.
-2. **Every crossing sits behind a port** (an interface in `contract.ts`) with
-   **two adapters**: `http` (today) and `in-process` (after co-residence). The
-   binding is chosen once in `configureCatalog()`. **Converting a crossing = swap
-   one adapter binding — zero call-site churn.** The port's types *are* the JSON
-   contract, so the shape is identical in both modes.
-3. **Synchronous RPC (S4):** at co-residence, bind the in-process adapter — the
-   caller imports the catalog service function directly (via the port) instead of
-   the `catalog-client` HTTP stub. Keep the zod schemas as the function
-   param/return types. (This rule assumes an S4 HTTP server exists to retire; per
-   the deferred-machine-surface finding above, checkin may **never host
-   `/api/internal`** — under option C the old server carries S4 for the whole
-   overlap and there is nothing checkin-side to retire.)
-4. **Async outbox (S5):** **do NOT collapse to a direct call.** The outbox
-   (durable `OrgEvent` rows, in-transaction write, retry/ordering/audit) has
-   value independent of transport. At co-residence the consumer stops
-   HTTP-polling the producer and instead **reads the shared `OrgEvent` table
-   in-process** (or a shared in-process bus), but the async seam stays. Collapse
-   to a synchronous call only with a specific reason; default is keep.
-5. **JSON structure stays.** The contract package (`receipt-types` S4 schemas,
-   the S5 `orgEventPayload` schema) remains the shared vocabulary in both modes.
-   The vendored copy (below) is temporary **as a copy** — it becomes the
-   permanent shared `packages/` contract once receipt-app lands. Delete a schema
-   only when its field genuinely dies, not merely because the call went
-   in-process.
+1. **Every crossing is a synchronous in-process call behind a port.** The caller
+   declares the port in its own `contract.ts`; checkin-app binds the
+   implementation once, in the caller's `configure<Lib>()`. A library never
+   imports another library.
+2. **Every crossing is schema-checked at runtime, in-process too.** The callee
+   parses its input with the shared zod schema and the caller parses the
+   response. That keeps an HTTP adapter a binding swap if a library is ever
+   extracted; none exists today.
+3. **No polling inside the app, no DB access at boot, no new schedules.** Any
+   catch-up sweep a crossing needs (the S5 cursor replay below, for one) is a
+   try/catch step inside the existing prod `/api/cron/reconcile-shopify`.
+   `instrumentation.ts` only binds; it never touches a database.
+4. **JSON structure stays.** The contract package (`receipt-types` S4 schemas,
+   the S5 `orgEventPayload` schema) is the shared vocabulary. The vendored copy
+   (below) is temporary **as a copy**; it becomes the permanent shared
+   `packages/` contract once receipt-app lands. Delete a schema only when its
+   field genuinely dies.
+
+### X1 — the post-commit call-out (S5 producer)
+
+Local inventory (#1287 §8a), expense (#1272 §8d) and workflow-mapping (#1289
+§8e) all consume S5 events through this call-out. The catalog's side:
+
+- **The row is the commit receipt.** `emitOrgEvent(tx, orgId, payload)` validates
+  the payload with `orgEventPayloadSchema` and writes the `OrgEvent` row inside
+  the catalog's transaction, as the source does. The catalog and each consumer
+  have separate databases, so a cross-library effect is always two commits; the
+  row is what lets the second one be replayed.
+- **After that transaction commits, the catalog calls each registered consumer
+  in-process, in the same request,** passing the committed events (id, `orgId`,
+  payload). Consumers register through an `OrgEventConsumer` port the catalog
+  declares in `contract.ts` (`onOrgEvents(events)`); checkin-app passes the bound
+  list into `configureCatalog({ ..., orgEventConsumers })`. The catalog never
+  imports a consumer.
+- **A consumer failure never undoes the catalog's write.** The commit has already
+  happened; a throwing consumer is logged, the remaining consumers still run, and
+  the request succeeds.
+- **Each consumer keeps its own cursor in its own database.** The catalog never
+  records who consumed what, because tracking its consumers would couple it to
+  them. A consumer parses each event with `orgEventPayloadSchema`, applies it,
+  and advances its cursor; a throw leaves the cursor behind the failed event.
+- **Replay reads from the cursor.** The catalog exposes a read of one org's
+  events in id order after a given id. The catch-up step in
+  `/api/cron/reconcile-shopify`, or a retry button, has each consumer read from
+  its cursor and re-apply. A consumer whose actions are not set-to-value dedupes
+  on the event id through its received-event ledger.
+- **When it lands:** with the receipt crossing. Nothing consumes events before
+  receipts exist, so until then `emitOrgEvent` writes rows with an empty consumer
+  list.
 
 ### First landing (catalog in, receipt-app not yet)
 
@@ -722,22 +741,14 @@ handler.
   **temporary copies** (mark with a `ponytail:` removal note + tracking
   follow-up). Endgame: promote to a shared `packages/` contract when receipt
   arrives.
-- **Machine surface (`/api/internal`, org-bearer) is NOT hosted by checkin** —
-  option C (§12), since there are **no remote users at first landing**. Nothing to
-  serve; the old server covers any residual consumer during overlap. The eventual
-  remote-communication model is a **file export** (§12 follow-up), not this route.
-- **Consumer repoint (only if checkin ever hosts A/B):** `local-inventory-app`
-  and `workflow-mapping-app` read `/api/catalog/items` (+ `/[gtin13]`) on the old
-  server. If/when checkin hosts the machine surface, they repoint to
-  `/api/internal/items`. Until then they keep pointing at the old server; no
-  checkin change. Tracked as a #1286 follow-up.
-- The **S5 consumer / org-events poller** has no producer in checkin yet: land
-  it **inert** (no scheduled invocation) behind a flag until receipt-app
-  migrates. The outbox producer (`emitOrgEvent`) can run from day one — rows
-  simply accumulate until a consumer is enabled. `conversion-challenges` ships
-  **manager GET/accept/reject only** at first landing — the **submit path (raise
-  a challenge) is deferred, not dropped** (§8): it returns when a challenger
-  (receipt / local-inventory) co-resides, so the queue stays empty until then.
+- **Machine surface (`/api/internal`, org-bearer) is not hosted** (option C,
+  above). The remote-communication model is the **file export** (§12 follow-up).
+- **S5:** `emitOrgEvent` writes `OrgEvent` rows from day one; the consumer list
+  stays empty until X1's consumers land. There is no poller to land.
+- `conversion-challenges` ships **manager GET/accept/reject only** at first
+  landing; the **submit path (raise a challenge) is deferred, not dropped**: it
+  returns as an in-process call when a challenger (receipt / local-inventory)
+  exists, so the queue stays empty until then.
 - Provisional-from-receipt paths stay reachable via the catalog's own manual
   routes (as the source already supports) until the receipt producer exists.
 
@@ -847,8 +858,7 @@ ships in checkin's existing container (`deploy/docker-compose.prod.yml` +
    wired in `instrumentation.ts`; **34 human `/api/catalog/*` stubs**
    (`catalog-viewer`/`INVENTORY_MANAGER`); next-free `src/routes/_shared.ts` (no
    `next/server` — replaces the source `validate`). **The org-bearer machine
-   surface (`/api/internal`) is NOT built — deferred, blocked (§8); needs a
-   boundary decision A/B/C.** Human `GET /api/catalog/items` returns a bare
+   surface (`/api/internal`) is not hosted (§8, option C).** Human `GET /api/catalog/items` returns a bare
    model-bag array (pagination → Track 5). Depends on 1–3. *(Built locally: Track
    4, `b893d90b7` + `221022be7`; human surface **verified working** — a stub bug
    where `handler()` endpoint strings dropped the `/catalog` segment made
@@ -892,10 +902,6 @@ sections they belong to (§3–§9); this section does not recap them.
 - **Viewer-gate DB dedup (boundary PR).** The server resolver still does its own
   per-request `VolunteerDesignation` lookup though the client reads the
   `hasVolunteerDesignation` claim (§6); dedup the server to read the claim.
-- **Consumer repoint — only if checkin ever hosts the machine surface (A/B).**
-  `local-inventory-app` / `workflow-mapping-app` would repoint
-  `/api/catalog/items` → `/api/internal/items`. Not expected under option C +
-  file export; kept only as a contingency.
 - **Track 7 deferrals:** removal of the temporary receipt shims when receipt-app
   migrates; browser-only UI test coverage if a real gap appears (§10).
 
@@ -951,7 +957,8 @@ delete"). The later Inventory tracks rely on it: the library-isolation model +
 injection seam (`configureCatalog`, incl. the **sync-accessor / multi-org async
 constraint**, §6), own-DB / second-Prisma-client packaging, the
 security-generator cross-package coupling, the machine-surface **A/B/C → C**
-decision, the **file-export** remote-communication future, and the **prod-image
+decision, the **post-commit call-out (X1) with per-consumer cursors** (§8), the
+**file-export** remote-communication future, and the **prod-image
 build reality** (§9 Build note: deps-stage copies of the catalog + its
 `@inventory/*` manifests + schema/config; the `postinstall` generator shell-out;
 the runner's catalog Prisma + zero-import deploy config; the standalone-secret /

@@ -83,9 +83,9 @@ checkin injects into the library.**
 
 This is the **second app of the whole-Inventory migration** (catalog is first).
 Where local-inventory touches Inventory apps that have not moved yet
-(receipt-app, workflow-mapping-app), we bring **temporary copies / keep the HTTP
-seam** exactly as #1286 §8 prescribes — temporary meaning **< 2 weeks, dev-only,
-never in a release** — with a clean port at each crossing.
+(receipt-app, workflow-mapping-app), we bring **temporary copies** of the shared
+contracts — temporary meaning **< 2 weeks, dev-only, never in a release** — and
+each crossing is an in-process call behind a port, per #1286 §8.
 
 ### Decisions locked (carried over from #1286, adapted)
 
@@ -135,25 +135,31 @@ prisma/schema.prisma  14 models (own migrations)
 ```
 
 **Prisma models** (own schema, `@@map` to snake_case tables): `Location`,
-`OrgItem`, `InventoryLog`, `ReceiveQueue`, `SettingsData`,
+`OrgItem`, `InventoryLog`, `ReceiveQueue`,
 `InventoryProvisionalItem` (renamed from the source's `ProvisionalItem` to avoid a
 merged-classifications name collision with catalog's `ProvisionalItem`; table
 `provisional_items` preserved via `@@map` — §4),
-`InventoryMergeConflict`, `ProvisionalResolution`, `ReceivedOrgEvent`,
-`ProvisionalItemLog`, `ReceivedInventoryDelta`, `LocationLog`. (12 declared;
-plus the two Prisma-generated join/relation surfaces on `Location`↔`OrgItem`.)
+`InventoryMergeConflict`, `InventoryProvisionalResolution`,
+`InventoryReceivedOrgEvent` (both prefixed for the same reason; expense declares
+the same two source models), `ProvisionalItemLog`, `ReceivedInventoryDelta`,
+`LocationLog`. The source's `SettingsData` is **not ported**: every field is dead
+configuration (§7).
+
+`InventoryReceivedOrgEvent` is the record of every catalog event received, and
+its `max(id)` is the S5 cursor (§8a). `ReceivedInventoryDelta` is the record of
+what each apply did, and it becomes the apply guard (§8c). Both stay in full.
 
 The domain layer is framework-light and ports almost verbatim. The friction is
 **auth wiring and the catalog/orchestrator crossings** (§8), not the domain.
 
-### Workspace dependencies — reuse #1286's vendored packages, add two
+### Workspace dependencies — reuse #1286's vendored packages, add one
 
 The source depends on `@inventory/{auth, web-auth, gtin, workflows, receipt-types,
 receipt-contract-fixtures, org-events-poller, utils, pg-test-harness}`.
 Disposition — **the catalog port (#1286) already vendors `gtin`, `workflows`,
 `receipt-types`, `receipt-contract-fixtures`; local-inventory REUSES those, does
-not re-vendor.** New to local-inventory: `org-events-poller` (the consumer side —
-catalog is a *producer* and never needed it) and `utils`.
+not re-vendor.** New to local-inventory: `utils`. `org-events-poller` is not
+ported at all.
 
 | Source package | Ported? | Action |
 |---|---|---|
@@ -161,13 +167,12 @@ catalog is a *producer* and never needed it) and `utils`.
 | `@inventory/gtin` | Reuse | Already `packages/gtin` (vendored by #1286). No second copy. |
 | `@inventory/workflows` | Reuse | Already `packages/workflows` (vendored by #1286). Shared xstate helpers. |
 | `@inventory/receipt-types`, `receipt-contract-fixtures` | Reuse (temporary) | Already vendored by #1286 as temporary copies — local-inventory imports the same copy. Endgame: the permanent shared contract when receipt-app lands. |
-| `@inventory/org-events-poller` | **Yes — new `packages/org-events-poller`, deferred to track 6** | Shared S5 outbox-consumer machinery (cursor, ledger write, `assertTransition`, `onEvent` dispatch). Consumed by local-inventory/expense/workflow-mapping — a cross-app utility, **standalone package**, not folded into `local-inventory`. **Drive its drain from the in-process signal + boot, not its `setInterval`** (§8a) — expose/extract a one-shot `drainOnce` if the package only ships the timer-start today; the wall-clock loop is not used in checkin. **Confirmed in build: no Track-1 domain/unit file imports it**, so it lands with the S5 consumer (track 6), not the library skeleton. |
+| `@inventory/org-events-poller` | **No — not ported** | Nothing in checkin polls. The S5 consumer is an in-process handler the catalog calls after commit (§8a); its cursor, ledger write and `assertTransition` guard live in local-inventory's own handler. |
 | `@inventory/utils` | **Yes — new `packages/utils`, only if/when imported** | Generic helpers. Standalone shared package. **Confirmed in build: no Track-1 domain/unit file imports it** — vendor it in the track that first needs it (reuse #1286's copy if it vendored one by then), not in track 1. |
 | `@inventory/pg-test-harness` | n/a | Already present in checkin. Reuse. |
 
 Only genuinely inventory-specific helpers (`lib/gtin.ts` is a thin re-export;
-`api-client.ts`, `container.ts`, `org-events-poller.ts` wiring) live inside
-`local-inventory/src/lib`.
+`api-client.ts`, `container.ts` wiring) live inside `local-inventory/src/lib`.
 
 ---
 
@@ -190,7 +195,7 @@ checkin/
         runtime.ts                         configureLocalInventory() + getPrincipal()/db/org accessors
         contract.ts                        InventoryAuth / InventoryPrincipal / OrgIdentity + crossing ports (§8)
       package.json
-    org-events-poller/  utils/            new vendored @inventory/* deps
+    utils/                                new vendored @inventory/* dep
     gtin/  workflows/  receipt-types/     REUSED — vendored by #1286
   checkin-app/                            ← WIRING ONLY, no inventory logic
     src/instrumentation.ts                + one configureLocalInventory({...}) call at boot
@@ -229,16 +234,14 @@ checkin-app: (1) the FS-routing stub files; (2) their `pageRegistry` entries
 entries (checkin centralizes the boundary on purpose). Adding a *new* inventory
 route touches all three; editing inventory behavior touches none.
 
-**One extra boot concern local-inventory has that catalog does not:** the source
+**One boot concern the source has that checkin drops:** the source
 `container.ts` **starts a time-based org-events poller on import** (guarded by
 `LOCAL_INVENTORY_DATABASE_URL` being set, so `next build` doesn't connect). checkin
-**drops the interval poller entirely** — an in-app `setInterval` would keep the
-container's event loop awake forever and fight clean shutdown. Instead the S5
-consumer is **push-driven** (§8a): a one-shot **boot catch-up drain** from
-`configureLocalInventory()` / `instrumentation.ts` (server runtime only, never a
-container-import side effect, never during `next build`), plus **drain-on-emit**
-signalled in-process by catalog's producer. No wall-clock timer. Land it **inert**
-until the catalog producer emits (§8, §11).
+**drops the poller entirely**; an in-app `setInterval` would keep the container's
+event loop awake forever and fight clean shutdown. The S5 consumer is instead an
+in-process handler that the catalog calls after it commits (§8a), and its
+catch-up is a step in `/api/cron/reconcile-shopify`. `configureLocalInventory()`
+only binds; nothing touches a database at boot.
 
 ---
 
@@ -317,7 +320,7 @@ personal. The schema has **no email/DOB/address fields → no `pii` tier**.
   `resolvedByUserId`, `performedBy`, `performedByUsername` (who did what).
 - **`internal` — free text:** `rejectionReason`, `failureReason`, `notes`,
   `resolution` (may carry incidental sensitive text).
-- **`internal` — cross-app plumbing:** `receiptId`, `ReceivedOrgEvent.payload`,
+- **`internal` — cross-app plumbing:** `receiptId`, `InventoryReceivedOrgEvent.payload`,
   `ReceivedInventoryDelta.deltaJson`, `sourceEventId`, `lineItemId`.
 
 **Boundary-isolation process applies** (`AGENTS.md` + the
@@ -349,8 +352,8 @@ a guard test now covers it. Watch for it on the inventory routes.
 `receive-queue/[id]` + `.../fulfill` (POST);
 `inventory-log` (GET); `inventory-merge-conflicts` (GET) +
 `.../[id]/resolve` (POST); `provisional-items` (GET/POST);
-`received-inventory-deltas` (GET); `received-org-events` (GET); `system-data`
-(GET) — all **human** routes: read gate `authorize: 'catalog-viewer'` (reused
+`received-inventory-deltas` (GET); `received-org-events` (GET) — all **human**
+routes: read gate `authorize: 'catalog-viewer'` (reused
 verbatim — the inventory gate ≡ catalog's, §6), write gate `INVENTORY_MANAGER`.
 The source's `global-catalog/items*` proxy routes are **not registered** —
 dropped for an in-process catalog read (§8b). The `/api/internal/*` +
@@ -378,8 +381,8 @@ guards map cleanly:
 |---|---|---|
 | `canEditOrg` (writes: fulfill, apply, reassign, resolve, org-item edit) — the source's `organization_manager` | **`INVENTORY_MANAGER`** (the interim role #1286 adds — reuse, no new role) | **`ORG_MANAGER`** (net-new, gated on #1316) |
 | `canViewOrg` (reads: queues, lists, logs) | the viewer gate #1286 defined — authenticated **and** any RBAC-role holder / program leader / volunteer | (unchanged) |
-| `requireOrgBearer` (`/api/inventory/apply`, S3 delta from orchestrator) | checkin's **org-bearer / internal token** — the inbound machine seam (§8) | (unchanged) |
-| `requireServiceKey` (`X-Service-Key`, `/api/internal/*` from receipt/orchestrator) | checkin's **internal service-key** grant — the inbound machine seam (§8) | (unchanged) |
+| `requireOrgBearer` (`/api/inventory/apply`, S3 delta from orchestrator) | **none — not hosted**; apply is an in-process call (§8c) | (unchanged) |
+| `requireServiceKey` (`X-Service-Key`, `/api/internal/*` from receipt/orchestrator) | **none — not hosted** (§8c) | (unchanged) |
 
 **No role-foundation change is needed for local-inventory** — `INVENTORY_MANAGER`
 already lands in #1286's track 2. This doc's implementation simply *depends on*
@@ -471,7 +474,7 @@ checkin-app only re-exports pages (§3) and wires nav (see Nav placement). Same
 Mantine version → component-level reskin, not a rewrite. **Keep the source's
 `"use client"` + `/api/*` pattern** (matches checkin; #1286 §7).
 
-Eight pages, each an A12 surface / exception screen:
+Seven pages, each an A12 surface / exception screen:
 
 - `org-inventory` — OrgItem list + quantity edit (surface 1/2).
 - `locations` — create / rename / reassign (surface 1); backed by `LocationLog`.
@@ -481,16 +484,17 @@ Eight pages, each an A12 surface / exception screen:
   queue (surface 3).
 - `provisional-part-map` / `provisional-items` — provisional resolution view
   (surface 4).
-- `org-events` — the polled catalog org-events ledger (surface 4;
-  `received-org-events`). **local-inventory is the org-facing consumer that
-  surfaces these** — workflow-mapping deliberately does not (BYDESIGN, §10).
-- `system-data` — settings (`SettingsData`: poll interval/window, global server
-  URL). **org identity is not here** (it comes from the injected `Org` accessor,
-  §6). Every field is **dead on arrival**: `pollInterval*` had a timer that no
-  longer exists (S5 is in-process push, §8a); `globalServerUrl` pointed at the old
-  catalog server that local-inventory no longer calls (catalog reads are
-  in-process, §8b). Keep the row (harmless, model ports cleaner intact); drop the
-  fields with the track-8 cleanup rather than wiring UI to them.
+- `org-events` — the received catalog org-events ledger (surface 4;
+  `received-org-events`, backed by `InventoryReceivedOrgEvent`).
+  **local-inventory is the org-facing consumer that surfaces these** —
+  workflow-mapping deliberately does not (BYDESIGN, §10).
+
+The source's `system-data` page is **not ported**, and neither is the
+`SettingsData` model behind it. Every field is dead configuration: the
+`pollInterval*` fields configured a timer checkin does not have (§8a), and
+`globalServerUrl` pointed at the old catalog server, which local-inventory never
+calls (catalog reads are in-process, §8b). Org identity was never here; it comes
+from the injected `Org` accessor (§6).
 
 Drop the source `AppShell`/nav shell; pages render inside checkin's shell. Wire
 auth via `useSession` client-side + the checkin session in the route handlers.
@@ -528,98 +532,76 @@ auth via `useSession` client-side + the checkin session in the route handlers.
 local-inventory is a **terminal SINK** in the E-PIPELINE: two crossings flow
 **into** it (S5 events, §8a; S3 apply, §8c) — these are what make it a sink. A
 third is an outbound **read** (§8b): it reads catalog item data to display and
-resolve its stock. All three must be designed explicitly, using the **same
-per-crossing rule #1286 §8 set**:
-*keep the JSON/contract shapes; convert transport, not architecture; every
-crossing sits behind a port with an `http` adapter (today) and an `in-process`
-adapter (after co-residence); converting a crossing = swap one adapter binding in
-`configureLocalInventory()`, zero call-site churn; trigger = co-residence.*
+resolve its stock. All three follow the **crossing rules #1286 §8 set**: *keep
+the JSON/contract shapes; every crossing is a synchronous in-process call behind
+a port that checkin-app binds in `configureLocalInventory()`; the callee parses
+its input and the caller parses the response; nothing polls, nothing touches a
+database at boot, and any catch-up is a step in `/api/cron/reconcile-shopify`.*
+No crossing has an HTTP adapter.
 
 ### Crossing archetypes (from the source)
 
-| Crossing | Direction | Kind | Contract | Today's transport |
+| Crossing | Direction | Kind | Contract | Source transport |
 |---|---|---|---|---|
-| **S5 org-events** — provisional resolution events (`provisional_approved` / `_rejected` / `_mapped_to_existing`) | **catalog → local-inventory** | **async outbox — consumer side** | shared S5 union (`parseOrgEvent`, `@inventory/receipt-types`) | catalog's OrgEvent table, **HTTP-polled** by `startOrgEventsPoller`, persisted to local `received_org_events`, reacted to via `provisionalItemService` |
+| **S5 org-events** — provisional resolution events (`provisional_approved` / `_rejected` / `_mapped_to_existing`) | **catalog → local-inventory** | **post-commit call-out — consumer side** | shared S5 union (`parseOrgEvent`, `@inventory/receipt-types`) | catalog's OrgEvent table, **HTTP-polled** by `startOrgEventsPoller`, persisted to local `received_org_events`, reacted to via `provisionalItemService` |
 | **Catalog item reads** — item list + single-item lookup (display / resolution) | **local-inventory → catalog** | **synchronous read — consumer side** | catalog item shape | local-inventory's `/api/global-catalog/items*` routes **proxy** to the old catalog server (`globalServerUrl` + `signOrgToken` → catalog's `/api/catalog/items`) |
-| **S3 delta-apply + provisional/enqueue** — `inventory/apply`, `provisional-items`, `receive-queue`, `GET org-items` | **workflow-mapping orchestrator → local-inventory** | **synchronous RPC — callee side** | `ResolvedInventoryDeltaSchema` (org-bearer) + the `/api/internal/*` zod schemas (service-key) | `POST /api/inventory/apply` (org-bearer) and `POST/GET /api/internal/[...path]` (X-Service-Key) |
+| **S3 delta-apply** — `inventory/apply` | **workflow-mapping orchestrator → local-inventory** (and donations, X11) | **synchronous call — callee side** | `ResolvedInventoryDeltaSchema` | `POST /api/inventory/apply` (org-bearer) |
 
-These convert **differently** — that is the whole point of deciding now.
+In checkin all three are in-process calls.
 
 ### 8a. catalog → local-inventory (S5, item #4 — provisional resolution)
 
-**This is async and stays async** (#1286 §8 rule 4). The outbox — durable events,
-in-transaction write on the catalog side, retry/ordering/audit, and
-local-inventory's own `received_org_events` ledger + `received-org-event` xstate
-machine — has value independent of transport. The consumer reacts by calling
-`provisionalItemService.{approveProvisional,rejectProvisional,mapProvisionalToExisting}`,
-which does the org-item merge and **parks a `uom_mismatch` `InventoryMergeConflict`**
-when the provisional's counted conversion factor ≠ the resolved real item's factor
-(surface 3, the exception screen — see `mergeOrgItems`).
+**The S5 consumer is a synchronous in-process handler.** After the catalog
+commits a change and its `OrgEvent` row, it calls each registered consumer in the
+same request (the post-commit call-out, #1286 §8 X1). local-inventory registers a
+handler through that port. For each event the handler:
 
-**Conversion at co-residence — and why there is no in-app timer.** catalog lands
-first (#1286), so it is co-resident from local-inventory's **first day**. There is
-therefore **no remote producer to poll** — and the source's time-based
-`setInterval` poller must **not** be carried across. An in-app interval poller
-would keep the Node event loop busy forever (never-idle container), wake every N
-minutes with no traffic, duplicate-poll across replicas, and fight a clean
-SIGTERM. The async seam stays; the **trigger** changes from "poll on a timer" to
-"drain on an in-process signal." Concretely the in-process adapter is:
+1. parses it with the shared S5 union (`parseOrgEvent`);
+2. records it in `InventoryReceivedOrgEvent` (the audit record of every event
+   received; its `max(id)` is this consumer's cursor) and runs the
+   `received-org-event` xstate guard (`assertTransition`);
+3. reacts by calling
+   `provisionalItemService.{approveProvisional,rejectProvisional,mapProvisionalToExisting}`,
+   which does the org-item merge and **parks a `uom_mismatch`
+   `InventoryMergeConflict`** when the provisional's counted conversion factor ≠
+   the resolved real item's factor (surface 3, the exception screen — see
+   `mergeOrgItems`).
 
-- **Boot catch-up drain** — one-shot on startup: drain any `OrgEvent` rows written
-  while this process was down (crash recovery). No timer.
-- **Drain-on-emit** — catalog's `emitOrgEvent`, **after it commits** the
-  `OrgEvent` row, fires an in-process signal through the injected port; the
-  consumer drains **all pending rows for that org** (not just the just-written
-  one — so a sibling replica's writes are swept too). No timer.
-- **Bounded per-row retry** on a failed drain (backoff on the row); a stuck row is
-  re-attempted by the next emit-drain. **No periodic sweep** — events keep
-  arriving, so the next emit is the retry clock. Add a long-interval safety sweep
-  **only** if a real stuck-row gap appears, and if so run it on checkin's
-  **external scheduler** (the existing cron/Lambda infra), never an in-app
-  `setInterval` — so the container is still poked from outside, not self-woken.
+**Failure and replay.** The catalog's commit stands whether or not the handler
+succeeds. A handler that throws leaves the cursor behind the failed event, and
+the next replay re-applies from there: the catch-up step in
+`/api/cron/reconcile-shopify` (or a retry button) reads the catalog's events
+after the cursor and feeds them to the same handler. `InventoryReceivedOrgEvent`
+dedupes on the event id, so an event delivered twice applies once.
 
-Everything durable stays: the `OrgEvent` outbox rows, local `received_org_events`
-ledger, ordering, and the `assertTransition` guard. Only the wall-clock timer is
-gone.
+**No timer, no boot drain.** The source's `setInterval` poller is not carried
+across: an in-app interval would keep the Node event loop busy forever, wake
+every N minutes with no traffic, duplicate-poll across replicas, and fight a
+clean SIGTERM. Nothing reads the database at boot either.
 
-- Keep the shared S5 union (`parseOrgEvent`) as the contract in both modes.
-- The `http`/poll adapter exists in the port **only** as the fallback shape for a
-  *remote* producer. Since catalog is co-resident from day one, **local-inventory
-  ships the in-process push adapter and never ships an in-app interval poller.**
-  Land the consumer **inert** (drain wired but the catalog producer not yet
-  emitting) until catalog actually emits, per #1286 §8's inert-consumer note.
-
-**Port shape** (`contract.ts`): `CatalogEventSource` with `drainPending(orgId)`
-(sweep + apply) plus a `subscribe(onEmit)` the producer calls post-commit; the
-`in-process` adapter binds `onEmit` to catalog's emit hook, and `drainPending`
-reads catalog's OrgEvent rows via the catalog library service (both DBs in one
-process — a direct call into `@inventory/global-catalog`, not a cross-DB join).
-The retained `pollSince(cursor)` shape is the remote/`http` fallback only.
-local-inventory imports the port, never `@inventory/global-catalog` directly —
-checkin injects the bound adapter and, in `configureLocalInventory()`, runs the
-boot drain.
+**Port shape** (`contract.ts`): a `CatalogEventSource` with
+`eventsSince(orgId, cursor)` for replay; checkin-app binds it to the catalog
+library's event read and registers local-inventory's handler with the catalog's
+call-out. local-inventory imports the port, never `@inventory/global-catalog`
+directly.
 
 **Preserve these BYDESIGN behaviors** (do not "fix" in the port):
 - `conversion_challenge_*` events are **not** consumed / not back-propagated
-  (forward-only shrinkflation semantics; BYDESIGN). The poller's `default: break`
-  stays.
+  (forward-only shrinkflation semantics; BYDESIGN). The handler's `default:
+  break` stays.
 - Provisional-approval quantity imprecision (UNFINISHED #5): a provisional's
   stock counted at factor 1 vs. the real item's canonical factor is reconciled by
   the **uom_mismatch merge-conflict path**, not by silent rescaling. Keep it.
 
-### 8b. local-inventory → catalog (item reads — in-process, no repoint)
+### 8b. local-inventory → catalog (item reads — in-process)
 
 The source reads catalog item data (list + single lookup) to display and resolve
 its org-items: `local-inventory-app/src/app/api/global-catalog/items*` **proxy**
 to the old catalog server — `orgSettingsService.globalServerUrl` + a minted
-`signOrgToken` → catalog's `GET /api/catalog/items` (+ `/[gtin13]`). #1286 §8's
-Track-4 finding names local-inventory as exactly this remote consumer, and notes
-those org-bearer reads live under catalog's **`/api/internal`** (not the human
-`/api/catalog/*`) in checkin, with a one-line `pathPrefix` repoint for **still-
-remote** consumers.
+`signOrgToken` → catalog's `GET /api/catalog/items` (+ `/[gtin13]`).
 
-**For checkin's local-inventory that repoint is moot — it reads catalog
-in-process.** Catalog is co-resident from day one (dependency gate, §1), so:
+In checkin local-inventory **reads catalog in-process.** Catalog is co-resident
+from day one (dependency gate, §1), so:
 
 - Add a **`CatalogReader` port** (`contract.ts`: `listItems()`, `getItem(gtin13)`)
   bound in `configureLocalInventory()` to the **in-process** catalog library
@@ -629,26 +611,16 @@ in-process.** Catalog is co-resident from day one (dependency gate, §1), so:
   HTTP concern local-inventory sidesteps by reading the service.
 - The source's `/api/global-catalog/items*` proxy routes are **dropped** (or become
   thin re-reads of the port for any UI that still fetches a local path). `signOrgToken`
-  / `@inventory/auth` go with the retired auth (§6); `SettingsData.globalServerUrl`
-  is dead (§7) — it pointed at the old catalog server, which local-inventory no
-  longer calls.
-- `http` fallback exists in the port only for a hypothetical remote catalog; since
-  catalog lands first it is never bound here.
+  / `@inventory/auth` go with the retired auth (§6); `globalServerUrl` goes with
+  `SettingsData` (§7).
 
-So the repoint #1286 tracks for *other* still-remote consumers does not apply to
-checkin's local-inventory. (Only the **old** local-inventory-app server, if it
-runs remote during overlap before this port lands, still hits the old catalog
-server — that is #1286's follow-up, not this design's surface.)
+### 8c. workflow-mapping orchestrator → local-inventory (S3, apply)
 
-### 8c. workflow-mapping orchestrator → local-inventory (S3, apply surface)
-
-**This is synchronous RPC, and local-inventory is the callee.** The orchestrator
-(CI4, #1289 — **out of scope here**; only its calls *into* local-inventory are in
-scope) drives the "apply / retry-apply / proceed" surface. local-inventory
-**exposes** it. The contract local-inventory must preserve:
-
-The contract (payload shapes preserved as the in-process port's types; the source
-routes/auth are shown for reference — checkin hosts none of them, §8c):
+**This is a synchronous call, and local-inventory is the callee.** The
+orchestrator (CI4, #1289 — **out of scope here**; only its calls *into*
+local-inventory are in scope) applies a receipt's resolved delta at proceed.
+local-inventory **exposes** the apply service. The source's machine routes, shown
+for reference (checkin hosts none of them):
 
 | Operation | Source route | Payload contract | Source auth (not hosted in checkin) |
 |---|---|---|---|
@@ -658,70 +630,59 @@ routes/auth are shown for reference — checkin hosts none of them, §8c):
 | **enqueue receive** | `POST /api/internal/receive-queue` | `ReceiveQueueSchema` | X-Service-Key |
 | **read org-item** | `GET /api/internal/inventory/org-items/:gtin13?orgId=` | — | X-Service-Key |
 
-**Idempotency is part of the contract, not an implementation detail.** `apply`
-upserts `ReceivedInventoryDelta` keyed on `receiptId` and re-applies — a re-push
-of the same `receiptId` is a safe retry (that is *why* the orchestrator can
-"retry-apply"). Preserve this exact idempotent shape when the transport flips.
+**Only `apply` has a caller in checkin.** The other four rows have none, so they
+are not ported as crossings.
 
-**checkin cannot host this as an HTTP machine surface — #1286 §8 Track-4
-finding.** The source guards it with `requireOrgBearer` (org-bearer) / an
-`X-Service-Key`, and #1286 found checkin has **no sanctioned way to land a new
-machine-bearer route**: (1) `requireOrgBearer`/`@inventory/web-auth` is retired
-(§6) with no checkin-side org-bearer validator; (2) checkin's
-`authenticateRequest`/`handler()` pipeline has no org-bearer/service-key auth path
-and the registry `authorize` grammar can't express one; (3)
-`scripts/legacy-authz-routes.txt` is frozen; (4) a new `src/app/api/internal/…`
-route trips `check-route-coverage`'s `new-route-old-authz` ratchet (blocking). So
-the inbound `/api/internal/*` + org-bearer `/api/inventory/apply` surface **cannot
-be hosted in checkin as-is** — same wall the catalog machine surface hit.
+**Who calls apply.** The orchestrator is the **sole caller from the receipt
+pipeline**. Donations is a second caller: an in-kind gift without a receipt loads
+the identified goods directly (X11). Expense never calls apply; inventory load
+does not wait on expense sign-off (#1272 §8).
 
-**Unlike catalog, local-inventory cannot lean on "the old server carries it during
-overlap."** The migration **moves the write target**: once org-items live in
-checkin's inventory DB, a remote orchestrator pushing apply to the *old*
-local-inventory server would split-brain the stock. So the apply crossing must be
-**in-process, from a co-resident orchestrator** — it does not survive a remote
-producer.
+**The source's apply is not idempotent.** Each call re-adds the line quantities,
+so a retry double-counts stock. The **L2 apply fix** closes this as its own PR
+after the library skeleton, test first: the exported apply takes a **per-source
+key** (`receipt:<id>` or `donation:<id>`) and checks it against
+`ReceivedInventoryDelta`, which stays in full as the record of what each apply
+did; a repeat call with a key already recorded changes nothing.
+`ResolvedInventoryDeltaSchema` gains the key in the same change. The
+orchestrator's and donations' crossings are gated on this fix.
 
-**Resolution — apply is in-process only; sequence it with the orchestrator.**
+**checkin cannot host the source's HTTP machine surface** (#1286 §8): the source
+guards it with `requireOrgBearer` / an `X-Service-Key`, and checkin has no
+org-bearer validator, no org-bearer or service-key path in
+`authenticateRequest`/`handler()`, a frozen `scripts/legacy-authz-routes.txt`, and
+a blocking `new-route-old-authz` ratchet for new `src/app/api/internal/…` routes.
+It does not need to: every caller is co-resident.
 
-- When workflow-mapping (CI4) co-resides, bind the **in-process** adapter — the
-  orchestrator imports `receiptService.applyReceipt` / `enqueueItem` /
-  `createProvisional` **directly via the port**, no HTTP. Zod schemas stay the
-  function param types. **Do not assume workflow-mapping "collapses away"** — only
-  its transport changes; its calls into local-inventory are real and stay behind
-  the port.
-- **No inbound HTTP machine surface is built in checkin.** There is nothing to
-  keep "live during overlap" and nothing to "retire last" (the earlier wording
-  assumed checkin could host it — corrected per #1286).
-- **Consequence for first landing:** the pipeline apply path is live **only once
-  the orchestrator co-resides**. If a genuinely *remote* orchestrator must push
-  apply into checkin before then, that needs a boundary PR extending checkin auth
-  with a service-key/org-bearer inbound variant (#1286's option A) — a §12 open
-  item, not first-landing work.
+**Resolution — apply is in-process only.**
+
+- The orchestrator (and donations) call `receiptService.applyReceipt` **through a
+  port in their own `contract.ts`**, bound by checkin-app; no HTTP. Zod schemas
+  stay the function param types. **Do not assume workflow-mapping "collapses
+  away"** — its call into local-inventory is real and stays behind the port.
+- **No inbound HTTP machine surface is built in checkin.**
+- **Consequence for first landing:** receipt-driven apply goes live only once the
+  orchestrator co-resides and the L2 fix has landed.
 
 **Known concurrency hazard to carry across** (CONCURRENCY.md #2): concurrent
 `fulfill` of one receive-queue item, and concurrent `apply` of one receipt, have
-an unverified read-check-then-write race. The idempotency upsert covers the
-sequential replay; the concurrent window is not proven closed. Track as a
-**follow-up issue vs #1287** with a concurrent-drive test — do not silently
-"fix" during the port (BYDESIGN discipline: write the failing concurrent test
-first).
+an unverified read-check-then-write race. The per-source guard covers sequential
+replay; the concurrent window is not proven closed. Track as a **follow-up issue
+vs #1287** with a concurrent-drive test — do not silently "fix" during the port
+(BYDESIGN discipline: write the failing concurrent test first).
 
 ### First landing (local-inventory in; catalog in, receipt/orchestrator not yet)
 
 - Reuse the temporary vendored `receipt-types` / `receipt-contract-fixtures`
   (#1286's copies).
-- **S5 consumer**: bind the in-process catalog-events adapter but land the poller
-  **inert** (flag-gated) until catalog emits provisional events; the local ledger
-  + merge-conflict path are exercisable via seeded events / the catalog's own
-  manual resolution routes.
-- **S3 apply surface**: **not hosted over HTTP** (checkin can't; §8c). At first
-  landing the pipeline apply path is dormant — the human UI, catalog reads (§8b),
-  and S5 provisional consumption (§8a) all work, but receipt-driven apply only
-  goes live when the orchestrator co-resides and calls in-process. Manual UI edits
-  cover org-item/quantity setup until then. (Do **not** point a remote orchestrator
-  at the old local-inventory server once checkin holds the data — it split-brains
-  the stock, §8c.)
+- **S5 consumer**: the handler lands with the catalog's call-out (#1286 §8 X1).
+  Until then the local ledger + merge-conflict path are exercisable via seeded
+  events / the catalog's own manual resolution routes.
+- **S3 apply**: **not hosted over HTTP** (§8c). At first landing the pipeline
+  apply path is dormant — the human UI, catalog reads (§8b), and S5 provisional
+  consumption (§8a) all work, but receipt-driven apply only goes live when the
+  orchestrator co-resides and calls in-process. Manual UI edits cover
+  org-item/quantity setup until then.
 
 All temporary duplication is **< 2 weeks, dev-only** — acceptable, tracked.
 
@@ -732,9 +693,8 @@ All temporary duplication is **< 2 weeks, dev-only** — acceptable, tracked.
 Adds **no new service** — compiles into `checkin-app`'s build, ships in checkin's
 existing container. Same as #1286 §9, plus:
 
-- Build the new `packages/*` (`local-inventory`, and `org-events-poller` once the
-  S5 consumer lands, `utils` if a track pulls it in); the workspace build already
-  covers `packages/*`.
+- Build the new `packages/*` (`local-inventory`, and `utils` if a track pulls it
+  in); the workspace build already covers `packages/*`.
 - **Provision the dedicated inventory database** + `LOCAL_INVENTORY_DATABASE_URL`
   secret (monitoring-db pattern in the Infra database module).
 - **Org registry** — the checkin-owned `Org` table + its seeded Treehouse row
@@ -743,12 +703,12 @@ existing container. Same as #1286 §9, plus:
   `org` accessor at boot.
 - Add **inventory `prisma migrate deploy`** (against `LOCAL_INVENTORY_DATABASE_URL`)
   to the deploy sequence, ordered with checkin's and catalog's migration steps.
-- **S5 consumer lifecycle**: **no background timer** (§8a). A one-shot boot
-  catch-up drain runs from `instrumentation.ts` / `configureLocalInventory()` in
-  the server runtime only (never during `next build`); thereafter the consumer is
-  woken by catalog's in-process emit signal. Nothing keeps the event loop awake
-  between events, so idle CPU is zero and SIGTERM is clean. Safe under N replicas
-  (each boot-drains; drain-on-emit sweeps all pending rows for the org).
+- **S5 consumer lifecycle**: **no background timer and no boot drain** (§8a).
+  The catalog calls the handler in the request that commits the event; catch-up
+  for a failed event is a try/catch step in the existing prod
+  `/api/cron/reconcile-shopify`. `instrumentation.ts` only binds and never touches
+  a database, so the 06:45 prewarm wakes no DB and idle CPU is zero. No new
+  schedule.
 - No new Caddy route, no new port, no new container.
 
 ---
@@ -784,9 +744,10 @@ Same posture as #1286 §10:
   end** — enqueue → fulfill → apply delta → provisional resolution → uom_mismatch
   merge-conflict → resolve. Land in track 5.
 - **Coupling tests**: the three ports (§8) get contract tests — for the in-process
-  adapters (§8a catalog events, §8b catalog reads, §8c apply) that they behave
+  bindings (§8a catalog events, §8b catalog reads, §8c apply) that they behave
   identically to the source's HTTP shapes for the same input — the cheapest guard
-  that a transport flip is behavior-preserving.
+  that the transport change is behavior-preserving. The apply fix (§8c) adds a
+  repeat-call test per source key: the second call changes nothing.
 - **Concurrency**: the CONCURRENCY.md #2 fulfill/apply race is a **tracked
   follow-up** (§8c), not blocking the port.
 
@@ -808,10 +769,14 @@ local-inventory consumes, and local-inventory reuses catalog's vendored packages
    consumer — required to avoid the merged-classifications collision with catalog;
    it is a Track-1 change that must land **with/before** the Track-3 boundary PR
    (§4). Package stays `next`-free. **No new shared packages here** —
-   reuses #1286's `packages/{gtin,workflows,receipt-types}`; `org-events-poller`
-   and `utils` are **not imported by any Track-1 file** (confirmed in build), so
-   they defer (`org-events-poller` → track 6 with the S5 consumer; `utils` → the
-   track that first needs it), §2. No UI, no checkin wiring. Green in isolation.
+   reuses #1286's `packages/{gtin,workflows,receipt-types}`; `utils` is **not
+   imported by any Track-1 file** (confirmed in build), so it defers to the track
+   that first needs it, and `org-events-poller` is not ported (§2). No UI, no
+   checkin wiring. Green in isolation.
+   - **1a. Apply fix** — its own PR after the skeleton, test first: the per-source
+     guard (`receipt:<id>` / `donation:<id>`, checked against
+     `ReceivedInventoryDelta`) on the exported apply (§8c). Gates the
+     orchestrator's and donations' apply crossings.
 2. **Roles — done as a reuse decision** (`claude/nostalgic-wilbur-ddc7e8`).
    **None new**: `INVENTORY_MANAGER` + the `hasVolunteerDesignation` claim already
    on the base (untouched); inventory read-eligibility verified ≡ catalog's, so it
@@ -853,17 +818,15 @@ local-inventory consumes, and local-inventory reuses catalog's vendored packages
    registry-first boundary commit declaring a synthetic **public count response
    model** so the scalar total passes the stripper (a bare model-bag can't carry a
    total). Not offset+lookahead. Apply per-list, only where the volume warrants it.
-6. **S5 consumer** — bind the in-process catalog-events adapter (push-driven, §8a:
-   boot drain + drain-on-emit, **no timer**); wired from `instrumentation.ts`,
-   inert until catalog emits. Requires #1286's `emitOrgEvent` to expose the
-   post-commit signal hook the consumer subscribes to. Depends on 1–4 and on
-   #1286's catalog producer being co-resident.
+6. **S5 consumer** — the in-process handler (§8a), registered with the catalog's
+   post-commit call-out (#1286 §8 X1), plus its catch-up step in
+   `/api/cron/reconcile-shopify`. **No timer, no boot drain.** Lands with the
+   catalog's call-out; depends on 1–4.
 7. **Infra** — deploy sequence + DB provisioning.
 8. **(Deferred — each a tracked follow-up issue vs #1287, not prose "later")**
-   retire the HTTP `http`-adapter routes when receipt-app / workflow-mapping
-   co-reside and flip to in-process; the concurrency #2 fulfill/apply race test +
-   fix; UNFINISHED #5 provisional-quantity auto-correction (currently the
-   uom_mismatch queue is the accepted interim). File these at merge.
+   the concurrency #2 fulfill/apply race test + fix; UNFINISHED #5
+   provisional-quantity auto-correction (currently the uom_mismatch queue is the
+   accepted interim). File these at merge.
 
 ---
 
@@ -872,26 +835,21 @@ local-inventory consumes, and local-inventory reuses catalog's vendored packages
 Only genuinely open work lives here. Resolved decisions are recorded in the
 sections they belong to (§1–§11) and are **not** recapped here — org/user identity
 (§1/§6), the in-process apply + no-hosted-machine-surface decision (§8c), catalog
-reads in-process with no repoint (§8b), the push-driven no-timer consumer (§8a),
+reads in-process (§8b), the in-process S5 handler with its own cursor (§8a),
 roles/viewer gate (§6), DB/security/nav/testing (§4/§5/§7/§10). Nothing there is
 a STOP-AND-ASK; there is no hard blocker for first landing.
 
 ### Open follow-ups (file as GitHub issues referencing #1287 at merge)
 
-- **`emitOrgEvent` signal hook — cross-doc dependency on #1286.** The push-driven
-  S5 consumer (§8a) needs #1286's `emitOrgEvent` to expose a post-commit in-process
-  signal the consumer subscribes to. If #1286 ships without it, add it there (its
-  own PR) **before track 6**. This is the one live dependency, not just a deferral.
-- **Remote-orchestrator apply — boundary PR only if sequencing forces it (§8c).**
-  Apply is in-process only. If local-inventory ever lands while the orchestrator is
-  still remote, checkin needs a service-key/org-bearer inbound auth variant (#1286
-  option A). Preferred: sequence apply to co-reside with CI4 so this never arises.
+- **Catalog post-commit call-out — cross-doc dependency on #1286.** The S5
+  handler (§8a) is called by the catalog's call-out defined in #1286 §8 X1, which
+  must land **before track 6**. This is the one live dependency, not just a
+  deferral.
 - **Concurrency: fulfill/apply race (§8c; CONCURRENCY.md #2).** Unverified
   read-check-then-write window on concurrent fulfill / concurrent apply. File a
   concurrent-drive test (write the failing test first) + fix if real.
 - **Track 8 deferrals:** UNFINISHED #5 provisional-quantity auto-correction (the
-  uom_mismatch queue is the accepted interim); drop the dead `SettingsData` poll
-  fields (§7); browser-only UI test coverage if a real gap appears (§10).
+  uom_mismatch queue is the accepted interim); browser-only UI test coverage if a real gap appears (§10).
 
 **Deferral discipline:** each of the above is filed as a tracked issue at merge —
 never a bare "later" in prose or a code comment. The issue tracker remembers, not
@@ -902,7 +860,7 @@ this doc.
 - **No production inventory to migrate; loaded by pipeline + hand.** No existing
   data to import and no direct bulk-import endpoint (the source has none). The real
   load path is **receipt-replay** — replaying stored receipts (TOPDOWN GC-INVENTORY
-  Q22/Q30) through the orchestrator → apply/enqueue surface (§8c), which arrives
+  Q22/Q30) through the orchestrator → apply (§8c), which arrives
   when receipt-app co-resides; manual UI edits cover setup until then.
 - **Dev/test seed to build.** No reusable seed exists — lift the baseline
   locations/org-items/receive-queue shape from Inventory's
@@ -936,30 +894,33 @@ this?*); seeds that qualify:
   least-privilege (§6).
 - **Org-stamping invariant:** every row carries the one injected org identity
   (§6).
-- **Apply idempotency invariant:** a receipt-driven apply is keyed on `receiptId`
-  and safely re-appliable (that is what makes "retry-apply" correct) — §8c.
+- **Apply idempotency invariant:** every apply carries a per-source key (a
+  receipt or an in-kind donation); a repeat call with a key already applied
+  changes no quantity (that is what makes "retry-apply" correct) — §8c.
 - **Shrinkflation is forward-only:** a conversion-factor change is **never**
   back-propagated to already-counted stock; a provisional/real factor mismatch is
   **parked as a `uom_mismatch` merge-conflict** for a human, not auto-rescaled
   (BYDESIGN; §8a).
 - **Apply is in-process, not a hosted endpoint:** checkin hosts no machine-bearer
-  route; the receive/apply crossing is driven in-process by the co-resident
-  orchestrator (§8c) — the decision, not the wiring.
+  route; apply is called in-process by the co-resident orchestrator (the only
+  caller from the receipt pipeline) and by donations (§8c) — the decision, not the
+  wiring.
 - **Role decision:** writes use interim `INVENTORY_MANAGER`; strategic `ORG_MANAGER`
   split stays open in RB4 (cross-ref [#1316](https://github.com/innovationtreehouse/checkin/issues/1316)).
 
 **(2) Architecture/ops reference that stays true → `docs/designs/LOCAL_INVENTORY.md`**
 (§4 "operational reference → move, don't delete"). What later Inventory tracks
 (receipt-app, CI4) rely on: the three-crossing **port model** and its in-process
-adapters (events §8a, catalog read §8b, apply §8c), the **push-driven consumer**
-(boot drain + drain-on-emit, no timer, §8a), own-DB / third-Prisma-client
+bindings (events §8a, catalog read §8b, apply §8c), the **S5 handler** (called by
+the catalog after commit, own cursor, catch-up in the reconcile cron step, §8a),
+own-DB / third-Prisma-client
 packaging (§4), and the **machine-surface-not-hosted decision + the CI4
 co-residence sequencing constraint** (§8c/§12). Runnable-ops bits (the dev seed
 recipe, the `DOCKER_HOST` skip gotcha) go to `docs/ops/` if worth keeping.
 
 **(3) Pure mechanism now in the code → deleted** with the working doc (route
 mounting, stub tree, `NavLink[]` splice, `_shared.ts`, security-generator wiring,
-handler-endpoint gotcha, poller drain wiring, test tiers, pagination mechanics) —
+handler-endpoint gotcha, S5 handler wiring, test tiers, pagination mechanics) —
 a reader derives it from the source (§3).
 
 **Cross-doc note:** because catalog (#1286) distills first, its
