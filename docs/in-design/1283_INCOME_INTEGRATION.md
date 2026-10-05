@@ -32,13 +32,20 @@ checkin, and every decision is audited.
   source's own conversion script (`1283_INCOME_INTEGRATION-migration.md`).
 - **The QuickBooks side is net-new and matches before it creates.** The source
   has no QuickBooks code. Income uses the same rule as bulk donation (#1280 §7):
-  find an existing deposit first, create one only for a payout newer than the
-  cutoff, and send anything older to finance. That find-or-create is built
-  once in `packages/quickbooks` for both lanes. Matching needs QB-0 and a deposit
+  line payouts up with existing deposits first. The newest payout finance booked
+  by hand marks where the app takes over; the app creates deposits for unmatched
+  payouts after it and sends unmatched ones before it to finance. There is no
+  cutoff to set and nothing for anyone to do. That find-or-create is built once
+  in `packages/quickbooks` for both lanes. Matching needs QB-0 and a deposit
   read; creating needs the QB-2 deposit write. Until QB-2 lands, finance keeps
   booking by hand and the match records those deposits.
-- **Cost:** a two-model library on its own database, two read-only ports, and
-  one call added to an existing daily cron. No pipeline crossings.
+- **Some items book to their own QuickBooks category.** Finance maps a Shopify
+  item to a budget-owner bucket, checkin's table that mirrors QuickBooks
+  categories (the same buckets bulk donation and expense use). A deposit the app
+  creates splits the payout across those categories; unmapped items book at
+  organization level.
+- **Cost:** a three-model library on its own database, three read-only ports,
+  and one call added to an existing daily cron. No pipeline crossings.
 
 ---
 
@@ -105,10 +112,12 @@ interface PayoutMirror {
   paidPayoutsSince(from: Date): Promise<MirrorPayout[]>         // shop_payout
   payout(gid: string): Promise<MirrorPayout | null>
   transactions(payoutGid: string): Promise<MirrorBalanceTxn[]>  // shop_balance_transaction ⋈ shop_order.name
+  orderLines(orderGids: string[]): Promise<MirrorOrderLine[]>   // shop_order_line: variant id, title, sku, qty, price, discount
+  itemsSeen(): Promise<MirrorItem[]>                            // distinct variant id + latest title/sku, for the mapping screen
 }
 ```
 
-checkin-app binds it to three new SELECTs in `src/lib/shopifyRead/client.ts`,
+checkin-app binds it to five new SELECTs in `src/lib/shopifyRead/client.ts`,
 reusing that module's pool: SELECT-only by grant, `min: 0`, fast idle reap, and
 the "not wired → no-op" behaviour. The library opens no connection to the mirror
 and never imports `s-ingest-core`; the mirror has no `generator security`, so
@@ -128,16 +137,31 @@ or skip what it hasn't entered yet. So every payout is **matched first**:
 
 1. Look for an existing QuickBooks deposit for the payout (QB read path).
 2. **Found:** record its id and mark the payout reconciled. Post nothing.
-3. **Not found, newer than the cutoff:** create the deposit (QB-2 write), keyed
-   so a retry never books twice.
-4. **Not found, older than the cutoff:** finance's queue. The app never creates
-   a deposit for a period finance has presumably closed by hand.
+3. **Not found, after the takeover line:** create the deposit (QB-2 write),
+   keyed so a retry never books twice.
+4. **Not found, before the line:** finance's queue. A gap among finance's own
+   bookings is finance's to explain; the app never fills it.
+
+**The takeover line is derived, never configured** (owner decision). It is the
+date of the newest payout tied to a deposit the app did not create, i.e. one
+finance booked by hand, found by matching or chosen by finance. Each run matches
+every open payout first, then reads the line, then creates for what is after
+it. Payouts finance had booked by go-live sit before the line; everything later
+belongs to the app. No date to set, no switch to flip, no action from finance
+beyond knowing the release went out. The line always falls inside the mirror's
+reach, because the hand-booked payouts that set it are recent. Deposits the app
+creates don't move it. If finance hand-books a newer payout anyway, step 1 finds
+it and the line moves forward, which is harmless. With no hand booking matched
+yet (for example before the deposit read works), there is no line and the app
+creates nothing: it fails closed.
 
 **Built once, in `packages/quickbooks`.** Steps 1 to 4 are one shared
 find-or-create, used by income and bulk donation alike (plan decision), so the
-cutoff, the lookup and the retry key behave the same for both. Income supplies
-the deposit it wants (date, net, lines, account) and its key, the payout GID;
-the helper answers *found*, *ambiguous*, *created*, *failed* or *too old*.
+line, the lookup and the retry key behave the same for both. Income supplies
+the deposit it wants (date, net, lines, account), its key (the payout GID) and
+its current line; the helper answers *found*, *ambiguous*, *created*, *failed*
+or *before the line*. Each lane derives its line the same way from its own
+records.
 Owned by L4, alongside:
 
 - **One connection.** checkin-app builds one `AccessTokenSource` (the
@@ -174,9 +198,9 @@ Plain status column with a guarded transition table; no xstate.
 | (none) | Σ txn net ≠ payout net | `OPEN` + `TXN_SUM_MISMATCH` (nothing is posted for numbers that don't add up) |
 | (none), `WAITING` | exactly one unclaimed deposit, `amount = payout net`, date in `[issuedAt, issuedAt + window]` | `MATCHED` (nothing posted) |
 | (none), `WAITING` | more than one candidate | `OPEN` + `AMBIGUOUS_DEPOSIT` |
-| (none), `WAITING` | none found, payout newer than the cutoff, deposit write available | create → `POSTED`, or `OPEN` + `POST_FAILED` |
-| (none) | none found, payout newer than the cutoff, no deposit write yet | `WAITING` |
-| (none) | none found, payout older than the cutoff, window elapsed | `OPEN` + `NO_DEPOSIT` |
+| (none), `WAITING` | none found, payout after the line, deposit write available | create → `POSTED`, or `OPEN` + `POST_FAILED` |
+| (none) | none found, payout after the line or no line yet, no deposit write yet | `WAITING` |
+| (none) | none found, payout before the line, window elapsed | `OPEN` + `NO_DEPOSIT` |
 | `OPEN` | a later run finds the deposit (late hand booking) | `MATCHED` |
 | `OPEN` `POST_FAILED` | a later run, or finance's retry, creates it with the same key | `POSTED` |
 | `OPEN` | finance: match to a chosen deposit | `RESOLVED` (manual match) |
@@ -190,9 +214,9 @@ snapshot of `{ depositId, txnDate, totalCents }` plus the payout net, which is
 what makes drift detectable. A drifted deposit is never edited by the app, even
 one it created; finance decides. Every transition writes `IncomeAuditLog` in the
 same transaction. A run is idempotent and holds a Postgres advisory lock, so the
-cron and a manual "run now" cannot interleave. `window` (default 7 days),
-`cutoff` and `reconcileFrom` (default: the oldest payout in the mirror) are
-injected through `configureIncome()`. QuickBooks history predates the store's
+cron and a manual "run now" cannot interleave. `window` (default 7 days) and
+`reconcileFrom` (default: the oldest payout in the mirror) are injected through
+`configureIncome()`; neither decides who books what. QuickBooks history predates the store's
 (owner-confirmed), so `NO_DEPOSIT` is always a real exception, and there is no
 bulk dismiss.
 
@@ -211,20 +235,43 @@ reads the same freshly synced mirror and costs no extra Aurora wake, so a new
 payout is booked within about a day. A `FINANCE` "run now" route covers the
 rest.
 
-### Still open (owner)
+### Deposit lines and item categories
 
-- **The cutoff: a fixed cutover date or a rolling ~90 days?** Shared with bulk
-  donation, since the helper owns it. Matching first only protects a hand
-  booking that already exists when the app looks. A rolling window lets the
-  app create deposits for payouts up to ~90 days old that finance may still be
-  booking by hand. A fixed date at go-live only creates for payouts after it.
-  Either way the design assumes finance stops hand-booking payouts newer than
-  the cutoff once creation is live.
-- **What goes on the deposit we create.** Default: payout net into the bank
-  account, with gross charges to one income account and fees, refunds and
-  adjustments to their own accounts, all from configured account names. If
-  finance wants income split by product type or program class, income needs an
-  account-mapping table like bulk donation's QuickBooks categories.
+Certain items have to book to their own QuickBooks category (owner decision).
+A QuickBooks category is a **budget-owner bucket**: checkin owns that table, it
+carries each bucket's QuickBooks category and keeps the two in sync, and the
+expense lane builds it (#1280 §6). Income reuses it instead of keeping a second
+list:
+
+- **Bucket list:** income declares the same read port bulk donation does,
+  `OwnerDirectory { list(): Promise<OwnerInfo[]> }`, bound by checkin to its
+  table. Income keeps the bucket id as an opaque integer and never sees
+  approvers.
+- **Item mapping:** `IncomeItemCategory { variantId, budgetOwnerId }`, unique on
+  `variantId` (Shopify's variant id, stable across title and SKU edits). Finance
+  sets it on a screen listing every item the mirror has seen, with its current
+  mapping. Unmapped items are the default, not an error: they book at
+  organization level, which is no bucket, as in bulk donation.
+
+**Building a created deposit.** The deposit goes to the bank account for the
+payout's net. Its lines:
+
+- each charge's amount is split across its order's lines by line amount
+  (price × quantity − discount) and booked to each line's mapped category, or
+  organization-level income when unmapped;
+- tax, shipping and the rounding remainder of that split book at organization
+  level, so every charge's lines sum exactly to the charge;
+- a refund is split the same way against the same order's lines, as negative
+  lines;
+- fees and adjustments book at organization level to their own accounts.
+
+So the lines always sum to the payout net, and the deposit matches the bank.
+Account names (bank, organization-level income, fees, tax, shipping) are
+injected through `configureIncome()`. Mapping changes apply to deposits created
+afterwards. The app never rebooks a deposit it has already created. A mapping
+that points at an archived bucket stops that payout with `POST_FAILED` until
+finance remaps it. Hand-booked deposits that the app only matched are not
+checked against the mapping.
 
 ## 4. Roles: `FINANCE`, with board read
 
@@ -243,7 +290,7 @@ references the `FINANCE` authorize token, so it follows L3's role PR.
 | Model | Collides with | Port name |
 |---|---|---|
 | `AuditLog` | checkin's own `AuditLog` | **`IncomeAuditLog`**, `@@map("audit_log")` (owner-approved) |
-| `PayoutReconciliation` (new) | none: checked against checkin, every `packages/*` schema and all eight Inventory app schemas | as is |
+| `PayoutReconciliation`, `IncomeItemCategory` (new) | none: checked against checkin, every `packages/*` schema and all eight Inventory app schemas | as is |
 
 The dropped source models need no rename; none of them collided either. Actor
 columns keep the source names `actorUserId` / `resolvedByUserId`. Neither is in
@@ -267,11 +314,15 @@ Pages (Finance nav section tabs, gated `FINANCE`/`BOARD`): `income/payouts`
 | `/api/income/reconciliation/[id]/candidates` | GET | FINANCE | `IncomeQbDepositView[]` (live QB, ±window) |
 | `/api/income/reconciliation/[id]/resolve` | POST | FINANCE | `PayoutReconciliation` |
 | `/api/income/reconciliation/run` | POST | FINANCE | `IncomeReconciliationCount` |
+| `/api/income/items` | GET | FINANCE, BOARD | `IncomeItemView[]` (items seen + mapped bucket) |
+| `/api/income/items/[variantId]/category` | PUT, DELETE | FINANCE | `IncomeItemCategory` |
 
 Mirror and QB rows are not Prisma models, so the stripper would drop them. Each
 needs a **synthetic classification** (the `CatalogItemCount` pattern, #1286 §5):
 `IncomePayoutView`, `IncomeBalanceTxnView`, `IncomeQbDepositView`,
-`IncomeReconciliationCount`. These go in B, and they are the main way this
+`IncomeItemView`, `IncomeReconciliationCount`. The bucket picker reads the
+bucket list route the expense lane registers with the bucket table; income adds
+no route for it. These go in B, and they are the main way this
 boundary PR differs from the other lanes'. Resolve takes one of three actions:
 match to a chosen deposit, dismiss with a reason, or retry a `POST_FAILED`
 create. The create path adds no route. No audit-log route: the source has no
@@ -287,8 +338,8 @@ existing access. Income's tiering:
 
 - **`internal`**: all amounts and dates, `payoutGid`, deposit id and snapshot,
   status/kind, `actorUserId`/`actorUsername`/`resolvedByUserId`, free text
-  (`reason`, `note`), audit `before`/`after`; every field of the four synthetic
-  views.
+  (`reason`, `note`), audit `before`/`after`, item mappings (`variantId`,
+  `budgetOwnerId`); every field of the five synthetic views.
 - **`public`**: row `id` only.
 - **No `pii`, no `secret`.** This holds only while two things hold, and B's
   security test pins both: the mirror port's column lists exclude customer
@@ -296,15 +347,18 @@ existing access. Income's tiering:
   entity refs (QB deposit lines can name a customer). Widening either means
   re-tiering in its own boundary PR.
 - **Outbound:** a deposit income creates carries the payout's amounts, the
-  configured accounts and the payout GID, and nothing about who bought. Income
+  configured accounts, the bucket categories and the payout GID, and nothing
+  about who bought. Income
   never sends buyer identity to QuickBooks; S's tests pin the deposit it builds.
 
 ## 8. Phasing: three PRs, each based on `main`
 
 1. **S: `packages/income/` only.** Schema (`PayoutReconciliation`,
-   `IncomeAuditLog`) + fresh init migration; reconcile engine + transition
+   `IncomeItemCategory`, `IncomeAuditLog`) + fresh init migration; the
+   deposit-line builder (§3) with its sum-to-net tests; reconcile engine + transition
    table + resolve + audit; `contract.ts` (`IncomeAuth`, `PayoutMirror`,
-   `QbDepositSource`, which takes `AccessTokenSource` from `packages/quickbooks`);
+   `QbDepositSource`, which takes `AccessTokenSource` from `packages/quickbooks`,
+   and `OwnerDirectory`);
    route factories; pages/components rewritten from `PayoutsClient` /
    `PayoutDetailClient` / `ConflictsClient`; dev seed (one `OPEN NO_DEPOSIT` row
    stamped with the seeded `Org` id). Vitest unit tier plus the pg-test-harness
@@ -318,14 +372,16 @@ existing access. Income's tiering:
    touches no boundary file. In progress as #1862 (local `d1d935cf`): the
    read-only engine; it needs those additions.
 2. **B: boundary, alone, registry-first.** `@sensitivity` on the income schema,
-   `generator security`, `security/registry/income.ts` with all seven §6 routes,
-   the four synthetic classifications, the merge-list line, security tests
+   `generator security`, `security/registry/income.ts` with every §6 route,
+   the five synthetic classifications, the merge-list line, security tests
    (stripper over each view; the no-customer-column / no-QB-line pins of §7).
    Depends on S and on L3's `FINANCE` role PR.
 3. **W: wiring.** Route + page stubs, `pageRegistry`, Finance nav tabs,
    `configureIncome()` via the `LIBRARIES` list (H2), the `PayoutMirror` adapter
-   (three SELECTs in `shopifyRead/client.ts`), the shared `AccessTokenSource`
-   binding (inert until QB-0), the one-line call in `cron/reconcile-shopify`.
+   (five SELECTs in `shopifyRead/client.ts`), the `OwnerDirectory` binding to
+   checkin's bucket table, the shared `AccessTokenSource` binding (inert until
+   QB-0), the one-line call in `cron/reconcile-shopify`. Needs the expense
+   lane's bucket-table PR first, as bulk donation's W does.
    Flow tests: FINANCE sees and resolves (dismiss) the seeded row; BOARD reads but
    gets 403 on resolve/run; a non-finance persona gets 403 everywhere; run with
    the mirror unwired returns zero counts. The flow compose has no mirror and no
@@ -342,9 +398,10 @@ these PRs.
 
 **Crossings: none.** Income calls no other library and no library calls
 income. Its dependencies are host-provided (the mirror bridge, the QB token
-source) and one shared package. Cross-lane touches all sit in L4's
-`packages/quickbooks`: the `AccessTokenSource` location, `depositsSince`, the
-deposit write, and the find-or-create shared with bulk donation (§3).
+source, checkin's bucket table) and one shared package. Cross-lane touches: L3
+builds the bucket table; L4's `packages/quickbooks` carries the
+`AccessTokenSource` location, `depositsSince`, the deposit write, and the
+find-or-create shared with bulk donation (§3).
 
 ## 9. Distillation at merge
 
@@ -355,8 +412,9 @@ register file:
   for finance with the reason. A deposit backs at most one payout. `[Decision]`
 - A payout is matched against the ledger before anything is created for it. The
   app creates a deposit only when none exists and the payout is newer than the
-  cutoff; an older payout with no deposit goes to finance, never to an automatic
-  entry. `[Decision]`
+  newest one finance booked by hand; an older payout with no deposit goes to
+  finance, never to an automatic entry. Where that line falls is derived from
+  the ledger, never configured. `[Decision]`
 - A retried create never books a payout twice. `[Decision]`
 - The app never edits or deletes a ledger entry, including one it created.
   `[Decision — deliberate limit]`
@@ -364,6 +422,9 @@ register file:
   it is never silently re-matched. `[Decision — *Principle: people decide about people*]`
 - Store history reaches the app only through the mirror; there is no in-app
   upload of store exports. `[Decision — deliberate limit]`
+- Items finance has not mapped book at organization level; mapping an item is
+  never required before a payout posts. A mapping change never rebooks a deposit
+  already created. `[Decision]`
 - Income keeps no buyer identity; who paid is read from the mirror where it is
   needed. `[Decision — *Principle: least privilege*]`
 
