@@ -188,6 +188,22 @@ hours at a time — is a normal operating mode here, not an incident.
   it is held for a human, because once state has moved on a bare toggle cannot
   tell entering from leaving.  [Decision]
 
+- A facility close a keyholder confirmed at the kiosk — the echoed server token,
+  or the kiosk's own offline confirm — is applied whenever it reaches the server,
+  however late; it is never held for staleness or ordering, and a kiosk clock
+  flagged as having stepped is trusted. The keyholder was at the reader and saw
+  the room, so the close is a fact, not a toggle. Everyone in the building at that
+  moment departs at the keyholder's scan time, not the time the close arrived,
+  and never more than 24 hours after arrival. A scan time ahead of the server's
+  clock is not trusted: that close is held for a human. Someone who arrived after
+  the keyholder's scan is left as they are only when a keyholder who also arrived
+  later is still in — the building reopened; otherwise they depart when the close
+  arrives. A departure the nightly sweep stamped before the close arrived is
+  pulled back to the keyholder's time; a departure a person has since corrected
+  is not. A keyholder who arrived after the scan does not count as still inside.
+  The close still needs the keyholder in the building at their scan time — an
+  unconfirmed late keyholder scan is held like any other.  [Decision]
+
 - A non-keyholder scan accepted while the facility is closed is held, not toggled,
   until a keyholder visit exists; the held scans then project automatically in the
   order they occurred. It never produces a roster with no keyholder present. A
