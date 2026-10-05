@@ -145,6 +145,8 @@ column).
 ### State machine 3: QuickBooks reconciliation (new): `PayoutReconciliation`
 
 One row per paid payout from either source, unique on the reconciliation key.
+Finance books exactly one QuickBooks deposit per payout (owner-confirmed), so the
+match is one-to-one.
 Plain status column with a guarded transition table; no xstate, because the
 source has none and this machine has six edges.
 
@@ -154,7 +156,7 @@ source has none and this machine has six edges.
 | (none) | run: window elapsed with none / >1 candidate, or sum mismatch | `OPEN` + kind `NO_DEPOSIT` / `AMBIGUOUS_DEPOSIT` / `TXN_SUM_MISMATCH` |
 | `OPEN` | a later run auto-matches (late booking) | `MATCHED` |
 | `OPEN` | finance: match to a chosen deposit | `RESOLVED` (manual match) |
-| `OPEN` | finance: dismiss with a required reason (e.g. combined deposit) | `RESOLVED` (dismissed) |
+| `OPEN` | finance: dismiss with a required reason (e.g. booked as something other than a deposit) | `RESOLVED` (dismissed) |
 | `MATCHED` / `RESOLVED` | run: deposit gone or amount changed, or payout changed (mirror update, or an accepted CSV conflict) | `OPEN` + kind `DRIFT` |
 
 Rules: payouts not yet paid are skipped, not queued. A deposit backs at most one
@@ -323,4 +325,4 @@ Mechanism (ports, cron hook, synthetic views) is deleted with this doc.
   would need the CSV tables too, and the plan places every Inventory app in its
   own library.
 - **Reconcile per order against QB sales receipts.** Rejected: the bank sees
-  payouts, and finance books one deposit per payout.
+  payouts, and finance books one deposit per payout (owner-confirmed).
