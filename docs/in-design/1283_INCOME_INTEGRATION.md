@@ -247,10 +247,12 @@ list:
   `OwnerDirectory { list(): Promise<OwnerInfo[]> }`, bound by checkin to its
   table. Income keeps the bucket id as an opaque integer and never sees
   approvers.
-- **Item mapping:** `IncomeItemCategory { variantId, budgetOwnerId }`, unique on
-  `variantId` (Shopify's variant id, stable across title and SKU edits). Finance
-  sets it on a screen listing every item the mirror has seen, with its current
-  mapping. Unmapped items are the default, not an error: they book at
+- **Item mapping:** `IncomeItemCategory { orgId, variantId, budgetOwnerId }`,
+  unique on `(orgId, variantId)` like every other income table, so a second org
+  keeps its own mappings. `variantId` is Shopify's variant id, stable across
+  title and SKU edits. Finance sets the mapping for the injected org on a screen
+  listing every item the mirror has seen, with its current mapping; the routes
+  and the deposit-line builder always read and write under that org. Unmapped items are the default, not an error: they book at
   organization level, which is no bucket, as in bulk donation.
 
 **Building a created deposit.** The deposit goes to the bank account for the
@@ -315,7 +317,7 @@ Pages (Finance nav section tabs, gated `FINANCE`/`BOARD`): `income/payouts`
 | `/api/income/reconciliation/[id]/resolve` | POST | FINANCE | `PayoutReconciliation` |
 | `/api/income/reconciliation/run` | POST | FINANCE | `IncomeReconciliationCount` |
 | `/api/income/items` | GET | FINANCE, BOARD | `IncomeItemView[]` (items seen + mapped bucket) |
-| `/api/income/items/[variantId]/category` | PUT, DELETE | FINANCE | `IncomeItemCategory` |
+| `/api/income/items/[variantId]/category` | PUT, DELETE | FINANCE | `IncomeItemCategory` (the injected org's mapping) |
 
 Mirror and QB rows are not Prisma models, so the stripper would drop them. Each
 needs a **synthetic classification** (the `CatalogItemCount` pattern, #1286 §5):
@@ -338,7 +340,7 @@ existing access. Income's tiering:
 
 - **`internal`**: all amounts and dates, `payoutGid`, deposit id and snapshot,
   status/kind, `actorUserId`/`actorUsername`/`resolvedByUserId`, free text
-  (`reason`, `note`), audit `before`/`after`, item mappings (`variantId`,
+  (`reason`, `note`), audit `before`/`after`, item mappings (`orgId`, `variantId`,
   `budgetOwnerId`); every field of the five synthetic views.
 - **`public`**: row `id` only.
 - **No `pii`, no `secret`.** This holds only while two things hold, and B's
