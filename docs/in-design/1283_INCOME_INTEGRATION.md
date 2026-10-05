@@ -39,12 +39,14 @@ checkin, and every decision is audited.
   in `packages/quickbooks` for both lanes. Matching needs QB-0 and a deposit
   read; creating needs the QB-2 deposit write. Until QB-2 lands, finance keeps
   booking by hand and the match records those deposits.
-- **Some items book to their own QuickBooks category.** Finance maps a Shopify
-  item to a budget-owner bucket, checkin's table that mirrors QuickBooks
-  categories (the same buckets bulk donation and expense use). A deposit the app
-  creates splits the payout across those categories; unmapped items book at
-  organization level.
-- **Cost:** a three-model library on its own database, three read-only ports,
+- **Some items book to their own QuickBooks class.** Finance maps a Shopify
+  item to a budget-owner bucket, checkin's table whose QuickBooks reference is a
+  Class (owner decision D4; the same buckets bulk donation and expense use). A
+  deposit the app creates splits the payout across those classes; unmapped
+  items book at organization level.
+- **Check, cash and grant income stay out of scope for good** (owner decision
+  D6). They are pure QuickBooks work, and the system does not duplicate them.
+- **Cost:** a four-model library on its own database, three read-only ports,
   and one call added to an existing daily cron. No pipeline crossings.
 
 ---
@@ -95,6 +97,11 @@ them, so H3 gates this lane only through `quickbooks`.
 | `csv-to-fixtures.mjs` | **Used once, from the Inventory repo at a pinned SHA**, not ported | migration doc |
 | QuickBooks reconciliation | **Net-new** | The backlog item's headline; absent from the source |
 
+**Out of scope for good (D6):** check, cash and grant income. Finance books it
+in QuickBooks directly; income has no record of it and never will. Those
+deposits can land in the same bank account as payouts; §3's exclusions keep
+them out of a payout's candidates when the amounts collide.
+
 So the plan's review device (S body = filtered `diff -r` against the source)
 does not fit this lane: almost nothing is verbatim. The S body carries the table
 above as its port-diff, file by file.
@@ -130,12 +137,18 @@ lands as `TXN_SUM_MISMATCH` for finance rather than matching silently.
 
 ## 3. QuickBooks: match before create
 
-Income follows the rule bulk donation set for the same problem (#1280 §7). Finance
+Income applies the matching model shared by expense, bulk donation and in-kind
+(`INVENTORY_PORT_RECONCILIATION.md`, "The matching model"), first set by bulk
+donation for this problem (#1280 §7). Finance
 books by hand today, so older payouts are already in QuickBooks and newer ones
 are not. Posting by age alone would double-book what finance entered recently,
 or skip what it hasn't entered yet. So every payout is **matched first**:
 
-1. Look for an existing QuickBooks deposit for the payout (QB read path).
+1. Look for an existing QuickBooks deposit for the payout (QB read path). The
+   search is narrow and driven from our side: deposits into the payout's bank
+   account, dated inside `[issuedAt, issuedAt + window]`, with amount = payout
+   net, minus every deposit already claimed by another payout and every deposit
+   finance has excluded. Old QuickBooks history is never walked.
 2. **Found:** record its id and mark the payout reconciled. Post nothing.
 3. **Not found, after the takeover line:** create the deposit (QB-2 write),
    keyed so a retry never books twice.
@@ -158,10 +171,10 @@ creates nothing: it fails closed.
 **Built once, in `packages/quickbooks`.** Steps 1 to 4 are one shared
 find-or-create, used by income and bulk donation alike (plan decision), so the
 line, the lookup and the retry key behave the same for both. Income supplies
-the deposit it wants (date, net, lines, account), its key (the payout GID) and
-its current line; the helper answers *found*, *ambiguous*, *created*, *failed*
-or *before the line*. Each lane derives its line the same way from its own
-records.
+the deposit it wants (date, net, lines, account), its key (the payout GID), its
+current line, and its claimed and excluded deposit ids; the helper keeps no
+state and answers *found*, *ambiguous*, *created*, *failed* or *before the
+line*. Each lane derives its line the same way from its own records.
 Owned by L4, alongside:
 
 - **One connection.** checkin-app builds one `AccessTokenSource` (the
@@ -169,8 +182,9 @@ Owned by L4, alongside:
   `configureExpense()`, `configureIncome()` and bulk donation's configure call.
   That requires the type to live in `packages/quickbooks`, not in expense's
   `contract.ts` where #1272 §9 places it. **Owner-approved; handed to L4 (QB-0).**
-- **Read:** `depositsSince(from)` (a one-line `pagedSince("Deposit", …)`), in
-  the QB-0 PR. Income's adapter keeps only `{ id, txnDate, totalCents,
+- **Read:** a windowed deposit read, `depositsBetween(from, to)` (Deposit
+  `WHERE TxnDate BETWEEN …`), in the QB-0 PR. It replaces the `depositsSince`
+  income asked for earlier, which would walk history. Income's adapter keeps only `{ id, txnDate, totalCents,
   depositToAccount }` and discards lines, memo and entity refs (§7).
 - **Write:** the QB-2 deposit-create method. Expense's QB-2 only creates
   purchases and bills; bulk donation needs the same deposit write.
@@ -196,7 +210,7 @@ Plain status column with a guarded transition table; no xstate.
 | From | Event | To |
 |---|---|---|
 | (none) | Σ txn net ≠ payout net | `OPEN` + `TXN_SUM_MISMATCH` (nothing is posted for numbers that don't add up) |
-| (none), `WAITING` | exactly one unclaimed deposit, `amount = payout net`, date in `[issuedAt, issuedAt + window]` | `MATCHED` (nothing posted) |
+| (none), `WAITING` | exactly one deposit, neither claimed nor excluded, `amount = payout net`, date in `[issuedAt, issuedAt + window]` | `MATCHED` (nothing posted) |
 | (none), `WAITING` | more than one candidate | `OPEN` + `AMBIGUOUS_DEPOSIT` |
 | (none), `WAITING` | none found, payout after the line, deposit write available | create → `POSTED`, or `OPEN` + `POST_FAILED` |
 | (none) | none found, payout after the line or no line yet, no deposit write yet | `WAITING` |
@@ -227,21 +241,46 @@ queue: anything that doesn't add up, doesn't match cleanly or fails to post goes
 to finance (finance rule: a control is a flag a person signs off).
 
 **Exception queue** = rows in `OPEN`, grouped by kind. `DRIFT` is the surviving
-form of the source's conflict queue.
+form of the source's conflict queue. In the shared model's vocabulary, income's
+`POSTED` is `CREATED`, `NO_DEPOSIT` is `BEFORE_LINE` and `AMBIGUOUS_DEPOSIT` is
+`AMBIGUOUS`; `TXN_SUM_MISMATCH` and `DRIFT` are income's own.
 
-**When it runs.** checkin cannot add a cron route: `/api/cron/*` live in the
-frozen `legacy-authz-routes.txt`. Income's `runReconcile()` is called from the
-existing `/api/cron/reconcile-shopify` handler after checkin's own reconcile. It
-reads the same freshly synced mirror and costs no extra Aurora wake, so a new
-payout is booked within about a day. A `FINANCE` "run now" route covers the
-rest.
+### Exclusions: `IncomeQbMatchExclusion`
+
+Finance can permanently remove a QuickBooks deposit from candidacy (owner
+decision D5), with one click and a reason. The usual case for income is a check
+or cash deposit (out of scope, D6) whose amount and date collide with a payout
+and keep it `AMBIGUOUS`.
+
+- **Model:** `IncomeQbMatchExclusion { orgId, qbTxnId, reason, by, at }`,
+  unique on `(orgId, qbTxnId)`, `@@map("qb_match_exclusion")`. The shared model
+  names it `QbMatchExclusion`, but every lane has one and the classification
+  map merges by model name, so each lane prefixes it (§5).
+- **Action:** from a payout's candidate list, finance excludes a deposit with a
+  required reason. The exclusion is written with an audit row in the same
+  transaction, and it is permanent: there is no undo route. A wrong exclusion is
+  corrected by matching the payout to that deposit by hand, which the resolve
+  action allows.
+- **Effect:** excluded and claimed ids are the only QuickBooks-side state income
+  keeps. Both are passed to the shared find-or-create on every run, and an
+  `AMBIGUOUS` payout left with one candidate auto-matches on the next run.
+
+**When it runs: one step inside `/api/cron/reconcile-shopify`, nothing at
+boot.** checkin cannot add a cron route: `/api/cron/*` live in the frozen
+`legacy-authz-routes.txt`. Income's `runReconcile()` is a try/catch step in the
+existing prod `/api/cron/reconcile-shopify` handler, after checkin's own
+reconcile. It reads the same freshly synced mirror and costs no extra Aurora
+wake, so a new payout is booked within about a day. `configureIncome()` only
+stores what it is given: no database or QuickBooks access at app start, no
+recovery sweep, no schedule of its own. A `FINANCE` "run now" route and the
+`POST_FAILED` retry cover anything urgent.
 
 ### Deposit lines and item categories
 
 Certain items have to book to their own QuickBooks category (owner decision).
-A QuickBooks category is a **budget-owner bucket**: checkin owns that table, it
-carries each bucket's QuickBooks category and keeps the two in sync, and the
-expense lane builds it (#1280 §6). Income reuses it instead of keeping a second
+A QuickBooks category is a **budget-owner bucket**: checkin owns that table, its
+QuickBooks reference is a **Class** id (owner decision D4), and the expense lane
+builds it (#1280 §6). Income reuses it instead of keeping a second
 list:
 
 - **Bucket list:** income declares the same read port bulk donation does,
@@ -260,7 +299,7 @@ list:
 payout's net. Its lines:
 
 - each charge's amount is split across its order's lines by line amount
-  (price × quantity − discount) and booked to each line's mapped category, or
+  (price × quantity − discount) and booked to each line's mapped bucket's Class, or
   organization-level income when unmapped;
 - whatever the split leaves over books at organization level, so every
   charge's lines sum exactly to the charge;
@@ -298,6 +337,7 @@ references the `FINANCE` authorize token, so it follows L3's role PR.
 |---|---|---|
 | `AuditLog` | checkin's own `AuditLog` | **`IncomeAuditLog`**, `@@map("audit_log")` (owner-approved) |
 | `PayoutReconciliation`, `IncomeItemCategory` (new) | none: checked against checkin, every `packages/*` schema and all eight Inventory app schemas | as is |
+| `QbMatchExclusion` (shared model's name) | the same model in expense and bulk donation | **`IncomeQbMatchExclusion`**, `@@map("qb_match_exclusion")` |
 
 The dropped source models need no rename; none of them collided either. Actor
 columns keep the source names `actorUserId` / `resolvedByUserId`. Neither is in
@@ -323,6 +363,8 @@ Pages (Finance nav section tabs, gated `FINANCE`/`BOARD`): `income/payouts`
 | `/api/income/reconciliation/run` | POST | FINANCE | `IncomeReconciliationCount` |
 | `/api/income/items` | GET | FINANCE, BOARD | `IncomeItemView[]` (items seen + mapped bucket) |
 | `/api/income/items/[variantId]/category` | PUT, DELETE | FINANCE | `IncomeItemCategory` (the injected org's mapping) |
+| `/api/income/qb-exclusions` | GET | FINANCE, BOARD | `IncomeQbMatchExclusion[]` |
+| `/api/income/qb-exclusions` | POST | FINANCE | `IncomeQbMatchExclusion` (exclude a deposit, reason required) |
 
 Mirror and QB rows are not Prisma models, so the stripper would drop them. Each
 needs a **synthetic classification** (the `CatalogItemCount` pattern, #1286 §5):
@@ -346,7 +388,8 @@ existing access. Income's tiering:
 - **`internal`**: all amounts and dates, `payoutGid`, deposit id and snapshot,
   status/kind, `actorUserId`/`actorUsername`/`resolvedByUserId`, free text
   (`reason`, `note`), audit `before`/`after`, item mappings (`orgId`, `variantId`,
-  `budgetOwnerId`); every field of the five synthetic views.
+  `budgetOwnerId`), exclusions (`qbTxnId`, `reason`, `by`, `at`); every field of
+  the five synthetic views.
 - **`public`**: row `id` only.
 - **No `pii`, no `secret`.** This holds only while two things hold, and B's
   security test pins both: the mirror port's column lists exclude customer
@@ -354,14 +397,15 @@ existing access. Income's tiering:
   entity refs (QB deposit lines can name a customer). Widening either means
   re-tiering in its own boundary PR.
 - **Outbound:** a deposit income creates carries the payout's amounts, the
-  configured accounts, the bucket categories and the payout GID, and nothing
+  configured accounts, the bucket Classes and the payout GID, and nothing
   about who bought. Income
   never sends buyer identity to QuickBooks; S's tests pin the deposit it builds.
 
 ## 8. Phasing: three PRs, each based on `main`
 
 1. **S: `packages/income/` only.** Schema (`PayoutReconciliation`,
-   `IncomeItemCategory`, `IncomeAuditLog`) + fresh init migration; the
+   `IncomeItemCategory`, `IncomeQbMatchExclusion`, `IncomeAuditLog`) + fresh
+   init migration; the
    deposit-line builder (§3) with its sum-to-net tests; reconcile engine + transition
    table + resolve + audit; `contract.ts` (`IncomeAuth`, `PayoutMirror`,
    `QbDepositSource`, which takes `AccessTokenSource` from `packages/quickbooks`,
@@ -407,8 +451,9 @@ these PRs.
 income. Its dependencies are host-provided (the mirror bridge, the QB token
 source, checkin's bucket table) and one shared package. Cross-lane touches: L3
 builds the bucket table; L4's `packages/quickbooks` carries the
-`AccessTokenSource` location, `depositsSince`, the deposit write, and the
-find-or-create shared with bulk donation (§3).
+`AccessTokenSource` location, `depositsBetween`, the Class reader (D4), the
+deposit write, and the stateless find-or-create shared with the other lanes
+(§3).
 
 ## 9. Distillation at merge
 
@@ -423,6 +468,11 @@ register file:
   finance, never to an automatic entry. Where that line falls is derived from
   the ledger, never configured. `[Decision]`
 - A retried create never books a payout twice. `[Decision]`
+- A QuickBooks entry finance has excluded is never offered as a match again; an
+  exclusion carries a reason and is not undone. `[Decision]`
+- Income's matching runs only inside the existing daily reconcile step or on a
+  finance request; it never runs at app start or on a schedule of its own.
+  `[Decision]`
 - The app never edits or deletes a ledger entry, including one it created.
   `[Decision — deliberate limit]`
 - A payout or deposit that changes after it was reconciled reopens for finance;
