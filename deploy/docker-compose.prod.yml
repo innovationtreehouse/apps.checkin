@@ -25,6 +25,8 @@ services:
       - ../.env
     environment:
       DATABASE_URL: postgresql://prisma:${DB_PASSWORD}@db:5432/checkmein?schema=public
+      # One per checkin-app/libraries.json entry: <NAME>_DATABASE_URL -> its database.
+      CATALOG_DATABASE_URL: postgresql://prisma:${DB_PASSWORD}@db:5432/catalog?schema=public
     depends_on:
       - db
 
@@ -37,6 +39,9 @@ services:
       POSTGRES_DB: checkmein
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Creates each library's database on first init.
+      - ./prod-initdb:/docker-entrypoint-initdb.d:ro
+      - ../checkin-app/libraries.json:/libraries.json:ro
 
 volumes:
   postgres_data:

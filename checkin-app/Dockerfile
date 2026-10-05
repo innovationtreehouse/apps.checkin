@@ -2,13 +2,27 @@
 # see the root package.json, root package-lock.json, and every workspace manifest.
 # Build with:  docker build -f checkin-app/Dockerfile .
 
+# Stage 0: Install inputs of every packages/* workspace — its manifest plus, where
+# it has one, its Prisma schema/config (the `postinstall: prisma generate` needs
+# them). Pruned from the full source so the deps layer below re-runs only when
+# one of these files changes, not on any package source edit.
+FROM node:24-alpine AS install-inputs
+WORKDIR /src
+COPY packages ./packages
+RUN find packages -mindepth 2 -maxdepth 2 \
+      ! -name package.json ! -name prisma ! -name prisma.config.ts \
+      -exec rm -rf {} +
+
 # Stage 1: Install dependencies (whole workspace, hoisted to /app/node_modules)
 FROM node:24-alpine AS deps
 WORKDIR /app
 # Copy only the manifests + lockfile first for a cache-friendly `npm ci` layer.
-# Add packages/*/package.json here when @checkin/* packages land (item 4).
 COPY package.json package-lock.json* ./
 COPY checkin-app/package.json ./checkin-app/package.json
+COPY --from=install-inputs /src/packages ./packages
+# Library schemas run checkin's `security` generator, whose provider path is
+# package-relative (../../checkin-app/scripts/security-generator.js).
+COPY checkin-app/scripts ./checkin-app/scripts
 RUN npm ci
 
 # Stage 2: Build the app
@@ -25,12 +39,11 @@ COPY . .
 # (its schema lives at checkin-app/prisma; the security generator resolves its
 # script + output paths relative to the app cwd).
 RUN npm -w checkin-app exec -- prisma generate
-# The global catalog (#1286) ships its own Prisma schema + client; its generated
-# client (packages/global-catalog/src/generated) is gitignored, so it must be
-# generated in the image too or the catalog routes fail "Module not found:
-# ../generated/prisma/client". This also re-emits the committed catalog security
-# classifications (idempotent).
-RUN npm -w @inventory/global-catalog exec -- prisma generate
+# Each checkin-hosted library (checkin-app/libraries.json) ships its own Prisma
+# client into its gitignored src/generated, so generate them here for `next
+# build` to trace into the standalone bundle. Also re-emits each library's
+# committed security classifications (idempotent).
+RUN scripts/each-library.sh run db:generate
 # Build stamp surfaced in the app footer: the deployed commit SHA, passed via
 # --build-arg by the deploy workflow and inlined into the bundle (NEXT_PUBLIC_*,
 # build-time). Empty in local/ad-hoc builds -> the footer shows "dev".
@@ -72,6 +85,14 @@ RUN npm -w checkin-app run build
 RUN mkdir /prisma-cli && cd /prisma-cli && npm init -y >/dev/null \
  && npm install --no-audit --no-fund --save-exact \
       prisma@"$(node -p "require('/app/node_modules/prisma/package.json').version")"
+# Migrate-task layout for each library, mirroring checkin-app's below: its
+# manifest (so `npm -w` resolves it), schema + migrations, its zero-import
+# deploy config as prisma.config.ts, and a node_modules symlink to the shipped
+# prisma CLI tree.
+RUN mkdir /libs && scripts/each-library.sh exec --call 'out="/libs/packages/${PWD##*/}" \
+      && mkdir -p "$out" && cp -r package.json prisma "$out/" \
+      && cp prisma.config.deploy.ts "$out/prisma.config.ts" \
+      && ln -s ../../checkin-app/node_modules "$out/node_modules"'
 
 # Stage 3: Production image
 FROM node:24-alpine AS runner
@@ -111,6 +132,14 @@ COPY --from=builder /app/checkin-app/prisma.config.deploy.ts ./checkin-app/prism
 # command's cwd resolves it without touching the standalone /app/node_modules.
 # CI's deploy-build smoke asserts it with `npx --no-install prisma --version`.
 COPY --from=builder /prisma-cli/node_modules ./checkin-app/node_modules
+# Library migrations: the migrate task runs scripts/each-library.sh against each
+# library's own <NAME>_DATABASE_URL before checkin's migrate deploy.
+COPY --from=builder /libs/ ./
+# The root manifest lets scripts/each-library.sh resolve each library by
+# workspace name (`npm -w <package>`).
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/checkin-app/libraries.json ./checkin-app/libraries.json
+COPY --from=builder /app/scripts/each-library.sh ./scripts/each-library.sh
 
 EXPOSE 4000
 ENV PORT=4000
