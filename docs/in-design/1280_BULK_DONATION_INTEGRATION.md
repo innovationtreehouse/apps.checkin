@@ -48,7 +48,7 @@ difference from those, or a decision they leave open.
 | Library + own DB + checkin security regime + retired source auth + injected `Org` + vitest/flow tests | Unchanged. Package `@inventory/bulk-donation`, boot call `configureBulkDonation()`, DB `BULKDONATION_DATABASE_URL` (the source's own name, inherited). |
 | Field tiers `public`/`internal`, no `pii` (catalog, inventory) | **Donor fields are `pii`** (§4). |
 | Broad viewer gate (catalog, inventory) | **None.** `FINANCE` and `BOARD` only (§5). |
-| Crossings behind ports (all) | **No library crossing.** One host port, the owner directory, backed by a checkin-owned owner table that expense also needs (§6). |
+| Crossings behind ports (all) | **No crossing for the Benevity surface.** One host port, the owner directory, backed by a checkin-owned owner table that expense also needs (§6). In-kind (FR5) adds four crossings, X9–X11 and X13, declared inert in S (§2.4). |
 | Data migration | None. Start from seed (owner decision). |
 
 ## 2. Surface
@@ -112,6 +112,80 @@ FD3 stays open after this port. A manual-entry design would reuse this port's
 `Transaction` and owner-assignment flow, so the schema should not be bent now to
 anticipate it.
 
+### 2.4 FR5: in-kind donation identification (#1270)
+
+FR5 moved to this lane from the receipt design (owner decision). **Nothing in the
+source implements it.** A search of the whole Inventory repo for in-kind finds
+no code in receipt-app, bulkdonation-app, or anywhere else; the receipt design
+reached the same result. So there is nothing to port and nothing to split
+between receipt and donations.
+
+What this lane takes on: FR5 as net-new design work, together with FD3's in-kind
+entry. **Past in-kind gifts stay in QuickBooks only** (owner decision): there is
+no import of historical in-kind donations, so in-kind records start with the
+first one entered here. The domain is not built in this port's three PRs; the ports it needs are
+declared in S so no later PR waits on another lane. An in-kind donation arrives
+one of two ways (owner decision: both are real):
+
+- **With a receipt.** The donor's paperwork goes through the receipt pipeline
+  exactly like a purchase receipt: OCR, line extraction, catalog matching (so the
+  catalog learns from it), and an automatic inventory load. The difference is
+  the money side: no money was spent, so it goes to donations, not expense. The
+  uploader marks the receipt as a donation at intake, and the orchestrator routes
+  its money side accordingly. **The uploader is often not the donor** (staff
+  importing a donor's paperwork), so the in-kind mark asks who the donor is
+  instead of assuming the uploader. The uploader must pick "I am the donor" or
+  enter the donor's name; a blank donor is not allowed (owner decision). The
+  uploader stays recorded as the
+  actor; the donor is a separate field. Inventory loading reuses the existing apply
+  crossing (plan X4); nothing new there. How the donor reaches donations is X13 below.
+- **Without a receipt.** Someone in ops identifies each item by picking it from
+  the catalog and enters quantity and value. Donations then loads the goods into
+  inventory itself.
+
+New crossings (numbered after the plan's X1–X8), each a port in this library's
+`contract.ts` with an inert adapter in S, never a direct import:
+
+| # | Crossing | Kind | Inert adapter |
+|---|---|---|---|
+| X9 | orchestrator → donations: an in-kind receipt's money side only (`ingestInKind(receipt)`, idempotent on `receiptId`) | sync, in-process, callee | throws, so the caller retries; same as the receipt design's inert S1 sink |
+| X10 | donations → catalog: item search and lookup for the no-receipt picker | sync read, caller | empty results |
+| X11 | donations → local-inventory: load identified goods (idempotent per source, keyed `donation:<id>`, beside the receipt pipeline's `receipt:<id>`) | sync, in-process, caller | throws |
+| X13 | receipt → donations, directly: the donor entered at upload (`recordInKindDonor(receiptId, donor)`, idempotent on `receiptId`; a later call replaces the donor, which is how edits arrive), and `withdrawInKind(receiptId)` when the uploader clears the in-kind mark | sync, in-process, callee | throws |
+
+`donor` is `InKindDonor { firstName: string; lastName: string; companyName:
+string | null }` and is never null. The receipt design declares the caller side and has confirmed this signature;
+`receiptId` is the receipt's UUID, and "I am the donor" is resolved to the
+uploader's name before the call. Clearing the in-kind mark is its own call.
+
+**`withdrawInKind(receiptId: string): Promise<void>`** is idempotent, and a
+receipt donations never heard of is a no-op (the receipt side re-sends from
+current state, so a withdraw can arrive with no donor ever recorded). It deletes the waiting donor
+record for that receipt (donor details are `pii` and would otherwise sit
+unmatched forever) and any *donor needed* queue entry. In normal flow no money
+side can exist yet: X9 is sent only after the receipt proceeds, and the in-kind
+mark is locked from then on. If a money side has arrived anyway, donations does
+not delete anything; it raises the receipt in the finance queue as an anomaly.
+
+**The donor never passes through the orchestrator** (owner decision). Donations
+joins the two halves on `receiptId`, and either may arrive first:
+
+- **Donor first:** donations stores it and waits; nothing shows in a queue until
+  the money side arrives.
+- **Money side first** (the donor call has not synced yet): the in-kind donation
+  is recorded and shows in the finance queue as *donor needed*. It is not booked
+  to QuickBooks until the donor arrives, and the entry clears itself when it
+  does. An entry that stays means the receipt side's delivery is stuck.
+- **Both present:** the donation is ready to book (§7).
+
+X9 and X13 also change the receipt and orchestrator designs: receipt intake
+needs an "in-kind" mark with the donor fields above and calls X13 itself, and
+the orchestrator sends that receipt's money side to X9 instead of the expense
+crossing (X5). Donor details are `pii` (§4) and are held by donations, which
+links them to no checkin person (§6). If the receipt library persists them, it
+tiers them `pii` too. How goods are valued for QuickBooks, and what the donor's acknowledgement
+says, belong to the in-kind design.
+
 ## 3. Database and renames
 
 Own database as in #1286 §4. Model names are checked against every source schema
@@ -131,8 +205,8 @@ Default is `internal`; nothing is `public` except the synthetic count model.
 
 | Tier | Fields | Why |
 |---|---|---|
-| `pii` | `Transaction.donorFirstName`, `donorLastName`, `donorComment`; `TransactionCommentRule.comment`; `UploadedFile.fileBlob` | Names identify a person. Comments are free text that often names one ("in memory of…") and are copied verbatim into rules. The blob is the raw CSV, every name included. |
-| `internal` | amounts and fees, company and campaign, nonprofit/project/bank ids, dates, `ownerId`, `isOrganizationalLevel`, all actor ids and usernames, `originalFilename`, `fileHash`, counts, `AccountMap.*`, hold `reason`/`matchedRows`/`status`, `DisbursementEvent.payload`, snapshot `state`/`context`, `WorkflowEvent.*` | Financial and attribution data; not identifying alone. |
+| `pii` | `Transaction.donorFirstName`, `donorLastName`, `donorComment`; `TransactionCommentRule.comment`; `UploadedFile.fileBlob`; `DonationQbCandidateView.memo` | Names identify a person. Comments are free text that often names one ("in memory of…") and are copied verbatim into rules. The blob is the raw CSV, every name included. A hand-entered QuickBooks memo is free text that may name a donor. |
+| `internal` | amounts and fees, company and campaign, nonprofit/project/bank ids, dates, `ownerId`, `isOrganizationalLevel`, all actor ids and usernames, `originalFilename`, `fileHash`, counts, `AccountMap.*`, hold `reason`/`matchedRows`/`status`, `DisbursementEvent.payload`, snapshot `state`/`context`, `WorkflowEvent.*`, `DisbursementEvent.qbMatchState`/`qbTxnId`, `DonationQbMatchExclusion.*`, `DonationQbCandidateView` id/type/date/amount (synthetic) | Financial and attribution data; not identifying alone. |
 | `public` | `DonationNavCounts { unassignedQueue, disbursementHolds }` (synthetic, §5) | Two scalars; #1286 §7 pattern. |
 
 `companyName` names the donor's employer. With a name beside it, it narrows
@@ -188,32 +262,45 @@ Routes, all human, all under `/api/donations/`, registered in one B PR:
 | `disbursement-holds` | GET |
 | `disbursement-holds/[disbursementId]/resubmit` | POST |
 | `disbursement-events` | GET |
-| `owners` | GET |
 | `nav-counts` | GET (returns `DonationNavCounts`) |
+| `disbursement-events/[disbursementId]/qb-candidates` | GET (returns `DonationQbCandidateView[]`) |
+| `disbursement-events/[disbursementId]/qb-resolve` | POST (pick a candidate, create, or retry) |
+| `qb-exclusions` | GET, POST |
 
-That is 19 entries. Dropped: `auth/*`, `health`, `system-data`. Volume is
+That is 22 entries; the last four serve the drain's finance queue and are registered now so the drain PR touches no boundary. Dropped: `auth/*`, `health`, `system-data`, and the source's `local-owners`: the owner picker reads the bucket list route the expense lane registers with the bucket table (§6), as income does. Volume is
 hundreds of gifts a year, so no list gets a `.../count` endpoint now. Pages go
 under the Finance section as `NavLink[]` tabs (#1272 §7), gated `FINANCE`/`BOARD`.
 
 ## 6. Owners and donors: two identity decisions
 
-**An owner is an accounting bucket** (owner decision). Each bucket has one or more
-people who approve within it. Most buckets correspond to a program; some, such as
-Facility, belong to the organization as a whole and have no program. In the
+**An owner is an accounting bucket** (owner decision). Most buckets correspond to
+a program; some, such as Facility, belong to the organization as a whole and have
+no program. In the
 source the buckets are the auth app's `Owner { id, name, orgId, archivedAt }`,
 with approvers attached through its user roles, and both bulk donation and
 expense read them from the auth server. The auth app retires, so the buckets
 move into checkin:
 
 - **checkin owns the bucket table**, as it owns the `Org` registry: it links to
-  checkin's `Program` and `Person`, and two libraries need it. Minimal shape:
-  `BudgetOwner { id, name, programId?, archivedAt? }` plus a
-  `BudgetOwnerApprover { budgetOwnerId, personId }` join. `programId` is null for
-  organization-level buckets like Facility.
+  checkin's `Program`, and several libraries need it. Minimal shape:
+  `BudgetOwner { id, name, programId?, qbClassId, archivedAt? }`. `programId` is
+  null for organization-level buckets like Facility.
+- **Approvers are derived, never stored** (owner decision). A program bucket's
+  approvers are the program's leader and its program treasurers
+  (`ProgramVolunteer.isTreasurer`); an organization-level bucket has none and is
+  auto-approved. There is no approver table.
 - **This library only lists buckets.** It declares
   `OwnerDirectory { list(): Promise<OwnerInfo[]> }` in `contract.ts`, keeps
-  `ownerId` as an opaque integer, and never sees approvers. checkin binds the
-  port to its table in `configureBulkDonation()`.
+  `ownerId` as an opaque integer, uses the list to validate an assignment and
+  show bucket names, and never sees approvers. checkin binds the port to its
+  table in `configureBulkDonation()`. Exact shape, identical to income's so
+  checkin binds both with one implementation over the bucket table (libraries
+  cannot import each other, so each declares it):
+  `OwnerDirectory { list(): Promise<OwnerInfo[]> }`,
+  `OwnerInfo { id: number; name: string; archivedAt: Date | null }`. The source's
+  `orgId` field is dropped (the org is injected) and its numeric timestamp
+  becomes a `Date`. An archived bucket cannot be newly assigned, and a booking
+  that points at one fails until finance remaps it.
 - **Expense needs the same table, and #1272 §6 needs a correction**: it models the
   budget owner as a `Person`. Under this decision expense's per-line approval
   check becomes "is this session an approver of the line's bucket", and
@@ -221,10 +308,27 @@ move into checkin:
 - **The table is a prerequisite for W here and for expense's routes.** It is a
   checkin schema change with its own sensitivity annotations, registry entries
   for a bucket admin screen, and seed rows, so it ships as its own small PR off
-  `main`, before either library's W. Which lane builds it is Q1.
+  `main`, before either library's W. **The expense lane (L3) builds it** (owner
+  decision), since expense needs the approvers and this port does not.
+- **Each bucket is a QuickBooks Class, and the two must stay in sync** (owner
+  decision). The bucket table carries the Class id, and creating, renaming, or
+  archiving a bucket has a QuickBooks side. Which side is authoritative, and whether sync is pulled
+  (QB-1 read) or pushed (QB-2 write), is the expense lane's call on its QB
+  ladder; this port only reads buckets.
+- **Organizational-level is not an owner.** A gift with no restriction goes to no
+  owner at all, as in the source. There are several organization-level buckets
+  (Facility is one), so organizational-level never maps to a particular bucket.
 
 This is not a pipeline crossing between libraries; it is host data two libraries
 read.
+
+**Consequence for posting.** Because the owner is a QuickBooks Class, a booked
+gift has to carry its owner's Class to QuickBooks. The source's
+`DisbursementPayloadV1` lines carry account, cents, and Benevity transaction id,
+but not the owner. Before the QuickBooks drain (§7) exists, the payload gains
+the owner id per line (a `V2`, since the version is in the contract), and an
+organizational-level line carries none. Ship V1 at first landing; the bump goes
+with the drain, not with this port.
 
 **Donors stay library-local** (owner decision). They do not link to checkin
 `Person` or `Household`. Benevity donors are mostly employees of other companies
@@ -238,15 +342,68 @@ it deliberately.
 The source has **no QuickBooks code.** Its account map produces ledger account
 *names*, and completion writes a `DisbursementEvent` that nothing in the Inventory
 repo consumes (verified by search). So first landing posts nothing; events
-accumulate, as catalog's `OrgEvent` rows do before a consumer exists.
+accumulate, as catalog's `OrgEvent` rows do before a consumer exists. Until the
+drain exists, finance keeps booking by hand, and matching reconciles those
+bookings when it arrives.
 
-Posting later is a drain of `DisbursementEvent` into QuickBooks, using
-`@inventory/quickbooks` and the read-only `AccessTokenSource` from #1272 §9 QB-0,
-on the QB-2 write methods. No second connection, no second token, no OAuth route.
-It is a deposit (gifts and matches in, fees out), not expense's Purchase/Bill, so
-QB-2 needs a deposit write method. That is a dependency on L4's ladder, not a
-library crossing, and it is out of this port's three PRs; file it as a follow-up
-against FD2.
+**What gets written.** Both use `@inventory/quickbooks` (L4) and the one
+`AccessTokenSource` checkin-app injects into every library. No second connection,
+no OAuth route. Every line is tagged with its owner's Class (§6); an
+organizational-level line carries none.
+
+- **Benevity disbursement:** a bank **Deposit** (gifts and matches in, fees out).
+- **In-kind donation:** no money reaches a bank, so it books through an
+  **"In-kind clearing" account** used in place of a bank account (owner
+  decision): a Deposit into clearing (credit in-kind contribution income) and a
+  Purchase out of clearing (debit the in-kind expense), same date and amount, so
+  clearing nets to zero. Not a bank Deposit and no JournalEntry; both reuse the
+  Deposit and Purchase writers. The clearing account is a configured account
+  reference whose exact name finance confirms.
+
+**Matching model** (owner decision, shared with income and expense). Matching is
+driven from our records, never by scanning QuickBooks.
+
+- **The work list is our own unmatched records.** Each `DisbursementEvent` and
+  each in-kind donation carries a match state: `UNMATCHED` →
+  `MATCHED(qbTxnId)` or `CREATED(qbTxnId)`, or a finance-queue state
+  (`AMBIGUOUS`, `BEFORE_LINE`, `WAITING`, `POST_FAILED`). The queue should fall
+  to zero and stay there.
+- **Each search is narrow:** for one record, ask QuickBooks only for entries of
+  the right type, in the right account (the bank account for Benevity, the
+  clearing account for in-kind), with that net amount, dated within 7 days of the
+  record's deposit date. The bank reference is not relied on; hand entries
+  usually lack it. Old history is never walked.
+- **A QuickBooks entry is claimed once.** The claimed `qbTxnId` is stored on the
+  record, unique per `(orgId, qbTxnId)`, and claimed ids are dropped from every
+  candidate list.
+- **Exclusions:** finance can permanently remove a QuickBooks entry from
+  candidacy with a reason. `DonationQbMatchExclusion { orgId, qbTxnId, reason,
+  by, at }`, unique on `(orgId, qbTxnId)`. The model is prefixed because every
+  lane keeps its own exclusion table and classifications merge by model name.
+- **One candidate:** `MATCHED`; post nothing (expense's `backfill` path). **More
+  than one:** `AMBIGUOUS`; equal amounts are common, so finance picks or creates,
+  never a guess. **None, after the takeover line:** create, keyed so a retry never
+  books twice. **None, before the line:** `BEFORE_LINE`; a gap among finance's
+  own bookings is finance's to explain.
+
+**The takeover line is derived, never configured.** It is the date of the newest
+bulk-donation record (Benevity or in-kind) in `MATCHED` state, meaning tied to an
+entry the app did not create, whether found by matching or picked by finance.
+Each run matches first, then reads the line, then creates for what is after it.
+`CREATED` entries never move the line; a late hand booking of a newer record is
+matched and moves it forward. With no `MATCHED` record there is no line and the
+app creates nothing: it fails closed.
+
+The shared find-or-create in `packages/quickbooks` is stateless: bulk donation
+passes the record, its retry key (org + disbursement id, or the in-kind donation
+id), its takeover line, and its claimed and excluded ids. It answers *found*,
+*ambiguous*, *created*, *failed*, or *before the line*.
+
+**When it runs.** No boot drain and no new schedule (plan rule 5). The drain is
+a try/catch step inside the existing prod `/api/cron/reconcile-shopify`, next to
+income's; finance's queue actions (pick, create, retry) run it for one record
+on demand. It ships as a **named follow-up PR in this lane (D, §9)** after L4's
+QB-2.
 
 ## 8. Testing
 
@@ -259,33 +416,42 @@ rule (bulk applies) → NO_MATCH hold → add rule → resubmit → completed ev
 duplicate re-upload is a no-op. A security test asserts a session holding neither
 `FINANCE` nor `BOARD` gets 403 on every route and that `fileBlob` never appears in a response.
 
-## 9. Phasing: three PRs, each based on `main`
+## 9. Phasing: three PRs plus the drain, each based on `main`
 
 1. **S, skeleton** (`packages/bulk-donation/` + lockfile). Schema with
    `SystemData` dropped, migrations, repositories, services, the machine and
-   actor, csv parser, account-map lookup, `contract.ts` (auth, org,
-   `OwnerDirectory`), `runtime.ts`, unit tests. Retired auth, `ui-utils`, `utils`,
+   actor, csv parser, account-map lookup, the drain's tables pre-seated
+   (`DisbursementEvent.qbMatchState` default `UNMATCHED`, `qbTxnId` with
+   `@@unique([orgId, qbTxnId])`, and `DonationQbMatchExclusion`) so the drain
+   PR adds no schema or boundary change, `contract.ts` (auth, org,
+   `OwnerDirectory`, and the inert in-kind ports X9–X11 and X13 from §2.4), `runtime.ts`, unit tests. Retired auth, `ui-utils`, `utils`,
    `bcrypt`, `jose` removed. Body carries the port-diff against Inventory
    `07797b59`. Needs H3 (`donations`).
 2. **B, boundary** (alone). `@sensitivity` on every field per §4,
-   `DonationNavCounts` synthetic classification, `security/registry/bulk-donation.ts`
-   with all 19 routes, one merge-list line. Needs H1 and L3's `FINANCE` role and
+   `DonationNavCounts` and `DonationQbCandidateView` synthetic classifications,
+   `security/registry/bulk-donation.ts`
+   with all 22 routes, one merge-list line. Needs H1 and L3's `FINANCE` role and
    a finance-or-board token on `main`.
 3. **W, wiring.** Route and page stubs, `pageRegistry`, Finance tabs,
    `configureBulkDonation()` with the `OwnerDirectory` binding, one line in each
    harness list, flow and security tests, a seed (two disbursements, one clean,
    one that holds; a `FINANCE` persona). Needs H2, B, and the checkin bucket
    table (§6) on `main`.
+4. **D, QuickBooks drain** (named follow-up, after L4's QB-2). The §7 matching
+   and Deposit write for disbursements, the finance-queue handlers behind the
+   four routes B already registered, the payload bump to `V2` (owner Class per
+   line, §6), and one try/catch step in the prod `/api/cron/reconcile-shopify`.
+   No schema, registry, or boundary change. In-kind's match fields and its
+   clearing-account writes arrive with the in-kind design, which builds that
+   record.
 
-## 10. Open questions (STOP AND ASK)
+## 10. Open questions
 
-- **Q1. Who builds the bucket table (§6)?** Recommended: its own checkin PR off
-  `main`, owned by the expense lane (L3), since expense needs approvers and this
-  port does not. Either way #1272 §6 gets corrected from "owner is a `Person`".
-- **Q2. Is organizational-level the same thing as the Facility bucket?** The
-  source marks an unrestricted gift "organizational-level" with no owner at all.
-  If finance would rather book those to Facility, the flag becomes an owner
-  assignment and the auto-mark sets Facility. Default: keep the source's flag.
+None open. Resolved: an in-kind donor may not be left blank; the uploader picks
+"I am the donor" or enters a name, so X13 always carries a donor (§2.4).
+
+Handed to the expense lane: build the bucket table,
+correct #1272 §6, and decide the bucket ↔ QuickBooks Class sync direction.
 
 ## 11. Distillation at merge
 
@@ -299,5 +465,5 @@ mechanism and goes with this doc.
 
 ---
 
-*Design for FD1 (#1280), with FD2 (#1281) and FD3 (#1282); lane L6 of the
+*Design for FD1 (#1280), with FD2 (#1281), FD3 (#1282) and FR5 (#1270); lane L6 of the
 parallel port plan. Source pinned at Inventory `07797b59`.*
