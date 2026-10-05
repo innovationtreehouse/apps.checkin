@@ -3,8 +3,10 @@
  * Focus on the 'self' case binding to the resource id param — a latent IDOR
  * guard, so it must fail closed on a present-but-mismatched id.
  */
-import { resolveAccess, type ResolverContext } from '@/security/access-resolvers';
+import { callerHoldsRole, resolveAccess, type ResolverContext } from '@/security/access-resolvers';
+import type { Authorize } from '@/security/core';
 import type { AuthResult } from '@/types/auth';
+import prisma from '@/lib/prisma';
 
 const session = (id: number): AuthResult => ({
     type: 'session',
@@ -169,6 +171,81 @@ describe("resolveAccess 'kiosk'", () => {
 
     test('a normal session (not kiosk) → denied', async () => {
         expect((await resolveAccess('kiosk', rctx(session(1)))).allowed).toBe(false);
+    });
+});
+
+// H4 finance vocabulary (#1272 §6, #1280 §4, #1265 §6). One persona per audience:
+// finance, board, inventory manager, sysadmin-only, a Treehouse Volunteer (keyholder), and a plain
+// household member with no role.
+describe('finance vocabulary, catalog-viewer FINANCE admission, widened anyRole', () => {
+    const as = (flags: Partial<Extract<AuthResult, { type: 'session' }>['user']>): AuthResult => {
+        const a = session(1);
+        if (a.type === 'session') Object.assign(a.user, flags);
+        return a;
+    };
+    const personas: Record<string, AuthResult> = {
+        finance: as({ isFinance: true }),
+        board: as({ isBoardMember: true }),
+        inventoryManager: as({ isInventoryManager: true }),
+        sysadminOnly: as({ isSysadmin: true }),
+        volunteer: as({ isKeyholder: true }),
+        familyMember: as({ householdId: 7 }),
+    };
+    const allowed = async (authorize: Authorize, who: string) =>
+        (await resolveAccess(authorize, rctx(personas[who]))).allowed;
+
+    beforeEach(() => {
+        // The designation leg of the volunteer predicate reads the DB; nobody here has one.
+        prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue(null);
+    });
+
+    test.each([
+        ['finance', true], ['board', false], ['sysadminOnly', false], ['volunteer', false], ['familyMember', false],
+    ])("'finance' admits %s → %s", async (who, expected) => {
+        expect(await allowed('finance', who)).toBe(expected);
+    });
+
+    test.each([
+        ['finance', true], ['board', true], ['sysadminOnly', false], ['volunteer', false], ['familyMember', false],
+    ])("'finance-or-board' admits %s → %s", async (who, expected) => {
+        expect(await allowed('finance-or-board', who)).toBe(expected);
+    });
+
+    test.each([
+        ['finance', true], ['board', true], ['sysadminOnly', true], ['volunteer', true], ['familyMember', false],
+    ])("'catalog-viewer' admits %s → %s", async (who, expected) => {
+        expect(await allowed('catalog-viewer', who)).toBe(expected);
+    });
+
+    test("'catalog-viewer' admits a volunteer designation holder with no role", async () => {
+        prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue({ id: 1 });
+        expect(await allowed('catalog-viewer', 'familyMember')).toBe(true);
+    });
+
+    test.each(['finance', 'finance-or-board'] as const)(
+        "'%s' denies a caller with no session", async (authorize) => {
+            expect((await resolveAccess(authorize, rctx({ type: 'unauthenticated' }))).allowed).toBe(false);
+        },
+    );
+
+    test.each([
+        ['finance', true], ['board', true], ['inventoryManager', true],
+        ['sysadminOnly', false], ['volunteer', false], ['familyMember', false],
+    ])("anyRole [isInventoryManager, isFinance, isBoardMember] admits %s → %s", async (who, expected) => {
+        const authorize: Authorize = { anyRole: ['isInventoryManager', 'isFinance', 'isBoardMember'] };
+        expect((await resolveAccess(authorize, rctx(personas[who]))).allowed).toBe(expected);
+    });
+
+    test.each([
+        ['sysadminOnly', true], ['board', true], ['finance', false], ['volunteer', false], ['familyMember', false],
+    ])("a BusinessRole-only anyRole [isSysadmin, isBoardMember] admits %s → %s", async (who, expected) => {
+        expect((await resolveAccess({ anyRole: ['isSysadmin', 'isBoardMember'] }, rctx(personas[who]))).allowed).toBe(expected);
+    });
+
+    test.each([
+        ['finance', true], ['board', false], ['sysadminOnly', false], ['volunteer', false], ['familyMember', false],
+    ])("role 'isFinance' held by %s → %s", (who, expected) => {
+        expect(callerHoldsRole('isFinance', personas[who], {}, rctx(personas[who]).callerContext)).toBe(expected);
     });
 });
 
