@@ -262,15 +262,19 @@ payout's net. Its lines:
 - each charge's amount is split across its order's lines by line amount
   (price × quantity − discount) and booked to each line's mapped category, or
   organization-level income when unmapped;
-- tax, shipping and the rounding remainder of that split book at organization
-  level, so every charge's lines sum exactly to the charge;
+- whatever the split leaves over books at organization level, so every
+  charge's lines sum exactly to the charge;
 - a refund is split the same way against the same order's lines, as negative
   lines;
 - fees and adjustments book at organization level to their own accounts.
 
 So the lines always sum to the payout net, and the deposit matches the bank.
-Account names (bank, organization-level income, fees, tax, shipping) are
-injected through `configureIncome()`. Mapping changes apply to deposits created
+**Assumption (owner fact):** shipping and tax are always $0. Treehouse ships
+nothing, and its services are tax-free in Texas, so the remainder line carries
+rounding only. There are no tax or shipping accounts, and the mirror port reads
+no per-order tax or shipping columns. Anything unexpected in the remainder still
+books at organization level. Account names (bank, organization-level income,
+fees) are injected through `configureIncome()`. Mapping changes apply to deposits created
 afterwards. The app never rebooks a deposit it has already created. A mapping
 that points at an archived bucket stops that payout with `POST_FAILED` until
 finance remaps it. Hand-booked deposits that the app only matched are not
