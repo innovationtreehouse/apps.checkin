@@ -60,14 +60,14 @@ export const SUPERVISION_CONFIRM_DEADFRONT_MS = 1_000;
  * effects (notifications) intentionally run off the global client either way.
  */
 export async function processCheckin(participant: Person, authType: string, db: DbClient = prisma, visitTime: Date = new Date()) {
-    // Facility lock covers the open-state read AND the create, so a racing
-    // last-keyholder sweep (#254) cannot leave this visit open after close.
-    // Same 2-arg lock space as runFacilityClose — independent of the per-person
-    // lock the scan route already holds.
+    // Facility lock serializes the open-state read and the create against the
+    // last-keyholder sweep: a check-in lands wholly before a close (and is swept)
+    // or wholly after it. Same 2-arg lock space as runFacilityClose —
+    // independent of the per-person lock the scan route already holds.
     return withFacilityLock(db, async (tx) => {
-    // Callers read "no open visit" before this lock; a PARKED_CLOSED flush
-    // (facility lock only, no person lock) can project one in that window.
-    // Park the scan instead of letting the one-open-visit index throw.
+    // Callers read "no open visit" before this lock; a concurrent check-in for
+    // the same person can land in that window. Park the scan instead of
+    // letting the one-open-visit index throw.
     const openVisit = await tx.visit.findFirst({
         where: { personId: participant.id, departedAt: null, ...LIVE_VISIT },
         select: { id: true },
@@ -76,8 +76,11 @@ export async function processCheckin(participant: Person, authType: string, db: 
         return apiJson({ type: "parked", reason: "double_in", message: "Recorded for review." });
     }
 
-    // Non-keyholders require an open facility (at least 1 isKeyholder present)
-    if (!participant.isKeyholder) {
+    // A badge at the kiosk always checks in — someone scanning inside the
+    // building got in somehow, and the screen must show them. With no keyholder
+    // present the visit reads as "no keyholder" (derived in getFullAttendance).
+    // Every other surface still needs a keyholder present to open the building.
+    if (!participant.isKeyholder && authType !== "kiosk") {
         const activeKeyholders = await tx.visit.count({
             where: {
                 departedAt: null,
@@ -85,29 +88,7 @@ export async function processCheckin(participant: Person, authType: string, db: 
                 person: { isKeyholder: true }
             }
         });
-
         if (activeKeyholders === 0) {
-            // Closed is advisory: a kiosk badge is held (projection C) until a
-            // keyholder Visit exists, then auto-projected in occurredAt order.
-            // The raw log still carries facility_closed so the scan stays
-            // visible on the review panel — without it, a night where no
-            // keyholder ever arrives leaves the touch in limbo on every
-            // surface. A flushed event's row is simply dismissible.
-            // Dashboard check-in still 403s (no badge to hold).
-            if (authType === "kiosk") {
-                const badge = await tx.rawBadgeLog.findFirst({
-                    where: { personId: participant.id, reviewReason: null },
-                    orderBy: { timestamp: "desc" },
-                    select: { id: true },
-                });
-                if (badge) {
-                    await tx.rawBadgeLog.update({
-                        where: { id: badge.id },
-                        data: { reviewReason: "facility_closed" },
-                    });
-                }
-                return apiJson({ type: "parked", reason: "facility_closed", message: "Recorded. Will project when a keyholder is present." });
-            }
             return apiError("Facility is closed. A Keyholder must check in first.", 403);
         }
     }

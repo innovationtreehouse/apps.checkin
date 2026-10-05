@@ -5,9 +5,10 @@
  * Cross-participant race: last-keyholder force-close vs a concurrent
  * non-keyholder check-in (#254).
  *
- * The person-level advisory lock does not serialize these two transactions.
- * Without a facility-level lock the check-in can create an open visit after
- * (or during) the sweep, leaving someone checked into a closed facility.
+ * The person-level advisory lock does not serialize these two transactions;
+ * the facility lock does. The check-in lands wholly before the sweep (and is
+ * swept) or wholly after it (an open no-keyholder visit) — never a 403 or a
+ * park at the kiosk, and the sweep never leaves the people it saw inside.
  *
  * jest.setup.js sets TEST_DB_POOL_MAX=2 so the two POSTs run on separate
  * connections, matching production.
@@ -76,7 +77,7 @@ describe('POST /api/scan facility-close lock (#254)', () => {
         await prisma.household.deleteMany({ where: { id: { in: householdIds } } });
     });
 
-    it('concurrent last-keyholder confirm and non-keyholder check-in leave zero open visits', async () => {
+    it('concurrent last-keyholder confirm and non-keyholder check-in: sweep is complete, racer checks in', async () => {
         await prisma.visit.create({ data: { personId: keyholderId, arrivedAt: new Date() } });
         await prisma.visit.create({ data: { personId: otherId, arrivedAt: new Date() } });
 
@@ -95,20 +96,11 @@ describe('POST /api/scan facility-close lock (#254)', () => {
         expect(checkinRes.status).toBe(200);
 
         const open = await prisma.visit.count({
-            where: { personId: { in: [keyholderId, otherId, racerId] }, departedAt: null, deletedAt: null },
+            where: { personId: { in: [keyholderId, otherId] }, departedAt: null, deletedAt: null },
         });
         expect(open).toBe(0);
 
-        const checkinBody = await checkinRes.json();
-        // Either the sweep closed a visit the racer won, or the racer parked
-        // after the sweep — never an open visit, never a 403 on the kiosk.
-        expect(['checkin', 'parked', 'checkout']).toContain(checkinBody.type);
-        if (checkinBody.type === 'parked') {
-            const badge = await prisma.rawBadgeLog.findFirst({
-                where: { personId: racerId },
-                orderBy: { timestamp: 'desc' },
-            });
-            expect(badge?.reviewReason).toBe('facility_closed');
-        }
+        expect((await checkinRes.json()).type).toBe('checkin');
+        expect(await prisma.visit.count({ where: { personId: racerId } })).toBe(1);
     });
 });

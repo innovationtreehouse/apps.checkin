@@ -21,7 +21,7 @@ describe("Home", () => {
     it("checks in a privileged, signed-in user", async () => {
         setSession({ id: 1, name: "Ann Admin", isSysadmin: true });
         mockFetchJson({
-            "/api/attendance": { access: "full", attendance: [], safety: { isLastKeyholder: false, isTwoDeepViolation: false } },
+            "/api/attendance": { access: "full", attendance: [], safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false } },
             "/api/membership": { membershipStatus: "ACTIVE" },
             "/api/scan": { type: "checkin" },
         });

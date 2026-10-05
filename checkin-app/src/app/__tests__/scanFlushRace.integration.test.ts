@@ -2,14 +2,14 @@
  * @jest-environment node
  */
 /**
- * A PARKED_CLOSED flush runs under the facility lock only, so it can project
- * an open visit for a person whose own scan already read "no open visit" and
- * is waiting on that lock. The scan must then park as a double IN — never hit
+ * A scan reads "no open visit" before it takes the facility lock, so another
+ * check-in for the same person can open a visit while it waits on that lock.
+ * The scan must then park as a double IN — never hit
  * the one-open-visit index and be acked as a duplicate with its rows rolled
  * back (docs/rules/attendance-checkin.md: a touch is never lost).
  *
- * The race is made deterministic by inserting the open visit (as the flush
- * would) the moment the scan first acquires the facility lock.
+ * The race is made deterministic by inserting the open visit the moment the
+ * scan first acquires the facility lock.
  */
 import { POST } from "@/app/api/scan/route";
 import prisma from "@/lib/prisma";
@@ -52,7 +52,7 @@ function scanReq(body: Record<string, unknown>) {
     }) as unknown as import("next/server").NextRequest;
 }
 
-describe("Scan racing a PARKED_CLOSED flush (real DB)", () => {
+describe("Scan racing another check-in for the same person (real DB)", () => {
     let keyholder: Person;
     let member: Person;
     const householdIds: number[] = [];
@@ -71,7 +71,7 @@ describe("Scan racing a PARKED_CLOSED flush (real DB)", () => {
 
     beforeEach(async () => {
         await prisma.visit.create({ data: { personId: keyholder.id, arrivedAt: new Date(0), arrivedVia: "SCANNER" } });
-        // What the flush projects for the member while their scan waits on the lock.
+        // The visit another check-in opens while the member's scan waits on the lock.
         onFirstFacilityLock = async () => {
             await prisma.visit.create({ data: { personId: member.id, arrivedAt: new Date(), arrivedVia: "SCANNER" } });
         };
