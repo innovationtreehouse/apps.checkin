@@ -1,4 +1,4 @@
-import type { Prisma } from "@/generated/prisma/client";
+import type { Prisma } from "../../generated/prisma/client";
 import type { Db } from "../db/index";
 import type { InventoryProvisionalItem, InventoryMergeConflict, ProvisionalItemLog } from "../db/schema";
 

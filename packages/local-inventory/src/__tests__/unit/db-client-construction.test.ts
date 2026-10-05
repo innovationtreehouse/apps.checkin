@@ -25,14 +25,14 @@ vi.mock("@prisma/adapter-pg", () => ({
   },
 }));
 
-vi.mock("@/generated/prisma/client", () => ({
+vi.mock("../../generated/prisma/client", () => ({
   PrismaClient: class {
     constructor(public opts: unknown) {}
   },
 }));
 
 const ENV = "LOCAL_INVENTORY_DATABASE_URL";
-const CLIENT = "@/lib/db/index";
+const CLIENT = "../../lib/db/index";
 let saved: string | undefined;
 
 beforeEach(() => {

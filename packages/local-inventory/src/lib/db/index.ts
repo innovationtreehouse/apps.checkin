@@ -10,7 +10,7 @@
  * `datasource.url` itself. In production LOCAL_INVENTORY_DATABASE_URL should route through
  * RDS Proxy / pgBouncer (`?pgbouncer=true&connection_limit=1`).
  */
-import { PrismaClient } from "@/generated/prisma/client";
+import { PrismaClient } from "../../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
 declare global {

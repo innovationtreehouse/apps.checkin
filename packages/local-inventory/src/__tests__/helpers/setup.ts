@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach } from "vitest";
-import { initDb } from "@/lib/db/index";
+import { initDb } from "../../lib/db/index";
 import { resetDb } from "./db";
 
 export function useIntegrationSetup(): void {

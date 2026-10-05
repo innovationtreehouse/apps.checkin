@@ -1,5 +1,4 @@
 import { defineConfig } from "vitest/config";
-import path from "node:path";
 
 export default defineConfig({
   test: {
@@ -15,10 +14,5 @@ export default defineConfig({
     // DB-backed unit suites share one inventory DB and clean via resetDb at their own start,
     // so files must not run in parallel against each other.
     fileParallelism: false,
-  },
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
   },
 });

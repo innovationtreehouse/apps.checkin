@@ -6,10 +6,7 @@
     "moduleResolution": "Bundler",
     "lib": ["ES2022"],
     "resolveJsonModule": true,
-    "isolatedModules": true,
-    "paths": {
-      "@/*": ["./src/*"]
-    }
+    "isolatedModules": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "prisma.config.ts"],
   "exclude": ["node_modules", "dist", "src/generated"]

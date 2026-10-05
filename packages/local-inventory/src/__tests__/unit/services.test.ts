@@ -5,15 +5,15 @@
  */
 import { expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
-import { db } from "@/lib/db/index";
-import { createLocationRepository } from "@/lib/repositories/locationRepository";
-import { createReceiveQueueRepository } from "@/lib/repositories/receiveQueueRepository";
-import { createInventoryRepository } from "@/lib/repositories/inventoryRepository";
-import { createProvisionalItemRepository } from "@/lib/repositories/provisionalItemRepository";
-import { createLocationService } from "@/lib/services/locationService";
-import { createReceiveQueueService } from "@/lib/services/receiveQueueService";
-import { createInventoryService } from "@/lib/services/inventoryService";
-import { ServiceError } from "@/lib/services/serviceError";
+import { db } from "../../lib/db/index";
+import { createLocationRepository } from "../../lib/repositories/locationRepository";
+import { createReceiveQueueRepository } from "../../lib/repositories/receiveQueueRepository";
+import { createInventoryRepository } from "../../lib/repositories/inventoryRepository";
+import { createProvisionalItemRepository } from "../../lib/repositories/provisionalItemRepository";
+import { createLocationService } from "../../lib/services/locationService";
+import { createReceiveQueueService } from "../../lib/services/receiveQueueService";
+import { createInventoryService } from "../../lib/services/inventoryService";
+import { ServiceError } from "../../lib/services/serviceError";
 import { useIntegrationSetup } from "../helpers/setup";
 import { TEST_ORG_ID, TEST_ORG_ID_2 } from "../helpers/seed";
 

@@ -13,7 +13,7 @@ export type {
   InventoryReceivedOrgEvent,
   ProvisionalItemLog,
   ReceivedInventoryDelta,
-} from "@/generated/prisma/client";
+} from "../../generated/prisma/client";
 
 // NOTE: these enum arrays are used for runtime validation in workflows.
 export const inventoryChangeTypeEnum = ["manual", "automatic", "received"] as const;

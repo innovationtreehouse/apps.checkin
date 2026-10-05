@@ -1,5 +1,5 @@
 import { describe } from "vitest";
-import { db, initDb } from "@/lib/db/index";
+import { db, initDb } from "../../lib/db/index";
 
 /**
  * DB-gate for the integration tier. `describeDb` is `describe` when LOCAL_INVENTORY_DATABASE_URL

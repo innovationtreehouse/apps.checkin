@@ -4,7 +4,7 @@ import {
   assertMergeConflictTransition,
   assertReceivedOrgEventTransition,
   WorkflowTransitionError,
-} from "@/workflows/index";
+} from "../../workflows/index";
 
 // ── ProvisionalItem machine ──────────────────────────────────────────────────
 
