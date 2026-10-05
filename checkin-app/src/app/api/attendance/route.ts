@@ -6,6 +6,7 @@ import { getFullAttendance, invalidateAttendanceCache } from "@/lib/getFullAtten
 import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
 import { lastKeyholderGuard, runFacilityClose } from "@/lib/scan-service";
 import { lockFacility } from "@/lib/facilityLock";
+import { flushParkedClosed } from "@/lib/presence/project";
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { logBackendError, logger } from "@/lib/logger";
 import { config } from "@/lib/config";
@@ -280,6 +281,11 @@ export const POST = withAuth({}, async (req, auth) => {
                         associatedEventId: eventId
                     }
                 });
+
+                // A keyholder in opens the facility: release the PARKED_CLOSED backlog.
+                if (participant.isKeyholder) {
+                    await flushParkedClosed(tx);
+                }
 
                 return { alreadyCheckedIn: false as const, visit };
             }, {
