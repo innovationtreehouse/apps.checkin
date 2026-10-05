@@ -151,6 +151,7 @@ export async function processCheckout(
     forceCloseConfirmed: boolean = false
 ) {
     let facilityClosed = false;
+    let closeOfferToken: string | null = null;
 
     if (participant.isKeyholder) {
         const remainingKeyholders = await db.visit.count({
@@ -199,10 +200,8 @@ export async function processCheckout(
                 // keyholder standing at the reader confirmed the room is clear.
                 // Honored only on a replay (the drain); a live scan carrying the
                 // flag falls through to the server-authoritative token flow below.
-                // This bypasses ONLY the token: the isKeyholder / no-other-keyholder
-                // / others-present guards above still bound it, so a client flag can
-                // never close a facility the server doesn't independently read as a
-                // last-keyholder-with-others close.
+                // This bypasses ONLY the token: a client flag closes only on a
+                // keyholder's own scan.
                 const offlineConfirmed = forceCloseConfirmed && replayEventId != null;
 
                 if (!confirmForceClose && !offlineConfirmed && replayEventId) {
@@ -243,30 +242,29 @@ export async function processCheckout(
             }
 
             facilityClosed = true;
-
-            // The token is spent. Clear it before the visit departs so no
-            // redeemable force-close state survives on a closed row — every
-            // lookup filters `departedAt: null` today, but one that forgets to
-            // shouldn't find a live-looking token.
-            await db.visit.update({
-                where: { id: activeVisitId },
-                data: { forceCloseWarnedAt: null, forceCloseToken: null }
-            });
-
-            // The facility-wide sweep takes row locks on EVERY open visit, and
-            // the email kick fires its own DB queries. Neither may run inside the
-            // scan route's per-participant advisory-lock transaction: it would
-            // block concurrent scans for other participants and let the email run
-            // contend on the still-open transaction. When called standalone (root
-            // client — e.g. tests) we own the whole operation, so run them here;
-            // under the route's tx client the route runs both AFTER it commits
-            // (see finalizeFacilityClose / route.ts).
-            if (isRootClient(db)) {
-                await withFacilityLock(db, (tx) => closeAllOpenVisits(tx));
-                invalidateAttendanceCache();
-                kickPostEventEmails();
-            }
+        } else if (forceCloseConfirmed && replayEventId != null) {
+            // The kiosk's offline two-scan close, from a keyholder whose visit is
+            // still open while another keyholder is recorded: any keyholder may
+            // close, so the other keyholder does not stop it.
+            facilityClosed = true;
+        } else if (authType === "kiosk" && !replayEventId) {
+            // Another keyholder is still recorded inside, so this departure goes
+            // through — but the keyholder may be the last one actually here, with
+            // the other a forgotten badge-out. A second badge closes the building
+            // (closeOnOfferConfirm). Never offered on a replay: nobody is at the
+            // reader to badge again.
+            closeOfferToken = randomUUID();
         }
+    }
+
+    if (facilityClosed) {
+        // The token is spent. Clear it before the visit departs: a token on
+        // a departed row is a live close offer (closeOnOfferConfirm).
+        await db.visit.update({
+            where: { id: activeVisitId },
+            data: { forceCloseWarnedAt: null, forceCloseToken: null }
+        });
+        await sweepIfStandalone(db);
     }
 
     // SUPERVISION INTERRUPT (#1436). Fires on EVERY departure, not just a
@@ -284,6 +282,17 @@ export async function processCheckout(
 
     const finalVisits = await processVisitCheckout(activeVisitId, visitTime, db, "SCANNER");
     const updatedVisit = finalVisits.length > 0 ? finalVisits[finalVisits.length - 1] : null;
+    // Stamped after the checkout: event-chunking may replace the original row.
+    const closeOffer = closeOfferToken && updatedVisit
+        ? await db.visit.update({
+            where: { id: updatedVisit.id },
+            data: { forceCloseWarnedAt: new Date(), forceCloseToken: closeOfferToken },
+        }).then(() => ({
+            closePrompt: `Others are still recorded inside. Badge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to close the building and check everyone out.`,
+            forceCloseToken: closeOfferToken,
+            confirmSeconds: FORCE_CLOSE_CONFIRM_SECONDS,
+        }))
+        : {};
 
     // Fire-and-forget: send check-out notifications (mirrors processCheckin)
     sendCheckinNotifications(participant.id, 'checkout').catch(err =>
@@ -297,7 +306,49 @@ export async function processCheckout(
         participant: scanParticipant(participant),
         visit: updatedVisit,
         facilityClosed,
+        ...closeOffer,
         signedRequest: authType === "kiosk",
+    });
+}
+
+/**
+ * The second badge of a keyholder whose checkout offered a close (see
+ * processCheckout): they are already departed, so this closes the facility
+ * without a visit of their own. Live, the scan must echo the offer's token; a
+ * replay may instead carry the kiosk's offline two-scan confirm. Returns null
+ * when the scan is not such a confirm.
+ */
+export async function closeOnOfferConfirm(
+    participant: Person,
+    authType: string,
+    db: DbClient,
+    confirmToken: string | null,
+    replayEventId: string | null,
+    forceCloseConfirmed: boolean,
+): Promise<Response | null> {
+    if (!participant.isKeyholder || authType !== "kiosk") return null;
+    const offlineConfirmed = forceCloseConfirmed && replayEventId != null;
+    if (!offlineConfirmed) {
+        if (confirmToken == null) return null;
+        const offered = await db.visit.findFirst({
+            where: { personId: participant.id, departedAt: { not: null }, deletedAt: null, forceCloseToken: confirmToken },
+            select: { id: true },
+        });
+        if (!offered) return null;
+        await db.visit.update({
+            where: { id: offered.id },
+            data: { forceCloseWarnedAt: null, forceCloseToken: null },
+        });
+    }
+
+    await sweepIfStandalone(db);
+    return apiJson({
+        message: "Facility closed",
+        type: "checkout" as const,
+        participant: scanParticipant(participant),
+        visit: null,
+        facilityClosed: true,
+        signedRequest: true,
     });
 }
 
@@ -363,6 +414,22 @@ async function supervisionInterrupt(
             type: "warning" as const,
         }, 400),
     };
+}
+
+/**
+ * The facility-wide sweep takes row locks on EVERY open visit, and the email
+ * kick fires its own DB queries. Neither may run inside the scan route's
+ * per-participant advisory-lock transaction: it would block concurrent scans
+ * for other participants and let the email run contend on the still-open
+ * transaction. When called standalone (root client — e.g. tests) we own the
+ * whole operation, so run them here; under the route's tx client the route runs
+ * both AFTER it commits (see finalizeFacilityClose in route.ts).
+ */
+async function sweepIfStandalone(db: DbClient) {
+    if (!isRootClient(db)) return;
+    await withFacilityLock(db, (tx) => closeAllOpenVisits(tx));
+    invalidateAttendanceCache();
+    kickPostEventEmails();
 }
 
 /** Mark every still-open visit as departed. Facility-wide, not participant-scoped:

@@ -131,11 +131,25 @@ Things the app takes as true because they are handled outside it.
   a human's second badge at the door. With a server present that confirm is the
   echoed server-minted token; with no network the kiosk runs the same warning and
   second-badge confirm itself, so a keyholder can still lock up offline. The queued
-  close carries the confirm, and the server honours it on the delayed replay only
-  where it independently reads a last keyholder leaving with others still present.
+  close carries the confirm, and the server honours it on the delayed replay
+  whenever the badge is a keyholder's.
   Offline the supervision close-guard can only warn, never hold a departure — the
   kiosk cannot re-check two-deep without the server, so it leaves the call to the
   keyholder at the reader.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII, §VIII.4*]
+
+- Any keyholder can close the building at the kiosk with a double scan, whoever
+  else is recorded inside — another keyholder included. We trust the keyholder
+  to know they are the last one out; another keyholder still recorded is a
+  forgotten badge-out. When another keyholder is recorded, the first badge checks
+  the keyholder out and offers the close; a second badge within the countdown
+  closes the facility. The last keyholder with others still present gets the
+  warning above instead and stays recorded until they confirm, and a keyholder
+  alone closes on a single badge. Offline the kiosk runs the same offer and
+  confirm itself, and the server honours the queued confirm whoever else it
+  reads as present. The close is bound to the badge that was shown the offer —
+  someone else scanning during the countdown scans normally — and a read of that
+  badge within a second of the offer is the same touch read twice, never the
+  confirm. Nothing on the web can stop a kiosk close.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
 
 ### The kiosk
 
