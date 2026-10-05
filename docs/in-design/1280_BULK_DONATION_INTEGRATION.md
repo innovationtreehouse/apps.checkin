@@ -22,10 +22,10 @@ under the Finance area, with donor names visible only to the finance role.
 
 - **Finance staff** get the four Benevity screens (upload, unassigned queue,
   disbursement holds, booking batches) plus the two rule tables (comment rules,
-  account map) under Finance, gated on the `FINANCE` role.
+  account map) under Finance, gated on the `FINANCE` and `BOARD` roles.
 - **Donors' names are personal data.** This is the first ported library whose
-  schema carries a `pii` tier; only `FINANCE` reads it, and no broad viewer gate
-  exists.
+  schema carries a `pii` tier; only `FINANCE` and `BOARD` read it, and no broad
+  viewer gate exists. Donors stay inside the library, unlinked to checkin people.
 - **Nothing posts to QuickBooks at first landing.** The source never did either:
   its booking batch is an outbox row with no consumer. Posting arrives later on
   the expense port's QuickBooks client.
@@ -47,8 +47,8 @@ difference from those, or a decision they leave open.
 |---|---|
 | Library + own DB + checkin security regime + retired source auth + injected `Org` + vitest/flow tests | Unchanged. Package `@inventory/bulk-donation`, boot call `configureBulkDonation()`, DB `BULKDONATION_DATABASE_URL` (the source's own name, inherited). |
 | Field tiers `public`/`internal`, no `pii` (catalog, inventory) | **Donor fields are `pii`** (§4). |
-| Broad viewer gate (catalog, inventory) | **None.** `FINANCE` only, as in expense (§5). |
-| Crossings behind ports (all) | **No library crossing.** One host port, the owner directory, which shares a decision with expense (§6). |
+| Broad viewer gate (catalog, inventory) | **None.** `FINANCE` and `BOARD` only (§5). |
+| Crossings behind ports (all) | **No library crossing.** One host port, the owner directory, backed by a checkin-owned owner table that expense also needs (§6). |
 | Data migration | None. Start from seed (owner decision). |
 
 ## 2. Surface
@@ -78,9 +78,9 @@ needed.
   uploads carrying that comment match it. Exact string match only.
 - **Restricted-condition mapping.** The source has no separate feature by this
   name. A donor's restriction ("for the robotics team") arrives as the donor
-  comment, and owner assignment plus comment rules are how it maps to a budget.
-  This port treats FD1's "restricted-condition mapping" as that, and builds
-  nothing further (open question Q3).
+  comment, and owner assignment plus comment rules are how it maps to an owner.
+  This port treats FD1's "restricted-condition mapping" as exactly that and
+  builds nothing further (Q1).
 - **GL account map.** Rules keyed on company, campaign (each may be `*`), donation
   method, and donation type yield three ledger account names: donation, match,
   fees. Exactly one rule must match each gift.
@@ -119,8 +119,8 @@ and checkin's: **only `SystemData` collides** (workflow-mapping). The plan's
 owner-approved rename is `DonationSystemData`, but its single field
 (`localInventoryUrl`) is read by nothing except its own settings page; the owner
 lookup it was meant to configure actually calls the auth server. This port
-**drops the model, its route, and its page**, which removes the collision rather
-than renaming it (Q4; if the owner prefers to keep it, the rename stands).
+**drops the model, its route, and its page** (owner-confirmed), which removes the
+collision; no rename is needed.
 `Transaction`, `WorkflowEvent`, and `UploadedFile` are generic but unique today;
 H1's duplicate-key test guards them.
 
@@ -156,22 +156,24 @@ identity, but the name is already `pii` behind the same gate, so it stays
   (`ownerId`, `uploadedByUserId`, `createdByUserId`, `actorUserId` are not), so
   every model is admin-only by construction, as in #1286 §5.
 
-**Who reads donor identity: `FINANCE` only.** Each route's view is
-`[finance, ['everyones:pii', 'everyones:internal', 'public']]`; nobody else is
-authorized at all. Sysadmin is excluded, matching Finance Ops today
-(`finance-payments.md`, Ownership). Whether the board also reads donor names is
-Q2. Least-privilege note (`principles.md`): unlike the catalog this narrows
-access, and the narrowing applies to `pii` specifically.
+**Who reads donor identity: `FINANCE` and `BOARD`.** Each route's view grants
+`['everyones:pii', 'everyones:internal', 'public']` to both; nobody else is
+authorized at all. `BOARD` is included because the board acts as the superuser
+for finance today (owner decision; Finance Ops is board-only for the same
+reason). Sysadmin is excluded, matching Finance Ops (`finance-payments.md`,
+Ownership). Least-privilege note (`principles.md`): unlike the catalog this
+narrows access, and the narrowing applies to `pii` specifically.
 
 ## 5. Roles and routes
 
 Every source guard is `isFinance`, except `system-data` (dropped). So every route
-authorizes `FINANCE`, the distinct `PersonRoleKind` that expense's L3 role PR
-adds. **This port adds no role and no authorize token;** it reuses whatever
-finance token L3's boundary PR registers. The comment-rule and account-map
-tables are finance curation, the same folding #1272 §6 applies to `isOrgManager`.
-`BOARD` has no escalation here: there are no thresholds or conflicts to flag on
-inbound gifts.
+authorizes `FINANCE` (the distinct `PersonRoleKind` that expense's L3 role PR
+adds) or `BOARD`, with the same reads and writes for both. **This port adds no
+role and no authorize token;** it reuses the finance-or-board token L3's
+boundary PR registers, or asks L3 to register one if it ships finance-only. The
+comment-rule and account-map tables are finance curation, the same folding
+#1272 §6 applies to `isOrgManager`. There is no board escalation path: inbound
+gifts raise no thresholds or conflicts.
 
 Routes, all human, all under `/api/donations/`, registered in one B PR:
 
@@ -191,27 +193,45 @@ Routes, all human, all under `/api/donations/`, registered in one B PR:
 
 That is 19 entries. Dropped: `auth/*`, `health`, `system-data`. Volume is
 hundreds of gifts a year, so no list gets a `.../count` endpoint now. Pages go
-under the Finance section as `NavLink[]` tabs (#1272 §7), gated `FINANCE`.
+under the Finance section as `NavLink[]` tabs (#1272 §7), gated `FINANCE`/`BOARD`.
 
 ## 6. Owners and donors: two identity decisions
 
-**Owner directory (a host port, shared with expense).** In the source an owner is
-not a person: it is a named budget bucket (`Owner { id, name, orgId, archivedAt }`)
-kept by the auth app, and both bulk donation and expense list it through the auth
-server. The auth app retires, so checkin has to supply owners. The library
-declares `OwnerDirectory { list(): Promise<OwnerInfo[]> }` in `contract.ts` and
-stores `ownerId` as an opaque integer; checkin binds it. #1272 §6 models expense's
-budget owner as a `Person`, so binding this port the same way keeps one owner
-concept across finance. But a donor restriction usually names a program, not a
-person, and checkin has `Program`. Which one owners are is Q1, and expense must
-answer it identically. Not a pipeline crossing; it is a shared decision.
+**An owner is an accounting bucket** (owner decision). Each bucket has one or more
+people who approve within it. Most buckets correspond to a program; some, such as
+Facility, belong to the organization as a whole and have no program. In the
+source the buckets are the auth app's `Owner { id, name, orgId, archivedAt }`,
+with approvers attached through its user roles, and both bulk donation and
+expense read them from the auth server. The auth app retires, so the buckets
+move into checkin:
 
-**Donors (raised, not picked).** Donors could link to checkin `Person`/`Household`
-or stay library-local. Recommendation: **library-local.** Benevity donors are
-mostly employees of other companies, the file carries first and last name only
-(no email), so any link would be a name guess, and a cross-database link adds a
-second place donor `pii` is joinable to a household. FD7 (year-end statements) is
-the first feature that would want a link, and it can add one deliberately. Q5.
+- **checkin owns the bucket table**, as it owns the `Org` registry: it links to
+  checkin's `Program` and `Person`, and two libraries need it. Minimal shape:
+  `BudgetOwner { id, name, programId?, archivedAt? }` plus a
+  `BudgetOwnerApprover { budgetOwnerId, personId }` join. `programId` is null for
+  organization-level buckets like Facility.
+- **This library only lists buckets.** It declares
+  `OwnerDirectory { list(): Promise<OwnerInfo[]> }` in `contract.ts`, keeps
+  `ownerId` as an opaque integer, and never sees approvers. checkin binds the
+  port to its table in `configureBulkDonation()`.
+- **Expense needs the same table, and #1272 §6 needs a correction**: it models the
+  budget owner as a `Person`. Under this decision expense's per-line approval
+  check becomes "is this session an approver of the line's bucket", and
+  `PartOwnerMap` maps a part to a bucket, not a person.
+- **The table is a prerequisite for W here and for expense's routes.** It is a
+  checkin schema change with its own sensitivity annotations, registry entries
+  for a bucket admin screen, and seed rows, so it ships as its own small PR off
+  `main`, before either library's W. Which lane builds it is Q1.
+
+This is not a pipeline crossing between libraries; it is host data two libraries
+read.
+
+**Donors stay library-local** (owner decision). They do not link to checkin
+`Person` or `Household`. Benevity donors are mostly employees of other companies
+and the file carries only first and last name, so any link would be a guess, and
+a cross-database link would add a second place donor `pii` joins to a household.
+FD7 (year-end statements) is the first feature that might want one; it would add
+it deliberately.
 
 ## 7. QuickBooks
 
@@ -236,8 +256,8 @@ call services directly (account-map lookup, processor, money, concurrency,
 workflow audit) stay in the package's DB tier on `pg-test-harness`; the 16
 route-bound ones become flow tests in W. The A14 journey is upload → auto org-level → assign with comment
 rule (bulk applies) → NO_MATCH hold → add rule → resubmit → completed event →
-duplicate re-upload is a no-op. A security test asserts a non-`FINANCE` session
-gets 403 on every route and that `fileBlob` never appears in a response.
+duplicate re-upload is a no-op. A security test asserts a session holding neither
+`FINANCE` nor `BOARD` gets 403 on every route and that `fileBlob` never appears in a response.
 
 ## 9. Phasing: three PRs, each based on `main`
 
@@ -250,29 +270,28 @@ gets 403 on every route and that `fileBlob` never appears in a response.
 2. **B, boundary** (alone). `@sensitivity` on every field per §4,
    `DonationNavCounts` synthetic classification, `security/registry/bulk-donation.ts`
    with all 19 routes, one merge-list line. Needs H1 and L3's `FINANCE` role and
-   token on `main`.
+   a finance-or-board token on `main`.
 3. **W, wiring.** Route and page stubs, `pageRegistry`, Finance tabs,
    `configureBulkDonation()` with the `OwnerDirectory` binding, one line in each
    harness list, flow and security tests, a seed (two disbursements, one clean,
-   one that holds; a `FINANCE` persona). Needs H2 and B; the owner binding needs
-   Q1 answered.
+   one that holds; a `FINANCE` persona). Needs H2, B, and the checkin bucket
+   table (§6) on `main`.
 
 ## 10. Open questions (STOP AND ASK)
 
-- **Q1. What is an owner?** A `Person` (as #1272 assumes for expense), a
-  checkin `Program`, or a named budget bucket kept in checkin? Blocks W's binding;
-  expense must use the same answer.
-- **Q2. Does `BOARD` read donor names?** Default: no, `FINANCE` only.
-- **Q3. Is "restricted-condition mapping" more than owner assignment by comment?**
-  If restrictions need their own record (restriction text, release date), that is
-  net-new and belongs with FD3/FD6, not this port.
-- **Q4. Drop `SystemData` instead of renaming it?** Recommended (§3).
-- **Q5. Donors library-local?** Recommended (§6).
+- **Q1. Who builds the bucket table (§6)?** Recommended: its own checkin PR off
+  `main`, owned by the expense lane (L3), since expense needs approvers and this
+  port does not. Either way #1272 §6 gets corrected from "owner is a `Person`".
+- **Q2. Is organizational-level the same thing as the Facility bucket?** The
+  source marks an unrestricted gift "organizational-level" with no owner at all.
+  If finance would rather book those to Facility, the flag becomes an owner
+  assignment and the auto-mark sets Facility. Default: keep the source's flag.
 
 ## 11. Distillation at merge
 
 Rules worth extracting go to `docs/rules/finance-payments.md` (no new file):
-donor identity is `pii`, readable by the finance role only; a Benevity gift is
+donor identity is `pii`, readable by the finance and board roles only; donors are
+not linked to members; every gift's owner is an accounting bucket, not a person; a Benevity gift is
 imported at most once per org; a disbursement is booked only when every gift has
 an owner or is organizational-level and matches exactly one account rule;
 account-map ambiguity is resolved by a person, never guessed. The rest is
