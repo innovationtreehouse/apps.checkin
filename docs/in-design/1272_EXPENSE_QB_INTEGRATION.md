@@ -606,6 +606,20 @@ reads:
 - **No broad viewer gate.** A volunteer or arbitrary RBAC-role holder does **not**
   read expenses.
 
+**A caller with no integer id is unauthenticated** (boundary rule 6). Expense's
+checkin-side adapter `getPrincipal()` returns `null` unless
+`typeof user.id === "number"`, as `checkin-app/src/lib/catalog/configure.ts`
+does, and the derived bucket-approver filter (program leader
+`Program.leadMentorId` and `ProgramVolunteer.isTreasurer`, matched to the
+session's person id) reads the id only from that principal. Prisma drops a
+`where` key whose value is `undefined`, so an id-less session (a JWT whose
+re-sync missed after a person merge or delete) would otherwise match every
+bucket.
+
+| Test | Expect |
+|---|---|
+| id-less session (`user.id` undefined) calls an approver read or approve/reject route | 401, never "approver of everything" |
+
 **Least-privilege note** (`docs/rules/principles.md`): unlike #1286/#1287 this gate
 does not widen anything — it confines financial data to finance, board, and the
 approvers of the row's bucket. Stated here so the divergence from the prior ports is a decision

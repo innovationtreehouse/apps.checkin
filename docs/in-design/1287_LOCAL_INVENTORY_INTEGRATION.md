@@ -461,6 +461,9 @@ concept (it *is* Treehouse). So:
   `username`, `proposedByUserId`, `resolvedByUserId`, `performedBy`,
   `performedByUsername`) store the injected principal's id + a username snapshot;
   no FK to checkin (separate DB).
+- **A caller with no integer id is unauthenticated** (boundary rule 6):
+  `getPrincipal()` returns `null` unless `typeof user.id === "number"`, as
+  catalog's adapter does, and every per-caller filter reads the id only from it.
 
 Both org and user identity flow through the single `configureLocalInventory()`
 injection — one source per process.
