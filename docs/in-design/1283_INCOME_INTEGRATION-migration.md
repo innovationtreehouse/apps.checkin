@@ -38,6 +38,9 @@ marketplace sales tax and advances are dropped.
    `payoutNoId`). Those payouts get no transactions, so income will raise each
    as `TXN_SUM_MISMATCH`; finance clears them in the queue. If the count is
    large, check the transactions export for missing date ranges before loading.
+   Also count `payoutDateOnly`: those payouts took the only id on their date even
+   though the amounts didn't agree, so the id may be wrong. Income raises them as
+   `TXN_SUM_MISMATCH` too.
 
 ## Load
 
