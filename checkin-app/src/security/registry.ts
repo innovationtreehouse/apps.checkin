@@ -20,6 +20,12 @@
  */
 import { defineRoute, defineOutbound } from './core';
 import './registry/catalog';
+import './registry/inventory';
+import './registry/expense';
+import './registry/income';
+import './registry/donation';
+import './registry/workflow';
+import './registry/receipt';
 
 // ─── Routes ────────────────────────────────────────────────────────────────
 

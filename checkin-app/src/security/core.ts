@@ -56,6 +56,18 @@ import {
     classifications as catalogSyntheticClassifications,
     relations as catalogSyntheticRelations,
 } from './catalogSyntheticClassifications';
+import * as inventoryGenerated from './generated/inventory-classifications';
+import * as inventorySynthetic from './inventorySyntheticClassifications';
+import * as expenseGenerated from './generated/expense-classifications';
+import * as expenseSynthetic from './expenseSyntheticClassifications';
+import * as incomeGenerated from './generated/income-classifications';
+import * as incomeSynthetic from './incomeSyntheticClassifications';
+import * as donationGenerated from './generated/donation-classifications';
+import * as donationSynthetic from './donationSyntheticClassifications';
+import * as workflowGenerated from './generated/workflow-classifications';
+import * as workflowSynthetic from './workflowSyntheticClassifications';
+import * as receiptGenerated from './generated/receipt-classifications';
+import * as receiptSynthetic from './receiptSyntheticClassifications';
 import type { BusinessRole } from '@/types/auth';
 import { assertNever } from '@/lib/lifecycle/classify';
 
@@ -71,6 +83,18 @@ export const CLASSIFICATION_SOURCES = [
     { source: 'checkin', classifications: checkinClassifications, relations: checkinRelations },
     { source: 'global-catalog', classifications: catalogClassifications, relations: catalogRelations },
     { source: 'catalog-synthetic', classifications: catalogSyntheticClassifications, relations: catalogSyntheticRelations },
+    { source: 'inventory', classifications: inventoryGenerated.classifications, relations: inventoryGenerated.relations },
+    { source: 'inventory-synthetic', classifications: inventorySynthetic.classifications, relations: inventorySynthetic.relations },
+    { source: 'expense', classifications: expenseGenerated.classifications, relations: expenseGenerated.relations },
+    { source: 'expense-synthetic', classifications: expenseSynthetic.classifications, relations: expenseSynthetic.relations },
+    { source: 'income', classifications: incomeGenerated.classifications, relations: incomeGenerated.relations },
+    { source: 'income-synthetic', classifications: incomeSynthetic.classifications, relations: incomeSynthetic.relations },
+    { source: 'donation', classifications: donationGenerated.classifications, relations: donationGenerated.relations },
+    { source: 'donation-synthetic', classifications: donationSynthetic.classifications, relations: donationSynthetic.relations },
+    { source: 'workflow', classifications: workflowGenerated.classifications, relations: workflowGenerated.relations },
+    { source: 'workflow-synthetic', classifications: workflowSynthetic.classifications, relations: workflowSynthetic.relations },
+    { source: 'receipt', classifications: receiptGenerated.classifications, relations: receiptGenerated.relations },
+    { source: 'receipt-synthetic', classifications: receiptSynthetic.classifications, relations: receiptSynthetic.relations },
 ] as const;
 
 type ClassificationSource = (typeof CLASSIFICATION_SOURCES)[number];
