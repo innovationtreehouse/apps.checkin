@@ -22,6 +22,7 @@ export function parkReasonToClass(reason: string): PresenceClassification {
     if (reason === "out_of_order") return PresenceClass.PARKED_OUT_OF_ORDER;
     if (reason === "clock_suspect") return PresenceClass.PARKED_CLOCK;
     if (reason === "facility_closed") return PresenceClass.PARKED_CLOSED;
+    if (reason === "double_in") return PresenceClass.CONFLICT_DOUBLE_IN;
     if (reason.startsWith("client_dead:")) return PresenceClass.PARKED_DEAD;
     // force_close_review and any future human-gated reason: parked for a
     // person, never auto-flushed.

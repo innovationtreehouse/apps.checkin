@@ -5,6 +5,7 @@ import { apiError, apiJson } from "@/lib/api-response";
 import type { Person } from "@/generated/prisma/client";
 import { type DbClient, isRootClient } from "@/lib/db-client";
 import { withFacilityLock } from "@/lib/facilityLock";
+import { LIVE_VISIT } from "@/lib/visit/filters";
 import { MAX_VISIT_MS } from "@/lib/visitTimes";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, youthIsPresent } from "@/lib/supervision";
 import { isYouth } from "@/lib/time";
@@ -52,6 +53,17 @@ export async function processCheckin(participant: Person, authType: string, db: 
     // Same 2-arg lock space as runFacilityClose — independent of the per-person
     // lock the scan route already holds.
     return withFacilityLock(db, async (tx) => {
+    // Callers read "no open visit" before this lock; a PARKED_CLOSED flush
+    // (facility lock only, no person lock) can project one in that window.
+    // Park the scan instead of letting the one-open-visit index throw.
+    const openVisit = await tx.visit.findFirst({
+        where: { personId: participant.id, departedAt: null, ...LIVE_VISIT },
+        select: { id: true },
+    });
+    if (openVisit) {
+        return apiJson({ type: "parked", reason: "double_in", message: "Recorded for review." });
+    }
+
     // Non-keyholders require an open facility (at least 1 isKeyholder present)
     if (!participant.isKeyholder) {
         const activeKeyholders = await tx.visit.count({
