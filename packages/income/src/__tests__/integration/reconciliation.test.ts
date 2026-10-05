@@ -400,6 +400,66 @@ describeDb("reconciliationService.resolve — retry and the pre-seated create st
   });
 });
 
+describeDb("IncomeQbMatchExclusion — finance excludes a deposit from matching", () => {
+  const exclude = (qbTxnId: string, reason = "owner draw, not a payout") =>
+    reconciliationService.excludeDeposit(ORG_A, qbTxnId, reason, { userId: 42 });
+
+  it("an excluded deposit is never auto-matched", async () => {
+    payout("P1", "2026-06-01", 97);
+    deposits = [dep("D1", "2026-06-02", 97)];
+    await exclude("D1");
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", depositId: null });
+  });
+
+  it("excluding one of two candidates leaves a clean match", async () => {
+    payout("P1", "2026-06-01", 97);
+    deposits = [dep("D1", "2026-06-02", 97), dep("D2", "2026-06-03", 97)];
+    await exclude("D1");
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor("P1")).toMatchObject({ status: "MATCHED", depositId: "D2" });
+  });
+
+  it("an excluded deposit is not offered or accepted as a manual candidate", async () => {
+    payout("P1", "2026-06-01", 97);
+    await runReconcile(ORG_A, NOW);
+    const row = await rowFor("P1");
+    deposits = [dep("D1", "2026-06-02", 95)];
+    await exclude("D1");
+    expect(await reconciliationService.candidates(ORG_A, row.id)).toEqual([]);
+    await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D1", { userId: 1 })).rejects.toMatchObject({
+      statusCode: 422,
+    });
+  });
+
+  it("exclusion is per org", async () => {
+    payout("P1", "2026-06-01", 97);
+    deposits = [dep("D1", "2026-06-02", 97)];
+    await reconciliationService.excludeDeposit(ORG_B, "D1", "other org", { userId: 1 });
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor("P1")).toMatchObject({ status: "MATCHED", depositId: "D1" });
+  });
+
+  it("records who excluded it and why, and audits it", async () => {
+    const saved = await exclude("D9", "  transfer between accounts ");
+    expect(saved).toMatchObject({ orgId: ORG_A, qbTxnId: "D9", reason: "transfer between accounts", excludedByUserId: 42 });
+    expect(await db.incomeAuditLog.count({ where: { action: "deposit.excluded", entityId: String(saved.id) } })).toBe(1);
+    expect(await reconciliationService.listExclusions(ORG_A)).toMatchObject([{ qbTxnId: "D9" }]);
+    expect(await reconciliationService.listExclusions(ORG_B)).toEqual([]);
+  });
+
+  it("requires a reason, refuses a duplicate, and refuses a deposit a payout holds", async () => {
+    await expect(exclude("D9", " ")).rejects.toMatchObject({ statusCode: 400 });
+    await exclude("D9");
+    await expect(exclude("D9")).rejects.toMatchObject({ statusCode: 409 });
+
+    payout("P1", "2026-06-01", 97);
+    deposits = [dep("D1", "2026-06-02", 97)];
+    await runReconcile(ORG_A, NOW);
+    await expect(exclude("D1")).rejects.toMatchObject({ statusCode: 409 });
+  });
+});
+
 describeDb("IncomeItemCategory", () => {
   it("maps a variant to one bucket per org, with no FK to the bucket table", async () => {
     const variantId = "gid://shopify/ProductVariant/1";

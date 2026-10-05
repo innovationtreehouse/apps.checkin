@@ -54,6 +54,19 @@ model IncomeItemCategory {
   @@map("income_item_categories")
 }
 
+// A QuickBooks deposit finance has permanently removed from matching (D5).
+model IncomeQbMatchExclusion {
+  id               Int      @id @default(autoincrement()) @map("id")
+  orgId            String   @map("org_id")
+  qbTxnId          String   @map("qb_txn_id")
+  reason           String   @map("reason")
+  excludedByUserId Int      @map("excluded_by_user_id")
+  excludedAt       DateTime @default(now()) @map("excluded_at")
+
+  @@unique([orgId, qbTxnId])
+  @@map("qb_match_exclusion")
+}
+
 model IncomeAuditLog {
   id            Int      @id @default(autoincrement()) @map("id")
   orgId         String   @map("org_id")

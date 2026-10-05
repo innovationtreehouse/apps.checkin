@@ -132,6 +132,8 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
       const rows = await tx.payoutReconciliation.findMany({ where: { orgId } });
       const byGid = new Map(rows.map((r) => [r.payoutGid, r]));
       const claimed = new Set(rows.flatMap((r) => (r.depositId ? [r.depositId] : [])));
+      const exclusions = await tx.incomeQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } });
+      const excluded = new Set(exclusions.map((e) => e.qbTxnId));
 
       // Settled rows whose payout or deposit moved reopen for finance; never re-matched silently.
       for (const row of rows) {
@@ -168,6 +170,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
           : deposits.filter(
               (d) =>
                 !claimed.has(d.id) &&
+                !excluded.has(d.id) &&
                 d.totalCents === fact.netCents &&
                 d.txnDate >= fact.payoutDate &&
                 d.txnDate <= addDays(fact.payoutDate, window),

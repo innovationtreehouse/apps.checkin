@@ -13,6 +13,7 @@ import {
   windowDays,
   type ReconStatus,
 } from "../lib/reconcile";
+import { recordAudit } from "../lib/audit";
 import { ServiceError } from "./serviceError";
 
 export interface Actor {
@@ -40,14 +41,15 @@ async function liveCandidates(orgId: string, payoutDate: string): Promise<QbDepo
   const w = windowDays();
   const from = addDays(payoutDate, -w);
   const to = addDays(payoutDate, w);
-  const [deposits, claimed] = await Promise.all([
+  const [deposits, claimed, excluded] = await Promise.all([
     source.depositsSince(new Date(`${from}T00:00:00Z`)),
     db.payoutReconciliation.findMany({
       where: { orgId, depositId: { not: null } },
       select: { depositId: true },
     }),
+    db.incomeQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
   ]);
-  const taken = new Set(claimed.map((c) => c.depositId));
+  const taken = new Set([...claimed.map((c) => c.depositId), ...excluded.map((e) => e.qbTxnId)]);
   return deposits.filter((d) => d.txnDate >= from && d.txnDate <= to && !taken.has(d.id));
 }
 
@@ -128,6 +130,44 @@ export const reconciliationService = {
       await audit(tx, orgId, "reconciliation.dismissed", current, saved, { ...actor, reason: why });
       return saved;
     });
+  },
+
+  listExclusions(orgId: string) {
+    return db.incomeQbMatchExclusion.findMany({ where: { orgId }, orderBy: { excludedAt: "desc" } });
+  },
+
+  /** Permanently remove a QuickBooks deposit from matching (D5); there is no undo. A held deposit can't be excluded. */
+  async excludeDeposit(orgId: string, qbTxnId: string, reason: string, actor: Actor) {
+    const why = reason.trim();
+    if (!why) throw new ServiceError(400, "A reason is required");
+
+    try {
+      return await db.$transaction(async (tx) => {
+        await lockReconciliation(tx, orgId, true);
+        const holder = await tx.payoutReconciliation.findUnique({
+          where: { orgId_depositId: { orgId, depositId: qbTxnId } },
+        });
+        if (holder) throw new ServiceError(409, "Deposit backs a payout; reopen that payout first");
+        const saved = await tx.incomeQbMatchExclusion.create({
+          data: { orgId, qbTxnId, reason: why, excludedByUserId: actor.userId },
+        });
+        await recordAudit(tx, {
+          orgId,
+          actorUserId: actor.userId,
+          actorUsername: actor.username,
+          action: "deposit.excluded",
+          entityType: "qb_match_exclusion",
+          entityId: saved.id,
+          after: saved,
+          reason: why,
+          correlationId: actor.correlationId,
+        });
+        return saved;
+      });
+    } catch (err) {
+      if (isUniqueConstraintError(err)) throw new ServiceError(409, "Deposit is already excluded");
+      throw err;
+    }
   },
 
   /** Re-attempt a failed deposit create. Only a POST_FAILED row qualifies. */

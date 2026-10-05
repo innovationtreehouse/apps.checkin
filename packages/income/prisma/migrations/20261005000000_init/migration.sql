@@ -37,6 +37,18 @@ CREATE TABLE "income_item_categories" (
 );
 
 -- CreateTable
+CREATE TABLE "qb_match_exclusion" (
+    "id" SERIAL NOT NULL,
+    "org_id" TEXT NOT NULL,
+    "qb_txn_id" TEXT NOT NULL,
+    "reason" TEXT NOT NULL,
+    "excluded_by_user_id" INTEGER NOT NULL,
+    "excluded_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "qb_match_exclusion_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "audit_log" (
     "id" SERIAL NOT NULL,
     "org_id" TEXT NOT NULL,
@@ -65,4 +77,7 @@ CREATE UNIQUE INDEX "payout_reconciliations_org_id_deposit_id_key" ON "payout_re
 
 -- CreateIndex
 CREATE UNIQUE INDEX "income_item_categories_org_id_variant_id_key" ON "income_item_categories"("org_id", "variant_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "qb_match_exclusion_org_id_qb_txn_id_key" ON "qb_match_exclusion"("org_id", "qb_txn_id");
 
