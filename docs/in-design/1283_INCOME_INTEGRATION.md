@@ -316,9 +316,8 @@ Mechanism (ports, cron hook, synthetic views) is deleted with this doc.
   keys on Shopify GIDs, the payout summary CSV has none, and checkin's grant on
   the mirror is SELECT-only.
 - **Re-pull old history from the Shopify API** by moving s-read's cutover back.
-  Rejected for the history the API no longer returns, which is the reason the
-  CSVs exist. Where the API does still reach, moving the cutover is cheaper than
-  importing, and `mirrorFrom` follows it.
+  Rejected: the API does not reach back far enough (owner-confirmed), which is
+  why the CSVs exist.
 - **Fold the QB match into checkin's `lib/finance/reconcile.ts`.** Rejected: it
   would need the CSV tables too, and the plan places every Inventory app in its
   own library.
