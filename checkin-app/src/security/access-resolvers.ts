@@ -240,6 +240,17 @@ export interface ResolverContext {
 }
 
 /**
+ * A session with no integer id (its JWT re-sync missed after a person merge or
+ * delete) admits nothing on the role-flag gates: Prisma drops a `where` key whose
+ * value is `undefined`, so a per-caller filter would widen to every row.
+ */
+function isIdentifiedSession(
+    auth: AuthResult,
+): auth is Extract<AuthResult, { type: 'session' }> {
+    return auth.type === 'session' && Number.isInteger(auth.user.id);
+}
+
+/**
  * Admission gate — the per-route `authorize` check. Returns whether the
  * caller is even allowed to *invoke* the endpoint (401/403 if not). View
  * resolution (orderedView) is downstream.
@@ -294,7 +305,7 @@ export async function resolveAccess(
                 // #1286 §6 / #1265 §6: any Treehouse Volunteer relationship —
                 // role flag, program leadership, or a volunteer designation.
                 // Catalog reads and receipt submission share this audience.
-                if (auth.type !== 'session') return { allowed: false };
+                if (!isIdentifiedSession(auth)) return { allowed: false };
                 const u = auth.user;
                 if (
                     u.isSysadmin || u.isBoardMember || u.isKeyholder ||
@@ -323,11 +334,11 @@ export async function resolveAccess(
             case 'finance':
                 // #1272 §6: FINANCE only; sysadmins are not auto-admitted
                 // (finance-payments.md: Finance Ops excludes sysadmins).
-                return { allowed: auth.type === 'session' && auth.user.isFinance === true };
+                return { allowed: isIdentifiedSession(auth) && auth.user.isFinance === true };
             case 'finance-or-board':
                 // #1272 §6 / #1280 §4: FINANCE or BOARD; still no sysadmin.
                 return {
-                    allowed: auth.type === 'session' &&
+                    allowed: isIdentifiedSession(auth) &&
                         (auth.user.isFinance === true || auth.user.isBoardMember === true),
                 };
             case 'certifier':
@@ -353,7 +364,7 @@ export async function resolveAccess(
             }
         }
     } else if ('anyRole' in authorize) {
-        if (auth.type !== 'session') return { allowed: false };
+        if (!isIdentifiedSession(auth)) return { allowed: false };
         return { allowed: authorize.anyRole.some(r => auth.user[r] === true) };
     }
     return { allowed: false };
