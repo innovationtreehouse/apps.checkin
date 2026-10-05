@@ -221,7 +221,7 @@ cron and a manual "run now" cannot interleave. `window` (default 7 days) and
 bulk dismiss.
 
 **Posting is automatic.** A payout that passes the steps above is created
-without a per-deposit approval, as in bulk donation's drain. The control is the
+without a per-deposit approval (owner-confirmed), as in bulk donation's drain. The control is the
 queue: anything that doesn't add up, doesn't match cleanly or fails to post goes
 to finance (finance rule: a control is a flag a person signs off).
 
