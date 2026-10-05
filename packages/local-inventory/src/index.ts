@@ -16,7 +16,6 @@ export * from "./lib/services/locationService";
 export * from "./lib/services/provisionalItemService";
 export * from "./lib/services/receiptService";
 export * from "./lib/services/receiveQueueService";
-export * from "./lib/services/userService";
 export * from "./lib/services/serviceError";
 
 export * from "./workflows/index";
