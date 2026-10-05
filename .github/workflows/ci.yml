@@ -645,6 +645,10 @@ jobs:
           npm run typecheck -w monitoring-relay-function
           npm run typecheck -w monitoring-watchdog-function
 
+      - name: Library boundary check
+        if: needs.changes.outputs.packages == 'true'
+        run: npm run check:library-boundaries
+
       - name: Test packages
         if: needs.changes.outputs.packages == 'true'
         run: npm run test:packages
