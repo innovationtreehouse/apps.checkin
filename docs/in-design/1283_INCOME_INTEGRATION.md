@@ -252,7 +252,8 @@ decision D5), with one click and a reason. The usual case for income is a check
 or cash deposit (out of scope, D6) whose amount and date collide with a payout
 and keep it `AMBIGUOUS`.
 
-- **Model:** `IncomeQbMatchExclusion { orgId, qbTxnId, reason, by, at }`,
+- **Model:** `IncomeQbMatchExclusion { orgId, qbTxnId, reason, excludedByUserId, excludedAt }`
+  (column `excluded_by_user_id`, following `actorUserId` / `resolvedByUserId`),
   unique on `(orgId, qbTxnId)`, `@@map("qb_match_exclusion")`. The shared model
   names it `QbMatchExclusion`, but every lane has one and the classification
   map merges by model name, so each lane prefixes it (§5).
@@ -363,7 +364,7 @@ Pages (Finance nav section tabs, gated `FINANCE`/`BOARD`): `income/payouts`
 | `/api/income/reconciliation/run` | POST | FINANCE | `IncomeReconciliationCount` |
 | `/api/income/items` | GET | FINANCE, BOARD | `IncomeItemView[]` (items seen + mapped bucket) |
 | `/api/income/items/[variantId]/category` | PUT, DELETE | FINANCE | `IncomeItemCategory` (the injected org's mapping) |
-| `/api/income/qb-exclusions` | GET | FINANCE, BOARD | `IncomeQbMatchExclusion[]` |
+| `/api/income/qb-exclusions` | GET | FINANCE, BOARD | `IncomeQbMatchExclusion[]` (the injected org's, newest first) |
 | `/api/income/qb-exclusions` | POST | FINANCE | `IncomeQbMatchExclusion` (exclude a deposit, reason required) |
 
 Mirror and QB rows are not Prisma models, so the stripper would drop them. Each
@@ -388,7 +389,7 @@ existing access. Income's tiering:
 - **`internal`**: all amounts and dates, `payoutGid`, deposit id and snapshot,
   status/kind, `actorUserId`/`actorUsername`/`resolvedByUserId`, free text
   (`reason`, `note`), audit `before`/`after`, item mappings (`orgId`, `variantId`,
-  `budgetOwnerId`), exclusions (`qbTxnId`, `reason`, `by`, `at`); every field of
+  `budgetOwnerId`), exclusions (`qbTxnId`, `reason`, `excludedByUserId`, `excludedAt`); every field of
   the five synthetic views.
 - **`public`**: row `id` only.
 - **No `pii`, no `secret`.** This holds only while two things hold, and B's
