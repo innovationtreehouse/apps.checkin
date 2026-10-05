@@ -3,7 +3,8 @@
  * CI lint — verifies the security policy layer can't be routed around.
  *
  * Checks (advisory in Sprint 1; flipped to blocking in Sprint 4):
- *   1. Every src/app/api/<x>/route.ts file exports HTTP verbs registered in src/security/registry.ts.
+ *   1. Every src/app/api/<x>/route.ts file exports HTTP verbs registered in src/security/registry.ts
+ *      (or a per-library module under src/security/registry/).
  *   2. Every registry entry corresponds to an existing route file.
  *   3. Migrated routes (listed in scripts/migrated-routes.txt) must NOT call NextResponse.json / Response.json directly.
  *   4. Calls to third-party hosts (shopify.com, myshopify.com, resend.com, SHOPIFY_STORE_DOMAIN) live only in src/lib/shopify.ts and src/lib/email.ts.
@@ -204,17 +205,22 @@ function extractExportedVerbs(content: string): string[] {
 }
 
 function loadRegisteredEndpoints(): { routes: Set<string>; outbounds: Set<string> } {
-    // Parse the registry file directly rather than evaluating it — keeps this
+    // Parse the registry files directly rather than evaluating them — keeps this
     // lint independent of module-resolution quirks. The registry follows a
     // strict shape: defineRoute({ endpoint: '...' }) / defineOutbound({ surface: '...' }).
+    // registry.ts aggregates the per-library modules under registry/.
     const registryPath = path.join(REPO_ROOT, 'src/security/registry.ts');
+    const libRegistryDir = path.join(REPO_ROOT, 'src/security/registry');
     const routes = new Set<string>();
     const outbounds = new Set<string>();
     if (!fs.existsSync(registryPath)) {
         report('error', 'registry-load', registryPath, 'registry.ts not found');
         return { routes, outbounds };
     }
-    const content = fs.readFileSync(registryPath, 'utf-8');
+    const libRegistryPaths = fs.existsSync(libRegistryDir)
+        ? fs.readdirSync(libRegistryDir).filter(f => f.endsWith('.ts')).map(f => path.join(libRegistryDir, f))
+        : [];
+    const content = [registryPath, ...libRegistryPaths].map(p => fs.readFileSync(p, 'utf-8')).join('\n');
     const routeRe = /defineRoute\s*\(\s*\{\s*endpoint\s*:\s*['"]([^'"]+)['"]/g;
     const outboundRe = /defineOutbound\s*\(\s*\{\s*surface\s*:\s*['"]([^'"]+)['"]/g;
     let m: RegExpExecArray | null;
