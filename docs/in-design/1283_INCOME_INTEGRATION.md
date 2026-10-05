@@ -189,7 +189,7 @@ records. With QB-2, step 3 goes live. Income's S/B/W PRs wait on none of this.
 
 ### Reconciliation state machine: `PayoutReconciliation`
 
-One row per paid payout, unique on `payoutGid`. Finance books exactly one
+One row per paid payout, unique on `(orgId, payoutGid)`. Finance books exactly one
 QuickBooks deposit per payout (owner-confirmed), so the match is one-to-one.
 Plain status column with a guarded transition table; no xstate.
 
@@ -208,7 +208,7 @@ Plain status column with a guarded transition table; no xstate.
 | `MATCHED` / `POSTED` / `RESOLVED` | deposit gone or amount changed, or payout gone from the mirror or its amount/status changed | `OPEN` + `DRIFT` |
 
 Rules: payouts not yet paid are skipped, not queued. A deposit backs at most one
-payout (partial unique on the deposit id, so tests run `migrate deploy`, not
+payout (partial unique on `(orgId, depositId)`, so tests run `migrate deploy`, not
 `db push`). The row records the deposit's origin, `matched` or `created`, and a
 snapshot of `{ depositId, txnDate, totalCents }` plus the payout net, which is
 what makes drift detectable. A drifted deposit is never edited by the app, even
