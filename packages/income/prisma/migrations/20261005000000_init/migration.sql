@@ -11,6 +11,7 @@ CREATE TABLE "payout_reconciliations" (
     "status" TEXT NOT NULL,
     "kind" TEXT,
     "resolution" TEXT,
+    "origin" TEXT,
     "deposit_id" TEXT,
     "deposit_txn_date" TEXT,
     "deposit_total_cents" INTEGER,

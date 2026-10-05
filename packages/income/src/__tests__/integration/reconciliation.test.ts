@@ -74,7 +74,9 @@ describeDb("runReconcile — automatic transitions", () => {
     deposits = [dep("D1", "2026-06-03", 97), dep("D2", "2026-06-03", 98)];
 
     expect(await runReconcile(ORG_A, NOW)).toMatchObject({ status: "ran", matched: 1 });
-    expect(await rowFor("P1")).toMatchObject({ status: "MATCHED", resolution: "AUTO", depositId: "D1", depositTotalCents: 97 });
+    expect(await rowFor("P1")).toMatchObject({
+      status: "MATCHED", resolution: "AUTO", origin: "matched", depositId: "D1", depositTotalCents: 97,
+    });
     expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.matched" } })).toBe(1);
   });
 
@@ -319,6 +321,80 @@ describeDb("reconciliationService — finance actions", () => {
     await expect(reconciliationService.dismiss(ORG_B, row.id, "y", { userId: 1 })).rejects.toMatchObject({
       statusCode: 404,
     });
+  });
+});
+
+describeDb("reconciliationService.resolve — retry and the pre-seated create states", () => {
+  async function postFailed() {
+    payout("P1", "2026-06-01", 97);
+    return db.payoutReconciliation.create({
+      data: { orgId: ORG_A, payoutGid: "P1", payoutDate: "2026-06-01", payoutNetCents: 97, status: "OPEN", kind: "POST_FAILED" },
+    });
+  }
+
+  it("retry is refused for any row that is not POST_FAILED", async () => {
+    payout("P1", "2026-06-01", 97);
+    await runReconcile(ORG_A, NOW);
+    const row = await rowFor("P1");
+    expect(row.kind).toBe("NO_DEPOSIT");
+    await expect(reconciliationService.resolve(ORG_A, row.id, { action: "retry" }, { userId: 1 })).rejects.toMatchObject({
+      statusCode: 409,
+    });
+  });
+
+  it("retry on POST_FAILED reports the deposit write as unavailable and changes nothing", async () => {
+    const row = await postFailed();
+    await expect(reconciliationService.resolve(ORG_A, row.id, { action: "retry" }, { userId: 1 })).rejects.toMatchObject({
+      statusCode: 503,
+    });
+    expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "POST_FAILED" });
+  });
+
+  it("a run keeps POST_FAILED instead of reclassifying it, but still records a deposit that turns up", async () => {
+    await postFailed();
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "POST_FAILED" });
+
+    deposits = [dep("D1", "2026-06-02", 97)];
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor("P1")).toMatchObject({ status: "MATCHED", origin: "matched", depositId: "D1" });
+  });
+
+  it("resolve dispatches match and dismiss", async () => {
+    payout("P1", "2026-06-01", 97);
+    await runReconcile(ORG_A, NOW);
+    const row = await rowFor("P1");
+    deposits = [dep("D7", "2026-06-02", 95)];
+    expect(
+      await reconciliationService.resolve(ORG_A, row.id, { action: "match", depositId: "D7" }, { userId: 1 }),
+    ).toMatchObject({ status: "RESOLVED", resolution: "MANUAL", origin: "matched" });
+  });
+
+  it("a POSTED row is drift-checked like any settled row", async () => {
+    payout("P1", "2026-06-01", 97);
+    deposits = [dep("D1", "2026-06-02", 97)];
+    await db.payoutReconciliation.create({
+      data: {
+        orgId: ORG_A, payoutGid: "P1", payoutDate: "2026-06-01", payoutNetCents: 97, status: "POSTED",
+        origin: "created", depositId: "D1", depositTxnDate: "2026-06-02", depositTotalCents: 97,
+      },
+    });
+    await runReconcile(ORG_A, NOW);
+    expect((await rowFor("P1")).status).toBe("POSTED");
+
+    deposits = [];
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "DRIFT", origin: null, depositId: null });
+  });
+
+  it("a WAITING row is not drift-checked", async () => {
+    payout("P1", "2026-06-01", 97);
+    setPayout("P1", { status: "failed" });
+    await db.payoutReconciliation.create({
+      data: { orgId: ORG_A, payoutGid: "P1", payoutDate: "2026-06-01", payoutNetCents: 97, status: "WAITING" },
+    });
+    await runReconcile(ORG_A, NOW);
+    expect((await rowFor("P1")).status).toBe("WAITING");
   });
 });
 

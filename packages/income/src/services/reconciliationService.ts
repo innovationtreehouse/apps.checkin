@@ -2,6 +2,8 @@ import { db, isUniqueConstraintError } from "../db";
 import type { QbDeposit } from "../contract";
 import { getIncomeConfig } from "../runtime";
 import {
+  RECON_KIND,
+  RECON_ORIGIN,
   RECON_RESOLUTION,
   RECON_STATUS,
   addDays,
@@ -13,11 +15,17 @@ import {
 } from "../lib/reconcile";
 import { ServiceError } from "./serviceError";
 
-interface Actor {
+export interface Actor {
   userId: number;
   username?: string;
   correlationId?: string;
 }
+
+/** The three finance resolutions the resolve route accepts. */
+export type ResolveAction =
+  | { action: "match"; depositId: string }
+  | { action: "dismiss"; reason: string }
+  | { action: "retry" };
 
 async function openRow(orgId: string, id: number) {
   const row = await db.payoutReconciliation.findUnique({ where: { id } });
@@ -80,6 +88,7 @@ export const reconciliationService = {
             status: RECON_STATUS.RESOLVED,
             kind: null,
             resolution: RECON_RESOLUTION.MANUAL,
+            origin: RECON_ORIGIN.MATCHED,
             depositId: deposit.id,
             depositTxnDate: deposit.txnDate,
             depositTotalCents: deposit.totalCents,
@@ -119,5 +128,26 @@ export const reconciliationService = {
       await audit(tx, orgId, "reconciliation.dismissed", current, saved, { ...actor, reason: why });
       return saved;
     });
+  },
+
+  /** Re-attempt a failed deposit create. Only a POST_FAILED row qualifies. */
+  async retry(orgId: string, id: number, _actor: Actor): Promise<never> {
+    const row = await openRow(orgId, id);
+    if (row.status !== RECON_STATUS.OPEN || row.kind !== RECON_KIND.POST_FAILED) {
+      throw new ServiceError(409, "Only a failed deposit create can be retried");
+    }
+    // ponytail: no deposit write until L4 ships the shared find-or-create (design §8, PR 4).
+    throw new ServiceError(503, "QuickBooks deposit creation is not available");
+  },
+
+  resolve(orgId: string, id: number, req: ResolveAction, actor: Actor) {
+    switch (req.action) {
+      case "match":
+        return reconciliationService.matchToDeposit(orgId, id, req.depositId, actor);
+      case "dismiss":
+        return reconciliationService.dismiss(orgId, id, req.reason, actor);
+      case "retry":
+        return reconciliationService.retry(orgId, id, actor);
+    }
   },
 };

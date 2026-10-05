@@ -12,6 +12,8 @@ datasource db {
 // One row per paid mirror payout once it is matched to a QuickBooks deposit or raised for
 // finance. deposit_id is set only while the row holds a deposit, so the unique pair means a
 // deposit backs at most one payout. payout_net_cents is the net seen at the last decision.
+// status: WAITING | OPEN | MATCHED | POSTED | RESOLVED. origin: matched | created, set while
+// the row holds a deposit. WAITING, POSTED, POST_FAILED and "created" belong to the create path.
 model PayoutReconciliation {
   id                Int       @id @default(autoincrement()) @map("id")
   orgId             String    @map("org_id")
@@ -21,6 +23,7 @@ model PayoutReconciliation {
   status            String    @map("status")
   kind              String?   @map("kind")
   resolution        String?   @map("resolution")
+  origin            String?   @map("origin")
   depositId         String?   @map("deposit_id")
   depositTxnDate    String?   @map("deposit_txn_date")
   depositTotalCents Int?      @map("deposit_total_cents")

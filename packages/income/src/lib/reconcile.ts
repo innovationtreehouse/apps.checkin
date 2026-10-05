@@ -4,7 +4,13 @@ import type { MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
 import { getIncomeConfig, isoDay } from "../runtime";
 import { recordAudit, type TxClient } from "./audit";
 
-export const RECON_STATUS = { OPEN: "OPEN", MATCHED: "MATCHED", RESOLVED: "RESOLVED" } as const;
+export const RECON_STATUS = {
+  WAITING: "WAITING",
+  OPEN: "OPEN",
+  MATCHED: "MATCHED",
+  POSTED: "POSTED",
+  RESOLVED: "RESOLVED",
+} as const;
 export type ReconStatus = (typeof RECON_STATUS)[keyof typeof RECON_STATUS];
 
 export const RECON_KIND = {
@@ -12,10 +18,17 @@ export const RECON_KIND = {
   AMBIGUOUS_DEPOSIT: "AMBIGUOUS_DEPOSIT",
   TXN_SUM_MISMATCH: "TXN_SUM_MISMATCH",
   DRIFT: "DRIFT",
+  POST_FAILED: "POST_FAILED",
 } as const;
 export type ReconKind = (typeof RECON_KIND)[keyof typeof RECON_KIND];
 
 export const RECON_RESOLUTION = { AUTO: "AUTO", MANUAL: "MANUAL", DISMISSED: "DISMISSED" } as const;
+
+/** Where the deposit a row holds came from: found in QuickBooks, or created by income. */
+export const RECON_ORIGIN = { MATCHED: "matched", CREATED: "created" } as const;
+
+/** Statuses whose row holds a decision a later change to the payout or deposit must reopen. */
+export const SETTLED_STATUSES: string[] = [RECON_STATUS.MATCHED, RECON_STATUS.POSTED, RECON_STATUS.RESOLVED];
 
 export const DEFAULT_WINDOW_DAYS = 7;
 
@@ -101,7 +114,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
   // Settled rows are drift-checked against the payout's current state, whether or not it is
   // still paid and inside reconcileFrom. Rows settled after this read are checked next run.
   const settled = await db.payoutReconciliation.findMany({
-    where: { orgId, status: { not: RECON_STATUS.OPEN } },
+    where: { orgId, status: { in: SETTLED_STATUSES } },
     select: { payoutGid: true, payoutDate: true },
   });
   const settledPayouts = new Map<string, MirrorPayout | null>();
@@ -122,7 +135,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
 
       // Settled rows whose payout or deposit moved reopen for finance; never re-matched silently.
       for (const row of rows) {
-        if (row.status === RECON_STATUS.OPEN || !settledPayouts.has(row.payoutGid)) continue;
+        if (!SETTLED_STATUSES.includes(row.status) || !settledPayouts.has(row.payoutGid)) continue;
         const payout = settledPayouts.get(row.payoutGid) ?? null;
         const cause = driftCause(row, payout, depositsById);
         if (!cause) continue;
@@ -134,6 +147,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
             status: RECON_STATUS.OPEN,
             kind: RECON_KIND.DRIFT,
             resolution: null,
+            origin: null,
             depositId: null,
             depositTxnDate: null,
             depositTotalCents: null,
@@ -165,6 +179,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
             status: RECON_STATUS.MATCHED,
             kind: null,
             resolution: RECON_RESOLUTION.AUTO,
+            origin: RECON_ORIGIN.MATCHED,
             depositId: d.id,
             depositTxnDate: d.txnDate,
             depositTotalCents: d.totalCents,
@@ -179,6 +194,8 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
           continue;
         }
 
+        // A failed create stays POST_FAILED until a deposit turns up or finance retries.
+        if (row?.kind === RECON_KIND.POST_FAILED) continue;
         const windowElapsed = today > addDays(fact.payoutDate, window);
         if (!fact.sumMismatch && !windowElapsed) continue;
 
