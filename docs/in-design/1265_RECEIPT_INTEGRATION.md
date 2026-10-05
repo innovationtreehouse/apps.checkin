@@ -404,6 +404,18 @@ submitter's list and detail calls filter `WHERE uploadedByUserId = principal.id`
 finance reads the org. Submitter routes reuse the existing `catalog-viewer`
 `authorize` token, so no new token grammar enters the boundary.
 
+**A caller with no integer id is unauthenticated** (boundary rule 6). Receipt's
+checkin-side adapter `getPrincipal()` returns `null` unless
+`typeof user.id === "number"`, as `checkin-app/src/lib/catalog/configure.ts`
+does, and the submitter filter reads the id only from that principal. Prisma
+drops a `where` key whose value is `undefined`, so an id-less session (a JWT
+whose re-sync missed after a person merge or delete) would otherwise list every
+receipt in the org.
+
+| Test | Expect |
+|---|---|
+| id-less session (`user.id` undefined) calls the submitter list or detail route | 401, never a list |
+
 ---
 
 ## 7. Crossings (Wave 3)
