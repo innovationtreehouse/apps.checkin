@@ -9,227 +9,31 @@ datasource db {
   provider = "postgresql"
 }
 
-model PayoutImport {
-  id         Int      @id @default(autoincrement()) @map("id")
-  orgId      String   @map("org_id")
-  payoutDate String   @map("payout_date")
-  totalCents Int      @map("total_cents")
-  payload    String   @map("payload")
-  importedAt DateTime @default(now()) @map("imported_at")
+// One row per paid mirror payout once it is matched to a QuickBooks deposit or raised for
+// finance. deposit_id is set only while the row holds a deposit, so the unique pair means a
+// deposit backs at most one payout. payout_net_cents is the net seen at the last decision.
+model PayoutReconciliation {
+  id                Int       @id @default(autoincrement()) @map("id")
+  orgId             String    @map("org_id")
+  payoutGid         String    @map("payout_gid")
+  payoutDate        String    @map("payout_date")
+  payoutNetCents    Int       @map("payout_net_cents")
+  status            String    @map("status")
+  kind              String?   @map("kind")
+  resolution        String?   @map("resolution")
+  depositId         String?   @map("deposit_id")
+  depositTxnDate    String?   @map("deposit_txn_date")
+  depositTotalCents Int?      @map("deposit_total_cents")
+  reason            String?   @map("reason")
+  resolvedByUserId  Int?      @map("resolved_by_user_id")
+  resolvedAt        DateTime? @map("resolved_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  payout    Payout?
-  conflicts PayoutConflict[]
-
-  @@map("payout_imports")
-}
-
-model Payout {
-  id                  Int     @id @map("id")
-  orgId               String  @map("org_id")
-  shopifyPayoutId     String? @map("shopify_payout_id")
-  payoutDate          String  @map("payout_date")
-  status              String  @map("status")
-  chargesCents             Int     @map("charges_cents")
-  refundsCents             Int     @map("refunds_cents")
-  adjustmentsCents         Int     @map("adjustments_cents")
-  marketplaceSalesTaxCents Int     @map("marketplace_sales_tax_cents")
-  advancesCents            Int     @map("advances_cents")
-  reservedFundsCents       Int     @map("reserved_funds_cents")
-  feesCents                Int     @map("fees_cents")
-  retriedAmountCents       Int     @map("retried_amount_cents")
-  totalCents               Int     @map("total_cents")
-  currency                 String  @map("currency")
-  bankReference            String? @map("bank_reference")
-
-  payoutImport PayoutImport @relation(fields: [id], references: [id])
-
-  @@unique([orgId, payoutDate, totalCents], name: "payouts_org_date_total_unique")
-  @@map("payouts")
-}
-
-model PayoutConflict {
-  id               Int       @id @default(autoincrement()) @map("id")
-  orgId            String    @map("org_id")
-  incomingPayload  String    @map("incoming_payload")
-  existingImportId Int       @map("existing_import_id")
-  reason           String    @default("payload_mismatch") @map("reason")
-  status           String    @default("pending") @map("status")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  resolvedAt       DateTime? @map("resolved_at")
-  resolvedByUserId Int?      @map("resolved_by_user_id")
-
-  payoutImport PayoutImport @relation(fields: [existingImportId], references: [id])
-
-  @@map("payout_conflicts")
-}
-
-model PayoutImportFile {
-  id               Int      @id @default(autoincrement()) @map("id")
-  orgId            String   @map("org_id")
-  uploadedByUserId Int      @map("uploaded_by_user_id")
-  uploadedAt       DateTime @default(now()) @map("uploaded_at")
-  originalFilename String   @map("original_filename")
-  fileHash         String   @map("file_hash")
-  rowCount         Int      @default(0) @map("row_count")
-  insertedCount    Int      @default(0) @map("inserted_count")
-  duplicateCount   Int      @default(0) @map("duplicate_count")
-  conflictCount    Int      @default(0) @map("conflict_count")
-
-  @@map("payout_import_files")
-}
-
-model ShopifyImportFile {
-  id               Int      @id @default(autoincrement()) @map("id")
-  orgId            String   @map("org_id")
-  uploadedByUserId Int      @map("uploaded_by_user_id")
-  uploadedAt       DateTime @default(now()) @map("uploaded_at")
-  originalFilename String   @map("original_filename")
-  fileHash         String   @map("file_hash")
-  rowCount         Int      @default(0) @map("row_count")
-  newOrderCount    Int      @default(0) @map("new_order_count")
-  skippedOrderCount Int     @default(0) @map("skipped_order_count")
-
-  orderBlobs ShopifyOrderBlob[]
-
-  @@map("shopify_import_files")
-}
-
-model ShopifyOrderBlob {
-  id           Int      @id @default(autoincrement()) @map("id")
-  orgId        String   @map("org_id")
-  purchaseId   String   @map("purchase_id")
-  paidAt       String?  @map("paid_at")
-  totalCents   Int      @map("total_cents")
-  payload      String   @map("payload")
-  importFileId Int      @map("import_file_id")
-  importedAt   DateTime @default(now()) @map("imported_at")
-
-  importFile ShopifyImportFile @relation(fields: [importFileId], references: [id])
-
-  @@unique([orgId, purchaseId], name: "shopify_order_blobs_org_purchase_unique")
-  @@map("shopify_order_blobs")
-}
-
-model ShopifyCustomer {
-  id              Int      @id @default(autoincrement()) @map("id")
-  orgId           String   @map("org_id")
-  email           String   @map("email")
-  billingName     String?  @map("billing_name")
-  billingStreet   String?  @map("billing_street")
-  billingAddress1 String?  @map("billing_address1")
-  billingAddress2 String?  @map("billing_address2")
-  billingCompany  String?  @map("billing_company")
-  billingCity     String?  @map("billing_city")
-  billingZip      String?  @map("billing_zip")
-  billingProvince String?  @map("billing_province")
-  billingCountry  String?  @map("billing_country")
-  billingPhone    String?  @map("billing_phone")
-  phone           String?  @map("phone")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
-
-  orders ShopifyOrder[]
-
-  @@unique([orgId, email], name: "shopify_customers_org_email_unique")
-  @@map("shopify_customers")
-}
-
-model ShopifyOrder {
-  id                Int      @id @default(autoincrement()) @map("id")
-  orgId             String   @map("org_id")
-  purchaseId        String   @map("purchase_id")
-  shopifyNumericId  String?  @map("shopify_numeric_id")
-  customerId        Int      @map("customer_id")
-  financialStatus   String?  @map("financial_status")
-  paidAt            String?  @map("paid_at")
-  fulfillmentStatus String?  @map("fulfillment_status")
-  fulfilledAt       String?  @map("fulfilled_at")
-  cancelledAt       String?  @map("cancelled_at")
-  createdAt         String?  @map("created_at")
-  currency          String?  @map("currency")
-  subtotalCents     Int      @default(0) @map("subtotal_cents")
-  shippingCents     Int      @default(0) @map("shipping_cents")
-  taxesCents        Int      @default(0) @map("taxes_cents")
-  totalCents        Int      @default(0) @map("total_cents")
-  discountCode      String?  @map("discount_code")
-  discountAmountCents Int    @default(0) @map("discount_amount_cents")
-  refundedAmountCents Int    @default(0) @map("refunded_amount_cents")
-  importedAt        DateTime @default(now()) @map("imported_at")
-
-  customer   ShopifyCustomer      @relation(fields: [customerId], references: [id])
-  lineItems  ShopifyOrderLineItem[]
-  payoutLineItems ShopifyPayoutLineItem[]
-
-  @@unique([orgId, purchaseId], name: "shopify_orders_org_purchase_unique")
-  @@map("shopify_orders")
-}
-
-model ShopifyOrderLineItem {
-  id                Int     @id @default(autoincrement()) @map("id")
-  orderId           Int     @map("order_id")
-  orgId             String  @map("org_id")
-  quantity          Int     @default(1) @map("quantity")
-  name              String  @map("name")
-  priceCents        Int     @default(0) @map("price_cents")
-  compareAtPriceCents Int?  @map("compare_at_price_cents")
-  sku               String? @map("sku")
-  discountCents     Int     @default(0) @map("discount_cents")
-  fulfillmentStatus String? @map("fulfillment_status")
-
-  order ShopifyOrder @relation(fields: [orderId], references: [id])
-
-  @@map("shopify_order_line_items")
-}
-
-model PayoutDetailImportFile {
-  id               Int      @id @default(autoincrement()) @map("id")
-  orgId            String   @map("org_id")
-  uploadedByUserId Int      @map("uploaded_by_user_id")
-  uploadedAt       DateTime @default(now()) @map("uploaded_at")
-  originalFilename String   @map("original_filename")
-  fileHash         String   @map("file_hash")
-  rowCount         Int      @default(0) @map("row_count")
-  insertedCount    Int      @default(0) @map("inserted_count")
-  duplicateCount   Int      @default(0) @map("duplicate_count")
-
-  detailBlobs ShopifyPayoutDetailBlob[]
-
-  @@map("payout_detail_import_files")
-}
-
-model ShopifyPayoutDetailBlob {
-  id              Int      @id @default(autoincrement()) @map("id")
-  orgId           String   @map("org_id")
-  shopifyPayoutId String   @map("shopify_payout_id")
-  payoutDate      String   @map("payout_date")
-  payload         String   @map("payload")
-  importFileId    Int      @map("import_file_id")
-  importedAt      DateTime @default(now()) @map("imported_at")
-
-  importFile PayoutDetailImportFile @relation(fields: [importFileId], references: [id])
-
-  @@unique([orgId, shopifyPayoutId], name: "shopify_payout_detail_blobs_org_payout_unique")
-  @@map("shopify_payout_detail_blobs")
-}
-
-model ShopifyPayoutLineItem {
-  id              Int     @id @default(autoincrement()) @map("id")
-  orgId           String  @map("org_id")
-  shopifyPayoutId String  @map("shopify_payout_id")
-  transactionDate String  @map("transaction_date")
-  transactionType String  @map("transaction_type")
-  orderRef        String? @map("order_ref")
-  shopifyOrderId  Int?    @map("shopify_order_id")
-  payoutStatus    String? @map("payout_status")
-  payoutDate      String  @map("payout_date")
-  amountCents     Int     @map("amount_cents")
-  feeCents        Int     @map("fee_cents")
-  netCents        Int     @map("net_cents")
-  currency        String  @map("currency")
-
-  shopifyOrder ShopifyOrder? @relation(fields: [shopifyOrderId], references: [id])
-
-  @@map("shopify_payout_line_items")
+  @@unique([orgId, payoutGid])
+  @@unique([orgId, depositId])
+  @@index([orgId, status])
+  @@map("payout_reconciliations")
 }
 
 model IncomeAuditLog {
@@ -247,32 +51,4 @@ model IncomeAuditLog {
   createdAt     DateTime @default(now()) @map("created_at")
 
   @@map("audit_log")
-}
-
-// One row per paid payout (CSV or mirror) once it is matched to a QuickBooks deposit or
-// raised for finance. key = "csv:<Payout.id>" | "gid:<payoutGid>". deposit_id is set only
-// while the row holds a deposit, so the unique pair means a deposit backs at most one payout.
-model PayoutReconciliation {
-  id                Int       @id @default(autoincrement()) @map("id")
-  orgId             String    @map("org_id")
-  key               String    @map("key")
-  source            String    @map("source")
-  payoutDate        String    @map("payout_date")
-  payoutNetCents    Int       @map("payout_net_cents")
-  status            String    @map("status")
-  kind              String?   @map("kind")
-  resolution        String?   @map("resolution")
-  depositId         String?   @map("deposit_id")
-  depositTxnDate    String?   @map("deposit_txn_date")
-  depositTotalCents Int?      @map("deposit_total_cents")
-  reason            String?   @map("reason")
-  resolvedByUserId  Int?      @map("resolved_by_user_id")
-  resolvedAt        DateTime? @map("resolved_at")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
-
-  @@unique([orgId, key])
-  @@unique([orgId, depositId])
-  @@index([orgId, status])
-  @@map("payout_reconciliations")
 }

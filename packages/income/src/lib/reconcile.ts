@@ -1,6 +1,6 @@
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
-import type { QbDeposit } from "../contract";
+import type { MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
 import { getIncomeConfig, isoDay } from "../runtime";
 import { recordAudit, type TxClient } from "./audit";
 
@@ -19,10 +19,9 @@ export const RECON_RESOLUTION = { AUTO: "AUTO", MANUAL: "MANUAL", DISMISSED: "DI
 
 export const DEFAULT_WINDOW_DAYS = 7;
 
-/** A paid payout from either source, normalised for matching. */
+/** A paid mirror payout, normalised for matching. */
 export interface PayoutFact {
-  key: string;
-  source: "csv" | "mirror";
+  payoutGid: string;
   payoutDate: string;
   netCents: number;
   sumMismatch: boolean;
@@ -55,45 +54,36 @@ export async function lockReconciliation(tx: TxClient, orgId: string, wait: bool
   return locked;
 }
 
-async function collectPayouts(orgId: string): Promise<PayoutFact[]> {
-  const { mirror, mirrorFrom, reconcileFrom } = getIncomeConfig();
-  const fromDay = reconcileFrom ? isoDay(reconcileFrom) : undefined;
-  const mirrorDay = mirrorFrom ? isoDay(mirrorFrom) : undefined;
-
-  const csv = await db.payout.findMany({
-    where: { orgId, status: "paid", payoutDate: { gte: fromDay, lt: mirrorDay } },
-    select: { id: true, payoutDate: true, totalCents: true },
-  });
-  const facts: PayoutFact[] = csv.map((p) => ({
-    key: `csv:${p.id}`,
-    source: "csv",
-    payoutDate: p.payoutDate,
-    netCents: p.totalCents,
-    sumMismatch: false,
-  }));
-
-  if (mirror && mirrorFrom) {
-    const since = reconcileFrom && reconcileFrom > mirrorFrom ? reconcileFrom : mirrorFrom;
-    for (const p of await mirror.paidPayoutsSince(since)) {
-      const txns = await mirror.transactions(p.payoutGid);
-      const txnNet = txns.reduce((s, t) => s + t.netCents, 0);
-      facts.push({
-        key: `gid:${p.payoutGid}`,
-        source: "mirror",
-        payoutDate: isoDay(p.issuedAt),
-        netCents: p.netCents,
-        sumMismatch: txnNet !== p.netCents,
-      });
-    }
+async function collectPayouts(mirror: PayoutMirror): Promise<PayoutFact[]> {
+  const { reconcileFrom } = getIncomeConfig();
+  const facts: PayoutFact[] = [];
+  for (const p of await mirror.paidPayoutsSince(reconcileFrom ?? new Date(0))) {
+    const txns = await mirror.transactions(p.payoutGid);
+    const txnNet = txns.reduce((s, t) => s + t.netCents, 0);
+    facts.push({
+      payoutGid: p.payoutGid,
+      payoutDate: isoDay(p.issuedAt),
+      netCents: p.netCents,
+      sumMismatch: txnNet !== p.netCents,
+    });
   }
-
-  return facts.sort((a, b) => a.payoutDate.localeCompare(b.payoutDate) || a.key.localeCompare(b.key));
+  return facts.sort((a, b) => a.payoutDate.localeCompare(b.payoutDate) || a.payoutGid.localeCompare(b.payoutGid));
 }
 
-function depositChanged(row: PayoutReconciliation, deposits: Map<string, QbDeposit>): boolean {
-  if (!row.depositId) return false;
+/** Why a settled row must reopen, or null when its payout and deposit still agree with it. */
+function driftCause(
+  row: PayoutReconciliation,
+  payout: MirrorPayout | null,
+  deposits: Map<string, QbDeposit>,
+): string | null {
+  if (!payout) return "payout_missing";
+  if (payout.status !== "paid") return `payout_status:${payout.status}`;
+  if (payout.netCents !== row.payoutNetCents) return "payout_amount";
+  if (!row.depositId) return null;
   const d = deposits.get(row.depositId);
-  return !d || d.totalCents !== row.depositTotalCents || d.txnDate !== row.depositTxnDate;
+  if (!d) return "deposit_missing";
+  if (d.totalCents !== row.depositTotalCents || d.txnDate !== row.depositTxnDate) return "deposit_changed";
+  return null;
 }
 
 /**
@@ -101,16 +91,24 @@ function depositChanged(row: PayoutReconciliation, deposits: Map<string, QbDepos
  * Idempotent; a no-op until a deposit source is bound. Reads the ledger only.
  */
 export async function runReconcile(orgId: string, now: Date = new Date()): Promise<ReconcileResult> {
-  const { deposits: depositSource } = getIncomeConfig();
-  if (!depositSource) return { status: "unbound" };
+  const { deposits: depositSource, mirror } = getIncomeConfig();
+  if (!depositSource || !mirror) return { status: "unbound" };
 
   const window = windowDays();
   const today = isoDay(now);
-  const facts = await collectPayouts(orgId);
-  const factsByKey = new Map(facts.map((f) => [f.key, f]));
-  const deposits = facts.length
-    ? await depositSource.depositsSince(new Date(`${facts[0].payoutDate}T00:00:00Z`))
-    : [];
+  const facts = await collectPayouts(mirror);
+
+  // Settled rows are drift-checked against the payout's current state, whether or not it is
+  // still paid and inside reconcileFrom. Rows settled after this read are checked next run.
+  const settled = await db.payoutReconciliation.findMany({
+    where: { orgId, status: { not: RECON_STATUS.OPEN } },
+    select: { payoutGid: true, payoutDate: true },
+  });
+  const settledPayouts = new Map<string, MirrorPayout | null>();
+  for (const { payoutGid } of settled) settledPayouts.set(payoutGid, await mirror.payout(payoutGid));
+
+  const earliest = [...facts.map((f) => f.payoutDate), ...settled.map((r) => r.payoutDate)].sort()[0];
+  const deposits = earliest ? await depositSource.depositsSince(new Date(`${earliest}T00:00:00Z`)) : [];
   const depositsById = new Map(deposits.map((d) => [d.id, d]));
 
   return db.$transaction(
@@ -119,15 +117,15 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
 
       const result = { status: "ran" as const, matched: 0, opened: 0, drifted: 0 };
       const rows = await tx.payoutReconciliation.findMany({ where: { orgId } });
-      const byKey = new Map(rows.map((r) => [r.key, r]));
+      const byGid = new Map(rows.map((r) => [r.payoutGid, r]));
       const claimed = new Set(rows.flatMap((r) => (r.depositId ? [r.depositId] : [])));
 
       // Settled rows whose payout or deposit moved reopen for finance; never re-matched silently.
       for (const row of rows) {
-        if (row.status === RECON_STATUS.OPEN) continue;
-        const fact = factsByKey.get(row.key);
-        const payoutChanged = fact !== undefined && fact.netCents !== row.payoutNetCents;
-        if (!payoutChanged && !depositChanged(row, depositsById)) continue;
+        if (row.status === RECON_STATUS.OPEN || !settledPayouts.has(row.payoutGid)) continue;
+        const payout = settledPayouts.get(row.payoutGid) ?? null;
+        const cause = driftCause(row, payout, depositsById);
+        if (!cause) continue;
 
         if (row.depositId) claimed.delete(row.depositId);
         const updated = await tx.payoutReconciliation.update({
@@ -139,16 +137,16 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
             depositId: null,
             depositTxnDate: null,
             depositTotalCents: null,
-            payoutNetCents: fact?.netCents ?? row.payoutNetCents,
+            payoutNetCents: payout?.netCents ?? row.payoutNetCents,
           },
         });
-        byKey.set(row.key, updated);
-        await audit(tx, orgId, "reconciliation.drift", row, updated);
+        byGid.set(row.payoutGid, updated);
+        await audit(tx, orgId, "reconciliation.drift", row, updated, { userId: null, reason: cause });
         result.drifted++;
       }
 
       for (const fact of facts) {
-        const row = byKey.get(fact.key);
+        const row = byGid.get(fact.payoutGid);
         if (row && (row.status !== RECON_STATUS.OPEN || row.kind === RECON_KIND.DRIFT)) continue;
 
         const candidates = fact.sumMismatch
@@ -212,8 +210,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
 function base(orgId: string, fact: PayoutFact) {
   return {
     orgId,
-    key: fact.key,
-    source: fact.source,
+    payoutGid: fact.payoutGid,
     payoutDate: fact.payoutDate,
     payoutNetCents: fact.netCents,
   };

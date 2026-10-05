@@ -1,10 +1,11 @@
 // Ports the host (checkin-app) binds via configureIncome(). Each is optional: unbound, the
 // matching feature no-ops and the CSV side keeps working.
 
-/** A paid payout as the s-read mirror holds it (shop_payout). */
+/** A payout as the s-read mirror holds it (shop_payout). */
 export interface MirrorPayout {
   payoutGid: string;
   issuedAt: Date;
+  status: string;
   netCents: number;
   currency: string | null;
 }
@@ -21,6 +22,7 @@ export interface MirrorBalanceTxn {
 
 /** Read-only view of the already-ingested Shopify mirror. Never selects customer columns. */
 export interface PayoutMirror {
+  /** Payouts with status "paid" issued on or after `from`. */
   paidPayoutsSince(from: Date): Promise<MirrorPayout[]>;
   payout(gid: string): Promise<MirrorPayout | null>;
   transactions(payoutGid: string): Promise<MirrorBalanceTxn[]>;
