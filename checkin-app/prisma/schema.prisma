@@ -985,6 +985,7 @@ model Program {
   participants ProgramParticipant[]
   events       Event[]
   instances    ProgramInstance[]
+  budgetOwners BudgetOwner[]
 }
 
 // Program → Instance → Event, PHASE 1 (additive tier + 1:1 backfill; nothing
@@ -1043,6 +1044,10 @@ model ProgramVolunteer {
   personId Int
   /// @sensitivity:internal
   isCore        Boolean @default(false)
+  /// A program treasurer; a program may have several. With the program
+  /// leader, treasurers approve within the program's BudgetOwner bucket.
+  /// @sensitivity:internal
+  isTreasurer   Boolean @default(false)
 
   program Program     @relation(fields: [programId], references: [id])
   person  Person @relation(fields: [personId], references: [id])
@@ -1664,4 +1669,34 @@ model Org {
   id   String @id
   /// @sensitivity:public
   name String
+}
+
+/// An accounting bucket that expense lines and bulk-donation gifts are owned by
+/// (#1280 §6). Not a Person. Approvers are derived, never stored: a program
+/// bucket's are that program's leader and treasurers (ProgramVolunteer
+/// .isTreasurer); an org-level bucket (no program — Facility is one of several)
+/// has none, because finance assigning an item to it is the approval.
+/// Buckets are archived, never deleted — libraries hold `id` as an opaque
+/// cross-database owner id, so a deleted row would orphan their references.
+/// Finance structure — all internal.
+model BudgetOwner {
+  /// @sensitivity:internal
+  id                   Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  name                 String
+  /// Null for an org-level bucket.
+  /// @sensitivity:internal
+  programId            Int?
+  /// @sensitivity:internal
+  archivedAt           DateTime?
+  /// The QuickBooks Online id of the Class this bucket is (external id, not a
+  /// checkin FK). Null until QuickBooks sync links it; one bucket per Class.
+  /// @sensitivity:internal
+  quickBooksClassId    String?   @unique
+
+  // Restrict: a program with a bucket is not deleted out from under it, and
+  // SetNull would silently turn a program bucket into an org-level one.
+  program Program? @relation(fields: [programId], references: [id], onDelete: Restrict)
+
+  @@index([programId])
 }
