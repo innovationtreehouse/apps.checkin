@@ -4,6 +4,7 @@ import { LIVE_PERSON } from "@/lib/person/filters";
 import { PresenceClass } from "@/lib/presence/events";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits } from "@/lib/supervision";
 import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
+import { invalidatableCache } from "@/lib/invalidatableCache";
 
 /**
  * Current-attendance feed.
@@ -39,29 +40,24 @@ import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications
  * id/name/time — no `personal`/`pii` field — so it is safe on the kiosk path
  * without a separate projection.
  *
- * Per-process cache: a GET hits the DB only on a cold miss. Visit writes
- * (check-in / check-out / facility close) call `invalidateAttendanceCache`
- * so the next read refills. One ECS task; a scale-to-zero relaunch starts empty.
+ * Per-process cache (see {@link invalidatableCache}): a GET hits the DB on a cold
+ * miss, or after 60s while anyone is present. Writes that change the roster or a
+ * present person's fields call `invalidateAttendanceCache` after commit. One ECS
+ * task; a scale-to-zero relaunch starts empty.
  */
-type AttendancePayload = Awaited<ReturnType<typeof computeFullAttendance>>;
-let kioskCache: AttendancePayload | null = null;
-let fullCache: AttendancePayload | null = null;
+const occupied = (p: Awaited<ReturnType<typeof computeFullAttendance>>) => p.counts.total > 0 || p.held.length > 0;
+const kioskCache = invalidatableCache(() => computeFullAttendance(true), occupied);
+const fullCache = invalidatableCache(() => computeFullAttendance(false), occupied);
 
 export function invalidateAttendanceCache(): void {
-    kioskCache = null;
-    fullCache = null;
+    kioskCache.invalidate();
+    fullCache.invalidate();
     // Present-limited cert grid is occupancy; a check-in/out must refresh it too.
     invalidateKioskCertificationsCache();
 }
 
 export async function getFullAttendance(opts: { kiosk?: boolean } = {}) {
-    const kiosk = opts.kiosk === true;
-    if (kiosk) {
-        if (!kioskCache) kioskCache = await computeFullAttendance(true);
-        return kioskCache;
-    }
-    if (!fullCache) fullCache = await computeFullAttendance(false);
-    return fullCache;
+    return (opts.kiosk === true ? kioskCache : fullCache).get();
 }
 
 async function computeFullAttendance(kiosk: boolean) {

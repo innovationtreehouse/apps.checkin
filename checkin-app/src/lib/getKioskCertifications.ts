@@ -1,11 +1,14 @@
 import prisma from "@/lib/prisma";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { invalidatableCache } from "@/lib/invalidatableCache";
 
 /**
  * Tool-cert grid payload for GET /api/kioskdisplay/certifications.
  *
- * Same per-process cache as getFullAttendance: a GET hits the DB only on a
- * cold miss. Visit writes go through invalidateAttendanceCache (which also
+ * Same per-process cache as getFullAttendance (see {@link invalidatableCache}).
+ * The present-limited grid also refreshes every 60s while anyone is present;
+ * the all-members grid has no occupancy signal and refreshes only on
+ * invalidation. Visit writes go through invalidateAttendanceCache (which also
  * clears this, because the present-limited grid is occupancy). Cert/tool
  * writes call invalidateKioskCertificationsCache directly.
  */
@@ -19,22 +22,16 @@ type CertsPayload = {
     tools: { id: number; name: string }[];
 };
 
-let presentCache: CertsPayload | null = null;
-let allCache: CertsPayload | null = null;
+const presentCache = invalidatableCache(() => computeKioskCertifications(true), (p) => p.participants.length > 0);
+const allCache = invalidatableCache(() => computeKioskCertifications(false), () => false);
 
 export function invalidateKioskCertificationsCache(): void {
-    presentCache = null;
-    allCache = null;
+    presentCache.invalidate();
+    allCache.invalidate();
 }
 
 export async function getKioskCertifications(opts: { limitToPresent?: boolean } = {}): Promise<CertsPayload> {
-    const limitToPresent = opts.limitToPresent !== false;
-    if (limitToPresent) {
-        if (!presentCache) presentCache = await computeKioskCertifications(true);
-        return presentCache;
-    }
-    if (!allCache) allCache = await computeKioskCertifications(false);
-    return allCache;
+    return (opts.limitToPresent !== false ? presentCache : allCache).get();
 }
 
 async function computeKioskCertifications(limitToPresent: boolean): Promise<CertsPayload> {

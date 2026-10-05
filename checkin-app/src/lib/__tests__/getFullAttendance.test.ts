@@ -242,4 +242,43 @@ describe("attendance cache", () => {
         await getFullAttendance({ kiosk: true });
         expect(findMany).toHaveBeenCalledTimes(3);
     });
+
+    it("does not store a result an invalidate raced past", async () => {
+        let release!: (v: unknown) => void;
+        findMany.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+        const inFlight = getFullAttendance({ kiosk: true });
+        await Promise.resolve();
+        invalidateAttendanceCache();
+        release(rows);
+        await inFlight;
+
+        // The pre-invalidate result was returned but not cached.
+        findMany.mockResolvedValue([]);
+        const fresh = await getFullAttendance({ kiosk: true });
+        expect(fresh.counts.total).toBe(0);
+        expect(findMany).toHaveBeenCalledTimes(2);
+    });
+
+    describe("staleness bound", () => {
+        const fakeClock = (now: string) => jest.useFakeTimers({ now: new Date(now), doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
+        afterEach(() => jest.useRealTimers());
+
+        it("refills after 60s while the building is occupied", async () => {
+            fakeClock("2026-10-05T12:00:00Z");
+            await getFullAttendance({ kiosk: true });
+            jest.setSystemTime(new Date("2026-10-05T12:01:01Z"));
+            await getFullAttendance({ kiosk: true });
+            expect(findMany).toHaveBeenCalledTimes(2);
+        });
+
+        it("never expires an empty building, so the database can pause", async () => {
+            findMany.mockResolvedValue([]);
+            fakeClock("2026-10-05T12:00:00Z");
+            await getFullAttendance({ kiosk: true });
+            jest.setSystemTime(new Date("2026-10-05T18:00:00Z"));
+            await getFullAttendance({ kiosk: true });
+            expect(findMany).toHaveBeenCalledTimes(1);
+        });
+    });
 });
+
