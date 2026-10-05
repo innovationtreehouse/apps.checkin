@@ -117,10 +117,9 @@ mapping, capital seed) are not prerequisites.
 
 - **One connection.** checkin-app builds one `AccessTokenSource` (the
   Secrets-Manager read adapter) and injects the same instance into
-  `configureExpense()` and `configureIncome()`. That requires the
-  `AccessTokenSource` type to live in `packages/quickbooks`, not in expense's
-  `contract.ts` where #1272 §9 places it; otherwise income imports expense.
-  **Coordination point with L4 (QB-0).**
+  `configureExpense()` and `configureIncome()`. The `AccessTokenSource` type
+  lives in `packages/quickbooks` (owner-decided), so neither library imports the
+  other. It ships in L4's QB-0 PR; #1272 §9 is updated to match.
 - **One read method.** The client pages `Purchase` and `Bill`; income needs
   `Deposit`. Add `depositsSince(from)` (a one-line `pagedSince("Deposit", …)`)
   in the QB-0 PR. Income's adapter keeps only `{ id, txnDate, totalCents,
@@ -292,8 +291,8 @@ QB-0 (L4) gates live deposit matching, not any of these PRs.
 
 **Crossings: none.** Income calls no other library and no library calls income.
 Its dependencies are host-provided (the mirror bridge, the QB token source) and
-one shared package. The only cross-lane touch is the `AccessTokenSource`
-location and `depositsSince`, both inside L4's QB-0 PR (§3).
+one shared package. The only cross-lane touch is that L4's QB-0 PR ships the
+`AccessTokenSource` type and `depositsSince` in `packages/quickbooks` (§3).
 
 ## 9. Distillation at merge
 

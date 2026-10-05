@@ -867,8 +867,10 @@ checkin.
     has **read-only IAM on the access-token secret and nothing else** — no write, no
     refresh-token access.
   So the library's port narrows to a **read-only `AccessTokenSource { current():
-  Promise<string> }`** (bound by `configureExpense` to a Secrets-Manager-read
-  adapter; a file/env adapter for local dev). The write-side `TokenStore` lives in
+  Promise<string> }`**, declared in `packages/quickbooks` (shared: income uses the
+  same instance, #1283) and bound once by checkin-app to a Secrets-Manager-read
+  adapter (a file/env adapter for local dev), then injected into
+  `configureExpense`. The write-side `TokenStore` lives in
   the **refresher**, not the app. `QuickBooksClient` is adjusted so production never
   calls `refreshTokens`/`saveTokens` — it fetches the current access token from the
   source; if it ever reads a just-expired one (refresher lagged) it errors and the
@@ -1045,8 +1047,8 @@ library skeleton + shared packages) has landed; the inventory-load crossing (tra
    access-token secret — §5/§9). Own PR track, **registry-first**.
 4. **Routes + auth + in-process seams** — library route factories + a next-free
    `src/routes/_shared.ts` (parse/validate via injected `httpError`, no
-   `next/server`) + `contract.ts` (crossing ports + the read-only QB
-   `AccessTokenSource` port) + `configureExpense` wired in `instrumentation.ts`;
+   `next/server`) + `contract.ts` (crossing ports; the read-only QB
+   `AccessTokenSource` comes from `packages/quickbooks`) + `configureExpense` wired in `instrumentation.ts`;
    **human** `/api/…` stubs (`FINANCE`/`BOARD`, budget-owner query-filter) + guards +
    the household-COI flag; the `capital-assets/seed` finance route; the `C` (catalog)
    crossing bound in-process. **No receipt-intake machine route — checkin can't host
