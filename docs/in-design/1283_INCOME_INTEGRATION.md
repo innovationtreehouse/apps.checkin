@@ -3,20 +3,22 @@
 ## Problem
 
 Every few days Shopify pays the organization's store takings into the bank as
-one lump, a payout, net of fees and refunds. Finance has to confirm that each
-payout was booked in QuickBooks as a deposit of the right amount, and work out
-the ones that weren't. Nothing does that check today. checkin already mirrors
-the store's orders and payouts, and it reconciles orders against memberships
-and enrollments, but it never looks at QuickBooks. The retiring income
-application doesn't either: it is a CSV importer for the same Shopify data,
-with a queue for re-imports that disagree.
+one lump, a payout, net of fees and refunds. Each payout has to appear in
+QuickBooks as one deposit of the right amount. Today finance books them by
+hand, so payouts older than about 90 days are already in QuickBooks and need
+checking, while newer ones need booking. Nothing does either job today.
+checkin already mirrors the store's orders and payouts, and it reconciles
+orders against memberships and enrollments, but it never touches QuickBooks.
+The retiring income application doesn't either: it is a CSV importer for the
+same Shopify data, with a queue for re-imports that disagree.
 
 ## Objective
 
-Every paid Shopify payout is matched to exactly one QuickBooks deposit, or
-appears in a finance queue that says why it isn't. Finance clears that queue
-inside checkin, and every decision is audited. Nothing is written to
-QuickBooks.
+Every paid Shopify payout ends up tied to exactly one QuickBooks deposit. If
+finance already booked it, the app finds that deposit and records the link. If
+nobody has, and the payout is recent, the app creates the deposit. Anything
+else appears in a finance queue that says why. Finance clears that queue inside
+checkin, and every decision is audited.
 
 ## Executive summary
 
@@ -28,9 +30,13 @@ QuickBooks.
   keeps no Shopify data of its own. The source's CSV importers are not ported:
   the history the API can't reach is loaded into the mirror once, by the
   source's own conversion script (`1283_INCOME_INTEGRATION-migration.md`).
-- **The QuickBooks match is net-new.** The source has no QuickBooks code. Income
-  reads deposits through the access-token source expense uses (QB-0), plus one
-  read method. No second connection.
+- **The QuickBooks side is net-new and matches before it creates.** The source
+  has no QuickBooks code. Income uses the same rule as bulk donation (#1280 §7):
+  find an existing deposit first, create one only for a payout newer than the
+  cutoff, and send anything older to finance. That find-or-create is built
+  once in `packages/quickbooks` for both lanes. Matching needs QB-0 and a deposit
+  read; creating needs the QB-2 deposit write. Until QB-2 lands, finance keeps
+  booking by hand and the match records those deposits.
 - **Cost:** a two-model library on its own database, two read-only ports, and
   one call added to an existing daily cron. No pipeline crossings.
 
@@ -113,63 +119,112 @@ Loaded history and API data look the same to income. The one difference: a
 loaded payout whose id the script could not recover has no transactions, so it
 lands as `TXN_SUM_MISMATCH` for finance rather than matching silently.
 
-## 3. QuickBooks: QB-0 plus one read method
+## 3. QuickBooks: match before create
 
-Income needs the QB-0 rung of #1272 §9 and nothing above it. It reads deposits;
-it never posts, so QB-2/QB-3 and the expense-specific QB-1 wiring (account
-mapping, capital seed) are not prerequisites.
+Income follows the rule bulk donation set for the same problem (#1280 §7). Finance
+books by hand today, so older payouts are already in QuickBooks and newer ones
+are not. Posting by age alone would double-book what finance entered recently,
+or skip what it hasn't entered yet. So every payout is **matched first**:
+
+1. Look for an existing QuickBooks deposit for the payout (QB read path).
+2. **Found:** record its id and mark the payout reconciled. Post nothing.
+3. **Not found, newer than the cutoff:** create the deposit (QB-2 write), keyed
+   so a retry never books twice.
+4. **Not found, older than the cutoff:** finance's queue. The app never creates
+   a deposit for a period finance has presumably closed by hand.
+
+**Built once, in `packages/quickbooks`.** Steps 1 to 4 are one shared
+find-or-create, used by income and bulk donation alike (plan decision), so the
+cutoff, the lookup and the retry key behave the same for both. Income supplies
+the deposit it wants (date, net, lines, account) and its key, the payout GID;
+the helper answers *found*, *ambiguous*, *created*, *failed* or *too old*.
+Owned by L4, alongside:
 
 - **One connection.** checkin-app builds one `AccessTokenSource` (the
   Secrets-Manager read adapter) and injects the same instance into
-  `configureExpense()` and `configureIncome()`. That requires the
-  `AccessTokenSource` type to live in `packages/quickbooks`, not in expense's
-  `contract.ts` where #1272 §9 places it; otherwise income imports expense.
-  **Owner-approved; handed to L4 (QB-0).**
-- **One read method.** The client pages `Purchase` and `Bill`; income needs
-  `Deposit`. Add `depositsSince(from)` (a one-line `pagedSince("Deposit", …)`)
-  in the QB-0 PR. Income's adapter keeps only `{ id, txnDate, totalCents,
+  `configureExpense()`, `configureIncome()` and bulk donation's configure call.
+  That requires the type to live in `packages/quickbooks`, not in expense's
+  `contract.ts` where #1272 §9 places it. **Owner-approved; handed to L4 (QB-0).**
+- **Read:** `depositsSince(from)` (a one-line `pagedSince("Deposit", …)`), in
+  the QB-0 PR. Income's adapter keeps only `{ id, txnDate, totalCents,
   depositToAccount }` and discards lines, memo and entity refs (§7).
-- **Before QB-0 lands** the port is unbound, and the run no-ops the same way
-  checkin's reconciler does without the mirror. Income can ship S/B/W ahead of
-  QB-0.
+- **Write:** the QB-2 deposit-create method. Expense's QB-2 only creates
+  purchases and bills; bulk donation needs the same deposit write.
+
+**The retry key.** The created deposit carries the payout GID in a field the
+lookup in step 1 also matches on, and the call sends it as QuickBooks' request
+id. A run that crashes after QuickBooks accepted the deposit, but before income
+recorded it, finds that deposit on the next run and records it as found. Nothing
+is booked twice, and income needs no separate outbox table: the reconciliation
+row is the outbox.
+
+**Rungs, and what works before each.** Before QB-0, the run no-ops. With QB-0
+and the read, steps 1, 2 and 4 work; a payout that step 3 would create waits,
+re-checked every run, and finance keeps booking by hand, which step 2 then
+records. With QB-2, step 3 goes live. Income's S/B/W PRs wait on none of this.
 
 ### Reconciliation state machine: `PayoutReconciliation`
 
 One row per paid payout, unique on `payoutGid`. Finance books exactly one
 QuickBooks deposit per payout (owner-confirmed), so the match is one-to-one.
-Plain status column with a guarded transition table; no xstate, because the
-source has none and this machine has six edges.
+Plain status column with a guarded transition table; no xstate.
 
 | From | Event | To |
 |---|---|---|
-| (none) | run: exactly one unclaimed deposit with `amount = payout net`, date in `[issuedAt, issuedAt + window]`, and Σ txn net = payout net | `MATCHED` (auto) |
-| (none) | run: window elapsed with none / >1 candidate, or sum mismatch | `OPEN` + kind `NO_DEPOSIT` / `AMBIGUOUS_DEPOSIT` / `TXN_SUM_MISMATCH` |
-| `OPEN` | a later run auto-matches (late booking) | `MATCHED` |
+| (none) | Σ txn net ≠ payout net | `OPEN` + `TXN_SUM_MISMATCH` (nothing is posted for numbers that don't add up) |
+| (none), `WAITING` | exactly one unclaimed deposit, `amount = payout net`, date in `[issuedAt, issuedAt + window]` | `MATCHED` (nothing posted) |
+| (none), `WAITING` | more than one candidate | `OPEN` + `AMBIGUOUS_DEPOSIT` |
+| (none), `WAITING` | none found, payout newer than the cutoff, deposit write available | create → `POSTED`, or `OPEN` + `POST_FAILED` |
+| (none) | none found, payout newer than the cutoff, no deposit write yet | `WAITING` |
+| (none) | none found, payout older than the cutoff, window elapsed | `OPEN` + `NO_DEPOSIT` |
+| `OPEN` | a later run finds the deposit (late hand booking) | `MATCHED` |
+| `OPEN` `POST_FAILED` | a later run, or finance's retry, creates it with the same key | `POSTED` |
 | `OPEN` | finance: match to a chosen deposit | `RESOLVED` (manual match) |
-| `OPEN` | finance: dismiss with a required reason (e.g. booked as something other than a deposit) | `RESOLVED` (dismissed) |
-| `MATCHED` / `RESOLVED` | run: deposit gone or amount changed, or payout gone from the mirror or its amount/status changed | `OPEN` + kind `DRIFT` |
+| `OPEN` | finance: dismiss with a required reason | `RESOLVED` (dismissed) |
+| `MATCHED` / `POSTED` / `RESOLVED` | deposit gone or amount changed, or payout gone from the mirror or its amount/status changed | `OPEN` + `DRIFT` |
 
 Rules: payouts not yet paid are skipped, not queued. A deposit backs at most one
-payout (partial unique on the matched deposit id, so tests run `migrate deploy`,
-not `db push`). A matched or resolved row stores a snapshot of `{ depositId,
-txnDate, totalCents }` and the payout net it matched, which is what makes drift
-detectable. Every transition writes `IncomeAuditLog` in the same transaction. A
-run is idempotent and holds a Postgres advisory lock, so the cron and a manual
-"run now" cannot interleave. `window` (default 7 days) and `reconcileFrom`
-(default: the oldest payout in the mirror) are injected through
-`configureIncome()`, so they can be tuned without a code change. QuickBooks
-history predates the store's (owner-confirmed), so every payout should have a
-deposit to find: `NO_DEPOSIT` is always a real exception, and there is no bulk
-dismiss.
+payout (partial unique on the deposit id, so tests run `migrate deploy`, not
+`db push`). The row records the deposit's origin, `matched` or `created`, and a
+snapshot of `{ depositId, txnDate, totalCents }` plus the payout net, which is
+what makes drift detectable. A drifted deposit is never edited by the app, even
+one it created; finance decides. Every transition writes `IncomeAuditLog` in the
+same transaction. A run is idempotent and holds a Postgres advisory lock, so the
+cron and a manual "run now" cannot interleave. `window` (default 7 days),
+`cutoff` and `reconcileFrom` (default: the oldest payout in the mirror) are
+injected through `configureIncome()`. QuickBooks history predates the store's
+(owner-confirmed), so `NO_DEPOSIT` is always a real exception, and there is no
+bulk dismiss.
 
-**Exception queue** = rows in `OPEN`, grouped by kind. That is the whole queue.
-`DRIFT` is the surviving form of the source's conflict queue.
+**Posting is automatic.** A payout that passes the steps above is created
+without a per-deposit approval, as in bulk donation's drain. The control is the
+queue: anything that doesn't add up, doesn't match cleanly or fails to post goes
+to finance (finance rule: a control is a flag a person signs off).
+
+**Exception queue** = rows in `OPEN`, grouped by kind. `DRIFT` is the surviving
+form of the source's conflict queue.
 
 **When it runs.** checkin cannot add a cron route: `/api/cron/*` live in the
 frozen `legacy-authz-routes.txt`. Income's `runReconcile()` is called from the
 existing `/api/cron/reconcile-shopify` handler after checkin's own reconcile. It
-reads the same freshly synced mirror and costs no extra Aurora wake. A
-`FINANCE` "run now" route covers the rest.
+reads the same freshly synced mirror and costs no extra Aurora wake, so a new
+payout is booked within about a day. A `FINANCE` "run now" route covers the
+rest.
+
+### Still open (owner)
+
+- **The cutoff: a fixed cutover date or a rolling ~90 days?** Shared with bulk
+  donation, since the helper owns it. Matching first only protects a hand
+  booking that already exists when the app looks. A rolling window lets the
+  app create deposits for payouts up to ~90 days old that finance may still be
+  booking by hand. A fixed date at go-live only creates for payouts after it.
+  Either way the design assumes finance stops hand-booking payouts newer than
+  the cutoff once creation is live.
+- **What goes on the deposit we create.** Default: payout net into the bank
+  account, with gross charges to one income account and fees, refunds and
+  adjustments to their own accounts, all from configured account names. If
+  finance wants income split by product type or program class, income needs an
+  account-mapping table like bulk donation's QuickBooks categories.
 
 ## 4. Roles: `FINANCE`, with board read
 
@@ -217,7 +272,9 @@ Mirror and QB rows are not Prisma models, so the stripper would drop them. Each
 needs a **synthetic classification** (the `CatalogItemCount` pattern, #1286 §5):
 `IncomePayoutView`, `IncomeBalanceTxnView`, `IncomeQbDepositView`,
 `IncomeReconciliationCount`. These go in B, and they are the main way this
-boundary PR differs from the other lanes'. No audit-log route: the source has no
+boundary PR differs from the other lanes'. Resolve takes one of three actions:
+match to a chosen deposit, dismiss with a reason, or retry a `POST_FAILED`
+create. The create path adds no route. No audit-log route: the source has no
 audit viewer either; add one when someone asks to read it.
 
 ## 7. Sensitivity
@@ -238,6 +295,9 @@ existing access. Income's tiering:
   fields, and the deposit adapter discards QB `Line[]`, `PrivateNote` and
   entity refs (QB deposit lines can name a customer). Widening either means
   re-tiering in its own boundary PR.
+- **Outbound:** a deposit income creates carries the payout's amounts, the
+  configured accounts and the payout GID, and nothing about who bought. Income
+  never sends buyer identity to QuickBooks; S's tests pin the deposit it builds.
 
 ## 8. Phasing: three PRs, each based on `main`
 
@@ -252,7 +312,11 @@ existing access. Income's tiering:
    one-deposit-one-payout, a payout with no transactions, advisory lock. The DB
    tier skips silently without `DOCKER_HOST`. The body carries the §1
    disposition table as its port-diff. Depends on H3 vendoring
-   `packages/quickbooks` (for the type only).
+   `packages/quickbooks` (for the type only). The schema carries the whole
+   machine from the start (`origin`, and the `WAITING`, `POSTED` and
+   `POST_FAILED` values), so B tiers every field once and the create path later
+   touches no boundary file. In progress as #1862 (local `d1d935cf`): the
+   read-only engine; it needs those additions.
 2. **B: boundary, alone, registry-first.** `@sensitivity` on the income schema,
    `generator security`, `security/registry/income.ts` with all seven §6 routes,
    the four synthetic classifications, the merge-list line, security tests
@@ -267,13 +331,20 @@ existing access. Income's tiering:
    the mirror unwired returns zero counts. The flow compose has no mirror and no
    QB, so the matching logic is covered by S's DB tier, not by flow tests.
 
+4. **Create path, a follow-up after L4 lands the shared find-or-create and the
+   QB-2 deposit write.** `packages/income` only: the engine calls the helper
+   instead of its own lookup, and step 3 goes live. No route, field or boundary
+   change; the three PRs above already carry everything it needs.
+
 The historic CSV load is an operator step, not a PR; it can run before or after
-W (migration doc). QB-0 (L4) gates live matching, not any of these PRs.
+W (migration doc). QB-0 gates live matching and QB-2 gates creating, not any of
+these PRs.
 
 **Crossings: none.** Income calls no other library and no library calls
-income. Its two dependencies are host-provided (the mirror bridge, the QB token
-source) and one shared package. The only cross-lane touch is the
-`AccessTokenSource` location and `depositsSince`, both inside L4's QB-0 PR (§3).
+income. Its dependencies are host-provided (the mirror bridge, the QB token
+source) and one shared package. Cross-lane touches all sit in L4's
+`packages/quickbooks`: the `AccessTokenSource` location, `depositsSince`, the
+deposit write, and the find-or-create shared with bulk donation (§3).
 
 ## 9. Distillation at merge
 
@@ -282,8 +353,13 @@ register file:
 
 - Every paid store payout is matched to exactly one ledger deposit, or is raised
   for finance with the reason. A deposit backs at most one payout. `[Decision]`
-- Payout reconciliation only reads the ledger; it never writes or corrects an
-  entry there. `[Decision — deliberate limit]`
+- A payout is matched against the ledger before anything is created for it. The
+  app creates a deposit only when none exists and the payout is newer than the
+  cutoff; an older payout with no deposit goes to finance, never to an automatic
+  entry. `[Decision]`
+- A retried create never books a payout twice. `[Decision]`
+- The app never edits or deletes a ledger entry, including one it created.
+  `[Decision — deliberate limit]`
 - A payout or deposit that changes after it was reconciled reopens for finance;
   it is never silently re-matched. `[Decision — *Principle: people decide about people*]`
 - Store history reaches the app only through the mirror; there is no in-app
@@ -306,5 +382,8 @@ Mechanism (ports, cron hook, synthetic views) is deleted with this doc.
   kinds.** That is less code, and it reads the same mirror. Rejected only because
   the plan fixes every Inventory app as its own library and database. Revisit if
   the owner prefers it; the engine in §3 moves over unchanged.
+- **Create or skip by payout age alone.** Rejected: it double-books what finance
+  entered by hand recently and skips what it hasn't entered yet. Matching first
+  handles both (bulk donation's rule).
 - **Reconcile per order against QB sales receipts.** Rejected: the bank sees
   payouts, and finance books one deposit per payout (owner-confirmed).
