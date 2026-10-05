@@ -208,8 +208,9 @@ Plain status column with a guarded transition table; no xstate.
 | `MATCHED` / `POSTED` / `RESOLVED` | deposit gone or amount changed, or payout gone from the mirror or its amount/status changed | `OPEN` + `DRIFT` |
 
 Rules: payouts not yet paid are skipped, not queued. A deposit backs at most one
-payout (partial unique on `(orgId, depositId)`, so tests run `migrate deploy`, not
-`db push`). The row records the deposit's origin, `matched` or `created`, and a
+payout: a plain unique on `(orgId, depositId)`, where `deposit_id` is null
+whenever a row holds no deposit. Postgres allows any number of nulls under a
+plain unique, and unlike a partial index it survives `prisma db push`. The row records the deposit's origin, `matched` or `created`, and a
 snapshot of `{ depositId, txnDate, totalCents }` plus the payout net, which is
 what makes drift detectable. A drifted deposit is never edited by the app, even
 one it created; finance decides. Every transition writes `IncomeAuditLog` in the
