@@ -5,6 +5,7 @@ export * from "./runtime";
 export * from "./db";
 export * from "./db/schema";
 export * from "./lib/audit";
+export * from "./lib/deposit-lines";
 export * from "./lib/reconcile";
 export * from "./services/reconciliationService";
 export * from "./services/serviceError";

@@ -14,6 +14,7 @@ export interface MirrorPayout {
 export interface MirrorBalanceTxn {
   txnGid: string;
   type: string;
+  orderGid: string | null;
   orderName: string | null;
   amountCents: number;
   feeCents: number;

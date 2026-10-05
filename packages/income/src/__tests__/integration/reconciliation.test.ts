@@ -22,7 +22,7 @@ const dep = (id: string, txnDate: string, totalCents: number): QbDeposit => ({
 /** Add a paid payout whose transactions sum to its net unless `txnNet` says otherwise. */
 function payout(gid: string, day: string, netCents: number, txnNet: number = netCents): string {
   payouts.push({ payoutGid: gid, issuedAt: new Date(`${day}T00:00:00Z`), status: "paid", netCents, currency: "USD" });
-  txns[gid] = [{ txnGid: `${gid}/t`, type: "charge", orderName: "#1001", amountCents: txnNet, feeCents: 0, netCents: txnNet }];
+  txns[gid] = [{ txnGid: `${gid}/t`, type: "charge", orderGid: "O1", orderName: "#1001", amountCents: txnNet, feeCents: 0, netCents: txnNet }];
   return gid;
 }
 
@@ -401,10 +401,12 @@ describeDb("reconciliationService.resolve — retry and the pre-seated create st
 });
 
 describeDb("IncomeItemCategory", () => {
-  it("maps a variant to one bucket, with no FK to the bucket table", async () => {
-    await db.incomeItemCategory.create({ data: { variantId: "gid://shopify/ProductVariant/1", budgetOwnerId: 999 } });
+  it("maps a variant to one bucket per org, with no FK to the bucket table", async () => {
+    const variantId = "gid://shopify/ProductVariant/1";
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId, budgetOwnerId: 999 } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_B, variantId, budgetOwnerId: 2 } });
     await expect(
-      db.incomeItemCategory.create({ data: { variantId: "gid://shopify/ProductVariant/1", budgetOwnerId: 2 } }),
+      db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId, budgetOwnerId: 2 } }),
     ).rejects.toMatchObject({ code: "P2002" });
   });
 });

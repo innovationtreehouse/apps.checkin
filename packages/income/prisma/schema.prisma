@@ -44,11 +44,13 @@ model PayoutReconciliation {
 // the OwnerDirectory port. Unmapped variants book at organization level.
 model IncomeItemCategory {
   id            Int      @id @default(autoincrement()) @map("id")
-  variantId     String   @unique @map("variant_id")
+  orgId         String   @map("org_id")
+  variantId     String   @map("variant_id")
   budgetOwnerId Int      @map("budget_owner_id")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
+  @@unique([orgId, variantId])
   @@map("income_item_categories")
 }
 
