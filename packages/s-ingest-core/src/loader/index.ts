@@ -7,6 +7,11 @@
  * This is what makes the whole fleet's at-least-once processing safe: re-invoke, replay, and
  * concurrent-overlap all re-project the same nodes and converge to the same live state. Do NOT
  * change a projector to a create/insert or a non-natural key without preserving this property.
+ *
+ * ORDERING CONTRACT: orders are newest-wins on Shopify's `updatedAt` (see projectOrder), so the
+ * order in which order nodes arrive does not matter. Payouts and balance transactions carry no
+ * Shopify version field; they are only ever fetched live (never bulk-exported), so their raw-log
+ * id order is fetch order and last-write-wins is newest-wins.
  */
 import type { DbClient } from "../ingest/rawLog.js";
 import { ObjectType } from "../generated/prisma/client.js";
