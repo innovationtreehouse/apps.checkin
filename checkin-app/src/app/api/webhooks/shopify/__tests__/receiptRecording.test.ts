@@ -53,6 +53,7 @@ function webhookReq(body: string, signature: string | null) {
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 const MEMBERSHIP_BODY = JSON.stringify({
+    financial_status: 'paid',
     id: 999001,
     note_attributes: [{ name: 'Membership_Process_ID', value: '12' }],
     line_items: [],
@@ -130,7 +131,7 @@ describe('POST /api/webhooks/shopify — delivery receipts', () => {
         // Raw string, not JSON.stringify: the sample order id exceeds 2^53, and the
         // detection must survive JSON.parse rounding it. No cart attributes, like
         // the real sample payload.
-        const body = '{"id":820982911946154508,"test":true,"line_items":[]}';
+        const body = '{"id":820982911946154508,"test":true,"financial_status":"paid","line_items":[]}';
         const res = await POST(webhookReq(body, sign(body)));
         expect(res.status).toBe(200);
         expect(auditCreate).toHaveBeenCalledTimes(1);

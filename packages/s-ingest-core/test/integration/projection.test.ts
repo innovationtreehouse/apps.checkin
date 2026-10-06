@@ -82,7 +82,7 @@ describeDb("projection into live tables (real Postgres)", () => {
     const payout = await prisma.shopPayout.findUnique({
       where: { storeId_payoutGid: { storeId: STORE, payoutGid: "gid://shopify/ShopifyPaymentsPayout/5001" } },
     });
-    const txns = await prisma.shopBalanceTransaction.findMany({ where: { payoutGid: "gid://shopify/ShopifyPaymentsPayout/5001" } });
+    const txns = await prisma.shopBalanceTransaction.findMany({ where: { storeId: STORE, payoutGid: "gid://shopify/ShopifyPaymentsPayout/5001" } });
     const sum = txns.reduce((s, t) => s + t.netCents, 0);
 
     expect(payout?.netCents).toBe(7700);

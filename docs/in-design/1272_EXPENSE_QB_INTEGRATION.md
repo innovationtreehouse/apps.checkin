@@ -241,10 +241,10 @@ preserve them exactly:
 
 The source depends on `@inventory/{auth, gtin, money, org-events-poller,
 receipt-types, service-client, web-auth, workflows}`. **The catalog port (#1286)
-already vendors `gtin`, `workflows`, `receipt-types`, `receipt-contract-fixtures`;
-checkin already vendors `money`.** Expense **reuses** those. New to expense — the
-headline — is `@inventory/quickbooks`. `org-events-poller` and `service-client`
-are not ported.
+already vendors `gtin`, `workflows`, `receipt-types`; the H3 shared-packages port
+vendors `receipt-contract-fixtures`; checkin already vendors `money`.** Expense
+**reuses** those. New to expense — the headline — is `@inventory/quickbooks`.
+`org-events-poller` and `service-client` are not ported.
 
 | Source package | Ported? | Action |
 |---|---|---|
@@ -252,7 +252,7 @@ are not ported.
 | `@inventory/gtin` | Reuse | `packages/gtin`, vendored by #1286. |
 | `@inventory/workflows` | Reuse | `packages/workflows`, vendored by #1286. Shared xstate helpers. |
 | `@inventory/money` | Reuse | Already in checkin `packages/money` (cents math). |
-| `@inventory/receipt-types`, `receipt-contract-fixtures` | Reuse (temporary) | Vendored by #1286 as temporary copies. Expense imports the same copy — it needs `CompletedReceiptSchema` (intake, §8a) and the S5 `parseOrgEvent` union (provisional events, §8). |
+| `@inventory/receipt-types`, `receipt-contract-fixtures` | Reuse (temporary) | Temporary copies: `receipt-types` vendored by #1286, `receipt-contract-fixtures` by the H3 shared-packages port. Expense imports the same copy — it needs `CompletedReceiptSchema` (intake, §8a) and the S5 `parseOrgEvent` union (provisional events, §8). |
 | `@inventory/org-events-poller` | **No — not ported** | Nothing in checkin polls. Expense is a **second consumer** of catalog events (provisional resolution) through an in-process handler the catalog calls after commit (§8d). |
 | `@inventory/service-client` | **No — not ported** | The typed HTTP client the source uses for the catalog crossing (pathPrefix `/api/internal`, org-bearer). In checkin every expense crossing is an in-process call (§8) and QB has its own outbound client (§9), so nothing uses it. |
 | `@inventory/quickbooks` | **Yes — new `packages/quickbooks`, NET-NEW to checkin** | The first QuickBooks code in checkin. Read client + OAuth2 (three `fetch` calls, no SDK) + types **already built**; write path + checkin token storage + the outbox-drain terminus are net-new (§9). Standalone shared package — donations (GC-DONOR) and program-finance (GC-PROGRAM-FINANCE) consume it later. |

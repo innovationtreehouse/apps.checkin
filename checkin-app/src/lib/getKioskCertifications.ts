@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { getKioskDisplayNames } from "@/lib/kiosk-names";
 
 /**
  * Tool-cert grid payload for GET /api/kioskdisplay/certifications.
@@ -8,12 +9,14 @@ import { LIVE_PERSON } from "@/lib/person/filters";
  * cold miss. Visit writes go through invalidateAttendanceCache (which also
  * clears this, because the present-limited grid is occupancy). Cert/tool
  * writes call invalidateKioskCertificationsCache directly.
+ *
+ * `name` is the kiosk label (getKioskDisplayNames over the whole grid), resolved
+ * here so no last name or address reaches the kiosk device.
  */
 type CertsPayload = {
     participants: {
         id: number;
         name: string;
-        nickname: string | null;
         toolStatuses: { toolId: number; level: string }[];
     }[];
     tools: { id: number; name: string }[];
@@ -68,10 +71,10 @@ async function computeKioskCertifications(limitToPresent: boolean): Promise<Cert
         });
     }
 
+    const labels = getKioskDisplayNames(participantsData);
     const participants = participantsData.map((participant) => ({
         id: participant.id,
-        name: participant.name?.trim() || participant.email?.split("@")[0] || "",
-        nickname: participant.nickname,
+        name: labels.get(participant.id) || "",
         toolStatuses: participant.toolStatuses,
     }));
 

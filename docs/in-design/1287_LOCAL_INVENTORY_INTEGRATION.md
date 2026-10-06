@@ -157,16 +157,16 @@ The domain layer is framework-light and ports almost verbatim. The friction is
 The source depends on `@inventory/{auth, web-auth, gtin, workflows, receipt-types,
 receipt-contract-fixtures, org-events-poller, utils, pg-test-harness}`.
 Disposition — **the catalog port (#1286) already vendors `gtin`, `workflows`,
-`receipt-types`, `receipt-contract-fixtures`; local-inventory REUSES those, does
-not re-vendor.** New to local-inventory: `utils`. `org-events-poller` is not
-ported at all.
+`receipt-types`, and the H3 shared-packages port vendors `receipt-contract-fixtures`;
+local-inventory REUSES those, does not re-vendor.** New to local-inventory:
+`utils`. `org-events-poller` is not ported at all.
 
 | Source package | Ported? | Action |
 |---|---|---|
 | `@inventory/auth`, `@inventory/web-auth` | **No — dropped** | The source's auth system, retired for checkin next-auth (§6). |
 | `@inventory/gtin` | Reuse | Already `packages/gtin` (vendored by #1286). No second copy. |
 | `@inventory/workflows` | Reuse | Already `packages/workflows` (vendored by #1286). Shared xstate helpers. |
-| `@inventory/receipt-types`, `receipt-contract-fixtures` | Reuse (temporary) | Already vendored by #1286 as temporary copies — local-inventory imports the same copy. Endgame: the permanent shared contract when receipt-app lands. |
+| `@inventory/receipt-types`, `receipt-contract-fixtures` | Reuse (temporary) | Temporary copies: `receipt-types` vendored by #1286, `receipt-contract-fixtures` by the H3 shared-packages port — local-inventory imports the same copy. Endgame: the permanent shared contract when receipt-app lands. |
 | `@inventory/org-events-poller` | **No — not ported** | Nothing in checkin polls. The S5 consumer is an in-process handler the catalog calls after commit (§8a); its cursor, ledger write and `assertTransition` guard live in local-inventory's own handler. |
 | `@inventory/utils` | **Yes — new `packages/utils`, only if/when imported** | Generic helpers. Standalone shared package. **Confirmed in build: no Track-1 domain/unit file imports it** — vendor it in the track that first needs it (reuse #1286's copy if it vendored one by then), not in track 1. |
 | `@inventory/pg-test-harness` | n/a | Already present in checkin. Reuse. |
