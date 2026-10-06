@@ -130,7 +130,9 @@ jobs:
           # from re-running the package's own vitest suite. Root package.json /
           # package-lock.json is included: a shared dep bump (vitest, prisma,
           # testcontainers) can break these suites without touching a workspace.
-          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|\.github/workflows/ci\.yml$)'; then
+          # The library boundary check also reads its own script and checkin's
+          # schema (a new checkin model can collide with a library's).
+          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|\.github/workflows/ci\.yml$|scripts/check-library-boundaries\.mjs$|checkin-app/prisma/schema\.prisma$)'; then
             echo "A package/function workspace (or this workflow) changed — running the Vitest tier."
             echo "packages=true" >> "$GITHUB_OUTPUT"
           else
@@ -644,6 +646,10 @@ jobs:
           npm run typecheck -w s-replay-function
           npm run typecheck -w monitoring-relay-function
           npm run typecheck -w monitoring-watchdog-function
+
+      - name: Library boundary check
+        if: needs.changes.outputs.packages == 'true'
+        run: npm run check:library-boundaries
 
       - name: Test packages
         if: needs.changes.outputs.packages == 'true'
