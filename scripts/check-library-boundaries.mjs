@@ -72,8 +72,12 @@ for (const { dir, json } of pkgs.filter((p) => p.json.library === true)) {
     }
   }
   const ownEnv = ownDbEnv(json.name);
+  // ponytail: skips only src/generated/ (Prisma's client output, recreated by
+  // postinstall). Generated output written anywhere else is scanned; honour the
+  // package's .gitignore if a library ever generates elsewhere.
+  const generated = join(dir, 'src', 'generated') + sep;
   const scanned = [
-    ...files(join(dir, 'src'), /\.tsx?$/),
+    ...[...files(join(dir, 'src'), /\.tsx?$/)].filter((f) => !f.startsWith(generated)),
     ...files(join(dir, 'prisma'), /\.prisma$/),
     ...readdirSync(dir).filter((f) => /^prisma\.config.*\.ts$/.test(f)).map((f) => join(dir, f)),
   ];
