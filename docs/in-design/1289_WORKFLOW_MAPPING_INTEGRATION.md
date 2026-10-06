@@ -184,7 +184,8 @@ becomes `row.orgId === org().id`.
 **The registry grammar cannot express this gate today.** A route takes exactly
 one `Authorize`: a single string token, or `{ anyRole: BusinessRole[] }`. There
 is no OR of two tokens, and `BusinessRole` (`types/auth.ts`) holds neither
-`isInventoryManager` nor `isFinance` (H4 adds `isFinance` to `Role` only).
+`isInventoryManager` nor `isFinance` (the `isFinance` session flag is on main
+via #1856; H4 adds it to the security `Role`).
 **Fix, no new token, owned by H4:** H4 widens `anyRole`'s element type from
 `BusinessRole` to the session-flag members of `Role`, resolved through
 `callerHoldsRole`, in the same boundary PR as the rest of the finance
@@ -343,8 +344,8 @@ have no caller anywhere in the source.
   the callee: a guard keyed per source (`receipt:<id>` here, `donation:<id>`
   for X11) that short-circuits when that source's `ReceivedInventoryDelta` row is
   already `applied`, as expense does. **Owned by the local-inventory lane** (owner
-  decision): its own PR after #1859, test first, which also corrects #1287
-  §8c's "safe retry" sentence. X4 does not flip until it lands.
+  decision): its own PR after #1859, test first (#1287 §8c already describes the
+  per-source guard, via #1878). X4 does not flip until it lands.
 
 ### 8d. S4 outbound: orchestrator → catalog (CI3 association lives here)
 
@@ -377,12 +378,18 @@ the receipt, and a later catalog verdict never rewrites an applied receipt
 
 ### 8e. S5 consumer: catalog → orchestrator (push-driven, no timer)
 
-Reintroduces `UNFINISHED.md` #8 on #1287 §8a's mechanism: port
-`CatalogEventSource { drainPending(orgId), subscribe(onEmit) }`: drain-on-emit
-from catalog's post-commit hook, inside the user request that committed the
-event, with bounded per-row retry. **No DB access at app boot and no new
+Reintroduces `UNFINISHED.md` #8 on the catalog's X1 post-commit call-out (#1286
+§8 X1) and #1287 §8a's consumer shape. Two pieces, same as local-inventory:
+
+- **Handler:** an `OrgEventConsumer` (`onOrgEvents(events)`) that checkin-app
+  registers through `configureCatalog({ ..., orgEventConsumers })`. The catalog
+  calls it in-process after its transaction commits, inside the same user
+  request. The handler parses each event, applies it, and advances its cursor; a
+  throw leaves the cursor behind the failed event.
+- **Replay port:** `CatalogEventSource { eventsSince(orgId, cursor) }` in this
+  library's `contract.ts`, bound by checkin-app to the catalog's event read. **No DB access at app boot and no new
 schedule** (plan rule 5): the catch-up sweep (cursor replay after a crash or a
-failed drain) is a try/catch step inside the existing prod
+handler that threw) reads `eventsSince` from the cursor; it is a try/catch step inside the existing prod
 `/api/cron/reconcile-shopify`, next to the other libraries' sweeps. The step
 is capped per run and returns counts only (events applied, failed). No
 `setInterval`. No local event ledger: every action below is a set-to-value
@@ -391,17 +398,22 @@ safe.
 
 | Event | Action |
 |---|---|
-| `provisional_approved`, `provisional_mapped_to_existing` (X → Y) | lines with `provisionalItemGtin13 = X` on receipts **not `resolved`** → `recognized`, `assignedGtin13 = Y`, factor and version from the event |
+| `provisional_approved`, `provisional_mapped_to_existing` (X → Y) | lines with `provisionalItemGtin13 = X` on receipts in **`pending_review` or `apply_failed`** → `recognized`, `assignedGtin13 = Y`, factor and version from the event |
 | `provisional_rejected` | audit only (owner decision; the machine has no way back to `pending_review`) |
 | everything else | `default: break`, kept (verdicts and conversion challenges are not the orchestrator's, per `BYDESIGN.md`) |
 
-Resolved receipts are left alone: their line status records what was pushed,
-and downstream converges on its own consumers. On `apply_failed`, the retry
-pushes Y.
+The remap follows §3's line-edit rule: it touches only receipts whose lines a
+manager could edit. `applying` receipts are left alone because their push is in
+flight, and `resolved` receipts because their line status records what was
+pushed; downstream converges on its own consumers. On `apply_failed`, the retry
+pushes Y. An event that arrives while a receipt is `applying` is not retried
+for it: if that push fails, the line still carries X, which downstream also
+converges.
 
-- **Inert at S:** the port is bound, nothing subscribes.
-- **Flip (X2):** X1 (catalog's post-commit signal) plus L7 W; the same PR adds
-  the cron step.
+- **Inert at S:** `eventsSince` returns no events, and the handler is not
+  registered with the catalog.
+- **Flip (X2):** X1 (catalog's post-commit call-out) plus L7 W; the PR
+  registers the handler and adds the cron step.
 
 ### 8f. Peer URLs go away
 
@@ -445,7 +457,7 @@ Three PRs, each based on `main`, per the parallel plan.
 
 | PR | Contents |
 |---|---|
-| **S** (skeleton) | `packages/workflow-mapping/`: verbatim port; schema with `WorkflowSystemData` slimmed and renamed; `contract.ts` with `WorkflowRuntimeConfig` (principal, org accessor, `httpError`) and the six ports `CatalogReader`, `CatalogSubmissions`, `ExpenseSink`, `DonationSink`, `InventorySink`, `CatalogEventSource`, each with an inert adapter; push-and-settle routing the money side on `isInKind`; `ingestReceipt` with org and `P2002` handling; the `PROCEED` compare-and-set; line-edit 409; `applying` in the failed queue; the drops in §2. Plus the only `packages/receipt-types` change any lane's S makes, called out in the PR body: the `CompletedReceipt.isInKind` field; deletion of the four HTTP-transport exports that no longer have a caller (`expenseApplyIdempotencyKey`, `inventoryApplyIdempotencyKey`, `IDEMPOTENCY_KEY_HEADER`, `SCHEMA_VERSION_HEADER`) and their tests, after a fresh grep of `packages/` and `checkin-app/` confirms no caller; and one MINOR bump of `RECEIPT_CONTRACT_VERSION` to `1.1.0`, per `contract.ts`'s own rule (the version covers the payload schema, not helper exports). The receipt lane's S only consumes the field, so no two S PRs edit the version line. |
+| **S** (skeleton) | `packages/workflow-mapping/`: verbatim port; schema with `WorkflowSystemData` slimmed and renamed; `contract.ts` with `WorkflowRuntimeConfig` (principal, org accessor, `httpError`) and the six ports `CatalogReader`, `CatalogSubmissions`, `ExpenseSink`, `DonationSink`, `InventorySink`, `CatalogEventSource` (replay read), each with an inert adapter, plus the unregistered `onOrgEvents` handler; push-and-settle routing the money side on `isInKind`; `ingestReceipt` with org and `P2002` handling; the `PROCEED` compare-and-set; line-edit 409; `applying` in the failed queue; the drops in §2. Plus the only `packages/receipt-types` change any lane's S makes, called out in the PR body: the `CompletedReceipt.isInKind` field; deletion of the four HTTP-transport exports that no longer have a caller (`expenseApplyIdempotencyKey`, `inventoryApplyIdempotencyKey`, `IDEMPOTENCY_KEY_HEADER`, `SCHEMA_VERSION_HEADER`) and their tests, after a fresh grep of `packages/` and `checkin-app/` confirms no caller; and one MINOR bump of `RECEIPT_CONTRACT_VERSION` to `1.1.0`, per `contract.ts`'s own rule (the version covers the payload schema, not helper exports). The receipt lane's S only consumes the field, so no two S PRs edit the version line. |
 | **B** (boundary) | `@sensitivity` on the package schema (§5); `security/registry/workflow-mapping.ts` with all 10 routes and the 3 synthetic models (writes `inventory-manager`; reads `{ anyRole: ['isInventoryManager', 'isFinance', 'isBoardMember'] }`); one merge-list line. Inert. Depends on **H4** (local branch `claude/charming-bardeen-a13163`, opens after #1856), which adds `isFinance` and the `anyRole` widening (§6). |
 | **W** (wiring) | route and page stubs, `pageRegistry`, Inventory section tabs and badge, `configureWorkflowMapping()` binding the inert adapters, harness list lines, the dev seed macro, flow tests. |
 
@@ -454,7 +466,7 @@ Three PRs, each based on `main`, per the parallel plan.
 | # | Flip | Gate |
 |---|---|---|
 | X3 | S4: bind both catalog ports in-process | L7 W |
-| X2 | S5: subscribe, plus the catch-up step in `/api/cron/reconcile-shopify` | X1 + L7 W |
+| X2 | S5: register the handler with the catalog's call-out, plus the catch-up step in `/api/cron/reconcile-shopify` | X1 + L7 W |
 | X5 | S2: bind `ExpenseSink` | L3 W + expense intake idempotent in its service |
 | X4 | S3: bind `InventorySink` | L2 W + the per-source apply guard (`receipt:<id>` / `donation:<id>`) |
 | X9 | in-kind money side: bind `DonationSink` | L6 W (`ingestInKind` idempotent on `receiptId`) |
@@ -467,9 +479,6 @@ in `apply_failed`, which is the intended holding behaviour.
 
 - **Follow-up, not designed here:** a deliberate correction path for
   already-pushed receipts, adjusting inventory and expense too.
-- **Corrections owed elsewhere:** #1817 §8a's "receipt-app → expense" should read
-  "workflow-mapping → expense" (§8b); #1817 §8c's "I" crossing is dropped (§8c);
-  #1287 §8c's "safe retry" sentence (the local-inventory lane's fix).
 - **At merge:** `CUJS.md` A16-2 says the orchestrator "collapses to direct calls
   in checkin monolith". Only the transport changes; update the line.
 
