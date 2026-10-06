@@ -194,16 +194,20 @@ export interface EntitlementOrder extends Pick<MirrorOrder, "financialStatus" | 
     lines: { variantId: string; quantity: number }[];
 }
 
-/** ok, or the exception to raise; `kind: null` = not paid yet, raise nothing. */
-export type Entitlement = { ok: true } | { ok: false; kind: PaymentExceptionKind | null };
+/** ok, or the exception to raise; `kind: null` = nothing to do yet, raise nothing. */
+export type Entitlement = { ok: true } | { ok: false; kind: PaymentExceptionKind | null; nothingAwaiting?: true };
 
 /**
  * Does this order pay for activating these people in this program? Paid and not
  * reversed, carries the program's own variant, and buys at least one seat per
- * person still awaiting payment. A seat shortfall activates nobody: the order
- * cannot say which of the household it was meant for, so the board decides.
+ * person still awaiting payment. Nobody awaiting payment is a no-op (a redelivery,
+ * or ids no longer pending), judged before the order so it raises nothing. A seat
+ * shortfall activates nobody: the order cannot say which of the household it was
+ * meant for, so the board decides.
  */
 export async function orderEntitlesEnrollment(order: EntitlementOrder, programId: number, personIds: number[]): Promise<Entitlement> {
+    const awaiting = await prisma.programParticipant.count({ where: { programId, personId: { in: personIds }, ...fromWhere("PENDING_UNPAID") } });
+    if (awaiting === 0) return { ok: false, kind: null, nothingAwaiting: true };
     if (isReversed(order)) return { ok: false, kind: "REVERSED_BEFORE_ACTIVATION" };
     if (!isPaid(order)) return { ok: false, kind: null };
 
@@ -211,8 +215,6 @@ export async function orderEntitlesEnrollment(order: EntitlementOrder, programId
     const variantId = program?.shopifyVariantId;
     const seats = variantId ? order.lines.filter((l) => l.variantId === variantId).reduce((n, l) => n + l.quantity, 0) : 0;
     if (seats === 0) return { ok: false, kind: "NO_ITEM" };
-
-    const awaiting = await prisma.programParticipant.count({ where: { programId, personId: { in: personIds }, ...fromWhere("PENDING_UNPAID") } });
     if (seats < awaiting) return { ok: false, kind: "AMOUNT_MISMATCH" };
     return { ok: true };
 }

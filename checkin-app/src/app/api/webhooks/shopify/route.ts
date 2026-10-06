@@ -187,7 +187,9 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
                 if (!entitlement.ok) {
                     logger.warn(`[SHOPIFY WEBHOOK] order ${orderId ?? "?"} does not entitle program ${programId} (${entitlement.kind}) — NOT activated`);
                     if (entitlement.kind) await raisePaymentException(entitlement.kind, { shopifyOrderId: orderId, programId, personId: participantIds[0] ?? null });
-                    outcome = `program ${programId}: ${entitlement.kind ?? "not paid"} — flagged, not activated`;
+                    outcome = entitlement.kind
+                        ? `program ${programId}: ${entitlement.kind} — flagged, not activated`
+                        : `program ${programId}: ${"nothingAwaiting" in entitlement ? "nothing awaiting payment" : "not paid"} — not activated`;
                 } else if (await unentitledMemberCodeUse(programId, participantIds, codes, orderId)) {
                     logger.warn(`[SHOPIFY WEBHOOK] Program member discount code on a non-member order ${orderId ?? "?"} (program ${programId}) — flagged, NOT activated`);
                     await raisePaymentException("DISCOUNT_UNAUTHORIZED", { shopifyOrderId: orderId, programId, personId: participantIds[0] ?? null });
