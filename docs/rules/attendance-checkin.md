@@ -144,6 +144,12 @@ Things the app takes as true because they are handled outside it.
   name recorded, what shows is the part of their address before the @, never the
   address itself.  [Decision — *Policy: Records Policy, Art. IV*]
 
+- The kiosk never shows a last name. It names people as the roster does — the
+  nickname, else the first name, with a last initial (or two letters) only to tell
+  two people apart — and that applies to everything sent to the kiosk, not only
+  what it renders: the roster, held scans, the certification grid and every
+  warning.  [Decision]
+
 ### Kiosk resilience
 
 The badge kiosk and its offline scan path. Infrastructure failure — WiFi loss for

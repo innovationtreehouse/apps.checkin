@@ -8,7 +8,7 @@ import { withFacilityLock } from "@/lib/facilityLock";
 import { MAX_VISIT_MS } from "@/lib/visitTimes";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, youthIsPresent } from "@/lib/supervision";
 import { isYouth } from "@/lib/time";
-import { getKioskDisplayName } from "@/lib/kiosk-names";
+import { getKioskDisplayName, getKioskDisplayNames } from "@/lib/kiosk-names";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
@@ -21,6 +21,18 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
  */
 function scanParticipant(participant: Person) {
     return { id: participant.id, name: getKioskDisplayName(participant) };
+}
+
+/**
+ * The "others are here" list on a force-close warning, labelled as the kiosk
+ * roster labels people: nickname, else first name, a last initial only to tell
+ * two apart, else the email local-part. Never a last name or an address — the
+ * badge path renders it on the public kiosk screen (docs/rules/attendance-checkin.md,
+ * "The kiosk"). Keyed by visit id, which is unique per row.
+ */
+function presentNames(visits: { id: number; person: Pick<Person, "name" | "nickname" | "email"> }[]): string {
+    const labels = getKioskDisplayNames(visits.map(v => ({ ...v.person, id: v.id })));
+    return visits.map(v => labels.get(v.id)).filter(Boolean).join(", ");
 }
 
 /** Seconds the kiosk counts down after showing the force-close warning. The
@@ -226,13 +238,7 @@ export async function processCheckout(
                         data: { forceCloseWarnedAt: new Date(), forceCloseToken: token }
                     });
 
-                    // Never render the raw address (tier `pii`) on the kiosk screen (#329):
-                    // fall back to the email local-part, same as getFullAttendance /
-                    // kioskdisplay/certifications.
-                    const names = remainingUsers
-                        .map(u => u.person.name?.trim() || u.person.email?.split("@")[0] || "")
-                        .filter(Boolean)
-                        .join(", ");
+                    const names = presentNames(remainingUsers);
                     return apiJson({
                         error: `Warning! You are the last isKeyholder, but others are here:\n${names}\n\nBadge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to confirm you've checked them and close the facility.`,
                         type: "warning" as const,
@@ -468,10 +474,7 @@ export async function lastKeyholderGuard(
                 where: { id: visitId },
                 data: { forceCloseWarnedAt: new Date(), forceCloseToken: token }
             });
-            const names = remainingUsers
-                .map(u => u.person.name?.trim() || u.person.email?.split("@")[0] || "")
-                .filter(Boolean)
-                .join(", ");
+            const names = presentNames(remainingUsers);
             return {
                 action: 'warn',
                 token,
