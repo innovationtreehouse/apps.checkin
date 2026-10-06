@@ -162,7 +162,7 @@ whose file is the body**:
   source, stored as **`text/plain`**. OCR reads it as text, as the source's `.eml`
   path did. Storing it as HTML is ruled out: the file is served from checkin's
   own origin, so stored HTML would be one header mistake away from live script
-  there (§3 serves every file as an attachment).
+  there (§3 shows text only as escaped text).
 - The ledger hash for a body is the hash of that stored text.
 - When a message has attachments, its body is ignored; it is usually covering
   text.
@@ -268,9 +268,20 @@ column (and a held mail item's file) is `secret` tier.
 
 **Files are not JSON (plan rule 7).** `GET /api/receipts/[id]/file` is built on
 the **H6 file-route primitive** (`defineFileRoute` / `fileHandler`: authorize, the
-per-row scope check, then a streamed body), registered like any route. It sends
-`Content-Disposition: attachment`, the stored type, and `nosniff`; nothing is
-served inline. Every download writes an audit row (§6). A test asserts that no
+per-row scope check, then a streamed body), registered like any route. Every
+response carries the stored type, `nosniff`, and `Content-Security-Policy:
+sandbox`, so nothing the file contains can run as checkin's origin. By type
+(owner decision):
+
+- **Images and PDFs display in the browser** (`Content-Disposition: inline`).
+  Their content was checked against its magic bytes at upload (§2), so the stored
+  type is the real one.
+- **Text is shown escaped, never served as a page.** The receipt page renders a
+  `text/plain` file as escaped text (a React text node in a `<pre>`, which escapes
+  by default), so HTML source from an email body displays as visible tags. The
+  file route itself sends text only as `Content-Disposition: attachment`.
+
+Every view or download writes an audit row (§6). A test asserts that no
 JSON route's response contains a `secret`-tier receipt column. H6 is a boundary PR
 that lands before this lane's B and W.
 `ponytail:` ceiling is DB size and backup time; upgrade path is a private S3 bucket
@@ -552,7 +563,7 @@ caps; auto-OCR success, failure and refusal; the catch-up steps (counts only);
 tax note required; self-approval refused; the reimbursement view against a stub
 port; magic-byte rejection of a renamed file and of a `text/plain` upload that is not UTF-8 or holds a NUL byte; OCR output never setting
 reimbursee, vendor or `needsReimbursement`; a non-adult uploader's
-`needsReimbursement` rejected; an audit row per file download and mail-queue
+`needsReimbursement` rejected; a text file rendered as escaped text and served only as an attachment; an image or PDF served inline under `sandbox`; an audit row per file view or download and mail-queue
 view; no JSON route returning a `secret` column (jest, in
 `src/security/__tests__`). **Forged-From fixtures** for phase G, each of which must
 land in the finance queue and never as that person's receipt: SPF pass with no
