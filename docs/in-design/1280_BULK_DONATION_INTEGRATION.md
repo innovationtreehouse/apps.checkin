@@ -105,7 +105,7 @@ concurrency test verbatim.
 | Benevity (corporate) intake | Yes (FD1) | Ported |
 | Shopify online donations | No. checkin's reconciliation passes donations through untouched (`finance-payments.md`, Reconciliation) | Not built; FD4's income port is the natural home |
 | Check / cash entry [board] | No | Net-new, not designed here |
-| In-kind entry [ops] | No. TOPDOWN GC-DONOR calls it its own intake that fans out to catalog, inventory, and donations | Net-new, not designed here; it would be a crossing |
+| In-kind entry [ops] | No. TOPDOWN GC-DONOR calls it its own intake that fans out to catalog, inventory, and donations | Net-new; designed in §2.4 with FR5, built after this port's three PRs |
 | Donation-receipt email | No | Net-new, not designed here |
 
 FD3 stays open after this port. A manual-entry design would reuse this port's
@@ -364,8 +364,9 @@ bookings when it arrives.
 no OAuth route. Every line is tagged with its owner's Class (§6); an
 organizational-level line carries none.
 
-Writes go through #1272 §9's one closed-enum, create-only writer: Deposit and
-Purchase only here, field-allowlisted, never a Check-type Purchase, with the
+Writes go through the one closed-enum, create-only writer in `packages/quickbooks`,
+owned by lane L4 of the parallel port plan (Purchase, Bill, Deposit, Vendor).
+Bulk donation uses Deposit and Purchase only, field-allowlisted, never a Check-type Purchase, with the
 retry key written into `DocNumber`/`PrivateNote` and looked up before each create,
 and a per-run count and total cap.
 
@@ -409,17 +410,21 @@ driven from our records, never by scanning QuickBooks.
   books twice. **None, before the line:** `BEFORE_LINE`; a gap among finance's
   own bookings is finance's to explain.
 
-**The takeover line is derived, never configured.** It is the date of the newest
-bulk-donation record (Benevity or in-kind) in `MATCHED` state, meaning tied to an
-entry the app did not create, whether found by matching or picked by finance.
+**The takeover line is derived, never configured, and there is one per stream.**
+Benevity disbursements (matched in the bank account) and in-kind donations
+(matched in the clearing account) each have their own line, so a hand-booked
+Benevity deposit never pushes in-kind records before the line, or the reverse.
+A stream's line is the date of its newest record in `MATCHED` state, meaning tied
+to an entry the app did not create, whether found by matching or picked by
+finance.
 Each run matches first, then reads the line, then creates for what is after it.
 `CREATED` entries never move the line; a late hand booking of a newer record is
-matched and moves it forward. With no `MATCHED` record there is no line and the
-app creates nothing: it fails closed.
+matched and moves it forward. A stream with no `MATCHED` record has no line, and
+the app creates nothing in it: it fails closed.
 
 The shared find-or-create in `packages/quickbooks` is stateless: bulk donation
 passes the record, its retry key (org + disbursement id, or the in-kind donation
-id), its takeover line, and its claimed and excluded ids. It answers *found*,
+id), its stream's takeover line, and its claimed and excluded ids. It answers *found*,
 *ambiguous*, *created*, *failed*, or *before the line*.
 
 **When it runs.** No boot drain and no new schedule (plan rule 5). The drain is
