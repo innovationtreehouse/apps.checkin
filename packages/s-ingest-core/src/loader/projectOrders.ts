@@ -6,9 +6,15 @@
  * status changes are captured.
  */
 import type { DbClient } from "../ingest/rawLog.js";
+import type { EventSource } from "../generated/prisma/client.js";
 import type { NormalizedOrder } from "../shopify/schemas.js";
 
-export async function projectOrder(db: DbClient, storeId: string, order: NormalizedOrder): Promise<void> {
+export async function projectOrder(
+  db: DbClient,
+  storeId: string,
+  order: NormalizedOrder,
+  source: EventSource,
+): Promise<void> {
   const fields = {
     storeId,
     legacyId: order.legacyId ?? null,
@@ -31,6 +37,7 @@ export async function projectOrder(db: DbClient, storeId: string, order: Normali
     test: order.test,
     noteAttributes: order.noteAttributes ?? undefined,
     discountCodes: order.discountCodes,
+    source,
     lastSyncedAt: new Date(),
   };
 

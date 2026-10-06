@@ -169,6 +169,10 @@ model ShopOrder {
   /// them (scalar lists can't be null in Prisma, so absence isn't distinguishable —
   /// the same backfill that fills variant ids fixes these).
   discountCodes      String[]  @default([]) @map("discount_codes")
+  /// Provenance of the node that last wrote this row: an API sync (BACKFILL/INCREMENTAL)
+  /// or an operator inject (HAND_LOADED/TEST_LOADED). Re-ingest restamps it, so an API
+  /// re-read heals a row a fixture overwrote. Null only on rows written by pre-column code.
+  source             EventSource?
   lastSyncedAt       DateTime  @default(now()) @map("last_synced_at")
 
   @@id([storeId, shopifyGid])
@@ -230,6 +234,8 @@ model ShopPayout {
   adjustmentsFeeCents  Int       @default(0) @map("adjustments_fee_cents")
   reservedFundsCents   Int       @default(0) @map("reserved_funds_cents")
   retriedCents         Int       @default(0) @map("retried_cents")
+  /// Provenance of the last write — see ShopOrder.source.
+  source               EventSource?
   lastSyncedAt         DateTime  @default(now()) @map("last_synced_at")
 
   @@id([storeId, payoutGid])
@@ -252,6 +258,8 @@ model ShopBalanceTransaction {
   currency                String?
   transactionDate         DateTime? @map("transaction_date")
   sourceOrderTransactionId String?  @map("source_order_transaction_id")
+  /// Provenance of the last write — see ShopOrder.source.
+  source                  EventSource?
 
   @@id([storeId, txnGid])
   @@index([storeId, payoutGid])

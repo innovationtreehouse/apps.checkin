@@ -140,12 +140,15 @@ export async function ordersChangedSince(since: Date | null, limit = 1000): Prom
     return rows.rows;
 }
 
-/** Look up specific orders by their numeric legacy id (the id the app stored on activation). */
+/**
+ * Look up specific REAL orders by their numeric legacy id (the id the app stored on
+ * activation). `test = false`: a test order must never back a reversal or a payment row.
+ */
 export async function ordersByLegacyIds(legacyIds: string[]): Promise<MirrorOrder[]> {
     const p = getPool();
     if (!p || legacyIds.length === 0) return [];
     const rows = await p.query<MirrorOrder>(
-        `SELECT ${ORDER_COLS} FROM shop_order WHERE legacy_id = ANY($1::text[])`,
+        `SELECT ${ORDER_COLS} FROM shop_order WHERE test = false AND legacy_id = ANY($1::text[])`,
         [legacyIds],
     );
     return rows.rows;
@@ -322,15 +325,16 @@ export async function orderLegacyIdsPresent(legacyIds: string[]): Promise<Set<st
  * GIDs. Shopify Payments surfaces a dispute as a signed balance transaction whose
  * `type` names the dispute — this distinguishes a chargeback (CRITICAL) from an
  * ordinary refund. Case-insensitive LIKE so 'dispute'/'chargeback'/'adjustment'
- * variants all match.
+ * variants all match. Only disputes on real (`test = false`) orders count.
  */
 export async function disputedOrderGids(orderGids: string[]): Promise<Set<string>> {
     const p = getPool();
     if (!p || orderGids.length === 0) return new Set();
     const rows = await p.query<{ orderGid: string }>(
-        `SELECT DISTINCT order_gid AS "orderGid" FROM shop_balance_transaction
-         WHERE order_gid = ANY($1::text[])
-           AND (lower(type) LIKE '%dispute%' OR lower(type) LIKE '%chargeback%')`,
+        `SELECT DISTINCT bt.order_gid AS "orderGid" FROM shop_balance_transaction bt
+         JOIN shop_order o ON o.shopify_gid = bt.order_gid
+         WHERE bt.order_gid = ANY($1::text[]) AND o.test = false
+           AND (lower(bt.type) LIKE '%dispute%' OR lower(bt.type) LIKE '%chargeback%')`,
         [orderGids],
     );
     return new Set(rows.rows.map((r) => r.orderGid));

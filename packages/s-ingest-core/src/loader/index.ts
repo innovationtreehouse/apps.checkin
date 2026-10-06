@@ -9,7 +9,7 @@
  * change a projector to a create/insert or a non-natural key without preserving this property.
  */
 import type { DbClient } from "../ingest/rawLog.js";
-import { ObjectType } from "../generated/prisma/client.js";
+import { EventSource, ObjectType } from "../generated/prisma/client.js";
 import {
   orderNodeSchema,
   payoutNodeSchema,
@@ -28,16 +28,17 @@ export async function projectNode(
   storeId: string,
   objectType: ObjectType,
   node: unknown,
+  source: EventSource,
 ): Promise<void> {
   switch (objectType) {
     case ObjectType.ORDER:
-      await projectOrder(db, storeId, normalizeOrder(orderNodeSchema.parse(node)));
+      await projectOrder(db, storeId, normalizeOrder(orderNodeSchema.parse(node)), source);
       return;
     case ObjectType.PAYOUT:
-      await projectPayout(db, storeId, normalizePayout(payoutNodeSchema.parse(node)));
+      await projectPayout(db, storeId, normalizePayout(payoutNodeSchema.parse(node)), source);
       return;
     case ObjectType.BALANCE_TXN:
-      await projectBalanceTxn(db, storeId, normalizeBalanceTxn(balanceTxnNodeSchema.parse(node)));
+      await projectBalanceTxn(db, storeId, normalizeBalanceTxn(balanceTxnNodeSchema.parse(node)), source);
       return;
     case ObjectType.REFUND: {
       const r = normalizeStandaloneRefund(refundSchemaWithOrder.parse(node));

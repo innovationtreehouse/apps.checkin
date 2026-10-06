@@ -125,14 +125,21 @@ All run locally with no AWS dependency (they read `.env`):
 ```bash
 npm run sync:incremental     # delta pull (orders + payouts) since the last watermark
 npm run sync:backfill        # Bulk Operation backfill from CUTOVER_DATE forward
-npm run inject -- <fixture.json> [--test]   # load a hand-authored/fixture node
+INJECT_ALLOW=1 npm run inject -- <fixture.json> --reason "<why>" [--test]   # load a hand-authored/fixture node
 ```
 
 `inject` validates the node with the same Zod schema the API path uses, appends it
 to `shopify_raw_event` tagged `HAND_LOADED` (or `TEST_LOADED` with `--test`), then
-runs the loader so it flows into the live tables exactly like real data. This is
-also how batch/test infrastructure seeds matching raw events. A fixture file looks
-like:
+runs the loader so it flows into the live tables exactly like real data. Each live
+row carries the same `source` stamp, and a later API re-read of the same GID
+restamps it. This is also how batch/test infrastructure seeds matching raw events.
+
+Guard rails: inject refuses to run without `INJECT_ALLOW=1` and a non-empty
+`--reason`, and records the operator (`cli:<os user>`) and reason on an `ADMIN`
+`sync_run` that the injected raw events link to. `--test` also forces each order's
+`test` flag on (every checkin reader filters `test = false`) and is refused against
+the production store, by `STORE_ID` or by the mirror's `store` registry. A fixture
+file looks like:
 
 ```json
 { "objectType": "PAYOUT", "node": { "id": "gid://shopify/ShopifyPaymentsPayout/1", "...": "..." } }

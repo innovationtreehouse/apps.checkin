@@ -21,8 +21,16 @@ const fixtureFileSchema = z.union([fixtureSchema, z.array(fixtureSchema)]);
 
 export interface InjectOptions {
   storeId: string;
-  /** When true, tag rows TEST_LOADED instead of HAND_LOADED. */
+  /** When true, tag rows TEST_LOADED instead of HAND_LOADED and force orders' `test` flag on. */
   test?: boolean;
+  /** The ADMIN sync_run recording who injected and why. */
+  syncRunId?: bigint | null;
+}
+
+/** A TEST_LOADED order must carry Shopify's own test flag, which every downstream reader filters on. */
+function asTestNode(objectType: ObjectType, node: unknown): unknown {
+  if (objectType !== ObjectType.ORDER || typeof node !== "object" || node === null) return node;
+  return { ...node, test: true };
 }
 
 /** Inject one or many fixtures already parsed into objects. */
@@ -34,7 +42,16 @@ export async function injectFixtures(
   const source = opts.test ? EventSource.TEST_LOADED : EventSource.HAND_LOADED;
   const results: IngestNodeResult[] = [];
   for (const f of fixtures) {
-    results.push(await ingestNode(prisma, { storeId: opts.storeId, objectType: f.objectType, node: f.node, source }));
+    const node = opts.test ? asTestNode(f.objectType, f.node) : f.node;
+    results.push(
+      await ingestNode(prisma, {
+        storeId: opts.storeId,
+        objectType: f.objectType,
+        node,
+        source,
+        syncRunId: opts.syncRunId,
+      }),
+    );
   }
   return results;
 }

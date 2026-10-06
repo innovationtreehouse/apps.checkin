@@ -49,6 +49,8 @@ run("s-replay-function admin operations", () => {
     expect(result.processed).toBe(1);
     expect(result.distinctGids).toBe(1);
     expect(await orderCount()).toBe(1); // restored from the log
+    // The restored row carries the raw event's provenance, not a default.
+    expect((await liveOrder(orderGid(9001)))?.source).toBe("TEST_LOADED");
 
     const adminRuns = await prisma.syncRun.count({ where: { storeId: STORE, kind: "ADMIN" } });
     expect(adminRuns).toBeGreaterThanOrEqual(1);

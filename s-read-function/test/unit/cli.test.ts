@@ -15,14 +15,19 @@ const m = vi.hoisted(() => ({
   loadDbConfig: vi.fn(),
   loadShopifyConfig: vi.fn(),
   disconnect: vi.fn(),
+  findStore: vi.fn(),
+  withSyncRun: vi.fn(),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock("@inventory/s-ingest-core", () => ({
-  prisma: { $disconnect: m.disconnect },
+  prisma: { $disconnect: m.disconnect, store: { findUnique: m.findStore } },
   loadDbConfig: m.loadDbConfig,
   loadShopifyConfig: m.loadShopifyConfig,
   injectFile: m.injectFile,
+  withSyncRun: m.withSyncRun,
+  SyncKind: { ADMIN: "ADMIN" },
+  PROD_STORE_DOMAIN: "prod.myshopify.com",
   logger: m.logger,
 }));
 vi.mock("../../src/handler.js", () => ({ handler: m.handler, armSyncDeadline: vi.fn() }));
@@ -37,10 +42,14 @@ beforeEach(() => {
   m.loadShopifyConfig.mockReturnValue({ endpoint: "https://shop/graphql.json", apiVersion: "2025-07", adminToken: "t" });
   m.loadDbConfig.mockReturnValue({ storeId: "s1" });
   m.disconnect.mockResolvedValue(undefined);
+  m.findStore.mockResolvedValue(null);
+  m.withSyncRun.mockImplementation((_p, _s, _k, _scope, fn) => fn(77n));
+  process.env.INJECT_ALLOW = "1";
   process.exitCode = undefined;
 });
 
 afterEach(() => {
+  delete process.env.INJECT_ALLOW;
   process.argv = origArgv;
   process.exitCode = undefined;
 });
@@ -166,24 +175,35 @@ describe("cli — sync orchestrators", () => {
 });
 
 describe("cli — inject & guard rails", () => {
-  it("inject: loads the fixture and logs an inserted/total summary", async () => {
+  /** The error main() rejected with, via the top-level catch. */
+  const cliError = () => (m.logger.error.mock.calls.find((c) => c[0] === "cli failed")?.[1] as { err: Error }).err;
+
+  it("inject: runs inside an attributed ADMIN sync_run and logs an inserted/total summary", async () => {
     m.injectFile.mockResolvedValue([
       { inserted: true, shopifyGid: "g1" },
       { inserted: false, shopifyGid: "g2" },
     ]);
 
-    await runCli(["inject", "fixtures/orders.json"]);
+    await runCli(["inject", "--reason", "historical CSV load", "fixtures/orders.json"]);
 
-    expect(m.injectFile).toHaveBeenCalledWith({ $disconnect: m.disconnect }, "fixtures/orders.json", { storeId: "s1", test: false });
-    expect(logged("inject done")).toMatchObject({ count: 2, inserted: 1, source: "HAND_LOADED" });
+    expect(m.withSyncRun).toHaveBeenCalledWith(expect.anything(), "s1", "ADMIN", "inject", expect.any(Function), {
+      actor: expect.stringMatching(/^cli:/),
+      reason: "historical CSV load",
+    });
+    expect(m.injectFile).toHaveBeenCalledWith(expect.anything(), "fixtures/orders.json", {
+      storeId: "s1",
+      test: false,
+      syncRunId: 77n,
+    });
+    expect(logged("inject done")).toMatchObject({ count: 2, inserted: 1, source: "HAND_LOADED", reason: "historical CSV load" });
   });
 
   it("inject --test: marks the source TEST_LOADED", async () => {
     m.injectFile.mockResolvedValue([]);
 
-    await runCli(["inject", "fixtures/t.json", "--test"]);
+    await runCli(["inject", "fixtures/t.json", "--test", "--reason=dev fixture"]);
 
-    expect(m.injectFile).toHaveBeenCalledWith(expect.anything(), "fixtures/t.json", { storeId: "s1", test: true });
+    expect(m.injectFile).toHaveBeenCalledWith(expect.anything(), "fixtures/t.json", { storeId: "s1", test: true, syncRunId: 77n });
     expect(logged("inject done")).toMatchObject({ source: "TEST_LOADED" });
   });
 
@@ -191,8 +211,48 @@ describe("cli — inject & guard rails", () => {
     await runCli(["inject", "--test"]);
 
     expect(m.injectFile).not.toHaveBeenCalled();
-    expect(m.logger.error).toHaveBeenCalledWith("cli failed", expect.objectContaining({ err: expect.any(Error) }));
+    expect(cliError().message).toMatch(/Usage/);
     expect(process.exitCode).toBe(1);
+  });
+
+  it.each([
+    ["without INJECT_ALLOW=1", ["inject", "f.json", "--reason", "x"], () => delete process.env.INJECT_ALLOW, /INJECT_ALLOW/],
+    ["without --reason", ["inject", "f.json"], () => {}, /--reason/],
+    ["with a blank --reason", ["inject", "f.json", "--reason= "], () => {}, /--reason/],
+  ])("inject refuses %s", async (_label, args, arrange, msg) => {
+    arrange();
+    await runCli(args);
+
+    expect(cliError().message).toMatch(msg);
+    expect(m.withSyncRun).not.toHaveBeenCalled();
+    expect(m.injectFile).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("inject --test refuses when the target store is prod", async () => {
+    m.loadDbConfig.mockReturnValue({ storeId: "prod.myshopify.com" });
+    await runCli(["inject", "f.json", "--test", "--reason", "x"]);
+
+    expect(cliError().message).toMatch(/prod\.myshopify\.com/);
+    expect(m.injectFile).not.toHaveBeenCalled();
+  });
+
+  it("inject --test refuses when the mirror DB holds the prod store, whatever STORE_ID says", async () => {
+    m.findStore.mockResolvedValue({ myshopifyDomain: "prod.myshopify.com" });
+    await runCli(["inject", "f.json", "--test", "--reason", "x"]);
+
+    expect(cliError().message).toMatch(/may not be loaded/);
+    expect(m.injectFile).not.toHaveBeenCalled();
+  });
+
+  it("a HAND_LOADED inject into the prod mirror is allowed", async () => {
+    m.findStore.mockResolvedValue({ myshopifyDomain: "prod.myshopify.com" });
+    m.loadDbConfig.mockReturnValue({ storeId: "prod.myshopify.com" });
+    m.injectFile.mockResolvedValue([]);
+    await runCli(["inject", "f.json", "--reason", "historical CSV load"]);
+
+    expect(m.injectFile).toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
   });
 
   it("an unknown command fails with exitCode 1 and still disconnects", async () => {
