@@ -185,6 +185,7 @@ describe('Program Lifecycle Integration Tests', () => {
         // verifies this before activating (see route.ts).
         const payload = JSON.stringify({
             id: 12345,
+            financial_status: 'paid',
             line_items: [{ variant_id: "test-non-var" }],
             note_attributes: [
                 { name: "CheckMeIn_Account_ID", value: String(testParticipantId) },
@@ -200,6 +201,7 @@ describe('Program Lifecycle Integration Tests', () => {
             method: 'POST',
             headers: {
                 'x-shopify-hmac-sha256': hmac,
+                'x-shopify-topic': 'orders/paid',
                 'Content-Type': 'application/json'
             },
             body: payload
