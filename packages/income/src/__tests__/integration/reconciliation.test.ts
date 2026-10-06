@@ -484,6 +484,31 @@ describeDb("IncomeQbMatchExclusion — finance excludes a deposit from matching"
   });
 });
 
+describeDb("matchToDeposit — claims and exclusions are read under the lock", () => {
+  it("refuses a deposit excluded after QuickBooks was read but before the match commits", async () => {
+    payout("P1", "2026-06-01", 97);
+    await runReconcile(ORG_A, NOW);
+    const row = await rowFor("P1");
+    configureIncome({
+      mirror,
+      deposits: {
+        depositsSince: async () => {
+          // A concurrent exclusion lands while the QuickBooks read is in flight.
+          await new Promise((r) => setTimeout(r, 50));
+          await db.incomeQbMatchExclusion.create({
+            data: { orgId: ORG_A, qbTxnId: "D1", reason: "concurrent", excludedByUserId: 2 },
+          });
+          return [dep("D1", "2026-06-02", 97)];
+        },
+      },
+    });
+    await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D1", { userId: 1 })).rejects.toMatchObject({
+      statusCode: 422,
+    });
+    expect((await rowFor("P1")).status).toBe("OPEN");
+  });
+});
+
 describeDb("IncomeItemCategory", () => {
   it("maps a variant to one bucket per org, with no FK to the bucket table", async () => {
     const variantId = "gid://shopify/ProductVariant/1";

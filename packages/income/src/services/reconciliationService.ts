@@ -13,7 +13,7 @@ import {
   windowDays,
   type ReconStatus,
 } from "../lib/reconcile";
-import { recordAudit } from "../lib/audit";
+import { recordAudit, type TxClient } from "../lib/audit";
 import { ServiceError } from "./serviceError";
 
 export interface Actor {
@@ -34,23 +34,28 @@ async function openRow(orgId: string, id: number) {
   return row;
 }
 
-/** Unclaimed deposits dated within ±window of the payout, read live from QuickBooks. */
-async function liveCandidates(orgId: string, payoutDate: string): Promise<QbDeposit[]> {
+/** Deposits dated within ±window of the payout, read live from QuickBooks. */
+async function windowDeposits(payoutDate: string): Promise<QbDeposit[]> {
   const source = getIncomeConfig().deposits;
   if (!source) throw new ServiceError(503, "QuickBooks is not connected");
   const w = windowDays();
   const from = addDays(payoutDate, -w);
   const to = addDays(payoutDate, w);
-  const [deposits, claimed, excluded] = await Promise.all([
-    source.depositsSince(new Date(`${from}T00:00:00Z`)),
-    db.payoutReconciliation.findMany({
+  const deposits = await source.depositsSince(new Date(`${from}T00:00:00Z`));
+  return deposits.filter((d) => d.txnDate >= from && d.txnDate <= to);
+}
+
+/** Drop deposits a payout already holds or finance excluded. */
+async function unclaimed(client: TxClient, orgId: string, deposits: QbDeposit[]): Promise<QbDeposit[]> {
+  const [claimed, excluded] = await Promise.all([
+    client.payoutReconciliation.findMany({
       where: { orgId, depositId: { not: null } },
       select: { depositId: true },
     }),
-    db.incomeQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
+    client.incomeQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
   ]);
   const taken = new Set([...claimed.map((c) => c.depositId), ...excluded.map((e) => e.qbTxnId)]);
-  return deposits.filter((d) => d.txnDate >= from && d.txnDate <= to && !taken.has(d.id));
+  return deposits.filter((d) => !taken.has(d.id));
 }
 
 export const reconciliationService = {
@@ -71,17 +76,18 @@ export const reconciliationService = {
 
   async candidates(orgId: string, id: number) {
     const row = await openRow(orgId, id);
-    return liveCandidates(orgId, row.payoutDate);
+    return unclaimed(db, orgId, await windowDeposits(row.payoutDate));
   },
 
   async matchToDeposit(orgId: string, id: number, depositId: string, actor: Actor) {
     const row = await openRow(orgId, id);
-    const deposit = (await liveCandidates(orgId, row.payoutDate)).find((d) => d.id === depositId);
-    if (!deposit) throw new ServiceError(422, "Deposit is not an unclaimed candidate for this payout");
+    const inWindow = await windowDeposits(row.payoutDate);
 
     try {
       return await db.$transaction(async (tx) => {
         await lockReconciliation(tx, orgId, true);
+        const deposit = (await unclaimed(tx, orgId, inWindow)).find((d) => d.id === depositId);
+        if (!deposit) throw new ServiceError(422, "Deposit is not an unclaimed candidate for this payout");
         const current = await tx.payoutReconciliation.findUnique({ where: { id } });
         if (current?.status !== RECON_STATUS.OPEN) throw new ServiceError(409, "Already resolved");
         const saved = await tx.payoutReconciliation.update({

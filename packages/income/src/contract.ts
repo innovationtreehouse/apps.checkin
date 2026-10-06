@@ -1,5 +1,5 @@
 // Ports the host (checkin-app) binds via configureIncome(). Each is optional: unbound, the
-// matching feature no-ops and the CSV side keeps working.
+// feature that needs it no-ops.
 
 /**
  * Where a mirror row came from, read from the mirror's `source` column on shop_payout and
@@ -8,17 +8,25 @@
 export type MirrorSource = "api" | "hand_loaded";
 
 /**
- * Map the mirror's raw `source` value: HAND_LOADED / TEST_LOADED are loaded history;
- * BACKFILL / INCREMENTAL / NULL came from the Shopify API (NULL counts as API).
+ * Map the mirror's raw `source` value: HAND_LOADED is loaded history; BACKFILL / INCREMENTAL /
+ * NULL came from the Shopify API (NULL counts as API). TEST_LOADED maps to null: test rows
+ * must never match a real deposit, so the adapter drops them from every port result.
  */
-export function mirrorSource(raw: string | null): MirrorSource {
-  return raw === "HAND_LOADED" || raw === "TEST_LOADED" ? "hand_loaded" : "api";
+export function mirrorSource(raw: string | null): MirrorSource | null {
+  if (raw === "TEST_LOADED") return null;
+  return raw === "HAND_LOADED" ? "hand_loaded" : "api";
 }
 
-/** A payout as the s-read mirror holds it (shop_payout). */
+/** Map the mirror's raw payout status (Shopify's uppercase enum, e.g. PAID) to the port's lowercase. */
+export function mirrorPayoutStatus(raw: string): string {
+  return raw.toLowerCase();
+}
+
+/** A payout as the s-read mirror holds it (shop_payout), never a TEST_LOADED row. */
 export interface MirrorPayout {
   payoutGid: string;
   issuedAt: Date;
+  /** Lowercase, via mirrorPayoutStatus (e.g. "paid", "in_transit"). */
   status: string;
   netCents: number;
   currency: string | null;
