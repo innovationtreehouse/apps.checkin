@@ -16,6 +16,7 @@ while true; do
   # level up. Nothing below may kill the kiosk under `set -e` -- a Pi that
   # cannot update must keep serving scans on the checkout it already has.
   ROOT="$(git rev-parse --show-toplevel)"
+  python3 -c 'import client; client.repair_origin_url()' || true
   echo "Fetching releases..."
   if git -C "$ROOT" fetch --tags --force origin main; then
     BEFORE="$(git -C "$ROOT" rev-parse HEAD)"

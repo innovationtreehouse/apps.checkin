@@ -12,6 +12,7 @@ A thin client for Raspberry Pi that:
 import html
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -1210,6 +1211,39 @@ def _should_restart_for_update(remote_head, last_restart_target):
     # restart didn't move HEAD onto it (the checkout failed); True for a
     # never-tried or newly-advanced target.
     return remote_head != last_restart_target
+
+# The repo was renamed checkin -> apps.checkin; the old name resolves only via
+# GitHub's rename redirect, which dies the moment anyone creates a new repo
+# called "checkin" -- and the kiosk would then fetch and run that repo's code.
+_OLD_ORIGIN_RE = re.compile(
+    r"^(?P<prefix>.*github\.com[:/])innovationtreehouse/checkin(?P<suffix>\.git)?/?$",
+    re.IGNORECASE,
+)
+
+def canonical_origin_url(url):
+    """The apps.checkin equivalent of an old-name origin URL, else None.
+    Keeps scheme/user/.git so auth is unchanged; never matches checkin-client."""
+    m = _OLD_ORIGIN_RE.match(url.strip())
+    if not m:
+        return None
+    return f"{m['prefix']}innovationtreehouse/apps.checkin{m['suffix'] or ''}"
+
+def repair_origin_url():
+    """Point origin at the canonical repo if it still names the old one.
+    Idempotent: the rewritten URL no longer matches. Returns the new URL or None."""
+    try:
+        url = subprocess.check_output(
+            ["git", "remote", "get-url", "origin"], text=True, stderr=subprocess.DEVNULL
+        ).strip()
+        new_url = canonical_origin_url(url)
+        if new_url is None:
+            return None
+        subprocess.run(["git", "remote", "set-url", "origin", new_url], check=True)
+    except (OSError, subprocess.CalledProcessError) as e:
+        log.warning(f"Could not check/repair git origin URL: {e}")
+        return None
+    log.warning(f"Rewrote git origin from renamed repo URL {url} to {new_url}")
+    return new_url
 
 def fetch_update_refs(timeout=15):
     """Refresh both candidate targets. --force lets a moved tag land."""

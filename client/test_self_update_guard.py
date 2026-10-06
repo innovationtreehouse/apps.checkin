@@ -2,6 +2,7 @@
 restart-loop when the Pi's checkout of the target fails."""
 
 import os
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -10,6 +11,8 @@ from client import (
     _read_last_restart_target,
     _write_last_restart_target,
     _should_restart_for_update,
+    canonical_origin_url,
+    repair_origin_url,
     version_poller,
 )
 
@@ -183,6 +186,85 @@ class TestVersionPollerLateInit(unittest.TestCase):
         self.assertEqual(state.scan_protocol, 2)
         # And the late version is adopted without pushing a reload.
         state.push_event.assert_not_called()
+
+
+class TestCanonicalOriginUrl(unittest.TestCase):
+    """An origin naming the renamed repo works only via GitHub's redirect; a
+    new repo called "checkin" would hijack every kiosk's auto-update."""
+
+    def test_rewrites_old_name_in_every_url_form(self):
+        cases = {
+            "git@github.com:innovationtreehouse/checkin.git":
+                "git@github.com:innovationtreehouse/apps.checkin.git",
+            "git@github.com:innovationtreehouse/checkin":
+                "git@github.com:innovationtreehouse/apps.checkin",
+            "https://github.com/innovationtreehouse/checkin.git":
+                "https://github.com/innovationtreehouse/apps.checkin.git",
+            "https://github.com/innovationtreehouse/checkin/":
+                "https://github.com/innovationtreehouse/apps.checkin",
+            "ssh://git@github.com/InnovationTreehouse/Checkin.git\n":
+                "ssh://git@github.com/innovationtreehouse/apps.checkin.git",
+        }
+        for old, new in cases.items():
+            with self.subTest(old=old):
+                self.assertEqual(canonical_origin_url(old), new)
+
+    def test_leaves_other_urls_alone(self):
+        for url in (
+            "git@github.com:innovationtreehouse/apps.checkin.git",
+            "https://github.com/innovationtreehouse/apps.checkin",
+            "git@github.com:innovationtreehouse/checkin-client.git",
+            "git@github.com:someone-else/checkin.git",
+            "/home/pi/mirror/checkin.git",
+        ):
+            with self.subTest(url=url):
+                self.assertIsNone(canonical_origin_url(url))
+
+
+class TestRepairOriginUrl(unittest.TestCase):
+    def _run(self, current_url):
+        with patch("client.subprocess.check_output", return_value=current_url + "\n"), \
+             patch("client.subprocess.run") as run_mock:
+            result = repair_origin_url()
+        return result, run_mock
+
+    def test_old_url_is_rewritten(self):
+        with self.assertLogs("kiosk", level="WARNING"):
+            result, run_mock = self._run("git@github.com:innovationtreehouse/checkin.git")
+        new = "git@github.com:innovationtreehouse/apps.checkin.git"
+        self.assertEqual(result, new)
+        run_mock.assert_called_once_with(
+            ["git", "remote", "set-url", "origin", new], check=True)
+
+    def test_canonical_url_is_a_no_op(self):
+        result, run_mock = self._run("git@github.com:innovationtreehouse/apps.checkin.git")
+        self.assertIsNone(result)
+        run_mock.assert_not_called()
+
+    def test_git_failure_is_logged_not_raised(self):
+        err = subprocess.CalledProcessError(2, ["git", "remote", "get-url", "origin"])
+        with patch("client.subprocess.check_output", side_effect=err), \
+             patch("client.subprocess.run") as run_mock, \
+             self.assertLogs("kiosk", level="WARNING"):
+            self.assertIsNone(repair_origin_url())
+        run_mock.assert_not_called()
+
+    def test_real_repo_rewrite_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run(["git", "init", "-q", d], check=True)
+            subprocess.run(["git", "-C", d, "remote", "add", "origin",
+                            "git@github.com:innovationtreehouse/checkin.git"], check=True)
+            cwd = os.getcwd()
+            os.chdir(d)
+            try:
+                with self.assertLogs("kiosk", level="WARNING"):
+                    self.assertIsNotNone(repair_origin_url())
+                self.assertIsNone(repair_origin_url())
+                url = subprocess.check_output(
+                    ["git", "remote", "get-url", "origin"], text=True).strip()
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(url, "git@github.com:innovationtreehouse/apps.checkin.git")
 
 
 if __name__ == "__main__":
