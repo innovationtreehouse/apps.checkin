@@ -153,6 +153,10 @@ New crossings (numbered after the plan's X1–X8), each a port in this library's
 | X11 | donations → local-inventory: load identified goods (idempotent per source, keyed `donation:<id>`, beside the receipt pipeline's `receipt:<id>`) | sync, in-process, caller | throws |
 | X13 | receipt → donations, directly: the donor entered at upload (`recordInKindDonor(receiptId, donor)`, idempotent on `receiptId`; a later call replaces the donor, which is how edits arrive), and `withdrawInKind(receiptId)` when the uploader clears the in-kind mark | sync, in-process, callee | throws |
 
+**Each callee's zod parse asserts `orgId`.** X9 and X13 reject a payload whose
+`orgId` is not the injected org; Inventory enforced per-org scoping at the bearer,
+and in-process this assertion keeps it.
+
 `donor` is `InKindDonor { firstName: string; lastName: string; companyName:
 string | null }` and is never null. The receipt design declares the caller side and has confirmed this signature;
 `receiptId` is the receipt's UUID, and "I am the donor" is resolved to the
@@ -220,6 +224,11 @@ identity, but the name is already `pii` behind the same gate, so it stays
   stripped for any view without `everyones:pii`. `secret` would make it
   unreturnable outright, but that tier means cryptographic material, so it is not
   borrowed here.
+- **Reads of donor identity are audited.** Every route that returns donor `pii`
+  (the transaction lists and detail, the comment rules, the QuickBooks candidate
+  view with its memo) and any export of donor data writes an audit row: actor,
+  route, record ids or the filter used, row count, time. The row carries no donor
+  field.
 - **Audit payloads never carry donor fields.** The source's `WorkflowEvent.payload`
   holds owner ids, file metadata, and account-map rows only, which is why it can be
   `internal`. W adds a test asserting no donor field reaches a payload; a future
@@ -287,8 +296,10 @@ move into checkin:
   null for organization-level buckets like Facility.
 - **Approvers are derived, never stored** (owner decision). A program bucket's
   approvers are the program's leader and its program treasurers
-  (`ProgramVolunteer.isTreasurer`); an organization-level bucket has none and is
-  auto-approved. There is no approver table.
+  (`ProgramVolunteer.isTreasurer`, set by the Board only); an
+  organization-level bucket has none. There is no approver table. Approvers
+  matter only for money leaving the org (#1272 §6 sign-off seats); this library
+  never reads them.
 - **This library only lists buckets.** It declares
   `OwnerDirectory { list(): Promise<OwnerInfo[]> }` in `contract.ts`, keeps
   `ownerId` as an opaque integer, uses the list to validate an assignment and
@@ -351,6 +362,19 @@ bookings when it arrives.
 no OAuth route. Every line is tagged with its owner's Class (§6); an
 organizational-level line carries none.
 
+Writes go through #1272 §9's one closed-enum, create-only writer: Deposit and
+Purchase only here, field-allowlisted, never a Check-type Purchase, with the
+retry key written into `DocNumber`/`PrivateNote` and looked up before each create,
+and a per-run count and total cap.
+
+**No sign-off seats apply.** The reimbursement and card-charge sign-off seats
+(#1272 §6, Financial Policy F2 / F2-COI) govern money leaving the org. Donations
+post only inbound Deposits and the in-kind clearing pair, which moves no money
+out and is never booked against a card or bank account. A donation flow that
+ever pays out (a refund to a donor, a card charge) takes the same seats and is
+held from QuickBooks until they are filled, with at most +1 Board for a card
+charge.
+
 - **Benevity disbursement:** a bank **Deposit** (gifts and matches in, fees out).
 - **In-kind donation:** no money reaches a bank, so it books through an
   **"In-kind clearing" account** used in place of a bank account (owner
@@ -402,7 +426,9 @@ id), its takeover line, and its claimed and excluded ids. It answers *found*,
 **When it runs.** No boot drain and no new schedule (plan rule 5). The drain is
 a try/catch step inside the existing prod `/api/cron/reconcile-shopify`, next to
 income's; finance's queue actions (pick, create, retry) run it for one record
-on demand. It ships as a **named follow-up PR in this lane (D, §9)** after L4's
+on demand. The step is idempotent, capped per run, and returns counts only
+(matched, created, queued, failed) — no ids, donor names or amounts in the cron
+response. It ships as a **named follow-up PR in this lane (D, §9)** after L4's
 QB-2.
 
 ## 8. Testing
@@ -414,7 +440,8 @@ workflow audit) stay in the package's DB tier on `pg-test-harness`; the 16
 route-bound ones become flow tests in W. The A14 journey is upload → auto org-level → assign with comment
 rule (bulk applies) → NO_MATCH hold → add rule → resubmit → completed event →
 duplicate re-upload is a no-op. A security test asserts a session holding neither
-`FINANCE` nor `BOARD` gets 403 on every route and that `fileBlob` never appears in a response.
+`FINANCE` nor `BOARD` gets 403 on every route and that `fileBlob` never appears in a response,
+and that every donor-`pii` read writes one audit row with no donor field in it.
 
 ## 9. Phasing: three PRs plus the drain, each based on `main`
 
