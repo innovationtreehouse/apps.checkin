@@ -70,6 +70,20 @@ run("s-replay-function admin operations", () => {
     expect((await liveOrder(gid))?.name).toBe("#second");
   });
 
+  it("a stale bulk event with a HIGHER id does not revert newer state on replay", async () => {
+    const gid = orderGid(5002);
+    // Incremental event (newer state) logged first; the older bulk snapshot logged after it.
+    await prisma.shopifyRawEvent.create({
+      data: rawOrderEvent(STORE, gid, orderNode(gid, { updatedAt: "2026-03-01T00:00:00Z", displayFinancialStatus: "REFUNDED" }), { hash: "new" }),
+    });
+    await prisma.shopifyRawEvent.create({
+      data: rawOrderEvent(STORE, gid, orderNode(gid, { updatedAt: "2026-02-01T00:00:00Z", displayFinancialStatus: "PAID" }), { hash: "old" }),
+    });
+
+    await replay(prisma, { storeId: STORE, actor: "test", reason: "stale-bulk" });
+    expect((await liveOrder(gid))?.financialStatus).toBe("REFUNDED");
+  });
+
   it("records partial progress on the FAILED run when projection dies mid-stream", async () => {
     // Row 1 is valid; row 2 (created after → higher id, processed second) has no `id` so the
     // order schema parse throws. Row 1 is already committed when row 2 fails.

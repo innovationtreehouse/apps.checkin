@@ -1,9 +1,10 @@
 /**
  * Project a normalized order into the live tables: shop_order, shop_order_line,
- * shop_refund. Idempotent — keyed on Shopify GIDs, so re-running with the same or
- * a newer node simply overwrites. A later node with `cancelledAt` / a changed
- * financial status overwrites the prior row, which is how cancellations and
- * status changes are captured.
+ * shop_refund. Idempotent and newest-wins on Shopify's `updatedAt`: a node whose
+ * `updatedAt` is older than the stored row's is skipped entirely (order AND its
+ * lines/refunds), so a stale bulk snapshot, re-ingested export, or replayed event
+ * can never revert financial status, refunds, or cancellation. Equal `updatedAt`
+ * re-writes, which keeps same-version re-projection idempotent.
  */
 import type { DbClient } from "../ingest/rawLog.js";
 import type { NormalizedOrder } from "../shopify/schemas.js";
@@ -34,11 +35,23 @@ export async function projectOrder(db: DbClient, storeId: string, order: Normali
     lastSyncedAt: new Date(),
   };
 
-  await db.shopOrder.upsert({
-    where: { storeId_shopifyGid: { storeId, shopifyGid: order.shopifyGid } },
-    create: { shopifyGid: order.shopifyGid, ...fields },
-    update: fields,
+  // Insert-if-absent, then a guarded update. The UPDATE's WHERE is re-checked under the
+  // row lock, so a concurrent newer write can't be clobbered between read and write.
+  const { count: created } = await db.shopOrder.createMany({
+    data: [{ shopifyGid: order.shopifyGid, ...fields }],
+    skipDuplicates: true,
   });
+  if (created === 0) {
+    const { count: updated } = await db.shopOrder.updateMany({
+      where: {
+        storeId,
+        shopifyGid: order.shopifyGid,
+        OR: order.updatedAt ? [{ updatedAt: null }, { updatedAt: { lte: order.updatedAt } }] : [{ updatedAt: null }],
+      },
+      data: fields,
+    });
+    if (updated === 0) return; // stored row is newer — leave it and its children alone
+  }
 
   // Reconcile line items by GID: upsert present ones, soft-mark absent ones.
   const incoming = new Set(order.lines.map((l) => l.lineGid));
