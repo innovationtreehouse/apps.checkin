@@ -13,6 +13,7 @@
 import { POST } from '@/app/api/attendance/manual/route';
 import { DELETE } from '@/app/api/attendance/manual/[id]/route';
 import prisma from '@/lib/prisma';
+import { getFullAttendance } from '@/lib/getFullAttendance';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -98,5 +99,39 @@ describe('tombstoned open visit does not block the next check-in', () => {
         expect(await prisma.visit.count({
             where: { personId: subjectId, departedAt: null, deletedAt: null },
         })).toBe(1);
+    });
+
+    it('a tombstoned open visit leaves the cached kiosk roster', async () => {
+        await prisma.visit.deleteMany({ where: { personId: subjectId } });
+        // A second keyholder stays present, so the delete doesn't close the
+        // facility (whose close path refreshes the cache on its own).
+        const other = await prisma.person.create({
+            data: {
+                email: `other-${EMAIL_TAG}@example.com`,
+                name: 'Tombstone Other Keyholder',
+                isKeyholder: true,
+                householdId,
+                visits: { create: { arrivedAt: new Date(Date.now() - 120000) } },
+            },
+        });
+
+        try {
+            const created = await POST(openVisitRequest()) as Response;
+            expect(created.status).toBe(201);
+            const visitId = (await created.json()).visit.id as number;
+
+            // Warm the cache with the visit on the roster.
+            const before = await getFullAttendance({ kiosk: true });
+            expect(before.attendance.map(v => v.id)).toContain(visitId);
+
+            const deleted = await DELETE(deleteRequest(), { params: Promise.resolve({ id: String(visitId) }) } as never);
+            expect(deleted.status).toBe(200);
+
+            const after = await getFullAttendance({ kiosk: true });
+            expect(after.attendance.map(v => v.id)).not.toContain(visitId);
+        } finally {
+            await prisma.visit.deleteMany({ where: { personId: other.id } });
+            await prisma.person.delete({ where: { id: other.id } });
+        }
     });
 });

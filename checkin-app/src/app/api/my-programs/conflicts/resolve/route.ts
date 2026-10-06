@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { intervalsOverlap } from "@/lib/attendanceConflicts";
 import { apiError } from "@/lib/api-response";
 import { deleteSignificance } from "@/lib/visit/significance";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 /**
  * Resolve an attendance conflict by deleting one of the duplicate Visit rows.
@@ -105,6 +106,7 @@ export const POST = withAuth({}, async (req, auth) => {
   }, { maxWait: 5000, timeout: 15000 });
 
   if (failure) return apiError(failure.error, failure.status);
+  invalidateAttendanceCache();
 
   return NextResponse.json({ success: true, deletedVisitId: visit.id });
 });
