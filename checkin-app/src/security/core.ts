@@ -56,20 +56,61 @@ import {
     classifications as catalogSyntheticClassifications,
     relations as catalogSyntheticRelations,
 } from './catalogSyntheticClassifications';
+import * as inventoryGenerated from './generated/inventory-classifications';
+import * as inventorySynthetic from './inventorySyntheticClassifications';
+import * as expenseGenerated from './generated/expense-classifications';
+import * as expenseSynthetic from './expenseSyntheticClassifications';
+import * as incomeGenerated from './generated/income-classifications';
+import * as incomeSynthetic from './incomeSyntheticClassifications';
+import * as donationGenerated from './generated/donation-classifications';
+import * as donationSynthetic from './donationSyntheticClassifications';
+import * as workflowGenerated from './generated/workflow-classifications';
+import * as workflowSynthetic from './workflowSyntheticClassifications';
+import * as receiptGenerated from './generated/receipt-classifications';
+import * as receiptSynthetic from './receiptSyntheticClassifications';
 import type { BusinessRole } from '@/types/auth';
 import { assertNever } from '@/lib/lifecycle/classify';
 
-// checkin and the global catalog (#1286 §5) keep separate Prisma schemas, each
-// with its own `generator security` map. Their model names are disjoint
-// (enforced by having no shared schema), so a flat merge is the whole-system
-// classification map every boundary consumer (stripper, outbound, registry)
-// reads through. This is the single merge point — import `classifications` /
-// `relations` from here, not from either generated file.
-// The synthetic map adds non-Prisma response models (e.g. CatalogItemCount, a
-// count endpoint's scalar total — #1286 §7); its keys are disjoint from both
-// generated maps, so the flat merge stays unambiguous.
-export const classifications = { ...checkinClassifications, ...catalogClassifications, ...catalogSyntheticClassifications } as const;
-export const relations = { ...checkinRelations, ...catalogRelations, ...catalogSyntheticRelations } as const;
+// Every classification source: checkin's schema, each vendored library's schema
+// (#1286 §5, its own `generator security` map), and hand-authored synthetic
+// response models (e.g. CatalogItemCount — #1286 §7). The flat merge below is
+// the whole-system map every boundary consumer (stripper, outbound, registry)
+// reads through — import `classifications` / `relations` from here, not from a
+// source file. Model keys must be disjoint across sources, or a later source
+// silently overwrites an earlier one; __tests__/classification-sources.test.ts
+// enforces that.
+export const CLASSIFICATION_SOURCES = [
+    { source: 'checkin', classifications: checkinClassifications, relations: checkinRelations },
+    { source: 'global-catalog', classifications: catalogClassifications, relations: catalogRelations },
+    { source: 'catalog-synthetic', classifications: catalogSyntheticClassifications, relations: catalogSyntheticRelations },
+    { source: 'inventory', classifications: inventoryGenerated.classifications, relations: inventoryGenerated.relations },
+    { source: 'inventory-synthetic', classifications: inventorySynthetic.classifications, relations: inventorySynthetic.relations },
+    { source: 'expense', classifications: expenseGenerated.classifications, relations: expenseGenerated.relations },
+    { source: 'expense-synthetic', classifications: expenseSynthetic.classifications, relations: expenseSynthetic.relations },
+    { source: 'income', classifications: incomeGenerated.classifications, relations: incomeGenerated.relations },
+    { source: 'income-synthetic', classifications: incomeSynthetic.classifications, relations: incomeSynthetic.relations },
+    { source: 'donation', classifications: donationGenerated.classifications, relations: donationGenerated.relations },
+    { source: 'donation-synthetic', classifications: donationSynthetic.classifications, relations: donationSynthetic.relations },
+    { source: 'workflow', classifications: workflowGenerated.classifications, relations: workflowGenerated.relations },
+    { source: 'workflow-synthetic', classifications: workflowSynthetic.classifications, relations: workflowSynthetic.relations },
+    { source: 'receipt', classifications: receiptGenerated.classifications, relations: receiptGenerated.relations },
+    { source: 'receipt-synthetic', classifications: receiptSynthetic.classifications, relations: receiptSynthetic.relations },
+] as const;
+
+type ClassificationSource = (typeof CLASSIFICATION_SOURCES)[number];
+type MergeSources<S extends readonly ClassificationSource[], K extends 'classifications' | 'relations'> =
+    S extends readonly [infer Head extends ClassificationSource, ...infer Rest extends readonly ClassificationSource[]]
+        ? Head[K] & MergeSources<Rest, K>
+        : unknown;
+
+function mergeSources(key: 'classifications' | 'relations'): Record<string, unknown> {
+    const merged: Record<string, unknown> = {};
+    for (const s of CLASSIFICATION_SOURCES) Object.assign(merged, s[key]);
+    return merged;
+}
+
+export const classifications = mergeSources('classifications') as MergeSources<typeof CLASSIFICATION_SOURCES, 'classifications'>;
+export const relations = mergeSources('relations') as MergeSources<typeof CLASSIFICATION_SOURCES, 'relations'>;
 
 export type Models = keyof typeof classifications;
 export type FieldsOf<M extends Models> = keyof (typeof classifications)[M];
