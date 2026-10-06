@@ -226,7 +226,9 @@ call to the bearer's org; in-process there is no bearer, so the callee's input
 schema checks that the payload's `orgId` is the injected org and rejects any
 other. Here that is `ingestReceipt` (S1, §8a) and the S5 handler (§8e); expense
 (S2), donations (X9), local-inventory (S3) and catalog (S4) assert the same in
-their own parses.
+their own parses. The org is only known at runtime, so the check is a
+refinement built at call time from `org()` (or a check straight after the
+parse), never part of a schema constant defined at import.
 
 **Inert means "queue, never pretend".** An inert S2/S3 adapter throws
 `not wired`, so a pushed receipt waits in `apply_failed` for the flip. A no-op
