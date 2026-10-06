@@ -28,6 +28,14 @@ marketplace sales tax and advances are dropped.
 
 ## Before loading
 
+0. **Wait for the mirror provenance fix.** Today `inject` tags only the
+   `shopify_raw_event` row; the projected `shop_*` rows carry no provenance, so a
+   hand-loaded payout or order is indistinguishable from Shopify data, and
+   `inject` has no production guard, actor or reason. The load runs only after the
+   fix that marks hand-loaded rows in the live `shop_*` tables and guards
+   `inject` ("Mark and guard hand-loaded Shopify mirror rows", owned outside the
+   port) is deployed to the target environment. Income reads that mark (§2 of the
+   design).
 1. **Trim every export to dates before s-read's `CUTOVER_DATE`.** Rows from the
    cutover on already came from the API under the same Shopify ids. Loading them
    would overwrite those rows with the less detailed CSV values.
@@ -73,7 +81,8 @@ Load dev first, then prod.
 ## Done when
 
 - The `HAND_LOADED` count in `shopify_raw_event` matches the fixture count, in
-  prod.
+  prod, and the same rows carry the hand-loaded mark in the live `shop_*`
+  tables.
 - The `TXN_SUM_MISMATCH` rows from step 3 and the new `ORDER_NOT_IN_MIRROR`
   gaps are each either explained or cleared.
 

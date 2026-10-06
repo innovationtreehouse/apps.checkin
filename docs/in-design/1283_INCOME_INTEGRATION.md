@@ -131,9 +131,13 @@ and never imports `s-ingest-core`; the mirror has no `generator security`, so
 nothing of it enters the classification map. Column lists exclude
 `customer_email` / `customer_name`. Income never needs to know who bought.
 
-Loaded history and API data look the same to income. The one difference: a
-loaded payout whose id the script could not recover has no transactions, so it
-lands as `TXN_SUM_MISMATCH` for finance rather than matching silently.
+**The mirror port exposes where each row came from.** `MirrorPayout` and
+`MirrorBalanceTxn` carry `source: "api" | "hand_loaded"`, read from the
+provenance mark the mirror fix adds to the live `shop_*` tables (migration doc,
+step 0). Payout detail and the reconciliation queue show it, so finance can tell
+loaded history from Shopify data. Matching treats both the same. A loaded payout
+whose id the script could not recover has no transactions, so it lands as
+`TXN_SUM_MISMATCH` for finance rather than matching silently.
 
 ## 3. QuickBooks: match before create
 
@@ -151,7 +155,12 @@ or skip what it hasn't entered yet. So every payout is **matched first**:
    finance has excluded. Old QuickBooks history is never walked.
 2. **Found:** record its id and mark the payout reconciled. Post nothing.
 3. **Not found, after the takeover line:** create the deposit (QB-2 write),
-   keyed so a retry never books twice.
+   keyed so a retry never books twice. **Gated on the mirror being
+   newest-wins.** s-read's `projectOrders` / `projectPayouts` do not keep the
+   newest version today: a backfill, bulk re-ingest or replay can revert a row to
+   older state. A deposit created from a reverted payout would book wrong amounts,
+   so step 3 stays off (the payout waits as `WAITING`) until that fix, owned
+   outside the port, is deployed. Matching (steps 1, 2, 4) does not wait.
 4. **Not found, before the line:** finance's queue. A gap among finance's own
    bookings is finance's to explain; the app never fills it.
 
@@ -270,7 +279,9 @@ and keep it `AMBIGUOUS`.
 boot.** checkin cannot add a cron route: `/api/cron/*` live in the frozen
 `legacy-authz-routes.txt`. Income's `runReconcile()` is a try/catch step in the
 existing prod `/api/cron/reconcile-shopify` handler, after checkin's own
-reconcile. It reads the same freshly synced mirror and costs no extra Aurora
+reconcile. The step is idempotent (advisory lock, §3), capped per run, and returns
+counts only (`IncomeReconciliationCount`): no payout ids, amounts or names in the
+cron response. It reads the same freshly synced mirror and costs no extra Aurora
 wake, so a new payout is booked within about a day. `configureIncome()` only
 stores what it is given: no database or QuickBooks access at app start, no
 recovery sweep, no schedule of its own. A `FINANCE` "run now" route and the
@@ -440,12 +451,14 @@ existing access. Income's tiering:
    QB, so the matching logic is covered by S's DB tier, not by flow tests.
 
 4. **Create path, a follow-up after L4 lands the shared find-or-create and the
-   QB-2 deposit write.** `packages/income` only: the engine calls the helper
+   QB-2 deposit write, and after the mirror newest-wins fix is deployed (§3,
+   step 3).** Writes go through #1272 §9's closed-enum, create-only writer
+   (Deposit, field-allowlisted, key looked up before create, per-run cap). `packages/income` only: the engine calls the helper
    instead of its own lookup, and step 3 goes live. No route, field or boundary
    change; the three PRs above already carry everything it needs.
 
 The historic CSV load is an operator step, not a PR; it can run before or after
-W (migration doc). QB-0 gates live matching and QB-2 gates creating, not any of
+W, and only after the mirror provenance fix (migration doc, step 0). QB-0 gates live matching and QB-2 gates creating, not any of
 these PRs.
 
 **Crossings: none.** Income calls no other library and no library calls
