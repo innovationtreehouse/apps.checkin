@@ -41,11 +41,11 @@ checkin, and every decision is audited.
   booking by hand and the match records those deposits.
 - **Some items book to their own QuickBooks class.** Finance maps a Shopify
   item to a budget-owner bucket, checkin's table whose QuickBooks reference is a
-  Class (owner decision D4; the same buckets bulk donation and expense use). A
+  Class (owner decision; the same buckets bulk donation and expense use). A
   deposit the app creates splits the payout across those classes; unmapped
   items book at organization level.
-- **Check, cash and grant income stay out of scope for good** (owner decision
-  D6). They are pure QuickBooks work, and the system does not duplicate them.
+- **Check, cash and grant income stay out of scope for good** (owner
+  decision). They are pure QuickBooks work, and the system does not duplicate them.
 - **Cost:** a four-model library on its own database, three read-only ports,
   and one call added to an existing daily cron. No pipeline crossings.
 
@@ -97,7 +97,7 @@ them, so H3 gates this lane only through `quickbooks`.
 | `csv-to-fixtures.mjs` | **Used once, from the Inventory repo at a pinned SHA**, not ported | migration doc |
 | QuickBooks reconciliation | **Net-new** | The backlog item's headline; absent from the source |
 
-**Out of scope for good (D6):** check, cash and grant income. Finance books it
+**Out of scope for good (owner decision):** check, cash and grant income. Finance books it
 in QuickBooks directly; income has no record of it and never will. Those
 deposits can land in the same bank account as payouts; §3's exclusions keep
 them out of a payout's candidates when the amounts collide.
@@ -141,9 +141,12 @@ whose id the script could not recover has no transactions, so it lands as
 
 ## 3. QuickBooks: match before create
 
-Income applies the matching model shared by expense, bulk donation and in-kind
-(`INVENTORY_PORT_RECONCILIATION.md`, "The matching model"), first set by bulk
-donation for this problem (#1280 §7). Finance
+Income applies the matching model the owner set for every lane that books to
+QuickBooks (expense, bulk donation and in-kind), first worked out by bulk
+donation for this problem (#1280 §7). Its rules are stated in full here: our
+own unmatched records drive narrow searches, a QuickBooks entry is claimed by
+one record at most, finance can exclude an entry for good, and more than one
+candidate always goes to a person. Finance
 books by hand today, so older payouts are already in QuickBooks and newer ones
 are not. Posting by age alone would double-book what finance entered recently,
 or skip what it hasn't entered yet. So every payout is **matched first**:
@@ -189,8 +192,8 @@ Owned by L4, alongside:
 - **One connection.** checkin-app builds one `AccessTokenSource` (the
   Secrets-Manager read adapter) and injects the same instance into
   `configureExpense()`, `configureIncome()` and bulk donation's configure call.
-  That requires the type to live in `packages/quickbooks`, not in expense's
-  `contract.ts` where #1272 §9 places it. **Owner-approved; handed to L4 (QB-0).**
+  That requires the type to live in `packages/quickbooks`, so neither library
+  imports the other. **Owner-approved; handed to L4 (QB-0).**
 - **Read:** a windowed deposit read, `depositsBetween(from, to)` (Deposit
   `WHERE TxnDate BETWEEN …`), in the QB-0 PR. It replaces the `depositsSince`
   income asked for earlier, which would walk history. Income's adapter keeps only `{ id, txnDate, totalCents,
@@ -257,8 +260,8 @@ form of the source's conflict queue. In the shared model's vocabulary, income's
 ### Exclusions: `IncomeQbMatchExclusion`
 
 Finance can permanently remove a QuickBooks deposit from candidacy (owner
-decision D5), with one click and a reason. The usual case for income is a check
-or cash deposit (out of scope, D6) whose amount and date collide with a payout
+decision), with one click and a reason. The usual case for income is a check
+or cash deposit (out of scope, above) whose amount and date collide with a payout
 and keep it `AMBIGUOUS`.
 
 - **Model:** `IncomeQbMatchExclusion { orgId, qbTxnId, reason, excludedByUserId, excludedAt }`
@@ -291,7 +294,7 @@ recovery sweep, no schedule of its own. A `FINANCE` "run now" route and the
 
 Certain items have to book to their own QuickBooks category (owner decision).
 A QuickBooks category is a **budget-owner bucket**: checkin owns that table, its
-QuickBooks reference is a **Class** id (owner decision D4), and the expense lane
+QuickBooks reference is a **Class** id (owner decision), and the expense lane
 builds it (#1280 §6). Income reuses it instead of keeping a second
 list:
 
@@ -452,8 +455,11 @@ existing access. Income's tiering:
 
 4. **Create path, a follow-up after L4 lands the shared find-or-create and the
    QB-2 deposit write, and after the mirror newest-wins fix is deployed (§3,
-   step 3).** Writes go through #1272 §9's closed-enum, create-only writer
-   (Deposit, field-allowlisted, key looked up before create, per-run cap). `packages/income` only: the engine calls the helper
+   step 3).** Writes go through the single create-only QuickBooks writer L4
+   builds in `packages/quickbooks` (Deposit, field-allowlisted, key looked up
+   before create, per-run cap). The Deposit write is owned by the QuickBooks lane
+   (L4) and has no other owner today: #1272 §9's QB-2 writer list does not name
+   it yet. `packages/income` only: the engine calls the helper
    instead of its own lookup, and step 3 goes live. No route, field or boundary
    change; the three PRs above already carry everything it needs.
 
@@ -465,7 +471,7 @@ these PRs.
 income. Its dependencies are host-provided (the mirror bridge, the QB token
 source, checkin's bucket table) and one shared package. Cross-lane touches: L3
 builds the bucket table; L4's `packages/quickbooks` carries the
-`AccessTokenSource` location, `depositsBetween`, the Class reader (D4), the
+`AccessTokenSource` location, `depositsBetween`, the Class reader, the
 deposit write, and the stateless find-or-create shared with the other lanes
 (§3).
 
