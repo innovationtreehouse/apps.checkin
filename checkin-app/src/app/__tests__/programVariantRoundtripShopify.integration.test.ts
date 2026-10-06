@@ -52,7 +52,7 @@ function webhookReq(body: string, secret: string) {
     const signature = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('base64');
     return new Request('http://localhost/api/webhooks/shopify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-shopify-hmac-sha256': signature },
+        headers: { 'Content-Type': 'application/json', 'x-shopify-topic': 'orders/paid', 'x-shopify-hmac-sha256': signature },
         body,
     });
 }
@@ -142,6 +142,7 @@ describe('Shopify variant round-trip: create -> persist -> webhook match', () =>
         // above, not a hand-seeded literal (the gap every other Shopify test
         // leaves open).
         const orderBody = JSON.stringify({
+            financial_status: 'paid',
             id: `roundtrip-order-${data.program.id}`,
             line_items: [{ variant_id: data.program.shopifyVariantId }],
             note_attributes: [

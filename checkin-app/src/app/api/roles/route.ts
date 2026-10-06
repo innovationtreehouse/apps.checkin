@@ -16,6 +16,7 @@ import {
 } from "@/lib/roles";
 import { personActor } from "@/lib/auditActor";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { isYouth } from "@/lib/time";
 
 const PERSON_SELECT = {
@@ -167,6 +168,8 @@ export const PATCH = withAuth(
                     },
                 };
             });
+            // isKeyholder drives the roster's keyholder count and the close logic.
+            invalidateAttendanceCache();
 
             return NextResponse.json({ message: "Roles updated successfully", user: result.user });
         } catch (error) {

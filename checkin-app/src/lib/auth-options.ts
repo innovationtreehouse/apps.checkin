@@ -163,6 +163,22 @@ const BOOTSTRAP_SYSADMINS = (process.env.BOOTSTRAP_SYSADMINS || "")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
 
+/**
+ * Whether a VolunteerDesignation exists for this email (#1286 catalog-viewer
+ * leg). Designations are keyed by email (no Person FK), so this can't ride the
+ * person load's includes; the JWT callback resolves it and passes the result to
+ * assignParticipantClaims, giving the session the full catalog-viewer signal the
+ * server gate uses (access-resolvers 'catalog-viewer'). Indexed lookup on a
+ * @unique column; null email (never a designation) skips the query.
+ */
+async function hasVolunteerDesignation(email: string | null | undefined): Promise<boolean> {
+    if (!email) return false;
+    const designation = await withAuroraResumeRetry(() =>
+        prisma.volunteerDesignation.findUnique({ where: { email }, select: { id: true } }),
+    );
+    return !!designation;
+}
+
 export const authOptions: NextAuthOptions = {
     debug: config.isDevInstance(),
     adapter: patchedAdapter,
@@ -375,7 +391,10 @@ export const authOptions: NextAuthOptions = {
 
                     // Stamp authority claims, applying the household login gate (a board
                     // "Deny Membership" forces denied=true and strips every role flag).
-                    assignParticipantClaims(token, dbParticipant);
+                    assignParticipantClaims(token, {
+                        ...dbParticipant,
+                        hasVolunteerDesignation: await hasVolunteerDesignation(dbParticipant.email),
+                    });
                 }
             } else if (token.id) {
                 // On every subsequent request (no `user` present), re-sync authority
@@ -415,7 +434,10 @@ export const authOptions: NextAuthOptions = {
                 // Re-stamp claims on every request so a board "Deny Membership" takes effect
                 // within the token's refresh window (updateAge), not only at next sign-in.
                 // assignParticipantClaims forces denied=true and clears all roles when DENIED.
-                assignParticipantClaims(token, dbParticipant);
+                assignParticipantClaims(token, {
+                    ...dbParticipant,
+                    hasVolunteerDesignation: await hasVolunteerDesignation(dbParticipant.email),
+                });
             }
             return token;
         },
@@ -438,6 +460,8 @@ export const authOptions: NextAuthOptions = {
                 session.user.emailVerified = token.emailVerified ?? false;
                 // ops-stg access gate escape hatch — see lib/config.ts isStagingAccessAllowed.
                 session.user.canAccessStaging = token.canAccessStaging ?? false;
+                // Catalog-viewer volunteer leg (#1286) — completes the client gate.
+                session.user.hasVolunteerDesignation = token.hasVolunteerDesignation ?? false;
             }
             return session;
         }

@@ -232,6 +232,18 @@ describe('Eligible Participants API Integration Tests', () => {
              expect(res.status).toBe(401);
         });
 
+        // The shape NextAuth builds when the jwt re-sync misses (person merged away or
+        // deleted) and returns an empty token: a user object with no id. An undefined id
+        // in a Prisma `where` drops the filter, so this must never reach the resolvers.
+        it('should return 401 for a session whose user has no id', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({
+                 user: { name: undefined, email: undefined, image: undefined },
+             });
+
+             const res = await GET(createReq(publicProgramId, 'Candidate'), createParams(publicProgramId));
+             expect(res.status).toBe(401);
+        });
+
         it('should return 404 Not Found for non-existent program', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
 

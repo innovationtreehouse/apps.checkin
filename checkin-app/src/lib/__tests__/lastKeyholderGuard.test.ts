@@ -108,4 +108,15 @@ describe("lastKeyholderGuard", () => {
         expect(result.names).toContain("jane.doe");
         expect(result.names).not.toContain("@");
     });
+
+    it("names people by first name, never a last name", async () => {
+        const db = fakeDb({
+            remainingUsers: [{ name: "Riley Thompson", email: null }, { name: "Riley Tan", email: null }],
+        });
+        const result = await lastKeyholderGuard(42, { isKeyholder: true }, null, db);
+
+        if (result.action !== "warn") throw new Error("expected warn");
+        expect(result.names).toBe("Riley Th., Riley Ta.");
+        expect(result.message).not.toMatch(/Thompson|Tan\b/);
+    });
 });

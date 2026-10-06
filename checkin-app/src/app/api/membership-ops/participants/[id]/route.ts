@@ -5,6 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -87,6 +88,8 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
                 household: true
             }
         });
+        // Name, DOB/adult and keyholder fields all feed the live roster.
+        invalidateAttendanceCache();
 
         await prisma.auditLog.create({
             data: {

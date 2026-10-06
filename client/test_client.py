@@ -421,6 +421,12 @@ class TestExampleConfigMatchesDefaults(unittest.TestCase):
 class TestForceCloseConfirm(unittest.TestCase):
     """§5.23 explicit confirm: the warning arms a token, the next scan spends it."""
 
+    def setUp(self):
+        # These drive the second badge immediately; the dead-front has its own test.
+        patcher = patch("client.CONFIRM_DEADFRONT_SECONDS", 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_post_scan_sends_displayed_intent(self):
         client = BackendClient("http://fake", SigningKey(b"\x00" * 32))
         client.session = MagicMock()
@@ -477,14 +483,47 @@ class TestForceCloseConfirm(unittest.TestCase):
 
     def test_token_is_single_use_and_dies_with_the_countdown(self):
         state = AttendanceState()
-        self.assertIsNone(state.take_confirm())
+        self.assertIsNone(state.take_confirm(7))
+        state.arm_confirm(7, "tok", 15)
+        self.assertIsNone(state.take_confirm(5), "another badge must not consume it")
+        self.assertEqual(state.take_confirm(7), "tok")
+        self.assertIsNone(state.take_confirm(7), "a spent token must not confirm twice")
+        state.arm_confirm(7, "tok", 0)  # countdown already over
+        self.assertIsNone(state.take_confirm(7), "an expired countdown confirms nothing")
 
-        state.arm_confirm("tok", 15)
-        self.assertEqual(state.take_confirm(), "tok")
-        self.assertIsNone(state.take_confirm(), "a spent token must not confirm twice")
+    def test_a_double_read_inside_the_dead_front_is_dropped(self):
+        """A scanner reading the checkout badge twice must not confirm the close
+        (online or offline), nor toggle the keyholder back IN."""
+        state = AttendanceState()
+        state.push_event = lambda event: None
+        backend = Mock(attendance_path=None)
+        state.arm_confirm(7, "tok-1", 15)
+        state.arm_local_close(9, 15)
+        outbox = Outbox(":memory:")
 
-        state.arm_confirm("tok", 0)  # countdown already over
-        self.assertIsNone(state.take_confirm(), "an expired countdown confirms nothing")
+        with patch("client.CONFIRM_DEADFRONT_SECONDS", 1.0):
+            handle_scan(backend, state, outbox, 7)
+            handle_scan(backend, state, outbox, 9)
+
+        backend.post_scan.assert_not_called()
+        self.assertEqual(outbox.pending_rows(), [])
+        state.confirm_armed_at -= 2
+        self.assertEqual(state.take_confirm(7), "tok-1", "still armed for the real second badge")
+
+    def test_another_badge_during_the_countdown_scans_normally(self):
+        """A member arriving while a keyholder's close offer counts down is an
+        ordinary IN -- never pinned OUT with the keyholder's token."""
+        state = AttendanceState()
+        state.push_event = lambda event: None
+        state.arm_confirm(7, "tok-1", 15)
+        backend = Mock(attendance_path=None)
+        backend.post_scan.return_value = ({"type": "checkin", "participant": {"id": 5}}, 200, None)
+
+        handle_scan(backend, state, Outbox(":memory:"), 5)
+
+        self.assertEqual(backend.post_scan.call_args.kwargs["intent"], "IN")
+        self.assertIsNone(backend.post_scan.call_args.kwargs["force_close_token"])
+        self.assertEqual(state.take_confirm(7), "tok-1", "the keyholder's confirm survives")
 
     def test_warning_arms_the_countdown_and_the_next_scan_confirms(self):
         state = AttendanceState()
@@ -537,12 +576,43 @@ class TestForceCloseConfirm(unittest.TestCase):
                          "the confirm must repeat OUT, not toggle to IN")
         self.assertEqual(backend.post_scan.call_args.kwargs["force_close_token"], "tok-1")
 
+    def test_checkout_close_offer_arms_the_countdown_and_the_next_scan_closes_as_out(self):
+        """Another keyholder is still recorded inside: the checkout goes through
+        and offers the close. The second badge echoes the token as OUT."""
+        state = AttendanceState()
+        events = []
+        state.push_event = events.append
+        state.present_ids.add(7)
+        backend = Mock(attendance_path=None)
+        backend.post_scan.return_value = ({
+            "type": "checkout", "message": "Checked out successfully",
+            "participant": {"id": 7, "name": "Kim"},
+            "closePrompt": "Others are still recorded inside. Badge again within 15 seconds to close the building.",
+            "forceCloseToken": "tok-offer", "confirmSeconds": 15,
+        }, 200, None)
+
+        handle_scan(backend, state, Outbox(":memory:"), 7)
+
+        self.assertEqual(events[0]["countdown"], 15)
+        self.assertIn("CHECKED OUT", events[0]["html"])
+        self.assertIn("close the building", events[0]["html"])
+        self.assertIn("banner-warning", events[0]["html"])
+
+        backend.post_scan.return_value = ({
+            "type": "checkout", "message": "Facility closed", "facilityClosed": True,
+            "participant": {"id": 7, "name": "Kim"},
+        }, 200, None)
+        handle_scan(backend, state, Outbox(":memory:"), 7)
+
+        self.assertEqual(backend.post_scan.call_args.kwargs["intent"], "OUT")
+        self.assertEqual(backend.post_scan.call_args.kwargs["force_close_token"], "tok-offer")
+
     def test_a_queued_confirm_carries_its_token_into_the_outbox(self):
         """Without this the drain replays token-less and the server parks the
         close for review -- silently undoing the confirm the keyholder gave."""
         state = AttendanceState()
         state.push_event = lambda event: None
-        state.arm_confirm("tok-1", 15)
+        state.arm_confirm(7, "tok-1", 15)
         outbox = Outbox(":memory:")
         backend = Mock(attendance_path=None)
         backend.post_scan.return_value = ({"error": "unreachable"}, 0, None)
@@ -558,7 +628,7 @@ class TestForceCloseConfirm(unittest.TestCase):
         state.push_event = lambda event: None
         outbox = Outbox(":memory:")
         outbox.enqueue("evt-0", 7, "2026-08-21T10:00:00+00:00")
-        state.arm_confirm("tok-2", 15)
+        state.arm_confirm(7, "tok-2", 15)
         backend = Mock(attendance_path=None)
 
         handle_scan(backend, state, outbox, 7)
@@ -683,6 +753,12 @@ class TestOfflineForceClose(unittest.TestCase):
     """Offline the server mints no token, so the kiosk runs the last-keyholder
     warning + two-scan confirm itself and flags the queued close as confirmed."""
 
+    def setUp(self):
+        # These drive the second badge immediately; the dead-front has its own test.
+        patcher = patch("client.CONFIRM_DEADFRONT_SECONDS", 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     ROSTER = {
         "attendance": [
             {"participant": {"id": 9, "isKeyholder": True}},
@@ -709,14 +785,20 @@ class TestOfflineForceClose(unittest.TestCase):
         state = self._state(two_deep_violation=True)
         self.assertEqual(state.keyholder_ids, {9})
         self.assertTrue(state.last_two_deep_violation)
-        self.assertTrue(state.offline_last_keyholder(9))
-        self.assertFalse(state.offline_last_keyholder(5), "a non-keyholder is never the last keyholder")
+        self.assertTrue(state.offline_close_offer(9))
+        self.assertFalse(state.offline_close_offer(5), "a non-keyholder never closes the building")
 
-    def test_not_last_keyholder_when_another_keyholder_present(self):
+    def test_close_offered_when_another_keyholder_is_recorded_inside(self):
+        # The other keyholder may be a forgotten badge-out: any keyholder can close.
         state = self._state()
         state.keyholder_ids = {9, 3}
         state.current_counts = {"keyholders": 2, "total": 3}
-        self.assertFalse(state.offline_last_keyholder(9))
+        self.assertTrue(state.offline_close_offer(9))
+
+    def test_no_close_offer_for_a_keyholder_alone(self):
+        state = self._state()
+        state.current_counts = {"keyholders": 1, "total": 1}
+        self.assertFalse(state.offline_close_offer(9))
 
     def test_local_close_is_bound_single_use_and_expires(self):
         state = AttendanceState()
@@ -738,7 +820,7 @@ class TestOfflineForceClose(unittest.TestCase):
         handle_scan(backend, state, ob, 9)
 
         self.assertIn("banner-warning", events[-1]["html"])
-        self.assertIn("last key holder", events[-1]["html"].lower())
+        self.assertIn("badge again to close", events[-1]["html"].lower())
         self.assertEqual(events[-1]["countdown"], FORCE_CLOSE_CONFIRM_SECONDS)
         self.assertFalse(backend.post_scan.call_args.kwargs["force_close_confirmed"])
         rows = ob.pending_rows()

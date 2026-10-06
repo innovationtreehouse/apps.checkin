@@ -303,7 +303,7 @@ export function SystemVersionBox() {
         setCurrentVersion(currentSha);
 
         if (currentSha && !currentSha.startsWith('unknown')) {
-          const ghRes = await fetch('https://api.github.com/repos/innovationtreehouse/checkin/commits/main');
+          const ghRes = await fetch('https://api.github.com/repos/innovationtreehouse/apps.checkin/commits/main');
           if (!ghRes.ok) throw new Error('Failed to fetch latest version from GitHub');
 
           const ghData = await ghRes.json();
@@ -311,7 +311,7 @@ export function SystemVersionBox() {
           setLatestVersion(latestSha);
 
           if (latestSha && currentSha !== latestSha && !latestSha.startsWith(currentSha)) {
-            const compRes = await fetch(`https://api.github.com/repos/innovationtreehouse/checkin/compare/${currentSha}...main`);
+            const compRes = await fetch(`https://api.github.com/repos/innovationtreehouse/apps.checkin/compare/${currentSha}...main`);
             if (compRes.ok) {
               const compData = await compRes.json();
               if (compData.commits) {
@@ -361,7 +361,7 @@ export function SystemVersionBox() {
           </Text>
 
           <Anchor
-            href={`https://github.com/innovationtreehouse/checkin/compare/${currentVersion}...main`}
+            href={`https://github.com/innovationtreehouse/apps.checkin/compare/${currentVersion}...main`}
             target="_blank"
             rel="noopener noreferrer"
           >

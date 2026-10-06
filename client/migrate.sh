@@ -16,7 +16,7 @@ NEW_DIR="$HOME/checkin"
 NEW_CLIENT_DIR="$NEW_DIR/client"
 BACKUP_DIR="$HOME/checkin-client.old"
 AUTOSTART="$HOME/.config/openbox/autostart"
-MONOREPO_URL="${MONOREPO_URL:-git@github.com:innovationtreehouse/checkin.git}"
+MONOREPO_URL="${MONOREPO_URL:-git@github.com:innovationtreehouse/apps.checkin.git}"
 
 log()  { echo "[migrate] $*"; }
 fail() { echo "[migrate] ERROR: $*" >&2; exit 1; }

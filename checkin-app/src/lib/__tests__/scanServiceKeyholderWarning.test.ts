@@ -1,7 +1,9 @@
 /**
- * The last-keyholder warning is rendered on the kiosk screen. `Person.email` is
- * tier `pii`, so a person with no `name` must degrade to the email local-part —
- * never the full address (#329).
+ * The last-keyholder warning is rendered on the kiosk screen, a public display
+ * that mostly lists minors. It names people the way the kiosk roster does —
+ * nickname, else first name, last initial only to tell two apart — never a last
+ * name; a person with no `name` degrades to the email local-part, never the
+ * address (docs/rules/attendance-checkin.md, "The kiosk").
  *
  * The force close itself is bound to that warning: it proceeds only for a scan
  * echoing the confirm token minted with it, never for two badge events that
@@ -64,8 +66,19 @@ it("prefers the name when set, and mixes both without leaking", async () => {
         { name: "   ", email: "blank.name@example.com" },
     ]);
 
-    expect(body.error).toContain("Alex Rivera, blank.name");
+    expect(body.error).toContain("Alex, blank.name");
     expect(body.error).not.toContain("@");
+});
+
+it("never shows a last name — only the initial that tells two people apart", async () => {
+    const body = await warningFor([
+        { name: "Sam Lee", email: null },
+        { name: "Sam Park", email: null },
+        { name: "Jordan Quinlan-Smith", email: null },
+    ]);
+
+    expect(body.error).toContain("Sam L., Sam P., Jordan");
+    expect(body.error).not.toMatch(/Lee|Park|Quinlan|Smith/);
 });
 
 it("omits a person with neither name nor email rather than rendering an empty slot", async () => {

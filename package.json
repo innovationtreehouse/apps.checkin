@@ -15,6 +15,7 @@
     "test": "npm -w checkin-app run test",
     "db:generate:test": "npm run db:generate -w @inventory/s-ingest-core && npm run db:generate -w @inventory/monitoring-db && npm run db:generate -w @inventory/global-catalog",
     "pretest:packages": "npm run db:generate:test",
+    "check:library-boundaries": "node scripts/check-library-boundaries.mjs",
     "test:packages": "npm run test -w ./packages --if-present",
     "pretest:functions": "npm run db:generate:test",
     "test:functions": "npm run test -w s-read-function -w s-replay-function -w monitoring-relay-function -w monitoring-watchdog-function --if-present",

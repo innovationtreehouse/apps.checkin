@@ -71,6 +71,31 @@ describeDb("projection into live tables (real Postgres)", () => {
     expect(await prisma.shopifyRawEvent.count({ where: { storeId: STORE, objectType: ObjectType.ORDER } })).toBe(2);
   });
 
+  it("ignores an OLDER payload arriving after a newer one (newest-wins on updatedAt)", async () => {
+    const newer = orderNode({
+      updatedAt: "2026-03-01T00:00:00Z",
+      cancelledAt: "2026-03-01T00:00:00Z",
+      displayFinancialStatus: "REFUNDED",
+      totalRefundedSet: { shopMoney: { amount: "100.00", currencyCode: "USD" } },
+      lineItems: { nodes: [] },
+      refunds: [{ id: "gid://shopify/Refund/3001", createdAt: "2026-03-01T00:00:00Z", totalRefundedSet: { shopMoney: { amount: "100.00", currencyCode: "USD" } } }],
+    });
+    await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node: newer }], { storeId: STORE });
+    await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node: orderNode() }], { storeId: STORE });
+
+    const row = await prisma.shopOrder.findUnique({
+      where: { storeId_shopifyGid: { storeId: STORE, shopifyGid: "gid://shopify/Order/1001" } },
+    });
+    expect(row?.financialStatus).toBe("REFUNDED");
+    expect(row?.totalRefundedCents).toBe(10000);
+    expect(row?.cancelledAt).not.toBeNull();
+    expect(row?.updatedAt?.toISOString()).toBe("2026-03-01T00:00:00.000Z");
+    // The stale node's line item is not projected either — children follow the order guard.
+    expect(await prisma.shopOrderLine.count({ where: { storeId: STORE } })).toBe(0);
+    // The stale payload is still logged; only projection is skipped.
+    expect(await prisma.shopifyRawEvent.count({ where: { storeId: STORE, objectType: ObjectType.ORDER } })).toBe(2);
+  });
+
   it("stores signed balance transactions whose nets sum to the payout net", async () => {
     const fixtures = [
       { objectType: ObjectType.PAYOUT, node: { id: "gid://shopify/ShopifyPaymentsPayout/5001", net: { amount: "77.00", currencyCode: "USD" }, status: "PAID", issuedAt: "2026-02-05T00:00:00Z" } },
@@ -82,7 +107,7 @@ describeDb("projection into live tables (real Postgres)", () => {
     const payout = await prisma.shopPayout.findUnique({
       where: { storeId_payoutGid: { storeId: STORE, payoutGid: "gid://shopify/ShopifyPaymentsPayout/5001" } },
     });
-    const txns = await prisma.shopBalanceTransaction.findMany({ where: { payoutGid: "gid://shopify/ShopifyPaymentsPayout/5001" } });
+    const txns = await prisma.shopBalanceTransaction.findMany({ where: { storeId: STORE, payoutGid: "gid://shopify/ShopifyPaymentsPayout/5001" } });
     const sum = txns.reduce((s, t) => s + t.netCents, 0);
 
     expect(payout?.netCents).toBe(7700);

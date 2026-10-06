@@ -171,6 +171,19 @@ export async function orderLineVariantIds(orderGid: string): Promise<string[]> {
     return rows.rows.map((r) => r.variantLegacyId);
 }
 
+/** One order's attributable lines with their quantities — the program seat count.
+ *  Lines an order edit removed are excluded; they were not paid for. */
+export async function orderLines(orderGid: string): Promise<{ variantId: string; quantity: number }[]> {
+    const p = getPool();
+    if (!p) return [];
+    const rows = await p.query<{ variantId: string; quantity: number }>(
+        `SELECT variant_legacy_id AS "variantId", quantity FROM shop_order_line
+         WHERE order_gid = $1 AND variant_legacy_id IS NOT NULL AND removed = false`,
+        [orderGid],
+    );
+    return rows.rows;
+}
+
 /** The `sync_run` columns the board needs to judge how fresh the mirror is. */
 export interface MirrorSyncRun {
     /**
