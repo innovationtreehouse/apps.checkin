@@ -134,6 +134,15 @@ Things the app takes as true because they are handled outside it.
 - Only what the app sells reconciles: a membership, or a program. Donations and
   merchandise pass through untouched.  [Decision]
 
+- A program order activates enrollment only when it is paid and not refunded,
+  voided or cancelled, carries that program's own item, and buys a seat for every
+  person it would activate. The payment notification and reconciliation apply the
+  one same check. An order that falls short activates nobody — it cannot say which
+  of the household it was for — and is raised for the board.  [Decision]
+
+- An order that names someone outside the buyer's household is not checked
+  against household ownership; the seat and item checks are the control.  [Decision — deliberate limit]
+
 - There is no fee ledger. What a family owes and has paid for a program is the
   enrollment's own state and the store order behind it, never a separate record of
   charges and payments kept alongside.  [Decision — deliberate limit]

@@ -7,13 +7,15 @@ import { withWebhook } from "@/lib/webhookAuth";
 import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { activateProgramEnrollment } from "@/lib/programs/activateEnrollment";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
-import { raisePaymentException } from "@/lib/finance/reconcile";
+import { isPaid, orderEntitlesEnrollment, raisePaymentException, type EntitlementOrder } from "@/lib/finance/reconcile";
 import { recordShopifyWebhookReceipt, tryParseJson } from "@/lib/shopifyWebhookReceipt";
 
 interface ShopifyOrder {
     id?: number | string;
     note_attributes?: { name: string; value: string }[];
-    line_items?: { variant_id?: number | string }[];
+    line_items?: { variant_id?: number | string; quantity?: number }[];
+    financial_status?: string | null;
+    cancelled_at?: string | null;
     /** Coupons applied at checkout — the program member-code entitlement check below. */
     discount_codes?: { code?: string }[];
 }
@@ -64,7 +66,7 @@ function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: 
     return { ok: true };
 }
 
-// Shopify Webhook for `orders/paid` or `orders/create`
+// Shopify Webhook for `orders/paid`.
 // Verifies HMAC signature, extracts custom attributes, and marks user as ACTIVE.
 //
 // ENV: this handler runs in ALL environments — dev/prod receive it from the real
@@ -73,6 +75,23 @@ function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: 
 // logic is the synthetic dev-mock variant fallback, gated on config.shopifyMockActive()
 // (⇔ CHECKIN_ENV=local) below.
 export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac }, async (req, order: ShopifyOrder) => {
+        // Only a paid, unreversed orders/paid delivery moves anything. A reversed one is
+        // left to the reconciler, which raises it against the pending record.
+        // A refund moves financial_status off "paid", so no refund total is needed here.
+        const facts: EntitlementOrder = {
+            financialStatus: order.financial_status ?? null,
+            cancelledAt: order.cancelled_at ? new Date(order.cancelled_at) : null,
+            totalRefundedCents: 0,
+            lines: (order.line_items ?? []).map((li) => ({ variantId: String(li.variant_id), quantity: li.quantity ?? 1 })),
+        };
+        const topic = req.headers.get("x-shopify-topic");
+        if (topic !== "orders/paid" || !isPaid(facts)) {
+            const outcome = `topic ${topic ?? "missing"}, financial_status ${order.financial_status ?? "missing"} — ignored`;
+            logger.info(`[SHOPIFY WEBHOOK] order ${order.id ?? "?"}: ${outcome}`);
+            await recordShopifyWebhookReceipt(req, order, { hmacValid: true, outcome });
+            return NextResponse.json({ success: true });
+        }
+
         // Iterate through line items to find CheckMeIn_Account_ID and Program_ID
         // We set these custom attributes in the permalink URL:
         // https://[store].myshopify.com/cart/[VariantID]:1?attributes[CheckMeIn_Account_ID]=123&attributes[Program_ID]=456
@@ -155,37 +174,23 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
             outcome = "invalid CheckMeIn_Account_ID or Program_ID — ignored";
 
             if (participantIds.length > 0 && !isNaN(programId)) {
-                // Guard mirrors the membership H2 fix above: note_attributes
-                // (CheckMeIn_Account_ID / Program_ID) are entirely
-                // customer-controlled — set from the public cart permalink —
-                // so nothing in the payload itself proves the paid order was
-                // for THIS program at THIS program's price. Without this, an
-                // attacker could self-enroll (the authenticated enroll flow
-                // creates a PENDING participant, no payment) then pay for the
-                // cheapest item in the store with a forged
-                // Program_ID/CheckMeIn_Account_ID attribute and activate (or
-                // activate someone else's) enrollment. Checked by variant id —
-                // stable, and the same id the enroll flow's checkout link is
-                // built from — not order total. Fail CLOSED: no variant
-                // configured on the Program, or
-                // no line-item match, means we do NOT activate.
-                const program = await prisma.program.findUnique({ where: { id: programId } });
-                const hasProgramItem = !!program?.shopifyVariantId &&
-                    (order.line_items ?? []).some((li) => String(li.variant_id) === program.shopifyVariantId);
+                // note_attributes are customer-controlled (set from the public cart
+                // permalink), so the order itself must prove it pays for THIS program
+                // and for every person it names — the same check the reconciler makes.
+                const orderId = order.id ? String(order.id) : null;
+                const entitlement = await orderEntitlesEnrollment(facts, programId, participantIds);
 
                 // Member-code entitlement, judged HERE because this is the money event:
-                // the item gate proves the order is this program's, this proves the
-                // family was allowed the price it paid. Sits after the item gate, like
-                // the membership branch's volunteer-code check, and fails the same way
-                // as NO_ITEM — flag for the board, do NOT activate. Never re-asked later.
+                // the order check proves the order pays for these seats, this proves the
+                // family was allowed the price it paid. Never re-asked later.
                 const codes = (order.discount_codes ?? []).map((d) => String(d.code ?? ""));
-                if (hasProgramItem && await unentitledMemberCodeUse(programId, participantIds, codes, order.id ? String(order.id) : null)) {
-                    logger.warn(`[SHOPIFY WEBHOOK] Program member discount code on a non-member order ${order.id ?? "?"} (program ${programId}) — flagged, NOT activated`);
-                    await raisePaymentException("DISCOUNT_UNAUTHORIZED", {
-                        shopifyOrderId: order.id ? String(order.id) : null,
-                        programId,
-                        personId: participantIds[0] ?? null,
-                    });
+                if (!entitlement.ok) {
+                    logger.warn(`[SHOPIFY WEBHOOK] order ${orderId ?? "?"} does not entitle program ${programId} (${entitlement.kind}) — NOT activated`);
+                    if (entitlement.kind) await raisePaymentException(entitlement.kind, { shopifyOrderId: orderId, programId, personId: participantIds[0] ?? null });
+                    outcome = `program ${programId}: ${entitlement.kind ?? "not paid"} — flagged, not activated`;
+                } else if (await unentitledMemberCodeUse(programId, participantIds, codes, orderId)) {
+                    logger.warn(`[SHOPIFY WEBHOOK] Program member discount code on a non-member order ${orderId ?? "?"} (program ${programId}) — flagged, NOT activated`);
+                    await raisePaymentException("DISCOUNT_UNAUTHORIZED", { shopifyOrderId: orderId, programId, personId: participantIds[0] ?? null });
                     outcome = `program ${programId}: unentitled member discount code — flagged, not activated`;
                 } else {
                     // Shared choke point — same path the reconciler uses to recover a
@@ -194,8 +199,7 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
                     const { activatedCount } = await activateProgramEnrollment({
                         programId,
                         personIds: participantIds,
-                        shopifyOrderId: order.id ? String(order.id) : "",
-                        hasProgramItem,
+                        shopifyOrderId: orderId ?? "",
                     });
 
                     outcome = `program ${programId}: activated ${activatedCount} of ${participantIds.length} participant(s)`;
