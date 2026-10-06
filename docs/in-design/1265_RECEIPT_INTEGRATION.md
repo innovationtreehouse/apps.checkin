@@ -82,7 +82,11 @@ shapes rather than loosening one.
 
 **Limits the source lacks** (its `upload-hardening.test.ts` records both): a 10 MB
 file cap and a 200-line cap, 400 on breach; 10 MB stays inside the API's 32 MB
-request limit after base64. Accepted types add `image/webp`.
+request limit after base64. Accepted types add `image/webp`. **The type is checked
+by magic bytes, not the declared `Content-Type` or extension:** the first bytes
+must match an allowlist (JPEG, PNG, WebP, HEIC, PDF; plain text for the email-body
+case, §2a), else 400. The stored file is the bytes as uploaded; the app never
+modifies an image (owner decision: no EXIF stripping, no redaction).
 
 **Duplicate detection ports verbatim.** SHA-256 file hash, then the composite
 `(retailer, date, total)`, then `(retailer, orderNumber)`, then
@@ -155,8 +159,9 @@ whose file is the body**:
 
 - The body's `text/plain` part when Gmail has one; otherwise the `text/html` part's
   source, stored as **`text/plain`**. OCR reads it as text, as the source's `.eml`
-  path did. Storing it as HTML is ruled out: the file route serves files inline
-  from checkin's own origin, so stored HTML would be live script there.
+  path did. Storing it as HTML is ruled out: the file is served from checkin's
+  own origin, so stored HTML would be one header mistake away from live script
+  there (§3 serves every file as an attachment).
 - The ledger hash for a body is the hash of that stored text.
 - When a message has attachments, its body is ignored; it is usually covering
   text.
@@ -170,13 +175,25 @@ happens.
 
 - **Ledger:** `ReceiptMailItem` keyed unique on `(gmailMessageId, attachmentHash)`.
   An item already in the ledger is skipped, so re-reading a message is free.
-- **Sender:** the `From` address must match a `Person` email, that person must be
-  in the submitter audience (§6), and the message must carry a passing SPF or DKIM
-  result in Google's `Authentication-Results`; a `From` header alone is trivially
-  forged. Then the attachment enters the **same upload pipeline** in auto mode
-  (OCR, the duplicate check including the §2 lock) with that person as uploader.
+- **Sender authentication: DMARC alignment, not "SPF or DKIM".** SPF
+  authenticates the envelope sender, not `From`, so a pass proves nothing about who
+  the message claims to be from. The step accepts a sender only when:
+  - it reads the **topmost** `Authentication-Results` header, and only if that
+    header's authserv-id is `mx.google.com`; every other `Authentication-Results`
+    header (lower in the message, or from any other server) is ignored, since a
+    sender can write those;
+  - that header carries `dmarc=pass`, so SPF or DKIM passed **aligned** with the
+    `From` domain;
+  - the message has exactly one `From` header containing exactly one addr-spec;
+    that address is matched, never the display name;
+  - headers inside a forwarded or attached message (`message/rfc822` parts, quoted
+    "From:" lines in the body) are never read for identity.
+- **Sender to person:** the authenticated `From` address must match a `Person`
+  email, and that person must be in the submitter audience (§6). Then the
+  attachment enters the **same upload pipeline** in auto mode (OCR, the duplicate
+  check including the §2 lock) with that person as uploader.
 - **Anything else goes to a `FINANCE` queue, never dropped:** unknown sender,
-  sender outside the audience, failed authentication. The item keeps its file until
+  sender outside the audience, failed or missing DMARC alignment. The item keeps its file until
   finance assigns an uploader (then it enters the pipeline as above) or discards it.
 - **Fields email cannot carry:** reimbursement, in-kind mark, donor. A mailed
   receipt therefore always stops at `submitter_review` (guard extended from
@@ -192,7 +209,9 @@ stored:** subject, other recipients, any other header, and the body, **with one
 exception**: when the body itself is the receipt document (a message with no
 attachment), it is stored as that receipt's file, at the same tier and behind the
 same file route as an uploaded file, and nowhere else. The sender address is
-`pii`, read by `FINANCE` only; a held file is tiered like the receipt file.
+`pii`, read by `FINANCE` only; a held file is tiered like the receipt file and
+leaves only through the file route (§3). Every view of the mail queue writes an
+audit row (§6).
 
 ---
 
@@ -205,6 +224,13 @@ that dies mid-call leaves the receipt in `auto_upload`; the daily catch-up step
 (§4) moves any such row older than ten minutes to `ocr_failed` ("interrupted"),
 where the submitter can retry. `ponytail:` ceiling is a day stuck in "Reading";
 the submitter can discard and re-upload sooner.
+
+**OCR output is advisory.** The receipt text is untrusted input to the model, so
+what comes back is a proposal for a person to confirm, never an authority. OCR
+fills the receipt's own details (retailer, date, totals, lines, `isDelayed`). It
+never sets the reimbursee, the QuickBooks vendor, or `needsReimbursement`; only a
+person sets those, in the upload form or in `submitter_review`. **The file goes to
+Anthropic as bytes** (base64 in the request), never as a URL the API would fetch.
 
 **Call shape** (re-checked against the current API, not the source's):
 
@@ -236,8 +262,16 @@ bind the real client, and a missing key there fails OCR into `ocr_failed` ("not
 configured") while manual entry keeps working.
 
 **File storage: `bytea` in the receipt database, as the source does.** Hundreds of
-files a year is under a gigabyte annually; lists already `omit` the blob. Served
-only by `GET /api/receipts/[id]/file` behind the receipt's own gate, with `nosniff`.
+files a year is under a gigabyte annually; lists already `omit` the blob. The file
+column (and a held mail item's file) is `secret` tier.
+
+**Files are not JSON (plan rule 7).** `GET /api/receipts/[id]/file` is built on
+the **H6 file-route primitive** (`defineFileRoute` / `fileHandler`: authorize, the
+per-row scope check, then a streamed body), registered like any route. It sends
+`Content-Disposition: attachment`, the stored type, and `nosniff`; nothing is
+served inline. Every download writes an audit row (§6). A test asserts that no
+JSON route's response contains a `secret`-tier receipt column. H6 is a boundary PR
+that lands before this lane's B and W.
 `ponytail:` ceiling is DB size and backup time; upgrade path is a private S3 bucket
 read with the task role, as `agreementDocument.ts` does.
 
@@ -265,8 +299,10 @@ existing prod `/api/cron/reconcile-shopify`, beside income and the Gmail step
 3. X13 re-send for receipts with `donorSyncedAt` null.
 4. Gmail intake (phase G).
 
-Work done inside a user request (OCR, the first push, the first X13 call) stays
-in the request; the steps only catch what that missed.
+Each step is idempotent, capped per run, and returns counts only (swept, pushed,
+re-sent, mail items read, failed) — no ids, names, addresses or amounts in the
+cron response. Work done inside a user request (OCR, the first push, the first
+X13 call) stays in the request; the steps only catch what that missed.
 
 **Reimbursement status (FR3 port requirement).** What the backlog row believed
 does survive: a submitter sees every receipt they uploaded (`listForOrg` filters to
@@ -299,6 +335,12 @@ the app.
 **History has a limit, and it is expected.** A past reimbursement that was booked
 in QuickBooks without a receipt never appears in "My receipts": the list shows
 receipts, and that payment has none.
+
+**The reimbursement option is hidden for non-adults (owner decision).** The
+submitter audience (§6) can include minors. For an uploader who is not an adult,
+the upload form and `submitter_review` do not offer "I paid for this myself", and
+the service rejects `needsReimbursement` from them. A minor's receipt is always a
+plain purchase or in-kind.
 
 **"My receipts" view (owner decision).** One list of the uploader's receipts, each
 row showing its intake state and, when `needsReimbursement`, the QuickBooks paid
@@ -395,9 +437,13 @@ not (an unused `defineRoute` is inert).
 **Sensitivity follows expense (#1272 §5), not catalog.** `internal` for amounts,
 retailer, receipt/order numbers, line text, `reimbursementFor`, every actor
 id (`uploadedByUserId` becomes `Person.id`), audit values and QB linkage. The
-**file is the most sensitive field** (names, delivery addresses, card last four):
-never in a JSON response, only the file route. `reimbursementFor` moves to `pii` if
-a route ever returns contact details beside it.
+**file is `secret`** (names, delivery addresses, card last four): never in a JSON
+response, only the H6 file route (§3). `reimbursementFor` moves to `pii` if a
+route ever returns contact details beside it.
+
+**Sensitive reads are audited.** Every file download (submitter or finance) and
+every view of the mail queue writes an audit row: actor, receipt or mail-item id,
+action, time. The audit payload carries no PII and no file bytes.
 
 **Narrow reads at the handler, no scopeBindings**, as #1272 §5 settled: a
 submitter's list and detail calls filter `WHERE uploadedByUserId = principal.id`;
@@ -410,11 +456,17 @@ checkin-side adapter `getPrincipal()` returns `null` unless
 does, and the submitter filter reads the id only from that principal. Prisma
 drops a `where` key whose value is `undefined`, so an id-less session (a JWT
 whose re-sync missed after a person merge or delete) would otherwise list every
-receipt in the org.
+receipt in the org. The filter takes the id through `callerId(auth): number`,
+which throws on anything but an integer.
+
+**Never authorize on `localUserId`.** The `receipt-types` contracts carry a
+caller-asserted `localUserId`; receipt never reads it for authorization, for
+"my receipts", or for attribution. The uploader is always the principal.
 
 | Test | Expect |
 |---|---|
 | id-less session (`user.id` undefined) calls the submitter list or detail route | 401, never a list |
+| a payload `localUserId` names another person | ignored; uploader and filter come from the principal |
 
 ---
 
@@ -495,8 +547,18 @@ The bulk-donation design (§2.4) owns the callee; agreed signature:
 ## 8. Testing
 
 The source's vitest suites port with the library (Anthropic client mocked). New:
-caps; auto-OCR success, failure and refusal; the catch-up steps; tax note required;
-self-approval refused; the reimbursement view against a stub port. One flow test
+caps; auto-OCR success, failure and refusal; the catch-up steps (counts only);
+tax note required; self-approval refused; the reimbursement view against a stub
+port; magic-byte rejection of a renamed file; OCR output never setting
+reimbursee, vendor or `needsReimbursement`; a non-adult uploader's
+`needsReimbursement` rejected; an audit row per file download and mail-queue
+view; no JSON route returning a `secret` column (jest, in
+`src/security/__tests__`). **Forged-From fixtures** for phase G, each of which must
+land in the finance queue and never as that person's receipt: SPF pass with no
+DMARC alignment; a forged `Authentication-Results: mx.google.com` below Google's
+real one; two `From` headers; one `From` with two addresses; a display name
+naming a `Person` over a foreign address; a forwarded message whose inner `From`
+is a `Person`. One flow test
 on the local mock: auto upload → finalized → submitter sees it, "not yet paid"; "Hide completed" hides it. No tier
 calls the real API; a dozen-receipt fixture eval is run by hand before any model or
 effort change.
@@ -510,7 +572,7 @@ All PRs are based on `main`; none stacks.
 | PR | Contents |
 |---|---|
 | **S** skeleton | `packages/receipt/`: schema (`ReceiptOrgSettings`; `SettingsData` dropped; new `pushedAt`, `isInKind`, donor names, `donorSyncedAt`; `isInKind` written into `CompletedReceipt.isInKind`; this PR does not edit `receipt-types`), services incl. bulk import and the duplicate-race fix (test first, §2), pre-seated for G: `Receipt.intakeSource`, the `ReceiptMailItem` model and the extended `submitter_review` guard (inert until G), machine, OCR adapter + mock, UI, import prep scripts, `contract.ts` with the `ReceiptSink`, `ReimbursementStatus` and `DonorSink` ports and inert adapters, vitest suites. Port-diff in the body. |
-| **B** boundary | `@sensitivity` on the receipt schema; `security/registry/receipt.ts` with every route, including file, import and the mail queue (list, assign, discard); one merge-list line. Maintainers, alone. |
+| **B** boundary | `@sensitivity` on the receipt schema (file columns `secret`); after H6; `security/registry/receipt.ts` with every route, including file, import and the mail queue (list, assign, discard); one merge-list line. Maintainers, alone. |
 | **W** wiring | route and page stubs, `pageRegistry`, nav (Finance area for queues; "My receipts" where staff can reach it), `configureReceipt()`, harness list entries, `RECEIPT_DATABASE_URL` + `ANTHROPIC_API_KEY` in Infra, flow test. Needs `FINANCE` on `main`. |
 | **G** Gmail intake | the mailbox adapter, the step in `reconcile-shopify`, the finance mail-queue page; Infra: the two secrets, the refresher, the consent runbook. After W. |
 | **X6** | bind `ReceiptSink` to `ingestReceipt`; pipeline flow test. After L7 W. |
