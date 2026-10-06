@@ -269,13 +269,17 @@ column (and a held mail item's file) is `secret` tier.
 **Files are not JSON (plan rule 7).** `GET /api/receipts/[id]/file` is built on
 the **H6 file-route primitive** (`defineFileRoute` / `fileHandler`: authorize, the
 per-row scope check, then a streamed body), registered like any route. Every
-response carries the stored type, `nosniff`, and `Content-Security-Policy:
-sandbox`, so nothing the file contains can run as checkin's origin. By type
-(owner decision):
+response carries the stored type and `nosniff`. By type (owner decision):
 
-- **Images and PDFs display in the browser** (`Content-Disposition: inline`).
-  Their content was checked against its magic bytes at upload (§2), so the stored
-  type is the real one.
+- **Images display in the browser** (`Content-Disposition: inline`) with
+  `Content-Security-Policy: sandbox`, so nothing in the file can run as checkin's
+  origin.
+- **PDFs display in the browser** (`inline`) **without** `sandbox`: Chrome's
+  built-in PDF viewer will not open a sandboxed document. A script inside a PDF
+  runs in the browser's PDF viewer, not as checkin, and the PDF's type was checked
+  by its magic bytes at upload (§2).
+- **Builder check:** the W PR verifies by hand, in Chrome, Firefox and Safari,
+  that an image and a PDF display inline and a text file downloads.
 - **Text is shown escaped, never served as a page.** The receipt page renders a
   `text/plain` file as escaped text (a React text node in a `<pre>`, which escapes
   by default), so HTML source from an email body displays as visible tags. The
@@ -563,7 +567,7 @@ caps; auto-OCR success, failure and refusal; the catch-up steps (counts only);
 tax note required; self-approval refused; the reimbursement view against a stub
 port; magic-byte rejection of a renamed file and of a `text/plain` upload that is not UTF-8 or holds a NUL byte; OCR output never setting
 reimbursee, vendor or `needsReimbursement`; a non-adult uploader's
-`needsReimbursement` rejected; a text file rendered as escaped text and served only as an attachment; an image or PDF served inline under `sandbox`; an audit row per file view or download and mail-queue
+`needsReimbursement` rejected; a text file rendered as escaped text and served only as an attachment; an image served inline under `sandbox` and a PDF served inline without it; an audit row per file view or download and mail-queue
 view; no JSON route returning a `secret` column (jest, in
 `src/security/__tests__`). **Forged-From fixtures** for phase G, each of which must
 land in the finance queue and never as that person's receipt: SPF pass with no
