@@ -66,6 +66,20 @@ describe('withAuth', () => {
         expect(handler).not.toHaveBeenCalled();
     });
 
+    // NextAuth still builds session.user from the empty token the jwt callback returns
+    // when the person's re-sync lookup misses (merged away / deleted).
+    it.each([
+        ['an empty-token session (no id)', { name: undefined, email: undefined, image: undefined }],
+        ['the dev guest persona (non-numeric id)', { id: 'guest', name: 'Logged out' }],
+    ])('returns 401 for %s', async (_label, sessionUser) => {
+        mockSession.mockResolvedValue({ user: sessionUser });
+        const route = withAuth({}, handler);
+        const res = await route(sessionReq());
+
+        expect(res.status).toBe(401);
+        expect(handler).not.toHaveBeenCalled();
+    });
+
     it('returns 403 for a kiosk request on a route without allowKiosk', async () => {
         mockPubKeys.mockReturnValue(['key']);
         mockVerify.mockReturnValue({ ok: true });

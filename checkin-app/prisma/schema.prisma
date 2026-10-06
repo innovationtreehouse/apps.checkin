@@ -230,6 +230,7 @@ enum PersonRoleKind {
   BG_REVIEWER
   OPERATIONS
   INVENTORY_MANAGER
+  FINANCE
 }
 
 /// Source of truth for role grants (expand phase of the boolean-column -> table

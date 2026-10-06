@@ -37,6 +37,7 @@ function fakeDb() {
         $executeRaw: jest.fn().mockResolvedValue(0),
         boardSettings: { findUnique: jest.fn().mockResolvedValue({ orgMembershipYearBoundary: null, bgRecheckMonths: 0 }) },
         visit: {
+            findFirst: jest.fn().mockResolvedValue(null),
             count: jest.fn().mockResolvedValue(1),
             findMany: jest.fn().mockResolvedValue([]),
             findUnique: jest.fn().mockResolvedValue({ supervisionWarnedAt: null }),

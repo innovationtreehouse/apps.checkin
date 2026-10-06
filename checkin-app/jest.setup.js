@@ -48,7 +48,8 @@ process.env.CHECKIN_ENV = 'dev';
   // that serializes them — matching production.
   // mintId is the same shape again: its two mints must run on separate
   // connections so the IdCounter row lock is what serializes them.
-  if (testPath && /(scanConcurrency|attendanceManualConcurrency|attendanceManualCheckinConcurrency|visitWriteLockConcurrency|programsParticipantsConcurrency|programsPublicRegisterConcurrency|trustedAdultConcurrency|householdLeadsConcurrency|mintId|facilityCloseLock)\.integration\.test\.[jt]sx?$/.test(testPath)) {
+  // scanFlushRace commits a racing visit from a second connection mid-scan.
+  if (testPath && /(scanConcurrency|attendanceManualConcurrency|attendanceManualCheckinConcurrency|visitWriteLockConcurrency|programsParticipantsConcurrency|programsPublicRegisterConcurrency|trustedAdultConcurrency|householdLeadsConcurrency|mintId|facilityCloseLock|scanFlushRace)\.integration\.test\.[jt]sx?$/.test(testPath)) {
     process.env.TEST_DB_POOL_MAX = '2';
   }
 }

@@ -4,6 +4,7 @@ import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { activateByProcessId } from "@/lib/membership/payment";
 import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
+import { fromWhere } from "@/lib/programs/enrollmentState";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
 
@@ -136,8 +137,7 @@ export async function raisePaymentException(kind: PaymentExceptionKind, ref: Exc
  * reconciler disagree about which orders count as paid.
  */
 export function isPaid(o: Pick<MirrorOrder, "financialStatus" | "cancelledAt" | "totalRefundedCents">): boolean {
-    const s = (o.financialStatus ?? "").toUpperCase();
-    return (s === "PAID" || s === "PARTIALLY_PAID") && !o.cancelledAt && o.totalRefundedCents === 0;
+    return (o.financialStatus ?? "").toUpperCase() === "PAID" && !o.cancelledAt && o.totalRefundedCents === 0;
 }
 
 /**
@@ -184,6 +184,37 @@ export function usesVolunteerCodeUnentitled(order: MirrorOrder, volunteerCode: s
     const vc = volunteerCode.trim().toUpperCase();
     if (!vc) return false;
     return order.discountCodes.some((c) => c.trim().toUpperCase() === vc);
+}
+
+// ── program entitlement (shared by the orders/paid webhook and this reconciler) ──
+
+/** The order facts a program entitlement is judged on — built from the webhook
+ *  payload or the mirror, so both paths judge the same thing. */
+export interface EntitlementOrder extends Pick<MirrorOrder, "financialStatus" | "cancelledAt" | "totalRefundedCents"> {
+    lines: { variantId: string; quantity: number }[];
+}
+
+/** ok, or the exception to raise; `kind: null` = not paid yet, raise nothing. */
+export type Entitlement = { ok: true } | { ok: false; kind: PaymentExceptionKind | null };
+
+/**
+ * Does this order pay for activating these people in this program? Paid and not
+ * reversed, carries the program's own variant, and buys at least one seat per
+ * person still awaiting payment. A seat shortfall activates nobody: the order
+ * cannot say which of the household it was meant for, so the board decides.
+ */
+export async function orderEntitlesEnrollment(order: EntitlementOrder, programId: number, personIds: number[]): Promise<Entitlement> {
+    if (isReversed(order)) return { ok: false, kind: "REVERSED_BEFORE_ACTIVATION" };
+    if (!isPaid(order)) return { ok: false, kind: null };
+
+    const program = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyVariantId: true } });
+    const variantId = program?.shopifyVariantId;
+    const seats = variantId ? order.lines.filter((l) => l.variantId === variantId).reduce((n, l) => n + l.quantity, 0) : 0;
+    if (seats === 0) return { ok: false, kind: "NO_ITEM" };
+
+    const awaiting = await prisma.programParticipant.count({ where: { programId, personId: { in: personIds }, ...fromWhere("PENDING_UNPAID") } });
+    if (seats < awaiting) return { ok: false, kind: "AMOUNT_MISMATCH" };
+    return { ok: true };
 }
 
 // ── forward pass (recover missed payments) ───────────────────────────────────
@@ -334,69 +365,76 @@ async function reconcileForwardMembership(order: MirrorOrder): Promise<boolean> 
 }
 
 /**
- * Program forward recovery: a paid order matched by email to persons who have a
- * PENDING enrollment. Uses the shared activateProgramEnrollment (extracted from the
- * webhook). Returns true if claimed.
+ * Program forward recovery: a paid order whose enrollments are still PENDING is a
+ * missed webhook. Judged by orderEntitlesEnrollment, the same check the webhook
+ * makes. Returns true if claimed.
  */
 async function reconcileForwardProgram(order: MirrorOrder): Promise<boolean> {
-    if (!isPaid(order)) return false;
-
     if (order.legacyId) {
         const known = await prisma.programParticipant.findFirst({ where: { shopifyOrderId: order.legacyId }, select: { programId: true } });
         if (known) return true;
     }
 
     // Preferred: the cart attributes the enroll flow's checkout link set — the same
-    // keys the orders/paid webhook credits (mirrored since #1029). CheckMeIn_Account_ID
-    // is a comma-separated person list, matching the webhook's own parse.
+    // keys the orders/paid webhook credits. CheckMeIn_Account_ID is a comma-separated
+    // person list, matching the webhook's own parse.
     const programRaw = mirror.orderAttr(order, "Program_ID");
     const accountRaw = mirror.orderAttr(order, "CheckMeIn_Account_ID");
     if (programRaw && accountRaw) {
         const programId = parseInt(programRaw, 10);
         const ids = accountRaw.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
         if (isNaN(programId) || ids.length === 0) {
-            await raisePaymentException("UNMATCHED_ORDER", { shopifyOrderId: order.legacyId });
+            if (isPaid(order)) await raisePaymentException("UNMATCHED_ORDER", { shopifyOrderId: order.legacyId });
             return true;
         }
         // Only those actually awaiting payment; a redelivery/re-run finds none and no-ops.
         const pending = await prisma.programParticipant.findMany({
             where: { programId, personId: { in: ids }, status: "PENDING" },
-            select: { programId: true, personId: true },
+            select: { personId: true },
         });
         if (pending.length === 0) return true; // it IS this program's order, nothing to recover.
         return activateProgramFromOrder(order, programId, pending.map((p) => p.personId));
     }
 
-    // Fallback for pre-#1029 orders (no attributes mirrored): the purchaser
-    // (household lead) and everyone in their household — enrollment is per person,
-    // but the order pays under the lead's email.
+    // Fallback for orders without attributes: the purchaser (household lead) and
+    // everyone in their household. Claims the order only when it carries a pending
+    // program's own variant — anything else (merch, a donation) passes untouched.
+    if (!isPaid(order)) return false;
     const email = order.customerEmail?.toLowerCase().trim();
     if (!email) return false;
     const leads = await prisma.person.findMany({ where: { email, isHouseholdLead: true }, select: { householdId: true } });
     const householdIds = [...new Set(leads.map((l) => l.householdId))];
     if (householdIds.length === 0) return false;
-    const people = await prisma.person.findMany({ where: { householdId: { in: householdIds } }, select: { id: true } });
-    const personIds = people.map((p) => p.id);
 
     const pending = await prisma.programParticipant.findMany({
-        where: { personId: { in: personIds }, status: "PENDING" },
-        select: { programId: true, personId: true },
+        where: { person: { householdId: { in: householdIds } }, status: "PENDING" },
+        select: { programId: true, personId: true, program: { select: { shopifyVariantId: true } } },
     });
     if (pending.length === 0) return false;
 
-    // A single order can enroll a whole household in one program; more than one
-    // distinct program among the pending set is unattributable without attributes.
-    const programs = [...new Set(pending.map((p) => p.programId))];
+    const orderVariants = new Set((await mirror.orderLines(order.orderGid)).map((l) => l.variantId));
+    const matched = pending.filter((p) => p.program.shopifyVariantId && orderVariants.has(p.program.shopifyVariantId));
+    const programs = [...new Set(matched.map((p) => p.programId))];
+    if (programs.length === 0) return false;
     if (programs.length > 1) {
         await raisePaymentException("UNMATCHED_ORDER", { shopifyOrderId: order.legacyId });
         return true;
     }
 
-    return activateProgramFromOrder(order, programs[0], pending.map((p) => p.personId));
+    return activateProgramFromOrder(order, programs[0], matched.map((p) => p.personId));
 }
 
-/** Shared tail for both program-matching paths: activate through the one choke point. */
+/** Shared tail for both program-matching paths: judge, then activate through the one choke point. */
 async function activateProgramFromOrder(order: MirrorOrder, programId: number, personIds: number[]): Promise<boolean> {
+    const entitlement = await orderEntitlesEnrollment({ ...order, lines: await mirror.orderLines(order.orderGid) }, programId, personIds);
+    if (!entitlement.ok) {
+        if (entitlement.kind) {
+            logger.warn(`[reconcile] program order ${order.legacyId} not entitled (${entitlement.kind}, program ${programId}) — NOT activated`);
+            await raisePaymentException(entitlement.kind, { shopifyOrderId: order.legacyId, programId, personId: personIds[0] ?? null });
+        }
+        return true;
+    }
+
     // Coupon entitlement, parity with the membership forward branch above: the order
     // may well contain the program's product, but the member code on it is only honest
     // if some enrollee's household is dues-settled through the program's coverage date.
@@ -409,18 +447,7 @@ async function activateProgramFromOrder(order: MirrorOrder, programId: number, p
     }
 
     const { activateProgramEnrollment } = await import("@/lib/programs/activateEnrollment");
-    const res = await activateProgramEnrollment({
-        programId,
-        personIds,
-        shopifyOrderId: order.legacyId ?? "",
-        // Line variant ids are mirrored since #1048, but this program path still
-        // matches by cart attribute / household rather than the program's variant id —
-        // program recovery has no amount gate, so it never had the coupon false-positive
-        // the membership path did, and widening it to a variant check is deferred (the
-        // membership fix was the scoped concern). So hasProgramItem stays true here: the
-        // order is matched to THIS program's pending enrollments.
-        hasProgramItem: true,
-    });
+    const res = await activateProgramEnrollment({ programId, personIds, shopifyOrderId: order.legacyId ?? "" });
     logger.info(`[reconcile] recovered program payment: program ${programId} ← order ${order.legacyId} (${res.activatedCount} activated)`);
     return true;
 }

@@ -17,6 +17,7 @@ declare module "next-auth" {
       isBackgroundCheckReviewer?: boolean;
       isOperations?: boolean;
       isInventoryManager?: boolean;
+      isFinance?: boolean;
       householdId?: number | null;
       householdLead?: boolean;
       // adult / youth / unknown — the derived band only, never the date
@@ -37,6 +38,10 @@ declare module "next-auth" {
       // ops-stg access gate escape hatch — sysadmin-settable, NOT one of the
       // five PersonRole flags above. See lib/config.ts isStagingAccessAllowed.
       canAccessStaging?: boolean;
+      // Catalog-viewer volunteer leg (#1286): a VolunteerDesignation exists for
+      // this email. Completes the client catalog-viewer predicate so the
+      // Inventory nav matches the server gate (access-resolvers 'catalog-viewer').
+      hasVolunteerDesignation?: boolean;
     };
   }
 
@@ -48,11 +53,13 @@ declare module "next-auth" {
     isBackgroundCheckReviewer?: boolean;
     isOperations?: boolean;
     isInventoryManager?: boolean;
+    isFinance?: boolean;
     householdId?: number | null;
     householdLead?: boolean;
     toolStatuses?: { toolId: number; level: string }[];
     // Set by the persona-mint provider; carried into the JWT by the jwt callback.
     impersonatedBy?: string | null;
+    hasVolunteerDesignation?: boolean;
   }
 }
 
@@ -72,6 +79,7 @@ declare module "next-auth/jwt" {
     isBackgroundCheckReviewer?: boolean;
     isOperations?: boolean;
     isInventoryManager?: boolean;
+    isFinance?: boolean;
     householdId?: number | null;
     householdLead?: boolean;
     // See Session.user.ageBand above — derived band, never the DOB.
@@ -80,5 +88,7 @@ declare module "next-auth/jwt" {
     toolStatuses?: { toolId: number; level: string }[];
     // ops-stg access gate escape hatch — see Session.user.canAccessStaging above.
     canAccessStaging?: boolean;
+    // See Session.user.hasVolunteerDesignation above (#1286 catalog-viewer leg).
+    hasVolunteerDesignation?: boolean;
   }
 }

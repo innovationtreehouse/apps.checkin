@@ -1,0 +1,9 @@
+{
+  "eventType": "item_reference_proposal_approved",
+  "version": 1,
+  "proposalId": 12,
+  "gtin13": "0001234500017",
+  "partNumber": "PN-1",
+  "manufacturer": "Acme",
+  "retailer": "Home Depot"
+}

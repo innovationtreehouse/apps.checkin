@@ -17,9 +17,6 @@ import type { CatalogPrincipal, OrgIdentity } from "@inventory/global-catalog";
  */
 const TREEHOUSE_ORG: OrgIdentity = { id: "treehouse", name: "Treehouse" };
 
-type ApiErrorCtor = new (status: number, message: string) => Error;
-let apiErrorCtor: ApiErrorCtor | undefined;
-
 async function getPrincipal(): Promise<CatalogPrincipal | null> {
   // Lazy: importing auth-options at boot would crash a Google-credless boot.
   const [{ getServerSession }, { authOptions }] = await Promise.all([
@@ -32,32 +29,6 @@ async function getPrincipal(): Promise<CatalogPrincipal | null> {
   return { id: user.id, name: user.name ?? null };
 }
 
-/**
- * The library throws its route errors through this; handler() maps an
- * `instanceof ApiResponseError` to its status. ApiResponseError lives in
- * @/security/handler (which transitively imports auth), so it is warmed lazily
- * off the boot path. Before it warms, fall back to a status-carrying Error — this
- * only happens if a route throws before the warm resolves, which does not occur
- * once the process has served any request.
- */
-function httpError(status: number, message: string): Error {
-  if (apiErrorCtor) return new apiErrorCtor(status, message);
-  const err = new Error(message) as Error & { status: number };
-  err.status = status;
-  return err;
-}
-
-export async function configureCatalogRuntime(): Promise<void> {
-  // AWAIT the warm here (register() awaits this before Next serves any request),
-  // so apiErrorCtor is set before the first request — no cold-start window where
-  // a catalog 4xx degrades to 500. The try/catch keeps a credential-less boot
-  // (the deploy smoke test, no GOOGLE_CLIENT_ID) from crashing on the
-  // auth-options throw in @/security/handler's import chain.
-  try {
-    const m = await import("@/security/handler");
-    apiErrorCtor = m.ApiResponseError as unknown as ApiErrorCtor;
-  } catch {
-    /* credential-less boot (smoke test) — handler()/auth load per-request there */
-  }
-  configureCatalog({ auth: { getPrincipal }, org: () => TREEHOUSE_ORG, httpError });
+export function configureCatalogRuntime(): void {
+  configureCatalog({ auth: { getPrincipal }, org: () => TREEHOUSE_ORG });
 }
