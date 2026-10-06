@@ -20,6 +20,7 @@ function participant(overrides: Partial<ClaimSourceParticipant> = {}): ClaimSour
         toolStatuses: [{ toolId: 1, level: 'CERTIFIED' }],
         household: { orgMembership: { status: 'ACTIVE' } },
         canAccessStaging: false,
+        hasVolunteerDesignation: false,
         ...overrides,
     };
 }
@@ -152,5 +153,28 @@ describe('assignParticipantClaims — canAccessStaging claim (ops-stg gate)', ()
             household: { orgMembership: { status: 'DENIED' } },
         }));
         expect(token.canAccessStaging).toBe(false);
+    });
+});
+
+describe('assignParticipantClaims — hasVolunteerDesignation claim (#1286 catalog-viewer)', () => {
+    it('stamps hasVolunteerDesignation=true when a designation exists', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ hasVolunteerDesignation: true }));
+        expect(token.hasVolunteerDesignation).toBe(true);
+    });
+
+    it('stamps hasVolunteerDesignation=false when none exists', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ hasVolunteerDesignation: false }));
+        expect(token.hasVolunteerDesignation).toBe(false);
+    });
+
+    it('forces hasVolunteerDesignation=false for a DENIED household', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({
+            hasVolunteerDesignation: true,
+            household: { orgMembership: { status: 'DENIED' } },
+        }));
+        expect(token.hasVolunteerDesignation).toBe(false);
     });
 });

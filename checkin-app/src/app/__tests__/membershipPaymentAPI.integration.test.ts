@@ -36,11 +36,11 @@ function asUser(id: number) {
     (getServerSession as jest.Mock).mockResolvedValue({ user: { id, isSysadmin: false, isBoardMember: false } });
 }
 function shopifyReq(payload: unknown, secret: string) {
-    const raw = JSON.stringify(payload);
+    const raw = JSON.stringify({ financial_status: 'paid', ...(payload as object) });
     const sig = crypto.createHmac('sha256', secret).update(raw, 'utf8').digest('base64');
     return new Request('http://localhost:4000/api/webhooks/shopify', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-shopify-hmac-sha256': sig },
+        headers: { 'content-type': 'application/json', 'x-shopify-topic': 'orders/paid', 'x-shopify-hmac-sha256': sig },
         body: raw,
     });
 }

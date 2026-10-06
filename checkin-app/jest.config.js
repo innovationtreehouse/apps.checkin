@@ -78,6 +78,11 @@ const customJestConfig = {
         '^@/(.*)$': '<rootDir>/src/$1',
         // Workspace TS package — point jest at its source so it transforms it.
         '^@inventory/money$': '<rootDir>/../packages/money/src/index.ts',
+        // Global catalog (#1286): jest's resolver doesn't honor the package's
+        // `exports` subpaths, so map them to source. Subpath rule first (more
+        // specific), then the bare entry.
+        '^@inventory/global-catalog/(.*)$': '<rootDir>/../packages/global-catalog/src/$1',
+        '^@inventory/global-catalog$': '<rootDir>/../packages/global-catalog/src/index.ts',
     },
     // The worktree ignore lives at the repo root (.claude/worktrees/), one level
     // up now that rootDir is checkin-app/. testPathIgnorePatterns matches the

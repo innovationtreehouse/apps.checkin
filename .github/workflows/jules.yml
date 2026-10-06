@@ -9,17 +9,21 @@ on:
 
 jobs:
   jules:
-    # Restrict execution to:
-    # 1. Issues (not pull requests)
-    # 2. EITHER:
-    #    - Labeled 'jules' (either just added or already present)
-    #    - OR Issue/Comment body contains '@jules' AND author is an organization MEMBER or OWNER
+    # Runs only on issues (not PRs), and only when the text that reaches the
+    # prompt was written by an org OWNER or MEMBER — on every trigger, since
+    # this is a public repo and the agent has write access:
+    # - issues events: the issue author must be OWNER/MEMBER, and the issue is
+    #   labelled 'jules' or its body mentions '@jules'.
+    # - issue_comment: the comment author must be OWNER/MEMBER, and the issue is
+    #   labelled 'jules' or the comment mentions '@jules'.
     if: >
       !github.event.issue.pull_request && (
-        github.event.label.name == 'jules' ||
-        contains(github.event.issue.labels.*.name, 'jules') ||
-        (github.event_name == 'issues' && contains(github.event.issue.body, '@jules') && (github.event.issue.author_association == 'MEMBER' || github.event.issue.author_association == 'OWNER')) ||
-        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@jules') && (github.event.comment.author_association == 'MEMBER' || github.event.comment.author_association == 'OWNER'))
+        (github.event_name == 'issues' &&
+          contains(fromJSON('["OWNER", "MEMBER"]'), github.event.issue.author_association) &&
+          (contains(github.event.issue.labels.*.name, 'jules') || contains(github.event.issue.body, '@jules'))) ||
+        (github.event_name == 'issue_comment' &&
+          contains(fromJSON('["OWNER", "MEMBER"]'), github.event.comment.author_association) &&
+          (contains(github.event.issue.labels.*.name, 'jules') || contains(github.event.comment.body, '@jules')))
       )
     runs-on: ubuntu-latest
     permissions:

@@ -14,10 +14,8 @@ import { fromWhere } from "@/lib/programs/enrollmentState";
  * clearing the pending timer, stamping the paying order id, and releasing any
  * scholarship inventory hold (compensating Shopify's sale-time auto-decrement).
  *
- * The membership-item check lives with the CALLER, because only the webhook has
- * the order's line-item variant ids — the mirror does not. The webhook passes the
- * computed value; the reconciler passes hasProgramItem=true (it matched the order
- * to a pending enrollment by email).
+ * Callers must first establish the order pays for these people
+ * (orderEntitlesEnrollment in lib/finance/reconcile.ts); this function does not.
  */
 export interface ActivateEnrollmentInput {
     programId: number;
@@ -25,8 +23,6 @@ export interface ActivateEnrollmentInput {
     personIds: number[];
     /** Numeric Shopify order id, stored on each activated participant for reversal joins. */
     shopifyOrderId: string;
-    /** Did the paid order contain this program's product? Fail-closed: false = don't activate. */
-    hasProgramItem: boolean;
 }
 
 export interface ActivateEnrollmentResult {
@@ -35,7 +31,7 @@ export interface ActivateEnrollmentResult {
 }
 
 export async function activateProgramEnrollment(input: ActivateEnrollmentInput): Promise<ActivateEnrollmentResult> {
-    const { programId, personIds, shopifyOrderId, hasProgramItem } = input;
+    const { programId, personIds, shopifyOrderId } = input;
     const program = await prisma.program.findUnique({ where: { id: programId } });
 
     let activatedCount = 0;
@@ -45,10 +41,6 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
         const existing = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId } } });
         if (!existing) {
             logger.warn(`[enroll] Participant ${personId} not found in program ${programId} — ignoring payment.`);
-            continue;
-        }
-        if (!hasProgramItem) {
-            logger.warn(`[enroll] Order ${shopifyOrderId || "?"} for participant ${personId} / program ${programId} did not contain the program's Shopify variant — left PENDING, NOT activated.`);
             continue;
         }
 

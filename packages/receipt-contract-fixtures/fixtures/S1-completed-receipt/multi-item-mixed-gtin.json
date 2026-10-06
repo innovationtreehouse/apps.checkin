@@ -1,0 +1,43 @@
+{
+  "receiptId": "R-1001",
+  "orgId": "org-1",
+  "submitterId": 7,
+  "vendorName": "Home Depot",
+  "receiptNumber": "INV-555",
+  "orderNumber": null,
+  "currency": "USD",
+  "taxCents": 0,
+  "shippingCents": 0,
+  "discountCents": 0,
+  "receiptTotalCents": 3500,
+  "receiptDate": "2026-06-01",
+  "needsReimbursement": false,
+  "reimbursementFor": null,
+  "submittedAt": "2026-06-01T12:00:00.000Z",
+  "lineItems": [
+    {
+      "receiptLineItemId": 1,
+      "lineNumber": 1,
+      "description": "Recognized Widget",
+      "partNumber": "PN-1",
+      "manufacturer": "Acme",
+      "quantity": 1,
+      "unitPriceCents": 1500,
+      "totalPriceCents": 1500,
+      "isDelayed": false,
+      "gtin13": "0001234500017"
+    },
+    {
+      "receiptLineItemId": 2,
+      "lineNumber": 2,
+      "description": "Unknown Gadget",
+      "partNumber": "PN-2",
+      "manufacturer": "Acme",
+      "quantity": 2,
+      "unitPriceCents": 1000,
+      "totalPriceCents": 2000,
+      "isDelayed": false,
+      "gtin13": null
+    }
+  ]
+}
