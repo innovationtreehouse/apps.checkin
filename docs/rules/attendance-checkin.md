@@ -214,12 +214,14 @@ hours at a time — is a normal operating mode here, not an incident.
   the room, so the close is a fact, not a toggle. Everyone in the building at that
   moment departs at the keyholder's scan time, not the time the close arrived,
   and never more than 24 hours after arrival. A scan time ahead of the server's
-  clock is not trusted: that close is held for a human. Someone who arrived after
-  the keyholder's scan is left as they are only when a keyholder who also arrived
-  later is still in — the building reopened; otherwise they depart when the close
-  arrives. A departure the nightly sweep stamped before the close arrived is
-  pulled back to the keyholder's time; a departure a person has since corrected
-  is not. A keyholder who arrived after the scan does not count as still inside.
+  clock is not trusted: that close is held for a human. Someone who arrived more
+  than two minutes after the keyholder's scan is left as they are: they badged in
+  after lock-up, and a late close never ends a visit that began after it, however
+  late it arrives. An arrival within those two minutes is the kiosk's clock
+  disagreeing with the server's, and departs with everyone else. A departure the
+  nightly sweep stamped before the close arrived is pulled back to the
+  keyholder's time; a departure a person has since corrected is not. A keyholder
+  who arrived after the scan does not count as still inside.
   The close still needs the keyholder in the building at their scan time — an
   unconfirmed late keyholder scan is held like any other.  [Decision]
 

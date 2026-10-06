@@ -447,13 +447,14 @@ async function sweepIfStandalone(db: DbClient, closeTime: Date) {
  *  is capped at the visit's own `arrivedAt + MAX_VISIT_MS`, and `updateMany`
  *  can only set one constant for every row it touches.
  *
- *  Someone who arrived after `closeTime` is left open only when a keyholder who
- *  also arrived after it is still in — the building reopened. Otherwise nobody
- *  holds the building for them, so they depart now, the moment the close became
- *  known. A visit the nightly cron already AUTO_CLOSEd past `closeTime` is
+ *  Someone who arrived more than {@link LATE_CLOSE_SKEW_MS} after `closeTime`
+ *  badged in after lock-up and is left as they are — a late close never ends a
+ *  visit that began after it. An arrival inside the skew is the kiosk's clock
+ *  disagreeing with the server's, so it departs too, no earlier than it
+ *  arrived. A visit the nightly cron already AUTO_CLOSEd past `closeTime` is
  *  pulled back to it — the cron stamped only because the close had not arrived
  *  yet. Live, nobody arrived after `closeTime` and no departure lies in the
- *  future, so neither clause matches.
+ *  future.
  *
  *  FACILITY_CLOSE, not AUTO_CLOSE: the stamp is the moment the building
  *  actually closed, so it is bounded by building hours — plausible, unlike the
@@ -463,33 +464,28 @@ async function sweepIfStandalone(db: DbClient, closeTime: Date) {
  *
  *  The columns are timestamp-without-zone holding UTC, so the instant is
  *  converted AT TIME ZONE 'UTC' or the comparison is off by the server's offset. */
+/** Kiosk-vs-server clock skew a late close absorbs on the arrival side. */
+export const LATE_CLOSE_SKEW_MS = 2 * 60_000;
+
 async function closeAllOpenVisits(db: DbClient, closeTime: Date = new Date()) {
     const closeAt = new Date(Math.min(closeTime.getTime(), Date.now())).toISOString();
     // Tombstoned visits are excluded: closing one would rewrite a record the
     // member chose to erase, and resurrect a machine departure if it is undone.
     await db.$executeRaw`
         WITH t AS (
-            SELECT (${closeAt}::timestamptz AT TIME ZONE 'UTC') AS close_at,
-                   (now() AT TIME ZONE 'UTC') AS now_at
+            SELECT (${closeAt}::timestamptz AT TIME ZONE 'UTC') AS close_at
         )
         UPDATE "Visit" v
         SET "departedAt" = LEAST(
-                CASE WHEN v."arrivedAt" <= t.close_at THEN t.close_at ELSE t.now_at END,
+                GREATEST(t.close_at, v."arrivedAt"),
                 v."arrivedAt" + ${MAX_VISIT_MS}::double precision * interval '1 millisecond'
             ),
             "departedVia" = 'FACILITY_CLOSE'::"VisitSource"
         FROM t
         WHERE v."deletedAt" IS NULL
-          AND (
-              (v."arrivedAt" <= t.close_at
-               AND (v."departedAt" IS NULL
-                    OR (v."departedVia" = 'AUTO_CLOSE'::"VisitSource" AND v."departedAt" > t.close_at)))
-              OR (v."departedAt" IS NULL
-                  AND NOT EXISTS (
-                      SELECT 1 FROM "Visit" k JOIN "Person" p ON p.id = k."personId"
-                      WHERE p."isKeyholder" AND k."departedAt" IS NULL
-                        AND k."deletedAt" IS NULL AND k."arrivedAt" > t.close_at))
-          )`;
+          AND v."arrivedAt" <= t.close_at + ${LATE_CLOSE_SKEW_MS}::double precision * interval '1 millisecond'
+          AND (v."departedAt" IS NULL
+               OR (v."departedVia" = 'AUTO_CLOSE'::"VisitSource" AND v."departedAt" > t.close_at))`;
 }
 
 /** Fire-and-forget post-event email run on facility close. The dynamic import
