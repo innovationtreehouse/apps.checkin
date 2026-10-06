@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import MagicMock
 
 from outbox import (Outbox, classify_response, replay_drain, new_event_id, now_iso,
-                    in_closed_window, MIN_BACKOFF_SECONDS, DRAIN_PACE_SECONDS)
+                    in_closed_window, MIN_BACKOFF_SECONDS, DRAIN_PACE_SECONDS, MAX_5XX_ATTEMPTS)
 from client import handle_scan, _saved_banner_html, ClockWatch
 
 
@@ -254,6 +254,49 @@ class TestReplayDrain(unittest.TestCase):
                              protocol_ok_fn=lambda: True)
             self.assertEqual(len(sent), 1)
             self.assertEqual(ob.pending_rows(), [])
+
+    def test_persistent_5xx_head_row_is_dead_lettered_and_unblocks_fifo(self):
+        # A poison row the server 500s on forever must not hold the head.
+        with tempfile.TemporaryDirectory() as d:
+            ob = Outbox(os.path.join(d, "outbox.db"))
+            ob.enqueue("poison", "99999999999", "2026-08-18T10:00:00+00:00")
+            ob.enqueue("good", "7", "2026-08-18T10:01:00+00:00")
+            sent = []
+
+            def send_fn(participant_id, client_event_id=None, **kwargs):
+                sent.append(client_event_id)
+                if client_event_id == "poison":
+                    return {"error": "Internal Server Error"}, 500, None
+                return {"type": "checkin"}, 200, None
+
+            def fake_sleep(_secs):
+                if "good" in sent:
+                    raise _StopLoop()
+
+            with self.assertRaises(_StopLoop):
+                replay_drain(ob, send_fn, sleep_fn=fake_sleep, in_closed_window_fn=lambda: False)
+            self.assertEqual(sent.count("poison"), MAX_5XX_ATTEMPTS)
+            self.assertEqual(ob.pending_rows(), [])
+            self.assertEqual(ob.dead_count(), 1)
+
+    def test_503_warming_is_never_dead_lettered_by_attempt_count(self):
+        with tempfile.TemporaryDirectory() as d:
+            ob = Outbox(os.path.join(d, "outbox.db"))
+            ob.enqueue("evt", "7", "2026-08-18T10:00:00+00:00")
+            calls = {"n": 0}
+
+            def send_fn(*a, **k):
+                calls["n"] += 1
+                return {"error": "warming"}, 503, None
+
+            def fake_sleep(_secs):
+                if calls["n"] >= MAX_5XX_ATTEMPTS + 5:
+                    raise _StopLoop()
+
+            with self.assertRaises(_StopLoop):
+                replay_drain(ob, send_fn, sleep_fn=fake_sleep, in_closed_window_fn=lambda: False)
+            self.assertEqual(len(ob.pending_rows()), 1)
+            self.assertEqual(ob.dead_count(), 0)
 
     def test_acked_events_are_removed_in_order(self):
         ob = self._run([
@@ -701,6 +744,20 @@ class TestHandleScanQueuesOnFailure(unittest.TestCase):
             self.assertEqual(backend.post_scan.call_count, 1)
             self.assertIn("2 waiting", state.events[-1]["html"])
             self.assertEqual(state.events[-1]["queued"], 2)
+
+    def test_malformed_scan_is_rejected_without_sending_or_queueing(self):
+        # Concatenated double-read, UPC, and over-int4 ids never reach the outbox.
+        for raw in ("12345123451", "012345678905", "2147483648", "0", "12a"):
+            with self.subTest(raw=raw), tempfile.TemporaryDirectory() as d:
+                ob = Outbox(os.path.join(d, "outbox.db"))
+                backend = self._backend(({"error": "down"}, 0, None))
+                state = FakeState()
+
+                handle_scan(backend, state, ob, raw)
+
+                self.assertEqual(backend.post_scan.call_count, 0)
+                self.assertEqual(ob.pending_count(), 0)
+                self.assertIn("banner-error", state.events[-1]["html"])
 
     def test_enqueue_pushes_queued_count_for_the_badge_not_just_on_drain(self):
         with tempfile.TemporaryDirectory() as d:

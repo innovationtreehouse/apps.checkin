@@ -63,3 +63,15 @@ describe("Performance: sendCheckinNotifications", () => {
         expect(maxInFlight).toBe(11);
     });
 });
+
+describe("sendCheckinNotifications event time", () => {
+    beforeEach(() => jest.clearAllMocks());
+
+    // A replayed or held scan must report when it happened, not when it synced.
+    it("renders the passed scan time, not the send time", async () => {
+        await sendCheckinNotifications(1, "checkin", "SCANNER", new Date("2026-03-04T15:00:00Z"));
+
+        const html = (sendEmail as jest.Mock).mock.calls[0][2] as string;
+        expect(html).toContain("March 4");
+    });
+});

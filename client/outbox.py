@@ -23,6 +23,10 @@ DRAIN_PACE_SECONDS = 1.0
 # Guard rail against a pathological stuck state. Un-acked rows are never
 # evicted to enforce this -- it is a log-only warning, not a hard cap.
 WARN_QUEUE_SIZE = 50_000
+# A row still failing 5xx after this many attempts (~4h at the backoff cap) is
+# a poison row, not an outage: dead-letter it so it reaches the server review
+# queue instead of blocking the FIFO head forever.
+MAX_5XX_ATTEMPTS = 50
 
 # docs/rules/attendance-checkin.md (kiosk resilience): the drain never sends
 # during the closed window -- a queued POST is non-GET and wakes the curfewed
@@ -388,6 +392,13 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, in_closed_w
             backoff = MIN_BACKOFF_SECONDS
             # Same badge refresh as the ack branch: a queue that empties by
             # dead-lettering must not leave a stale count on screen.
+            if push_fn:
+                push_fn({"html": "", "queued": outbox.pending_count()})
+            sleep_fn(DRAIN_PACE_SECONDS)
+        elif 500 <= status < 600 and status != 503 and attempts + 1 >= MAX_5XX_ATTEMPTS:
+            outbox.mark_dead(client_event_id, status)
+            log.warning(f"Outbox event {client_event_id} dead-lettered after {attempts + 1} attempts (status={status})")
+            backoff = MIN_BACKOFF_SECONDS
             if push_fn:
                 push_fn({"html": "", "queued": outbox.pending_count()})
             sleep_fn(DRAIN_PACE_SECONDS)

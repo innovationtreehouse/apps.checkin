@@ -141,7 +141,7 @@ export async function notifyNewProgramAnnounced(
  * - emailCheckinReceipts: send to the participant themselves
  * - emailDependentCheckins: send to household leads when a dependent checks in/out
  */
-export async function sendCheckinNotifications(participantId: number, type: 'checkin' | 'checkout', source?: VisitSource | null) {
+export async function sendCheckinNotifications(participantId: number, type: 'checkin' | 'checkout', source?: VisitSource | null, at: Date = new Date()) {
     try {
         const participant = await prisma.person.findUnique({
             where: { id: participantId },
@@ -156,17 +156,16 @@ export async function sendCheckinNotifications(participantId: number, type: 'che
 
         if (!participant) return;
 
-        const now = new Date();
         // Server-side render: the client TimezoneProvider never runs here, so the
         // configured zone is passed per call.
         const timeZone = await resolveDisplayTimezone();
-        const timeStr = formatTime(now, {
+        const timeStr = formatTime(at, {
             timeZone,
             hour: 'numeric',
             minute: '2-digit',
             hour12: true
         });
-        const dateStr = formatDate(now, {
+        const dateStr = formatDate(at, {
             timeZone,
             weekday: 'long',
             month: 'long',

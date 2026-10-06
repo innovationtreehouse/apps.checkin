@@ -12,6 +12,7 @@ import { isYouth } from "@/lib/time";
 import { getKioskDisplayName, getKioskDisplayNames } from "@/lib/kiosk-names";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { logBackendError } from "@/lib/logger";
 
 /**
  * What a scan response may say about who scanned: an id and the same
@@ -56,8 +57,8 @@ export const SUPERVISION_CONFIRM_DEADFRONT_MS = 1_000;
  *
  * The scan route passes its transaction client `db` so these reads and writes
  * run under the per-participant advisory lock. When called standalone (e.g.
- * unit tests) `db` defaults to the global prisma client. Fire-and-forget side
- * effects (notifications) intentionally run off the global client either way.
+ * unit tests) `db` defaults to the global prisma client. Notifications are the
+ * caller's job, after commit (see notifyScanOutcome).
  */
 export async function processCheckin(participant: Person, authType: string, db: DbClient = prisma, visitTime: Date = new Date()) {
     // Facility lock serializes the open-state read and the create against the
@@ -105,11 +106,6 @@ export async function processCheckin(participant: Person, authType: string, db: 
         },
     });
     invalidateAttendanceCache();
-
-    // Fire-and-forget: send check-in notifications
-    sendCheckinNotifications(participant.id, 'checkin', 'SCANNER').catch(err =>
-        console.error('Checkin notification error:', err)
-    );
 
     // A youth arriving into a room short of supervision is WARNED, never blocked
     // (#1436): opening the door before the second adult is the keyholder's call to
@@ -295,11 +291,6 @@ export async function processCheckout(
             confirmSeconds: FORCE_CLOSE_CONFIRM_SECONDS,
         }))
         : {};
-
-    // Fire-and-forget: send check-out notifications (mirrors processCheckin)
-    sendCheckinNotifications(participant.id, 'checkout').catch(err =>
-        console.error('Checkout notification error:', err)
-    );
 
     return apiJson({
         message: facilityClosed ? "Checked out and Facility closed" : "Checked out successfully",
@@ -595,8 +586,9 @@ export async function lastKeyholderGuard(
  *
  * processCheckout (under the lock, on the tx client) only *decides* whether the
  * facility closed and reports it via `facilityClosed` in the response body; the
- * route hands that response here once committed. A sweep failure is logged, not
- * thrown, so it never turns an already-committed checkout into a 500.
+ * route hands that response here once committed. The sweep is retried once (it
+ * can lose a lock race against an in-flight check-in); a second failure lands in
+ * ErrorLog, never thrown, so it can't turn a committed checkout into a 500.
  */
 export async function finalizeFacilityClose(res: Response, closeTime: Date = new Date()): Promise<void> {
     let body: { facilityClosed?: boolean } | null;
@@ -609,7 +601,40 @@ export async function finalizeFacilityClose(res: Response, closeTime: Date = new
 
     try {
         await runFacilityClose(closeTime);
-    } catch (err) {
-        console.error("Failed to close facility-wide visits after scan:", err);
+    } catch {
+        try {
+            await runFacilityClose(closeTime);
+        } catch (err) {
+            await logBackendError(err, "facility-close");
+        }
+    }
+}
+
+/**
+ * Send the check-in/out email for a committed scan. Runs only after the scan
+ * transaction commits, so a rollback can't leave a false email and a retried
+ * (duplicate_ignored) scan can't send a second one. `at` is the scan's event
+ * time, so a replayed or held scan reports when it happened.
+ */
+export async function notifyScanOutcome(res: Response, at: Date): Promise<void> {
+    let body: { type?: string; participant?: { id?: number }; visit?: unknown } | null;
+    try {
+        body = await res.clone().json();
+    } catch {
+        return;
+    }
+    const personId = body?.participant?.id;
+    if (typeof personId !== "number") return;
+    // A close-offer confirm departs nobody (closeOnOfferConfirm): the keyholder
+    // already left, and got their checkout email then.
+    if (body?.visit === null) return;
+    if (body?.type === "checkin") {
+        sendCheckinNotifications(personId, "checkin", "SCANNER", at).catch(err =>
+            console.error("Checkin notification error:", err)
+        );
+    } else if (body?.type === "checkout") {
+        sendCheckinNotifications(personId, "checkout", undefined, at).catch(err =>
+            console.error("Checkout notification error:", err)
+        );
     }
 }

@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { apiError, apiJson } from "@/lib/api-response";
-import { processCheckin, processCheckout, finalizeFacilityClose, forceCloseTokenMatches, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/scan-service";
+import { processCheckin, processCheckout, finalizeFacilityClose, forceCloseTokenMatches, notifyScanOutcome, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/scan-service";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
 import { applyPresenceIntent } from "@/lib/presence/project";
 import { config } from "@/lib/config";
@@ -48,7 +48,9 @@ export const POST = withKiosk(
     try {
         const participantId = body.participantId;
 
-        if (!participantId || typeof participantId !== 'number') {
+        // Bounded to Postgres int4 (see lib/searchId.ts): a larger id makes the
+        // lookup throw, and the kiosk retries a 500 forever at its queue head.
+        if (typeof participantId !== 'number' || !Number.isInteger(participantId) || participantId < 1 || participantId > 2147483647) {
             return apiError("A valid numeric participantId is required.", 400);
         }
 
@@ -513,6 +515,7 @@ export const POST = withKiosk(
         // blocks concurrent scans for other participants. No-op unless the
         // response reports facilityClosed.
         await finalizeFacilityClose(res, isReplay ? eventTime : undefined);
+        await notifyScanOutcome(res, eventTime);
         // After the tx (+ optional facility sweep) commits, so a concurrent
         // GET cannot refill the cache from uncommitted rows.
         invalidateAttendanceCache();

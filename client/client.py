@@ -1027,7 +1027,19 @@ def _saved_banner_html(queued, intent=None):
     label = "CHECKED IN" if intent == "IN" else "CHECKED OUT" if intent == "OUT" else "Saved"
     return f'<div class="banner banner-saved">✓ {label} — will sync ({queued} waiting)</div>'
 
+# Server ids are Postgres int4. A longer read is two badges run together (a
+# lost Enter) or a product barcode -- never a person, and must not be queued.
+MAX_PARTICIPANT_ID = 2147483647
+
+def _is_valid_participant_id(participant_id):
+    raw = str(participant_id)
+    return raw.isascii() and raw.isdigit() and 0 < int(raw) <= MAX_PARTICIPANT_ID
+
 def handle_scan(backend, state, outbox, participant_id):
+    if not _is_valid_participant_id(participant_id):
+        log.warning(f"Rejected malformed scan: {participant_id!r}")
+        state.push_event({"html": '<div class="banner banner-error">✗ Badge not read — please scan again</div>'})
+        return
     if state.in_confirm_deadfront(participant_id):
         # Dropped like the server's debounce drops it: a scanner double-read of
         # the warning badge must neither confirm the close nor toggle back IN.
