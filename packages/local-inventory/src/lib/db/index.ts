@@ -59,3 +59,8 @@ export function isUniqueConstraintError(err: unknown): boolean {
   return typeof err === "object" && err !== null && (err as { code?: string }).code === "P2002";
 }
 
+
+/** True for a Prisma P2025 record-not-found (e.g. an `update` whose `where` no longer matches). */
+export function isRecordNotFoundError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === "P2025";
+}
