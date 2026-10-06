@@ -57,6 +57,7 @@ jobs:
       app: ${{ steps.detect.outputs.app }}
       client: ${{ steps.detect.outputs.client }}
       packages: ${{ steps.detect.outputs.packages }}
+      scripts: ${{ steps.detect.outputs.scripts }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -96,6 +97,7 @@ jobs:
             echo "app=true" >> "$GITHUB_OUTPUT"
             echo "client=true" >> "$GITHUB_OUTPUT"
             echo "packages=true" >> "$GITHUB_OUTPUT"
+            echo "scripts=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed="$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA")"
@@ -138,6 +140,14 @@ jobs:
           else
             echo "No packages/** or *-function/** change — skipping the Vitest tier."
             echo "packages=false" >> "$GITHUB_OUTPUT"
+          fi
+          # dump-task-logs.sh redacts row data before task logs reach the public
+          # Actions log; its check runs when it, its test, or this workflow changes.
+          if printf '%s\n' "$changed" | grep -qE '^(scripts/(test-)?dump-task-logs\.sh|\.github/workflows/ci\.yml)$'; then
+            echo "dump-task-logs.sh (or this workflow) changed — running its check."
+            echo "scripts=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "scripts=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ---------------------------------------------------------------------------
@@ -700,6 +710,28 @@ jobs:
         if: needs.changes.outputs.client == 'true'
         working-directory: client
         run: python -m unittest discover -v
+
+  # Stubbed-aws check that dump-task-logs.sh keeps row data out of the public
+  # Actions log. Needs only bash + jq; runs under the runner's mawk.
+  script-tests:
+    name: Script checks (dump-task-logs)
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Skip notice (no script change)
+        if: needs.changes.outputs.scripts != 'true'
+        run: echo "No dump-task-logs change — nothing to test; reporting success."
+
+      - name: Checkout code
+        if: needs.changes.outputs.scripts == 'true'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}   # empty on push/PR = default ref; the tag when called by deploy-prod
+
+      - name: Run dump-task-logs check
+        if: needs.changes.outputs.scripts == 'true'
+        run: bash scripts/test-dump-task-logs.sh
 
   deploy-build:
     name: Deploy build (no deploy)
