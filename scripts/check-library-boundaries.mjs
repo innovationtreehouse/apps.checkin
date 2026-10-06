@@ -59,9 +59,9 @@ function* files(dir, re) {
 const packageName = (spec) => spec.split('/').slice(0, spec.startsWith('@') ? 2 : 1).join('/');
 
 // ponytail: line regex, not a TS parser. Catches `from '…'`, `import '…'` and
-// `import('…')`/`require('…')` on one line; misses a specifier split across lines or a
+// `import('…')`/`require('…')`/`vi.mock('…')` on one line; misses a specifier split across lines or a
 // computed dynamic import. Upgrade to ts.preProcessFile if that ever bites.
-const SPEC = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)(['"])([^'"]+)\1/g;
+const SPEC = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*|(\.mock)\s*\(\s*)(['"])([^'"]+)\2/g;
 
 const violations = [];
 for (const { dir, json } of pkgs.filter((p) => p.json.library === true)) {
@@ -86,14 +86,15 @@ for (const { dir, json } of pkgs.filter((p) => p.json.library === true)) {
     readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
       const at = `${relative(root, file)}:${i + 1}`;
       if (rel.startsWith('src/')) {
-        for (const [, , spec] of line.matchAll(SPEC)) {
+        for (const [, mock, , spec] of line.matchAll(SPEC)) {
           let why = forbidden(spec, json.name);
           if (!why && spec.startsWith('.')) {
             const target = resolve(dirname(file), spec);
             if (target !== dir && !target.startsWith(dir + sep)) why = 'escapes package';
           }
           const pkg = packageName(spec);
-          if (!why && RAW_SQL.test(pkg) && !(pkg === '@prisma/adapter-pg' && DB_CLIENT_FILE.test(rel))) {
+          // A vi.mock replaces the client rather than connecting through it.
+          if (!why && !mock && RAW_SQL.test(pkg) && !(pkg === '@prisma/adapter-pg' && DB_CLIENT_FILE.test(rel))) {
             why = 'raw SQL client; only src/db/index.ts or src/lib/db/index.ts may import @prisma/adapter-pg';
           }
           if (why) violations.push(`${at} ${spec} (${why})`);
