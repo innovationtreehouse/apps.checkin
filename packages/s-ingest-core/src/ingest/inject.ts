@@ -10,6 +10,7 @@ import { z } from "zod";
 import type { PrismaClient } from "../db/client.js";
 import { EventSource, ObjectType } from "../generated/prisma/client.js";
 import { ingestNode, type IngestNodeResult } from "./ingestNode.js";
+import { rawMetaForNode } from "../shopify/schemas.js";
 
 // Prisma enum values are exactly these strings (ObjectType.ORDER === "ORDER"),
 // so validate the literal and cast — version-independent across Zod releases.
@@ -33,12 +34,61 @@ function asTestNode(objectType: ObjectType, node: unknown): unknown {
   return { ...node, test: true };
 }
 
-/** Inject one or many fixtures already parsed into objects. */
+/** An API-synced row (or one written before `source` existed) is Shopify's truth. */
+const API_OWNED = { OR: [{ source: null }, { source: { in: [EventSource.BACKFILL, EventSource.INCREMENTAL] } }] };
+
+/**
+ * Fixture GIDs that already have an API-owned live row. Projection upserts by GID, so
+ * injecting one would overwrite real data — and orders are newest-wins on `updatedAt`, so
+ * a fixture stamped later than Shopify's copy would pin itself there. shop_refund has no
+ * `source`, so any existing refund row counts as API-owned.
+ */
+async function apiOwnedGids(
+  prisma: PrismaClient,
+  storeId: string,
+  fixtures: Array<{ objectType: ObjectType; node: unknown }>,
+): Promise<string[]> {
+  const gids = (t: ObjectType) =>
+    fixtures.filter((f) => f.objectType === t).map((f) => rawMetaForNode(t, f.node).shopifyGid);
+  const [orders, payouts, txns, refunds] = await Promise.all([
+    prisma.shopOrder.findMany({
+      where: { storeId, shopifyGid: { in: gids(ObjectType.ORDER) }, ...API_OWNED },
+      select: { shopifyGid: true },
+    }),
+    prisma.shopPayout.findMany({
+      where: { storeId, payoutGid: { in: gids(ObjectType.PAYOUT) }, ...API_OWNED },
+      select: { payoutGid: true },
+    }),
+    prisma.shopBalanceTransaction.findMany({
+      where: { storeId, txnGid: { in: gids(ObjectType.BALANCE_TXN) }, ...API_OWNED },
+      select: { txnGid: true },
+    }),
+    prisma.shopRefund.findMany({
+      where: { storeId, refundGid: { in: gids(ObjectType.REFUND) } },
+      select: { refundGid: true },
+    }),
+  ]);
+  return [
+    ...orders.map((r) => r.shopifyGid),
+    ...payouts.map((r) => r.payoutGid),
+    ...txns.map((r) => r.txnGid),
+    ...refunds.map((r) => r.refundGid),
+  ];
+}
+
+/**
+ * Inject one or many fixtures already parsed into objects. Refuses the whole batch,
+ * before writing anything, if any fixture reuses the GID of an API-owned row.
+ */
 export async function injectFixtures(
   prisma: PrismaClient,
   fixtures: Array<{ objectType: ObjectType; node: unknown }>,
   opts: InjectOptions,
 ): Promise<IngestNodeResult[]> {
+  const taken = await apiOwnedGids(prisma, opts.storeId, fixtures);
+  if (taken.length > 0) {
+    throw new Error(`inject refused: ${taken.length} GID(s) already hold API-synced rows: ${taken.join(", ")}`);
+  }
   const source = opts.test ? EventSource.TEST_LOADED : EventSource.HAND_LOADED;
   const results: IngestNodeResult[] = [];
   for (const f of fixtures) {

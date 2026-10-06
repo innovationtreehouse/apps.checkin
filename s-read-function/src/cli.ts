@@ -43,12 +43,13 @@ function parseLimit(args: string[], fallback: number): number {
   return fallback;
 }
 
-/** Value of `--name=value` or `--name value`; undefined when the flag is absent. */
+/** Value of `--name=value` or `--name value`; undefined when absent or followed by another flag. */
 function parseFlag(args: string[], name: string): string | undefined {
   const eq = args.find((a) => a.startsWith(`--${name}=`));
   if (eq) return eq.slice(name.length + 3);
   const i = args.indexOf(`--${name}`);
-  return i >= 0 ? args[i + 1] : undefined;
+  const next = i >= 0 ? args[i + 1] : undefined;
+  return next?.startsWith("--") ? undefined : next;
 }
 
 async function main(): Promise<void> {

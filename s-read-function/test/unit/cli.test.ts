@@ -219,6 +219,7 @@ describe("cli — inject & guard rails", () => {
     ["without INJECT_ALLOW=1", ["inject", "f.json", "--reason", "x"], () => delete process.env.INJECT_ALLOW, /INJECT_ALLOW/],
     ["without --reason", ["inject", "f.json"], () => {}, /--reason/],
     ["with a blank --reason", ["inject", "f.json", "--reason= "], () => {}, /--reason/],
+    ["when --reason is followed by another flag", ["inject", "f.json", "--reason", "--test"], () => {}, /--reason/],
   ])("inject refuses %s", async (_label, args, arrange, msg) => {
     arrange();
     await runCli(args);

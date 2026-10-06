@@ -131,8 +131,10 @@ INJECT_ALLOW=1 npm run inject -- <fixture.json> --reason "<why>" [--test]   # lo
 `inject` validates the node with the same Zod schema the API path uses, appends it
 to `shopify_raw_event` tagged `HAND_LOADED` (or `TEST_LOADED` with `--test`), then
 runs the loader so it flows into the live tables exactly like real data. Each live
-row carries the same `source` stamp, and a later API re-read of the same GID
-restamps it. This is also how batch/test infrastructure seeds matching raw events.
+row carries the same `source` stamp. Inject refuses the whole file, before writing
+anything, if any GID already has an API-synced row (source `BACKFILL`,
+`INCREMENTAL`, or NULL; any existing `shop_refund` row), so a fixture can never
+overwrite real data. This is also how batch/test infrastructure seeds matching raw events.
 
 Guard rails: inject refuses to run without `INJECT_ALLOW=1` and a non-empty
 `--reason`, and records the operator (`cli:<os user>`) and reason on an `ADMIN`

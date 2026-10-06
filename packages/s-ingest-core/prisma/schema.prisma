@@ -170,8 +170,8 @@ model ShopOrder {
   /// the same backfill that fills variant ids fixes these).
   discountCodes      String[]  @default([]) @map("discount_codes")
   /// Provenance of the node that last wrote this row: an API sync (BACKFILL/INCREMENTAL)
-  /// or an operator inject (HAND_LOADED/TEST_LOADED). Re-ingest restamps it, so an API
-  /// re-read heals a row a fixture overwrote. Null only on rows written by pre-column code.
+  /// or an operator inject (HAND_LOADED/TEST_LOADED). Every write restamps it. Inject
+  /// refuses GIDs whose row is API-owned. Null only on rows written by pre-column code.
   source             EventSource?
   lastSyncedAt       DateTime  @default(now()) @map("last_synced_at")
 
