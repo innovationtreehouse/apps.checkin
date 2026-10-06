@@ -303,6 +303,21 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         });
 
         it.each([
+            ['lacks the program variant', OTHER_VARIANT_ID, {}],
+            ['was refunded', PROGRAM_VARIANT_ID, { financial_status: 'refunded' }],
+        ])('raises nothing for an order that %s when nobody named is awaiting payment', async (_label, variantId, extra) => {
+            await prisma.programParticipant.upsert({
+                where: { programId_personId: { programId, personId: p1 } },
+                update: { status: 'ACTIVE', pendingSince: null },
+                create: { programId, personId: p1, status: 'ACTIVE' },
+            });
+            const body = JSON.stringify({ ...JSON.parse(programPayload(String(p1), variantId)), ...extra });
+            await POST(webhookReq(body, sign(body)));
+            expect(await statusOf(p1)).toBe('ACTIVE');
+            expect(await exceptionKinds()).toEqual([]);
+        });
+
+        it.each([
             ['an unpaid financial_status', 'orders/paid', { financial_status: 'pending' }],
             ['a refunded financial_status', 'orders/paid', { financial_status: 'partially_refunded' }],
             ['a cancelled order', 'orders/paid', { financial_status: 'paid', cancelled_at: '2026-10-01T00:00:00Z' }],
