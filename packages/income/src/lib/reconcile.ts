@@ -1,6 +1,6 @@
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
-import type { MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
+import type { MirrorPayout, MirrorSource, PayoutMirror, QbDeposit } from "../contract";
 import { getIncomeConfig, isoDay } from "../runtime";
 import { recordAudit, type TxClient } from "./audit";
 
@@ -38,6 +38,7 @@ export interface PayoutFact {
   payoutDate: string;
   netCents: number;
   sumMismatch: boolean;
+  source: MirrorSource;
 }
 
 export type ReconcileResult =
@@ -67,7 +68,7 @@ export async function lockReconciliation(tx: TxClient, orgId: string, wait: bool
   return locked;
 }
 
-async function collectPayouts(mirror: PayoutMirror): Promise<PayoutFact[]> {
+export async function collectPayouts(mirror: PayoutMirror): Promise<PayoutFact[]> {
   const { reconcileFrom } = getIncomeConfig();
   const facts: PayoutFact[] = [];
   for (const p of await mirror.paidPayoutsSince(reconcileFrom ?? new Date(0))) {
@@ -78,6 +79,7 @@ async function collectPayouts(mirror: PayoutMirror): Promise<PayoutFact[]> {
       payoutDate: isoDay(p.issuedAt),
       netCents: p.netCents,
       sumMismatch: txnNet !== p.netCents,
+      source: p.source,
     });
   }
   return facts.sort((a, b) => a.payoutDate.localeCompare(b.payoutDate) || a.payoutGid.localeCompare(b.payoutGid));

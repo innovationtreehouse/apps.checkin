@@ -2,10 +2,10 @@ import { it, expect, beforeEach, afterEach } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureIncome } from "../../runtime";
-import { runReconcile, lockReconciliation } from "../../lib/reconcile";
+import { runReconcile, lockReconciliation, collectPayouts } from "../../lib/reconcile";
 import { reconciliationService } from "../../services/reconciliationService";
 import { seedIncomeDev } from "../../seed";
-import type { MirrorBalanceTxn, MirrorPayout, PayoutMirror, QbDeposit } from "../../contract";
+import type { MirrorBalanceTxn, MirrorPayout, MirrorSource, PayoutMirror, QbDeposit } from "../../contract";
 import { clearAll, ORG_A, ORG_B, newUserId } from "../helpers/fixtures";
 
 // Fake mirror: `payouts` holds every payout the store knows, in any status.
@@ -20,9 +20,9 @@ const dep = (id: string, txnDate: string, totalCents: number): QbDeposit => ({
 });
 
 /** Add a paid payout whose transactions sum to its net unless `txnNet` says otherwise. */
-function payout(gid: string, day: string, netCents: number, txnNet: number = netCents): string {
-  payouts.push({ payoutGid: gid, issuedAt: new Date(`${day}T00:00:00Z`), status: "paid", netCents, currency: "USD" });
-  txns[gid] = [{ txnGid: `${gid}/t`, type: "charge", orderGid: "O1", orderName: "#1001", amountCents: txnNet, feeCents: 0, netCents: txnNet }];
+function payout(gid: string, day: string, netCents: number, txnNet: number = netCents, source: MirrorSource = "api"): string {
+  payouts.push({ payoutGid: gid, issuedAt: new Date(`${day}T00:00:00Z`), status: "paid", netCents, currency: "USD", source });
+  txns[gid] = [{ txnGid: `${gid}/t`, type: "charge", orderGid: "O1", orderName: "#1001", amountCents: txnNet, feeCents: 0, netCents: txnNet, source }];
   return gid;
 }
 
@@ -189,6 +189,30 @@ describeDb("runReconcile — automatic transitions", () => {
     release();
     await holder;
     expect(await runReconcile(ORG_A, NOW)).toMatchObject({ status: "ran", matched: 1 });
+  });
+});
+
+describeDb("runReconcile — hand-loaded history", () => {
+  it("payout facts carry each payout's source", async () => {
+    payout("P1", "2026-06-01", 97);
+    payout("P2", "2026-06-02", 50, 50, "hand_loaded");
+    const facts = await collectPayouts(mirror);
+    expect(facts.map((f) => [f.payoutGid, f.source])).toEqual([["P1", "api"], ["P2", "hand_loaded"]]);
+  });
+
+  it("matches a hand-loaded payout exactly like an API one", async () => {
+    payout("P1", "2026-06-01", 97, 97, "hand_loaded");
+    deposits = [dep("D1", "2026-06-02", 97)];
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor("P1")).toMatchObject({ status: "MATCHED", depositId: "D1" });
+  });
+
+  it("a hand-loaded payout with no recovered transactions opens TXN_SUM_MISMATCH", async () => {
+    payout("P1", "2026-06-01", 97, 97, "hand_loaded");
+    txns.P1 = [];
+    deposits = [dep("D1", "2026-06-02", 97)];
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "TXN_SUM_MISMATCH" });
   });
 });
 

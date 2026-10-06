@@ -1,6 +1,20 @@
 // Ports the host (checkin-app) binds via configureIncome(). Each is optional: unbound, the
 // matching feature no-ops and the CSV side keeps working.
 
+/**
+ * Where a mirror row came from, read from the mirror's `source` column on shop_payout and
+ * shop_balance_transaction. Finance sees it; matching treats both the same.
+ */
+export type MirrorSource = "api" | "hand_loaded";
+
+/**
+ * Map the mirror's raw `source` value: HAND_LOADED / TEST_LOADED are loaded history;
+ * BACKFILL / INCREMENTAL / NULL came from the Shopify API (NULL counts as API).
+ */
+export function mirrorSource(raw: string | null): MirrorSource {
+  return raw === "HAND_LOADED" || raw === "TEST_LOADED" ? "hand_loaded" : "api";
+}
+
 /** A payout as the s-read mirror holds it (shop_payout). */
 export interface MirrorPayout {
   payoutGid: string;
@@ -8,6 +22,7 @@ export interface MirrorPayout {
   status: string;
   netCents: number;
   currency: string | null;
+  source: MirrorSource;
 }
 
 /** One balance transaction of a mirror payout (shop_balance_transaction ⋈ shop_order.name). */
@@ -19,6 +34,7 @@ export interface MirrorBalanceTxn {
   amountCents: number;
   feeCents: number;
   netCents: number;
+  source: MirrorSource;
 }
 
 /** One order line (shop_order_line). Amounts in cents; `variantId` is null for custom items. */

@@ -10,6 +10,7 @@ const txn = (type: string, orderGid: string | null, amountCents: number, feeCent
   amountCents,
   feeCents,
   netCents: amountCents - feeCents,
+  source: "api",
 });
 
 const line = (orderGid: string, variantId: string | null, priceCents: number, quantity = 1, discountCents = 0): MirrorOrderLine => ({
