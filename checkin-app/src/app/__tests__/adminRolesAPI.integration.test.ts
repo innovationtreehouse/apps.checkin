@@ -18,6 +18,7 @@
  */
 import { GET, PATCH } from '@/app/api/roles/route';
 import prisma from '@/lib/prisma';
+import { ROLE_FLAGS } from '@/lib/roles';
 import { getServerSession } from 'next-auth/next';
 
 /** Does this person hold OPERATIONS in the table? isOperations has no Person column. */
@@ -178,11 +179,18 @@ describe('Admin Roles API Integration Tests', () => {
             expect(res.status).toBe(404);
         });
 
-        it('self-edit: a sysadmin may change their own non-board flag', async () => {
+        it('self-edit: a sysadmin may not change their own flags -> 403, unchanged', async () => {
             asSession({ id: testSysAdminId, isSysadmin: true });
             const res = await PATCH(patchReq({ targetUserId: testSysAdminId, isOperations: true }));
-            expect(res.status).toBe(200);
-            expect(await hasOperationsRow(testSysAdminId)).toBe(true);
+            expect(res.status).toBe(403);
+            expect(await hasOperationsRow(testSysAdminId)).toBe(false);
+        });
+
+        it('a session with no integer actor id is refused (fail closed) -> 403, no write', async () => {
+            asSession({ isSysadmin: true, isBoardMember: true });
+            const res = await PATCH(patchReq({ targetUserId: testTargetUserId, isOperations: true }));
+            expect(res.status).toBe(403);
+            expect(await hasOperationsRow(testTargetUserId)).toBe(false);
         });
     });
 
@@ -509,8 +517,100 @@ describe('Admin Roles API Integration Tests', () => {
         });
     });
 
+    describe('PATCH /api/roles — own-household rule', () => {
+        let householdId: number;
+        let boardSelfId: number;
+        let sysadminSelfId: number;
+        let spouseId: number;
+        let outsiderId: number;
+
+        beforeAll(async () => {
+            householdId = (await prisma.household.create({ data: { name: "Own HH" } })).id;
+            boardSelfId = (await prisma.person.create({
+                data: {
+                    email: `own-board-${TAG}@example.com`, name: 'Own Board', isBoardMember: true,
+                    householdId, roles: { create: [{ role: 'BOARD' }] },
+                },
+            })).id;
+            sysadminSelfId = (await prisma.person.create({
+                data: {
+                    email: `own-sysadmin-${TAG}@example.com`, name: 'Own Sysadmin', isSysadmin: true,
+                    household: { create: { name: "Test HH" } }, roles: { create: [{ role: 'SYSADMIN' }] },
+                },
+            })).id;
+            spouseId = (await prisma.person.create({
+                data: {
+                    email: `own-spouse-${TAG}@example.com`, name: 'Own Spouse', isKeyholder: true,
+                    householdId, roles: { create: [{ role: 'KEYHOLDER' }] },
+                },
+            })).id;
+            outsiderId = (await prisma.person.create({
+                data: { email: `own-outsider-${TAG}@example.com`, name: 'Outsider', household: { create: { name: "Test HH" } } },
+            })).id;
+        });
+
+        afterAll(async () => {
+            const ids = [boardSelfId, sysadminSelfId, spouseId, outsiderId].filter((id) => id !== undefined);
+            if (ids.length === 0) return;
+            await prisma.auditLog.deleteMany({ where: { OR: [{ actorId: { in: ids } }, { affectedEntityId: { in: ids } }] } });
+            await prisma.person.deleteMany({ where: { id: { in: ids } } });
+            if (householdId !== undefined) await prisma.household.deleteMany({ where: { id: householdId } });
+        });
+
+        async function auditCount(personId: number) {
+            return prisma.auditLog.count({ where: { affectedEntityId: personId } });
+        }
+
+        it('a sysadmin cannot grant themself BOARD -> 403, no row, no audit', async () => {
+            asSession({ id: sysadminSelfId, isSysadmin: true });
+            const audits = await auditCount(sysadminSelfId);
+            const res = await PATCH(patchReq({ targetUserId: sysadminSelfId, isBoardMember: true }));
+            expect(res.status).toBe(403);
+            expect(await prisma.personRole.findUnique({ where: { personId_role: { personId: sysadminSelfId, role: 'BOARD' } } })).toBeNull();
+            expect(await auditCount(sysadminSelfId)).toBe(audits);
+        });
+
+        it('a board member cannot grant any role flag to someone in their household -> 403 for every flag', async () => {
+            asSession({ id: boardSelfId, isBoardMember: true });
+            for (const flag of ROLE_FLAGS.filter((f) => f !== 'isKeyholder')) {
+                const res = await PATCH(patchReq({ targetUserId: spouseId, [flag]: true }));
+                expect({ flag, status: res.status }).toEqual({ flag, status: 403 });
+            }
+            const rows = await prisma.personRole.findMany({ where: { personId: spouseId }, select: { role: true } });
+            expect(rows.map((r) => r.role)).toEqual(['KEYHOLDER']);
+        });
+
+        it('a board member cannot revoke a role from someone in their household -> 403, unchanged', async () => {
+            asSession({ id: boardSelfId, isBoardMember: true });
+            const res = await PATCH(patchReq({ targetUserId: spouseId, isKeyholder: false }));
+            expect(res.status).toBe(403);
+            const data = await res.json();
+            expect(data.error).toMatch(/own household/);
+            expect(await prisma.personRole.findUnique({ where: { personId_role: { personId: spouseId, role: 'KEYHOLDER' } } })).not.toBeNull();
+        });
+
+        it('a sysadmin cannot set canAccessStaging on themself -> 403, unchanged', async () => {
+            asSession({ id: sysadminSelfId, isSysadmin: true });
+            const res = await PATCH(patchReq({ targetUserId: sysadminSelfId, canAccessStaging: true }));
+            expect(res.status).toBe(403);
+            const row = await prisma.person.findUnique({ where: { id: sysadminSelfId }, select: { canAccessStaging: true } });
+            expect(row?.canAccessStaging).toBe(false);
+        });
+
+        it('the same actor may grant to someone outside their household -> 200, audited in the same request', async () => {
+            asSession({ id: boardSelfId, isBoardMember: true });
+            const res = await PATCH(patchReq({ targetUserId: outsiderId, isKeyholder: true, isOperations: true }));
+            expect(res.status).toBe(200);
+            const rows = await prisma.auditLog.findMany({ where: { actorId: boardSelfId, affectedEntityId: outsiderId, tableName: 'PersonRole' } });
+            expect(rows.map((r) => r.newData)).toEqual(expect.arrayContaining([{ isKeyholder: true }, { isOperations: true }]));
+            expect(rows.map((r) => r.oldData)).toEqual(expect.arrayContaining([{ isKeyholder: false }, { isOperations: false }]));
+            expect(rows.every((r) => r.actorSystem === null)).toBe(true);
+        });
+    });
+
     describe('PATCH /api/roles — last-board guard', () => {
         let loneBoardId: number;
+        let staleBoardId: number;
 
         beforeAll(async () => {
             // The lock/count the route guards on is PersonRole now — assert the ambient
@@ -530,18 +630,25 @@ describe('Admin Roles API Integration Tests', () => {
                 },
             });
             loneBoardId = lone.id;
+            const stale = await prisma.person.create({
+                data: { email: `stale-board-${TAG}@example.com`, name: 'Stale Board', household: { create: { name: "Test HH" } } },
+            });
+            staleBoardId = stale.id;
         });
 
         afterAll(async () => {
             // If beforeAll threw before assignment, an undefined id would make these
             // where clauses match ALL rows — bail instead of cascading the failure.
-            if (loneBoardId === undefined) return;
-            await prisma.auditLog.deleteMany({ where: { actorId: loneBoardId } });
-            await prisma.person.deleteMany({ where: { id: loneBoardId } });
+            const ids = [loneBoardId, staleBoardId].filter((id) => id !== undefined);
+            if (ids.length === 0) return;
+            await prisma.auditLog.deleteMany({ where: { actorId: { in: ids } } });
+            await prisma.person.deleteMany({ where: { id: { in: ids } } });
         });
 
         it('removing the last board member -> 409, board membership unchanged', async () => {
-            asSession({ id: loneBoardId, isBoardMember: true });
+            // Self-removal is refused by the own-household rule, so the actor is someone
+            // whose session still claims board after their own board row was revoked.
+            asSession({ id: staleBoardId, isBoardMember: true });
             const res = await PATCH(patchReq({ targetUserId: loneBoardId, isBoardMember: false }));
             expect(res.status).toBe(409);
             const data = await res.json();
@@ -591,7 +698,7 @@ describe('Admin Roles API Integration Tests', () => {
             await prisma.person.deleteMany({ where: { id: { in: ids } } });
         });
 
-        it('two concurrent self-removals with count==2 -> exactly one 200 and one 409; final count is 1', async () => {
+        it('two concurrent cross-removals with count==2 -> exactly one 200 and one 409; final count is 1', async () => {
             // Deterministic mock-identity assignment: Promise.all evaluates its array
             // left-to-right, and each PATCH call synchronously reaches its
             // getServerSession() call (the first await inside authenticateRequest)
@@ -603,8 +710,8 @@ describe('Admin Roles API Integration Tests', () => {
                 .mockResolvedValueOnce({ user: { id: raceBId, isBoardMember: true } });
 
             const [resA, resB] = await Promise.all([
-                PATCH(patchReq({ targetUserId: raceAId, isBoardMember: false })),
                 PATCH(patchReq({ targetUserId: raceBId, isBoardMember: false })),
+                PATCH(patchReq({ targetUserId: raceAId, isBoardMember: false })),
             ]);
 
             const statuses = [resA.status, resB.status].sort();

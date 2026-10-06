@@ -366,7 +366,7 @@ export const authOptions: NextAuthOptions = {
                         // System bypass: bootstrap self-promotion off an env-configured
                         // allowlist, not a user-initiated authority-matrix request — there is
                         // no actor to check against, only a trusted source deciding its own grant.
-                        await setRoleFlag(prisma, dbParticipant.id, "isSysadmin", true, "system");
+                        await setRoleFlag(prisma, dbParticipant.id, "isSysadmin", true, { system: "system:bootstrap-sysadmin" });
                         dbParticipant.isSysadmin = true;
                         // Claims derive from `roles`, not the mirror column — push the grant
                         // into the in-memory list so this same-request sign-in gets it too.

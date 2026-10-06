@@ -11,7 +11,10 @@ import {
     RoleMatrixError,
     LastBoardMemberError,
     DeniedHouseholdBoardError,
+    OwnHouseholdRoleError,
+    assertNotOwnHousehold,
 } from "@/lib/roles";
+import { personActor } from "@/lib/auditActor";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { isYouth } from "@/lib/time";
 
@@ -110,29 +113,17 @@ export const PATCH = withAuth(
                     select: PERSON_SELECT,
                 });
                 if (!target) throw new TargetNotFoundError();
+                // Covers canAccessStaging too, which does not go through setRoleFlag.
+                await assertNotOwnHousehold(tx, actor.id, targetUserId);
 
-                // Delta + audit are built from setRoleFlag's post-lock read, so the
-                // no-op check and the recorded before/after are consistent with the
-                // write (thpr C). One call per requested flag; no-ops report changed:false.
-                // TWO accumulators because these are two different tables. Role flags are
-                // PersonRole rows; canAccessStaging is a plain column on Person. Folding
-                // both into one AuditLog row would file a Person change under
-                // tableName "PersonRole" — the exact metadata drift #1179 is cleaning up
-                // elsewhere, and it would make the staging grant unfindable by anyone
-                // querying the audit log for Person changes.
-                const oldData: Partial<Record<RoleFlag, boolean>> = {};
-                const newData: Partial<Record<RoleFlag, boolean>> = {};
+                // setRoleFlag writes one PersonRole audit row per changed flag.
+                for (const field of Object.keys(requested) as RoleFlag[]) {
+                    await setRoleFlag(tx, targetUserId, field, requested[field]!, actor);
+                }
+
+                // canAccessStaging is a Person column, so it is audited under tableName "Person".
                 const stagingOld: Partial<Record<'canAccessStaging', boolean>> = {};
                 const stagingNew: Partial<Record<'canAccessStaging', boolean>> = {};
-                for (const field of Object.keys(requested) as RoleFlag[]) {
-                    const { changed, before, after } = await setRoleFlag(
-                        tx, targetUserId, field, requested[field]!, actor,
-                    );
-                    if (changed) {
-                        oldData[field] = before;
-                        newData[field] = after;
-                    }
-                }
 
                 // Plain column write — no matrix, no mirror, no PersonRole row. Sysadmin-only
                 // gate already enforced above (fail closed before any write happens).
@@ -147,26 +138,10 @@ export const PATCH = withAuth(
                     canAccessStagingAfter = after;
                 }
 
-                if (Object.keys(newData).length > 0) {
-                    await tx.auditLog.create({
-                        data: {
-                            actorId: actor.id,
-                            action: "EDIT",
-                            tableName: "PersonRole",
-                            affectedEntityId: targetUserId,
-                            oldData,
-                            newData,
-                        },
-                    });
-                }
-
-                // Separate row, tableName "Person": canAccessStaging is a column there, not
-                // a PersonRole row. Same tx, so a PATCH that changes both still audits both
-                // atomically — it just files each under the table it actually touched.
                 if (Object.keys(stagingNew).length > 0) {
                     await tx.auditLog.create({
                         data: {
-                            actorId: actor.id,
+                            ...personActor(actor.id),
                             action: "EDIT",
                             tableName: "Person",
                             affectedEntityId: targetUserId,
@@ -194,6 +169,9 @@ export const PATCH = withAuth(
         } catch (error) {
             if (error instanceof TargetNotFoundError) {
                 return apiError("No such user", 404);
+            }
+            if (error instanceof OwnHouseholdRoleError) {
+                return apiError("You cannot change roles for yourself or anyone in your own household — someone outside your household must.", 403);
             }
             if (error instanceof RoleMatrixError) {
                 return apiError(error.message, 403);
