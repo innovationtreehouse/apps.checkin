@@ -264,7 +264,10 @@ configured") while manual entry keeps working.
 
 **File storage: `bytea` in the receipt database, as the source does.** Hundreds of
 files a year is under a gigabyte annually; lists already `omit` the blob. The file
-column (and a held mail item's file) is `secret` tier.
+column (and a held mail item's file) is **`pii`** tier: it carries names and
+delivery addresses. It is not `secret`, which `SECURITY-POLICY.md` reserves for
+cryptographic material that is never returned; a receipt file is returned, but only
+through the file route.
 
 **Files are not JSON (plan rule 7).** `GET /api/receipts/[id]/file` is built on
 the **H6 file-route primitive** (`defineFileRoute` / `fileHandler`: authorize, the
@@ -286,7 +289,8 @@ response carries the stored type and `nosniff`. By type (owner decision):
   file route itself sends text only as `Content-Disposition: attachment`.
 
 Every view or download writes an audit row (§6). A test asserts that no
-JSON route's response contains a `secret`-tier receipt column. H6 is a boundary PR
+JSON route's response contains a receipt file column (`Receipt.fileBlob`,
+`ReceiptMailItem.fileBlob`). H6 is a boundary PR
 that lands before this lane's B and W.
 `ponytail:` ceiling is DB size and backup time; upgrade path is a private S3 bucket
 read with the task role, as `agreementDocument.ts` does.
@@ -312,12 +316,24 @@ existing prod `/api/cron/reconcile-shopify`, beside income and the Gmail step
 
 1. OCR-interrupted sweep (`auto_upload` older than ten minutes → `ocr_failed`).
 2. S1 re-push of finalized receipts with `pushedAt` null.
-3. X13 re-send for receipts with `donorSyncedAt` null.
+3. X13 re-send for receipts with `donorSync = pending`.
 4. Gmail intake (phase G).
 
 Each step is idempotent, capped per run, and returns counts only (swept, pushed,
 re-sent, mail items read, failed) — no ids, names, addresses or amounts in the
-cron response. Work done inside a user request (OCR, the first push, the first
+cron response. **Order and cost**, for whoever owns the shared step order and time
+budget of `reconcile-shopify`:
+
+| Step | Cap per run | Cost |
+|---|---|---|
+| 1. OCR-interrupted sweep | none needed | one `UPDATE`; milliseconds |
+| 2. S1 re-push | 50 receipts | in-process calls; seconds |
+| 3. X13 re-send | 50 receipts | in-process calls; seconds |
+| 4. Gmail intake | 10 receipt files | one OCR call each, seconds to tens of seconds; worst case about 5 minutes |
+
+Gmail runs last because it is the only slow step; anything over its cap waits for
+the next day, which the 3-day window (§2a) allows. At hundreds of receipts a year
+the cap is rarely reached. Work done inside a user request (OCR, the first push, the first
 X13 call) stays in the request; the steps only catch what that missed.
 
 **Reimbursement status (FR3 port requirement).** What the backlog row believed
@@ -412,10 +428,16 @@ instead of expense. This lane's part is the mark and nothing else:
   `receiptId`; the orchestrator's X9 stays money-only, and donations joins the
   two on `receiptId`. OCR does not fill it: the paperwork is the donor's
   purchase receipt, which names the store, not the donor.
-- `Receipt.donorSyncedAt` marks donations as up to date. It is cleared on every
-  donor or in-kind change and stamped when X13 returns; the daily catch-up step
-  re-sends every receipt where it is null and a donor was ever sent, as for S1
-  (§4).
+- `Receipt.donorSync` (`none` / `pending` / `synced`) tracks X13, because one
+  nullable timestamp cannot tell "never in-kind" from "withdraw pending" from
+  "first send failed":
+  - `none`: never in-kind. Untouched by X13 and by the catch-up step, so a plain
+    purchase never sends `withdrawInKind`.
+  - `pending`: set in the same write as any change that donations must hear
+    about: the mark set, the donor edited, or the mark cleared on a receipt that
+    is not `none`.
+  - `synced`: set when the X13 call returns. A failed call leaves `pending`.
+  The daily catch-up step re-sends only `pending` rows (§4).
 - Donor names are **`pii`** on `Receipt`, matching bulk donation §4: read only by
   `FINANCE` (and by `BOARD` if donations' gate is reused). The uploader can enter
   them but does not read them back: the submitter list and detail views return the
@@ -453,7 +475,7 @@ not (an unused `defineRoute` is inert).
 **Sensitivity follows expense (#1272 §5), not catalog.** `internal` for amounts,
 retailer, receipt/order numbers, line text, `reimbursementFor`, every actor
 id (`uploadedByUserId` becomes `Person.id`), audit values and QB linkage. The
-**file is `secret`** (names, delivery addresses, card last four): never in a JSON
+**file is `pii`** (names, delivery addresses, card last four): never in a JSON
 response, only the H6 file route (§3). `reimbursementFor` moves to `pii` if a
 route ever returns contact details beside it.
 
@@ -528,8 +550,9 @@ The bulk-donation design (§2.4) owns the callee; agreed signature:
   side to ever surface it. Name confirmed with the bulk-donation design.
 - Which call a re-send makes comes from the receipt's current state, not a stored
   operation: in-kind sends `recordInKindDonor` with the current donor, not in-kind
-  sends `withdrawInKind`. One marker covers both.
-- A throw means not delivered: `donorSyncedAt` stays null, and the daily catch-up
+  sends `withdrawInKind`. One state field covers both, and a never-in-kind
+  receipt stays `none`, so it never sends anything.
+- A throw means not delivered: `donorSync` stays `pending`, and the daily catch-up
   step or the next edit re-sends. **Inert at S:** throws `not wired`, so nothing is lost
   while donations is not live.
 - Donor names leave this lane only through X13; they are never on S1.
@@ -563,12 +586,12 @@ The bulk-donation design (§2.4) owns the callee; agreed signature:
 ## 8. Testing
 
 The source's vitest suites port with the library (Anthropic client mocked). New:
-caps; auto-OCR success, failure and refusal; the catch-up steps (counts only);
+caps; auto-OCR success, failure and refusal; the catch-up steps (counts only); X13 state: a never-in-kind receipt never sends `withdrawInKind`, a failed first send stays `pending` and is retried;
 tax note required; self-approval refused; the reimbursement view against a stub
 port; magic-byte rejection of a renamed file and of a `text/plain` upload that is not UTF-8 or holds a NUL byte; OCR output never setting
 reimbursee, vendor or `needsReimbursement`; a non-adult uploader's
 `needsReimbursement` rejected; a text file rendered as escaped text and served only as an attachment; an image served inline under `sandbox` and a PDF served inline without it; an audit row per file view or download and mail-queue
-view; no JSON route returning a `secret` column (jest, in
+view; no JSON route returning a receipt file column (jest, in
 `src/security/__tests__`). **Forged-From fixtures** for phase G, each of which must
 land in the finance queue and never as that person's receipt: SPF pass with no
 DMARC alignment; a forged `Authentication-Results: mx.google.com` below Google's
@@ -587,9 +610,9 @@ All PRs are based on `main`; none stacks.
 
 | PR | Contents |
 |---|---|
-| **S** skeleton | `packages/receipt/`: schema (`ReceiptOrgSettings`; `SettingsData` dropped; new `pushedAt`, `isInKind`, donor names, `donorSyncedAt`; `isInKind` written into `CompletedReceipt.isInKind`; this PR does not edit `receipt-types`), services incl. bulk import and the duplicate-race fix (test first, §2), pre-seated for G: `Receipt.intakeSource`, the `ReceiptMailItem` model and the extended `submitter_review` guard (inert until G), machine, OCR adapter + mock, UI, import prep scripts, `contract.ts` with the `ReceiptSink`, `ReimbursementStatus` and `DonorSink` ports and inert adapters, vitest suites. Port-diff in the body. |
-| **B** boundary | `@sensitivity` on the receipt schema (file columns `secret`); after H6; `security/registry/receipt.ts` with every route, including file, import and the mail queue (list, assign, discard); one merge-list line. Maintainers, alone. |
-| **W** wiring | route and page stubs, `pageRegistry`, nav (Finance area for queues; "My receipts" where staff can reach it), `configureReceipt()`, harness list entries, `RECEIPT_DATABASE_URL` + `ANTHROPIC_API_KEY` in Infra, flow test. Needs `FINANCE` on `main`. |
+| **S** skeleton | `packages/receipt/`: schema (`ReceiptOrgSettings`; `SettingsData` dropped; new `pushedAt`, `isInKind`, donor names, `donorSync`; `isInKind` written into `CompletedReceipt.isInKind`; this PR does not edit `receipt-types`), services incl. bulk import and the duplicate-race fix (test first, §2), pre-seated for G: `Receipt.intakeSource`, the `ReceiptMailItem` model and the extended `submitter_review` guard (inert until G), machine, OCR adapter + mock, UI, import prep scripts, `contract.ts` with the `ReceiptSink`, `ReimbursementStatus` and `DonorSink` ports and inert adapters, vitest suites. Port-diff in the body. |
+| **B** boundary | `@sensitivity` on the receipt schema (file columns `pii`); after H6; `security/registry/receipt.ts` with every route, including file, import and the mail queue (list, assign, discard); one merge-list line. Maintainers, alone. |
+| **W** wiring | route and page stubs, `pageRegistry`, nav (Finance area for queues; "My receipts" where staff can reach it), `configureReceipt()`, harness list entries, `RECEIPT_DATABASE_URL` in Infra, `ANTHROPIC_API_KEY` in dev (prod only after Q5), flow test. Needs `FINANCE` on `main`. |
 | **G** Gmail intake | the mailbox adapter, the step in `reconcile-shopify`, the finance mail-queue page; Infra: the two secrets, the refresher, the consent runbook. After W. |
 | **X6** | bind `ReceiptSink` to `ingestReceipt`; pipeline flow test. After L7 W. |
 | **X13** | bind `DonorSink` to donations' `recordInKindDonor` and `withdrawInKind`. After L6 W and L8 W. |
@@ -602,7 +625,10 @@ All PRs are based on `main`; none stacks.
 
 - **Q5. Vendor compliance** (noted by the owner). I believe, but have not
   verified, that Anthropic's API holds the SOC 2 and ISO 27001 attestations the
-  Definitions Policy requires. Confirm before W enables the real client in prod.
+  Definitions Policy requires. **Gate:** Infra does not set `ANTHROPIC_API_KEY` in
+  prod until Q5 is confirmed and recorded on #1266. Until then prod OCR fails
+  closed into `ocr_failed` ("not configured", §3), and manual entry and the
+  Gmail and import paths keep working without automatic reading.
 
 ### Assumptions
 
