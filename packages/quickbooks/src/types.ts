@@ -10,6 +10,25 @@ export interface QboTokens {
 
 export type QboEnv = "sandbox" | "production";
 
+/** Which QBO company the client talks to. Production is allowed only when CHECKIN_ENV=prod. */
+export interface QboRealm {
+  env: QboEnv;
+  realmId: string;
+}
+
+/**
+ * Read-only source of the current QBO access token. The app never refreshes or
+ * stores tokens: an external refresher owns rotation and publishes the token.
+ */
+export interface AccessTokenSource {
+  current(): Promise<string>;
+}
+
+export interface QboRef {
+  value: string;
+  name?: string;
+}
+
 // A QBO Purchase (expense: cash/card/check). Bills have a similar shape (VendorRef/TxnDate/TotalAmt).
 export interface QboPurchase {
   Id: string;
@@ -22,6 +41,45 @@ export interface QboPurchase {
   DocNumber?: string;
   PrivateNote?: string; // memo — real vendor often lives here on reimbursement bills
   Line?: { Description?: string; Amount?: number }[]; // line detail — real vendor + allocated amounts
+}
+
+export interface QboDeposit {
+  Id: string;
+  TxnDate: string;
+  TotalAmt: number;
+  DepositToAccountRef?: QboRef;
+  PrivateNote?: string;
+  Line?: { Description?: string; Amount?: number }[];
+}
+
+export interface QboBillPayment {
+  Id: string;
+  TxnDate: string;
+  TotalAmt: number;
+  VendorRef?: QboRef;
+  PayType?: string;
+  Line?: { Amount?: number; LinkedTxn?: { TxnId: string; TxnType: string }[] }[];
+}
+
+export interface QboAccount {
+  Id: string;
+  Name: string;
+  FullyQualifiedName: string;
+  AccountType?: string;
+  Active?: boolean;
+}
+
+export interface QboClass {
+  Id: string;
+  Name: string;
+  FullyQualifiedName: string;
+  Active?: boolean;
+}
+
+export interface QboVendor {
+  Id: string;
+  DisplayName: string;
+  Active?: boolean;
 }
 
 // What the vendor-join loop actually compares OCR output against.

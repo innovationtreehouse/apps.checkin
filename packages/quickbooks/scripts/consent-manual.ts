@@ -6,9 +6,11 @@
 //   npm run consent:manual -w @inventory/quickbooks
 import { randomBytes } from "node:crypto";
 import { createInterface } from "node:readline/promises";
-import { oauthConfigFromEnv, authUrl, exchangeCode, saveTokens } from "../src/oauth";
+import { oauthConfigFromEnv, authUrl, exchangeCode } from "../src/oauth";
+import { saveTokens, tokenFileFromEnv } from "../src/local";
 
 const cfg = oauthConfigFromEnv();
+const tokenFile = tokenFileFromEnv();
 const state = randomBytes(16).toString("hex");
 
 console.log("1. Open this URL, sign in to your company, and authorize:\n");
@@ -29,5 +31,5 @@ if (returnedState !== state) throw new Error("state mismatch — paste the URL f
 if (!code || !realmId) throw new Error("URL missing code or realmId — paste the full redirected URL");
 
 const tokens = await exchangeCode(cfg, code, realmId);
-saveTokens(tokens);
-console.log(`\n✓ Connected. realmId=${realmId}. Tokens saved to .qbo-tokens.json (gitignored).`);
+saveTokens(tokenFile, tokens);
+console.log(`\n✓ Connected. realmId=${realmId}. Tokens saved to ${tokenFile}.`);

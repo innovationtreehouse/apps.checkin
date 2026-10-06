@@ -2,9 +2,11 @@
 // code for tokens, and saves them. Run: npm run consent -w @inventory/quickbooks
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
-import { oauthConfigFromEnv, authUrl, exchangeCode, saveTokens } from "../src/oauth";
+import { oauthConfigFromEnv, authUrl, exchangeCode } from "../src/oauth";
+import { saveTokens, tokenFileFromEnv } from "../src/local";
 
 const cfg = oauthConfigFromEnv();
+const tokenFile = tokenFileFromEnv();
 const state = randomBytes(16).toString("hex");
 const port = Number(new URL(cfg.redirectUri).port || 80);
 
@@ -32,9 +34,9 @@ const server = createServer(async (req, res) => {
 
   try {
     const tokens = await exchangeCode(cfg, code, realmId);
-    saveTokens(tokens);
+    saveTokens(tokenFile, tokens);
     res.writeHead(200).end("QuickBooks connected. Tokens saved. You can close this tab.");
-    console.log(`\n✓ Connected. realmId=${realmId}. Tokens saved to .qbo-tokens.json (gitignored).`);
+    console.log(`\n✓ Connected. realmId=${realmId}. Tokens saved to ${tokenFile}.`);
   } catch (err) {
     res.writeHead(500).end(String(err));
     console.error(err);
