@@ -141,18 +141,20 @@ path on an explicit phase ladder (§9).
 | UI location | **All UI in the library** — components, pages, route handlers. checkin-app only re-exports and mounts (§3). |
 | UI style | **Keep the client pattern** — `"use client"` pages + `/api/*` routes; re-auth + re-theme only. Matches checkin's dominant pattern, same as #1286 §7 / #1287 §7. |
 | `orgId` / user identity | **Keep the columns; inject the values** — resolved by #1286 §6. Org identity comes from the **checkin-owned `Org` registry table** (seeded on the initial migration with a stable well-known id), injected as an accessor `getOrg(): OrgIdentity` — **not** an env scalar, **not** a `SettingsData` row, **not** a cross-DB read. The user-id columns (`submitterId`, `decidedByUserId`, `capitalOwnerId`, `userId`) map to checkin **`Person.id`** via the injected principal; a line's owner is a `BudgetOwner` bucket id, not a person (§6). Both flow through the single `configureExpense()` injection (§6). |
-| QuickBooks | **Incremental phase ladder** QB-0…QB-3 (§9), grounded in `@inventory/quickbooks` (read client + OAuth already built; write path + the `qb_pending` terminus net-new). Static creds (`QBO_CLIENT_ID/SECRET/ENVIRONMENT/REDIRECT_URI`) are **Infra-managed env/secrets**. **The app never writes a secret and never holds the rotating refresh token:** an **Infra-owned refresher** (Secrets Manager rotation Lambda / scheduled Lambda) owns the refresh token + rotation and publishes the current access token; the app reads it **read-only** (`GetSecretValue`). **No token in Postgres, no file, no app-side write** (§9 QB-0). |
+| QuickBooks | **Incremental phase ladder** QB-0…QB-3 (§9), grounded in `@inventory/quickbooks` (read client + OAuth already built; write path + the `qb_pending` terminus net-new). Static creds (`QBO_CLIENT_ID/SECRET/ENVIRONMENT/REDIRECT_URI`) are **Infra-managed env/secrets** for the refresher and consent tooling; the app never holds `QBO_CLIENT_SECRET`. Writes go through one closed-enum, create-only writer (§9 QB-2). **The app never writes a secret and never holds the rotating refresh token:** an **Infra-owned refresher** (Secrets Manager rotation Lambda / scheduled Lambda) owns the refresh token + rotation and publishes the current access token; the app reads it **read-only** (`GetSecretValue`). **No token in Postgres, no file, no app-side write** (§9 QB-0). |
 
 ### The A13 / FE1–FE5 surface (scope)
 
 1. **Expense + line model; per-line owner approval** (FE1). Each line gets a
    `LineItemOwnerApproval`; an approver of the line's bucket approves/rejects it,
-   and a line in an org-level bucket is auto-approved (§6).
+   and a reimbursement or card-charge line also needs its sign-off seats filled
+   before it posts (§6).
 2. **Approval + flag / checkoff / audit** (FE1/FE2, GC-FIN-CONTROL). Flags —
    tax-attached, threshold-crossed, missing-receipt, non-Everyday, **COI/conflict**
    — are surfaced to the right human (finance / board) for a checkoff, all
-   audit-logged. The app does **not** enforce approval tiers; the **household-aware
-   COI conflict flag is the one with real logic** and is *buildable here* because
+   audit-logged. The app does **not** enforce approval tiers; it enforces only the
+   F2 / F2-COI sign-off seats on reimbursements and card charges (§6). The
+   **household-aware COI predicate is the one with real logic** and is *buildable here* because
    checkin has households (§6, the "port gets better" item). COI applies only to
    external payouts (reimbursements) and anything affecting external reporting.
    Actions:
@@ -524,10 +526,25 @@ schema, not the expense schema) — the **exact surface #1286 Track-2 built** fo
 - The **`ROLE_FLAGS`-indexed row-type interfaces** tsc forces the optional
   `isFinance?` onto (catalog found three for its flag — expect the same set of
   membership-ops/roles page + roles-edit-modal row types).
-- **No `/api/roles` code change** and **no `DevLoginPicker` change** — the route
-  iterates `ROLE_FLAGS` and `setRoleFlag`'s authority matrix already lets
-  sysadmin/board grant any flag, so `FINANCE` is grantable automatically. (An
-  earlier "grant UI" line here overstated the surface — corrected per #1286 Track-2.)
+- **No `DevLoginPicker` change** — the `/api/roles` route iterates `ROLE_FLAGS`,
+  so `FINANCE` is grantable through `setRoleFlag`'s authority matrix without a
+  new route.
+
+**Who may grant (owner).** Nobody assigns any role or flag — `BOARD`, `FINANCE`,
+`INVENTORY_MANAGER`, Program Treasurer, any RBAC — to themself or to anyone in
+their own household. `setRoleFlag` rejects a grant whose target is the actor or
+shares a household with the actor; the check lives in that one shared function,
+so it covers every flag, and Program Treasurer (`isTreasurer`) gets the same
+check. `isTreasurer` is set by `BOARD` only — it comes from the Board-approved
+program budget. Every RBAC change, `isTreasurer` included, writes an audit row
+(actor, target, flag, old → new). Adult-only for `FINANCE` and Program Treasurer
+is corporate policy, not enforced in software.
+
+| Test | Expect |
+|---|---|
+| actor grants any flag to themself, or to a member of their own household | rejected; no row changes |
+| non-Board actor sets `isTreasurer` | rejected |
+| any accepted RBAC change | one audit row naming actor, target, flag, old → new |
 
 This is **its own PR track** (§11), independent of #1286's `INVENTORY_MANAGER` —
 expense is finance, not inventory management, so it does **not** reuse that role.
@@ -546,9 +563,13 @@ reaches it through an injected accessor in `contract.ts`, never by import.
 
 - A **program bucket** is approved by the program's leader (`Program.leadMentorId`)
   and its program treasurers (`ProgramVolunteer.isTreasurer`; several are
-  allowed). `isTreasurer` is added in the same boundary PR as the bucket table.
-- An **org-level bucket** has no approvers. A line assigned there is
-  auto-approved, because finance assigning the item there is the approval.
+  allowed). `isTreasurer` is added in the same boundary PR as the bucket table,
+  and only `BOARD` sets it (§6 "Who may grant").
+- An **org-level bucket** has no derived approvers. Assigning a line there is
+  internal accounting and needs no sign-off; a reimbursement or card-charge line
+  in an org-level bucket still needs every sign-off seat, and its program
+  approver seat is filled by an independent Board member (§6 "Reimbursement and
+  card-charge sign-off").
 
 `LineItemOwnerApproval` stores the bucket id and `decidedByUserId` (who decided).
 The source's `budgetOwnerUserId` is dropped; it always equals
@@ -573,8 +594,8 @@ drive the pipeline correct. Both fold onto `FINANCE`:
    and clearing lines that did not auto-assign. Standing map: `PartOwnerMap`
    (bucket per GTIN), routes `/api/ownership-map`, `/api/local-owners`; at intake
    `initFinancialFlow` calls `resolveItemOwner(gtin)` so a mapped line routes
-   straight to its bucket's approvers for signoff (or auto-approves in an
-   org-level bucket). Queue side: an unmapped line lands in
+   straight to its bucket's approvers for signoff (an org-level bucket has no
+   derived approvers; its program-approver seat is a Board member, §6). Queue side: an unmapped line lands in
    `assign_ownership` and is resolved via `assign-owner` / `finance-assign` /
    `resolve-unknown` on the `LineItemOwnerApproval` (owner-conflict resolution,
    FE2/#1273). This is what routes each line to the *right* bucket — the approval
@@ -614,22 +635,27 @@ does, and the derived bucket-approver filter (program leader
 session's person id) reads the id only from that principal. Prisma drops a
 `where` key whose value is `undefined`, so an id-less session (a JWT whose
 re-sync missed after a person merge or delete) would otherwise match every
-bucket.
+bucket. Every per-caller filter takes the id through `callerId(auth): number`,
+which throws on anything but an integer; an empty derived set (the caller
+approves no bucket, leads no program) returns an empty result, never "skip the
+filter". A caller-asserted id in a payload (e.g. `receipt-types` `localUserId`)
+is never used for authorization, approval or sign-off attribution.
 
 | Test | Expect |
 |---|---|
 | id-less session (`user.id` undefined) calls an approver read or approve/reject route | 401, never "approver of everything" |
+| caller with an integer id who approves no bucket calls an approver read | empty list |
+| payload `localUserId` names an approver | ignored; attribution comes from the principal |
 
 **Least-privilege note** (`docs/rules/principles.md`): unlike #1286/#1287 this gate
 does not widen anything — it confines financial data to finance, board, and the
 approvers of the row's bucket. Stated here so the divergence from the prior ports is a decision
 on the record, not an oversight.
 
-### Flag / checkoff / audit — surface, don't enforce (GC-FIN-CONTROL)
+### Flag / checkoff / audit (GC-FIN-CONTROL)
 
-The app **does not enforce approval tiers, COI, or segregation-of-duties.** It
-surfaces a **flag** to the right human for a **checkoff**, all **audit-logged**
-(`ExpenseAuditLog`). Humans decide; the software records, routes, and proves.
+The app does not enforce approval tiers or thresholds. It surfaces a **flag** to
+the right human for a **checkoff**, all **audit-logged** (`ExpenseAuditLog`).
 Flags: **tax-attached**, **threshold-crossed** ($500 / $2k / $50 awareness, from
 Procurement policy H — *awareness, not enforcement*), **missing-receipt**,
 **non-Everyday**, and **COI/conflict**. Each routes to finance or board and lands
@@ -637,6 +663,11 @@ a checkoff + audit row. This **replaces** the source's implicit tiering with the
 lightweight flag pattern GC-FIN-CONTROL specifies — the flags are low-volume
 (~1–2 of each per year) even though the expense process itself is high-volume, so
 the flag machinery stays deliberately thin.
+
+**The one enforced control is the sign-off on money leaving the org.** A
+reimbursement or card-charge line does not reach QuickBooks until its sign-off
+seats are filled by distinct, independent people (next subsections). Separation
+of duties and COI are enforced there, as a hold; everywhere else they stay flags.
 
 ### The household-aware COI flag — the port gets *better* in checkin
 
@@ -648,13 +679,71 @@ this is a genuine port-gets-better item.
 
 **COI scope.** Accepting an item into a program budget is internal accounting and
 raises no conflict of interest. COI controls apply only to **external payouts**
-(reimbursements) and to anything affecting **external reporting**. So the flag
-fires on a reimbursement line: when the person who approves it (a bucket approver
-or the finance assignee) shares a household with the person being reimbursed,
-raise the COI flag and route it to `BOARD` for checkoff. Design it as a real predicate over
+(reimbursements) and to anything affecting **external reporting**. So the predicate runs on reimbursement and card-charge lines: a
+signer who is the submitter or the reimbursee, or shares a household with either,
+is conflicted. A conflicted signer cannot fill a seat, and a conflicted Treasurer
+adds Board seats (F2-COI, next subsection). Design it as a real predicate over
 checkin's household graph (read via the injected principal/port, not a cross-DB
 join — §4), not as another rubber-stamp. This directly discharges GC-ROLES'
 "expense approval + conflict constraints" duty gap.
+
+### Reimbursement and card-charge sign-off (Financial Policy F2 / F2-COI)
+
+Policy chain: purchaser → Program Leader or Program Treasurer → Treasurer (→ +1
+or +2 non-conflicted Board members on conflict). The Treasurer pays in
+QuickBooks; the system creates the Bill and never pays it (§9 QB-2).
+
+**Seats.** A reimbursement line needs every seat filled by a distinct person:
+
+| Seat | Who may fill it |
+|---|---|
+| Submitter | the person who submitted (an attestation, not an approval) |
+| Program approver | the bucket's Program Leader or one of its Program Treasurers (`ProgramVolunteer.isTreasurer`); for an org-level bucket, an independent Board member who is not the Treasurer-seat signer |
+| Treasurer | any `FINANCE` holder (a Treasurer-only seat can come later via #1314 designations) |
+| +1 / +2 Board | non-conflicted Board members, when F2-COI requires them |
+
+**Independence — who cannot fill a seat:**
+
+- the submitter, the reimbursee, or anyone in either one's household;
+- anyone already in another seat for the same line (no one authorises and
+  executes);
+- a conflicted program approver: another PL/PT of that program signs; if none
+  can, a Board member takes the seat.
+
+**F2-COI escalation:**
+
+- Treasurer conflicted (is the submitter or related to them) → +1 non-conflicted
+  Board member;
+- Treasurer is the same person who signed as PL/PT → +1 (and a different
+  Treasurer-seat signer is required anyway by "distinct people");
+- both → +2.
+
+**Exceptions carried from F2:**
+
+- a signed note in lieu of a receipt, under $50, in a program budget → PL/PT +
+  Treasurer;
+- $50 or more, or not in a program budget → Board;
+- a non-member purchaser's reimbursement → Board only.
+
+**Card charges** use the same seats and independence rules with a reduced
+escalation: at most **+1** non-conflicted Board member, never +2.
+
+**Hold and record.** A line with an unfilled seat stays out of the QB-2 outbox
+(§9); no `ExpenseEvent` row is committed for it. Each sign-off writes an
+`ExpenseAuditLog` row: who, in which seat, when. A sign-off is attributed only
+from the principal (`callerId()`), never from a payload. The reimbursement option
+is hidden for non-adults (owner), so a minor never appears as a submitter of a
+reimbursement.
+
+| Test | Expect |
+|---|---|
+| one person fills two seats on a line | second sign-off rejected |
+| signer shares a household with the reimbursee | rejected for every seat |
+| Treasurer conflicted | line held until +1 Board seat is filled |
+| Treasurer also signed as PL/PT, and conflicted | +2 Board seats required |
+| card charge with both conflicts | +1 Board seat, never +2 |
+| org-level bucket line | program approver seat accepts only a Board member who is not the Treasurer-seat signer |
+| line with any seat unfilled | no `ExpenseEvent`, nothing posted |
 
 ### Org + user identity — one injected source, shared with catalog + inventory
 
@@ -748,6 +837,11 @@ caller parses the response; nothing polls, nothing touches a database at boot,
 and any catch-up is a step in `/api/cron/reconcile-shopify`.* No crossing has an
 HTTP adapter: the Inventory apps all move into checkin and none runs remotely
 (owner decision, on security grounds), so there is no remote peer to serve.
+
+**Each callee's zod parse asserts `orgId`.** Expense's callee ports (S2 intake,
+X12 reimbursement status, the S5 handler) reject a payload whose `orgId` is not
+the injected org (§6). This keeps the per-org scoping Inventory's own auth
+enforced at the bearer, now that the call is in-process.
 
 **Inventory load is not an expense crossing.** The orchestrator is the sole
 applier of receipt stock (#1287 §8c), and inventory load does not wait on expense
@@ -898,6 +992,7 @@ checkin.
   `isExpired`), `oauthConfigFromEnv` (`QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` /
   `QBO_ENVIRONMENT` / `QBO_REDIRECT_URI`), the sandbox↔production `apiBase` switch,
   `realmId` capture from the consent redirect, and refresh-token **rotation**.
+  The OAuth half runs only in the refresher and the consent CLI, never in the app.
 - **Net-new — the app is a read-only token consumer; an Infra-owned refresher owns
   rotation.** The source refreshes inline (`ensureFresh` → `refreshTokens` →
   `saveTokens` to a gitignored file). That model requires the app to **write** the
@@ -907,11 +1002,14 @@ checkin.
   **Infra-owned refresher** (the standard AWS "credential that must rotate but the
   app shouldn't manage" shape — a Secrets Manager **rotation Lambda**, or a small
   scheduled Lambda on checkin's existing external scheduler). Three secrets, three
-  homes, and the app touches only two of them **read-only**:
+  homes, and the app touches only the access token, **read-only**:
   - **Static credentials** — `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`,
-    `QBO_ENVIRONMENT`, `QBO_REDIRECT_URI` — plain **env vars loaded by Infra** at
-    boot (`oauthConfigFromEnv` reads them). Never change. The "keys to generate the
-    key."
+    `QBO_ENVIRONMENT`, `QBO_REDIRECT_URI` — loaded by Infra into the refresher and
+    the consent tooling only. Never change. The "keys to generate the key."
+    **`QBO_CLIENT_SECRET` is never in the app's environment**: the app does not
+    refresh, so it has no use for it. The app gets `QBO_ENVIRONMENT` and the
+    `realmId`, and uses the production realm only when `CHECKIN_ENV=prod`; any
+    other environment pointed at production fails closed at configure time.
   - **The rotating refresh token** (~100 days, **rotates every refresh**) — held
     and rotated **only by the refresher**, which has the **sole write grant** to the
     secret. The app never sees it, never holds it, never writes it. This is what
@@ -933,7 +1031,12 @@ checkin.
   write from the app.**
 - **Refresh concurrency — solved by construction.** Because rotation has a
   **single writer** (the refresher Lambda), the multi-replica refresh race is gone:
-  app replicas only *read* the published access token; none of them refresh.
+  app replicas only *read* the published access token; none of them refresh. A
+  refresher run that gets `invalid_grant` (the refresh token is dead and consent
+  must be redone) raises an alert; it does not retry silently.
+- **Token reads are alarmed.** A CloudWatch alarm fires on `GetSecretValue` for
+  the access-token secret from any principal other than the app's task role and
+  the refresher.
 - **Net-new — consent + initial seed (one-time, operator/Infra, no app route).**
   Consent stays the **source's CLI flow** (`npm run consent` — a local server
   catches the redirect at the operator's `localhost:8087`, exchanges the code, and
@@ -981,7 +1084,9 @@ date.
 ### QB-2 — write path (the `qb_pending` terminus)
 
 Post signed-off expense lines to QuickBooks. **This is the headline net-new
-work** and FE3's core.
+work** and FE3's core. A reimbursement or card-charge line enters the outbox only
+once every sign-off seat is filled (§6); until then it is held and nothing is
+committed for it.
 
 - **Exists in the source (checkin side of the port):** the `expense-qb-processor`
   already builds and **validates** the outbound payload against `QbExpenseEventSchema`
@@ -1043,17 +1148,35 @@ and bulk donation, and driven **from our side**:
   `packages/quickbooks`; expense passes its line, its takeover line, and its
   claimed + excluded ids.
 
-**The write itself.** `@inventory/quickbooks` is read-only today; QB-2 adds the
-writers for Purchase, Bill and Vendor, each sent with a QBO **`requestid`** derived
-from the event so a crash after QuickBooks accepts is recovered as "found", never
-a second booking (GC-QB "idempotent, sync-not-clobber"). It maps account name →
-QBO account ref and the line's bucket → its Class (§6), on the
-`AccessTokenSource` QB-0 established.
+**The write itself — one closed, create-only writer.** `@inventory/quickbooks` is
+read-only today. QB-2 adds exactly one write entry point, `create(entity, fields)`,
+whose `entity` is a closed enum: `Purchase`, `Bill`, `Deposit`, `Vendor`. Nothing
+else is exported that can write.
+
+- **Create only.** No update, delete, void or sparse-update path exists.
+- **Field allowlists per entity.** Only listed fields reach the request body;
+  `Vendor` takes `DisplayName` only.
+- **No Check-type Purchase.** A `Purchase` with `PaymentType: "Check"` is rejected
+  before the request. With the closed enum this is what keeps the invariant: the
+  system never writes a BillPayment, a Check or a Payment.
+- **Idempotency key in the entry, looked up before create.** The key derived from
+  the event goes in `DocNumber` (or `PrivateNote` where `DocNumber` is taken) and
+  as the QBO `requestid`. Before each create the writer queries QuickBooks for an
+  entry carrying that key; a hit is recorded as "found", never a second booking.
+  The `requestid` window is short, so the lookup is what makes a retry days later
+  safe (GC-QB "idempotent, sync-not-clobber").
+- **Per-run cap.** A drain run stops after a fixed count and a fixed total amount;
+  the rest waits for the next run, and hitting the cap raises an alert.
+
+It maps account name → QBO account ref and the line's bucket → its Class (§6), on
+the `AccessTokenSource` QB-0 established.
 
 **Draining the outbox.** The request that commits an `ExpenseEvent` drains it
 right away. Anything that request did not finish (a crash, a QuickBooks outage),
 plus `recoverStrandedQbExpenses`, is picked up by a try/catch step in the existing
-prod `/api/cron/reconcile-shopify`. No boot drain, no timer, no new schedule.
+prod `/api/cron/reconcile-shopify`. No boot drain, no timer, no new schedule. The
+step is idempotent, capped (above), and returns counts only (posted, matched,
+held, failed) — no ids, names or amounts in the cron response.
 
 **The QB sync-failure / ambiguity queue** (A13 step 6). A post can fail (auth,
 validation, QBO rejection) or be **ambiguous** (more than one match candidate; a
@@ -1069,6 +1192,7 @@ try/catch step in `/api/cron/reconcile-shopify` re-reads each system-originated
 QBO transaction (tracked by `sourceQbTxnId` / the outbox) through the windowed
 readers, compares it against what was posted, flags drift (amount / account /
 vendor changed in QB after we posted), and routes it to a reconciliation queue.
+Like every cron step, it is capped and returns counts only.
 **Exists:** the read path (QB-1). **Net-new:** the diff + drift queue. Grounds on
 GC-QB's "reverse-reconcile against existing QB to enumerate what the system still
 can't model."
@@ -1110,7 +1234,12 @@ existing container. Same as #1286 §9 / #1287 §9, plus the QB specifics:
   `QBO_ENVIRONMENT` (`sandbox` → `production`), `QBO_REDIRECT_URI` (the consent
   redirect — the operator's `localhost` for the CLI consent flow, since the app
   hosts no callback) — **Infra-managed env vars / secrets** for the refresher +
-  consent tooling.
+  consent tooling only. The app's task definition carries `QBO_ENVIRONMENT` and
+  the realm id, never `QBO_CLIENT_SECRET`; the production realm is configured only
+  where `CHECKIN_ENV=prod`.
+- **Alarms:** `GetSecretValue` on the access-token secret by any principal other
+  than the app task role and the refresher; refresher `invalid_grant`; a QB drain
+  run hitting its cap.
 - **QB token refresher (Infra-owned, the only writer):** Infra provisions the
   access-token **secret** (AWS Secrets Manager) and a **refresher** — a Secrets
   Manager rotation Lambda or a scheduled Lambda on checkin's existing external
@@ -1158,12 +1287,14 @@ library skeleton + shared packages) has landed.
    **distinct row** (RB2, a kept role; owner-decided — **references #1314 without
    closing it**), the **exact #1286 Track-2 surface** (non-txn `ADD VALUE` migration,
    `FLAG_TO_KIND`, next-auth in 3 spots, `RoleBadge`, the 3 `ROLE_FLAGS`-indexed row
-   types; **no `/api/roles` and no `DevLoginPicker` change** — grantable
-   automatically, §6). Own PR (role-system change). Defines the household-COI
-   predicate over checkin's household graph (reimbursement lines only, §6).
+   types; **no `DevLoginPicker` change**, §6), plus the "who may grant" check in
+   `setRoleFlag` (no self or own-household grant, any flag) and its audit row.
+   Own PR (role-system change). Defines the household-COI predicate over
+   checkin's household graph (reimbursement and card-charge lines, §6).
    - **2a. Budget-owner bucket table** — its own small checkin boundary PR off
-     `main`: `BudgetOwner` + `ProgramVolunteer.isTreasurer` + classifications,
-     and the derived bucket-approver lookup (§6).
+     `main`: `BudgetOwner` + `ProgramVolunteer.isTreasurer` (set by `BOARD`
+     only, audited) + classifications, and the derived bucket-approver lookup
+     (§6).
 3. **Security boundary** — `@sensitivity` annotations (`internal` for money /
    vendor / attribution / plumbing; **no `secret` field — QB tokens are external**,
    §5/§9), `generator security` for the expense schema (cross-package wiring, §5),
@@ -1176,7 +1307,8 @@ library skeleton + shared packages) has landed.
    `next/server`) + `contract.ts` (crossing ports + the read-only QB
    `AccessTokenSource` port) + `configureExpense` wired in `instrumentation.ts`;
    **human** `/api/…` stubs (`FINANCE`/`BOARD`, bucket-approver query-filter) +
-   guards + the household-COI flag; the `capital-assets/seed` finance route; the `C`
+   guards + the household-COI flag + the sign-off seats and outbox hold (§6),
+   written test-first; the `capital-assets/seed` finance route; the `C`
    (catalog) crossing bound in-process. **No intake machine route — checkin can't
    host it (§8a); intake is in-process only.** Watch the route-endpoint-string gotcha (§5);
    list routes return bare arrays (pagination → track 5). Depends on 1–3.
@@ -1207,9 +1339,10 @@ library skeleton + shared packages) has landed.
 - **QB-1** (read) — windowed readers + FINANCE-triggered account / vendor / Class
   bootstrap + the capital-seed upload page and intake (FE4). After QB-0. Feeds
   tracks 4–5.
-- **QB-2** (write path / `qb_pending` terminus) — the net-new QBO **writers**
-  (Purchase, Bill, Vendor; never BillPayment, Check or Payment) in
-  `@inventory/quickbooks`, match-before-create with `ExpenseQbMatchExclusion`, the
+- **QB-2** (write path / `qb_pending` terminus) — the one closed-enum,
+  create-only QBO **writer** (Purchase, Bill, Deposit, Vendor; never BillPayment,
+  Payment or a Check-type Purchase; field allowlists; key looked up before
+  create; per-run cap) in `@inventory/quickbooks`, match-before-create with `ExpenseQbMatchExclusion`, the
   outbox drain (on commit + the reconcile cron step), and the **QB sync-failure /
   ambiguity queue** (FE3, A13 step 6). After QB-0 and after the
   domain/outbox tracks (1, 4). **The QB write path follows the QB read/client-port
@@ -1270,6 +1403,13 @@ Posture mirrors #1286 §10 / #1287 §10.
 - **Matching tests** (packages-only, no QuickBooks): one candidate links, two go
   to `AMBIGUOUS`, a claimed or excluded id is never a candidate, no takeover line
   creates nothing, and no writer ever emits a BillPayment, Check or Payment.
+- **QB entity-path test (CI, packages-only).** It fails if `packages/quickbooks`
+  can issue a request to any QBO entity path other than create on `purchase`,
+  `bill`, `deposit` or `vendor`; if a field outside an entity's allowlist reaches
+  a request body; if a Check-type Purchase is sent; or if a create is sent without
+  first looking up its idempotency key.
+- **Sign-off tests** (§6 tables) land first in the expense routes track, before
+  the outbox wiring they guard.
 
 ---
 
@@ -1311,8 +1451,9 @@ this doc.
   curl+retired-auth transport (write via the expense Prisma client against
   `EXPENSE_DATABASE_URL`); stamp the one seeded `Org` id (§6); add
   `VolunteerDesignation` / household rows (seed has 0), a program bucket with a
-  leader and a treasurer, and an org-level bucket, so the COI flag, the
-  bucket-approver gate and auto-approval are exercisable.
+  leader and a treasurer, an org-level bucket, and enough Board and `FINANCE`
+  holders in separate households, so the COI flag, the bucket-approver gate and
+  every sign-off seat (including +2 Board) are exercisable.
 - **`reimbursementFor` / reimbursee tiering** defaults to `internal` behind the
   narrow gate; raise to `pii` if a route ever returns the person's contact details
   alongside (§5).
@@ -1336,18 +1477,29 @@ reconciliation's core. So **add rules to that file, do not create a new one**
 (creating a near-duplicate finance file would fragment the register). Run the §3.9
 test (*could a later change violate this?*) on each; seeds that qualify — decisions
 and invariants only, no mechanism:
-- **Flag / checkoff / audit, not enforcement:** the app **surfaces** procurement/
-  finance flags (tax-attached, threshold-crossed, missing-receipt, non-Everyday,
-  COI) to a human for checkoff + audit; it does **not** enforce approval tiers,
-  segregation-of-duties, or thresholds — *cite GC-FIN-CONTROL* (§6). Threshold
-  numbers ($500/$2k/$50) are *awareness*, from Procurement Policy H.
+- **Flag / checkoff / audit:** the app **surfaces** procurement/finance flags
+  (tax-attached, threshold-crossed, missing-receipt, non-Everyday, COI) to a
+  human for checkoff + audit; it does not enforce approval tiers or thresholds —
+  *cite GC-FIN-CONTROL* (§6). Threshold numbers ($500/$2k/$50) are *awareness*,
+  from Procurement Policy H.
+- **Money leaving the org needs filled sign-off seats:** a reimbursement or
+  card-charge line is held out of QuickBooks until its submitter, program
+  approver and Treasurer seats (plus +1/+2 Board under F2-COI; at most +1 for a
+  card charge) are filled by distinct, independent people, and each sign-off is
+  audit-recorded — *cite Financial Policy F2 / F2-COI* (§6).
 - **COI is household-aware and limited to external payouts and external
-  reporting:** on a reimbursement, an approver in the reimbursee's household is a
-  conflict → flag to `BOARD`; accepting an item into a program budget is internal
-  accounting and raises no COI (§6).
+  reporting:** the submitter, the reimbursee and their households cannot sign;
+  accepting an item into a program budget is internal accounting and raises no
+  COI (§6).
+- **Nobody grants a role or flag to themself or their own household;
+  `isTreasurer` is set by `BOARD` only; every RBAC change is audit-logged** (§6).
 - **Budget owners are buckets; approvers are derived, never stored:** a program
-  bucket is approved by the program's leader and treasurers; a line in an
-  org-level bucket is auto-approved (§6).
+  bucket is approved by the program's leader and treasurers; an org-level
+  bucket's program-approver seat is an independent Board member (§6).
+- **One closed, create-only QuickBooks writer:** Purchase, Bill, Deposit, Vendor
+  only, field-allowlisted, never a Check-type Purchase, idempotency key looked up
+  before create, capped per run; the app holds no QuickBooks client secret and
+  writes to the production realm only in prod (§9).
 - **A reimbursement is a QuickBooks Bill the system never pays:** the system
   writes Bills and Purchases and **never writes a BillPayment, a Check or a
   Payment**; finance pays in QuickBooks and the system reads the payment back

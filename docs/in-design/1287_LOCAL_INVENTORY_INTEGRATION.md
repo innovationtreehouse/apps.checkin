@@ -463,7 +463,11 @@ concept (it *is* Treehouse). So:
   no FK to checkin (separate DB).
 - **A caller with no integer id is unauthenticated** (boundary rule 6):
   `getPrincipal()` returns `null` unless `typeof user.id === "number"`, as
-  catalog's adapter does, and every per-caller filter reads the id only from it.
+  catalog's adapter does, and every per-caller filter reads the id only from it,
+  through `callerId(auth): number`, which throws on anything but an integer. An
+  empty derived set returns an empty result, never "skip the filter". A
+  caller-asserted id in a payload (e.g. `receipt-types` `localUserId`) is never
+  used for authorization or attribution.
 
 Both org and user identity flow through the single `configureLocalInventory()`
 injection — one source per process.
@@ -575,7 +579,8 @@ succeeds. A handler that throws leaves the cursor behind the failed event, and
 the next replay re-applies from there: the catch-up step in
 `/api/cron/reconcile-shopify` (or a retry button) reads the catalog's events
 after the cursor and feeds them to the same handler. `InventoryReceivedOrgEvent`
-dedupes on the event id, so an event delivered twice applies once.
+dedupes on the event id, so an event delivered twice applies once. The cron step
+is capped per run and returns counts only (applied, failed).
 
 **No timer, no boot drain.** The source's `setInterval` poller is not carried
 across: an in-app interval would keep the Node event loop busy forever, wake
@@ -664,6 +669,10 @@ It does not need to: every caller is co-resident.
   stay the function param types. **Do not assume workflow-mapping "collapses
   away"** — its call into local-inventory is real and stays behind the port.
 - **No inbound HTTP machine surface is built in checkin.**
+- **The callee's zod parse asserts `orgId`.** `applyReceipt` (and the S5 handler,
+  §8a) rejects a payload whose `orgId` is not the injected org. This keeps the
+  per-org scoping the source enforced at the org-bearer, now that the call is
+  in-process.
 - **Consequence for first landing:** receipt-driven apply goes live only once the
   orchestrator co-resides and the L2 fix has landed.
 

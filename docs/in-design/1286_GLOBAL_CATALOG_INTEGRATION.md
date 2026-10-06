@@ -692,11 +692,16 @@ over HTTP; they call its service in-process.
 2. **Every crossing is schema-checked at runtime, in-process too.** The callee
    parses its input with the shared zod schema and the caller parses the
    response. That keeps an HTTP adapter a binding swap if a library is ever
-   extracted; none exists today.
+   extracted; none exists today. **The callee's parse asserts `orgId`:** a
+   payload whose `orgId` is not the callee's injected org is rejected. Inventory
+   enforced per-org scoping at the org-bearer; in-process, this assertion is
+   what keeps it.
 3. **No polling inside the app, no DB access at boot, no new schedules.** Any
    catch-up sweep a crossing needs (the S5 cursor replay below, for one) is a
    try/catch step inside the existing prod `/api/cron/reconcile-shopify`.
-   `instrumentation.ts` only binds; it never touches a database.
+   Each step is idempotent, capped per run, and returns counts only — no ids,
+   names or amounts in the cron response. `instrumentation.ts` only binds; it
+   never touches a database.
 4. **JSON structure stays.** The contract package (`receipt-types` S4 schemas,
    the S5 `orgEventPayload` schema) is the shared vocabulary. The vendored copy
    (below) is temporary **as a copy**; it becomes the permanent shared
