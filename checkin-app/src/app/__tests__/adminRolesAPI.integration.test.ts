@@ -194,10 +194,10 @@ describe('Admin Roles API Integration Tests', () => {
             expect(await prisma.auditLog.count({ where: { affectedEntityId: testSysAdminId } })).toBe(audits);
         });
 
-        it('a session with no integer actor id is refused (fail closed) -> 403, no write', async () => {
+        it('a session with no integer actor id is refused (fail closed) -> 401, no write', async () => {
             asSession({ isSysadmin: true, isBoardMember: true });
             const res = await PATCH(patchReq({ targetUserId: testTargetUserId, isOperations: true }));
-            expect(res.status).toBe(403);
+            expect(res.status).toBe(401);
             expect(await hasOperationsRow(testTargetUserId)).toBe(false);
         });
     });
