@@ -31,6 +31,7 @@ const ORACLES = [
     'caller-context-no-id.integration.test.ts',
     'classification-sources.test.ts',
     'emergency-contact-program-scope.test.ts',
+    'file-route.test.ts',
     'household-lead-program-scope.test.ts',
     'impersonatedBy-inertness.test.ts',
     'led-households-roster.test.ts',

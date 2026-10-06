@@ -69,7 +69,7 @@ const ALLOWLIST = new Set<string>([
 ]);
 
 const HTTP_METHODS = 'GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS';
-const WRAPPERS = 'withAuth|handler|withCron|withWebhook|withKiosk';
+const WRAPPERS = 'withAuth|handler|fileHandler|withCron|withWebhook|withKiosk';
 const PUBLIC_SESSION_HELPERS = /\b(getOptionalSessionUser|authenticateRequest)\s*\(/;
 
 /** Strip block + line comments so commented-out mentions (e.g. "a raw

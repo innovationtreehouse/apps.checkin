@@ -4,7 +4,8 @@
  *
  * Checks (advisory in Sprint 1; flipped to blocking in Sprint 4):
  *   1. Every src/app/api/<x>/route.ts file exports HTTP verbs registered in src/security/registry.ts
- *      (or a per-library module under src/security/registry/).
+ *      (or a per-library module under src/security/registry/) — by defineRoute, or by
+ *      defineFileRoute for a file route served through fileHandler().
  *   2. Every registry entry corresponds to an existing route file.
  *   3. Migrated routes (listed in scripts/migrated-routes.txt) must NOT call NextResponse.json / Response.json directly.
  *   4. Calls to third-party hosts (shopify.com, myshopify.com, resend.com, SHOPIFY_STORE_DOMAIN) live only in src/lib/shopify.ts and src/lib/email.ts.
@@ -45,6 +46,8 @@ const ALLOWED_THIRD_PARTY_FETCH_FILES = new Set<string>([
 
 const THIRD_PARTY_HOST_RE = /(shopify\.com|myshopify\.com|resend\.com|SHOPIFY_STORE_DOMAIN)/;
 const VERB_EXPORT_RE = /export\s+(?:const|async\s+function|function)\s+(GET|POST|PUT|PATCH|DELETE)\b/g;
+/** A registry entry for an endpoint: a JSON route or a file route. */
+export const REGISTRY_ENTRY_RE = /define(?:File)?Route\s*\(\s*\{\s*endpoint\s*:\s*['"]([^'"]+)['"]/;
 const JSON_CALL_RE = /\b(NextResponse|Response)\.json\s*\(/;
 
 /**
@@ -207,7 +210,8 @@ function extractExportedVerbs(content: string): string[] {
 function loadRegisteredEndpoints(): { routes: Set<string>; outbounds: Set<string> } {
     // Parse the registry files directly rather than evaluating them — keeps this
     // lint independent of module-resolution quirks. The registry follows a
-    // strict shape: defineRoute({ endpoint: '...' }) / defineOutbound({ surface: '...' }).
+    // strict shape: defineRoute({ endpoint: '...' }) / defineFileRoute({ endpoint: '...' }) /
+    // defineOutbound({ surface: '...' }).
     // registry.ts aggregates the per-library modules under registry/.
     const registryPath = path.join(REPO_ROOT, 'src/security/registry.ts');
     const libRegistryDir = path.join(REPO_ROOT, 'src/security/registry');
@@ -221,7 +225,7 @@ function loadRegisteredEndpoints(): { routes: Set<string>; outbounds: Set<string
         ? fs.readdirSync(libRegistryDir).filter(f => f.endsWith('.ts')).map(f => path.join(libRegistryDir, f))
         : [];
     const content = [registryPath, ...libRegistryPaths].map(p => fs.readFileSync(p, 'utf-8')).join('\n');
-    const routeRe = /defineRoute\s*\(\s*\{\s*endpoint\s*:\s*['"]([^'"]+)['"]/g;
+    const routeRe = new RegExp(REGISTRY_ENTRY_RE.source, 'g');
     const outboundRe = /defineOutbound\s*\(\s*\{\s*surface\s*:\s*['"]([^'"]+)['"]/g;
     let m: RegExpExecArray | null;
     while ((m = routeRe.exec(content)) !== null) routes.add(m[1]);

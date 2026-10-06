@@ -2,7 +2,19 @@ import {
     findBareIncludeLegs,
     findOrphanRegistryEntries,
     findUnregisteredBareIncludeLegs,
+    REGISTRY_ENTRY_RE,
 } from "../check-route-coverage";
+
+describe("REGISTRY_ENTRY_RE", () => {
+    it.each(["defineRoute", "defineFileRoute"])("reads the endpoint of a %s entry", fn => {
+        expect(REGISTRY_ENTRY_RE.exec(`${fn}({\n    endpoint: 'GET /api/x/[id]/file',`)?.[1])
+            .toBe("GET /api/x/[id]/file");
+    });
+
+    it("does not read an outbound surface as a route", () => {
+        expect(REGISTRY_ENTRY_RE.exec(`defineOutbound({ surface: 'shopify.order' })`)).toBeNull();
+    });
+});
 
 const names = (src: string) => findBareIncludeLegs(src).map(l => l.name);
 
