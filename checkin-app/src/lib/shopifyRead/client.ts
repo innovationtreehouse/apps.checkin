@@ -26,6 +26,10 @@ import { logger } from "@/lib/logger";
  * isConfigured() is false and the reconciler no-ops, so an env without the mirror
  * runs no reconciliation rather than crashing.
  *
+ * Every read here is API-only (see apiSource below). Hand-loaded history is for the
+ * income library's payout reconciliation, which reads the mirror through its own
+ * query path and selects `source` itself — never through these functions.
+ *
  * ponytail: no store_id filter — each env has its own `shopify_read_<env>` DB with
  * exactly one store, so filtering would only risk a myshopify-vs-storefront domain
  * mismatch. Add a store filter if a single mirror DB ever holds multiple stores.
@@ -60,6 +64,18 @@ function getPool(): Pool | null {
         pool.on("error", (e) => logger.error("shopify_read pool error:", e));
     }
     return pool;
+}
+
+/**
+ * Rows Shopify's API wrote (BACKFILL / INCREMENTAL), excluding operator injects
+ * (HAND_LOADED / TEST_LOADED) — membership/program reconcile and the match audit
+ * must act only on what Shopify itself reports. NULL counts as API: s-read stamps
+ * every write and backfilled existing rows, so a null is a row the previous sync
+ * code wrote during the deploy that added the column.
+ */
+function apiSource(alias?: string): string {
+    const col = alias ? `${alias}.source` : 'source';
+    return `(${col} IS NULL OR ${col} IN ('BACKFILL', 'INCREMENTAL'))`;
 }
 
 export function isConfigured(): boolean {
@@ -132,7 +148,7 @@ export async function ordersChangedSince(since: Date | null, limit = 1000): Prom
         // but would rule out any future index on updated_at. Both sides must move
         // together — casting only one direction shifts the cursor by the offset.
         `SELECT ${ORDER_COLS} FROM shop_order
-         WHERE test = false AND ($1::timestamptz IS NULL OR updated_at > ($1::timestamptz AT TIME ZONE 'UTC'))
+         WHERE test = false AND ${apiSource()} AND ($1::timestamptz IS NULL OR updated_at > ($1::timestamptz AT TIME ZONE 'UTC'))
          ORDER BY updated_at ASC NULLS FIRST
          LIMIT $2`,
         [since, limit],
@@ -148,7 +164,7 @@ export async function ordersByLegacyIds(legacyIds: string[]): Promise<MirrorOrde
     const p = getPool();
     if (!p || legacyIds.length === 0) return [];
     const rows = await p.query<MirrorOrder>(
-        `SELECT ${ORDER_COLS} FROM shop_order WHERE test = false AND legacy_id = ANY($1::text[])`,
+        `SELECT ${ORDER_COLS} FROM shop_order WHERE test = false AND ${apiSource()} AND legacy_id = ANY($1::text[])`,
         [legacyIds],
     );
     return rows.rows;
@@ -268,7 +284,7 @@ export async function lineVariantStats(): Promise<{ lines: number; withVariant: 
         `SELECT count(*)::int AS "lines", count(l.variant_legacy_id)::int AS "withVariant"
          FROM shop_order_line l
          JOIN shop_order o ON o.shopify_gid = l.order_gid
-         WHERE l.removed = false AND o.test = false`,
+         WHERE l.removed = false AND o.test = false AND ${apiSource('o')}`,
     );
     return rows.rows[0];
 }
@@ -308,7 +324,7 @@ export async function ordersForVariants(variantIds: string[]): Promise<MirrorAud
                   WHERE l.order_gid = shop_order.shopify_gid AND l.removed = false
                     AND l.variant_legacy_id = ANY($1::text[])) AS "matchedVariantIds"
          FROM shop_order
-         WHERE test = false
+         WHERE test = false AND ${apiSource()}
            AND EXISTS (SELECT 1 FROM shop_order_line l
                         WHERE l.order_gid = shop_order.shopify_gid AND l.removed = false
                           AND l.variant_legacy_id = ANY($1::text[]))
@@ -327,7 +343,8 @@ export async function orderLegacyIdsPresent(legacyIds: string[]): Promise<Set<st
     const p = getPool();
     if (!p || legacyIds.length === 0) return new Set();
     const rows = await p.query<{ legacyId: string }>(
-        `SELECT legacy_id AS "legacyId" FROM shop_order WHERE test = false AND legacy_id = ANY($1::text[])`,
+        `SELECT legacy_id AS "legacyId" FROM shop_order
+         WHERE test = false AND ${apiSource()} AND legacy_id = ANY($1::text[])`,
         [legacyIds],
     );
     return new Set(rows.rows.map((r) => r.legacyId));
@@ -347,6 +364,7 @@ export async function disputedOrderGids(orderGids: string[]): Promise<Set<string
         `SELECT DISTINCT bt.order_gid AS "orderGid" FROM shop_balance_transaction bt
          JOIN shop_order o ON o.shopify_gid = bt.order_gid
          WHERE bt.order_gid = ANY($1::text[]) AND o.test = false
+           AND ${apiSource('o')} AND ${apiSource('bt')}
            AND (lower(bt.type) LIKE '%dispute%' OR lower(bt.type) LIKE '%chargeback%')`,
         [orderGids],
     );
@@ -366,11 +384,10 @@ export async function minRealOrderLegacyId(): Promise<bigint | null> {
     const p = getPool();
     if (!p) return null;
     const rows = await p.query<{ minLegacyId: string | null }>(
-        // `~ '^\d+$'` guards the ::bigint cast: a single non-numeric legacy_id (a
-        // hand-loaded/test row) would otherwise throw for the WHOLE aggregate and
-        // 500 the audit. Shopify ids are always numeric, so this skips only junk.
+        // `~ '^\d+$'` guards the ::bigint cast: a single non-numeric
+        // legacy_id would otherwise throw for the WHOLE aggregate and 500 the audit. Shopify ids are always numeric, so this skips only junk.
         `SELECT min(legacy_id::bigint)::text AS "minLegacyId"
-         FROM shop_order WHERE test = false AND legacy_id ~ '^\\d+$'`,
+         FROM shop_order WHERE test = false AND ${apiSource()} AND legacy_id ~ '^\\d+$'`,
     );
     const v = rows.rows[0]?.minLegacyId;
     return v == null ? null : BigInt(v);
