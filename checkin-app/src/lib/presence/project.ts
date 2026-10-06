@@ -9,6 +9,7 @@ import {
     PresenceClass,
     appendPresenceEvent,
     classifyPresenceEvent,
+    parkReasonToClass,
 } from "@/lib/presence/events";
 
 /**
@@ -65,13 +66,7 @@ export async function applyPresenceIntent(
         }
 
         const res = await processCheckin(args.participant, args.authType, db, args.occurredAt);
-        const projected = await visitIdFromCheckin(res);
-        await classifyPresenceEvent(
-            db,
-            event.id,
-            projected != null ? PresenceClass.PROJECTED : PresenceClass.PARKED_CLOSED,
-            projected,
-        );
+        const projected = await classifyCheckin(db, event.id, res);
         if (projected != null && args.participant.isKeyholder) {
             await flushParkedClosed(db);
         }
@@ -162,13 +157,7 @@ async function flushParkedClosedLocked(db: TxClient): Promise<void> {
                 continue;
             }
             const res = await processCheckin(person, "kiosk", db, ev.occurredAt);
-            const projected = await visitIdFromCheckin(res);
-            await classifyPresenceEvent(
-                db,
-                ev.id,
-                projected != null ? PresenceClass.PROJECTED : PresenceClass.PARKED_CLOSED,
-                projected,
-            );
+            await classifyCheckin(db, ev.id, res);
         } else if (openVisit) {
             await processCheckout(person, openVisit.id, "kiosk", db, null, ev.occurredAt, ev.clientEventId);
             await classifyPresenceEvent(db, ev.id, PresenceClass.PROJECTED, openVisit.id);
@@ -178,13 +167,24 @@ async function flushParkedClosedLocked(db: TxClient): Promise<void> {
     }
 }
 
-async function visitIdFromCheckin(res: Response): Promise<number | null> {
-    if (!res.ok) return null;
-    try {
-        const body = (await res.clone().json()) as { type?: string; visit?: { id?: number } };
-        if (body.type === "checkin" && typeof body.visit?.id === "number") return body.visit.id;
-    } catch {
-        return null;
+/** Classify an IN event from processCheckin's actual outcome and return the
+ *  projected visit id. An error response (e.g. a session check-in into a
+ *  closed facility) stays unclassified — never PARKED_CLOSED, which flushes. */
+async function classifyCheckin(db: DbClient, eventId: number, res: Response): Promise<number | null> {
+    let body: { type?: string; reason?: string; visit?: { id?: number } } = {};
+    if (res.ok) {
+        try {
+            body = await res.clone().json();
+        } catch {
+            body = {};
+        }
+    }
+    if (body.type === "checkin" && typeof body.visit?.id === "number") {
+        await classifyPresenceEvent(db, eventId, PresenceClass.PROJECTED, body.visit.id);
+        return body.visit.id;
+    }
+    if (body.type === "parked" && body.reason) {
+        await classifyPresenceEvent(db, eventId, parkReasonToClass(body.reason));
     }
     return null;
 }

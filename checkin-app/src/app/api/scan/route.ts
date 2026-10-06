@@ -1,4 +1,3 @@
-import { Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { apiError, apiJson } from "@/lib/api-response";
@@ -9,6 +8,7 @@ import { config } from "@/lib/config";
 import { withKiosk } from "@/lib/kioskAuth";
 import { SCAN_PROTOCOL_VERSION } from "@/lib/scanProtocol";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 
 // A merged-away badge should still get its owner through the door — an admin
 // tidying up dupes must not be the reason a member gets rejected at the
@@ -457,7 +457,10 @@ export const POST = withKiosk(
             // Cross-lock race on the same clientEventId (e.g. two replay attempts
             // of one queued event racing different advisory-lock windows) — the
             // unique constraint is the backstop the pre-read can't fully close.
-            if (clientEventId && err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+            // Only a clientEventId collision is a duplicate: any other P2002
+            // (e.g. the one-open-visit index) must 500 so the kiosk retries
+            // instead of acking a scan whose rows just rolled back.
+            if (clientEventId && uniqueViolationFields(err)?.includes("clientEventId")) {
                 return apiJson({ type: 'duplicate_ignored', message: 'Event already recorded.' });
             }
             throw err;
