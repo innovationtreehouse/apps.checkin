@@ -431,7 +431,7 @@ jobs:
 
           # Checkin-hosted libraries first, each against its own database
           # (checkin-app/libraries.json), then checkin's.
-          run_migrate_step "../scripts/each-library.sh exec -- prisma migrate deploy" "libraries-migrate-deploy"
+          run_migrate_step "../scripts/each-library.sh exec --no -- prisma migrate deploy" "libraries-migrate-deploy"
           run_migrate_step "npx prisma migrate deploy" "migrate-deploy"
 
       # Deliberately LAST, after migrate has already succeeded against the DDL
