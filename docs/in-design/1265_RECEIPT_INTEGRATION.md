@@ -83,9 +83,10 @@ shapes rather than loosening one.
 **Limits the source lacks** (its `upload-hardening.test.ts` records both): a 10 MB
 file cap and a 200-line cap, 400 on breach; 10 MB stays inside the API's 32 MB
 request limit after base64. Accepted types add `image/webp`. **The type is checked
-by magic bytes, not the declared `Content-Type` or extension:** the first bytes
-must match an allowlist (JPEG, PNG, WebP, HEIC, PDF; plain text for the email-body
-case, §2a), else 400. The stored file is the bytes as uploaded; the app never
+by content, not the declared `Content-Type` or extension:** images and PDF must
+match their magic bytes (JPEG, PNG, GIF, WebP, PDF), and `text/plain` (a manual
+upload or an email body, §2a) must be valid UTF-8 with no NUL bytes, else 400. The
+allowlist is the source's accepted types plus WebP, nothing more. The stored file is the bytes as uploaded; the app never
 modifies an image (owner decision: no EXIF stripping, no redaction).
 
 **Duplicate detection ports verbatim.** SHA-256 file hash, then the composite
@@ -549,7 +550,7 @@ The bulk-donation design (§2.4) owns the callee; agreed signature:
 The source's vitest suites port with the library (Anthropic client mocked). New:
 caps; auto-OCR success, failure and refusal; the catch-up steps (counts only);
 tax note required; self-approval refused; the reimbursement view against a stub
-port; magic-byte rejection of a renamed file; OCR output never setting
+port; magic-byte rejection of a renamed file and of a `text/plain` upload that is not UTF-8 or holds a NUL byte; OCR output never setting
 reimbursee, vendor or `needsReimbursement`; a non-adult uploader's
 `needsReimbursement` rejected; an audit row per file download and mail-queue
 view; no JSON route returning a `secret` column (jest, in
