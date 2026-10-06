@@ -213,6 +213,11 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // bag"). If a self-serve "emails we sent you" / suppression-audit view ever ships,
     // it earns `their_own: { field: 'personId', eqCtx: 'selfId' }`.
     'BulkSendItem',
+    // Budget-owner buckets (#1280 §6). Lands ahead of the model, so the boundary
+    // change ships alone. Finance/board reads need no binding (everyones:internal).
+    // Approvers are derived from programId (the program's leader and treasurers);
+    // the expense approval route earns that programId binding when it ships.
+    'BudgetOwner',
 ]);
 
 /**
