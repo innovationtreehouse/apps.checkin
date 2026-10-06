@@ -7,7 +7,8 @@ import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconCheck, IconX } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
-import { api } from "./api";
+import { api, errorMessage } from "./api";
+import LoadError from "./LoadError";
 import type { ItemReferenceProposalRow } from "./viewTypes";
 
 const PAGE_LIMIT = 200;
@@ -15,12 +16,14 @@ const PAGE_LIMIT = 200;
 export default function ItemReferenceProposalsClient() {
   const [proposals, setProposals] = useState<ItemReferenceProposalRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
     try {
       setProposals(await api<ItemReferenceProposalRow[]>(`/proposals/item-references?page=1&limit=${PAGE_LIMIT}`));
-    } catch (e) { console.error("[ItemReferenceProposalsClient] failed to load proposals", e); }
+      setError(null);
+    } catch (e) { setError(errorMessage(e)); }
     finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
@@ -60,7 +63,7 @@ export default function ItemReferenceProposalsClient() {
       <Title order={3} mb="xs">Item Reference Proposals</Title>
       <Text size="sm" c="dimmed" mb="md">Pending proposals from organizations to map part numbers/descriptions to catalog items.</Text>
 
-      {loading ? <Text c="dimmed">Loading…</Text> : proposals.length === 0 ? (
+      {error ? <LoadError what="proposals" message={error} onRetry={load} /> : loading ? <Text c="dimmed">Loading…</Text> : proposals.length === 0 ? (
         <Text c="dimmed">No pending item reference proposals.</Text>
       ) : (
         <Stack gap="sm">

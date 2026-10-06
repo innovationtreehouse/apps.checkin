@@ -7,7 +7,8 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconArchive, IconArchiveOff, IconEdit, IconPlus } from "@tabler/icons-react";
-import { api, useCanManage } from "./api";
+import { api, errorMessage, useCanManage } from "./api";
+import LoadError from "./LoadError";
 import type { CategoryRow, SubcategoryRow } from "./viewTypes";
 
 function ListItem({ label, isArchived, isSelected, canEdit, onSelect, onEdit, onArchive, onUnarchive }: {
@@ -47,19 +48,25 @@ export default function CategoriesClient() {
   const [catForm, setCatForm] = useState({ name: "", letter: "" });
   const [subForm, setSubForm] = useState({ name: "", number: 0 });
   const [saving, setSaving] = useState(false);
+  const [catError, setCatError] = useState<string | null>(null);
+  const [subError, setSubError] = useState<string | null>(null);
 
   async function loadCategories(includeArchived: boolean) {
-    const data = await api<CategoryRow[]>(`/categories${includeArchived ? "?includeArchived=true" : ""}`);
-    setCategories(data);
+    try {
+      setCategories(await api<CategoryRow[]>(`/categories${includeArchived ? "?includeArchived=true" : ""}`));
+      setCatError(null);
+    } catch (e) { setCatError(errorMessage(e)); }
   }
 
-  useEffect(() => { loadCategories(false).catch((e) => console.error("[CategoriesClient] load failed", e)); }, []);
+  useEffect(() => { loadCategories(false); }, []);
 
   async function loadSubcategories(catId: number, includeArchived: boolean) {
     const params = new URLSearchParams({ categoryId: String(catId) });
     if (includeArchived) params.set("includeArchived", "true");
-    const data = await api<SubcategoryRow[]>(`/subcategories?${params}`);
-    setSubcategories(data);
+    try {
+      setSubcategories(await api<SubcategoryRow[]>(`/subcategories?${params}`));
+      setSubError(null);
+    } catch (e) { setSubError(errorMessage(e)); }
   }
 
   async function handleCatSubmit(e: React.FormEvent) {
@@ -156,7 +163,8 @@ export default function CategoriesClient() {
               </Group>
             </Group>
             <Divider mb="sm" />
-            {categories.length === 0 ? <Text size="sm" c="dimmed">No categories yet</Text> : (
+            {catError ? <LoadError what="categories" message={catError} onRetry={() => loadCategories(showArchivedCats)} />
+              : categories.length === 0 ? <Text size="sm" c="dimmed">No categories yet</Text> : (
               <Stack gap={2}>
                 {[...categories].sort((a, b) => a.letter.localeCompare(b.letter)).map((cat) => (
                   <ListItem key={cat.id} label={`${cat.letter} — ${cat.name}`} isArchived={!!cat.archivedAt} isSelected={selectedCat?.id === cat.id} canEdit={canEdit}
@@ -181,6 +189,7 @@ export default function CategoriesClient() {
             </Group>
             <Divider mb="sm" />
             {!selectedCat ? <Text size="sm" c="dimmed">Select a category to manage its subcategories</Text>
+              : subError ? <LoadError what="subcategories" message={subError} onRetry={() => loadSubcategories(selectedCat.id, showArchivedSubs)} />
               : subcategories.length === 0 ? <Text size="sm" c="dimmed">No subcategories yet</Text>
               : (
                 <Stack gap={2}>

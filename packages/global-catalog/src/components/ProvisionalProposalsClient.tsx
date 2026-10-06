@@ -8,7 +8,8 @@ import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconEye, IconLink, IconX } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
-import { api } from "./api";
+import { api, errorMessage } from "./api";
+import LoadError from "./LoadError";
 import { USAGE_BEHAVIORS } from "./viewTypes";
 import type { CategoryRow, ProvisionalItemRow, SubcategoryRow } from "./viewTypes";
 
@@ -21,19 +22,25 @@ export default function ProvisionalProposalsClient() {
   const [subcategories, setSubcategories] = useState<SubcategoryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [onlyPending, setOnlyPending] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
+  // Category names label the rows and feed the approve form, so they load with the list.
   async function load() {
     setLoading(true);
     try {
-      setProposals(await api<ProvisionalItemRow[]>(`/provisional-items?page=1&limit=${PAGE_LIMIT}`));
-    } catch (e) { console.error("[ProvisionalProposalsClient] failed to load provisional proposals", e); }
+      const [rows, cats, subs] = await Promise.all([
+        api<ProvisionalItemRow[]>(`/provisional-items?page=1&limit=${PAGE_LIMIT}`),
+        api<CategoryRow[]>("/categories"),
+        api<SubcategoryRow[]>("/subcategories"),
+      ]);
+      setProposals(rows);
+      setCategories(cats);
+      setSubcategories(subs);
+      setError(null);
+    } catch (e) { setError(errorMessage(e)); }
     finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
-  useEffect(() => {
-    api<CategoryRow[]>("/categories").then(setCategories).catch((e) => console.error("[ProvisionalProposalsClient] failed to load categories", e));
-    api<SubcategoryRow[]>("/subcategories").then(setSubcategories).catch((e) => console.error("[ProvisionalProposalsClient] failed to load subcategories", e));
-  }, []);
 
   const pending = proposals.filter((p) => p.status === "pending");
   const reviewed = proposals.filter((p) => p.status !== "pending");
@@ -160,7 +167,8 @@ export default function ProvisionalProposalsClient() {
       </Group>
       <Text size="sm" c="dimmed" mb="md">Items proposed by orgs using provisional GTINs. Approve to create a real catalog entry, map to an existing item, or reject.</Text>
 
-      {loading ? <Text c="dimmed">Loading…</Text> : proposals.length === 0 ? <Text c="dimmed">No provisional proposals.</Text> : (
+      {error ? <LoadError what="provisional proposals" message={error} onRetry={load} />
+        : loading ? <Text c="dimmed">Loading…</Text> : proposals.length === 0 ? <Text c="dimmed">No provisional proposals.</Text> : (
         <Stack gap="lg">
           {pending.length > 0 && <div><Text fw={500} mb="xs">Pending ({pending.length})</Text><ProposalTable rows={pending} /></div>}
           {!onlyPending && reviewed.length > 0 && <div><Text fw={500} mb="xs" c="dimmed">Reviewed ({reviewed.length})</Text><ProposalTable rows={reviewed} /></div>}

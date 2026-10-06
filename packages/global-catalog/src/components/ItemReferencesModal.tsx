@@ -6,7 +6,8 @@ import {
 import { notifications } from "@mantine/notifications";
 import { IconArchive, IconCheck, IconEdit, IconPlus, IconX } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
-import { api } from "./api";
+import { api, errorMessage } from "./api";
+import LoadError from "./LoadError";
 import type { ItemRow, ItemReferenceRow } from "./viewTypes";
 
 // conversionFactor is set by the reference matcher (S4), not the human UI — the
@@ -59,11 +60,11 @@ function RefRow({ ref: r, canEdit, onArchive, onEditingChange, onUpdated }: {
   if (editing) {
     return (
       <Table.Tr>
-        <Table.Td><TextInput size="xs" value={form.partNumber} onChange={(e) => setForm({ ...form, partNumber: e.currentTarget.value })} /></Table.Td>
-        <Table.Td><TextInput size="xs" value={form.description} onChange={(e) => setForm({ ...form, description: e.currentTarget.value })} /></Table.Td>
-        <Table.Td><TextInput size="xs" value={form.manufacturer} onChange={(e) => setForm({ ...form, manufacturer: e.currentTarget.value })} /></Table.Td>
-        <Table.Td><TextInput size="xs" value={form.retailer} onChange={(e) => setForm({ ...form, retailer: e.currentTarget.value })} /></Table.Td>
-        <Table.Td><TextInput size="xs" value={form.url} onChange={(e) => setForm({ ...form, url: e.currentTarget.value })} /></Table.Td>
+        <Table.Td><TextInput size="xs" aria-label="Part number" value={form.partNumber} onChange={(e) => setForm({ ...form, partNumber: e.currentTarget.value })} /></Table.Td>
+        <Table.Td><TextInput size="xs" aria-label="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.currentTarget.value })} /></Table.Td>
+        <Table.Td><TextInput size="xs" aria-label="Manufacturer" value={form.manufacturer} onChange={(e) => setForm({ ...form, manufacturer: e.currentTarget.value })} /></Table.Td>
+        <Table.Td><TextInput size="xs" aria-label="Retailer" value={form.retailer} onChange={(e) => setForm({ ...form, retailer: e.currentTarget.value })} /></Table.Td>
+        <Table.Td><TextInput size="xs" aria-label="URL" value={form.url} onChange={(e) => setForm({ ...form, url: e.currentTarget.value })} /></Table.Td>
         <Table.Td>{r.conversionFactor}</Table.Td>
         <Table.Td>
           <Group gap={4}>
@@ -107,6 +108,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
 }) {
   const [refs, setRefs] = useState<ItemReferenceRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [addForm, setAddForm] = useState(EMPTY_REF);
   const [showAdd, setShowAdd] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -118,13 +120,14 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
     try {
       const data = await api<ItemReferenceRow[]>(`/item-references?gtin13=${encodeURIComponent(item.gtin13)}`);
       setRefs(data);
-    } catch (e) { console.error("[ItemReferencesModal] failed to load item references", e); }
+      setError(null);
+    } catch (e) { setError(errorMessage(e)); }
     finally { setLoading(false); }
   }
 
   const [wasOpened, setWasOpened] = useState(false);
   if (opened && !wasOpened) { setWasOpened(true); loadRefs(); }
-  if (!opened && wasOpened) { setWasOpened(false); setRefs([]); setShowAdd(false); setAddForm(EMPTY_REF); setEditingRows(new Set()); }
+  if (!opened && wasOpened) { setWasOpened(false); setRefs([]); setError(null); setShowAdd(false); setAddForm(EMPTY_REF); setEditingRows(new Set()); }
 
   async function handleCreate() {
     if (!item) return;
@@ -170,7 +173,8 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
   return (
     <Modal opened={opened} onClose={handleClose} title={item ? `References — ${item.name}` : "References"} size="xl" centered>
       {item && <Text size="sm" c="dimmed" ff="monospace" mb="md">{formatItemId(item.gtin13)}</Text>}
-      {loading ? <Text c="dimmed">Loading…</Text> : refs.length === 0 && !showAdd ? (
+      {error ? <LoadError what="references" message={error} onRetry={loadRefs} />
+        : loading ? <Text c="dimmed">Loading…</Text> : refs.length === 0 && !showAdd ? (
         <Text size="sm" c="dimmed" mb="md">No references yet.</Text>
       ) : (
         <Table withTableBorder withColumnBorders mb="md" style={{ tableLayout: "fixed" }}>
@@ -191,11 +195,11 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
             ))}
             {showAdd && (
               <Table.Tr>
-                <Table.Td><TextInput size="xs" placeholder="Part number" autoFocus value={addForm.partNumber} onChange={(e) => setAddForm({ ...addForm, partNumber: e.currentTarget.value })} /></Table.Td>
-                <Table.Td><TextInput size="xs" placeholder="Description" value={addForm.description} onChange={(e) => setAddForm({ ...addForm, description: e.currentTarget.value })} /></Table.Td>
-                <Table.Td><TextInput size="xs" placeholder="Manufacturer" value={addForm.manufacturer} onChange={(e) => setAddForm({ ...addForm, manufacturer: e.currentTarget.value })} /></Table.Td>
-                <Table.Td><TextInput size="xs" placeholder="Retailer" value={addForm.retailer} onChange={(e) => setAddForm({ ...addForm, retailer: e.currentTarget.value })} /></Table.Td>
-                <Table.Td><TextInput size="xs" placeholder="https://…" value={addForm.url} onChange={(e) => setAddForm({ ...addForm, url: e.currentTarget.value })} /></Table.Td>
+                <Table.Td><TextInput size="xs" aria-label="Part number" placeholder="Part number" autoFocus value={addForm.partNumber} onChange={(e) => setAddForm({ ...addForm, partNumber: e.currentTarget.value })} /></Table.Td>
+                <Table.Td><TextInput size="xs" aria-label="Description" placeholder="Description" value={addForm.description} onChange={(e) => setAddForm({ ...addForm, description: e.currentTarget.value })} /></Table.Td>
+                <Table.Td><TextInput size="xs" aria-label="Manufacturer" placeholder="Manufacturer" value={addForm.manufacturer} onChange={(e) => setAddForm({ ...addForm, manufacturer: e.currentTarget.value })} /></Table.Td>
+                <Table.Td><TextInput size="xs" aria-label="Retailer" placeholder="Retailer" value={addForm.retailer} onChange={(e) => setAddForm({ ...addForm, retailer: e.currentTarget.value })} /></Table.Td>
+                <Table.Td><TextInput size="xs" aria-label="URL" placeholder="https://…" value={addForm.url} onChange={(e) => setAddForm({ ...addForm, url: e.currentTarget.value })} /></Table.Td>
                 <Table.Td><Text c="dimmed" size="sm">auto</Text></Table.Td>
                 <Table.Td>
                   <Group gap={4}>

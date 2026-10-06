@@ -3,7 +3,8 @@ import { useEffect, useState } from "react";
 import { Button, Stack, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { formatItemId } from "../lib/gtin";
-import { api } from "./api";
+import { api, errorMessage } from "./api";
+import LoadError from "./LoadError";
 import type { ConversionChallengeRow } from "./viewTypes";
 
 const PAGE_LIMIT = 200;
@@ -11,13 +12,15 @@ const PAGE_LIMIT = 200;
 export default function ConversionChallengesClient() {
   const [challenges, setChallenges] = useState<ConversionChallengeRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [acting, setActing] = useState<number | null>(null);
 
   async function load() {
     setLoading(true);
     try {
       setChallenges(await api<ConversionChallengeRow[]>(`/conversion-challenges?page=1&limit=${PAGE_LIMIT}`));
-    } catch (e) { console.error("[ConversionChallengesClient] failed to load conversion challenges", e); }
+      setError(null);
+    } catch (e) { setError(errorMessage(e)); }
     finally { setLoading(false); }
   }
   useEffect(() => { load(); }, []);
@@ -51,7 +54,7 @@ export default function ConversionChallengesClient() {
       <Title order={3} mb="xs">Conversion Factor Challenges</Title>
       <Text size="sm" c="dimmed" mb="md">Organization managers have flagged these learned conversion factors as incorrect. Accepting updates the factor and increments the version; rejecting leaves it unchanged.</Text>
 
-      {loading ? <Text c="dimmed">Loading…</Text> : challenges.length === 0 ? (
+      {error ? <LoadError what="conversion challenges" message={error} onRetry={load} /> : loading ? <Text c="dimmed">Loading…</Text> : challenges.length === 0 ? (
         <Text c="dimmed">No pending conversion factor challenges.</Text>
       ) : (
         <Table striped highlightOnHover withTableBorder>
