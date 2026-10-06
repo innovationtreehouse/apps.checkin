@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { apiError, apiJson } from "@/lib/api-response";
-import { processCheckin, processCheckout, finalizeFacilityClose, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/scan-service";
+import { processCheckin, processCheckout, finalizeFacilityClose, forceCloseTokenMatches, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/scan-service";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
 import { applyPresenceIntent, flushParkedClosed } from "@/lib/presence/project";
 import { config } from "@/lib/config";
@@ -326,13 +326,46 @@ export const POST = withKiosk(
                 });
             }
 
+            // A facility close the keyholder confirmed at the kiosk applies whenever
+            // it arrives, however late: the keyholder was at the reader and saw the
+            // room. It needs the keyholder in the building at the scan time — a
+            // visit still open, or one the nightly cron closed after the scan.
+            // A scan time ahead of server now is a fast kiosk clock, not a close
+            // time to trust: it parks as clock_suspect below.
+            const aheadOfNow = eventTime.getTime() - Date.now() > REPLAY_FUTURE_TOLERANCE_MS;
+            const lateCloseVisit = isReplay && !aheadOfNow && participant.isKeyholder && intent !== "IN"
+                && (forceCloseConfirmed || confirmToken !== null)
+                ? await tx.visit.findFirst({
+                    where: {
+                        personId: participant.id,
+                        deletedAt: null,
+                        arrivedAt: { lte: eventTime },
+                        OR: [
+                            { departedAt: null },
+                            { departedVia: "AUTO_CLOSE", departedAt: { gt: eventTime } },
+                        ],
+                    },
+                    orderBy: { arrivedAt: "desc" },
+                    select: { departedAt: true, forceCloseToken: true },
+                })
+                : null;
+
             // A replay older than the freshness window, or one that lands behind
             // visit activity newer than its own scan time, can't be trusted to
             // toggle — state has moved past it. Park it for a human instead.
             // A dead-lettered event always parks: it never reaches the server
             // live, so there is nothing here for it to safely toggle against.
+            // A confirmed close is exempt from all three, a clock-step flag included:
+            // the kiosk clock is trusted unless it reads ahead of server now.
+            // Against a cron-closed visit the server never ran the confirm, so a
+            // token that doesn't match parks exactly as processCheckout's would.
             let parkReason: string | null = null;
-            if (clockSuspect) {
+            if (lateCloseVisit?.departedAt && !forceCloseConfirmed
+                && !forceCloseTokenMatches(lateCloseVisit.forceCloseToken, confirmToken)) {
+                parkReason = "force_close_review";
+            } else if (lateCloseVisit) {
+                // applied below
+            } else if (clockSuspect) {
                 parkReason = "clock_suspect";
             } else if (isDead) {
                 parkReason = `client_dead:${deadStatus}`;
@@ -383,6 +416,21 @@ export const POST = withKiosk(
                     clockSuspect,
                 });
                 return apiJson({ type: 'parked', message: 'Recorded for review.' });
+            }
+
+            // The cron already departed the keyholder, so there is no checkout left
+            // to run — but the close still applies: the sweep pulls that night's
+            // AUTO_CLOSE departures back to the keyholder's scan time.
+            if (lateCloseVisit?.departedAt) {
+                await appendPresenceEvent(tx, {
+                    personId: participant.id,
+                    occurredAt: eventTime,
+                    direction: "OUT",
+                    source: "SCANNER",
+                    clientEventId,
+                    classification: PresenceClass.PROJECTED,
+                });
+                return apiJson({ type: 'checkout', message: 'Checked out and Facility closed', facilityClosed: true });
             }
 
             // Live path. Direction: the displayed intent if the kiosk sent one,
@@ -471,7 +519,7 @@ export const POST = withKiosk(
         // kick out of the locked section means a last-isKeyholder close no longer
         // blocks concurrent scans for other participants. No-op unless the
         // response reports facilityClosed.
-        await finalizeFacilityClose(res);
+        await finalizeFacilityClose(res, isReplay ? eventTime : undefined);
         // After the tx (+ optional facility sweep) commits, so a concurrent
         // GET cannot refill the cache from uncommitted rows.
         invalidateAttendanceCache();

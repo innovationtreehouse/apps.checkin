@@ -183,7 +183,10 @@ export async function processCheckout(
                 departedAt: null,
                 deletedAt: null,
                 person: { isKeyholder: true },
-                id: { not: activeVisitId }
+                id: { not: activeVisitId },
+                // A late replay closes the building as it was at the scan: a
+                // keyholder who arrived after it reopened a different session.
+                ...(replayEventId ? { arrivedAt: { lte: visitTime } } : {}),
             }
         });
 
@@ -282,7 +285,7 @@ export async function processCheckout(
             where: { id: activeVisitId },
             data: { forceCloseWarnedAt: null, forceCloseToken: null }
         });
-        await sweepIfStandalone(db);
+        await sweepIfStandalone(db, visitTime);
     }
 
     // SUPERVISION INTERRUPT (#1436). Fires on EVERY departure, not just a
@@ -343,6 +346,8 @@ export async function closeOnOfferConfirm(
     confirmToken: string | null,
     replayEventId: string | null,
     forceCloseConfirmed: boolean,
+    /** When the confirming badge was read; the sweep departs everyone at it. */
+    closeTime: Date = new Date(),
 ): Promise<Response | null> {
     if (!participant.isKeyholder || authType !== "kiosk") return null;
     const offlineConfirmed = forceCloseConfirmed && replayEventId != null;
@@ -359,7 +364,7 @@ export async function closeOnOfferConfirm(
         });
     }
 
-    await sweepIfStandalone(db);
+    await sweepIfStandalone(db, closeTime);
     return apiJson({
         message: "Facility closed",
         type: "checkout" as const,
@@ -443,40 +448,67 @@ async function supervisionInterrupt(
  * whole operation, so run them here; under the route's tx client the route runs
  * both AFTER it commits (see finalizeFacilityClose in route.ts).
  */
-async function sweepIfStandalone(db: DbClient) {
+async function sweepIfStandalone(db: DbClient, closeTime: Date) {
     if (!isRootClient(db)) return;
-    await withFacilityLock(db, (tx) => closeAllOpenVisits(tx));
+    await withFacilityLock(db, (tx) => closeAllOpenVisits(tx, closeTime));
     invalidateAttendanceCache();
     kickPostEventEmails();
 }
 
-/** Mark every still-open visit as departed. Facility-wide, not participant-scoped:
- *  a single atomic statement, so it needs no wrapping transaction.
+/** Depart everyone who was in the building at `closeTime` — the moment the last
+ *  keyholder left. Live that is server now; a confirmed close replayed late
+ *  carries the keyholder's own scan time (the route parks one from a clock
+ *  running ahead; the clamp to now only absorbs the tolerated skew).
+ *  Facility-wide, not participant-scoped: a single atomic statement, so it needs
+ *  no wrapping transaction.
  *
  *  Raw rather than `updateMany` because the stamp is per-row: the close moment
  *  is capped at the visit's own `arrivedAt + MAX_VISIT_MS`, and `updateMany`
  *  can only set one constant for every row it touches.
  *
- *  FACILITY_CLOSE, not AUTO_CLOSE: the stamp is normally the moment the building
+ *  Someone who arrived after `closeTime` is left open only when a keyholder who
+ *  also arrived after it is still in — the building reopened. Otherwise nobody
+ *  holds the building for them, so they depart now, the moment the close became
+ *  known. A visit the nightly cron already AUTO_CLOSEd past `closeTime` is
+ *  pulled back to it — the cron stamped only because the close had not arrived
+ *  yet. Live, nobody arrived after `closeTime` and no departure lies in the
+ *  future, so neither clause matches.
+ *
+ *  FACILITY_CLOSE, not AUTO_CLOSE: the stamp is the moment the building
  *  actually closed, so it is bounded by building hours — plausible, unlike the
  *  cron's midnight sweep. Where the cap bites the stamp is 24h after arrival
  *  instead; both are placeholders the member is meant to correct, and a
  *  placeholder inside the 24h rule beats an accurate record that breaks it.
  *
- *  `now()` is timestamptz and the columns are timestamp-without-zone holding
- *  UTC, so the clock must be pulled AT TIME ZONE 'UTC' or the comparison is off
- *  by the server's offset. */
-async function closeAllOpenVisits(db: DbClient) {
+ *  The columns are timestamp-without-zone holding UTC, so the instant is
+ *  converted AT TIME ZONE 'UTC' or the comparison is off by the server's offset. */
+async function closeAllOpenVisits(db: DbClient, closeTime: Date = new Date()) {
+    const closeAt = new Date(Math.min(closeTime.getTime(), Date.now())).toISOString();
     // Tombstoned visits are excluded: closing one would rewrite a record the
     // member chose to erase, and resurrect a machine departure if it is undone.
     await db.$executeRaw`
-        UPDATE "Visit"
+        WITH t AS (
+            SELECT (${closeAt}::timestamptz AT TIME ZONE 'UTC') AS close_at,
+                   (now() AT TIME ZONE 'UTC') AS now_at
+        )
+        UPDATE "Visit" v
         SET "departedAt" = LEAST(
-                (now() AT TIME ZONE 'UTC'),
-                "arrivedAt" + ${MAX_VISIT_MS}::double precision * interval '1 millisecond'
+                CASE WHEN v."arrivedAt" <= t.close_at THEN t.close_at ELSE t.now_at END,
+                v."arrivedAt" + ${MAX_VISIT_MS}::double precision * interval '1 millisecond'
             ),
             "departedVia" = 'FACILITY_CLOSE'::"VisitSource"
-        WHERE "departedAt" IS NULL AND "deletedAt" IS NULL`;
+        FROM t
+        WHERE v."deletedAt" IS NULL
+          AND (
+              (v."arrivedAt" <= t.close_at
+               AND (v."departedAt" IS NULL
+                    OR (v."departedVia" = 'AUTO_CLOSE'::"VisitSource" AND v."departedAt" > t.close_at)))
+              OR (v."departedAt" IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM "Visit" k JOIN "Person" p ON p.id = k."personId"
+                      WHERE p."isKeyholder" AND k."departedAt" IS NULL
+                        AND k."deletedAt" IS NULL AND k."arrivedAt" > t.close_at))
+          )`;
 }
 
 /** Fire-and-forget post-event email run on facility close. The dynamic import
@@ -493,12 +525,21 @@ function kickPostEventEmails() {
  * last-keyholder checkout is committed — both from the scan route (via
  * finalizeFacilityClose) and from web close paths.
  */
-export async function runFacilityClose(): Promise<void> {
-    await withFacilityLock(prisma, (tx) => closeAllOpenVisits(tx));
+export async function runFacilityClose(closeTime: Date = new Date()): Promise<void> {
+    await withFacilityLock(prisma, (tx) => closeAllOpenVisits(tx, closeTime));
     // After the lock/tx commits so a concurrent kiosk GET cannot refill the
     // cache from still-open rows (READ COMMITTED).
     invalidateAttendanceCache();
     kickPostEventEmails();
+}
+
+/** Timing-safe force-close token compare: hash both sides to a fixed length so
+ *  timingSafeEqual can't throw on a length mismatch and no length leaks. */
+export function forceCloseTokenMatches(stored: string | null | undefined, given: string | null | undefined): boolean {
+    return stored != null && given != null && timingSafeEqual(
+        createHash("sha256").update(stored).digest(),
+        createHash("sha256").update(given).digest()
+    );
 }
 
 export type CloseGuardResult =
@@ -580,7 +621,7 @@ export async function lastKeyholderGuard(
  * route hands that response here once committed. A sweep failure is logged, not
  * thrown, so it never turns an already-committed checkout into a 500.
  */
-export async function finalizeFacilityClose(res: Response): Promise<void> {
+export async function finalizeFacilityClose(res: Response, closeTime: Date = new Date()): Promise<void> {
     let body: { facilityClosed?: boolean } | null;
     try {
         body = await res.clone().json();
@@ -590,7 +631,7 @@ export async function finalizeFacilityClose(res: Response): Promise<void> {
     if (!body?.facilityClosed) return;
 
     try {
-        await runFacilityClose();
+        await runFacilityClose(closeTime);
     } catch (err) {
         console.error("Failed to close facility-wide visits after scan:", err);
     }

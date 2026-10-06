@@ -81,6 +81,7 @@ export async function applyPresenceIntent(
             args.confirmToken ?? null,
             args.replayEventId ?? null,
             args.forceCloseConfirmed ?? false,
+            args.occurredAt,
         );
         if (closed) {
             await classifyPresenceEvent(db, event.id, PresenceClass.PROJECTED);
