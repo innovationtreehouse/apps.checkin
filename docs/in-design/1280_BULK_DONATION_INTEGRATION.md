@@ -228,7 +228,9 @@ identity, but the name is already `pii` behind the same gate, so it stays
   (the transaction lists and detail, the comment rules, the QuickBooks candidate
   view with its memo) and any export of donor data writes an audit row: actor,
   route, record ids or the filter used, row count, time. The row carries no donor
-  field.
+  field. It is a `WorkflowEvent` with `eventType: DONOR_DATA_READ` (route, ids or
+  filter, and count in `payload`), so the source's existing audit table holds it
+  and no new model or boundary change is needed.
 - **Audit payloads never carry donor fields.** The source's `WorkflowEvent.payload`
   holds owner ids, file metadata, and account-map rows only, which is why it can be
   `internal`. W adds a test asserting no donor field reaches a payload; a future
@@ -370,10 +372,7 @@ and a per-run count and total cap.
 **No sign-off seats apply.** The reimbursement and card-charge sign-off seats
 (#1272 §6, Financial Policy F2 / F2-COI) govern money leaving the org. Donations
 post only inbound Deposits and the in-kind clearing pair, which moves no money
-out and is never booked against a card or bank account. A donation flow that
-ever pays out (a refund to a donor, a card charge) takes the same seats and is
-held from QuickBooks until they are filled, with at most +1 Board for a card
-charge.
+out and is never booked against a card or bank account.
 
 - **Benevity disbursement:** a bank **Deposit** (gifts and matches in, fees out).
 - **In-kind donation:** no money reaches a bank, so it books through an
@@ -427,7 +426,7 @@ id), its takeover line, and its claimed and excluded ids. It answers *found*,
 a try/catch step inside the existing prod `/api/cron/reconcile-shopify`, next to
 income's; finance's queue actions (pick, create, retry) run it for one record
 on demand. The step is idempotent, capped per run, and returns counts only
-(matched, created, queued, failed) — no ids, donor names or amounts in the cron
+(matched, created, queued, failed); no ids, donor names or amounts in the cron
 response. It ships as a **named follow-up PR in this lane (D, §9)** after L4's
 QB-2.
 
