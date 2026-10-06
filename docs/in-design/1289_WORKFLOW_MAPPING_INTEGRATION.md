@@ -387,9 +387,11 @@ Reintroduces `UNFINISHED.md` #8 on the catalog's X1 post-commit call-out (#1286
   request. The handler parses each event, applies it, and advances its cursor; a
   throw leaves the cursor behind the failed event.
 - **Replay port:** `CatalogEventSource { eventsSince(orgId, cursor) }` in this
-  library's `contract.ts`, bound by checkin-app to the catalog's event read. **No DB access at app boot and no new
-schedule** (plan rule 5): the catch-up sweep (cursor replay after a crash or a
-handler that threw) reads `eventsSince` from the cursor; it is a try/catch step inside the existing prod
+  library's `contract.ts`, bound by checkin-app to the catalog's event read.
+
+**No DB access at app boot and no new schedule** (plan rule 5): the catch-up
+sweep (cursor replay after a crash or a handler that threw) reads `eventsSince`
+from the cursor; it is a try/catch step inside the existing prod
 `/api/cron/reconcile-shopify`, next to the other libraries' sweeps. The step
 is capped per run and returns counts only (events applied, failed). No
 `setInterval`. No local event ledger: every action below is a set-to-value
