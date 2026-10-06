@@ -15,6 +15,10 @@ import { createItem } from "../src/services/itemService";
 dotenv.config();
 
 async function main(): Promise<void> {
+  // Fixture rows must never reach a live catalog; only the local/flow env seeds.
+  if (process.env.CHECKIN_ENV !== "local") {
+    throw new Error(`Refusing to seed the catalog: CHECKIN_ENV is "${process.env.CHECKIN_ENV ?? ""}", not "local".`);
+  }
   if (!process.env.CATALOG_DATABASE_URL) {
     throw new Error("CATALOG_DATABASE_URL is not set — the catalog seed needs a database.");
   }
