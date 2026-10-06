@@ -59,7 +59,7 @@ name: Deploy staging
 #   - Secret VALUES set in Secrets Manager (checkin-stg/database-url*, ...).
 #   - GitHub Environment "staging": deployment branches = rel/*, required
 #     reviewers configured (approval gate) — this also pins the OIDC sub to
-#     repo:innovationtreehouse/checkin:environment:staging with no wildcard.
+#     repo:innovationtreehouse/apps.checkin:environment:staging with no wildcard.
 #   - DNS + cert SAN for ops-stg.innovationtreehouse.org.
 
 on:
