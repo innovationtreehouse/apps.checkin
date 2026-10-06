@@ -22,6 +22,14 @@ const MAX_MERGE_HOPS = 5;
 // leaving.
 const REPLAY_FRESHNESS_WINDOW_MS = 10 * 60 * 1000;
 
+// A replay stamped further ahead of server now than this came from a kiosk
+// whose clock is wrong; it parks as clock_suspect instead of toggling.
+const REPLAY_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
+
+// Outbox-only fields: they rewrite a scan's event time, skip its interrupts, or
+// inject review rows. Only a signed kiosk may send them.
+const KIOSK_ONLY_FIELDS = ["replay", "dead", "deadStatus", "scannedAt", "forceCloseConfirmed", "clockSuspect"] as const;
+
 // F7: the out-of-order guard needs the true latest activity across ALL of a
 // participant's visits, not just the most-recently-arrived one -- a
 // same-day/next-day resolution (D7) can write a departedAt newer than a
@@ -42,6 +50,13 @@ export const POST = withKiosk(
 
         if (!participantId || typeof participantId !== 'number') {
             return apiError("A valid numeric participantId is required.", 400);
+        }
+
+        if (auth.type !== 'kiosk') {
+            const sent = KIOSK_ONLY_FIELDS.filter((f) => body[f] !== undefined);
+            if (sent.length > 0) {
+                return apiError(`Only a kiosk may send: ${sent.join(", ")}.`, 400);
+            }
         }
 
         // Optional replay fields from a queued kiosk scan. Absent → exactly
@@ -109,9 +124,8 @@ export const POST = withKiosk(
                 : null;
 
         // The kiosk ran the force-close warning+confirm locally while offline and
-        // has no server token to echo. Honored only on a replay (processCheckout),
-        // and only when the server independently sees a last-keyholder-with-others
-        // close — the flag bypasses the token, never the occupancy guards.
+        // has no server token to echo. Honored only on a replay, and only from a
+        // keyholder — the flag bypasses the token, never the keyholder check.
         const forceCloseConfirmed = body.forceCloseConfirmed === true;
 
         // Displayed direction (invariant 5). Absent → legacy live-state toggle.
@@ -143,26 +157,14 @@ export const POST = withKiosk(
             }
         }
 
-        // Web session: check if user can scan this participant
-        let pendingHouseholdCheck = false;
-        if (auth.type === 'session') {
-            const user = auth.user;
-            const isSelf = participantId === Number(user.id);
-            const isAdmin = user.isSysadmin || user.isKeyholder || user.isBoardMember;
-
-            // In production, only privileged users may self-check-in via web.
-            // Everyone else must use the kiosk badge scanner.
-            if (isSelf && !isAdmin && config.isProd()) {
-                return apiError("Please use the kiosk badge scanner to check in.", 403);
-            }
-
-            if (!isSelf && !isAdmin) {
-                if (user.householdId && user.householdLead) {
-                    pendingHouseholdCheck = true;
-                } else {
-                    return apiError("Forbidden: You are not authorized to scan this user.", 403);
-                }
-            }
+        // Web session: refuse up front anyone who could only ever scan
+        // themselves, so the lookup below can't serve them as an id oracle.
+        // The full self/household check runs on the resolved participant.
+        const sessionUser = auth.type === 'session' && !(auth.user.isSysadmin || auth.user.isKeyholder || auth.user.isBoardMember)
+            ? auth.user
+            : null;
+        if (sessionUser && participantId !== Number(sessionUser.id) && !(sessionUser.householdId && sessionUser.householdLead)) {
+            return apiError("Forbidden: You are not authorized to scan this user.", 403);
         }
 
         // 3. Lookup participant
@@ -228,9 +230,16 @@ export const POST = withKiosk(
             });
         }
 
-        // Household lead check: verify participant is in the same household
-        if (pendingHouseholdCheck && auth.type === 'session') {
-            if (participant.householdId !== auth.user.householdId) {
+        // Checked against the resolved id, so a merged-away id can't disguise
+        // a self scan as a household scan.
+        if (sessionUser) {
+            const isSelf = participant.id === Number(sessionUser.id);
+            // In production, only privileged users may self-check-in via web.
+            // Everyone else must use the kiosk badge scanner.
+            if (isSelf && config.isProd()) {
+                return apiError("Please use the kiosk badge scanner to check in.", 403);
+            }
+            if (!isSelf && !(sessionUser.householdLead && sessionUser.householdId && participant.householdId === sessionUser.householdId)) {
                 return apiError("Forbidden: You are not authorized to scan this user.", 403);
             }
         }
@@ -276,10 +285,10 @@ export const POST = withKiosk(
             // the warning scan itself lands well under that age and must still
             // debounce, or the room's warning would auto-confirm with no human
             // acknowledgment at all.
+            // The token may sit on a departed visit: a close offered with a checkout.
             const isConfirm = (confirmToken !== null && (await tx.visit.count({
                 where: {
                     personId: participant.id,
-                    departedAt: null,
                     deletedAt: null,
                     forceCloseToken: confirmToken,
                 },
@@ -329,7 +338,9 @@ export const POST = withKiosk(
                 parkReason = `client_dead:${deadStatus}`;
             } else if (isReplay) {
                 const stale = Date.now() - eventTime.getTime() > REPLAY_FRESHNESS_WINDOW_MS;
-                if (stale) {
+                if (eventTime.getTime() - Date.now() > REPLAY_FUTURE_TOLERANCE_MS) {
+                    parkReason = "clock_suspect";
+                } else if (stale) {
                     parkReason = "stale_replay";
                 } else {
                     const activity = await tx.visit.aggregate({

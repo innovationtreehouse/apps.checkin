@@ -5,6 +5,7 @@ import { PresenceClass } from "@/lib/presence/events";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits } from "@/lib/supervision";
 import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
 import { invalidatableCache } from "@/lib/invalidatableCache";
+import { getKioskDisplayNames } from "@/lib/kiosk-names";
 
 /**
  * Current-attendance feed.
@@ -18,8 +19,9 @@ import { invalidatableCache } from "@/lib/invalidatableCache";
  *   emergency-contact modal on /attendance/current.
  *
  * - `{ kiosk: true }` (a signature-verified kiosk): a display-only roster —
- *   id, display name, nickname, isKeyholder, isYouth, arrival time and the
- *   program badge.
+ *   id, kiosk label, isKeyholder, isYouth, arrival time and the program badge.
+ *   The label is resolved here (getKioskDisplayNames: nickname, else first name,
+ *   a last initial only to tell two apart), so no last name reaches the device.
  *   The kiosk is an UNATTENDED device in a public room, and it forwards whatever
  *   it receives into an iframe with a wildcard postMessage origin
  *   (`client/client.py`), so no `personal`/`pii` field may reach it. It renders
@@ -37,8 +39,7 @@ import { invalidatableCache } from "@/lib/invalidatableCache";
  * they stay OUT of `counts`/`safety`: held scans exist ONLY when no keyholder is
  * present, so the supervision math is already failing, and folding unsupervised
  * bodies into it would mask that rather than expose it. The held DTO carries only
- * id/name/time — no `personal`/`pii` field — so it is safe on the kiosk path
- * without a separate projection.
+ * id/name/time — on the kiosk path the name is the kiosk label, as on the roster.
  *
  * Per-process cache (see {@link invalidatableCache}): a GET hits the DB on a cold
  * miss, or after 60s while anyone is present. Writes that change the roster or a
@@ -150,10 +151,11 @@ async function computeFullAttendance(kiosk: boolean) {
     // server-side, so `name` is always populated and the raw address never ships.
     // Strip the raw included `person` (carries email) out of the spread and re-emit
     // a sanitized DTO under the unchanged wire key `participant` (API contract).
+    const kioskLabels = kiosk ? getKioskDisplayNames(activeVisits.map(v => v.person)) : null;
     const attendance = activeVisits.map(({ person, ...v }) => {
         const displayName = person.name?.trim() || person.email?.split("@")[0] || null;
 
-        if (kiosk) {
+        if (kioskLabels) {
             // Display-only projection — see the header comment. The visit row itself
             // is rebuilt field by field rather than spread, so nothing new added to
             // Visit/Program later leaks onto the kiosk by default.
@@ -162,8 +164,7 @@ async function computeFullAttendance(kiosk: boolean) {
                 arrivedAt: v.arrivedAt,
                 participant: {
                     id: person.id,
-                    name: displayName,
-                    nickname: person.nickname,
+                    name: kioskLabels.get(person.id) || null,
                     isKeyholder: person.isKeyholder,
                     // The kiosk splits the board into keyholder/volunteer/youth
                     // columns. It gets the classification, not the birth date.
@@ -192,8 +193,8 @@ async function computeFullAttendance(kiosk: boolean) {
     // Held scans: badged IN while the facility was closed, awaiting a keyholder.
     // Ordered as they occurred (the order the flush will project them). Only the
     // display name resolves out — email is read for the same fallback the roster
-    // uses and never ships. nickname rides along so the kiosk shows the name the
-    // person goes by, same as the roster (#1813). LIVE_PERSON drops tombstones.
+    // uses and never ships. The kiosk gets the same label the roster does.
+    // LIVE_PERSON drops tombstones.
     const heldEvents = await prisma.presenceEvent.findMany({
         where: { classification: PresenceClass.PARKED_CLOSED, direction: "IN", person: LIVE_PERSON },
         orderBy: { occurredAt: "asc" },
@@ -208,12 +209,16 @@ async function computeFullAttendance(kiosk: boolean) {
     for (const ev of heldEvents) {
         if (!heldByPerson.has(ev.personId)) heldByPerson.set(ev.personId, ev);
     }
-    const held = [...heldByPerson.values()].map((ev) => ({
-        id: ev.id,
-        occurredAt: ev.occurredAt,
-        name: ev.person.name?.trim() || ev.person.email?.split("@")[0] || null,
-        nickname: ev.person.nickname,
-    }));
+    const heldEventsByPerson = [...heldByPerson.values()];
+    const heldLabels = kiosk ? getKioskDisplayNames(heldEventsByPerson.map(ev => ({ ...ev.person, id: ev.personId }))) : null;
+    const held = heldEventsByPerson.map((ev) => heldLabels
+        ? { id: ev.id, occurredAt: ev.occurredAt, name: heldLabels.get(ev.personId) || null }
+        : {
+            id: ev.id,
+            occurredAt: ev.occurredAt,
+            name: ev.person.name?.trim() || ev.person.email?.split("@")[0] || null,
+            nickname: ev.person.nickname,
+        });
 
     return { attendance, held, counts, safety };
 }

@@ -25,6 +25,12 @@ export type ClaimSourceParticipant = {
     // ops-stg access gate escape hatch — a plain Person column, NOT one of the
     // PersonRole-backed flags above (sysadmin-settable only; see lib/roles.ts).
     canAccessStaging: boolean;
+    // Whether a VolunteerDesignation exists for this person's email (#1286). The
+    // catalog-viewer gate admits volunteers, but a designation is keyed by email
+    // (no Person FK), so the JWT callback resolves it and passes the result here —
+    // the session then carries the full catalog-viewer signal, matching the
+    // server gate exactly (no session-blind nav leg).
+    hasVolunteerDesignation: boolean;
 };
 
 /**
@@ -53,4 +59,7 @@ export function assignParticipantClaims(token: JWT, p: ClaimSourceParticipant): 
     token.programsLed = denied ? [] : (p.programsLed?.map((prog) => prog.id) ?? []);
     // ops-stg access gate escape hatch — forced false on DENIED, same as every role flag.
     token.canAccessStaging = denied ? false : p.canAccessStaging;
+    // Catalog-viewer volunteer leg (#1286) — cleared on DENIED like the role flags,
+    // so a locked-out account never shows the Inventory nav.
+    token.hasVolunteerDesignation = denied ? false : p.hasVolunteerDesignation;
 }
