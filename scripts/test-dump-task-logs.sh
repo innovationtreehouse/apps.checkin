@@ -106,7 +106,63 @@ out=$(DUMP_TAIL_LINES=2 "$SCRIPT" grp strm | grep -v '^(')
 [ "$(tail -1 <<<"$out")" = "ERROR: the real failure" ] || fail "tail lost the last line"
 echo "   ✓ tail keeps the end"
 
-echo "8. --pointer-only never calls aws or prints task output"
+# Serves the given messages (one per argv) as a single-page stream.
+stub_events() {
+  printf '%s\n' "$@" | jq -R . | jq -s . > "$T/events.json"
+  cat > "$T/bin/aws" <<EOF
+#!/usr/bin/env bash
+[[ " \$* " == *" --next-token "* ]] && { echo '{"events":[],"nextForwardToken":"t"}'; exit 0; }
+jq '{nextForwardToken:"t", events: map({message:.})}' "$T/events.json"
+EOF
+  chmod +x "$T/bin/aws"
+}
+
+echo "8. a multi-line Failing row drops every continuation line"
+stub_events \
+  "psql:<stdin>:40: ERROR:  new row for relation \"Person\" violates check constraint \"dob_check\"" \
+  "DETAIL:  Failing row contains (9, Carol, carol@example.com, 'note line1" \
+  "note line2 carol-secret-2" \
+  "" \
+  "   indented line3 carol-secret-3)." \
+  "ERROR: the real failure"
+out=$("$SCRIPT" grp strm)
+for leak in Carol carol line2 line3; do
+  grep -q "$leak" <<<"$out" && { echo "$out"; fail "leaked '$leak'"; }
+done
+grep -q "violates check constraint" <<<"$out" || { echo "$out"; fail "dropped the leading ERROR"; }
+grep -q "^ERROR: the real failure" <<<"$out" || { echo "$out"; fail "dropped the next ERROR"; }
+grep -q "4 line(s) redacted" <<<"$out" || { echo "$out"; fail "continuation lines not counted"; }
+echo "   ✓ continuation lines gone and counted, next ERROR kept"
+
+echo "9. a multi-line CONTEXT COPY value drops every continuation line"
+stub_events \
+  "ERROR:  value too long for type character varying(10)" \
+  "CONTEXT:  COPY \"Person\", line 3: \"10,Dave,dave@example.com,\"\"note line1" \
+  "note line2 dave-secret-2\"\"\"" \
+  "psql:<stdin>:52: ERROR: the real failure"
+out=$("$SCRIPT" grp strm)
+for leak in Dave dave line2; do
+  grep -q "$leak" <<<"$out" && { echo "$out"; fail "leaked '$leak'"; }
+done
+grep -q "value too long" <<<"$out" || { echo "$out"; fail "dropped the leading ERROR"; }
+grep -q "psql:<stdin>:52: ERROR: the real failure" <<<"$out" || { echo "$out"; fail "dropped the next ERROR"; }
+grep -q "2 line(s) redacted" <<<"$out" || { echo "$out"; fail "continuation lines not counted"; }
+echo "   ✓ continuation lines gone and counted, next ERROR kept"
+
+echo "10. an unclosed COPY block ends at the next error line"
+stub_events \
+  "COPY public.\"Person\" (id, name, email) FROM stdin;" \
+  "11	Erin	erin@example.com" \
+  "erin-without-tabs@example.com" \
+  "psql:<stdin>:61: ERROR:  extra data after last expected column" \
+  "after the error"
+out=$("$SCRIPT" grp strm)
+grep -q "erin" <<<"$out" && { echo "$out"; fail "leaked COPY data"; }
+grep -q "psql:<stdin>:61: ERROR:  extra data" <<<"$out" || { echo "$out"; fail "error swallowed by the COPY block"; }
+grep -q "after the error" <<<"$out" || { echo "$out"; fail "lines after the error swallowed"; }
+echo "   ✓ data dropped, error and later lines kept"
+
+echo "11. --pointer-only never calls aws or prints task output"
 printf '#!/usr/bin/env bash\necho CALLED >&2; exit 1\n' > "$T/bin/aws"
 out=$("$SCRIPT" --pointer-only grp strm 2>&1); rc=$?
 [ $rc -eq 0 ] || fail "exit $rc"

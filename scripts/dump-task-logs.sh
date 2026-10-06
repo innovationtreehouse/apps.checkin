@@ -40,12 +40,43 @@ fi
 
 # Drops lines that can carry row values and masks the quoted value in
 # input-syntax errors. Prints the redacted-line count to fd 3.
+#
+# awslogs makes each newline its own event, so a row value with a newline
+# continues past its DETAIL/CONTEXT line: everything after one is dropped until
+# a line starts with a known non-data prefix. A COPY block ends at `\.` or at
+# an error line (a truncated stream or a psql that died mid-copy has no `\.`).
 redact() {
     awk '
-        in_copy { if ($0 == "\\.") in_copy = 0; n++; next }
+        function body(s) {
+            sub(/^psql:[^ ]*: /, "", s)
+            sub(/^[ \t]+/, "", s)
+            return s
+        }
+        function is_error(s) {
+            s = body(s)
+            return s ~ /^(ERROR|FATAL):/ || s ~ /^psql:/
+        }
+        function is_known(s) {
+            s = body(s)
+            return is_error(s) ||
+                s ~ /^(WARNING|NOTICE|HINT|STATEMENT|LOG):/ ||
+                s ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]/ ||
+                s ~ /^Error: P[0-9][0-9][0-9][0-9]/ ||
+                s ~ /^(Prisma|Applying migration|Datasource|All migrations)/ ||
+                s ~ /^[0-9]+ migrations? found/ ||
+                s ~ /^COPY .* FROM stdin;?$/ ||
+                s ~ /^\(/
+        }
+        in_copy {
+            if ($0 == "\\.") { in_copy = 0; n++; next }
+            if (!is_error($0)) { n++; next }
+            in_copy = 0
+        }
+        /(^|[: ])(DETAIL|CONTEXT):/ { in_detail = 1; n++; next }
+        in_detail && !is_known($0) { n++; next }
+        { in_detail = 0 }
         /^COPY .* FROM stdin;?$/ { in_copy = 1; print; next }
         index($0, "\t") ||
-        /(^|[: ])(DETAIL|CONTEXT):/ ||
         /Failing row/ ||
         /Key \(/ { n++; next }
         {
