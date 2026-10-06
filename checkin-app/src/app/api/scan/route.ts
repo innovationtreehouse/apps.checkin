@@ -124,9 +124,8 @@ export const POST = withKiosk(
                 : null;
 
         // The kiosk ran the force-close warning+confirm locally while offline and
-        // has no server token to echo. Honored only on a replay (processCheckout),
-        // and only when the server independently sees a last-keyholder-with-others
-        // close — the flag bypasses the token, never the occupancy guards.
+        // has no server token to echo. Honored only on a replay, and only from a
+        // keyholder — the flag bypasses the token, never the keyholder check.
         const forceCloseConfirmed = body.forceCloseConfirmed === true;
 
         // Displayed direction (invariant 5). Absent → legacy live-state toggle.
@@ -286,10 +285,10 @@ export const POST = withKiosk(
             // the warning scan itself lands well under that age and must still
             // debounce, or the room's warning would auto-confirm with no human
             // acknowledgment at all.
+            // The token may sit on a departed visit: a close offered with a checkout.
             const isConfirm = (confirmToken !== null && (await tx.visit.count({
                 where: {
                     personId: participant.id,
-                    departedAt: null,
                     deletedAt: null,
                     forceCloseToken: confirmToken,
                 },

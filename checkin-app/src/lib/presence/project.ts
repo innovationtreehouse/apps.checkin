@@ -4,7 +4,7 @@ import type { DbClient, TxClient } from "@/lib/db-client";
 import { withFacilityLock } from "@/lib/facilityLock";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { LIVE_VISIT } from "@/lib/visit/filters";
-import { processCheckin, processCheckout } from "@/lib/scan-service";
+import { closeOnOfferConfirm, processCheckin, processCheckout } from "@/lib/scan-service";
 import {
     PresenceClass,
     appendPresenceEvent,
@@ -79,6 +79,18 @@ export async function applyPresenceIntent(
     }
 
     if (!openVisit) {
+        const closed = await closeOnOfferConfirm(
+            args.participant,
+            args.authType,
+            db,
+            args.confirmToken ?? null,
+            args.replayEventId ?? null,
+            args.forceCloseConfirmed ?? false,
+        );
+        if (closed) {
+            await classifyPresenceEvent(db, event.id, PresenceClass.PROJECTED);
+            return closed;
+        }
         await classifyPresenceEvent(db, event.id, PresenceClass.CONFLICT_OUT_NO_IN);
         return apiJson({ type: "parked", message: "Recorded for review." });
     }
