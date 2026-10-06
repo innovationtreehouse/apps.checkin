@@ -17,6 +17,7 @@ declare module "next-auth" {
       isBackgroundCheckReviewer?: boolean;
       isOperations?: boolean;
       isInventoryManager?: boolean;
+      isFinance?: boolean;
       householdId?: number | null;
       householdLead?: boolean;
       // adult / youth / unknown — the derived band only, never the date
@@ -48,6 +49,7 @@ declare module "next-auth" {
     isBackgroundCheckReviewer?: boolean;
     isOperations?: boolean;
     isInventoryManager?: boolean;
+    isFinance?: boolean;
     householdId?: number | null;
     householdLead?: boolean;
     toolStatuses?: { toolId: number; level: string }[];
@@ -72,6 +74,7 @@ declare module "next-auth/jwt" {
     isBackgroundCheckReviewer?: boolean;
     isOperations?: boolean;
     isInventoryManager?: boolean;
+    isFinance?: boolean;
     householdId?: number | null;
     householdLead?: boolean;
     // See Session.user.ageBand above — derived band, never the DOB.
