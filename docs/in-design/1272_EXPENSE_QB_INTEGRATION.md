@@ -946,7 +946,9 @@ resolution can proceed. It consumes them exactly as local-inventory does (#1287
 §8a): an **in-process handler** registered with the catalog's post-commit
 call-out (#1286 §8 X1). The handler parses each event, records it in
 `ExpenseReceivedOrgEvent` (kept as the audit record of every event received, and
-expense's own cursor), and applies it. A throw leaves the cursor behind; the
+expense's own cursor), and applies it. The record and the reaction commit in one
+expense transaction, so a reaction that throws rolls the record back too. A throw
+therefore leaves the cursor behind; the
 catch-up step in `/api/cron/reconcile-shopify` (or a retry button) replays from
 it. No poller, no timer, no boot drain. `conversion_challenge_*` events stay
 unconsumed (BYDESIGN, forward-only), same as #1287.
@@ -1151,7 +1153,10 @@ and bulk donation, and driven **from our side**:
 **The write itself — one closed, create-only writer.** `@inventory/quickbooks` is
 read-only today. QB-2 adds exactly one write entry point, `create(entity, fields)`,
 whose `entity` is a closed enum: `Purchase`, `Bill`, `Deposit`, `Vendor`. Nothing
-else is exported that can write.
+else is exported that can write. The writer, **including `Deposit`**, is owned by
+the QuickBooks ladder (L4) in `packages/quickbooks`, not by expense: expense uses
+`Purchase`, `Bill` and `Vendor`, and the designs for #1885 and #1886 use
+`Deposit` and cite this writer rather than adding their own.
 
 - **Create only.** No update, delete, void or sparse-update path exists.
 - **Field allowlists per entity.** Only listed fields reach the request body;

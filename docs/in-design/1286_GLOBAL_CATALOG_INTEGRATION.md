@@ -730,7 +730,9 @@ Local inventory (#1287 §8a), expense (#1272 §8d) and workflow-mapping (#1289
 - **Each consumer keeps its own cursor in its own database.** The catalog never
   records who consumed what, because tracking its consumers would couple it to
   them. A consumer parses each event with `orgEventPayloadSchema`, applies it,
-  and advances its cursor; a throw leaves the cursor behind the failed event.
+  and advances its cursor **in the same transaction as the reaction**, so the
+  cursor never moves past an event whose reaction did not commit; a throw leaves
+  the cursor behind the failed event.
 - **Replay reads from the cursor.** The catalog exposes a read of one org's
   events in id order after a given id. The catch-up step in
   `/api/cron/reconcile-shopify`, or a retry button, has each consumer read from

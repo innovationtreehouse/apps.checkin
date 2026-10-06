@@ -574,6 +574,11 @@ handler through that port. For each event the handler:
    the resolved real item's factor (surface 3, the exception screen — see
    `mergeOrgItems`).
 
+Steps 2 and 3 commit in **one local-inventory transaction**. The event record,
+which is also the cursor, never exists without its reaction: if the reaction
+throws, the record rolls back with it, so the cursor stays behind the event and
+replay re-applies it.
+
 **Failure and replay.** The catalog's commit stands whether or not the handler
 succeeds. A handler that throws leaves the cursor behind the failed event, and
 the next replay re-applies from there: the catch-up step in
