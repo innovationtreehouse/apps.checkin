@@ -1,0 +1,6 @@
+{
+  "eventType": "provisional_rejected",
+  "version": 1,
+  "provisionalGtin13": "0009999900015",
+  "rejectionReason": "duplicate of existing reference"
+}

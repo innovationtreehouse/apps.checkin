@@ -1,0 +1,21 @@
+{
+  "receiptId": "R-2002",
+  "orgId": "org-1",
+  "retailer": "Home Depot",
+  "lineItems": [
+    {
+      "lineItemId": 1,
+      "gtin13": "0001234500017",
+      "quantityDelta": 1,
+      "isDelayed": false
+    },
+    {
+      "lineItemId": 2,
+      "gtin13": "0009999900015",
+      "quantityDelta": 1,
+      "isDelayed": false,
+      "isProvisional": true,
+      "provisionalName": "New SKU pending catalog"
+    }
+  ]
+}

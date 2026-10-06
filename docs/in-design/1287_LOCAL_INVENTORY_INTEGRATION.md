@@ -151,8 +151,8 @@ The domain layer is framework-light and ports almost verbatim. The friction is
 The source depends on `@inventory/{auth, web-auth, gtin, workflows, receipt-types,
 receipt-contract-fixtures, org-events-poller, utils, pg-test-harness}`.
 Disposition — **the catalog port (#1286) already vendors `gtin`, `workflows`,
-`receipt-types`, `receipt-contract-fixtures`; local-inventory REUSES those, does
-not re-vendor.** New to local-inventory: `org-events-poller` (the consumer side —
+`receipt-types`, and the H3 shared-packages port vendors `receipt-contract-fixtures`;
+local-inventory REUSES those, does not re-vendor.** New to local-inventory: `org-events-poller` (the consumer side —
 catalog is a *producer* and never needed it) and `utils`.
 
 | Source package | Ported? | Action |
@@ -160,7 +160,7 @@ catalog is a *producer* and never needed it) and `utils`.
 | `@inventory/auth`, `@inventory/web-auth` | **No — dropped** | The source's auth system, retired for checkin next-auth (§6). |
 | `@inventory/gtin` | Reuse | Already `packages/gtin` (vendored by #1286). No second copy. |
 | `@inventory/workflows` | Reuse | Already `packages/workflows` (vendored by #1286). Shared xstate helpers. |
-| `@inventory/receipt-types`, `receipt-contract-fixtures` | Reuse (temporary) | Already vendored by #1286 as temporary copies — local-inventory imports the same copy. Endgame: the permanent shared contract when receipt-app lands. |
+| `@inventory/receipt-types`, `receipt-contract-fixtures` | Reuse (temporary) | Temporary copies: `receipt-types` vendored by #1286, `receipt-contract-fixtures` by the H3 shared-packages port — local-inventory imports the same copy. Endgame: the permanent shared contract when receipt-app lands. |
 | `@inventory/org-events-poller` | **Yes — new `packages/org-events-poller`, deferred to track 6** | Shared S5 outbox-consumer machinery (cursor, ledger write, `assertTransition`, `onEvent` dispatch). Consumed by local-inventory/expense/workflow-mapping — a cross-app utility, **standalone package**, not folded into `local-inventory`. **Drive its drain from the in-process signal + boot, not its `setInterval`** (§8a) — expose/extract a one-shot `drainOnce` if the package only ships the timer-start today; the wall-clock loop is not used in checkin. **Confirmed in build: no Track-1 domain/unit file imports it**, so it lands with the S5 consumer (track 6), not the library skeleton. |
 | `@inventory/utils` | **Yes — new `packages/utils`, only if/when imported** | Generic helpers. Standalone shared package. **Confirmed in build: no Track-1 domain/unit file imports it** — vendor it in the track that first needs it (reuse #1286's copy if it vendored one by then), not in track 1. |
 | `@inventory/pg-test-harness` | n/a | Already present in checkin. Reuse. |
