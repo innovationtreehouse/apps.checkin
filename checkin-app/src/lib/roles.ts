@@ -1,7 +1,7 @@
 import type { PersonRoleKind } from "@/generated/prisma/client";
 import { type DbClient, withTx } from "@/lib/db-client";
 import { personActor, systemActor, type SystemActorName } from "@/lib/auditActor";
-import { sharesHousehold } from "@/lib/conflictOfInterest";
+import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 
 /**
  * The ONE hand-written map: session/JWT authority flag -> PersonRole table kind.
@@ -97,12 +97,11 @@ export class OwnHouseholdRoleError extends Error {}
  * the actor id is not a positive integer or does not resolve to a person.
  */
 export async function assertNotOwnHousehold(db: DbClient, actorId: number, targetId: number): Promise<void> {
-    if (!Number.isInteger(actorId) || actorId <= 0) throw new RoleMatrixError("Forbidden");
+    const actorHouseholdId = await resolveActorHouseholdId(db, actorId);
+    if (actorHouseholdId === null) throw new RoleMatrixError("Forbidden");
     if (actorId === targetId) throw new OwnHouseholdRoleError();
-    const actor = await db.person.findUnique({ where: { id: actorId }, select: { householdId: true } });
-    if (!actor) throw new RoleMatrixError("Forbidden");
     const target = await db.person.findUnique({ where: { id: targetId }, select: { householdId: true } });
-    if (sharesHousehold(actor.householdId, target?.householdId)) throw new OwnHouseholdRoleError();
+    if (sharesHousehold(actorHouseholdId, target?.householdId)) throw new OwnHouseholdRoleError();
 }
 
 /**
@@ -128,7 +127,8 @@ export type RoleActor =
  *    including adding board, but may never remove board membership.
  *    A system actor skips this check entirely.
  *  - the own-household rule (`assertNotOwnHousehold`): no person actor changes
- *    a role on themself or anyone in their household.
+ *    a role on themself or anyone in their household. A no-op writes nothing,
+ *    so it returns before this check.
  *  - the last-board-member guard: board membership can never be revoked down
  *    to zero, regardless of actor (including a system actor — this protects data
  *    integrity, not authority, so the bypass above does not extend to it).
@@ -161,8 +161,6 @@ export async function setRoleFlag(
     actor: RoleActor,
 ): Promise<{ changed: boolean; before: boolean; after: boolean }> {
     return withTx(db, async (tx) => {
-        if (!("system" in actor)) await assertNotOwnHousehold(tx, actor.id, personId);
-
         // Lock the BOARD row set FIRST, then read THIS person's roles under the lock,
         // so the no-op short-circuit and the returned before/after are consistent with
         // the write (thpr C: no pre-lock snapshot). ponytail: a no-op now takes the lock
@@ -172,6 +170,8 @@ export async function setRoleFlag(
         const rows = await tx.personRole.findMany({ where: { personId }, select: { role: true } });
         const before = rolesToFlags(rows)[flag];
         if (before === on) return { changed: false, before, after: before };
+
+        if (!("system" in actor)) await assertNotOwnHousehold(tx, actor.id, personId);
 
         if (!("system" in actor)) {
             if (!actor.isBoardMember) {

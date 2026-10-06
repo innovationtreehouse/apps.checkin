@@ -179,7 +179,8 @@ Things the app takes as true because they are handled outside it.
 - Nobody grants or removes a role or flag — board, keyholder, staging access, a
   program's treasurer, or any other — for themself or for anyone in their own
   household. A sysadmin may grant roles in general; this binds them like anyone
-  else.  [Decision — *Principle: self-scope and repair*]
+  else. The board and sysadmin household-move paths refuse to move anyone out of
+  or into the actor's own household, which would get around it.  [Decision — *Principle: self-scope and repair*]
 
 - A program's treasurer is set by the board alone.  [Decision]
 

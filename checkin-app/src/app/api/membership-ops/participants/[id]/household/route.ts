@@ -4,6 +4,7 @@ import { withAuth } from "@/lib/auth";
 import { logBackendError, logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadYouthError } from "@/lib/household/leads";
+import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 
 export const POST = withAuth<{ params: Promise<{ id: string }> }>(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -42,6 +43,14 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
             if (!household) {
                 return apiError("Household not found", 404);
             }
+        }
+
+        // Moving someone out of or into the actor's own household would let a role be
+        // granted around the own-household rule in lib/roles.ts, so neither end may be it.
+        const actorHouseholdId = await resolveActorHouseholdId(prisma, auth.user.id);
+        if (actorHouseholdId === null) return apiError("Forbidden", 403);
+        if (sharesHousehold(actorHouseholdId, participant.householdId) || sharesHousehold(actorHouseholdId, requestedHouseholdId)) {
+            return apiError("You cannot move someone out of or into your own household — someone outside your household must.", 403);
         }
 
         // A person leads their OWN household, so a change of household

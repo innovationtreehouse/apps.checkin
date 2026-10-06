@@ -71,6 +71,9 @@ export const PATCH = withAuth(
                 return apiError("Forbidden", 403);
             }
             const actor = auth.user;
+            if (!Number.isInteger(actor.id) || actor.id <= 0) {
+                return apiError("Forbidden", 403);
+            }
 
             const body = await req.json();
             // canAccessStaging is pulled out separately: it is NOT one of the five
@@ -113,8 +116,6 @@ export const PATCH = withAuth(
                     select: PERSON_SELECT,
                 });
                 if (!target) throw new TargetNotFoundError();
-                // Covers canAccessStaging too, which does not go through setRoleFlag.
-                await assertNotOwnHousehold(tx, actor.id, targetUserId);
 
                 // setRoleFlag writes one PersonRole audit row per changed flag.
                 for (const field of Object.keys(requested) as RoleFlag[]) {
@@ -131,6 +132,8 @@ export const PATCH = withAuth(
                 if (settingStaging) {
                     const after = Boolean(canAccessStaging);
                     if (after !== target.canAccessStaging) {
+                        // setRoleFlag runs this for role flags; staging is a plain column.
+                        await assertNotOwnHousehold(tx, actor.id, targetUserId);
                         await tx.person.update({ where: { id: targetUserId }, data: { canAccessStaging: after } });
                         stagingOld.canAccessStaging = target.canAccessStaging;
                         stagingNew.canAccessStaging = after;

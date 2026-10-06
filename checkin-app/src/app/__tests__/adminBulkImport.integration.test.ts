@@ -206,6 +206,32 @@ describe('Admin Bulk Import API Integration Tests', () => {
             expect(audit?.newData).toMatchObject({ mergedIntoHouseholdId: alice!.householdId, movedByImportOfPersonId: charlie!.id });
         });
 
+        it("refuses a Same Household As merge into the actor's own household, leaving the row's household as it was", async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+            const admin = await prisma.person.findUniqueOrThrow({ where: { id: testAdminId }, select: { householdId: true } });
+
+            const formData = createMockCsvFormData([
+                ['First Name', 'Last Name', 'Email', 'Parent Email', 'Same Household As'],
+                ['Dana', 'Batch Import Test', 'dana-batch-import-test@example.com', '', 'admin-import-test@example.com'],
+            ]);
+            const req = new Request('http://localhost:4000/api/membership-ops/participants/import', {
+                method: 'POST',
+                body: formData
+            }) as unknown as Parameters<typeof POST>[0];
+            (req as unknown as { formData: () => Promise<FormData> }).formData = jest.fn().mockResolvedValue(formData);
+
+            const res = await POST(req);
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.errors).toEqual([expect.stringContaining('your own household')]);
+
+            const dana = await prisma.person.findUnique({ where: { email: 'dana-batch-import-test@example.com' } });
+            expect(dana).not.toBeNull();
+            expect(dana!.householdId).not.toBe(admin.householdId);
+        });
+
         it('should automatically create households for participants with no household links, and correctly assign lead status based on age', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
                 user: { id: testAdminId, isSysadmin: true, isBoardMember: false }

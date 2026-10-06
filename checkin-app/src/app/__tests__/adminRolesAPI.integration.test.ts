@@ -186,6 +186,14 @@ describe('Admin Roles API Integration Tests', () => {
             expect(await hasOperationsRow(testSysAdminId)).toBe(false);
         });
 
+        it('self-save with no change is a no-op -> 200, no audit row', async () => {
+            asSession({ id: testSysAdminId, isSysadmin: true });
+            const audits = await prisma.auditLog.count({ where: { affectedEntityId: testSysAdminId } });
+            const res = await PATCH(patchReq({ targetUserId: testSysAdminId, isOperations: false, isKeyholder: false, canAccessStaging: false }));
+            expect(res.status).toBe(200);
+            expect(await prisma.auditLog.count({ where: { affectedEntityId: testSysAdminId } })).toBe(audits);
+        });
+
         it('a session with no integer actor id is refused (fail closed) -> 403, no write', async () => {
             asSession({ isSysadmin: true, isBoardMember: true });
             const res = await PATCH(patchReq({ targetUserId: testTargetUserId, isOperations: true }));
