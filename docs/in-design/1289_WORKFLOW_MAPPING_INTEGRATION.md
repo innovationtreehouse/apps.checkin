@@ -194,6 +194,16 @@ exactly the union above (`anyRole` has no admin auto-admit); existing `anyRole`
 routes are unaffected because `BusinessRole` stays a subset. The read view (`orderedView`) grants the
 same `public` + `internal` tiers to all three roles.
 
+**Actor ids come only from the principal (plan rule 6).** The checkin-side
+adapter's `getPrincipal()` returns `null` unless `typeof user.id === "number"`,
+so an id-less session is unauthenticated. Every acting id (the manager on
+proceed, apply, associate, propose, non-inventory; the actor on audit rows; the
+`Person.id` the S4 adapter stamps, §8d) is read through `callerId(auth): number`,
+which throws on anything but an integer. Any per-caller filter whose derived set
+is empty returns an empty result, never "skip the filter". A caller-asserted id
+in a payload (`CompletedReceipt.submitterId`, `receipt-types` `localUserId`) is
+stored as data and never used for authorization or actor attribution.
+
 ## 7. Surfaces
 
 All registered in B up front (10 routes), under `/api/workflow-mapping/`:
@@ -210,6 +220,13 @@ The base rule holds for every crossing: keep the zod contract, change only the
 transport, put the call behind a port in `contract.ts`, bind it once in
 `configureWorkflowMapping()`, and flip a crossing by swapping that one binding.
 No crossing is HTTP in checkin; the `http` adapters are not ported.
+
+**Every callee's zod parse asserts `orgId`.** Inventory's own auth scoped each
+call to the bearer's org; in-process there is no bearer, so the callee's input
+schema checks that the payload's `orgId` is the injected org and rejects any
+other. Here that is `ingestReceipt` (S1, §8a) and the S5 handler (§8e); expense
+(S2), donations (X9), local-inventory (S3) and catalog (S4) assert the same in
+their own parses.
 
 **Inert means "queue, never pretend".** An inert S2/S3 adapter throws
 `not wired`, so a pushed receipt waits in `apply_failed` for the flip. A no-op
@@ -251,8 +268,9 @@ enforces the dedupe:
   §4 fix; today the loser gets a 500.
 
 **Org.** The source took the org from the bearer token and ignored
-`receipt.orgId`. In-process there is no token: `ingestReceipt` rejects
-`receipt.orgId !== org().id` and takes `orgName` from the injected accessor.
+`receipt.orgId`. In-process there is no token: `ingestReceipt`'s zod parse
+rejects `receipt.orgId !== org().id`, and it takes `orgName` from the injected
+accessor.
 
 **What ingest does, synchronously, inside the caller's call:** validate, dedupe,
 run S4 recognition (a failed lookup is non-fatal: every line stays
@@ -363,7 +381,8 @@ from catalog's post-commit hook, inside the user request that committed the
 event, with bounded per-row retry. **No DB access at app boot and no new
 schedule** (plan rule 5): the catch-up sweep (cursor replay after a crash or a
 failed drain) is a try/catch step inside the existing prod
-`/api/cron/reconcile-shopify`, next to the other libraries' sweeps. No
+`/api/cron/reconcile-shopify`, next to the other libraries' sweeps. The step
+is capped per run and returns counts only (events applied, failed). No
 `setInterval`. No local event ledger: every action below is a set-to-value
 update, so replaying from the cursor (`WorkflowSystemData.orgEventCursor`) is
 safe.
@@ -408,7 +427,10 @@ its failing-first test.
 The source's 22 Vitest files port onto `@inventory/pg-test-harness`; the S1 and
 S2/S3 contract tests become port-level (fixtures into `ingestReceipt`; a
 recording sink asserts the payload). New: S1 org rejection and replay, both
-concurrency fixes, the line-edit 409, the S5 remap, inert adapters → `apply_failed`.
+concurrency fixes, the line-edit 409, the S5 remap, inert adapters → `apply_failed`,
+an id-less session → 401 on every route, a payload `submitterId` / `localUserId`
+never becoming the actor, an S5 event for another org rejected, and the cron
+step returning counts only.
 
 Flow tests are HTTP-only and S1 has no route, so W adds a **dev-only seed
 macro** (absent when `CHECKIN_ENV=prod`, per `docs/ops/dev-instance.md`) that
