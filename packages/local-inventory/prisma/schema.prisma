@@ -258,10 +258,15 @@ model ReceivedInventoryDelta {
   id            Int      @id @default(autoincrement())
   /// @sensitivity:internal
   orgId         String   @map("org_id")
+  /// Apply idempotency key: `receipt:<id>` or `donation:<id>`.
   /// @sensitivity:internal
-  receiptId     String   @unique @map("receipt_id")
+  sourceKey     String   @map("source_key")
+  /// @sensitivity:internal
+  receiptId     String?  @map("receipt_id")
   /// @sensitivity:internal
   deltaJson     String   @map("delta_json")
+  /// @sensitivity:internal
+  resultJson    String?  @map("result_json")
   /// @sensitivity:public
   status        String
   /// @sensitivity:internal
@@ -269,6 +274,7 @@ model ReceivedInventoryDelta {
   /// @sensitivity:public
   receivedAt    DateTime @default(now()) @map("received_at")
 
+  @@unique([orgId, sourceKey])
   @@map("received_inventory_deltas")
 }
 

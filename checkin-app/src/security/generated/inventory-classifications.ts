@@ -108,8 +108,10 @@ export const classifications = {
     ReceivedInventoryDelta: {
         id: 'public',
         orgId: 'internal',
+        sourceKey: 'internal',
         receiptId: 'internal',
         deltaJson: 'internal',
+        resultJson: 'internal',
         status: 'public',
         failureReason: 'internal',
         receivedAt: 'public',
