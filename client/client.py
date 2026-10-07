@@ -33,6 +33,19 @@ from health import health_monitor
 KIOSK_KEEPALIVE_PATHS = ("/api/attendance", "/api/kioskdisplay/certifications")
 
 
+CLOCK_INTERVAL_S = 30
+
+
+def local_clock_label(now=None):
+    """The Pi's local time and zone as this process sees them, flagged when
+    in_closed_window considers it overnight."""
+    now = now or datetime.now().astimezone()
+    label = now.strftime("%H:%M %Z (UTC%z)")
+    if in_closed_window(now):
+        label += " · overnight"
+    return label
+
+
 def is_kiosk_keepalive_path(path):
     return any(
         path == p or path.startswith(p + "?") or path.startswith(p + "/")
@@ -579,6 +592,18 @@ class KioskHandler(BaseHTTPRequestHandler):
     font-weight: bold;
     display: none;
   }}
+  #local-clock {{
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    z-index: 9998;
+    color: rgba(255,255,255,0.6);
+    background: rgba(0,0,0,0.5);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    pointer-events: none;
+  }}
   #fc-countdown {{ font-size: 2.5rem; }}
   @keyframes fadeout {{
     0% {{ opacity: 1; }}
@@ -663,6 +688,11 @@ class KioskHandler(BaseHTTPRequestHandler):
       handleData(data, true);
     }});
 
+    // The Pi's local time as Python sees it: the clock in_closed_window uses.
+    source.addEventListener("clock", function(e) {{
+      document.getElementById("local-clock").textContent = JSON.parse(e.data).label;
+    }});
+
     source.addEventListener("scan", function(e) {{
       const data = JSON.parse(e.data);
       if (data.reload) {{
@@ -714,6 +744,7 @@ class KioskHandler(BaseHTTPRequestHandler):
   <div id="blackout"></div>
   <div id="flash-container"></div>
   <div id="queue-badge"></div>
+  <div id="local-clock"></div>
   <iframe src="{self.kiosk_path}"></iframe>
 </body>
 </html>"""
@@ -741,20 +772,21 @@ class KioskHandler(BaseHTTPRequestHandler):
             self.wfile.write(f"event: status\ndata: {initial_status}\n\n".encode())
             self.wfile.flush()
 
+            last_clock = 0.0
             while True:
+                # The clock event doubles as the keepalive that detects dead connections.
+                if time.monotonic() - last_clock >= CLOCK_INTERVAL_S:
+                    clock = json.dumps({"label": local_clock_label()})
+                    self.wfile.write(f"event: clock\ndata: {clock}\n\n".encode())
+                    self.wfile.flush()
+                    last_clock = time.monotonic()
                 try:
-                    # Wait up to 30s for an event, then send a keepalive comment
-                    event_data = q.get(timeout=30)
+                    event_data = q.get(timeout=CLOCK_INTERVAL_S)
                     payload = json.dumps(event_data)
                     self.wfile.write(f"event: scan\ndata: {payload}\n\n".encode())
                     self.wfile.flush()
                 except queue_mod.Empty:
-                    # Timeout — send keepalive to detect dead connections
-                    try:
-                        self.wfile.write(b": keepalive\n\n")
-                        self.wfile.flush()
-                    except (BrokenPipeError, ConnectionResetError):
-                        break
+                    pass
         except (BrokenPipeError, ConnectionResetError):
             pass
         finally:

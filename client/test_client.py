@@ -3,7 +3,7 @@ import json
 import os
 import subprocess
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, Mock, patch
 
 from nacl.signing import SigningKey
@@ -22,6 +22,8 @@ from client import (
     _scan_result_banner_html,
     attendance_poller,
     handle_scan,
+    KioskHandler,
+    local_clock_label,
     latest_release_tag,
     main,
     resolve_update_target,
@@ -39,6 +41,27 @@ def scan_banner(body, status=200):
     # handle_scan now takes an outbox and delegates the markup to this helper;
     # calling it directly tests the same banner without faking a backend.
     return _scan_result_banner_html(body, status)[0]
+
+
+class TestLocalClockReadout(unittest.TestCase):
+    """The door screen shows the Pi's clock as Python sees it, so a Pi on the
+    wrong timezone (which shifts in_closed_window) is visible at a glance."""
+
+    CDT = timezone(timedelta(hours=-5), "CDT")
+
+    def test_label_carries_time_zone_name_and_offset(self):
+        self.assertEqual(local_clock_label(datetime(2026, 10, 7, 14, 5, tzinfo=self.CDT)),
+                         "14:05 CDT (UTC-0500)")
+
+    def test_label_flags_the_closed_window(self):
+        self.assertTrue(local_clock_label(datetime(2026, 10, 7, 23, 30, tzinfo=self.CDT))
+                        .endswith("overnight"))
+
+    def test_wrapper_renders_the_clock_fed_by_the_sse_stream(self):
+        wrapper = inspect.getsource(KioskHandler._serve_wrapper)
+        self.assertIn('id="local-clock"', wrapper)
+        self.assertIn('addEventListener("clock"', wrapper)
+        self.assertIn("event: clock", inspect.getsource(KioskHandler._serve_sse))
 
 
 class TestScanBannerName(unittest.TestCase):
