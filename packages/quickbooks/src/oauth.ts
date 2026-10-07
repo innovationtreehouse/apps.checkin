@@ -1,4 +1,3 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import type { QboTokens } from "./types";
 
 const AUTH_HOST = "https://appcenter.intuit.com/connect/oauth2";
@@ -68,15 +67,4 @@ export async function refreshTokens(cfg: OauthConfig, tokens: QboTokens): Promis
 // Refresh 60s before the access token actually expires.
 export function isExpired(tokens: QboTokens, now: number = Date.now()): boolean {
   return now >= tokens.obtainedAt + (tokens.expiresIn - 60) * 1000;
-}
-
-const TOKEN_FILE = process.env.QBO_TOKEN_FILE ?? new URL("../.qbo-tokens.json", import.meta.url).pathname;
-
-export function saveTokens(tokens: QboTokens): void {
-  writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 2), { mode: 0o600 });
-}
-
-export function loadTokens(): QboTokens | null {
-  if (!existsSync(TOKEN_FILE)) return null;
-  return JSON.parse(readFileSync(TOKEN_FILE, "utf-8")) as QboTokens;
 }

@@ -1,10 +1,25 @@
 # @inventory/quickbooks
 
-Read-only QuickBooks Online client. Used now to pull historical Purchases/Bills as
-**ground truth** for the receipt-OCR bake-off and the vendor-alias bootstrap loop.
-Later grows the write path for the `qb_pending` state-machine terminus.
-
+Read-only QuickBooks Online client (QB-0 of `docs/in-design/1272_EXPENSE_QB_INTEGRATION.md` §9).
 No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, refresh).
+
+## Public API
+
+- `AccessTokenSource { current(): Promise<string> }` — the only way the client gets a token.
+  The app injects a read-only source (Secrets Manager, built in checkin-app); the client
+  never refreshes or saves tokens. An expired token is an error for the caller to retry.
+- `new QuickBooksClient(source, { env, realmId })` — `env` is `sandbox` | `production`.
+  The production realm is refused unless `CHECKIN_ENV=prod` (unset fails closed).
+  `qboRealmFromEnv()` reads `QBO_ENVIRONMENT` + `QBO_REALM_ID` under the same guard.
+- Windowed readers, `from`/`to` inclusive `YYYY-MM-DD`, at most `MAX_WINDOW_DAYS` (93) wide:
+  `purchasesBetween`, `billsBetween`, `billPaymentsBetween`, `depositsBetween`.
+  There is no since-a-date reader.
+- Name lookups for bootstrap UIs: `accountNamed` / `classNamed` (by `FullyQualifiedName`,
+  e.g. `Parent:Child`), `vendorNamed` (by `DisplayName`). Mappings store the QuickBooks Id, never a name.
+- `qboString` / `qboDate` — the only way a value enters a query: escaped / validated literals.
+- Local dev and operator CLI only: `envAccessTokenSource()` (`QBO_ACCESS_TOKEN`),
+  `fileAccessTokenSource(path)` (refreshes and re-saves the consent token file),
+  `saveTokens` / `loadTokens` / `tokenFileFromEnv()` (`QBO_TOKEN_FILE`, required).
 
 ## One-time setup (you do this — OAuth consent can't be automated)
 
@@ -17,10 +32,11 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
    export QBO_CLIENT_ID=...
    export QBO_CLIENT_SECRET=...
    export QBO_ENVIRONMENT=sandbox        # switch to "production" later
+   export QBO_TOKEN_FILE=/absolute/path/to/packages/quickbooks/.qbo-tokens.json   # gitignored
    # QBO_REDIRECT_URI defaults to http://localhost:8087/callback
    ```
 
-5. Run consent — opens a URL, you sign in and authorize; tokens land in `.qbo-tokens.json` (gitignored):
+5. Run consent — opens a URL, you sign in and authorize; tokens land in `$QBO_TOKEN_FILE`:
 
    ```bash
    npm run consent -w @inventory/quickbooks
@@ -29,9 +45,10 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
 ## Pull ground truth
 
 ```bash
-npm run pull -w @inventory/quickbooks -- 2024-01-01
+npm run pull -w @inventory/quickbooks -- 2024-01-01 2024-12-31
 ```
 
+Reads in 93-day chunks. Against the production company it also needs `CHECKIN_ENV=prod`.
 Writes `.ground-truth.json` (normalized `GroundTruthRecord[]`) and prints a shape report:
 row count, distinct vendors, and how many totals collide — the real collision count for the
 amount-anchored vendor join.
@@ -39,6 +56,7 @@ amount-anchored vendor join.
 ## Notes
 
 - `realmId` (company id) is captured automatically from the consent redirect.
-- Refresh tokens **rotate** on every refresh; the client re-saves them, so don't hand-edit the token file.
-- Access token lives ~1h and auto-refreshes; refresh token ~100 days.
+- Refresh tokens **rotate** on every refresh; the file source re-saves them, so don't hand-edit the token file.
+- Access token lives ~1h; refresh token ~100 days.
 - Going to production: switch `QBO_ENVIRONMENT=production`, re-run consent against the real company.
+  The client also needs `CHECKIN_ENV=prod` to reach the production realm.
