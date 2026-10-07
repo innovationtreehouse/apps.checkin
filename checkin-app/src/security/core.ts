@@ -379,7 +379,7 @@ function authorizeNeeds(authorize: Authorize): Partial<CtxNeeds> {
     }
 }
 
-export function deriveCtxNeeds(spec: RouteSpec): CtxNeeds {
+export function deriveCtxNeeds(spec: Pick<RouteSpec, 'authorize' | 'orderedView'>): CtxNeeds {
     const needs: CtxNeeds = {
         programs: false,
         programHouseholds: false,
@@ -405,32 +405,99 @@ export interface RegisteredRoute extends RouteSpec {
     readonly ctxNeeds: CtxNeeds;
 }
 
+/**
+ * Content types a file route may serve — the owner-approved delivery allowlist.
+ * Each type's response headers are fixed by fileHandler (./fileHandler.ts), not
+ * chosen by the route.
+ */
+export const FILE_CONTENT_TYPES = [
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'application/pdf',
+    'text/plain',
+] as const;
+export type FileContentType = (typeof FILE_CONTENT_TYPES)[number];
+
+/**
+ * A file route (plan rule 7: files are not JSON). Serves the bytes of exactly
+ * one classified field, `file`, to a caller who passes `authorize` and whose
+ * view (first matching `orderedView` role) covers that field on the row. A
+ * field a file route serves is file-only: the JSON stripper never emits it.
+ * Always GET; never `public` or `kiosk` — a file goes only to an identified
+ * person.
+ */
+export interface FileRouteSpec {
+    endpoint: string;
+    authorize: Exclude<Authorize, 'public' | 'kiosk'>;
+    orderedView: readonly OrderedViewEntry[];
+    file: { model: Models; field: string };
+}
+
+export interface RegisteredFileRoute extends FileRouteSpec {
+    readonly ctxNeeds: CtxNeeds;
+}
+
 const _routes = new Map<string, RegisteredRoute>();
+const _fileRoutes = new Map<string, RegisteredFileRoute>();
+const _fileOnlyFields = new Set<string>();
 const _outbounds = new Map<string, OutboundSpec>();
 
-export function defineRoute(spec: RouteSpec): RouteSpec {
-    if (_routes.has(spec.endpoint)) {
-        throw new Error(`Duplicate route registration: ${spec.endpoint}`);
+function assertValidRegistration(endpoint: string, orderedView: readonly OrderedViewEntry[]): void {
+    if (_routes.has(endpoint) || _fileRoutes.has(endpoint)) {
+        throw new Error(`Duplicate route registration: ${endpoint}`);
     }
     const seenRoles = new Set<string>();
-    for (const [role, tokens] of spec.orderedView) {
+    for (const [role, tokens] of orderedView) {
         if (!VALID_ROLES.has(role)) {
-            throw new Error(`Route ${spec.endpoint}: unknown role '${role}'`);
+            throw new Error(`Route ${endpoint}: unknown role '${role}'`);
         }
         if (seenRoles.has(role)) {
-            throw new Error(`Route ${spec.endpoint}: duplicate role '${role}' in orderedView`);
+            throw new Error(`Route ${endpoint}: duplicate role '${role}' in orderedView`);
         }
         seenRoles.add(role);
         for (const tok of tokens) {
             if (parseToken(tok) === null) {
-                throw new Error(`Route ${spec.endpoint}: invalid token '${tok}'`);
+                throw new Error(`Route ${endpoint}: invalid token '${tok}'`);
             }
         }
     }
+}
+
+export function defineRoute(spec: RouteSpec): RouteSpec {
+    assertValidRegistration(spec.endpoint, spec.orderedView);
     // Derived AFTER validation (deriveCtxNeeds assumes tokens parse). The spread
     // order means an (illegally) author-supplied ctxNeeds is overwritten.
     _routes.set(spec.endpoint, { ...spec, ctxNeeds: deriveCtxNeeds(spec) });
     return spec;
+}
+
+export function defineFileRoute(spec: FileRouteSpec): FileRouteSpec {
+    const { endpoint, authorize, file } = spec;
+    if (!endpoint.startsWith('GET ')) {
+        throw new Error(`File route ${endpoint}: must be a GET endpoint`);
+    }
+    if (authorize === ('public' as Authorize) || authorize === ('kiosk' as Authorize)) {
+        throw new Error(`File route ${endpoint}: authorize '${authorize}' is not allowed`);
+    }
+    assertValidRegistration(endpoint, spec.orderedView);
+    const tiers = classifications[file.model] as Record<string, Tier> | undefined;
+    const tier = tiers?.[file.field];
+    if (tier === undefined) {
+        throw new Error(`File route ${endpoint}: unknown field ${file.model}.${file.field}`);
+    }
+    if (tier === 'secret') {
+        throw new Error(`File route ${endpoint}: ${file.model}.${file.field} is secret and never leaves`);
+    }
+    _fileRoutes.set(endpoint, { ...spec, ctxNeeds: deriveCtxNeeds(spec) });
+    _fileOnlyFields.add(`${file.model}.${file.field}`);
+    return spec;
+}
+
+/** True iff a registered file route serves this field — the stripper drops it. */
+export function isFileOnlyField(model: string, field: string): boolean {
+    return _fileOnlyFields.has(`${model}.${field}`);
 }
 
 export function defineOutbound(spec: OutboundSpec): OutboundSpec {
@@ -448,6 +515,14 @@ export function defineOutbound(spec: OutboundSpec): OutboundSpec {
 
 export function getRoute(endpoint: string): RegisteredRoute | undefined {
     return _routes.get(endpoint);
+}
+
+export function getFileRoute(endpoint: string): RegisteredFileRoute | undefined {
+    return _fileRoutes.get(endpoint);
+}
+
+export function allFileRoutes(): IterableIterator<[string, RegisteredFileRoute]> {
+    return _fileRoutes.entries();
 }
 
 export function getOutbound(surface: string): OutboundSpec | undefined {
