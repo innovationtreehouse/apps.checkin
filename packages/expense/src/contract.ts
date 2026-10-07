@@ -53,8 +53,8 @@ export interface SignoffDirectory {
   bucketApprovers(bucketId: number): Promise<BucketApprovers>;
   financeHolders(): Promise<number[]>;
   boardMembers(): Promise<number[]>;
-  /** The submitter, the reimbursee, and everyone in either one's household. */
-  conflictedFor(expense: { submitterId: number; reimbursementFor: string | null }): Promise<number[]>;
+  /** Everyone in the given people's households. */
+  householdOf(personIds: number[]): Promise<number[]>;
   /** Whether the purchaser holds an org membership (a non-member's line takes a Board approver). */
   isOrgMember(personId: number): Promise<boolean>;
 }
@@ -64,7 +64,7 @@ export const inertSignoffDirectory: SignoffDirectory = {
   bucketApprovers: async () => ({ orgLevel: false, approvers: [] }),
   financeHolders: async () => [],
   boardMembers: async () => [],
-  conflictedFor: async () => [],
+  householdOf: async () => [],
   isOrgMember: async () => false,
 };
 

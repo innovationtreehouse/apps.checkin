@@ -2,7 +2,7 @@
  * Sign-off hold, capital register, flags and QuickBooks match inputs against the real
  * database.
  */
-import { it, expect } from "vitest";
+import { describe, it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
@@ -19,7 +19,7 @@ describeDb("sign-off seats", () => {
   async function heldLine(opts: { reimbursement?: boolean } = {}) {
     // submitter 1 · leader 2 · finance 3 and 4 · board 5 · 8 in the submitter's household
     bindPorts({
-      signoff: directory({ approvers: { 100: [2] }, finance: [3, 4], board: [5], conflicted: [1, 8] }),
+      signoff: directory({ approvers: { 100: [2] }, finance: [3, 4], board: [5], households: [[1, 8]] }),
     });
     const id = await seedExpense({ state: "qb_pending", needsReimbursement: opts.reimbursement ?? true });
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
@@ -53,7 +53,7 @@ describeDb("sign-off seats", () => {
   });
 
   it("the only FINANCE holder conflicted: a Board member signs as Treasurer and a COI flag goes to the board", async () => {
-    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5], conflicted: [1, 3] }) });
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5], households: [[1, 3]] }) });
     const id = await seedExpense({ state: "qb_pending", needsReimbursement: true });
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     await seedApproval(id, li, { ownerId: 100, status: "approved" });
@@ -69,7 +69,7 @@ describeDb("sign-off seats", () => {
   });
 
   it("a card charge needing two Board substitutions is held and flagged to the board", async () => {
-    bindPorts({ signoff: directory({ orgLevel: [7], finance: [3], board: [5, 6], conflicted: [1, 3] }) });
+    bindPorts({ signoff: directory({ orgLevel: [7], finance: [3], board: [5, 6], households: [[1, 3]] }) });
     const id = await seedExpense({ state: "qb_pending" });
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     await seedApproval(id, li, { ownerId: 7, status: "approved" });
@@ -85,7 +85,7 @@ describeDb("sign-off seats", () => {
 
   it("an org-level line skips owner approval but still needs every seat, a Board member in the program seat", async () => {
     // 6 holds both FINANCE and Board
-    bindPorts({ signoff: directory({ orgLevel: [7], finance: [3, 6], board: [5, 6], conflicted: [1] }) });
+    bindPorts({ signoff: directory({ orgLevel: [7], finance: [3, 6], board: [5, 6] }) });
     const id = await seedExpense({ state: "owner_approval", needsReimbursement: true });
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     await seedApproval(id, li, { ownerId: 7, status: "approved" });
@@ -100,6 +100,45 @@ describeDb("sign-off seats", () => {
 
     await signLine(principal(5), li, "PROGRAM_APPROVER");
     expect(await events(id)).toBe(1);
+  });
+
+  describe("the reimbursee (reimburseePersonId)", () => {
+    // submitter 1 · reimbursee 9 · 10 in the reimbursee's household · leader 2 · finance 3 · board 5, 6
+    async function reimburseeLine(seat: { approvers?: number[]; finance?: number[]; board?: number[] }, reimburseePersonId?: number) {
+      bindPorts({
+        signoff: directory({
+          approvers: { 100: seat.approvers ?? [2] },
+          finance: seat.finance ?? [3],
+          board: seat.board ?? [5, 6],
+          households: [[9, 10]],
+        }),
+      });
+      const id = await seedExpense({ state: "qb_pending", needsReimbursement: reimburseePersonId !== undefined, reimburseePersonId });
+      const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+      await seedApproval(id, li, { ownerId: 100, status: "approved" });
+      return { id, li };
+    }
+
+    it("the reimbursee cannot fill any seat", async () => {
+      const { li } = await reimburseeLine({ approvers: [9], finance: [9], board: [9] }, 9);
+      for (const seat of ["SUBMITTER", "PROGRAM_APPROVER", "TREASURER"] as const) {
+        await expect(signLine(principal(9), li, seat)).rejects.toMatchObject({ statusCode: 403 });
+      }
+    });
+
+    it("a member of the reimbursee's household cannot fill any seat", async () => {
+      const { li } = await reimburseeLine({ approvers: [10], finance: [10], board: [10] }, 9);
+      for (const seat of ["SUBMITTER", "PROGRAM_APPROVER", "TREASURER"] as const) {
+        await expect(signLine(principal(10), li, seat)).rejects.toMatchObject({ statusCode: 403 });
+      }
+    });
+
+    it("a line without reimburseePersonId has no reimbursee conflict", async () => {
+      const { id, li } = await reimburseeLine({ approvers: [9], finance: [10] });
+      await signLine(principal(9), li, "PROGRAM_APPROVER");
+      await signLine(principal(10), li, "TREASURER");
+      expect((await signoffStatus(id))[0].missing).toEqual(["SUBMITTER"]);
+    });
   });
 
   it("an unbound directory fills no seat", async () => {

@@ -47,6 +47,14 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
     expect(expense!.state).toBe("assign_ownership");
   });
 
+  it("carries reimburseePersonId onto the expense; absent, the expense has no reimbursee", async () => {
+    await receiveCompletedReceipt({ ...allRecognized, needsReimbursement: true, reimburseePersonId: 9 });
+    expect((await db.expense.findFirst({ where: { id: allRecognized.receiptId } }))!.reimburseePersonId).toBe(9);
+
+    await receiveCompletedReceipt({ ...hasProvisional });
+    expect((await db.expense.findFirst({ where: { id: hasProvisional.receiptId } }))!.reimburseePersonId).toBeNull();
+  });
+
   it("a repeat call returns already_applied and changes nothing", async () => {
     await receiveCompletedReceipt(allRecognized);
     const before = await snapshot(allRecognized.receiptId);

@@ -111,6 +111,7 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
         receiptDate: receipt.receiptDate,
         needsReimbursement: receipt.needsReimbursement,
         reimbursementFor: receipt.reimbursementFor,
+        reimburseePersonId: receipt.reimburseePersonId ?? null,
         submittedAt: new Date(receipt.submittedAt),
         state: "pending",
         backfill: receipt.backfill,
