@@ -27,6 +27,7 @@ function receipt(orgId: string): CompletedReceipt {
     reimbursementFor: null,
     submittedAt: "2026-09-01T12:00:00.000Z",
     backfill: false,
+    isInKind: true,
     lineItems: [
       { receiptLineItemId: 1, lineNumber: 1, description: "Drill", partNumber: null, manufacturer: null, quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000, isDelayed: false },
     ],
