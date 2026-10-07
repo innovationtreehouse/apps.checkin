@@ -23,10 +23,15 @@ DRAIN_PACE_SECONDS = 1.0
 # Guard rail against a pathological stuck state. Un-acked rows are never
 # evicted to enforce this -- it is a log-only warning, not a hard cap.
 WARN_QUEUE_SIZE = 50_000
-# A row still failing 5xx after this many attempts (~4h at the backoff cap) is
-# a poison row, not an outage: dead-letter it so it reaches the server review
-# queue instead of blocking the FIFO head forever.
+# A row the server has answered with a handler error this many times (~4h at
+# the backoff cap) is a poison row, not an outage: dead-letter it so it reaches
+# the server review queue instead of blocking the FIFO head forever. Offline,
+# throttled and gateway responses (502/503/504: cold start, warming) never count.
 MAX_5XX_ATTEMPTS = 50
+
+
+def counts_toward_poison(status):
+    return 500 <= status < 600 and status not in (502, 503, 504)
 
 # docs/rules/attendance-checkin.md (kiosk resilience): the drain never sends
 # during the closed window -- a queued POST is non-GET and wakes the curfewed
@@ -75,7 +80,8 @@ class Outbox:
         last_attempt_at  TEXT,
         intent           TEXT,
         clock_suspect    INTEGER NOT NULL DEFAULT 0,
-        force_close_confirmed INTEGER NOT NULL DEFAULT 0
+        force_close_confirmed INTEGER NOT NULL DEFAULT 0,
+        server_errors    INTEGER NOT NULL DEFAULT 0
     )"""
 
     def _open(self, path):
@@ -107,6 +113,12 @@ class Outbox:
                 try:
                     conn.execute(
                         "ALTER TABLE outbox ADD COLUMN force_close_confirmed INTEGER NOT NULL DEFAULT 0"
+                    )
+                except sqlite3.OperationalError:
+                    pass
+                try:
+                    conn.execute(
+                        "ALTER TABLE outbox ADD COLUMN server_errors INTEGER NOT NULL DEFAULT 0"
                     )
                 except sqlite3.OperationalError:
                     pass
@@ -175,7 +187,7 @@ class Outbox:
         with self._lock:
             return self._conn.execute(
                 "SELECT client_event_id, participant_id, scanned_at, attempts, force_close_token, "
-                "intent, clock_suspect, force_close_confirmed "
+                "intent, clock_suspect, force_close_confirmed, server_errors "
                 "FROM outbox WHERE state='pending' ORDER BY scanned_at ASC"
             ).fetchall()
 
@@ -196,8 +208,9 @@ class Outbox:
     def bump_attempt(self, client_event_id, status):
         with self._lock:
             self._conn.execute(
-                "UPDATE outbox SET attempts = attempts + 1, last_status=? WHERE client_event_id=?",
-                (status, client_event_id),
+                "UPDATE outbox SET attempts = attempts + 1, last_status=?, "
+                "server_errors = server_errors + ? WHERE client_event_id=?",
+                (status, 1 if counts_toward_poison(status) else 0, client_event_id),
             )
             self._conn.commit()
 
@@ -359,7 +372,8 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, in_closed_w
             sleep_fn(dead_wait if dead_wait is not None else DRAIN_PACE_SECONDS)
             continue
 
-        client_event_id, participant_id, scanned_at, attempts, force_close_token, intent, clock_suspect, force_close_confirmed = rows[0]
+        (client_event_id, participant_id, scanned_at, _attempts, force_close_token, intent,
+         clock_suspect, force_close_confirmed, server_errors) = rows[0]
         # replay=True is what tells the server this is a redelivery: the live
         # attempt already sent this clientEventId (D4 try-first), so only the
         # drain may trip the replay-only guards. The token rides along so a
@@ -395,9 +409,9 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, in_closed_w
             if push_fn:
                 push_fn({"html": "", "queued": outbox.pending_count()})
             sleep_fn(DRAIN_PACE_SECONDS)
-        elif 500 <= status < 600 and status != 503 and attempts + 1 >= MAX_5XX_ATTEMPTS:
+        elif counts_toward_poison(status) and server_errors + 1 >= MAX_5XX_ATTEMPTS:
             outbox.mark_dead(client_event_id, status)
-            log.warning(f"Outbox event {client_event_id} dead-lettered after {attempts + 1} attempts (status={status})")
+            log.warning(f"Outbox event {client_event_id} dead-lettered after {server_errors + 1} server errors (status={status})")
             backoff = MIN_BACKOFF_SECONDS
             if push_fn:
                 push_fn({"html": "", "queued": outbox.pending_count()})

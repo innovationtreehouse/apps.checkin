@@ -40,6 +40,28 @@ describe("finalizeFacilityClose", () => {
         expect(logBackendError).toHaveBeenCalledWith(err, "facility-close");
     });
 
+    it("carries the late-close time into the retried sweep, not the retry's own clock", async () => {
+        const closeTime = new Date("2026-10-01T21:30:00Z");
+        const sweepTimes: unknown[] = [];
+        let attempt = 0;
+        tx.mockImplementation(async (cb: (t: unknown) => Promise<unknown>) => {
+            attempt++;
+            const fakeTx = {
+                $executeRaw: jest.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+                    if (values.includes(closeTime.toISOString())) sweepTimes.push(values[0]);
+                    return 0;
+                }),
+            };
+            await cb(fakeTx);
+            if (attempt === 1) throw new Error("Transaction already closed");
+        });
+
+        await finalizeFacilityClose(json({ facilityClosed: true }), closeTime);
+
+        expect(sweepTimes).toEqual([closeTime.toISOString(), closeTime.toISOString()]);
+        expect(logBackendError).not.toHaveBeenCalled();
+    });
+
     it("does nothing unless the response reports facilityClosed", async () => {
         await finalizeFacilityClose(json({ type: "checkout", facilityClosed: false }));
         expect(tx).not.toHaveBeenCalled();

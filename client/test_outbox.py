@@ -279,6 +279,53 @@ class TestReplayDrain(unittest.TestCase):
             self.assertEqual(ob.pending_rows(), [])
             self.assertEqual(ob.dead_count(), 1)
 
+    def test_offline_and_throttled_retries_do_not_count_toward_poison(self):
+        # A scan that waited out a long outage must not be dead-lettered by
+        # its first server error once the link returns.
+        with tempfile.TemporaryDirectory() as d:
+            ob = Outbox(os.path.join(d, "outbox.db"))
+            ob.enqueue("evt", "7", "2026-08-18T10:00:00+00:00")
+            script = ([({"error": "down"}, 0, None)] * 60
+                      + [({"error": "busy"}, 429, None)] * 10
+                      + [({"error": "boom"}, 500, None)]
+                      + [({"type": "checkin"}, 200, None)])
+            calls = {"n": 0}
+
+            def send_fn(*a, **k):
+                r = script[calls["n"]]
+                calls["n"] += 1
+                return r
+
+            def fake_sleep(_secs):
+                if calls["n"] >= len(script):
+                    raise _StopLoop()
+
+            with self.assertRaises(_StopLoop):
+                replay_drain(ob, send_fn, sleep_fn=fake_sleep, in_closed_window_fn=lambda: False)
+            self.assertEqual(ob.dead_count(), 0)
+            self.assertEqual(ob.pending_rows(), [])  # delivered, not dead-lettered
+
+    def test_gateway_errors_never_dead_letter(self):
+        # 502/504 are cold-start/proxy answers, not the handler refusing the row.
+        for status in (502, 504):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as d:
+                ob = Outbox(os.path.join(d, "outbox.db"))
+                ob.enqueue("evt", "7", "2026-08-18T10:00:00+00:00")
+                calls = {"n": 0}
+
+                def send_fn(*a, **k):
+                    calls["n"] += 1
+                    return {"error": "gateway"}, status, None
+
+                def fake_sleep(_secs):
+                    if calls["n"] >= MAX_5XX_ATTEMPTS + 5:
+                        raise _StopLoop()
+
+                with self.assertRaises(_StopLoop):
+                    replay_drain(ob, send_fn, sleep_fn=fake_sleep, in_closed_window_fn=lambda: False)
+                self.assertEqual(ob.dead_count(), 0)
+                self.assertEqual(len(ob.pending_rows()), 1)
+
     def test_503_warming_is_never_dead_lettered_by_attempt_count(self):
         with tempfile.TemporaryDirectory() as d:
             ob = Outbox(os.path.join(d, "outbox.db"))
