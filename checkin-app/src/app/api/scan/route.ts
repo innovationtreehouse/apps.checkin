@@ -28,6 +28,11 @@ const REPLAY_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
 
 // Outbox-only fields: they rewrite a scan's event time, skip its interrupts, or
 // inject review rows. Only a signed kiosk may send them.
+// Bounded to Postgres int4 (see lib/searchId.ts): a larger id makes the
+// lookup throw instead of matching nothing.
+const isPersonId = (v: unknown): v is number =>
+    typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 2147483647;
+
 const KIOSK_ONLY_FIELDS = ["replay", "dead", "deadStatus", "scannedAt", "forceCloseConfirmed", "clockSuspect"] as const;
 
 // F7: the out-of-order guard needs the true latest activity across ALL of a
@@ -46,11 +51,11 @@ export const POST = withKiosk(
     const startTime = Date.now();
 
     try {
-        const participantId = body.participantId;
-
-        // Bounded to Postgres int4 (see lib/searchId.ts): a larger id makes the
-        // lookup throw, and the kiosk retries a 500 forever at its queue head.
-        if (typeof participantId !== 'number' || !Number.isInteger(participantId) || participantId < 1 || participantId > 2147483647) {
+        const participantId = isPersonId(body.participantId) ? body.participantId : null;
+        // A dead-lettered row is the exception: it is parked below whatever it
+        // carries, so a corrupt read reaches the review queue instead of
+        // bouncing on the kiosk forever.
+        if (participantId === null && body.dead !== true) {
             return apiError("A valid numeric participantId is required.", 400);
         }
 
@@ -159,6 +164,33 @@ export const POST = withKiosk(
             }
         }
 
+        // A dead-lettered read that names no person can never project. It still
+        // lands in the review queue -- the scan is never discarded -- keyed by
+        // the raw value read, so the kiosk can stop retrying it.
+        const parkUnresolvable = async (): Promise<Response> => {
+            const raw = body.participantId;
+            const scannedValue = (typeof raw === 'string' ? raw : JSON.stringify(raw) ?? '').slice(0, 64);
+            try {
+                await prisma.rawBadgeLog.create({
+                    data: {
+                        personId: null,
+                        scannedValue,
+                        location: "Main Entrance",
+                        clientEventId,
+                        timestamp: eventTime,
+                        reviewReason: "client_dead:unresolvable",
+                    },
+                });
+            } catch (err) {
+                if (!uniqueViolationFields(err)?.includes("clientEventId")) throw err;
+                return apiJson({ type: 'duplicate_ignored', message: 'Event already recorded.' });
+            }
+            return apiJson({ type: 'parked', message: 'Recorded for review.' });
+        };
+        if (participantId === null) {
+            return await parkUnresolvable();
+        }
+
         // Web session: refuse up front anyone who could only ever scan
         // themselves, so the lookup below can't serve them as an id oracle.
         // The full self/household check runs on the resolved participant.
@@ -202,6 +234,7 @@ export const POST = withKiosk(
                     // Before any hop the scanned id is simply unknown. After one, we got
                     // here by following a merge pointer into a gap — a different fault,
                     // and one the operator can act on by reissuing the badge.
+                    if (isDead) return await parkUnresolvable();
                     return mergeHops > 0
                         ? apiError(`This badge belongs to a merged record; reissue it for participant ${lookupId}.`, 409)
                         : apiError(`Participant ${participantId} not found.`, 404);
@@ -214,6 +247,7 @@ export const POST = withKiosk(
             // record to reissue for — and so that id is never fetched.
             mergeHops++;
             if (mergeHops > MAX_MERGE_HOPS) {
+                if (isDead) return await parkUnresolvable();
                 return apiError(`This badge belongs to a merged record; reissue it for participant ${lookupId}.`, 409);
             }
             participant = await prisma.person.findUnique({ where: { id: lookupId } });

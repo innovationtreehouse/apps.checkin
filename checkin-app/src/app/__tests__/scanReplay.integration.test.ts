@@ -180,7 +180,7 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
         const parked = await queue();
         expect(parked).toHaveLength(1);
         expect(parked[0].reviewReason).toBe('stale_replay');
-        expect(parked[0].person.name).toBe('Replay Member');
+        expect(parked[0].person?.name).toBe('Replay Member');
         expect(parked[0].timestamp.getTime()).toBe(scannedAt.getTime());
 
         // The dismiss's guarded write, stamping both columns.
@@ -236,6 +236,36 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
 
         const rows = await prisma.rawBadgeLog.findMany({ where: { clientEventId: 'evt-dead-retry' } });
         expect(rows).toHaveLength(1);
+    });
+
+    // A corrupt read (two badges run together, a UPC) can never resolve to a
+    // person; it still lands in the review queue, once, keyed by what was read.
+    it('a dead-lettered unresolvable read parks with no person, surfaces for review, and dedups', async () => {
+        const scannedAt = new Date(Date.now() - 2 * 60_000);
+        const body = {
+            participantId: 1234512345123, clientEventId: 'evt-dead-unresolvable',
+            scannedAt: scannedAt.toISOString(), dead: true, deadStatus: 400,
+        };
+        try {
+            const first = await POST(scanReq(body));
+            expect(first.status).toBe(200);
+            expect((await first.json()).type).toBe('parked');
+
+            const retry = await POST(scanReq(body));
+            expect((await retry.json()).type).toBe('duplicate_ignored');
+
+            const rows = await prisma.rawBadgeLog.findMany({ where: { clientEventId: 'evt-dead-unresolvable' } });
+            expect(rows).toHaveLength(1);
+            expect(rows[0]).toMatchObject({
+                personId: null,
+                scannedValue: '1234512345123',
+                reviewReason: 'client_dead:unresolvable',
+                reviewedAt: null,
+            });
+            expect(rows[0].timestamp.getTime()).toBe(scannedAt.getTime());
+        } finally {
+            await prisma.rawBadgeLog.deleteMany({ where: { clientEventId: 'evt-dead-unresolvable' } });
+        }
     });
 
     it('rejects dead:true and replay:true together', async () => {

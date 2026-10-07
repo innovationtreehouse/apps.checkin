@@ -526,6 +526,54 @@ describe('POST /api/scan', () => {
             (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
         });
 
+        // A corrupt read can never resolve to a person; it must still land in the
+        // review queue (and 200, so the kiosk stops retrying it).
+        it.each([
+            ['an over-int4 id', 99999999999, '99999999999'],
+            ['a non-numeric value', '12a', '12a'],
+        ])('parks %s with no person, keeping the raw value', async (_label, participantId, scannedValue) => {
+            const scannedAt = new Date(Date.now() - 60_000).toISOString();
+            const res = await POST(deadReq({ participantId, scannedAt }));
+            expect(res.status).toBe(200);
+            expect((await res.json()).type).toBe('parked');
+            expect(prisma.person.findUnique).not.toHaveBeenCalled();
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
+                data: {
+                    personId: null,
+                    scannedValue,
+                    location: 'Main Entrance',
+                    clientEventId: 'evt-dead',
+                    timestamp: new Date(scannedAt),
+                    reviewReason: 'client_dead:unresolvable',
+                },
+            });
+            expect(processCheckin).not.toHaveBeenCalled();
+        });
+
+        it('parks a dead-lettered id that matches no one instead of 404ing forever', async () => {
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue(null);
+            const res = await POST(deadReq({ participantId: 424242 }));
+            expect(res.status).toBe(200);
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ personId: null, scannedValue: '424242', reviewReason: 'client_dead:unresolvable' }),
+            });
+        });
+
+        it('acks a redelivered unresolvable row as already recorded', async () => {
+            (prisma.rawBadgeLog.create as jest.Mock).mockRejectedValueOnce(
+                Object.assign(new Error('Unique constraint failed'), { code: 'P2002', meta: { target: ['clientEventId'] } })
+            );
+            const res = await POST(deadReq({ participantId: 99999999999 }));
+            expect(res.status).toBe(200);
+            expect((await res.json()).type).toBe('duplicate_ignored');
+        });
+
+        it('still 400s a corrupt id on a live scan -- only the dead-letter path parks it', async () => {
+            const res = await POST(deadReq({ participantId: 99999999999, dead: undefined }));
+            expect(res.status).toBe(400);
+            expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
+        });
+
         it('parks a dead-lettered event with a client_dead:<status> reviewReason and never toggles a visit', async () => {
             const scannedAt = new Date(Date.now() - 60_000).toISOString();
             const res = await POST(deadReq({ scannedAt }));

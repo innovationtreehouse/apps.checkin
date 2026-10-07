@@ -277,6 +277,7 @@ export const classifications = {
     RawBadgeLog: {
         id: 'internal',
         personId: 'internal',
+        scannedValue: 'internal',
         timestamp: 'personal',
         location: 'personal',
         clientEventId: 'internal',
