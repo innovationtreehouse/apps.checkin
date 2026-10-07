@@ -119,6 +119,50 @@ describeDb("comment rules apply at upload", () => {
   });
 });
 
+describeDb("upload runs the owner-assigned cycle per new disbursement", () => {
+  async function ruleFor(comment: string, ownerId: number) {
+    await db.transactionCommentRule.create({ data: { orgId, comment, ownerId, createdByUserId: 1 } });
+  }
+
+  it("a disbursement fully assigned at upload completes, attributed to the uploader", async () => {
+    await makeAccountMapRule(orgId);
+    await ruleFor("Robotics team", 201);
+    await upload([
+      ...FILE,
+      "D-2,2026-09-01,Acme Corp,T-5,7.00,0,0,check,standard,Al,Ng,",
+    ]);
+
+    for (const disbursementId of ["D-1", "D-2"]) {
+      await db.disbursementEvent.findFirstOrThrow({ where: { orgId, disbursementId } });
+      expect(await db.disbursementSnapshot.count({ where: { orgId, disbursementId } })).toBe(0);
+    }
+    const completed = await db.workflowEvent.findFirstOrThrow({ where: { orgId, disbursementId: "D-1", eventType: "DISBURSEMENT_COMPLETED" } });
+    expect(completed.actorUserId).toBe(1);
+    expect(completed.correlationId).toBe("corr-intake");
+    expect(await getNavCounts(orgId)).toEqual({ unassignedQueue: 0, disbursementHolds: 0 });
+  });
+
+  it("a partly assigned disbursement waits for ownership, and a fully assigned one with no account map goes on hold", async () => {
+    await ruleFor("Robotics team", 201);
+    await upload([
+      "D-1,2026-09-01,Acme Corp,T-1,100.00,0,0,check,standard,Jane,Doe,Robotics team",
+      "D-1,2026-09-01,Acme Corp,T-2,20.00,0,0,check,standard,John,Smith,Chess club",
+      "D-2,2026-09-01,Acme Corp,T-3,10.00,0,0,check,standard,Ann,Lee,Robotics team",
+    ]);
+
+    expect(await db.disbursementEvent.count({ where: { orgId } })).toBe(0);
+    expect(await db.disbursementSnapshot.count({ where: { orgId, disbursementId: "D-1" } })).toBe(0);
+    const d2 = await db.disbursementSnapshot.findFirstOrThrow({ where: { orgId, disbursementId: "D-2" } });
+    expect(d2.state).toBe("on_hold");
+    expect(await getNavCounts(orgId)).toEqual({ unassignedQueue: 1, disbursementHolds: 1 });
+
+    await makeAccountMapRule(orgId);
+    const t2 = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "T-2" } });
+    await transactionService.assignOwner(orgId, t2.id, 201, false, AUDIT);
+    await db.disbursementEvent.findFirstOrThrow({ where: { orgId, disbursementId: "D-1" } });
+  });
+});
+
 describeDb("donor data reads are audited", () => {
   it("each pii read writes one DONOR_DATA_READ row with route and count", async () => {
     await upload(FILE);
