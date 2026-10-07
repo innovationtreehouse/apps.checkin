@@ -1,4 +1,5 @@
 import inspect
+import io
 import json
 import os
 import subprocess
@@ -18,6 +19,7 @@ from client import (
     CLOSED_HOLD_DWELL_S,
     OFFLINE_HOLD_COPY,
     FORCE_CLOSE_CONFIRM_SECONDS,
+    KioskHandler,
     _saved_banner_html,
     _scan_result_banner_html,
     attendance_poller,
@@ -747,6 +749,45 @@ class TestProxyKeepaliveSkip(unittest.TestCase):
         self.assertEqual(body["counts"]["youth"], 0)
         self.assertEqual(body["safety"], {"isLastKeyholder": False, "isTwoDeepViolation": False})
         self.assertEqual(body["attendance"], [])
+
+    def test_synthetic_attendance_body_replays_the_last_real_roster(self):
+        state = AttendanceState()
+        roster = {
+            "access": "full",
+            "attendance": [{"participant": {"id": 9, "name": "Sam K.", "isKeyholder": True}}],
+            "counts": {"total": 1, "keyholders": 1, "volunteers": 0, "youth": 0},
+            "safety": {"isLastKeyholder": True, "isTwoDeepViolation": False},
+        }
+        state.seed_from_attendance(roster)
+        self.assertEqual(json.loads(synthetic_keepalive_body("/api/attendance", state)), roster)
+
+    def test_synthetic_certifications_body_is_empty_before_any_real_one(self):
+        body = json.loads(synthetic_keepalive_body("/api/kioskdisplay/certifications", AttendanceState()))
+        self.assertEqual(body, {"participants": [], "tools": []})
+
+    def _proxy_get(self, state, path, upstream_body):
+        handler = KioskHandler.__new__(KioskHandler)
+        handler.path = path
+        handler.headers = {}
+        handler.state = state
+        handler.backend = Mock(base_url="http://backend", signing_key=SigningKey.generate())
+        handler.wfile = io.BytesIO()
+        handler.send_response = handler.send_header = handler.end_headers = Mock()
+        resp = Mock(status_code=200, headers={})
+        resp.iter_content.return_value = [upstream_body]
+        with patch("client.requests.request", return_value=resp) as upstream:
+            handler._proxy_request("GET")
+        return handler.wfile.getvalue(), upstream
+
+    def test_closed_window_replays_the_last_proxied_certifications(self):
+        state = AttendanceState()
+        certs = b'{"participants": [{"id": 9, "name": "Sam K."}], "tools": [{"id": 1}]}'
+        with patch("client.skip_kiosk_keepalive", return_value=False):
+            self._proxy_get(state, "/api/kioskdisplay/certifications", certs)
+        with patch("client.skip_kiosk_keepalive", return_value=True):
+            replayed, upstream = self._proxy_get(state, "/api/kioskdisplay/certifications", b"")
+        upstream.assert_not_called()
+        self.assertEqual(replayed, certs)
 
 
 class TestOfflineForceClose(unittest.TestCase):
