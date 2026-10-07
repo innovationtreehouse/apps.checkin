@@ -1,0 +1,177 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  runtime      = "nodejs"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model UploadedFile {
+  id                 Int       @id @default(autoincrement())
+  orgId              String    @map("org_id")
+  uploadedByUserId   Int       @map("uploaded_by_user_id")
+  uploadedAt         DateTime  @default(now()) @map("uploaded_at")
+  originalFilename   String    @map("original_filename")
+  fileBlob           Bytes?    @map("file_blob")
+  fileHash           String    @map("file_hash")
+  rowCount           Int       @default(0) @map("row_count")
+  newRowCount        Int       @default(0) @map("new_row_count")
+  duplicateRowCount  Int       @default(0) @map("duplicate_row_count")
+  allDuplicate       Boolean   @default(false) @map("all_duplicate")
+  blobDeleted        Boolean   @default(false) @map("blob_deleted")
+
+  @@map("uploaded_files")
+}
+
+model Transaction {
+  id                     Int       @id @default(autoincrement())
+  orgId                  String    @map("org_id")
+  uploadedFileId         Int       @map("uploaded_file_id")
+  transactionId          String    @map("transaction_id")
+  importedAt             DateTime  @default(now()) @map("imported_at")
+
+  nonprofitName          String?   @map("nonprofit_name")
+  nonprofitId            String?   @map("nonprofit_id")
+  disbursementId         String?   @map("disbursement_id")
+  disbursementDate       String?   @map("disbursement_date")
+  bankDate               String?   @map("bank_date")
+  bankReferenceId        String?   @map("bank_reference_id")
+  paymentMethod          String?   @map("payment_method")
+  disbursementFrom       String?   @map("disbursement_from")
+  projectName            String?   @map("project_name")
+  projectId              String?   @map("project_id")
+  donationDate           String?   @map("donation_date")
+  donationFrequency      String?   @map("donation_frequency")
+  currency               String    @default("USD")
+  foreignExchangeRate    Float?    @map("foreign_exchange_rate")
+
+  companyName            String?   @map("company_name")
+  corporatePeerCampaign  String?   @map("corporate_peer_campaign")
+  donationAmountCents    Int       @default(0) @map("donation_amount_cents")
+  matchAmountCents       Int       @default(0) @map("match_amount_cents")
+  causeSupportFeeCents   Int       @default(0) @map("cause_support_fee_cents")
+  merchantFeeCents       Int       @default(0) @map("merchant_fee_cents")
+  checkFeeCents          Int       @default(0) @map("check_fee_cents")
+  donationMethod         String?   @map("donation_method")
+  donationType           String?   @map("donation_type")
+  donorFirstName         String?   @map("donor_first_name")
+  donorLastName          String?   @map("donor_last_name")
+  donorComment           String?   @map("donor_comment")
+
+  ownerId                Int?      @map("owner_id")
+  ownerAssignedAt        DateTime? @map("owner_assigned_at")
+  ownerAssignedByUserId  Int?      @map("owner_assigned_by_user_id")
+  isOrganizationalLevel  Boolean   @default(false) @map("is_organizational_level")
+
+  disbursementHolds DisbursementHold[]
+
+  @@unique([orgId, transactionId])
+  @@map("transactions")
+}
+
+model TransactionCommentRule {
+  id                Int      @id @default(autoincrement())
+  orgId             String   @map("org_id")
+  comment           String
+  ownerId           Int      @map("owner_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+  createdByUserId   Int      @map("created_by_user_id")
+
+  @@unique([orgId, comment])
+  @@map("transaction_comment_rules")
+}
+
+model AccountMap {
+  id                    Int      @id @default(autoincrement())
+  orgId                 String   @map("org_id")
+  companyName           String   @map("company_name")
+  corporatePeerCampaign String   @map("corporate_peer_campaign")
+  donationMethod        String?  @map("donation_method")
+  donationType          String?  @map("donation_type")
+  donationAccount       String   @map("donation_account")
+  matchAccount          String   @map("match_account")
+  feesAccount           String   @map("fees_account")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@map("account_map")
+}
+
+model DisbursementHold {
+  id             Int       @id @default(autoincrement())
+  orgId          String    @map("org_id")
+  disbursementId String    @map("disbursement_id")
+  transactionId  Int       @map("transaction_id")
+  transaction    Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  reason         String
+  matchedRows    String    @map("matched_rows")
+  status         String    @default("PENDING")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  resolvedAt     DateTime? @map("resolved_at")
+
+  @@map("disbursement_holds")
+}
+
+// qbMatchState: UNMATCHED | MATCHED | CREATED | AMBIGUOUS | BEFORE_LINE | WAITING | POST_FAILED.
+// qbTxnId is the QuickBooks entry this event is tied to (MATCHED or CREATED); an entry is
+// claimed by at most one event per org.
+model DisbursementEvent {
+  id             Int      @id @default(autoincrement())
+  orgId          String   @map("org_id")
+  disbursementId String   @map("disbursement_id")
+  payload        String
+  createdAt      DateTime @default(now()) @map("created_at")
+  qbMatchState   String   @default("UNMATCHED") @map("qb_match_state")
+  qbTxnId        String?  @map("qb_txn_id")
+
+  @@unique([orgId, disbursementId])
+  @@unique([orgId, qbTxnId])
+  @@index([orgId, qbMatchState])
+  @@map("disbursement_events")
+}
+
+model DisbursementSnapshot {
+  orgId          String   @map("org_id")
+  disbursementId String   @map("disbursement_id")
+  state          String
+  context        String
+  version        Int      @default(0)
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@id([orgId, disbursementId])
+  @@map("disbursement_snapshots")
+}
+
+model WorkflowEvent {
+  id             Int      @id @default(autoincrement())
+  orgId          String   @map("org_id")
+  disbursementId String?  @map("disbursement_id")
+  entityType     String   @map("entity_type")
+  entityId       String?  @map("entity_id")
+  eventType      String   @map("event_type")
+  actorUserId    Int?     @map("actor_user_id")
+  actorUsername  String?  @map("actor_username")
+  correlationId  String?  @map("correlation_id")
+  payload        String?
+  occurredAt     DateTime @default(now()) @map("occurred_at")
+
+  @@index([orgId, disbursementId, occurredAt])
+  @@index([orgId, occurredAt])
+  @@map("workflow_events")
+}
+
+// A QuickBooks entry finance has permanently removed from matching (D5).
+model DonationQbMatchExclusion {
+  id               Int      @id @default(autoincrement())
+  orgId            String   @map("org_id")
+  qbTxnId          String   @map("qb_txn_id")
+  reason           String
+  excludedByUserId Int      @map("excluded_by_user_id")
+  excludedAt       DateTime @default(now()) @map("excluded_at")
+
+  @@unique([orgId, qbTxnId])
+  @@map("qb_match_exclusion")
+}
