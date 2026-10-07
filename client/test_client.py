@@ -704,6 +704,64 @@ class TestAttendancePollerClosedWindow(unittest.TestCase):
         backend.get_attendance.assert_called()
 
 
+class TestHeldOnlyRosterIsOccupied(unittest.TestCase):
+    """Held (PARKED_CLOSED) scans are outside counts.total, but the people are
+    in the building: the kiosk must not sleep or stop polling over them."""
+
+    HELD_ONLY = {
+        "attendance": [],
+        "held": [{"id": 1, "person": {"id": 7, "name": "Sam"}}],
+        "counts": {"total": 0, "keyholders": 0},
+        "safety": {},
+    }
+
+    def _poll_once(self, state, response):
+        backend = Mock(attendance_path="/api/attendance")
+        backend.get_attendance.return_value = (response, 200)
+        calls = {"n": 0}
+
+        def fake_sleep(_secs):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise _StopLoop()
+
+        with self.assertRaises(_StopLoop):
+            attendance_poller(backend, state, sleep_fn=fake_sleep,
+                               in_closed_window_fn=lambda: False)
+        return backend
+
+    def test_poller_keeps_polling_while_only_held_people_are_in(self):
+        state = AttendanceState()
+        state.seed_from_attendance(self.HELD_ONLY)
+        state.current_counts = self.HELD_ONLY["counts"]
+        state.push_event = lambda event: None
+
+        backend = self._poll_once(state, self.HELD_ONLY)
+
+        backend.get_attendance.assert_called()
+
+    def test_poller_reports_a_held_only_roster_as_occupied(self):
+        state = AttendanceState()
+        pushed = []
+        state.push_event = pushed.append
+
+        self._poll_once(state, self.HELD_ONLY)
+
+        self.assertTrue(pushed[-1]["occupied"])
+
+    def test_a_held_scan_pushes_occupied(self):
+        state = AttendanceState()
+        pushed = []
+        state.push_event = pushed.append
+        backend = Mock(attendance_path="/api/attendance")
+        backend.post_scan.return_value = ({"type": "parked", "reason": "facility_closed"}, 200, None)
+        backend.get_attendance.return_value = (self.HELD_ONLY, 200)
+
+        handle_scan(backend, state, Outbox(":memory:"), 7)
+
+        self.assertTrue(pushed[-1]["occupied"])
+
+
 class TestProxyKeepaliveSkip(unittest.TestCase):
     """Iframe polls /api/attendance every 60s with idleStopMs unset. The proxy
     must swallow those GETs overnight and when empty or ALB never goes quiet."""

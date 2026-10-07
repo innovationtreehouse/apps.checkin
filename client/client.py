@@ -267,6 +267,9 @@ class AttendanceState:
         # False until a successful fetch. Distinguishes "unknown" from "known empty"
         # so boot (and the first tick after overnight) still polls.
         self.counts_known = False
+        # Held (PARKED_CLOSED) scans are outside counts.total by design, but
+        # those people are in the building, so the screen must stay awake.
+        self.held_count = 0
         self.confirm_token = None    # force-close confirm token, if a countdown is running
         self.confirm_participant = None  # the keyholder that token was shown to
         self.confirm_deadline = 0.0  # monotonic clock, end of that countdown
@@ -453,6 +456,11 @@ class AttendanceState:
             self.last_two_deep_violation = bool(safety.get("isTwoDeepViolation"))
             self.attendance_seen = True
             self.counts_known = True
+            self.held_count = len(att_data.get("held") or [])
+
+    def occupied_locked(self):
+        """Anyone in the building, counted or held. Caller holds self.lock."""
+        return self.current_counts.get("total", 0) > 0 or self.held_count > 0
 
     def facility_closed(self):
         """Best-effort local view of whether the facility is closed (no keyholder
@@ -607,19 +615,21 @@ class KioskHandler(BaseHTTPRequestHandler):
   function handleData(data, isInitial) {{
     const counts = data.counts || {{}};
     const total = counts.total ?? -1;
+    // Held scans sit outside counts.total; the Pi folds them into `occupied`.
+    const occupied = data.occupied ?? (total > 0);
 
     // Wake up on any activity
     if (!isInitial) setBlackout(false);
 
-    if (total === 0) {{
+    if (occupied) {{
+      setBlackout(false);
+    }} else if (total === 0) {{
       // Building is empty — sleep after 5s delay (so user can see banner)
       if (!sleepTimeout) {{
         sleepTimeout = setTimeout(() => {{
           setBlackout(true);
         }}, isInitial ? 0 : 5000);
       }}
-    }} else if (total > 0) {{
-      setBlackout(false);
     }}
   }}
 
@@ -737,7 +747,10 @@ class KioskHandler(BaseHTTPRequestHandler):
         try:
             # Send initial status
             with self.state.lock:
-                initial_status = json.dumps({"counts": self.state.current_counts})
+                initial_status = json.dumps({
+                    "counts": self.state.current_counts,
+                    "occupied": self.state.occupied_locked(),
+                })
             self.wfile.write(f"event: status\ndata: {initial_status}\n\n".encode())
             self.wfile.flush()
 
@@ -1193,9 +1206,10 @@ def handle_scan(backend, state, outbox, participant_id):
             for key in ("attendance", "held", "counts", "safety"):
                 if key in att_data:
                     event_payload[key] = att_data[key]
-            if "counts" in att_data:
-                with state.lock:
+            with state.lock:
+                if "counts" in att_data:
                     state.current_counts = att_data["counts"]
+                event_payload["occupied"] = state.occupied_locked()
             state.push_event(event_payload)
 
 # ---------------------------------------------------------------------------
@@ -1207,7 +1221,7 @@ def attendance_poller(backend, state, interval=30, sleep_fn=time.sleep,
     Pushes SSE status events when counts change so the blackout
     logic works on display-only kiosks without a scanner. §3.1/Q17: a
     24/7 kiosk must not defeat the overnight curfew with signed GETs.
-    Also skip while the last known roster is empty. Accepted trade-off: an
+    Also skip while nobody is counted or held. Accepted trade-off: an
     empty, asleep kiosk does NOT wake for occupancy created off this Pi (a
     manual/web check-in, or a scan at another entrance). The next local scan
     refetches /api/attendance and re-syncs to the live roster — only when that
@@ -1222,19 +1236,22 @@ def attendance_poller(backend, state, interval=30, sleep_fn=time.sleep,
                 state.counts_known = False
             continue
         with state.lock:
-            empty = state.counts_known and state.current_counts.get("total", 0) == 0
+            empty = state.counts_known and not state.occupied_locked()
         if empty:
             continue
         att_data, att_status = backend.get_attendance()
         if att_status == 200 and "counts" in att_data:
+            with state.lock:
+                held_before = state.held_count
             state.seed_from_attendance(att_data)
             new_counts = att_data["counts"]
             with state.lock:
-                changed = new_counts != state.current_counts
+                changed = new_counts != state.current_counts or state.held_count != held_before
                 state.current_counts = new_counts
+                occupied = state.occupied_locked()
             if changed:
                 log.info(f"Attendance poll: {new_counts.get('total', '?')} present")
-                state.push_event({"html": "", "counts": new_counts})
+                state.push_event({"html": "", "counts": new_counts, "occupied": occupied})
 
 def _read_last_restart_target(path=SELF_UPDATE_STATE_FILE):
     # Missing/unreadable file means "never restarted" -- same as no target.
