@@ -218,6 +218,12 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // Approvers are derived from programId (the program's leader and treasurers);
     // the expense approval route earns that programId binding when it ships.
     'BudgetOwner',
+    // Local inventory (#1287 §5) audit logs. Their `userId` is in SCOPABLE_FIELDS,
+    // but it is a local-inventory actor id — not checkin's `selfId` — so it never
+    // earns a `their_own` binding; the internal attribution fields stay with the
+    // INVENTORY_MANAGER view.
+    'InventoryLog',
+    'LocationLog',
 ]);
 
 /**

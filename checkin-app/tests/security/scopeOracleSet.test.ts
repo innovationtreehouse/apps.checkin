@@ -33,6 +33,7 @@ const ORACLES = [
     'emergency-contact-program-scope.test.ts',
     'household-lead-program-scope.test.ts',
     'impersonatedBy-inertness.test.ts',
+    'inventory-strip.test.ts',
     'led-households-roster.test.ts',
     'member-tier.test.ts',
     'payment-plans-strip.test.ts',

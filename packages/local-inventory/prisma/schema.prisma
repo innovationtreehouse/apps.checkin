@@ -5,13 +5,25 @@ generator client {
   moduleFormat = "cjs"
 }
 
+// Brings the inventory schema under checkin's security regime (design #1287 §5):
+// the same generator emits a classifications map, merged in
+// checkin-app/src/security/core.ts. Output lands beside checkin's own
+// generated map; paths are relative to this schema file.
+generator security {
+  provider = "node ../../checkin-app/scripts/security-generator.js"
+  output   = "../../../checkin-app/src/security/generated/inventory-classifications.ts"
+}
+
 datasource db {
   provider = "postgresql"
 }
 
 model Location {
+  /// @sensitivity:public
   id     Int    @id @default(autoincrement())
+  /// @sensitivity:public
   name   String
+  /// @sensitivity:internal
   orgId  String @map("org_id")
 
   primaryItems   OrgItem[] @relation("PrimaryLocation")
@@ -21,12 +33,19 @@ model Location {
 }
 
 model OrgItem {
+  /// @sensitivity:public
   id                  Int  @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId               String @map("org_id")
+  /// @sensitivity:public
   gtin13              String
+  /// @sensitivity:public
   existingQuantity    Int    @default(0) @map("existing_quantity")
+  /// @sensitivity:public
   desiredQuantity     Int    @default(0) @map("desired_quantity")
+  /// @sensitivity:public
   locationId          Int?   @map("location_id")
+  /// @sensitivity:public
   backstockLocationId Int?   @map("backstock_location_id")
 
   location        Location? @relation("PrimaryLocation", fields: [locationId], references: [id], onDelete: Restrict)
@@ -37,40 +56,65 @@ model OrgItem {
 }
 
 model InventoryLog {
+  /// @sensitivity:public
   id           Int      @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId        String   @map("org_id")
+  /// @sensitivity:internal
   userId       Int?     @map("user_id")
+  /// @sensitivity:internal
   username     String?  @map("username")
+  /// @sensitivity:public
   changedAt    DateTime @map("changed_at")
+  /// @sensitivity:public
   changeType   String   @map("change_type")
+  /// @sensitivity:public
   gtin13       String
+  /// @sensitivity:public
   fieldChanged String   @map("field_changed")
+  /// @sensitivity:public
   valueBefore  String?  @map("value_before")
+  /// @sensitivity:public
   valueAfter   String?  @map("value_after")
+  /// @sensitivity:internal
   receiptId    String?  @map("receipt_id")
   // Quantity provenance for applied deltas: the live OrgItem stores only the
   // total, so raw receipt qty + the conversion factor + the derived units that
   // were added are recorded here (null for manual edits with no conversion).
+  /// @sensitivity:public
   rawQuantity       Int? @map("raw_quantity")
+  /// @sensitivity:public
   conversionFactor  Int? @map("conversion_factor")
+  /// @sensitivity:public
   conversionVersion Int? @map("conversion_version")
 
   @@map("inventory_log")
 }
 
 model ReceiveQueue {
+  /// @sensitivity:public
   id          Int       @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId       String    @map("org_id")
+  /// @sensitivity:public
   gtin13      String
   // RAW receipt quantity; multiplied by conversionFactor when fulfilled so the
   // queued unit definition is preserved until it actually lands in inventory.
+  /// @sensitivity:public
   quantity    Int
+  /// @sensitivity:public
   conversionFactor  Int @default(1) @map("conversion_factor")
+  /// @sensitivity:public
   conversionVersion Int @default(1) @map("conversion_version")
+  /// @sensitivity:public
   retailer    String    @default("")
+  /// @sensitivity:internal
   receiptId   String    @map("receipt_id")
+  /// @sensitivity:internal
   lineItemId  Int       @map("line_item_id")
+  /// @sensitivity:public
   queuedAt    DateTime  @default(now()) @map("queued_at")
+  /// @sensitivity:public
   fulfilledAt DateTime? @map("fulfilled_at")
 
   @@map("receive_queue")
@@ -81,52 +125,86 @@ model ReceiveQueue {
 // classification map, which is a flat merge keyed by model name across schemas. The
 // dedicated database still namespaces the table, so `@@map("provisional_items")` is kept.
 model InventoryProvisionalItem {
+  /// @sensitivity:public
   id                    Int       @id @default(autoincrement())
+  /// @sensitivity:public
   provisionalGtin13     String    @unique @map("provisional_gtin13")
+  /// @sensitivity:public
   name                  String
+  /// @sensitivity:public
   proposedCategoryId    Int?      @map("proposed_category_id")
+  /// @sensitivity:public
   proposedSubcategoryId Int?      @map("proposed_subcategory_id")
+  /// @sensitivity:public
   usageBehavior         String    @map("usage_behavior")
+  /// @sensitivity:internal
   proposedByUserId      Int?      @map("proposed_by_user_id")
+  /// @sensitivity:internal
   orgId                 String    @map("org_id")
+  /// @sensitivity:public
   proposedAt            DateTime  @default(now()) @map("proposed_at")
+  /// @sensitivity:public
   status                String    @default("pending")
+  /// @sensitivity:public
   reviewedAt            DateTime? @map("reviewed_at")
+  /// @sensitivity:internal
   rejectionReason       String?   @map("rejection_reason")
+  /// @sensitivity:public
   resolvedToGtin13      String?   @map("resolved_to_gtin13")
   // The conversion factor this provisional's stock was counted under (from the
   // S3 delta's human-entered factor). Compared against the resolved real item's
   // canonical factor at merge time to detect a uom_mismatch. Integer.
+  /// @sensitivity:public
   conversionFactor      Int       @default(1) @map("conversion_factor")
 
   @@map("provisional_items")
 }
 
 model InventoryMergeConflict {
+  /// @sensitivity:public
   id                          Int       @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId                       String    @map("org_id")
+  /// @sensitivity:public
   provisionalGtin13           String    @map("provisional_gtin13")
+  /// @sensitivity:public
   realGtin13                  String    @map("real_gtin13")
+  /// @sensitivity:public
   conflictType                String    @map("conflict_type")
+  /// @sensitivity:public
   provisionalConversionFactor Int       @default(1) @map("provisional_conversion_factor")
+  /// @sensitivity:public
   existingConversionFactor    Int       @default(1) @map("existing_conversion_factor")
+  /// @sensitivity:public
   status                      String    @default("pending")
+  /// @sensitivity:internal
   resolvedByUserId            Int?      @map("resolved_by_user_id")
+  /// @sensitivity:public
   resolvedAt                  DateTime? @map("resolved_at")
+  /// @sensitivity:internal
   resolution                  String?
+  /// @sensitivity:internal
   sourceEventId               Int       @unique @map("source_event_id")
 
   @@map("inventory_merge_conflicts")
 }
 
 model InventoryProvisionalResolution {
+  /// @sensitivity:public
   id                Int      @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId             String   @map("org_id")
+  /// @sensitivity:public
   provisionalGtin13 String   @map("provisional_gtin13")
+  /// @sensitivity:public
   kind              String   // "approved" | "mapped_to_existing" | "rejected"
+  /// @sensitivity:public
   realGtin13        String?  @map("real_gtin13")
+  /// @sensitivity:internal
   rejectionReason   String?  @map("rejection_reason")
+  /// @sensitivity:public
   recordedAt        DateTime @default(now()) @map("recorded_at")
+  /// @sensitivity:internal
   sourceEventId     Int?     @map("source_event_id")
 
   @@unique([orgId, provisionalGtin13], name: "provisional_resolution_org_gtin_unique")
@@ -134,52 +212,84 @@ model InventoryProvisionalResolution {
 }
 
 model InventoryReceivedOrgEvent {
+  /// @sensitivity:public
   id            Int      @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId         String   @map("org_id")
+  /// @sensitivity:public
   eventType     String   @map("event_type")
+  /// @sensitivity:internal
   payload       String
+  /// @sensitivity:public
   receivedAt    DateTime @map("received_at")
+  /// @sensitivity:public
   status        String   @default("pending")
+  /// @sensitivity:internal
   failureReason String?  @map("failure_reason")
 
   @@map("received_org_events")
 }
 
 model ProvisionalItemLog {
+  /// @sensitivity:public
   id                Int      @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId             String   @map("org_id")
+  /// @sensitivity:public
   provisionalItemId Int?     @map("provisional_item_id")
+  /// @sensitivity:public
   gtin13            String
+  /// @sensitivity:public
   eventType         String   @map("event_type")
+  /// @sensitivity:internal
   notes             String?
+  /// @sensitivity:internal
   performedBy       Int?     @map("performed_by")
+  /// @sensitivity:internal
   performedByUsername String? @map("performed_by_username")
+  /// @sensitivity:public
   createdAt         DateTime @map("created_at")
 
   @@map("provisional_item_log")
 }
 
 model ReceivedInventoryDelta {
+  /// @sensitivity:public
   id            Int      @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId         String   @map("org_id")
+  /// @sensitivity:internal
   receiptId     String   @unique @map("receipt_id")
+  /// @sensitivity:internal
   deltaJson     String   @map("delta_json")
+  /// @sensitivity:public
   status        String
+  /// @sensitivity:internal
   failureReason String?  @map("failure_reason")
+  /// @sensitivity:public
   receivedAt    DateTime @default(now()) @map("received_at")
 
   @@map("received_inventory_deltas")
 }
 
 model LocationLog {
+  /// @sensitivity:public
   id         Int      @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId      String   @map("org_id")
+  /// @sensitivity:public
   locationId Int      @map("location_id")
+  /// @sensitivity:internal
   userId     Int?     @map("user_id")
+  /// @sensitivity:internal
   username   String?  @map("username")
+  /// @sensitivity:public
   changedAt  DateTime @map("changed_at")
+  /// @sensitivity:public
   eventType  String   @map("event_type")
+  /// @sensitivity:public
   nameBefore String?  @map("name_before")
+  /// @sensitivity:public
   nameAfter  String?  @map("name_after")
 
   @@map("location_log")
