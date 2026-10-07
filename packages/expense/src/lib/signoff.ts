@@ -30,6 +30,14 @@ export interface FilledSeat {
   signerUserId: number;
 }
 
+/**
+ * A reimbursement whose reimbursee is not known. Its conflict check cannot run, so it is held
+ * from the outbox and takes no sign-off until FINANCE sets the reimbursee.
+ */
+export function reimburseeUnknown(expense: { needsReimbursement: boolean; backfill: boolean; reimburseePersonId: number | null }): boolean {
+  return expense.needsReimbursement && !expense.backfill && expense.reimburseePersonId === null;
+}
+
 export function lineKind(expense: { needsReimbursement: boolean }): LineKind {
   return expense.needsReimbursement ? "reimbursement" : "card_charge";
 }

@@ -168,6 +168,9 @@ export interface ExpenseIntake {
   receive(receipt: unknown): Promise<{ receiptId: string; status: "created" | "already_applied" }>;
 }
 
+/** FINANCE names the Person owed a reimbursement whose receipt did not carry one. */
+export type SetReimbursee = (orgId: string, expenseId: string, personId: number, principal: ExpensePrincipal) => Promise<void>;
+
 /** X12 callee: when QuickBooks recorded each receipt's reimbursement as paid; null = not yet. */
 export interface ReimbursementStatus {
   forReceipts(receiptIds: unknown): Promise<Map<string, { paidOn: string | null }>>;

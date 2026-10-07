@@ -1,7 +1,8 @@
 // GC-FIN-CONTROL flags: surfaced to a human for checkoff, never enforced.
 import type { ExpenseSettings } from "../contract";
+import { reimburseeUnknown } from "./signoff";
 
-export const FLAG_KINDS = ["TAX_ATTACHED", "THRESHOLD_CROSSED", "CAPITAL_EQUIPMENT", "MISSING_RECEIPT", "NON_EVERYDAY", "COI"] as const;
+export const FLAG_KINDS = ["TAX_ATTACHED", "THRESHOLD_CROSSED", "CAPITAL_EQUIPMENT", "MISSING_RECEIPT", "NON_EVERYDAY", "COI", "REIMBURSEE_UNKNOWN"] as const;
 export type FlagKind = (typeof FLAG_KINDS)[number];
 export type FlagAudience = "FINANCE" | "BOARD";
 
@@ -13,6 +14,7 @@ export const FLAG_AUDIENCE: Record<FlagKind, FlagAudience> = {
   MISSING_RECEIPT: "FINANCE",
   NON_EVERYDAY: "FINANCE",
   COI: "BOARD",
+  REIMBURSEE_UNKNOWN: "FINANCE",
 };
 
 /**
@@ -24,6 +26,9 @@ export function detectIntakeFlags(
     taxCents: number;
     receiptTotalCents: number;
     lineItems: { unitPriceCents: number; totalPriceCents: number }[];
+    needsReimbursement?: boolean;
+    backfill?: boolean;
+    reimburseePersonId?: number | null;
   },
   settings: Pick<ExpenseSettings, "boardReviewTotalCents" | "capitalEquipmentUnitCents">,
 ): FlagKind[] {
@@ -36,5 +41,8 @@ export function detectIntakeFlags(
     flags.push("THRESHOLD_CROSSED");
   }
   if (expense.lineItems.some((li) => li.unitPriceCents >= settings.capitalEquipmentUnitCents)) flags.push("CAPITAL_EQUIPMENT");
+  if (reimburseeUnknown({ needsReimbursement: expense.needsReimbursement ?? false, backfill: expense.backfill ?? false, reimburseePersonId: expense.reimburseePersonId ?? null })) {
+    flags.push("REIMBURSEE_UNKNOWN");
+  }
   return flags;
 }

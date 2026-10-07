@@ -54,6 +54,10 @@ describe("flags", () => {
 
   it("raises tax, $2,000 review and $500 equipment flags; threshold and COI go to the board", () => {
     expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 100, lineItems: [line(100)] }, LIMITS)).toEqual([]);
+    const reimbursement = { taxCents: 0, receiptTotalCents: 100, lineItems: [line(100)], needsReimbursement: true };
+    expect(detectIntakeFlags(reimbursement, LIMITS)).toEqual(["REIMBURSEE_UNKNOWN"]);
+    expect(detectIntakeFlags({ ...reimbursement, reimburseePersonId: 9 }, LIMITS)).toEqual([]);
+    expect(detectIntakeFlags({ ...reimbursement, backfill: true }, LIMITS)).toEqual([]);
     expect(detectIntakeFlags({ taxCents: 1, receiptTotalCents: 100, lineItems: [line(100)] }, LIMITS)).toEqual(["TAX_ATTACHED"]);
     expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 199_999, lineItems: [line(49_999)] }, LIMITS)).toEqual([]);
     expect(detectIntakeFlags({ taxCents: 0, receiptTotalCents: 200_000, lineItems: [line(100)] }, LIMITS)).toEqual(["THRESHOLD_CROSSED"]);

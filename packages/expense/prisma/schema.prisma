@@ -320,7 +320,8 @@ model ExpenseLineSignoff {
 }
 
 // A GC-FIN-CONTROL flag surfaced to finance or board for checkoff. kind: TAX_ATTACHED | CAPITAL_EQUIPMENT |
-// THRESHOLD_CROSSED | MISSING_RECEIPT | NON_EVERYDAY | COI. audience: FINANCE | BOARD.
+// THRESHOLD_CROSSED | MISSING_RECEIPT | NON_EVERYDAY | COI |
+// REIMBURSEE_UNKNOWN. audience: FINANCE | BOARD.
 model ExpenseFlag {
   id                   Int       @id @default(autoincrement())
   orgId                String    @map("org_id")

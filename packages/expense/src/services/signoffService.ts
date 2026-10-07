@@ -1,13 +1,13 @@
 // Sign-off seats on reimbursement and card-charge lines (F2 / F2-COI). The signer is always the
 // principal; a line with an unfilled seat holds its expense out of the QB outbox.
 import { db, isUniqueConstraintError } from "../db";
-import type { ExpensePrincipal } from "../contract";
-import { getOrg } from "../runtime";
+import type { ExpensePrincipal, SetReimbursee } from "../contract";
+import { assertOrg, getExpenseRuntime, getOrg } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
-import { filledSeatsByLine, signoffFactsByLine, unsignedLines } from "../lib/signoff-facts";
-import { blockedSeats, missingSeats, signoffRefusal, type Seat } from "../lib/signoff";
+import { conflictedParties, filledSeatsByLine, signoffFactsByLine, unsignedLines } from "../lib/signoff-facts";
+import { blockedSeats, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
 import { raiseFlag } from "./flagService";
 import { ServiceError } from "./serviceError";
 
@@ -23,6 +23,7 @@ export async function signLine(principal: ExpensePrincipal, lineItemId: number, 
   const { expense } = line;
   if (expense.backfill) throw new ServiceError(400, "A backfilled expense is already booked; it takes no sign-off");
   if (CLOSED_STATES.has(expense.state)) throw new ServiceError(400, `Expense is ${expense.state}`);
+  if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before anyone signs");
 
   const facts = (await signoffFactsByLine(db, expense)).get(lineItemId)!;
   const filled = (await filledSeatsByLine(db, expense.id)).get(lineItemId) ?? [];
@@ -53,6 +54,57 @@ export async function signLine(principal: ExpensePrincipal, lineItemId: number, 
     await drainExpense(expense.orgId, expense.id);
   }
 }
+
+/**
+ * Sets the Person owed a reimbursement, clears REIMBURSEE_UNKNOWN, and voids every non-submitter
+ * sign-off by someone the new reimbursee conflicts, so that seat is signed again.
+ */
+export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, principal) => {
+  assertOrg(orgId);
+  const actor = actorOf(principal);
+  if (!principal.isFinance) throw new ServiceError(403, "Only FINANCE sets the reimbursee");
+  if (!Number.isInteger(personId) || personId <= 0) throw new ServiceError(400, "personId must be a positive integer");
+  const ownHousehold = [personId, ...(await getExpenseRuntime().signoff.householdOf([personId]))];
+  if (ownHousehold.includes(actor.userId)) throw new ServiceError(403, "You cannot name yourself or your household as reimbursee");
+
+  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId } });
+  if (!expense) throw new ServiceError(404, "Expense not found");
+  if (!expense.needsReimbursement) throw new ServiceError(400, "Expense is not a reimbursement");
+  if (expense.backfill) throw new ServiceError(400, "A backfilled expense is already booked; it takes no reimbursee");
+  if (CLOSED_STATES.has(expense.state)) throw new ServiceError(400, `Expense is ${expense.state}`);
+
+  const conflicted = await conflictedParties({ submitterId: expense.submitterId, reimburseePersonId: personId });
+  await db.$transaction(async (tx) => {
+    await tx.expense.update({ where: { id: expenseId }, data: { reimburseePersonId: personId } });
+    await writeAudit(tx, actor, {
+      expenseId,
+      action: "reimbursee_set",
+      fieldChanged: "reimburseePersonId",
+      valueBefore: expense.reimburseePersonId === null ? null : String(expense.reimburseePersonId),
+      valueAfter: String(personId),
+    });
+    const voided = await tx.expenseLineSignoff.findMany({
+      where: { expenseId, seat: { not: "SUBMITTER" }, signerUserId: { in: conflicted } },
+    });
+    await tx.expenseLineSignoff.deleteMany({ where: { id: { in: voided.map((v) => v.id) } } });
+    for (const v of voided) {
+      await writeAudit(tx, actor, {
+        expenseId,
+        action: "signoff_voided",
+        lineItemId: v.lineItemId,
+        fieldChanged: "seat",
+        valueBefore: v.seat,
+        notes: `signer ${v.signerUserId} conflicts with the reimbursee`,
+      });
+    }
+    await tx.expenseFlag.updateMany({
+      where: { expenseId, kind: "REIMBURSEE_UNKNOWN", checkedOffAt: null },
+      data: { checkedOffAt: new Date(), checkedOffByUserId: actor.userId, checkedOffByUsername: actor.username, notes: "reimbursee set" },
+    });
+  });
+
+  if (expense.state === "qb_pending") await drainExpense(orgId, expenseId);
+};
 
 /** Per line: the seats filled, still missing, and blocked (held until finance or the board acts). */
 export async function signoffStatus(expenseId: string) {

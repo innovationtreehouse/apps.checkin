@@ -55,6 +55,17 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
     expect((await db.expense.findFirst({ where: { id: hasProvisional.receiptId } }))!.reimburseePersonId).toBeNull();
   });
 
+  it("a reimbursement without reimburseePersonId raises REIMBURSEE_UNKNOWN to FINANCE; with one, or as a card charge, it does not", async () => {
+    const flagsOf = async (id: string) => (await db.expenseFlag.findMany({ where: { expenseId: id, kind: "REIMBURSEE_UNKNOWN" } })).map((f) => f.audience);
+    await receiveCompletedReceipt({ ...allRecognized, needsReimbursement: true });
+    expect(await flagsOf(allRecognized.receiptId)).toEqual(["FINANCE"]);
+
+    await receiveCompletedReceipt({ ...hasProvisional, needsReimbursement: true, reimburseePersonId: 9 });
+    await receiveCompletedReceipt({ ...allRecognized, receiptId: "r-card" });
+    expect(await flagsOf(hasProvisional.receiptId)).toEqual([]);
+    expect(await flagsOf("r-card")).toEqual([]);
+  });
+
   it("a repeat call returns already_applied and changes nothing", async () => {
     await receiveCompletedReceipt(allRecognized);
     const before = await snapshot(allRecognized.receiptId);
