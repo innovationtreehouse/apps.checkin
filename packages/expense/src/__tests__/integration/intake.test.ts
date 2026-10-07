@@ -7,7 +7,7 @@ import { describe, it, expect } from "vitest";
 import { fixture } from "@inventory/receipt-contract-fixtures";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { receiveCompletedReceipt } from "../../services/intakeService";
+import { receiveCompletedReceipt, replayReceivedPayloads } from "../../services/intakeService";
 
 type Receipt = { receiptId: string; orgId: string; taxCents: number; lineItems: Array<{ gtin13?: string | null; isProvisional?: boolean }> };
 
@@ -88,5 +88,52 @@ describeDb("S2 intake — has-provisional fixture", () => {
     const rows = await db.provisionalItemMap.findMany({ where: { provisionalGtin13: { in: gtins } } });
     expect(rows).toHaveLength(new Set(gtins).size);
     expect(rows.every((r) => r.status === "pending")).toBe(true);
+  });
+});
+
+describeDb("S2 intake — applied is written only after processing commits", () => {
+  it("a row left received (a crash before the expense existed) is processed on retry", async () => {
+    await db.receivedExpensePayload.create({
+      data: { orgId: allRecognized.orgId, receiptId: allRecognized.receiptId, payloadJson: "{}", status: "received" },
+    });
+
+    expect((await receiveCompletedReceipt(allRecognized)).status).toBe("created");
+
+    const s = await snapshot(allRecognized.receiptId);
+    expect(s.expenses).toBe(1);
+    expect(s.payloads.map((p) => p.status)).toEqual(["applied"]);
+  });
+
+  it("a row left received after processing finished is marked applied without reprocessing", async () => {
+    await receiveCompletedReceipt(allRecognized);
+    await db.receivedExpensePayload.updateMany({ data: { status: "received" } });
+    const before = await snapshot(allRecognized.receiptId);
+
+    expect((await receiveCompletedReceipt(allRecognized)).status).toBe("already_applied");
+
+    const after = await snapshot(allRecognized.receiptId);
+    expect({ ...after, payloads: [] }).toEqual({ ...before, payloads: [] });
+    expect(after.payloads.map((p) => p.status)).toEqual(["applied"]);
+  });
+
+  it("two concurrent calls create one expense and one flow, and neither fails", async () => {
+    const results = await Promise.all([receiveCompletedReceipt(allRecognized), receiveCompletedReceipt(allRecognized)]);
+
+    expect(results.map((r) => r.status).sort()).toEqual(["already_applied", "created"]);
+    const s = await snapshot(allRecognized.receiptId);
+    expect(s.expenses).toBe(1);
+    expect(s.approvals).toBe(allRecognized.lineItems.length);
+    expect(await db.expenseAuditLog.count({ where: { expenseId: allRecognized.receiptId, action: "financial_flow_started" } })).toBe(1);
+    expect(s.payloads.map((p) => p.status)).toEqual(["applied"]);
+  });
+
+  it("the catch-up sweep replays a payload left received or failed", async () => {
+    await db.receivedExpensePayload.create({
+      data: { orgId: allRecognized.orgId, receiptId: allRecognized.receiptId, payloadJson: JSON.stringify(allRecognized), status: "received" },
+    });
+
+    expect(await replayReceivedPayloads()).toEqual({ applied: 1, failed: 0 });
+
+    expect((await snapshot(allRecognized.receiptId)).expenses).toBe(1);
   });
 });

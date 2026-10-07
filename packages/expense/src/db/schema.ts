@@ -16,7 +16,7 @@ export type ExpenseState =
 export const provisionalItemMapStatusEnum = ["pending", "approved", "rejected", "mapped_to_existing"] as const;
 export type ProvisionalItemMapStatus = (typeof provisionalItemMapStatusEnum)[number];
 
-export const receivedExpensePayloadStatusEnum = ["applied", "failed"] as const;
+export const receivedExpensePayloadStatusEnum = ["received", "applied", "failed"] as const;
 export type ReceivedExpensePayloadStatus = (typeof receivedExpensePayloadStatusEnum)[number];
 
 export const receivedOrgEventStatusEnum = ["pending", "processed", "failed"] as const;

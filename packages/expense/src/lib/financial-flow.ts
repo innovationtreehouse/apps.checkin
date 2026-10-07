@@ -14,6 +14,7 @@ export async function isOrgLevelBucket(bucketId: number): Promise<boolean> {
   return (await getExpenseRuntime().signoff.bucketApprovers(bucketId)).orgLevel;
 }
 
+/** Creates the line approvals and leaves `pending`. A no-op when another call already started the flow. */
 export async function initFinancialFlow(expenseId: string, orgId: string, backfill = false): Promise<void> {
   const lineItems = await db.expenseLineItem.findMany({ where: { expenseId } });
 
@@ -34,6 +35,9 @@ export async function initFinancialFlow(expenseId: string, orgId: string, backfi
 
   // Approval creation and state transition are atomic: either both land or neither does.
   await db.$transaction(async (tx) => {
+    // Row-locking claim on the pending expense: a concurrent caller waits here, then finds it started.
+    const claimed = await tx.expense.updateMany({ where: { id: expenseId, state: "pending" }, data: { state: "pending" } });
+    if (claimed.count === 0) return;
     for (const li of lineItems) {
       const ownerId = resolvedOwners.get(li.id) ?? null;
       const preApproved = backfill || (ownerId !== null && orgLevel.get(ownerId) === true);

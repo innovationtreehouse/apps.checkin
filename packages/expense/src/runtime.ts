@@ -14,18 +14,30 @@ import {
   type SignoffDirectory,
 } from "./contract";
 
+export interface QuickBooksPorts {
+  reader: QbReader;
+  writer: QbWriter;
+}
+
 export interface ExpenseConfig {
   /** Accessor, so a multi-org host can resolve the org per request without a library change. */
   org: () => OrgIdentity;
-  owners?: OwnerDirectory;
+  budgetOwners?: OwnerDirectory;
+  /** Who may fill a sign-off seat: bucket approvers, role holders, households, membership. */
   signoff?: SignoffDirectory;
   catalog?: CatalogReader;
   catalogEvents?: CatalogEventSource;
-  qbReader?: QbReader;
-  qbWriter?: QbWriter;
+  quickbooks?: Partial<QuickBooksPorts>;
 }
 
-export type ExpenseRuntime = Required<ExpenseConfig>;
+export interface ExpenseRuntime {
+  org: () => OrgIdentity;
+  budgetOwners: OwnerDirectory;
+  signoff: SignoffDirectory;
+  catalog: CatalogReader;
+  catalogEvents: CatalogEventSource;
+  quickbooks: QuickBooksPorts;
+}
 
 // ponytail: one runtime per process, set once at app boot.
 let runtime: ExpenseRuntime | null = null;
@@ -34,12 +46,14 @@ let runtime: ExpenseRuntime | null = null;
 export function configureExpense(config: ExpenseConfig): void {
   runtime = {
     org: config.org,
-    owners: config.owners ?? inertOwnerDirectory,
+    budgetOwners: config.budgetOwners ?? inertOwnerDirectory,
     signoff: config.signoff ?? inertSignoffDirectory,
     catalog: config.catalog ?? inertCatalogReader,
     catalogEvents: config.catalogEvents ?? inertCatalogEventSource,
-    qbReader: config.qbReader ?? inertQbReader,
-    qbWriter: config.qbWriter ?? inertQbWriter,
+    quickbooks: {
+      reader: config.quickbooks?.reader ?? inertQbReader,
+      writer: config.quickbooks?.writer ?? inertQbWriter,
+    },
   };
 }
 

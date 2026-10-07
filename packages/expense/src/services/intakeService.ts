@@ -2,7 +2,8 @@
 // receiptId — the "already applied" check lives here, so the in-process caller gets it.
 import { CompletedReceiptSchema, type CompletedReceipt } from "@inventory/receipt-types";
 import { db, isUniqueConstraintError } from "../db";
-import { assertOrg } from "../runtime";
+import { assertOrg, getOrg } from "../runtime";
+import { logError } from "../lib/logger";
 import type { ExpenseIntake } from "../contract";
 import { initFinancialFlow, checkApprovalAutoTransition } from "../lib/financial-flow";
 import { FLAG_AUDIENCE, detectIntakeFlags } from "../lib/flags";
@@ -17,61 +18,81 @@ export async function receiveCompletedReceipt(
 ): Promise<{ receiptId: string; status: "created" | "already_applied" }> {
   const receipt = CompletedReceiptSchema.parse(raw);
   assertOrg(receipt.orgId);
-  const already = { receiptId: receipt.receiptId, status: "already_applied" as const };
+  const { receiptId } = receipt;
 
-  const existingPayload = await db.receivedExpensePayload.findFirst({
-    where: { receiptId: receipt.receiptId },
-    select: { id: true, status: true },
-  });
-  if (existingPayload?.status === "applied") return already;
+  const existingPayload = await db.receivedExpensePayload.findFirst({ where: { receiptId }, select: { status: true } });
+  if (existingPayload?.status === "applied") return { receiptId, status: "already_applied" };
 
+  // Record arrival as "received"; "applied" is written only after processing commits, so a crash
+  // in between leaves a row the next call (or the catch-up sweep) finishes.
   const payloadJson = JSON.stringify(receipt);
-  let payloadRowId: number;
-  if (existingPayload) {
-    await db.receivedExpensePayload.update({
-      where: { id: existingPayload.id },
-      data: { orgId: receipt.orgId, payloadJson, status: "applied", failureReason: null, receivedAt: new Date() },
-    });
-    payloadRowId = existingPayload.id;
-  } else {
-    try {
-      const inserted = await db.receivedExpensePayload.create({
-        data: { orgId: receipt.orgId, receiptId: receipt.receiptId, payloadJson, status: "applied" },
-      });
-      payloadRowId = inserted.id;
-    } catch (err) {
-      // A concurrent call for the same receipt won the insert and applies it.
-      if (isUniqueConstraintError(err)) return already;
-      throw err;
-    }
+  const arrival = { orgId: receipt.orgId, payloadJson, status: "received", failureReason: null, receivedAt: new Date() };
+  try {
+    await db.receivedExpensePayload.upsert({ where: { receiptId }, create: { receiptId, ...arrival }, update: arrival });
+  } catch (err) {
+    // A concurrent call inserted the row first; processing below is idempotent.
+    if (!isUniqueConstraintError(err)) throw err;
   }
 
+  let created: boolean;
   try {
-    await processCompletedReceipt(receipt);
+    created = await processCompletedReceipt(receipt);
   } catch (err) {
-    await db.receivedExpensePayload.update({
-      where: { id: payloadRowId },
+    await db.receivedExpensePayload.updateMany({
+      where: { receiptId, status: { not: "applied" } },
       data: { status: "failed", failureReason: err instanceof Error ? err.message : String(err) },
     });
     throw err;
   }
-  return { receiptId: receipt.receiptId, status: "created" };
+  await db.receivedExpensePayload.update({ where: { receiptId }, data: { status: "applied", failureReason: null } });
+  return { receiptId, status: created ? "created" : "already_applied" };
+}
+
+/** Catch-up sweep: re-runs payloads left received or failed. Capped; counts only. */
+export async function replayReceivedPayloads(limit = 50): Promise<{ applied: number; failed: number }> {
+  const rows = await db.receivedExpensePayload.findMany({
+    where: { orgId: getOrg().id, status: { in: ["received", "failed"] } },
+    orderBy: { receivedAt: "asc" },
+    take: limit,
+    select: { payloadJson: true },
+  });
+  const counts = { applied: 0, failed: 0 };
+  for (const r of rows) {
+    try {
+      await receiveCompletedReceipt(JSON.parse(r.payloadJson));
+      counts.applied++;
+    } catch (err) {
+      counts.failed++;
+      logError("intake_replay_failed", {}, err);
+    }
+  }
+  return counts;
 }
 
 export const expenseIntake: ExpenseIntake = { receive: receiveCompletedReceipt };
 
-async function processCompletedReceipt(receipt: CompletedReceipt): Promise<void> {
-  const existingExpense = await db.expense.findFirst({ where: { id: receipt.receiptId } });
-
+/** Creates the expense and starts its flow; true when this call created it. Idempotent. */
+async function processCompletedReceipt(receipt: CompletedReceipt): Promise<boolean> {
+  const existingExpense = await db.expense.findFirst({ where: { id: receipt.receiptId }, select: { id: true } });
   if (existingExpense) {
-    const approval = await db.lineItemOwnerApproval.findFirst({
-      where: { expenseId: receipt.receiptId },
-      select: { id: true },
-    });
-    if (!approval) await startFlow(receipt);
-    return;
+    await startFlow(receipt);
+    return false;
   }
 
+  try {
+    await createExpense(receipt);
+  } catch (err) {
+    // A concurrent call created the expense; resume its flow instead.
+    if (!isUniqueConstraintError(err)) throw err;
+    await startFlow(receipt);
+    return false;
+  }
+  await trackProvisionals(receipt);
+  await startFlow(receipt);
+  return true;
+}
+
+async function createExpense(receipt: CompletedReceipt): Promise<void> {
   await db.$transaction(async (tx) => {
     await tx.expense.create({
       data: {
@@ -124,7 +145,9 @@ async function processCompletedReceipt(receipt: CompletedReceipt): Promise<void>
       skipDuplicates: true,
     });
   });
+}
 
+async function trackProvisionals(receipt: CompletedReceipt): Promise<void> {
   const provisionalItemMapRepo = createProvisionalItemMapRepository(db);
   const provisionalResolutionRepo = createProvisionalResolutionRepository(db);
   const provisionalItemMapService = createProvisionalItemMapService({
@@ -167,11 +190,10 @@ async function processCompletedReceipt(receipt: CompletedReceipt): Promise<void>
       }
     }
   }
-
-  await startFlow(receipt);
 }
 
-// Pre-approved lines (backfill, org-level buckets) drive owner_approval straight through.
+// Starts the flow once (initFinancialFlow claims the pending expense); pre-approved lines
+// (backfill, org-level buckets) then drive owner_approval straight through.
 async function startFlow(receipt: CompletedReceipt): Promise<void> {
   await initFinancialFlow(receipt.receiptId, receipt.orgId, receipt.backfill);
   await checkApprovalAutoTransition(receipt.receiptId, SYSTEM_ACTOR);

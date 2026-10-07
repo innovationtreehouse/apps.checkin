@@ -1,4 +1,4 @@
-import { afterEach, beforeEach } from "vitest";
+import { afterEach, beforeEach, expect } from "vitest";
 import { db } from "../db";
 import { configureExpense } from "../runtime";
 import { ORG } from "./helpers/seed";
@@ -7,8 +7,8 @@ import { ORG } from "./helpers/seed";
 beforeEach(() => configureExpense({ org: () => ({ id: ORG, name: "Org One" }) }));
 
 afterEach(async () => {
-  // A Docker-less run (DB suites skipped) never connects just to clean up.
-  if (!process.env.EXPENSE_DATABASE_URL) return;
+  // Only the integration tier touches the database; a Docker-less run never connects to clean up.
+  if (!process.env.EXPENSE_DATABASE_URL || !expect.getState().testPath?.includes("/integration/")) return;
   // Children before parents (holds and audit rows restrict their expense and line).
   await db.expenseAuditLog.deleteMany();
   await db.expenseHold.deleteMany();

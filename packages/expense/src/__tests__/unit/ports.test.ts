@@ -26,10 +26,10 @@ describe("runtime", () => {
     const rt = getExpenseRuntime();
     expect(await rt.catalog.listCategories()).toEqual([]);
     expect(await rt.catalogEvents.eventsAfter(0)).toEqual([]);
-    expect(await rt.owners.list()).toEqual([]);
+    expect(await rt.budgetOwners.list()).toEqual([]);
     expect(await rt.signoff.bucketApprovers(1)).toEqual({ orgLevel: false, approvers: [] });
-    expect(await rt.qbReader.purchasesBetween("2026-01-01", "2026-01-31")).toEqual([]);
-    await expect(rt.qbWriter.create("Purchase", {})).rejects.toThrow(/not bound/);
+    expect(await rt.quickbooks.reader.purchasesBetween("2026-01-01", "2026-01-31")).toEqual([]);
+    await expect(rt.quickbooks.writer.create("Purchase", {})).rejects.toThrow(/not bound/);
   });
 
   it("assertOrg accepts only the injected org", () => {
