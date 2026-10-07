@@ -9,10 +9,12 @@ import { loginAs, api } from "./helpers";
 type ItemRow = {
   gtin13: string;
   name: string;
+  usageBehavior: string;
   category: { name: string; letter: string };
   subcategory: { name: string; number: number };
 };
 type CategoryRow = { id: number; name: string; letter: string; archivedAt: string | null };
+type SubcategoryRow = { id: number; number: number };
 
 describe("global catalog", () => {
   it("serves the seeded catalog to a viewer with nested category relations", async () => {
@@ -116,5 +118,37 @@ describe("global catalog", () => {
       body: JSON.stringify({ name: "Duplicate Letter", letter: "N" }),
     });
     expect(dup.status).toBe(409);
+  });
+
+  // Runs last: it adds an item, which would change the seeded count asserted above.
+  it("lets an INVENTORY_MANAGER create an item, edit it, and read the edit back", async () => {
+    const manager = await loginAs("inventory.manager@example.com");
+    const categories = await api<CategoryRow[]>(manager, "/api/catalog/categories");
+    const electronics = categories.json.find((c) => c.letter === "N")!;
+    const subs = await api<SubcategoryRow[]>(manager, `/api/catalog/subcategories?categoryId=${electronics.id}`);
+    const controlSystem = subs.json.find((s) => s.number === 10)!;
+
+    const name = `FlowTest Item ${Date.now()}`;
+    const created = await api<ItemRow>(manager, "/api/catalog/items", {
+      method: "POST",
+      body: JSON.stringify({ name, categoryId: electronics.id, subcategoryId: controlSystem.id, usageBehavior: "Durable" }),
+    });
+    expect(created.status).toBe(200);
+    expect(created.json.name).toBe(name);
+    expect(created.json.category.letter).toBe("N");
+    const { gtin13 } = created.json;
+
+    const renamed = `${name} (edited)`;
+    const edited = await api<ItemRow>(manager, `/api/catalog/items/${gtin13}`, {
+      method: "PUT",
+      body: JSON.stringify({ name: renamed, usageBehavior: "Single Use" }),
+    });
+    expect(edited.status).toBe(200);
+
+    const read = await api<ItemRow>(manager, `/api/catalog/items/${gtin13}`);
+    expect(read.status).toBe(200);
+    expect(read.json.name).toBe(renamed);
+    expect(read.json.usageBehavior).toBe("Single Use");
+    expect(read.json.subcategory.number).toBe(10);
   });
 });

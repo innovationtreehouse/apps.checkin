@@ -11,7 +11,8 @@ import {
   IconChevronUp, IconEdit, IconLink, IconPlus, IconSelector,
 } from "@tabler/icons-react";
 import { formatItemId } from "../lib/gtin";
-import { api, useCanManage } from "./api";
+import { api, errorMessage, lastPage, latestGate, useCanManage } from "./api";
+import LoadError from "./LoadError";
 import { USAGE_BEHAVIORS } from "./viewTypes";
 import type { CategoryRow, ItemRow, ItemReferenceRow, ReferenceConflictRow, SubcategoryRow, UsageBehavior } from "./viewTypes";
 import ItemReferencesModal from "./ItemReferencesModal";
@@ -36,17 +37,21 @@ function ReferencesTab() {
   const [showArchived, setShowArchived] = useState(false);
   const [refs, setRefs] = useState<ItemReferenceRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [begin] = useState(latestGate);
 
   const load = useCallback(async (q: string, sb: string, sd: string, sa: boolean) => {
+    const isLatest = begin();
     setLoading(true);
     try {
       const params = new URLSearchParams({ page: "1", limit: String(PAGE_LIMIT), sortBy: sb, sortDir: sd });
       if (q) params.set("q", q);
       if (sa) params.set("showArchived", "true");
-      setRefs(await api<ItemReferenceRow[]>(`/item-references?${params}`));
-    } catch (e) { console.error("[GlobalInventoryClient] failed to load item references", e); }
-    finally { setLoading(false); }
-  }, []);
+      const rows = await api<ItemReferenceRow[]>(`/item-references?${params}`);
+      if (isLatest()) { setRefs(rows); setError(null); }
+    } catch (e) { if (isLatest()) setError(errorMessage(e)); }
+    finally { if (isLatest()) setLoading(false); }
+  }, [begin]);
 
   useEffect(() => { load(debouncedSearch, sortBy, sortDir, showArchived); }, [load, debouncedSearch, sortBy, sortDir, showArchived]);
 
@@ -81,11 +86,13 @@ function ReferencesTab() {
   return (
     <Stack gap="sm">
       <Group justify="space-between" align="flex-end">
-        <TextInput placeholder="Filter by manufacturer, part #, description, or item…" value={search} onChange={(e) => setSearch(e.currentTarget.value)} maw={380} />
+        <TextInput aria-label="Filter references" placeholder="Filter by manufacturer, part #, description, or item…" value={search} onChange={(e) => setSearch(e.currentTarget.value)} maw={380} />
         <Checkbox label="Show archived references" checked={showArchived} onChange={(e) => setShowArchived(e.currentTarget.checked)} />
       </Group>
 
-      {loading ? <Text c="dimmed">Loading…</Text> : refs.length === 0 ? (
+      {error ? (
+        <LoadError what="references" message={error} onRetry={() => load(debouncedSearch, sortBy, sortDir, showArchived)} />
+      ) : loading ? <Text c="dimmed">Loading…</Text> : refs.length === 0 ? (
         <Text c="dimmed">No references found.</Text>
       ) : (
         <Table striped highlightOnHover withTableBorder verticalSpacing="xs">
@@ -124,7 +131,7 @@ function ReferencesTab() {
 }
 
 // ── Conflicts Tab ─────────────────────────────────────────────────────────────
-function ConflictsTab({ conflicts, onResolved }: { conflicts: ReferenceConflictRow[]; onResolved: () => void }) {
+function ConflictsTab({ conflicts, error, onResolved }: { conflicts: ReferenceConflictRow[]; error: string | null; onResolved: () => void }) {
   const [resolving, setResolving] = useState(false);
 
   async function handleResolve(id: number, resolution: "keep_existing" | "use_proposed") {
@@ -137,6 +144,7 @@ function ConflictsTab({ conflicts, onResolved }: { conflicts: ReferenceConflictR
     finally { setResolving(false); }
   }
 
+  if (error) return <LoadError what="reference conflicts" message={error} onRetry={onResolved} />;
   if (conflicts.length === 0) return <Text c="dimmed">No unresolved conflicts.</Text>;
 
   return (
@@ -197,6 +205,10 @@ export default function GlobalInventoryClient() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const [subcategories, setSubcategories] = useState<SubcategoryRow[]>([]);
+  const [itemsError, setItemsError] = useState<string | null>(null);
+  const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [conflictsError, setConflictsError] = useState<string | null>(null);
+  const [beginItems] = useState(latestGate);
 
   const [modalOpen, { open, close }] = useDisclosure(false);
   const [editItem, setEditItem] = useState<ItemRow | null>(null);
@@ -212,19 +224,32 @@ export default function GlobalInventoryClient() {
   const [conflictsLoaded, setConflictsLoaded] = useState(false);
 
   const loadItems = useCallback(async (q: string, sb: string, sd: string, sa: boolean, p: number) => {
-    const params = new URLSearchParams({ page: String(p), limit: String(PAGE_SIZE), sortBy: sb, sortDir: sd });
+    const isLatest = beginItems();
     const countParams = new URLSearchParams();
-    if (q) { params.set("q", q); countParams.set("q", q); }
-    if (sa) { params.set("includeArchived", "true"); countParams.set("includeArchived", "true"); }
-    try {
-      const [rows, count] = await Promise.all([
+    if (q) countParams.set("q", q);
+    if (sa) countParams.set("includeArchived", "true");
+    const fetchPage = (n: number) => {
+      const params = new URLSearchParams({ page: String(n), limit: String(PAGE_SIZE), sortBy: sb, sortDir: sd, ...Object.fromEntries(countParams) });
+      return Promise.all([
         api<ItemRow[]>(`/items?${params}`),
         api<{ total: number }>(`/items/count?${countParams}`),
       ]);
+    };
+    try {
+      let [rows, count] = await fetchPage(p);
+      // Archiving the only row on the last page shrinks the list under us.
+      const last = lastPage(count.total, PAGE_SIZE);
+      if (p > last) {
+        p = last;
+        [rows, count] = await fetchPage(p);
+      }
+      if (!isLatest()) return;
+      setPage(p);
       setItems(rows);
       setTotal(count.total);
-    } catch (e) { console.error("[GlobalInventoryClient] failed to load items", e); }
-  }, []);
+      setItemsError(null);
+    } catch (e) { if (isLatest()) setItemsError(errorMessage(e)); }
+  }, [beginItems]);
 
   // Filter/sort change → back to page 1. Prev/Next call loadItems directly.
   useEffect(() => { setPage(1); loadItems(debouncedSearch, sortBy, sortDir, showArchived, 1); }, [loadItems, debouncedSearch, sortBy, sortDir, showArchived]);
@@ -233,20 +258,28 @@ export default function GlobalInventoryClient() {
     setPage(p);
     loadItems(debouncedSearch, sortBy, sortDir, showArchived, p);
   }
-  useEffect(() => { api<CategoryRow[]>("/categories").then(setCategories).catch((e) => console.error("[GlobalInventoryClient] failed to load categories", e)); }, []);
+  const loadCategories = useCallback(async () => {
+    try {
+      setCategories(await api<CategoryRow[]>("/categories"));
+      setOptionsError(null);
+    } catch (e) { setOptionsError(errorMessage(e)); }
+  }, []);
+  useEffect(() => { loadCategories(); }, [loadCategories]);
 
   async function loadSubcategories(categoryId: string) {
     if (!categoryId) { setSubcategories([]); return; }
     try {
       setSubcategories(await api<SubcategoryRow[]>(`/subcategories?categoryId=${categoryId}`));
-    } catch (e) { console.error("[GlobalInventoryClient] failed to load subcategories", e); }
+      setOptionsError(null);
+    } catch (e) { setOptionsError(errorMessage(e)); }
   }
 
   const loadConflicts = useCallback(async () => {
     try {
       setConflicts(await api<ReferenceConflictRow[]>(`/reference-conflicts?page=1&limit=${PAGE_LIMIT}`));
       setConflictsLoaded(true);
-    } catch (e) { console.error("[GlobalInventoryClient] failed to load reference conflicts", e); }
+      setConflictsError(null);
+    } catch (e) { setConflictsError(errorMessage(e)); }
   }, []);
 
   function handleTabChange(value: string | null) {
@@ -321,7 +354,7 @@ export default function GlobalInventoryClient() {
   const subcategoryOptions = subcategories.map((s) => ({ value: String(s.id), label: `${String(s.number).padStart(2, "0")} — ${s.name}` }));
   const usageBehaviorOptions = USAGE_BEHAVIORS.map((v) => ({ value: v, label: v }));
   const colSpan = 5 + (canEdit ? 1 : 0) + (showArchived ? 1 : 0);
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const totalPages = lastPage(total, PAGE_SIZE);
 
   return (
     <>
@@ -344,11 +377,12 @@ export default function GlobalInventoryClient() {
 
         <Tabs.Panel value="catalog">
           <Group mb="md" justify="space-between" align="flex-end">
-            <TextInput placeholder="Search by name, ID, category, or subcategory…" value={search} onChange={(e) => setSearch(e.currentTarget.value)} maw={400} />
+            <TextInput aria-label="Search items" placeholder="Search by name, ID, category, or subcategory…" value={search} onChange={(e) => setSearch(e.currentTarget.value)} maw={400} />
             <Checkbox label="Show archived parts" checked={showArchived} onChange={(e) => setShowArchived(e.currentTarget.checked)} />
           </Group>
 
-          <Table striped highlightOnHover withTableBorder verticalSpacing="xs">
+          {itemsError && <LoadError what="items" message={itemsError} onRetry={() => loadItems(debouncedSearch, sortBy, sortDir, showArchived, page)} />}
+          {!itemsError && <Table striped highlightOnHover withTableBorder verticalSpacing="xs">
             <Table.Thead style={THEAD_STYLE}>
               <Table.Tr>
                 <Table.Th onClick={() => toggleSort("name")} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}><Group gap={4} wrap="nowrap">Name <SortIcon col="name" /></Group></Table.Th>
@@ -384,8 +418,8 @@ export default function GlobalInventoryClient() {
                 </Table.Tr>
               ))}
             </Table.Tbody>
-          </Table>
-          {totalPages > 1 && (
+          </Table>}
+          {!itemsError && totalPages > 1 && (
             <Group justify="space-between" mt="md">
               <Text size="sm" c="dimmed">{total} item{total === 1 ? "" : "s"}</Text>
               <Pagination value={page} onChange={goToPage} total={totalPages} />
@@ -394,11 +428,12 @@ export default function GlobalInventoryClient() {
         </Tabs.Panel>
 
         {canEdit && <Tabs.Panel value="associations"><ReferencesTab /></Tabs.Panel>}
-        {canEdit && <Tabs.Panel value="conflicts"><ConflictsTab conflicts={conflicts} onResolved={loadConflicts} /></Tabs.Panel>}
+        {canEdit && <Tabs.Panel value="conflicts"><ConflictsTab conflicts={conflicts} error={conflictsError} onResolved={loadConflicts} /></Tabs.Panel>}
       </Tabs>
 
       <Modal opened={modalOpen} onClose={close} title={editItem ? "Edit Item" : "Add Item"} centered>
         <form onSubmit={handleSubmit}>
+          {optionsError && <LoadError what="categories" message={optionsError} onRetry={() => { loadCategories(); if (form.categoryId) loadSubcategories(form.categoryId); }} />}
           <TextInput label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.currentTarget.value })} required mb="sm" data-autofocus />
           <Select label="Usage Behavior" data={usageBehaviorOptions} value={form.usageBehavior || null} onChange={(v) => setForm({ ...form, usageBehavior: (v as UsageBehavior) ?? "" })} placeholder="Select usage behavior" required mb="sm" />
           {!editItem && (

@@ -11,6 +11,8 @@ import { config, ORG_DOMAIN } from "@/lib/config";
 import { evaluateMint, type MintMode } from "@/lib/impersonation";
 import { recordLedger } from "@/lib/dev/ledger";
 import { assignParticipantClaims } from "@/lib/authClaims";
+import { isCatalogViewerClient } from "@/lib/catalogNav";
+import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { ROLE_FLAGS, setRoleFlag } from "@/lib/roles";
 import { addHouseholdLead } from "@/lib/household/leads";
 import { withAuroraResumeRetry } from "@/lib/auroraResumeRetry";
@@ -164,19 +166,22 @@ const BOOTSTRAP_SYSADMINS = (process.env.BOOTSTRAP_SYSADMINS || "")
     .filter(Boolean);
 
 /**
- * Whether a VolunteerDesignation exists for this email (#1286 catalog-viewer
- * leg). Designations are keyed by email (no Person FK), so this can't ride the
- * person load's includes; the JWT callback resolves it and passes the result to
- * assignParticipantClaims, giving the session the full catalog-viewer signal the
- * server gate uses (access-resolvers 'catalog-viewer'). Indexed lookup on a
- * @unique column; null email (never a designation) skips the query.
+ * Stamp the catalog-viewer volunteer leg (#1286) onto an already-claimed token.
+ * Designations are keyed by email (no Person FK), so this can't ride the person
+ * load. Matching canonicalizes both sides (Gmail dot/plus-insensitive), the same
+ * rule as the dues path and the server gate. The lookup runs only when the leg
+ * decides admission: a DENIED token or one another leg already admits skips it.
  */
-async function hasVolunteerDesignation(email: string | null | undefined): Promise<boolean> {
-    if (!email) return false;
-    const designation = await withAuroraResumeRetry(() =>
-        prisma.volunteerDesignation.findUnique({ where: { email }, select: { id: true } }),
+async function stampVolunteerDesignation(token: JWT, email: string | null | undefined): Promise<void> {
+    token.hasVolunteerDesignation = false;
+    if (!email || token.denied || isCatalogViewerClient(token)) return;
+    const key = canonicalizeEmail(email);
+    // ponytail: full scan of a small board-maintained table so legacy non-canonical
+    // rows still match; switch to findUnique on the key once every row is canonical.
+    const designations = await withAuroraResumeRetry(() =>
+        prisma.volunteerDesignation.findMany({ select: { email: true } }),
     );
-    return !!designation;
+    token.hasVolunteerDesignation = designations.some((d) => canonicalizeEmail(d.email) === key);
 }
 
 export const authOptions: NextAuthOptions = {
@@ -391,10 +396,8 @@ export const authOptions: NextAuthOptions = {
 
                     // Stamp authority claims, applying the household login gate (a board
                     // "Deny Membership" forces denied=true and strips every role flag).
-                    assignParticipantClaims(token, {
-                        ...dbParticipant,
-                        hasVolunteerDesignation: await hasVolunteerDesignation(dbParticipant.email),
-                    });
+                    assignParticipantClaims(token, dbParticipant);
+                    await stampVolunteerDesignation(token, dbParticipant.email);
                 }
             } else if (token.id) {
                 // On every subsequent request (no `user` present), re-sync authority
@@ -434,10 +437,8 @@ export const authOptions: NextAuthOptions = {
                 // Re-stamp claims on every request so a board "Deny Membership" takes effect
                 // within the token's refresh window (updateAge), not only at next sign-in.
                 // assignParticipantClaims forces denied=true and clears all roles when DENIED.
-                assignParticipantClaims(token, {
-                    ...dbParticipant,
-                    hasVolunteerDesignation: await hasVolunteerDesignation(dbParticipant.email),
-                });
+                assignParticipantClaims(token, dbParticipant);
+                await stampVolunteerDesignation(token, dbParticipant.email);
             }
             return token;
         },
