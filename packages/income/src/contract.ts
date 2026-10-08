@@ -85,14 +85,6 @@ export interface OwnerDirectory {
   list(): Promise<OwnerInfo[]>;
 }
 
-/**
- * QuickBooks OAuth access-token source. Local stand-in for the type QB-0 adds to
- * `@inventory/quickbooks`; replace with that import once the package is on main.
- */
-export interface AccessTokenSource {
-  current(): Promise<string>;
-}
-
 /** A QuickBooks Deposit, reduced to the fields reconciliation needs. `txnDate` is YYYY-MM-DD. */
 export interface QbDeposit {
   id: string;
@@ -101,7 +93,10 @@ export interface QbDeposit {
   depositToAccount: string | null;
 }
 
-/** Read-only QuickBooks deposit feed (QB-0's `depositsSince`, built over an AccessTokenSource). */
+/**
+ * Read-only QuickBooks deposit feed: deposits with txnDate in [from, to], both inclusive
+ * YYYY-MM-DD, at most MAX_WINDOW_DAYS wide. `quickBooksDepositSource` binds it to QuickBooks.
+ */
 export interface QbDepositSource {
-  depositsSince(from: Date): Promise<QbDeposit[]>;
+  depositsBetween(from: string, to: string): Promise<QbDeposit[]>;
 }

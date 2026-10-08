@@ -19,6 +19,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@inventory/money": "*",
+    "@inventory/quickbooks": "*",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0"
   },

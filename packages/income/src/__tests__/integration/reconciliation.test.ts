@@ -41,7 +41,7 @@ const mirror: PayoutMirror = {
 function bind() {
   configureIncome({
     mirror,
-    deposits: { depositsSince: async (from) => deposits.filter((d) => d.txnDate >= from.toISOString().slice(0, 10)) },
+    deposits: { depositsBetween: async (from, to) => deposits.filter((d) => d.txnDate >= from && d.txnDate <= to) },
   });
 }
 
@@ -67,7 +67,7 @@ describeDb("runReconcile — automatic transitions", () => {
   });
 
   it("is a no-op while the mirror is unbound", async () => {
-    configureIncome({ deposits: { depositsSince: async () => [] } });
+    configureIncome({ deposits: { depositsBetween: async () => [] } });
     expect(await runReconcile(ORG_A, NOW)).toEqual({ status: "unbound" });
   });
 
@@ -244,6 +244,15 @@ describeDb("runReconcile — drift", () => {
     expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "DRIFT" });
   });
 
+  it("reopens as DRIFT, reason deposit_missing, when the deposit's date moves outside every read window", async () => {
+    await matched();
+    deposits = [dep("D1", "2026-07-20", 97)];
+    expect(await runReconcile(ORG_A, NOW)).toMatchObject({ drifted: 1 });
+    expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "DRIFT", depositId: null });
+    const log = await db.incomeAuditLog.findFirstOrThrow({ where: { action: "reconciliation.drift" } });
+    expect(log.reason).toBe("deposit_missing");
+  });
+
   it("reopens as DRIFT when the payout net changes", async () => {
     await matched();
     setPayout("P1", { netCents: 90 });
@@ -279,7 +288,7 @@ describeDb("runReconcile — drift", () => {
     await matched();
     configureIncome({
       mirror,
-      deposits: { depositsSince: async () => deposits },
+      deposits: { depositsBetween: async () => deposits },
       reconcileFrom: new Date("2026-06-15T00:00:00Z"),
     });
     expect(await runReconcile(ORG_A, NOW)).toMatchObject({ drifted: 0 });
@@ -492,7 +501,7 @@ describeDb("matchToDeposit — claims and exclusions are read under the lock", (
     configureIncome({
       mirror,
       deposits: {
-        depositsSince: async () => {
+        depositsBetween: async () => {
           // A concurrent exclusion lands while the QuickBooks read is in flight.
           await new Promise((r) => setTimeout(r, 50));
           await db.incomeQbMatchExclusion.create({

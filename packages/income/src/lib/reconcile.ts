@@ -3,6 +3,7 @@ import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorPayout, MirrorSource, PayoutMirror, QbDeposit } from "../contract";
 import { getIncomeConfig, isoDay } from "../runtime";
 import { recordAudit, type TxClient } from "./audit";
+import { depositsIn, type DayRange } from "./qb-deposits";
 
 export const RECON_STATUS = {
   WAITING: "WAITING",
@@ -117,13 +118,17 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
   // still paid and inside reconcileFrom. Rows settled after this read are checked next run.
   const settled = await db.payoutReconciliation.findMany({
     where: { orgId, status: { in: SETTLED_STATUSES } },
-    select: { payoutGid: true, payoutDate: true },
+    select: { payoutGid: true, depositTxnDate: true },
   });
   const settledPayouts = new Map<string, MirrorPayout | null>();
   for (const { payoutGid } of settled) settledPayouts.set(payoutGid, await mirror.payout(payoutGid));
 
-  const earliest = [...facts.map((f) => f.payoutDate), ...settled.map((r) => r.payoutDate)].sort()[0];
-  const deposits = earliest ? await depositSource.depositsSince(new Date(`${earliest}T00:00:00Z`)) : [];
+  // Reads only each payout's match window and each settled deposit's booked day, never history.
+  const ranges: DayRange[] = [
+    ...facts.map((f): DayRange => [f.payoutDate, addDays(f.payoutDate, window)]),
+    ...settled.flatMap((r): DayRange[] => (r.depositTxnDate ? [[r.depositTxnDate, r.depositTxnDate]] : [])),
+  ];
+  const deposits = await depositsIn(depositSource, ranges);
   const depositsById = new Map(deposits.map((d) => [d.id, d]));
 
   return db.$transaction(

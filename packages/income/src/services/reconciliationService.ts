@@ -14,6 +14,7 @@ import {
   type ReconStatus,
 } from "../lib/reconcile";
 import { recordAudit, type TxClient } from "../lib/audit";
+import { depositsIn } from "../lib/qb-deposits";
 import { ServiceError } from "./serviceError";
 
 export interface Actor {
@@ -41,8 +42,7 @@ async function windowDeposits(payoutDate: string): Promise<QbDeposit[]> {
   const w = windowDays();
   const from = addDays(payoutDate, -w);
   const to = addDays(payoutDate, w);
-  const deposits = await source.depositsSince(new Date(`${from}T00:00:00Z`));
-  return deposits.filter((d) => d.txnDate >= from && d.txnDate <= to);
+  return depositsIn(source, [[from, to]]);
 }
 
 /** Drop deposits a payout already holds or finance excluded. */
