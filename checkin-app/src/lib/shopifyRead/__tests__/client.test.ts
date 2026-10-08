@@ -252,6 +252,21 @@ describe('order reads', () => {
         expect(sql).toContain(`updated_at AT TIME ZONE 'UTC' AS "updatedAt"`);
     });
 
+    it('ordersByLegacyIds ignores test orders', async () => {
+        queryMock.mockResolvedValue({ rows: [] });
+        await freshClient().ordersByLegacyIds(['123']);
+        expect(sqlOf(0)).toContain('test = false');
+    });
+
+    it('disputedOrderGids counts disputes on real orders only', async () => {
+        queryMock.mockResolvedValue({ rows: [{ orderGid: 'gid://shopify/Order/1' }] });
+        expect(await freshClient().disputedOrderGids(['gid://shopify/Order/1'])).toEqual(
+            new Set(['gid://shopify/Order/1']),
+        );
+        expect(sqlOf(0)).toContain('JOIN shop_order o');
+        expect(sqlOf(0)).toContain('o.test = false');
+    });
+
     it('neither read opens a pool when the mirror is unwired', async () => {
         delete process.env.SHOPIFY_READ_DATABASE_URL;
         const client = freshClient();

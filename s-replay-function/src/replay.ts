@@ -71,11 +71,11 @@ export async function replay(prisma: PrismaClient, args: ReplayArgs): Promise<Re
           orderBy: { id: "asc" },
           take: batchSize,
           ...(cursorId !== undefined ? { cursor: { id: cursorId }, skip: 1 } : {}),
-          select: { id: true, storeId: true, objectType: true, payload: true, shopifyGid: true },
+          select: { id: true, storeId: true, objectType: true, payload: true, shopifyGid: true, source: true },
         });
         if (rows.length === 0) break;
         for (const row of rows) {
-          await prisma.$transaction((tx) => projectNode(tx, row.storeId, row.objectType, row.payload));
+          await prisma.$transaction((tx) => projectNode(tx, row.storeId, row.objectType, row.payload, row.source));
           processed++;
           seen.add(row.shopifyGid);
           lastCommittedId = row.id;
