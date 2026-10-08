@@ -5,6 +5,14 @@ generator client {
   moduleFormat = "cjs"
 }
 
+// Brings the income schema under checkin's security regime (design #1283 §7): the
+// same generator emits a classifications map, merged in checkin-app/src/security/core.ts.
+// Paths are relative to this schema file.
+generator security {
+  provider = "node ../../checkin-app/scripts/security-generator.js"
+  output   = "../../../checkin-app/src/security/generated/income-classifications.ts"
+}
+
 datasource db {
   provider = "postgresql"
 }
@@ -15,22 +23,39 @@ datasource db {
 // status: WAITING | OPEN | MATCHED | POSTED | RESOLVED. origin: matched | created, set while
 // the row holds a deposit. WAITING, POSTED, POST_FAILED and "created" belong to the create path.
 model PayoutReconciliation {
+  /// @sensitivity:public
   id                Int       @id @default(autoincrement()) @map("id")
+  /// @sensitivity:internal
   orgId             String    @map("org_id")
+  /// @sensitivity:internal
   payoutGid         String    @map("payout_gid")
+  /// @sensitivity:internal
   payoutDate        String    @map("payout_date")
+  /// @sensitivity:internal
   payoutNetCents    Int       @map("payout_net_cents")
+  /// @sensitivity:internal
   status            String    @map("status")
+  /// @sensitivity:internal
   kind              String?   @map("kind")
+  /// @sensitivity:internal
   resolution        String?   @map("resolution")
+  /// @sensitivity:internal
   origin            String?   @map("origin")
+  /// @sensitivity:internal
   depositId         String?   @map("deposit_id")
+  /// @sensitivity:internal
   depositTxnDate    String?   @map("deposit_txn_date")
+  /// @sensitivity:internal
   depositTotalCents Int?      @map("deposit_total_cents")
+  /// @sensitivity:internal
   reason            String?   @map("reason")
+  /// @sensitivity:internal
   resolvedByUserId  Int?      @map("resolved_by_user_id")
+  /// @sensitivity:internal
   resolvedAt        DateTime? @map("resolved_at")
+  /// @sensitivity:internal
   createdAt         DateTime  @default(now()) @map("created_at")
+  /// @sensitivity:internal
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
   @@unique([orgId, payoutGid])
@@ -43,11 +68,17 @@ model PayoutReconciliation {
 // budget_owner_id is checkin's BudgetOwner.id in another database: no FK, validated through
 // the OwnerDirectory port. Unmapped variants book at organization level.
 model IncomeItemCategory {
+  /// @sensitivity:public
   id            Int      @id @default(autoincrement()) @map("id")
+  /// @sensitivity:internal
   orgId         String   @map("org_id")
+  /// @sensitivity:internal
   variantId     String   @map("variant_id")
+  /// @sensitivity:internal
   budgetOwnerId Int      @map("budget_owner_id")
+  /// @sensitivity:internal
   createdAt     DateTime @default(now()) @map("created_at")
+  /// @sensitivity:internal
   updatedAt     DateTime @updatedAt @map("updated_at")
 
   @@unique([orgId, variantId])
@@ -56,11 +87,17 @@ model IncomeItemCategory {
 
 // A QuickBooks deposit finance has permanently removed from matching (D5).
 model IncomeQbMatchExclusion {
+  /// @sensitivity:public
   id               Int      @id @default(autoincrement()) @map("id")
+  /// @sensitivity:internal
   orgId            String   @map("org_id")
+  /// @sensitivity:internal
   qbTxnId          String   @map("qb_txn_id")
+  /// @sensitivity:internal
   reason           String   @map("reason")
+  /// @sensitivity:internal
   excludedByUserId Int      @map("excluded_by_user_id")
+  /// @sensitivity:internal
   excludedAt       DateTime @default(now()) @map("excluded_at")
 
   @@unique([orgId, qbTxnId])
@@ -68,17 +105,29 @@ model IncomeQbMatchExclusion {
 }
 
 model IncomeAuditLog {
+  /// @sensitivity:public
   id            Int      @id @default(autoincrement()) @map("id")
+  /// @sensitivity:internal
   orgId         String   @map("org_id")
+  /// @sensitivity:internal
   actorUserId   Int?     @map("actor_user_id")
+  /// @sensitivity:internal
   actorUsername String?  @map("actor_username")
+  /// @sensitivity:internal
   action        String   @map("action")
+  /// @sensitivity:internal
   entityType    String   @map("entity_type")
+  /// @sensitivity:internal
   entityId      String?  @map("entity_id")
+  /// @sensitivity:internal
   before        String?  @map("before")
+  /// @sensitivity:internal
   after         String?  @map("after")
+  /// @sensitivity:internal
   reason        String?  @map("reason")
+  /// @sensitivity:internal
   correlationId String?  @map("correlation_id")
+  /// @sensitivity:internal
   createdAt     DateTime @default(now()) @map("created_at")
 
   @@map("audit_log")
