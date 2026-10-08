@@ -50,10 +50,15 @@ def skip_kiosk_keepalive(state, method, path, in_closed_window_fn=in_closed_wind
 def synthetic_keepalive_body(path, state):
     """JSON the iframe already knows how to parse, without a backend round-trip.
 
-    Must include `safety` (and `access`/`youth`): a missing safety object is
-    treated as UNKNOWN and paints the orange supervision fail-safe even on
-    an empty overnight board.
+    Replays the last real body for this path, so the roster the iframe was
+    already shown stays up; overnight occupancy changed off this Pi shows only
+    once a local scan refetches. With nothing seen yet, an empty board that
+    must include `safety` (and `access`/`youth`): a missing safety object is
+    treated as UNKNOWN and paints the orange supervision fail-safe.
     """
+    last = state.last_keepalive_bodies.get(path) if state is not None else None
+    if last is not None:
+        return last
     if is_kiosk_keepalive_path(path) and path.startswith("/api/kioskdisplay/certifications"):
         return json.dumps({"participants": [], "tools": []})
     return json.dumps({
@@ -292,6 +297,8 @@ class AttendanceState:
         self.keyholder_ids = set()
         self.last_two_deep_violation = False
         self.clock_watch = ClockWatch()
+        # Last real 200 body per keepalive path, replayed during the closed window.
+        self.last_keepalive_bodies = {}
 
     def arm_confirm(self, participant_id, token, seconds):
         """Hold the confirm token the server minted with a force-close warning or
@@ -449,6 +456,7 @@ class AttendanceState:
             self.keyholder_ids = keyholders
             self.last_two_deep_violation = bool(safety.get("isTwoDeepViolation"))
             self.counts_known = True
+            self.last_keepalive_bodies["/api/attendance"] = json.dumps(att_data)
 
 # ---------------------------------------------------------------------------
 # Transparent Signing Proxy & Kiosk Handler
@@ -808,13 +816,21 @@ class KioskHandler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 return
 
+            remember = (self.state is not None and method == "GET"
+                        and resp.status_code == 200 and sign_path in KIOSK_KEEPALIVE_PATHS)
+            chunks = []
             try:
                 for chunk in resp.iter_content(chunk_size=8192):
                     if chunk:
                         self.wfile.write(chunk)
+                        if remember:
+                            chunks.append(chunk)
             except (BrokenPipeError, ConnectionResetError):
                 # Browser closed the connection, normal for HMR or page reloads
-                pass
+                remember = False
+            if remember:
+                with self.state.lock:
+                    self.state.last_keepalive_bodies[sign_path] = b"".join(chunks).decode("utf-8", "replace")
                     
         except Exception as e:
             if not isinstance(e, (BrokenPipeError, ConnectionResetError)):
