@@ -1,0 +1,151 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  runtime      = "nodejs"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model ReceiptOrgSettings {
+  orgId                       String  @id @map("org_id")
+  taxExempt                   Boolean @default(false) @map("tax_exempt")
+  requireFinanceReviewWithTax Boolean @default(true) @map("require_finance_review_with_tax")
+  enforceReceiptAgeLimit      Boolean @default(true) @map("enforce_receipt_age_limit")
+  receiptAgeLimitDays         Int     @default(90) @map("receipt_age_limit_days")
+
+  @@map("org_settings")
+}
+
+model Receipt {
+  id                 String   @id
+  orgId              String   @map("org_id")
+  // The uploader's checkin Person.id.
+  uploadedByUserId   Int      @map("uploaded_by_user_id")
+  uploadedAt         DateTime @default(now()) @map("uploaded_at")
+  fileBlob           Bytes    @map("file_blob")
+  fileHash           String   @map("file_hash")
+  mimeType           String   @map("mime_type")
+  needsReimbursement Boolean  @default(false) @map("needs_reimbursement")
+  // Display only; the reimbursee's identity is reimburseePersonId.
+  reimbursementFor   String?  @map("reimbursement_for")
+  // The checkin Person.id owed the reimbursement: always the uploader; null for backfill.
+  reimburseePersonId Int?     @map("reimbursee_person_id")
+  // upload | email | import
+  intakeSource       String   @default("upload") @map("intake_source")
+  isInKind           Boolean  @default(false) @map("is_in_kind")
+  donorFirstName     String?  @map("donor_first_name")
+  donorLastName      String?  @map("donor_last_name")
+  donorCompanyName   String?  @map("donor_company_name")
+  // X13 delivery: none (never in-kind) | pending | synced
+  donorSync          String   @default("none") @map("donor_sync")
+  // Stamped when the S1 push returns; null means not yet delivered.
+  pushedAt           DateTime? @map("pushed_at")
+
+  details   ReceiptDetail?
+  lineItems ReceiptLineItem[]
+  auditLogs ReceiptAuditLog[]
+
+  // NOT unique by design: a re-uploaded duplicate file must insert so the
+  // duplicate pathway can flag it for human review (Inventory BYDESIGN.md).
+  @@index([orgId, fileHash], name: "receipts_org_id_file_hash_idx")
+  @@index([orgId, uploadedByUserId])
+  @@map("receipts")
+}
+
+model ReceiptDetail {
+  id                         String    @id
+  orgId                      String    @map("org_id")
+  retailer                   String?
+  receiptNumber              String?   @map("receipt_number")
+  orderNumber                String?   @map("order_number")
+  receiptDate                String?   @map("receipt_date")
+  currency                   String    @default("USD")
+  shippingCents              Int       @default(0) @map("shipping_cents")
+  taxCents                   Int       @default(0) @map("tax_cents")
+  discountCents              Int       @default(0) @map("discount_cents")
+  receiptTotalCents          Int?      @map("receipt_total_cents")
+  state                      String    @default("uploaded")
+  ocrStartedAt               DateTime? @map("ocr_started_at")
+  duplicateFlaggedAt         DateTime? @map("duplicate_flagged_at")
+  duplicateFlagClearedAt     DateTime? @map("duplicate_flag_cleared_at")
+  duplicateSuspectReceiptId  String?   @map("duplicate_suspect_receipt_id")
+  duplicateSuspectIsRejected Boolean?  @map("duplicate_suspect_is_rejected")
+  validationNotes            String?   @map("validation_notes")
+  approvedAt                 DateTime? @map("approved_at")
+  reviewedAt                 DateTime? @map("reviewed_at")
+
+  // Backfill import: the pre-matched QuickBooks transaction + idempotency key (source unit).
+  qbTxnId        String? @map("qb_txn_id")
+  qbEntity       String? @map("qb_entity")
+  importSourceId String? @map("import_source_id")
+
+  receipt Receipt @relation(fields: [id], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, importSourceId], name: "receipt_details_org_import_source_unique")
+  @@index([orgId, state])
+  @@map("receipt_details")
+}
+
+model ReceiptLineItem {
+  id              Int     @id @default(autoincrement())
+  receiptId       String  @map("receipt_id")
+  lineNumber      Int     @map("line_number")
+  description     String
+  partNumber      String? @map("part_number")
+  manufacturer    String?
+  quantity        Float   @default(1)
+  unitPriceCents  Int     @map("unit_price_cents")
+  totalPriceCents Int     @map("total_price_cents")
+  isDelayed       Boolean @default(false) @map("is_delayed")
+
+  receipt   Receipt           @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  auditLogs ReceiptAuditLog[]
+
+  @@unique([receiptId, lineNumber], name: "receipt_line_items_receipt_id_line_number_unique")
+  @@map("receipt_line_items")
+}
+
+model ReceiptAuditLog {
+  id           Int      @id @default(autoincrement())
+  receiptId    String   @map("receipt_id")
+  // The acting Person.id; null for a system step (catch-up sweep).
+  userId       Int?     @map("user_id")
+  username     String?
+  changedAt    DateTime @default(now()) @map("changed_at")
+  action       String
+  fieldChanged String?  @map("field_changed")
+  valueBefore  String?  @map("value_before")
+  valueAfter   String?  @map("value_after")
+  lineItemId   Int?     @map("line_item_id")
+
+  receipt  Receipt          @relation(fields: [receiptId], references: [id])
+  lineItem ReceiptLineItem? @relation(fields: [lineItemId], references: [id])
+
+  @@index([receiptId])
+  @@map("receipt_audit_log")
+}
+
+// Gmail intake ledger (phase G). One row per message attachment, or per body when
+// the message has none. Inert until G binds the mailbox.
+model ReceiptMailItem {
+  id             Int       @id @default(autoincrement())
+  orgId          String    @map("org_id")
+  gmailMessageId String    @map("gmail_message_id")
+  attachmentHash String    @map("attachment_hash")
+  receivedAt     DateTime  @map("received_at")
+  senderAddress  String    @map("sender_address")
+  // held | assigned | discarded
+  status         String    @default("held")
+  // Kept only while held; cleared once the item becomes a receipt or is discarded.
+  fileBlob       Bytes?    @map("file_blob")
+  mimeType       String?   @map("mime_type")
+  receiptId      String?   @map("receipt_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@unique([gmailMessageId, attachmentHash])
+  @@index([orgId, status])
+  @@map("receipt_mail_items")
+}
