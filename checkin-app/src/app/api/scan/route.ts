@@ -3,7 +3,7 @@ import { logger } from "@/lib/logger";
 import { apiError, apiJson } from "@/lib/api-response";
 import { processCheckin, processCheckout, finalizeFacilityClose, forceCloseTokenMatches, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/scan-service";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
-import { applyPresenceIntent, flushParkedClosed } from "@/lib/presence/project";
+import { applyPresenceIntent } from "@/lib/presence/project";
 import { config } from "@/lib/config";
 import { withKiosk } from "@/lib/kioskAuth";
 import { SCAN_PROTOCOL_VERSION } from "@/lib/scanProtocol";
@@ -401,10 +401,8 @@ export const POST = withKiosk(
             });
 
             // Dual-write the Stage-2 log. A parked scan must not consult Visit
-            // state at all (the pinned park contract): only PARKED_CLOSED events
-            // ever flush, and those always arrive through applyPresenceIntent
-            // with a real intent — direction on any other parked event is
-            // advisory review context, never projected.
+            // state at all (the pinned park contract): its direction is advisory
+            // review context for a human, never projected.
             if (parkReason) {
                 await appendPresenceEvent(tx, {
                     personId: participant.id,
@@ -446,8 +444,8 @@ export const POST = withKiosk(
 
 
             // 6. Project. Intent-carrying events apply IN/OUT as displayed
-            // (conflicts park; closed non-keyholder INs hold for C). Legacy
-            // callers without intent still toggle from live state.
+            // (conflicts park). Legacy callers without intent still toggle from
+            // live state.
             if (intent) {
                 return await applyPresenceIntent(tx, {
                     participant,
@@ -467,9 +465,7 @@ export const POST = withKiosk(
                 : await processCheckin(participant, authType, tx, eventTime);
 
             // Classification comes from the ACTUAL outcome. Only a confirmed
-            // toggle is PROJECTED; only a genuine closed-facility hold is
-            // PARKED_CLOSED (the auto-flush class) — review parks keep their
-            // own class so the flush can never bypass a human gate; warnings
+            // toggle is PROJECTED; review parks keep their own class; warnings
             // (visit still open) stay unclassified.
             let classification: string | null = null;
             try {
@@ -490,9 +486,6 @@ export const POST = withKiosk(
                 clientEventId,
                 classification,
             });
-            if (!activeVisit && participant.isKeyholder && classification === PresenceClass.PROJECTED) {
-                await flushParkedClosed(tx);
-            }
             return res;
         }, {
             // maxWait: time a racing scan waits to acquire a connection / start.

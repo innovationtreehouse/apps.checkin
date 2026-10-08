@@ -5,11 +5,13 @@
  * A facility close confirmed by the last keyholder at the kiosk applies whenever
  * it reaches the server, past the replay freshness window, and departs everyone
  * at the keyholder's scan time (docs/rules/attendance-checkin.md, kiosk
- * resilience). Unconfirmed stale replays still park.
+ * resilience) — but never anyone who arrived after it. Unconfirmed stale
+ * replays still park.
  */
 import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
+import { LATE_CLOSE_SKEW_MS } from '@/lib/scan-service';
 import type { Person } from '@/generated/prisma/client';
 
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
@@ -69,7 +71,7 @@ describe('Late confirmed facility close (real DB)', () => {
         await prisma.household.deleteMany({ where: { id: { in: people.map(p => p.householdId) } } });
     });
 
-    /** Keyholder + member in since 5h ago; lateComer arrived 1h ago, after the close. */
+    /** Keyholder + member in since 5h ago; lateComer arrived 1h ago, after the close (3h ago). */
     async function occupy(departed?: { at: Date; via: 'AUTO_CLOSE' }) {
         const at = new Date(Date.now() - 5 * HOUR);
         const done = departed ? { departedAt: departed.at, departedVia: departed.via } : {};
@@ -96,8 +98,8 @@ describe('Late confirmed facility close (real DB)', () => {
         const m = await visitOf(member);
         expect(m.departedAt?.getTime()).toBe(scannedAt.getTime());
         expect(m.departedVia).toBe('FACILITY_CLOSE');
-        // Arrived after the close with no keyholder since: departs when the close arrives.
-        expect((await visitOf(lateComer)).departedAt?.getTime()).toBeGreaterThan(Date.now() - 60_000);
+        // Badged in after lock-up: a late close never ends a visit that began after it.
+        expect((await visitOf(lateComer)).departedAt).toBeNull();
     });
 
     it('leaves a reopened building alone, and the opener does not block the late close', async () => {
@@ -110,6 +112,19 @@ describe('Late confirmed facility close (real DB)', () => {
         expect((await visitOf(member)).departedAt?.getTime()).toBe(scannedAt.getTime());
         expect((await visitOf(opener)).departedAt).toBeNull();
         expect((await visitOf(lateComer)).departedAt).toBeNull();
+    });
+
+    it('departs an arrival inside the clock-skew allowance, never before it arrived', async () => {
+        await occupy();
+        const scannedAt = new Date(Date.now() - 3 * HOUR);
+        const skewed = new Date(scannedAt.getTime() + LATE_CLOSE_SKEW_MS - 1000);
+        await prisma.visit.update({ where: { id: (await visitOf(lateComer)).id }, data: { arrivedAt: skewed } });
+        const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-skew', scannedAt: scannedAt.toISOString(), replay: true, forceCloseConfirmed: true }));
+        expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: true });
+
+        const late = await visitOf(lateComer);
+        expect(late.departedAt?.getTime()).toBe(skewed.getTime());
+        expect(late.departedVia).toBe('FACILITY_CLOSE');
     });
 
     it('parks a confirmed close whose scan time is ahead of server now (fast kiosk clock)', async () => {

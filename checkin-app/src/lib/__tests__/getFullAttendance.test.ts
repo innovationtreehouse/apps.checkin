@@ -5,10 +5,12 @@
  * — that grant is deliberate (registry.ts `keyholders:personal`, pickup/emergency).
  */
 const findMany = jest.fn();
-const heldFindMany = jest.fn();
+// The keyholder-cover query is the one that selects bare times.
+const coverFindMany = jest.fn();
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {
-    visit: { findMany: (...a: unknown[]) => findMany(...a) },
-    presenceEvent: { findMany: (...a: unknown[]) => heldFindMany(...a) },
+    visit: {
+        findMany: (args: { select?: unknown }) => (args.select ? coverFindMany(args) : findMany(args)),
+    },
 } }));
 
 // Who counts as a supervising adult is lib/supervision's rule and is tested there
@@ -22,7 +24,12 @@ jest.mock("@/lib/supervision", () => ({
     supervisingAdultCount: () => 1,
 }));
 
-import { getFullAttendance, invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import {
+    NO_KEYHOLDER_GRACE_MS,
+    getFullAttendance,
+    invalidateAttendanceCache,
+    visitHadNoKeyholder,
+} from "@/lib/getFullAttendance";
 
 // Age fixtures are relative to now so they never age past the youth boundary the
 // way a hardcoded year would; the day step keeps the age unambiguous mid-year.
@@ -58,8 +65,8 @@ beforeEach(() => {
     invalidateAttendanceCache();
     findMany.mockReset();
     findMany.mockResolvedValue(rows);
-    heldFindMany.mockReset();
-    heldFindMany.mockResolvedValue([]);
+    coverFindMany.mockReset();
+    coverFindMany.mockResolvedValue([{ arrivedAt: rows[0].arrivedAt, departedAt: null }]);
     supervisingAdultVisits.mockClear();
 });
 
@@ -76,6 +83,7 @@ describe("getFullAttendance({ kiosk: true })", () => {
         expect(attendance[0]).toEqual({
             id: 201,
             arrivedAt: rows[0].arrivedAt,
+            noKeyholder: false,
             participant: { id: 50, name: "Kay", isKeyholder: true, isYouth: false },
             event: { program: { id: 3, name: "Robotics" } },
         });
@@ -107,7 +115,7 @@ describe("getFullAttendance({ kiosk: true })", () => {
         expect(attendance[1].event).toBeNull();
         // aggregates are identical either way
         expect(counts).toEqual({ keyholders: 1, volunteers: 0, youth: 1, total: 2 });
-        expect(safety).toEqual({ isLastKeyholder: true, isTwoDeepViolation: true });
+        expect(safety).toEqual({ facilityOpen: true, isLastKeyholder: true, isTwoDeepViolation: true });
     });
 
     it("does not even fetch the emergency contacts", async () => {
@@ -139,67 +147,59 @@ describe("getFullAttendance() — privileged caller (unchanged)", () => {
     });
 });
 
-describe("held PARKED_CLOSED scans (#1782)", () => {
-    const heldRows = [
-        { id: 900, personId: 501, occurredAt: new Date("2026-07-01T09:00:00Z"), person: { name: "Held Person", nickname: "Hp", email: "held@example.com" } },
-        { id: 901, personId: 502, occurredAt: new Date("2026-07-01T09:05:00Z"), person: { name: null, nickname: null, email: "noname@example.com" } },
-    ];
+describe("visitHadNoKeyholder", () => {
+    const at = new Date("2026-07-01T09:00:00Z");
+    const plus = (ms: number) => new Date(at.getTime() + ms);
 
-    it("queries only unprojected closed-facility IN scans, oldest first, LIVE persons", async () => {
-        heldFindMany.mockResolvedValue(heldRows);
+    it("is false when a keyholder was already present", () => {
+        expect(visitHadNoKeyholder(at, [{ arrivedAt: plus(-60_000), departedAt: null }])).toBe(false);
+    });
+
+    it("is cleared by a keyholder arriving within the grace window", () => {
+        expect(visitHadNoKeyholder(at, [{ arrivedAt: plus(NO_KEYHOLDER_GRACE_MS), departedAt: null }])).toBe(false);
+    });
+
+    it("stays when the keyholder arrives after the grace window", () => {
+        expect(visitHadNoKeyholder(at, [{ arrivedAt: plus(NO_KEYHOLDER_GRACE_MS + 1), departedAt: null }])).toBe(true);
+    });
+
+    it("stays when the only keyholder had already left", () => {
+        expect(visitHadNoKeyholder(at, [{ arrivedAt: plus(-3_600_000), departedAt: plus(-1) }])).toBe(true);
+    });
+});
+
+describe("no-keyholder visits", () => {
+    const loneVolunteer = { ...rows[1], person: { ...rows[1].person, dateOfBirth: yearsAgo(40) } };
+
+    it("marks a visit with no keyholder cover and reports the facility closed", async () => {
+        findMany.mockResolvedValue([loneVolunteer]);
+        coverFindMany.mockResolvedValue([]);
+        for (const kiosk of [false, true]) {
+            invalidateAttendanceCache();
+            const { attendance, counts, safety } = await getFullAttendance({ kiosk });
+            expect(attendance[0].noKeyholder).toBe(true);
+            // Present and counted — the kiosk shows them — but the building is not open.
+            expect(counts.total).toBe(1);
+            expect(safety.facilityOpen).toBe(false);
+        }
+    });
+
+    it("never marks a keyholder, and skips the cover query when only keyholders are in", async () => {
+        findMany.mockResolvedValue([rows[0]]);
+        const { attendance, safety } = await getFullAttendance();
+        expect(attendance[0].noKeyholder).toBe(false);
+        expect(safety.facilityOpen).toBe(true);
+        expect(coverFindMany).not.toHaveBeenCalled();
+    });
+
+    it("asks only for live keyholder visits that could cover the arrivals", async () => {
         await getFullAttendance();
-        expect(heldFindMany.mock.calls[0][0]).toMatchObject({
-            where: { classification: "PARKED_CLOSED", direction: "IN", person: { mergedIntoId: null } },
-            orderBy: { occurredAt: "asc" },
+        expect(coverFindMany.mock.calls[0][0].where).toMatchObject({
+            deletedAt: null,
+            person: { isKeyholder: true, mergedIntoId: null },
+            arrivedAt: { lte: new Date(rows[1].arrivedAt.getTime() + NO_KEYHOLDER_GRACE_MS) },
+            OR: [{ departedAt: null }, { departedAt: { gte: rows[1].arrivedAt } }],
         });
-    });
-
-    it("ships id/name/nickname/time only — no email — on the privileged path", async () => {
-        heldFindMany.mockResolvedValue(heldRows);
-        const { held } = await getFullAttendance();
-        expect(held).toEqual([
-            { id: 900, occurredAt: heldRows[0].occurredAt, name: "Held Person", nickname: "Hp" },
-            { id: 901, occurredAt: heldRows[1].occurredAt, name: "noname", nickname: null },
-        ]);
-        expect(JSON.stringify(held)).not.toContain("@example.com");
-    });
-
-    it("ships only the kiosk label on the kiosk path — no last name, no email", async () => {
-        heldFindMany.mockResolvedValue(heldRows);
-        const { held } = await getFullAttendance({ kiosk: true });
-        expect(held).toEqual([
-            { id: 900, occurredAt: heldRows[0].occurredAt, name: "Hp" },
-            { id: 901, occurredAt: heldRows[1].occurredAt, name: "noname" },
-        ]);
-        expect(JSON.stringify(held)).not.toMatch(/Person|@example\.com/);
-    });
-
-    it("never folds held scans into counts or safety", async () => {
-        heldFindMany.mockResolvedValue(heldRows);
-        const { counts, safety } = await getFullAttendance();
-        // Identical to the no-held baseline: two visits, unchanged flags.
-        expect(counts).toEqual({ keyholders: 1, volunteers: 0, youth: 1, total: 2 });
-        expect(safety).toEqual({ isLastKeyholder: true, isTwoDeepViolation: true });
-    });
-
-    it("is an empty array when nothing is held", async () => {
-        const { held } = await getFullAttendance();
-        expect(held).toEqual([]);
-    });
-
-    it("dedupes a re-scan of the same person while held, keeping the earlier event", async () => {
-        // Kiosk intent comes from present_ids (Visits only, client.py), so a
-        // debounced re-scan of the same person while still held sends a second
-        // IN and parks a second PARKED_CLOSED row — the roster must show them
-        // once, at the time they first badged in, not the later duplicate.
-        heldFindMany.mockResolvedValue([
-            { id: 900, personId: 501, occurredAt: new Date("2026-07-01T09:00:00Z"), person: { name: "Held Person", nickname: "Hp", email: "held@example.com" } },
-            { id: 902, personId: 501, occurredAt: new Date("2026-07-01T09:00:05Z"), person: { name: "Held Person", nickname: "Hp", email: "held@example.com" } },
-        ]);
-        const { held } = await getFullAttendance();
-        expect(held).toEqual([
-            { id: 900, occurredAt: new Date("2026-07-01T09:00:00Z"), name: "Held Person", nickname: "Hp" },
-        ]);
     });
 });
 

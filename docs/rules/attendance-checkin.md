@@ -65,6 +65,11 @@ Things the app takes as true because they are handled outside it.
   drive no action; it is left out because it would buy nothing, not because it
   was overlooked.
 
+- Nobody being inside without a keyholder is kept at the door, by the keyholders
+  who lock it. The app does not enforce it: a badge read inside the building
+  says someone is there, so the app records them and marks the visit rather
+  than refusing or hiding the scan.
+
 - Check-in happens at the one facility. Other locations exist and are temporary,
   and checking in at them is out of scope.
 
@@ -75,7 +80,21 @@ Things the app takes as true because they are handled outside it.
 ### Opening and closing
 
 - Closing takes a second deliberate badge within a few seconds, which checks
-  everyone out. A single stray badge does neither.  [Decision]
+  everyone out — including anyone who checked in with no keyholder present. A
+  single stray badge does neither.  [Decision]
+
+- The facility is open only while a keyholder is present. A visit by someone
+  else never makes it read as open on any web surface: people inside with no
+  keyholder are shown as inside a closed facility.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
+
+- A badge at the kiosk always checks the person in, keyholder or not. Someone
+  scanning inside the building got in somehow, and the screen shows who is
+  there. With no keyholder in the building the visit is marked *no keyholder*,
+  and a keyholder checking in within ten minutes of that arrival clears the
+  mark. The mark is read from the visit record, so correcting a keyholder's
+  visit re-decides it. Every other way of checking someone in — the web, a
+  household lead, the review panel leaving a visit open — still needs a
+  keyholder already present.  [Decision]
 
 ### Supervision
 
@@ -161,7 +180,7 @@ Things the app takes as true because they are handled outside it.
 - The kiosk never shows a last name. It names people as the roster does — the
   nickname, else the first name, with a last initial (or two letters) only to tell
   two people apart — and that applies to everything sent to the kiosk, not only
-  what it renders: the roster, held scans, the certification grid and every
+  what it renders: the roster, the certification grid and every
   warning.  [Decision]
 
 ### Kiosk resilience
@@ -195,20 +214,20 @@ hours at a time — is a normal operating mode here, not an incident.
   the room, so the close is a fact, not a toggle. Everyone in the building at that
   moment departs at the keyholder's scan time, not the time the close arrived,
   and never more than 24 hours after arrival. A scan time ahead of the server's
-  clock is not trusted: that close is held for a human. Someone who arrived after
-  the keyholder's scan is left as they are only when a keyholder who also arrived
-  later is still in — the building reopened; otherwise they depart when the close
-  arrives. A departure the nightly sweep stamped before the close arrived is
-  pulled back to the keyholder's time; a departure a person has since corrected
-  is not. A keyholder who arrived after the scan does not count as still inside.
+  clock is not trusted: that close is held for a human. Someone who arrived more
+  than two minutes after the keyholder's scan is left as they are: they badged in
+  after lock-up, and a late close never ends a visit that began after it, however
+  late it arrives. An arrival within those two minutes is the kiosk's clock
+  disagreeing with the server's, and departs with everyone else. A departure the
+  nightly sweep stamped before the close arrived is pulled back to the
+  keyholder's time; a departure a person has since corrected is not. A keyholder
+  who arrived after the scan does not count as still inside.
   The close still needs the keyholder in the building at their scan time — an
   unconfirmed late keyholder scan is held like any other.  [Decision]
 
-- A non-keyholder scan accepted while the facility is closed is held, not toggled,
-  until a keyholder visit exists; the held scans then project automatically in the
-  order they occurred. It never produces a roster with no keyholder present. A
-  household lead's manual *open* backfill is not on this path — it still requires a
-  keyholder already present (the facility-open guard).  [Decision]
+- The kiosk is never blank while anyone is checked in: it shows everyone it
+  holds as inside, no-keyholder visits included, and its offline presence view
+  treats them as present.  [Decision]
 
 - The kiosk and attendance safety display reads a missing or incomplete safety
   payload as *unknown*, never as an empty, compliant room: a failed fetch or a

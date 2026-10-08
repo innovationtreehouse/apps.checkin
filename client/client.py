@@ -290,9 +290,6 @@ class AttendanceState:
         # Offline these decide whether a keyholder's OUT is a last-out-with-others
         # close, and whether to show a (yellow-only) supervision caution.
         self.keyholder_ids = set()
-        # False until the first successful attendance poll: before that the
-        # zeroed counts must not read as a closed facility.
-        self.attendance_seen = False
         self.last_two_deep_violation = False
         self.clock_watch = ClockWatch()
 
@@ -451,27 +448,7 @@ class AttendanceState:
             self.present_ids = present
             self.keyholder_ids = keyholders
             self.last_two_deep_violation = bool(safety.get("isTwoDeepViolation"))
-            self.attendance_seen = True
             self.counts_known = True
-
-    def facility_closed(self):
-        """Best-effort local view of whether the facility is closed (no keyholder
-        present), from the last successful attendance poll. Never claims closed
-        before the first poll — zeroed startup counts are unknown, not closed.
-        Offline it can't tell an arriving keyholder from a member (keyholder_ids
-        holds only present keyholders); the offline hold copy is hedged for that.
-
-        Deliberately keyed on `attendance_seen`, not the poller's `counts_known`:
-        `counts_known` resets to False for the whole overnight window (so the
-        poller does one wake-up fetch at the window's end), which would make an
-        offline scan overnight always read as "unknown" and fall back to the
-        confident CHECKED-IN banner — silent at exactly the hours a facility is
-        almost always actually closed. `attendance_seen` never resets, so it can
-        go stale after a web/other-entrance keyholder check-in during the
-        window; that staleness is bounded the same way main already accepts for
-        `counts_known` elsewhere — it clears on the next successful poll."""
-        with self.lock:
-            return self.attendance_seen and self.current_counts.get("keyholders", 0) == 0
 
 # ---------------------------------------------------------------------------
 # Transparent Signing Proxy & Kiosk Handler
@@ -557,8 +534,7 @@ class KioskHandler(BaseHTTPRequestHandler):
     color: #fff;
     white-space: pre-wrap;
     /* No fade: an amber banner stays fully legible for its whole dwell, which
-       for the force-close warning is its countdown and for a closed-facility
-       hold is CLOSED_HOLD_DWELL_S. */
+       for the force-close warning is its countdown. */
     animation: none;
   }}
   .banner-saved {{
@@ -687,17 +663,16 @@ class KioskHandler(BaseHTTPRequestHandler):
           banner.style.animation = null;
         }}
         const secs = data.countdown || 0;
-        const dwell = data.dwell || 0;
         clearInterval(countdownTimer);
         clearTimeout(bannerTimer);
-        bannerTimer = setTimeout(() => {{ container.innerHTML = ''; }}, (dwell || secs || 12) * 1000);
+        bannerTimer = setTimeout(() => {{ container.innerHTML = ''; }}, (secs || 12) * 1000);
         if (secs) startCountdown(secs);
       }}
       // Tell iframe to refresh attendance display with inline data
       const iframe = document.querySelector("iframe");
       if (iframe && iframe.contentWindow) {{
         if (data.attendance) {{
-          iframe.contentWindow.postMessage({{type: "refresh-attendance", attendance: data.attendance, held: data.held, counts: data.counts, safety: data.safety}}, "*");
+          iframe.contentWindow.postMessage({{type: "refresh-attendance", attendance: data.attendance, counts: data.counts, safety: data.safety}}, "*");
         }} else {{
           iframe.contentWindow.postMessage("refresh-attendance", "*");
         }}
@@ -965,17 +940,6 @@ def stdin_scanner_listener(backend, state, outbox):
         except EOFError:
             break
 
-# A closed-facility hold dwells far longer than an ordinary banner so the
-# member can read why their scan is waiting on someone else. Any later badge
-# event replaces it early.
-CLOSED_HOLD_DWELL_S = 30
-CLOSED_HOLD_COPY = "Scan successful, waiting for key holder before opening the building"
-# Offline hold copy. The kiosk can't tell whether the scanner is a keyholder
-# (keyholder_ids holds only PRESENT keyholders), so — unlike the server-gated
-# CLOSED_HOLD_COPY — this must read true for a keyholder arriving to open too:
-# no "waiting for key holder" claim, just a hedged not-yet-checked-in.
-OFFLINE_HOLD_COPY = "Scan saved — you'll be checked in once the building is open"
-
 # Offline force-close: the kiosk runs the last-keyholder warning + two-scan
 # confirm itself when the server is unreachable. Same window as the server's.
 FORCE_CLOSE_CONFIRM_SECONDS = 15
@@ -1004,9 +968,8 @@ def _offline_close_saved_html(queued):
     return f'<div class="banner banner-saved">✓ BUILDING CLOSED — will sync ({queued} waiting)</div>'
 
 def _scan_result_banner_html(body, status):
-    """Returns (html, countdown_seconds, dwell_seconds). Pure -- arming the
-    confirm token is the caller's job, so the drain can render a response
-    without arming one. dwell_seconds of 0 means the default dwell."""
+    """Returns (html, countdown_seconds). Pure -- arming the confirm token is
+    the caller's job, so the drain can render a response without arming one."""
     # Build banner HTML for the wrapper page.
     # All values below originate from the backend response (participant names,
     # messages) and are ultimately assigned to the wrapper page via innerHTML.
@@ -1023,24 +986,17 @@ def _scan_result_banner_html(body, status):
                 seconds = body.get("confirmSeconds")
                 countdown = seconds if isinstance(seconds, int) and 0 < seconds <= 120 else 15
                 warn += f'<br><span id="fc-countdown">{countdown}</span>s left to confirm'
-            return f'<div class="banner banner-warning">⚠️ {warn}</div>', countdown, 0
+            return f'<div class="banner banner-warning">⚠️ {warn}</div>', countdown
         err = html.escape(body.get("error", "Unknown error"))
-        return f'<div class="banner banner-error">✗ Scan failed: {err}</div>', 0, 0
+        return f'<div class="banner banner-error">✗ Scan failed: {err}</div>', 0
 
     stype = body.get("type", "")
-    # A park created no Visit, so none of these may render as a check-in: the
-    # green tick plus the "?" a park body has no name for reads as one at arm's
-    # length. Amber says captured-but-not-complete, which is what happened --
-    # the scan is held and projects on its own once a keyholder badges in.
+    # A park created no Visit, so it must not render as a check-in: the green
+    # tick plus the "?" a park body has no name for reads as one at arm's
+    # length. Amber says captured-but-not-complete -- recorded for review.
     if stype == "parked":
-        if body.get("reason") == "facility_closed":
-            return (
-                f'<div class="banner banner-warning">✓ {CLOSED_HOLD_COPY}</div>',
-                0,
-                CLOSED_HOLD_DWELL_S,
-            )
-        held = html.escape(body.get("message", "Recorded for review."))
-        return f'<div class="banner banner-warning">✓ {held}</div>', 0, 0
+        parked = html.escape(body.get("message", "Recorded for review."))
+        return f'<div class="banner banner-warning">✓ {parked}</div>', 0
     # The name the person goes by, resolved server-side by the same rule the kiosk
     # roster uses — nickname, else first name, else the part of the address before
     # the @. The raw address is never sent and never shown.
@@ -1054,32 +1010,22 @@ def _scan_result_banner_html(body, status):
         countdown = seconds if isinstance(seconds, int) and 0 < seconds <= 120 else 15
         prompt = html.escape(body.get("closePrompt", "Badge again to close the building."))
         return (f'<div class="banner banner-warning">✓ {who} — {label}<br>⚠️ {prompt}'
-                f'<br><span id="fc-countdown">{countdown}</span>s left to confirm</div>', countdown, 0)
+                f'<br><span id="fc-countdown">{countdown}</span>s left to confirm</div>', countdown)
     warning = html.escape(body.get("warning", "")).replace("\n", "<br>")
     if warning:
         # Scan succeeded but the room is short of supervising adults (#1436):
         # amber, and it dwells 12s instead of 5s. Still confirms the scan.
-        return f'<div class="banner banner-warning">✓ {who} — {label}<br>⚠️ {warning}</div>', 0, 0
+        return f'<div class="banner banner-warning">✓ {who} — {label}<br>⚠️ {warning}</div>', 0
     if msg and msg != "Checked in successfully" and msg != "Checked out successfully":
-        return f'<div class="banner banner-ok">✓ {who} — {msg}</div>', 0, 0
-    return f'<div class="banner banner-ok">✓ {who} — {label}</div>', 0, 0
+        return f'<div class="banner banner-ok">✓ {who} — {msg}</div>', 0
+    return f'<div class="banner banner-ok">✓ {who} — {label}</div>', 0
 
-def _saved_banner_html(queued, intent=None, facility_closed=False):
+def _saved_banner_html(queued, intent=None):
     # A queued scan reads as done and safe to walk away from -- distinct
     # from the red "not saved" state. The displayed direction is the intent
     # of record even when the server has not acked yet.
-    # Returns (html, dwell_seconds); dwell 0 means the default dwell.
-    if facility_closed and intent == "IN":
-        # No keyholder present per the last poll, so an offline IN is held, not an
-        # open — amber and hedged rather than a confident check-in. Hedged copy,
-        # not CLOSED_HOLD_COPY: this also fires for a keyholder arriving to open,
-        # whom the client can't distinguish offline.
-        return (
-            f'<div class="banner banner-warning">✓ {OFFLINE_HOLD_COPY} (will sync, {queued} waiting)</div>',
-            CLOSED_HOLD_DWELL_S,
-        )
     label = "CHECKED IN" if intent == "IN" else "CHECKED OUT" if intent == "OUT" else "Saved"
-    return f'<div class="banner banner-saved">✓ {label} — will sync ({queued} waiting)</div>', 0
+    return f'<div class="banner banner-saved">✓ {label} — will sync ({queued} waiting)</div>'
 
 def handle_scan(backend, state, outbox, participant_id):
     if state.in_confirm_deadfront(participant_id):
@@ -1126,8 +1072,7 @@ def handle_scan(backend, state, outbox, participant_id):
         if force_close_confirmed:
             state.push_event({"html": _offline_close_saved_html(queued), "queued": queued})
         else:
-            banner_html, dwell = _saved_banner_html(queued, intent, facility_closed=state.facility_closed())
-            state.push_event({"html": banner_html, "queued": queued, "dwell": dwell})
+            state.push_event({"html": _saved_banner_html(queued, intent), "queued": queued})
         log.info(f"Queued (predecessor pending): participant {participant_id} {intent}")
         return
 
@@ -1165,17 +1110,16 @@ def handle_scan(backend, state, outbox, participant_id):
             state.push_event({"html": _offline_close_saved_html(queued), "queued": queued})
             log.warning(f"Offline force-close CONFIRMED, queued: keyholder {participant_id}")
         else:
-            banner_html, dwell = _saved_banner_html(queued, intent, facility_closed=state.facility_closed())
-            state.push_event({"html": banner_html, "queued": queued, "dwell": dwell})
+            state.push_event({"html": _saved_banner_html(queued, intent), "queued": queued})
             log.warning(f"Scan queued (server unreachable/warming): participant {participant_id} {intent}")
         return
 
     # ack or dead: server responded definitively at scan time -- render the
     # existing immediate banner, unchanged behavior for the online path.
-    banner_html, countdown, dwell = _scan_result_banner_html(body, status)
+    banner_html, countdown = _scan_result_banner_html(body, status)
     if countdown:
         state.arm_confirm(participant_id, body["forceCloseToken"], countdown)
-    state.push_event({"html": banner_html, "countdown": countdown, "dwell": dwell})
+    state.push_event({"html": banner_html, "countdown": countdown})
 
     if outcome == "ack":
         ptype = body.get("type", "?")
@@ -1190,7 +1134,7 @@ def handle_scan(backend, state, outbox, participant_id):
         if att_status == 200:
             state.seed_from_attendance(att_data)
             event_payload = {"html": ""}
-            for key in ("attendance", "held", "counts", "safety"):
+            for key in ("attendance", "counts", "safety"):
                 if key in att_data:
                     event_payload[key] = att_data[key]
             if "counts" in att_data:

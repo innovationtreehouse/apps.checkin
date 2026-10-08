@@ -21,7 +21,7 @@ const attendanceData = {
     { id: 203, arrivedAt: "2026-07-01T14:10:00.000Z", participant: { id: 70, email: "stu@example.com", name: "Stu Student", isKeyholder: false, isSysadmin: false, dateOfBirth: "2012-01-01", householdId: 8 } },
   ],
   counts: { keyholders: 1, volunteers: 1, youth: 1, total: 3 },
-  safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+  safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
 };
 
 const householdData = {
@@ -212,7 +212,7 @@ describe("attendance/current page", () => {
       "/api/attendance": {
         access: "limited",
         counts: { keyholders: 0, volunteers: 0, students: 1, total: 1 },
-        safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
         self: null,
         household: [
           { id: 301, arrivedAt: "2026-07-01T14:00:00.000Z", participant: { id: 8801, email: "kid@example.com", name: "Kid Eight", isKeyholder: false, isSysadmin: false, dateOfBirth: "2015-01-01", householdId: 8 } },
@@ -236,7 +236,7 @@ describe("attendance/current page", () => {
       "/api/attendance": {
         access: "limited",
         counts: { keyholders: 0, volunteers: 1, students: 0, total: 1 },
-        safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
         self: { id: 401, arrivedAt: "2026-07-01T14:00:00.000Z", participant: { id: 42, email: "self@example.com", name: "Self Member", isKeyholder: false, isSysadmin: false, householdId: 8 } },
         household: [],
       },
@@ -326,7 +326,7 @@ describe("attendance/current page", () => {
           { id: 204, arrivedAt: "2026-07-01T14:15:00.000Z", participant: { id: 80, email: "dob@example.com", name: "No Dob", isKeyholder: false, isSysadmin: false, dateOfBirth: null, householdId: 11 } },
         ],
         counts: { keyholders: 0, volunteers: 0, youth: 1, total: 1 },
-        safety: { isLastKeyholder: false, isTwoDeepViolation: true },
+        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: true },
       },
     });
     renderWithProviders(<KioskDisplay />);
@@ -336,6 +336,34 @@ describe("attendance/current page", () => {
     expect(within(columnFor("Volunteers/Adults")).queryByText("No Dob")).not.toBeInTheDocument();
   });
 
+  it("never shows the facility open on no-keyholder visits: closed banner + per-visit mark", async () => {
+    setAdminSession();
+    mockFetchJson({
+      "/api/household": householdData,
+      "/api/attendance": {
+        access: "full",
+        attendance: [
+          { id: 205, arrivedAt: "2026-07-01T07:00:00.000Z", noKeyholder: true, participant: { id: 60, email: "val@example.com", name: "Val Volunteer", isKeyholder: false, isSysadmin: false, isYouth: false, householdId: 7 } },
+        ],
+        counts: { keyholders: 0, volunteers: 1, youth: 0, total: 1 },
+        safety: { facilityOpen: false, isLastKeyholder: false, isTwoDeepViolation: false },
+      },
+    });
+    renderWithProviders(<KioskDisplay />);
+
+    expect(await screen.findByText("Facility closed — no keyholder present")).toBeInTheDocument();
+    expect(within(columnFor("Volunteers/Adults")).getByText("Val Volunteer")).toBeInTheDocument();
+    expect(screen.getByText("No keyholder")).toBeInTheDocument();
+  });
+
+  it("reads safety without facilityOpen as unknown", async () => {
+    setAdminSession();
+    mockRoutes({ "/api/attendance": { ...attendanceData, safety: { isLastKeyholder: false, isTwoDeepViolation: false } } });
+    renderWithProviders(<KioskDisplay />);
+    expect(await screen.findByText("Supervision status unknown")).toBeInTheDocument();
+    expect(screen.queryByText("Facility closed — no keyholder present")).not.toBeInTheDocument();
+  });
+
   it("switches to kiosk mode automatically when the server flags a signed request", async () => {
     setAdminSession();
     mockFetchJson({
@@ -343,7 +371,7 @@ describe("attendance/current page", () => {
         access: "full",
         attendance: [],
         counts: { keyholders: 0, volunteers: 0, students: 0, total: 0 },
-        safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
         signedRequest: true,
       },
     });
@@ -364,7 +392,7 @@ describe("attendance/current page", () => {
         type: "refresh-attendance",
         attendance: [],
         counts: { keyholders: 0, volunteers: 0, students: 0, total: 0 },
-        safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
         signedRequest: true,
       },
     }));
@@ -576,7 +604,7 @@ describe("attendance/current page", () => {
           },
         ],
         counts: { keyholders: 1, volunteers: 2, students: 0, total: 3 },
-        safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
       },
     });
     renderWithProviders(<KioskDisplay />);
@@ -641,7 +669,7 @@ describe("attendance/current page", () => {
           },
         ],
         counts: { keyholders: 1, volunteers: 1, students: 0, total: 2 },
-        safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
       },
     });
     renderWithProviders(<KioskDisplay />);
@@ -677,7 +705,7 @@ describe("attendance/current page", () => {
               { id: 999, arrivedAt: "2026-07-01T14:00:00.000Z", participant: { id: 1, email: "admin@example.com", name: "Admin Self", isKeyholder: true, isSysadmin: true, dateOfBirth: "1980-01-01", householdId: 5 } },
             ],
             counts: { keyholders: 1, volunteers: 0, students: 0, total: 1 },
-            safety: { isLastKeyholder: false, isTwoDeepViolation: false },
+            safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
           }),
         } as Response;
       }
@@ -742,7 +770,7 @@ describe("attendance/current page", () => {
     setAdminSession();
     mockFetchJson({
       "/api/household": householdData,
-      "/api/attendance": { ...attendanceData, safety: { isLastKeyholder: true, isTwoDeepViolation: true } },
+      "/api/attendance": { ...attendanceData, safety: { facilityOpen: true, isLastKeyholder: true, isTwoDeepViolation: true } },
     });
     renderWithProviders(<KioskDisplay />);
 

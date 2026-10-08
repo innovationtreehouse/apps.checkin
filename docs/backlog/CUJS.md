@@ -95,9 +95,9 @@ _Extraction adds (2026-07-22):_
 7. ❌ Age-out → alumni pipeline (`M21`; SA1 BG trigger already covers the mentor return)
 
 ### A7. Keyholder / front-desk (kiosk)  [bucket AT]  — validated V3
-1. ✅ Open facility — non-keyholder check-in blocked when `activeKeyholders===0` (scan + manual paths)
+1. ✅ Open facility — open means a keyholder is present (`safety.facilityOpen`); a kiosk badge with no keyholder in still checks in, marked "no keyholder" (cleared by a keyholder IN within 10 min); web/manual check-in still blocked when `activeKeyholders===0`
 2. ✅ Check people in/out — `POST /api/scan` toggles presence, per-participant advisory lock
-3. ✅ Presence board — `getFullAttendance` roster+counts+safety (privileged ships DOB/phone/EC, kiosk display-only)
+3. ✅ Presence board — `getFullAttendance` roster+counts+safety (privileged ships DOB/phone/EC, kiosk display-only); never blank while anyone is inside; no-keyholder visits shown under a "facility closed" banner
 4. ✅ Cert-level display — kiosk cert grid (PII-minimized, #329 pattern)
 5. 🟡 Two-deep tracking (`AT6`) — **display flag only, no enforcement** (`isTwoDeepViolation` red banner; no block on last adult leaving, no 60s delay). ⚠️ **`AT10`/#300 fail-open CONFIRMED**: `isYouth(null)→false` so unknown-DOB persons count as **adults** → two-deep silently passes
 6. ✅ Keyholder-count warning + forced signout on close — last-keyholder double-badge (≤12s) → `closeAllOpenVisits` SYSTEM sweep marks every open visit departed. (Race `AT9`/#254 not re-tested)

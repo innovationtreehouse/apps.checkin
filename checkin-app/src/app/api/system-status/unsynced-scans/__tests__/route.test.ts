@@ -41,7 +41,6 @@ jest.mock("@/lib/attendanceTransitions", () => ({
     processVisitCheckout: jest.fn().mockResolvedValue([]),
 }));
 jest.mock("@/lib/facilityLock", () => ({ lockFacility: jest.fn() }));
-jest.mock("@/lib/presence/project", () => ({ flushParkedClosed: jest.fn() }));
 
 const db = prisma as unknown as {
     rawBadgeLog: { findMany: jest.Mock; updateMany: jest.Mock; findFirst: jest.Mock };
@@ -336,14 +335,6 @@ describe("POST /api/system-status/unsynced-scans/[id] (record — ruled branches
         expect(res.status).toBe(200);
         expect(db.$executeRaw).toHaveBeenCalled();
         expect(lockFacility).toHaveBeenCalled();
-    });
-
-    it("keyholder minted open releases the PARKED_CLOSED backlog (flush runs)", async () => {
-        const { flushParkedClosed } = jest.requireMock("@/lib/presence/project");
-        db.person.findUnique.mockResolvedValue({ id: 12, isKeyholder: true, mergedIntoId: null });
-        const res = await POST(recordReq({ action: "record" }), dismissCtx());
-        expect(res.status).toBe(200);
-        expect(flushParkedClosed).toHaveBeenCalled();
     });
 
     it("appends the departure presence event and processes checkout on a closed mint", async () => {

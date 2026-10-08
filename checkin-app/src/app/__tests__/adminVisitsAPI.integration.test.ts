@@ -9,6 +9,7 @@
 import { GET, PATCH, DELETE } from '@/app/api/facility/visits/route';
 import { POST } from '@/app/api/facility/visits/insert/route';
 import prisma from '@/lib/prisma';
+import { getFullAttendance } from '@/lib/getFullAttendance';
 import { getServerSession } from 'next-auth/next';
 
 // Mock NextAuth
@@ -526,6 +527,34 @@ describe('Admin Visits API Integration Tests', () => {
                 method: 'POST', headers: { 'content-type': 'application/json' }, body: '{oops',
             }) as unknown as import("next/server").NextRequest);
             expect((await malformed).status).toBe(400);
+        });
+
+        it('refreshes the live roster: a keyholder visit covering an arrival clears its no-keyholder mark', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testAdminId, isSysadmin: true } });
+            const kh = await prisma.person.create({
+                data: { email: 'kh-visits-api-test@example.com', name: 'KH Visits Test', isKeyholder: true, household: { create: { name: 'Test HH' } } },
+            });
+            const walkIn = await prisma.person.create({
+                data: { email: 'walkin-visits-api-test@example.com', name: 'Walkin Visits Test', household: { create: { name: 'Test HH' } } },
+            });
+            const arrivedAt = new Date(Date.now() - 3600000);
+            await prisma.visit.create({ data: { personId: walkIn.id, arrivedAt } });
+            try {
+                const row = async () => (await getFullAttendance()).attendance.find(v => v.participant.id === walkIn.id);
+                expect((await row())?.noKeyholder).toBe(true);
+
+                const res = await post({
+                    personId: kh.id,
+                    arrivedAt: new Date(arrivedAt.getTime() - 5 * 60000).toISOString(),
+                    departedAt: new Date(arrivedAt.getTime() + 30 * 60000).toISOString(),
+                });
+                expect(res.status).toBe(200);
+                expect((await row())?.noKeyholder).toBe(false);
+            } finally {
+                await prisma.visit.deleteMany({ where: { personId: { in: [kh.id, walkIn.id] } } });
+                await prisma.auditLog.deleteMany({ where: { secondaryAffectedEntity: kh.id } });
+                await prisma.person.deleteMany({ where: { id: { in: [kh.id, walkIn.id] } } });
+            }
         });
 
         it('404s an unknown person instead of creating an orphan visit', async () => {
