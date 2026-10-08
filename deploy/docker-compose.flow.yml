@@ -13,7 +13,7 @@ services:
       POSTGRES_PASSWORD: prismapassword
       POSTGRES_DB: checkmein
     volumes:
-      # #1286: create the catalog's dedicated database on first init (design §4).
+      # Create each checkin-hosted library's dedicated database on first init.
       - ./flow-initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U prisma -d checkmein"]
@@ -32,6 +32,7 @@ services:
     environment:
       DATABASE_URL: postgresql://prisma:prismapassword@db:5432/checkmein?schema=public
       CATALOG_DATABASE_URL: postgresql://prisma:prismapassword@db:5432/catalog?schema=public  # #1286 global catalog DB
+      LOCAL_INVENTORY_DATABASE_URL: postgresql://prisma:prismapassword@db:5432/local_inventory?schema=public  # #1287 local inventory DB
       CHECKIN_ENV: local            # enables persona-mint login + keyless kiosk
       NEXTAUTH_URL: http://localhost:4000
       NEXTAUTH_SECRET: flow-test-secret
@@ -44,10 +45,10 @@ services:
     command:
       - sh
       - -lc
-      # Checkin DB: generate + push + seed. Catalog DB (#1286): migrate deploy
-      # (NOT db push — the schema uses partial unique indexes db push can't express)
-      # + seed the baseline reference rows, then start the dev server.
-      - npm ci && npm -w @inventory/global-catalog exec -- prisma migrate deploy && npm -w @inventory/global-catalog run db:seed && cd checkin-app && npx prisma generate && npx prisma db push && npx prisma db seed && npm run dev
+      # Checkin DB: generate + push + seed. Catalog (#1286) and local-inventory
+      # (#1287) DBs: migrate deploy (NOT db push — their schemas use constraints
+      # db push can't express) + seed the baseline rows, then start the dev server.
+      - npm ci && npm -w @inventory/global-catalog exec -- prisma migrate deploy && npm -w @inventory/global-catalog run db:seed && npm -w @inventory/local-inventory exec -- prisma migrate deploy && npm -w @inventory/local-inventory run db:seed && cd checkin-app && npx prisma generate && npx prisma db push && npx prisma db seed && npm run dev
     healthcheck:
       # Up = the dev server answers an auth route. start_period covers npm ci + seed + first compile.
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4000/api/auth/csrf').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]

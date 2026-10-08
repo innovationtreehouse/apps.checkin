@@ -20,7 +20,8 @@ import type { CatalogPrincipal, OrgIdentity } from "@inventory/global-catalog";
 const TREEHOUSE_ORG_ID = "treehouse";
 let cachedOrg: OrgIdentity | undefined;
 
-async function getPrincipal(): Promise<CatalogPrincipal | null> {
+/** The signed-in person as a library principal; null unless the session carries an integer id. */
+export async function getPrincipal(): Promise<CatalogPrincipal | null> {
   // Lazy: importing auth-options at boot would crash a Google-credless boot.
   const [{ getServerSession }, { authOptions }] = await Promise.all([
     import("next-auth"),
@@ -35,9 +36,10 @@ async function getPrincipal(): Promise<CatalogPrincipal | null> {
 /**
  * Resolved on first use inside a request, never at boot (boot stays DB-free).
  * Only a found row is cached; a DB error or missing row throws, so the request
- * fails rather than running as a guessed org.
+ * fails rather than running as a guessed org. Every checkin-hosted library
+ * receives this same accessor, so all stamp the same org id.
  */
-async function getOrg(): Promise<OrgIdentity> {
+export async function getOrg(): Promise<OrgIdentity> {
   if (cachedOrg) return cachedOrg;
   const { default: prisma } = await import("@/lib/prisma");
   const row = await prisma.org.findUnique({
