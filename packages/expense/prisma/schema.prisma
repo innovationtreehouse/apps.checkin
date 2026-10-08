@@ -1,0 +1,339 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  runtime      = "nodejs"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// The org's money thresholds, one row per org. A missing row reads as the column defaults.
+model ExpenseOrgSettings {
+  orgId                        String @id @map("org_id")
+  capitalTotalThresholdCents   Int    @default(0) @map("capital_total_threshold_cents")
+  capitalLineItemThresholdCents Int   @default(0) @map("capital_line_item_threshold_cents")
+  // Unit price at or over which a line raises CAPITAL_EQUIPMENT for finance.
+  capitalEquipmentUnitCents    Int    @default(50000) @map("capital_equipment_unit_cents")
+  // Line or receipt total at or over which THRESHOLD_CROSSED goes to the board.
+  boardReviewTotalCents        Int    @default(200000) @map("board_review_total_cents")
+  // A note in lieu of a receipt at or over this takes a Board member in the program-approver seat.
+  noteInLieuLimitCents         Int    @default(5000) @map("note_in_lieu_limit_cents")
+
+  @@map("org_settings")
+}
+
+// Audit record of each settings update: the changed fields before and after (JSON).
+model ExpenseOrgSettingsChange {
+  id            Int      @id @default(autoincrement())
+  orgId         String   @map("org_id")
+  actorUserId   Int      @map("actor_user_id")
+  actorUsername String?  @map("actor_username")
+  before        String?
+  after         String
+  changedAt     DateTime @default(now()) @map("changed_at")
+
+  @@index([orgId])
+  @@map("org_settings_changes")
+}
+
+model Expense {
+  id                 String    @id
+  orgId              String    @map("org_id")
+  submitterId        Int       @map("submitter_id")
+  vendorName         String?   @map("vendor_name")
+  receiptNumber      String?   @map("receipt_number")
+  orderNumber        String?   @map("order_number")
+  currency           String    @default("USD")
+  taxCents           Int       @default(0) @map("tax_cents")
+  shippingCents      Int       @default(0) @map("shipping_cents")
+  discountCents      Int       @default(0) @map("discount_cents")
+  receiptTotalCents  Int       @map("receipt_total_cents")
+  receiptDate        String?   @map("receipt_date")
+  needsReimbursement Boolean   @default(false) @map("needs_reimbursement")
+  reimbursementFor   String?   @map("reimbursement_for")
+  submittedAt        DateTime  @map("submitted_at")
+  state              String    @default("pending")
+  // Historical QB-linked backfill: already booked in QuickBooks. Owner re-signoff is auto-approved
+  // and the QB posting step is skipped (lands terminal `qb_skipped`); capital review + depreciation
+  // still run so the capital register is built.
+  backfill           Boolean   @default(false)
+  // A signed note stands in for the receipt (F2 exception; changes who fills the program-approver seat).
+  noteInLieuOfReceipt Boolean  @default(false) @map("note_in_lieu_of_receipt")
+
+  lineItems          ExpenseLineItem[]
+  approvals          LineItemOwnerApproval[]
+  holds              ExpenseHold[]
+  auditLog           ExpenseAuditLog[]
+  flags              ExpenseFlag[]
+
+  @@map("expenses")
+}
+
+model ExpenseLineItem {
+  id                Int      @id @default(autoincrement())
+  expenseId         String   @map("expense_id")
+  receiptLineItemId Int      @map("receipt_line_item_id")
+  lineNumber        Int      @map("line_number")
+  description       String
+  partNumber        String?  @map("part_number")
+  manufacturer      String?
+  quantity          Float    @default(1)
+  unitPriceCents    Int      @map("unit_price_cents")
+  totalPriceCents   Int      @map("total_price_cents")
+  gtin13            String?
+  isDelayed         Boolean  @default(false) @map("is_delayed")
+  isCapital         Boolean  @default(false) @map("is_capital")
+  capitalOwnerId    Int?     @map("capital_owner_id")
+  depreciationYears Int?     @map("depreciation_years")
+  manualQbAccount   String?  @map("manual_qb_account")
+  allocatedTaxCents      Int?  @map("allocated_tax_cents")
+  allocatedShippingCents Int?  @map("allocated_shipping_cents")
+  allocatedDiscountCents Int?  @map("allocated_discount_cents")
+  // QuickBooks match state: UNMATCHED | MATCHED | CREATED | AMBIGUOUS | BEFORE_LINE | POST_FAILED.
+  // qb_txn_id is the claimed QuickBooks entry; unique, so an entry is claimed by one line at most.
+  qbMatchState      String   @default("UNMATCHED") @map("qb_match_state")
+  qbTxnId           String?  @unique @map("qb_txn_id")
+
+  expense           Expense                 @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  approvals         LineItemOwnerApproval[]
+  signoffs          ExpenseLineSignoff[]
+  holds             ExpenseHold[]
+  auditLog          ExpenseAuditLog[]
+
+  @@map("expense_line_items")
+}
+
+// owner_id is the line's budget-owner bucket (checkin BudgetOwner.id, another database: no FK).
+model LineItemOwnerApproval {
+  id                Int       @id @default(autoincrement())
+  expenseId         String    @map("expense_id")
+  lineItemId        Int       @map("line_item_id")
+  ownerId           Int?      @map("owner_id")
+  status            String    @default("pending")
+  decidedAt         DateTime? @map("decided_at")
+  decidedByUserId   Int?      @map("decided_by_user_id")
+  notes             String?
+
+  expense           Expense         @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  lineItem          ExpenseLineItem @relation(fields: [lineItemId], references: [id], onDelete: Cascade)
+
+  @@map("line_item_owner_approvals")
+}
+
+model AccountMapping {
+  id          Int      @id @default(autoincrement())
+  orgId       String   @map("org_id")
+  category    String
+  subcategory String
+  partNumber  String   @map("part_number")
+  isDelayed   Boolean? @map("is_delayed")
+  isCapital   Boolean? @map("is_capital")
+  qbAccount   String   @map("qb_account")
+
+  @@map("account_mapping")
+}
+
+model ExpenseHold {
+  id          Int       @id @default(autoincrement())
+  orgId       String    @map("org_id")
+  expenseId   String    @map("expense_id")
+  lineItemId  Int       @map("line_item_id")
+  reason      String
+  matchedRows String    @map("matched_rows")
+  status      String    @default("PENDING")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  resolvedAt  DateTime? @map("resolved_at")
+
+  expense     Expense         @relation(fields: [expenseId], references: [id])
+  lineItem    ExpenseLineItem @relation(fields: [lineItemId], references: [id])
+
+  @@map("expense_holds")
+}
+
+model ExpenseEvent {
+  id        Int      @id @default(autoincrement())
+  orgId     String   @map("org_id")
+  expenseId String   @map("expense_id")
+  payload   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([orgId, expenseId], name: "expense_events_org_expense_unique")
+  @@map("expense_events")
+}
+
+model ExpenseQbAccount {
+  id        Int    @id @default(autoincrement())
+  orgId     String @map("org_id")
+  name      String
+  qbAccount String @map("qb_account")
+
+  @@map("expense_qb_accounts")
+}
+
+model ExpenseAuditLog {
+  id           Int       @id @default(autoincrement())
+  expenseId    String    @map("expense_id")
+  userId       Int       @map("user_id")
+  username     String?
+  changedAt    DateTime  @default(now()) @map("changed_at")
+  action       String
+  fieldChanged String?   @map("field_changed")
+  valueBefore  String?   @map("value_before")
+  valueAfter   String?   @map("value_after")
+  lineItemId   Int?      @map("line_item_id")
+  notes        String?
+
+  expense      Expense          @relation(fields: [expenseId], references: [id])
+  lineItem     ExpenseLineItem? @relation(fields: [lineItemId], references: [id])
+
+  @@map("expense_audit_log")
+}
+
+// owner_id is a budget-owner bucket (checkin BudgetOwner.id, another database: no FK).
+model PartOwnerMap {
+  id      Int    @id @default(autoincrement())
+  orgId   String @map("org_id")
+  gtin13  String
+  ownerId Int    @map("owner_id")
+
+  @@unique([orgId, gtin13], name: "part_owner_map_org_gtin_unique")
+  @@map("part_owner_map")
+}
+
+model ProvisionalItemMap {
+  id                Int       @id @default(autoincrement())
+  provisionalGtin13 String    @map("provisional_gtin13")
+  orgId             String    @map("org_id")
+  status            String    @default("pending")
+  proposedAt        DateTime  @default(now()) @map("proposed_at")
+  reviewedAt        DateTime? @map("reviewed_at")
+  rejectionReason   String?   @map("rejection_reason")
+  resolvedToGtin13  String?   @map("resolved_to_gtin13")
+
+  @@unique([orgId, provisionalGtin13], name: "provisional_part_map_org_gtin_unique")
+  @@map("provisional_item_maps")
+}
+
+model ExpenseProvisionalResolution {
+  id                Int      @id @default(autoincrement())
+  orgId             String   @map("org_id")
+  provisionalGtin13 String   @map("provisional_gtin13")
+  kind              String   // "approved" | "mapped_to_existing" | "rejected"
+  realGtin13        String?  @map("real_gtin13")
+  rejectionReason   String?  @map("rejection_reason")
+  recordedAt        DateTime @default(now()) @map("recorded_at")
+  sourceEventId     Int?     @map("source_event_id")
+
+  @@unique([orgId, provisionalGtin13], name: "provisional_resolution_org_gtin_unique")
+  @@map("provisional_resolutions")
+}
+
+model ReceivedExpensePayload {
+  id            Int      @id @default(autoincrement())
+  orgId         String   @map("org_id")
+  receiptId     String   @unique @map("receipt_id")
+  payloadJson   String   @map("payload_json")
+  status        String
+  failureReason String?  @map("failure_reason")
+  receivedAt    DateTime @default(now()) @map("received_at")
+
+  @@map("received_expense_payloads")
+}
+
+// Audit record of every catalog S5 event received; max(id) is this consumer's cursor.
+model ExpenseReceivedOrgEvent {
+  id            Int      @id
+  orgId         String   @map("org_id")
+  eventType     String   @map("event_type")
+  payload       String
+  receivedAt    DateTime @map("received_at")
+  status        String   @default("pending")
+  failureReason String?  @map("failure_reason")
+
+  @@map("received_org_events")
+}
+
+// Capital asset register — this app is the system of record for fixed-asset numbers (ITFANN =
+// Innovation Treehouse Fixed Asset, e.g. "ITFA23"; 2-digit zero-pad, no space/dash). ONE ROW PER
+// PHYSICAL ASSET: a qty-N capital line expands to N rows, and a historical range/list is expanded to
+// individual numbers. Seeded rows carry the number hand-typed in QB (seeded=true); new assets are
+// minted here (max+1). `fullyDepreciatedDate` = acquisitionDate + depreciationYears; past it the
+// asset need not be tracked.
+model CapitalAsset {
+  id                   Int      @id @default(autoincrement())
+  orgId                String   @map("org_id")
+  assetNumber          String   @map("asset_number")
+  parentAssetNumber    String?  @map("parent_asset_number")
+  description          String
+  acquisitionDate      String?  @map("acquisition_date")
+  costCents            Int?     @map("cost_cents")
+  depreciationYears    Int?     @map("depreciation_years")
+  fullyDepreciatedDate String?  @map("fully_depreciated_date")
+  status               String   @default("tracked")
+  sourceExpenseId      String?  @map("source_expense_id")
+  sourceLineItemId     Int?     @map("source_line_item_id")
+  sourceReceiptId      String?  @map("source_receipt_id")
+  sourceQbTxnId        String?  @map("source_qb_txn_id")
+  seeded               Boolean  @default(false)
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  @@unique([orgId, assetNumber], name: "capital_assets_org_number_unique")
+  @@map("capital_assets")
+}
+
+// A QuickBooks transaction finance has permanently removed from matching (D5).
+model ExpenseQbMatchExclusion {
+  id                 Int      @id @default(autoincrement())
+  orgId              String   @map("org_id")
+  qbTxnId            String   @map("qb_txn_id")
+  reason             String
+  excludedByUserId   Int      @map("excluded_by_user_id")
+  excludedByUsername String?  @map("excluded_by_username")
+  excludedAt         DateTime @default(now()) @map("excluded_at")
+
+  @@unique([orgId, qbTxnId])
+  @@map("qb_match_exclusion")
+}
+
+// One filled sign-off seat on a reimbursement or card-charge line (Financial Policy F2 / F2-COI).
+// seat: SUBMITTER | PROGRAM_APPROVER | TREASURER; a Board member may fill the last two when nobody
+// eligible can. The two uniques make a seat fillable once and a person able to fill one seat per line.
+model ExpenseLineSignoff {
+  id             Int      @id @default(autoincrement())
+  expenseId      String   @map("expense_id")
+  lineItemId     Int      @map("line_item_id")
+  seat           String
+  signerUserId   Int      @map("signer_user_id")
+  signerUsername String?  @map("signer_username")
+  signedAt       DateTime @default(now()) @map("signed_at")
+
+  lineItem       ExpenseLineItem @relation(fields: [lineItemId], references: [id], onDelete: Cascade)
+
+  @@unique([lineItemId, seat])
+  @@unique([lineItemId, signerUserId])
+  @@map("expense_line_signoffs")
+}
+
+// A GC-FIN-CONTROL flag surfaced to finance or board for checkoff. kind: TAX_ATTACHED | CAPITAL_EQUIPMENT |
+// THRESHOLD_CROSSED | MISSING_RECEIPT | NON_EVERYDAY | COI. audience: FINANCE | BOARD.
+model ExpenseFlag {
+  id                   Int       @id @default(autoincrement())
+  orgId                String    @map("org_id")
+  expenseId            String    @map("expense_id")
+  kind                 String
+  audience             String
+  detail               String?
+  raisedAt             DateTime  @default(now()) @map("raised_at")
+  checkedOffAt         DateTime? @map("checked_off_at")
+  checkedOffByUserId   Int?      @map("checked_off_by_user_id")
+  checkedOffByUsername String?   @map("checked_off_by_username")
+  notes                String?
+
+  expense              Expense   @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@unique([expenseId, kind])
+  @@index([orgId, checkedOffAt])
+  @@map("expense_flags")
+}
