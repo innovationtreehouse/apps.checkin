@@ -1,9 +1,69 @@
 import {
+    countDirectJsonEntries,
+    extractExportedVerbs,
     findBareIncludeLegs,
+    findDirectJsonCalls,
+    findStaleDirectJsonEntries,
     findOrphanRegistryEntries,
     findUnregisteredBareIncludeLegs,
     REGISTRY_ENTRY_RE,
 } from "../check-route-coverage";
+
+describe("extractExportedVerbs", () => {
+    it("reads declaration exports", () => {
+        expect(extractExportedVerbs(`export const GET = h;\nexport async function POST() {}`).sort())
+            .toEqual(["GET", "POST"]);
+    });
+
+    it("reads an export list with several aliased specifiers", () => {
+        expect(extractExportedVerbs(`export { _guardedPATCH as PATCH, _guardedDELETE as DELETE };`).sort())
+            .toEqual(["DELETE", "PATCH"]);
+    });
+
+    it("reads one local exported under two verbs, and a bare verb specifier", () => {
+        expect(extractExportedVerbs(`export { handler as GET, handler as POST };\nexport { PUT };`).sort())
+            .toEqual(["GET", "POST", "PUT"]);
+    });
+
+    it("ignores non-verb exports and a verb that is only the local name", () => {
+        expect(extractExportedVerbs(`export { authOptions };\nexport { GET as helper };`)).toEqual([]);
+    });
+
+    it("reads a multi-line export list", () => {
+        expect(extractExportedVerbs(`export {\n    a as GET,\n    b as POST,\n};`).sort())
+            .toEqual(["GET", "POST"]);
+    });
+});
+
+describe("direct-json baseline", () => {
+    const FILE = "src/app/api/x/route.ts";
+    const baseline = () => countDirectJsonEntries(
+        `# comment\n\n${FILE} return NextResponse.json({\n`);
+
+    it("excuses the one listed line and leaves no stale entry", () => {
+        const allowance = baseline();
+        expect(findDirectJsonCalls(FILE, `    return NextResponse.json({\n    ok: 1 });`, allowance)).toEqual([]);
+        expect(findStaleDirectJsonEntries(allowance)).toEqual([]);
+    });
+
+    it("errors on a second occurrence of the same line", () => {
+        const src = `return NextResponse.json({\n});\nreturn NextResponse.json({\n});`;
+        expect(findDirectJsonCalls(FILE, src, baseline())).toEqual([{ line: 3, caller: "NextResponse" }]);
+    });
+
+    it("does not excuse the line in another file", () => {
+        expect(findDirectJsonCalls("src/app/api/y/route.ts", `return NextResponse.json({`, baseline()))
+            .toEqual([{ line: 1, caller: "NextResponse" }]);
+    });
+
+    it("warns on an entry that matches nothing", () => {
+        const allowance = baseline();
+        findDirectJsonCalls(FILE, `return Response.json({ a: 1 });`, allowance);
+        expect(findStaleDirectJsonEntries(allowance)).toEqual([
+            expect.objectContaining({ severity: "warn", rule: "stale-direct-json-baseline" }),
+        ]);
+    });
+});
 
 describe("REGISTRY_ENTRY_RE", () => {
     it.each(["defineRoute", "defineFileRoute"])("reads the endpoint of a %s entry", fn => {

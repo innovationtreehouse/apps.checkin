@@ -189,6 +189,52 @@ function loadLegacyAuthzRoutes(): Set<string> {
     );
 }
 
+/** The direct-json baseline: `<file> <exact trimmed line>` entries, each
+ *  excusing ONE occurrence of that line in that file. Frozen; see its header. */
+function loadDirectJsonBaseline(): Map<string, number> {
+    const file = path.join(REPO_ROOT, 'scripts/direct-json-baseline.txt');
+    if (!fs.existsSync(file)) return new Map();
+    return countDirectJsonEntries(fs.readFileSync(file, 'utf-8'));
+}
+
+export function countDirectJsonEntries(text: string): Map<string, number> {
+    const allowance = new Map<string, number>();
+    for (const entry of text.split('\n').map(l => l.trim())) {
+        if (entry && !entry.startsWith('#')) allowance.set(entry, (allowance.get(entry) ?? 0) + 1);
+    }
+    return allowance;
+}
+
+/** Direct `.json(` calls in a migrated route, minus baseline-excused ones.
+ *  Consumes `allowance` (keyed `<relFile> <trimmed line>`), so an entry still
+ *  above zero after every file is scanned is stale. */
+export function findDirectJsonCalls(
+    relFile: string, content: string, allowance: Map<string, number>,
+): { line: number; caller: string }[] {
+    const hits: { line: number; caller: string }[] = [];
+    content.split('\n').forEach((line, i) => {
+        const trimmed = line.trim();
+        const m = JSON_CALL_RE.exec(line);
+        if (!m || trimmed.startsWith('//')) return;
+        const key = `${relFile} ${trimmed}`;
+        const left = allowance.get(key) ?? 0;
+        if (left > 0) allowance.set(key, left - 1);
+        else hits.push({ line: i + 1, caller: m[1] });
+    });
+    return hits;
+}
+
+export function findStaleDirectJsonEntries(allowance: ReadonlyMap<string, number>): Finding[] {
+    return Array.from(allowance)
+        .filter(([, left]) => left > 0)
+        .map(([key, left]) => ({
+            severity: 'warn' as const,
+            rule: 'stale-direct-json-baseline',
+            file: 'scripts/direct-json-baseline.txt',
+            message: `baseline entry "${key}" is listed ${left} more time(s) than it matches — remove the line`,
+        }));
+}
+
 function findRouteFiles(dir: string, out: string[] = []): string[] {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
@@ -266,6 +312,7 @@ function checkGeneratedFileFresh() {
 function main() {
     const migrated = loadMigratedRoutes();
     const legacyAuthz = loadLegacyAuthzRoutes();
+    const directJsonAllowance = loadDirectJsonBaseline();
     const { routes: registered } = loadRegisteredEndpoints();
     const routeFiles = findRouteFiles(API_DIR);
 
@@ -298,14 +345,11 @@ function main() {
 
         const fullyMigrated = verbs.length > 0 && verbs.every(v => migrated.has(`${v} ${endpointPath}`));
         if (fullyMigrated && !ALLOWED_DIRECT_JSON_FILES.has(file)) {
-            const lines = content.split('\n');
-            lines.forEach((line, i) => {
-                if (JSON_CALL_RE.test(line) && !line.trim().startsWith('//')) {
-                    report('error', 'direct-json', file,
-                        `migrated route uses ${RegExp.$1}.json() — return ModelBag from handler() body instead`,
-                        i + 1);
-                }
-            });
+            for (const hit of findDirectJsonCalls(path.relative(REPO_ROOT, file), content, directJsonAllowance)) {
+                report('error', 'direct-json', file,
+                    `migrated route uses ${hit.caller}.json() — return ModelBag from handler() body instead`,
+                    hit.line);
+            }
         }
 
         // Rule 7. ponytail: warn, not error — there are pre-existing hits and CI
@@ -331,6 +375,7 @@ function main() {
     }
 
     findings.push(...findOrphanRegistryEntries(registered, allRouteEndpoints, allRoutePaths));
+    findings.push(...findStaleDirectJsonEntries(directJsonAllowance));
 
     // Keep the ratchet honest: a baseline entry whose route no longer exists
     // (deleted or migrated) must be pruned, or a later re-creation of the same

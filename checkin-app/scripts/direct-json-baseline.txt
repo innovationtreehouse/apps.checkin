@@ -1,0 +1,21 @@
+# RATCHET — direct NextResponse.json / Response.json calls in migrated routes.
+#
+# The CI lint (scripts/check-route-coverage.ts, rule `direct-json`) fails any
+# direct .json() call in a route whose verbs are all in migrated-routes.txt:
+# a migrated route returns a ModelBag from its handler() body so the response
+# stripper sees it. Each entry here excuses exactly ONE occurrence of one line:
+#
+#   <path relative to checkin-app/> <the source line, trimmed>
+#
+# A second identical line in the same file is still an error. An entry that
+# no longer matches warns as stale (`stale-direct-json-baseline`).
+#
+# This list may only SHRINK:
+#   - fixing a call: delete its line here.
+#   - ADDING a line requires owner/CODEOWNERS sign-off and is an explicit
+#     decision to ship a response outside the stripper. Don't.
+#
+# Comment lines and blank lines are ignored.
+
+# close-guard warn body; redesign pending in docs/in-design/WEB_LAST_KEYHOLDER_CHECKOUT.md
+src/app/api/attendance/manual/[id]/route.ts return NextResponse.json({
