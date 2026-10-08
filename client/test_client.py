@@ -554,7 +554,7 @@ class TestAttendancePollerClosedWindow(unittest.TestCase):
                 raise _StopLoop()
 
         with self.assertRaises(_StopLoop):
-            attendance_poller(backend, state, sleep_fn=fake_sleep,
+            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep,
                                in_closed_window_fn=in_closed_window_fn)
         return backend
 
@@ -580,7 +580,7 @@ class TestAttendancePollerClosedWindow(unittest.TestCase):
                 raise _StopLoop()
 
         with self.assertRaises(_StopLoop):
-            attendance_poller(backend, state, sleep_fn=fake_sleep,
+            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep,
                                in_closed_window_fn=lambda: False)
         backend.get_attendance.assert_not_called()
 
@@ -597,9 +597,69 @@ class TestAttendancePollerClosedWindow(unittest.TestCase):
                 raise _StopLoop()
 
         with self.assertRaises(_StopLoop):
-            attendance_poller(backend, state, sleep_fn=fake_sleep,
+            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep,
                                in_closed_window_fn=lambda: False)
         backend.get_attendance.assert_called()
+
+
+class TestReseedKeepsUndeliveredScans(unittest.TestCase):
+    """The server roster lags the kiosk: queued outbox rows are not on it. A
+    reseed must not erase them, or the next badge from that person is sent in
+    the wrong direction."""
+
+    def _queue(self, ob, pid, intent, at):
+        ob.enqueue(f"evt-{pid}-{at}", pid, at, intent=intent)
+
+    def test_pending_in_survives_an_empty_roster(self):
+        ob = Outbox(":memory:")
+        self._queue(ob, 5, "IN", "2026-10-05T10:00:00Z")
+        state = AttendanceState()
+        state.seed_from_attendance({"attendance": []}, ob.pending_rows())
+        self.assertEqual(state.displayed_intent(5), "OUT")
+
+    def test_pending_out_survives_a_roster_that_still_lists_them(self):
+        ob = Outbox(":memory:")
+        self._queue(ob, 5, "OUT", "2026-10-05T10:00:00Z")
+        state = AttendanceState()
+        state.seed_from_attendance(
+            {"attendance": [{"participant": {"id": 5, "isKeyholder": True}}]}, ob.pending_rows())
+        self.assertEqual(state.displayed_intent(5), "IN")
+        self.assertEqual(state.keyholder_ids, {5}, "keyholder ids stay roster-only")
+
+    def test_last_pending_intent_wins(self):
+        ob = Outbox(":memory:")
+        self._queue(ob, 5, "IN", "2026-10-05T10:00:00Z")
+        self._queue(ob, 5, "OUT", "2026-10-05T11:00:00Z")
+        state = AttendanceState()
+        state.seed_from_attendance({"attendance": []}, ob.pending_rows())
+        self.assertEqual(state.displayed_intent(5), "IN")
+
+    def test_poller_overlays_the_outbox(self):
+        ob = Outbox(":memory:")
+        self._queue(ob, 5, "IN", "2026-10-05T10:00:00Z")
+        backend = Mock(attendance_path="/api/attendance")
+        backend.get_attendance.return_value = ({"attendance": [], "counts": {"total": 0}}, 200)
+        state = AttendanceState()
+        state.push_event = lambda e: None
+        calls = {"n": 0}
+
+        def fake_sleep(_secs):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise _StopLoop()
+
+        with self.assertRaises(_StopLoop):
+            attendance_poller(backend, state, ob, sleep_fn=fake_sleep,
+                               in_closed_window_fn=lambda: False)
+        backend.get_attendance.assert_called()
+        self.assertEqual(state.displayed_intent(5), "OUT")
+
+    def test_apply_pending_without_a_roster(self):
+        ob = Outbox(":memory:")
+        self._queue(ob, 5, "IN", "2026-10-05T10:00:00Z")
+        state = AttendanceState()
+        state.apply_pending(ob.pending_rows())
+        self.assertEqual(state.displayed_intent(5), "OUT")
 
 
 class TestProxyKeepaliveSkip(unittest.TestCase):

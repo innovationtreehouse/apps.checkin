@@ -36,7 +36,7 @@ class FakeState:
     def note_presence(self, participant_id, checking_in, is_keyholder=None):
         return
 
-    def seed_from_attendance(self, att_data):
+    def seed_from_attendance(self, att_data, pending=()):
         return
 
     def take_local_close(self, participant_id):

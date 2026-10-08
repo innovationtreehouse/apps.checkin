@@ -450,8 +450,11 @@ class AttendanceState:
             else:
                 self.present_ids.discard(pid)
 
-    def seed_from_attendance(self, att_data):
-        """Replace the local presence view with the server roster."""
+    def seed_from_attendance(self, att_data, pending=()):
+        """Replace the local presence view with the server roster, plus this
+        kiosk's undelivered outbox rows, which the roster does not show yet. Snapshot `pending` BEFORE the fetch: a
+        row that drains in between is then in both (harmless); taken after, it
+        could be in neither. Keyholder ids stay roster-only."""
         visits = att_data.get("attendance") or []
         present = set()
         keyholders = set()
@@ -463,6 +466,7 @@ class AttendanceState:
             present.add(int(pid))
             if person.get("isKeyholder"):
                 keyholders.add(int(pid))
+        _overlay_pending(present, pending)
         safety = att_data.get("safety") or {}
         with self.lock:
             self.present_ids = present
@@ -470,6 +474,24 @@ class AttendanceState:
             self.last_two_deep_violation = bool(safety.get("isTwoDeepViolation"))
             self.counts_known = True
             self.last_keepalive_bodies["/api/attendance"] = json.dumps(att_data)
+
+    def apply_pending(self, pending):
+        """Overlay undelivered outbox rows when there is no roster to seed from."""
+        with self.lock:
+            _overlay_pending(self.present_ids, pending)
+
+def _overlay_pending(present, pending):
+    """Apply undelivered scans (outbox.pending_rows(), scanned_at ASC) to a
+    presence set: the last intent per person wins."""
+    for row in pending:
+        try:
+            pid = int(row[1])
+        except (TypeError, ValueError):
+            continue
+        if row[5] == "IN":
+            present.add(pid)
+        elif row[5] == "OUT":
+            present.discard(pid)
 
 # ---------------------------------------------------------------------------
 # Transparent Signing Proxy & Kiosk Handler
@@ -1190,9 +1212,10 @@ def handle_scan(backend, state, outbox, participant_id):
 
     # Fetch fresh attendance and push update for the iframe
     if backend.attendance_path and outcome == "ack":
+        pending = outbox.pending_rows()
         att_data, att_status = backend.get_attendance()
         if att_status == 200:
-            state.seed_from_attendance(att_data)
+            state.seed_from_attendance(att_data, pending)
             event_payload = {"html": ""}
             for key in ("attendance", "counts", "safety"):
                 if key in att_data:
@@ -1205,7 +1228,7 @@ def handle_scan(backend, state, outbox, participant_id):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def attendance_poller(backend, state, interval=30, sleep_fn=time.sleep,
+def attendance_poller(backend, state, outbox, interval=30, sleep_fn=time.sleep,
                        in_closed_window_fn=in_closed_window):
     """Background thread that polls attendance counts periodically.
     Pushes SSE status events when counts change so the blackout
@@ -1229,9 +1252,10 @@ def attendance_poller(backend, state, interval=30, sleep_fn=time.sleep,
             empty = state.counts_known and state.current_counts.get("total", 0) == 0
         if empty:
             continue
+        pending = outbox.pending_rows()
         att_data, att_status = backend.get_attendance()
         if att_status == 200 and "counts" in att_data:
-            state.seed_from_attendance(att_data)
+            state.seed_from_attendance(att_data, pending)
             new_counts = att_data["counts"]
             with state.lock:
                 changed = new_counts != state.current_counts
@@ -1405,7 +1429,10 @@ def main():
     outbox = Outbox(config.get("outbox_path", DEFAULT_OUTBOX_PATH))
     log.info(f"Outbox:  {outbox.path} ({outbox.pending_count()} pending on start)")
 
-    # Fetch initial attendance state (only if attendance_path is configured)
+    # Fetch initial attendance state (only if attendance_path is configured).
+    # Unseeded (offline, overnight, no path), queued scans still set intent.
+    pending = outbox.pending_rows()
+    seeded = False
     if attendance_path:
         if in_closed_window():
             log.info("Skipping initial attendance fetch (overnight idle)")
@@ -1414,13 +1441,17 @@ def main():
             att_data, att_status = backend.get_attendance()
             if att_status == 200 and "counts" in att_data:
                 state.current_counts = att_data["counts"]
-                state.seed_from_attendance(att_data)
+                state.seed_from_attendance(att_data, pending)
+                seeded = True
                 log.info(f"Initial state: {state.current_counts['total']} people present")
             else:
                 log.warning("Could not fetch initial attendance state")
+    if not seeded:
+        state.apply_pending(pending)
 
+    if attendance_path:
         # Start background poller for blackout updates
-        poller = threading.Thread(target=attendance_poller, args=(backend, state), daemon=True)
+        poller = threading.Thread(target=attendance_poller, args=(backend, state, outbox), daemon=True)
         poller.start()
 
     # Start version poller thread
