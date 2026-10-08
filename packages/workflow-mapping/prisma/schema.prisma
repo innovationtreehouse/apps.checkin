@@ -5,30 +5,51 @@ generator client {
   moduleFormat = "cjs"
 }
 
+// Brings the workflow-mapping schema under checkin's security regime (design
+// #1289 §5): the same generator emits a classifications map, merged in
+// checkin-app/src/security/core.ts. Paths are relative to this schema file.
+generator security {
+  provider = "node ../../checkin-app/scripts/security-generator.js"
+  output   = "../../../checkin-app/src/security/generated/workflow-classifications.ts"
+}
+
 datasource db {
   provider = "postgresql"
 }
 
 // The S5 drain cursor (id = 1): the id of the last catalog OrgEvent this library applied.
 model WorkflowSystemData {
+  /// @sensitivity:public
   id             Int @id
+  /// @sensitivity:internal
   orgEventCursor Int @default(0) @map("org_event_cursor")
 
   @@map("system_data")
 }
 
 model ReceivedReceipt {
+  /// @sensitivity:public
   id              Int      @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId           String   @map("org_id")
+  /// @sensitivity:internal
   receiptId       String   @unique @map("receipt_id")
+  /// @sensitivity:public
   state           String   @default("pending_review")
+  /// @sensitivity:personal
   receiptJson     String   @map("receipt_json")
+  /// @sensitivity:internal
   validationNotes String?  @map("validation_notes")
   // When each downstream leg accepted the push; once any is set the lines are frozen.
+  /// @sensitivity:public
   inventoryAppliedAt DateTime? @map("inventory_applied_at")
+  /// @sensitivity:public
   expenseAppliedAt   DateTime? @map("expense_applied_at")
+  /// @sensitivity:public
   donationAppliedAt  DateTime? @map("donation_applied_at")
+  /// @sensitivity:public
   createdAt       DateTime @default(now()) @map("created_at")
+  /// @sensitivity:public
   updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
 
   lineStatuses ReceivedReceiptLineStatus[]
@@ -37,18 +58,27 @@ model ReceivedReceipt {
 }
 
 model ReceivedReceiptLineStatus {
+  /// @sensitivity:public
   id                Int      @id @default(autoincrement())
+  /// @sensitivity:internal
   receivedReceiptId Int      @map("received_receipt_id")
+  /// @sensitivity:internal
   receiptLineItemId Int      @map("receipt_line_item_id")
+  /// @sensitivity:public
   recognitionStatus String   @default("unrecognized") @map("recognition_status")
+  /// @sensitivity:public
   assignedGtin13         String?  @map("assigned_gtin13")
+  /// @sensitivity:public
   provisionalItemGtin13  String?  @map("provisional_item_gtin13")
   // Conversion factor (inventory units per receipt-line unit) for this line:
   // the matched reference's factor for auto-recognized lines, or the human-
   // entered factor for manual associate / provisional. Carried onto the S3
   // delta so local-inventory multiplies raw qty by it. Integer, forward-only.
+  /// @sensitivity:public
   conversionFactor  Int      @default(1) @map("conversion_factor")
+  /// @sensitivity:public
   conversionVersion Int      @default(1) @map("conversion_version")
+  /// @sensitivity:public
   updatedAt         DateTime @default(now()) @updatedAt @map("updated_at")
 
   receivedReceipt ReceivedReceipt @relation(fields: [receivedReceiptId], references: [id], onDelete: Cascade)
@@ -58,16 +88,27 @@ model ReceivedReceiptLineStatus {
 }
 
 model WorkflowAuditLog {
+  /// @sensitivity:public
   id                Int      @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId             String   @map("org_id")
+  /// @sensitivity:internal
   actorUserId       Int?     @map("actor_user_id")
+  /// @sensitivity:internal
   actorUsername     String?  @map("actor_username")
+  /// @sensitivity:public
   eventType         String   @map("event_type")
+  /// @sensitivity:internal
   receivedReceiptId Int?     @map("received_receipt_id")
+  /// @sensitivity:internal
   lineStatusId      Int?     @map("line_status_id")
+  /// @sensitivity:public
   fromState         String?  @map("from_state")
+  /// @sensitivity:public
   toState           String?  @map("to_state")
+  /// @sensitivity:internal
   details           String?
+  /// @sensitivity:public
   createdAt         DateTime @default(now()) @map("created_at")
 
   @@map("workflow_audit_log")

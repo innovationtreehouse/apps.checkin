@@ -48,6 +48,7 @@ const ORACLES = [
     'toolstatus-self-scope.test.ts',
     'visit-household-lead-scope.test.ts',
     'visit-program-scope.test.ts',
+    'workflow-strip.test.ts',
 ] as const;
 
 describe('scope oracle set', () => {
