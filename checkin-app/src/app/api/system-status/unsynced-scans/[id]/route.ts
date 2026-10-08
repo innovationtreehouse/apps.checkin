@@ -72,6 +72,9 @@ export const POST = handler<{ id: string }>(
             where: { id, reviewReason: { not: null }, reviewedAt: null },
         });
         if (!row) throw notFound("No scan awaiting review with that id.");
+        if (row.personId === null) {
+            throw new ApiResponseError(409, "This scan matches no one on record — dismiss it once you have looked.");
+        }
         if (parsedDeparted && parsedDeparted <= row.timestamp) {
             throw badRequest("departedAt must be after the scan time.");
         }

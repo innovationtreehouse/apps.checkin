@@ -118,6 +118,8 @@ describe("GET /api/system-status/unsynced-scans", () => {
         const res = await GET(listReq());
         const { select } = db.rawBadgeLog.findMany.mock.calls[0][0];
         expect(select.person).toEqual({ select: { id: true, name: true } });
+        // The raw read, for a row that resolved to no person.
+        expect(select.scannedValue).toBe(true);
 
         const [row] = (await res.json()).scans;
         expect(row.person).toEqual({ id: 12, name: "Ada Lovelace" });

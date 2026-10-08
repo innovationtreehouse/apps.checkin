@@ -1157,8 +1157,13 @@ model RSVP {
 model RawBadgeLog {
   /// @sensitivity:internal
   id            Int      @id @default(autoincrement())
+  /// Null only for a dead-lettered kiosk read that names no person (an
+  /// unreadable or unknown badge number); `scannedValue` then holds what was read.
   /// @sensitivity:internal
-  personId Int
+  personId Int?
+  /// The raw badge value the kiosk read, kept when it resolves to no person.
+  /// @sensitivity:internal
+  scannedValue  String?
   /// @sensitivity:personal
   timestamp     DateTime @default(now())
   /// @sensitivity:personal
@@ -1177,7 +1182,7 @@ model RawBadgeLog {
   /// nothing this reads. @sensitivity:internal
   reviewedBy    Int?
 
-  person Person @relation(fields: [personId], references: [id])
+  person Person? @relation(fields: [personId], references: [id], onDelete: Restrict)
 
   @@index([personId, timestamp]) // Double-badge detection in /api/scan
 }
