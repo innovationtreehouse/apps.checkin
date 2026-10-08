@@ -67,6 +67,7 @@ Program roles (all Treehouse Volunteers):
 |---|---|---|---|
 | **Program Leader** | the person responsible for a program | `programLeaderId` *(rename pending from `leadMentorId`)* | policy term; **retire "lead mentor"** |
 | **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | Core's legal-authority rules are organizational (out of software scope) |
+| **Program Treasurer** | a Program Volunteer who keeps the program's money; a program may have several. With the Program Leader, approves within the program's budget-owner bucket | `ProgramVolunteer.isTreasurer` | policy term (*Sponsored Program Policy, Art. III §III.7*) |
 
 **Retired words (do not use):** `staff` / "program staff" (→ Treehouse Volunteers), `mentor` and `lead mentor` (→ Program Leader / Program Volunteer; program-specific "mentor" language is external), "program instructor" (→ `instructor` is **tool-only**, see Shop & Certification).
 
