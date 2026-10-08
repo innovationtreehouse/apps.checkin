@@ -1,6 +1,6 @@
 # @inventory/quickbooks
 
-Read-only QuickBooks Online client (QB-0 of `docs/in-design/1272_EXPENSE_QB_INTEGRATION.md` §9).
+Read-only QuickBooks Online client (QB-0 and QB-1 of `docs/in-design/1272_EXPENSE_QB_INTEGRATION.md` §9).
 No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, refresh).
 
 ## Public API
@@ -16,6 +16,15 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   There is no since-a-date reader.
 - Name lookups for bootstrap UIs: `accountNamed` / `classNamed` (by `FullyQualifiedName`,
   e.g. `Parent:Child`), `vendorNamed` (by `DisplayName`). Mappings store the QuickBooks Id, never a name.
+- Reference lists for the FINANCE bootstrap: `accounts()`, `classes()`, `vendors()` (active entries).
+- `billsBetween` returns `Balance` and `LinkedTxn`; `billPaymentsByIds(ids)` reads the payments a Bill
+  links, so a caller can tell when a Bill was paid.
+- Match-before-create, find half (`match.ts`, pure, no writes): `findMatch(candidates, request)` answers
+  `found` (`via: "key"` for the app's own creation, `"amount"` for a hand entry on amount, date window and
+  account or vendor), `ambiguous`, `not-found-after-line`, `not-found-before-line` or `not-found-no-line`.
+  Claimed and excluded ids are skipped. `takeoverLine(records)` is the newest hand-booked tie's date;
+  app-created ties never move it, and no hand tie means no line. `depositCandidate`, `purchaseCandidate`
+  and `billCandidate` adapt reader rows.
 - `qboString` / `qboDate` — the only way a value enters a query: escaped / validated literals.
 - Local dev and operator CLI only: `envAccessTokenSource()` (`QBO_ACCESS_TOKEN`),
   `fileAccessTokenSource(path)` (refreshes and re-saves the consent token file),

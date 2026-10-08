@@ -139,4 +139,34 @@ describe("QuickBooksClient", () => {
     expect(sql(1)).toBe("SELECT * FROM Class WHERE FullyQualifiedName = 'Robotics'");
     expect(sql(2)).toBe("SELECT * FROM Vendor WHERE DisplayName = 'O\\'Reilly'");
   });
+
+  it("reads a Bill's Balance and LinkedTxn so a caller can tell it was paid", async () => {
+    const bill = { Id: "7", TxnDate: "2025-03-01", TotalAmt: 50, Balance: 0, LinkedTxn: [{ TxnId: "90", TxnType: "BillPayment" }] };
+    respond("Bill", [bill]);
+    await expect(new QuickBooksClient(tokens, sandbox).billsBetween("2025-03-01", "2025-03-01")).resolves.toEqual([bill]);
+  });
+
+  it("reads BillPayments by id, escaping every id", async () => {
+    const client = new QuickBooksClient(tokens, sandbox);
+    respond("BillPayment", [{ Id: "90", TxnDate: "2025-04-02", TotalAmt: 50 }]);
+    await expect(client.billPaymentsByIds(["90", "9' OR Id > '0"])).resolves.toEqual([{ Id: "90", TxnDate: "2025-04-02", TotalAmt: 50 }]);
+    expect(sql(0)).toBe("SELECT * FROM BillPayment WHERE Id IN ('90', '9\\' OR Id > \\'0')");
+  });
+
+  it("reads no BillPayments for no ids and refuses more than a page of ids", async () => {
+    const client = new QuickBooksClient(tokens, sandbox);
+    await expect(client.billPaymentsByIds([])).resolves.toEqual([]);
+    await expect(client.billPaymentsByIds(Array.from({ length: 1001 }, (_, i) => String(i)))).rejects.toThrow(/at most 1000/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["accounts", "Account"],
+    ["classes", "Class"],
+    ["vendors", "Vendor"],
+  ] as const)("%s pages the %s list", async (method, entity) => {
+    respond(entity, [{ Id: "1" }]);
+    await expect(new QuickBooksClient(tokens, sandbox)[method]()).resolves.toEqual([{ Id: "1" }]);
+    expect(sql(0)).toBe(`SELECT * FROM ${entity} STARTPOSITION 1 MAXRESULTS 1000`);
+  });
 });

@@ -1,6 +1,7 @@
 import type {
   AccessTokenSource,
   QboAccount,
+  QboBill,
   QboBillPayment,
   QboClass,
   QboDeposit,
@@ -120,7 +121,7 @@ export class QuickBooksClient {
   }
 
   /** Bills = vendor invoices (a separate QBO entity from Purchase). */
-  billsBetween(from: string, to: string): Promise<QboPurchase[]> {
+  billsBetween(from: string, to: string): Promise<QboBill[]> {
     return this.between("Bill", from, to);
   }
 
@@ -130,6 +131,26 @@ export class QuickBooksClient {
 
   depositsBetween(from: string, to: string): Promise<QboDeposit[]> {
     return this.between("Deposit", from, to);
+  }
+
+  /** The BillPayments a Bill's LinkedTxn names, at most one page of ids. */
+  async billPaymentsByIds(ids: readonly string[]): Promise<QboBillPayment[]> {
+    if (ids.length === 0) return [];
+    if (ids.length > PAGE_SIZE) throw new Error(`QBO id lookup takes at most ${PAGE_SIZE} ids, got ${ids.length}`);
+    return this.query<QboBillPayment>(`SELECT * FROM BillPayment WHERE Id IN (${ids.map(qboString).join(", ")})`);
+  }
+
+  /** Reference lists (active entries) for the FINANCE bootstrap; not transaction history. */
+  accounts(): Promise<QboAccount[]> {
+    return this.paged("SELECT * FROM Account");
+  }
+
+  classes(): Promise<QboClass[]> {
+    return this.paged("SELECT * FROM Class");
+  }
+
+  vendors(): Promise<QboVendor[]> {
+    return this.paged("SELECT * FROM Vendor");
   }
 
   /** Lookup for bootstrap UIs; mappings store the Id. FullyQualifiedName is "Parent:Child" and unique. */
