@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
+import { centsToDollars } from "@inventory/money";
 import type {
   AccessTokenSource,
   QboAccount,
   QboBill,
   QboBillPayment,
   QboClass,
+  QboCustomer,
   QboDeposit,
   QboEnv,
   QboPurchase,
@@ -64,6 +67,159 @@ function parseDate(value: string): Date {
 export function qboDate(value: string): string {
   parseDate(value);
   return `'${value}'`;
+}
+
+/**
+ * The only entities the app may create. A reimbursement is a Bill the app never pays;
+ * BillPayment, Payment, JournalEntry and every other entity are refused.
+ */
+export const WRITABLE_ENTITIES = ["Purchase", "Bill", "Deposit", "Vendor"] as const;
+export type WritableEntity = (typeof WRITABLE_ENTITIES)[number];
+
+/** One booked line: integer cents to an account, optionally a Class (a bucket's QB ref). */
+export interface WriteLine {
+  amountCents: number;
+  accountId: string;
+  classId?: string;
+  description?: string;
+}
+
+/** A card or cash expense, paid from `accountId`. A Check is never written. */
+export interface PurchaseFields {
+  txnDate: string;
+  paymentType: "Cash" | "CreditCard";
+  accountId: string;
+  vendorId?: string;
+  lines: WriteLine[];
+  memo?: string;
+}
+
+/** A Bill to `vendorId` (a reimbursement). The app creates it and never pays it. */
+export interface BillFields {
+  txnDate: string;
+  vendorId: string;
+  dueDate?: string;
+  lines: WriteLine[];
+  memo?: string;
+}
+
+export interface DepositFields {
+  txnDate: string;
+  depositToAccountId: string;
+  lines: WriteLine[];
+  memo?: string;
+}
+
+export interface VendorFields {
+  displayName: string;
+}
+
+export type TxnWrite =
+  | { entity: "Purchase"; fields: PurchaseFields }
+  | { entity: "Bill"; fields: BillFields }
+  | { entity: "Deposit"; fields: DepositFields };
+
+export type WriteRequest = TxnWrite | { entity: "Vendor"; fields: VendorFields };
+
+const KEY_PATTERN = /^[A-Za-z0-9._:/-]{1,50}$/;
+const KEY_MARKER = /\[checkin:([A-Za-z0-9._:/-]{1,50})\]/;
+const MAX_PRIVATE_NOTE = 4000;
+
+const LANE_PATTERN = /^[a-z][a-z0-9-]{0,14}$/;
+const HASH_HEX_CHARS = 32; // 128 bits of sha256
+
+/**
+ * The only way a lane builds its idempotency key: `<lane>:<sourceId>` when that fits
+ * KEY_PATTERN, else `<lane>:h:<128-bit sha256 hex>` of it. Deterministic, so a retry
+ * sends the same key. The 50-char cap is QBO's `requestid` limit as documented, not
+ * verified live; this is the one place to change it.
+ */
+export function qbKey(lane: string, sourceId: string): string {
+  if (!LANE_PATTERN.test(lane)) throw new Error(`QBO key lane must match ${LANE_PATTERN}, got "${lane}"`);
+  if (!sourceId) throw new Error("QBO key sourceId must not be empty");
+  const plain = `${lane}:${sourceId}`;
+  if (KEY_PATTERN.test(plain)) return plain;
+  return `${lane}:h:${createHash("sha256").update(plain).digest("hex").slice(0, HASH_HEX_CHARS)}`;
+}
+
+/** The caller's idempotency key (from qbKey), sent as QBO `requestid` and written into a created transaction's PrivateNote. */
+export function assertAppKey(key: string): void {
+  if (!KEY_PATTERN.test(key)) throw new Error(`QBO app key must be 1-50 of [A-Za-z0-9._:/-], got "${key}"`);
+}
+
+/** The app key a created transaction carries in its PrivateNote; undefined on hand-booked entries. */
+export function appKeyOf(entry: { PrivateNote?: string }): string | undefined {
+  return KEY_MARKER.exec(entry.PrivateNote ?? "")?.[1];
+}
+
+function privateNote(memo: string | undefined, key: string): string {
+  if (memo !== undefined && KEY_MARKER.test(memo)) throw new Error("QBO memo must not carry an app key marker");
+  const note = memo ? `${memo}\n[checkin:${key}]` : `[checkin:${key}]`;
+  if (note.length > MAX_PRIVATE_NOTE) throw new Error(`QBO PrivateNote is ${note.length} chars; the limit is ${MAX_PRIVATE_NOTE}`);
+  return note;
+}
+
+function ref(id: string): { value: string } {
+  if (!/^\d+$/.test(id)) throw new Error(`QBO ref id must be numeric, got "${id}"`);
+  return { value: id };
+}
+
+function lines(rows: WriteLine[], detailType: "AccountBasedExpenseLineDetail" | "DepositLineDetail") {
+  if (rows.length === 0) throw new Error("QBO transaction needs at least one line");
+  return rows.map((l) => ({
+    Amount: centsToDollars(l.amountCents),
+    DetailType: detailType,
+    [detailType]: { AccountRef: ref(l.accountId), ...(l.classId !== undefined && { ClassRef: ref(l.classId) }) },
+    ...(l.description !== undefined && { Description: l.description }),
+  }));
+}
+
+/** The request body: only the listed fields of each entity, so no Id, SyncToken or sparse update can be sent. */
+function writeBody(req: WriteRequest, key: string): Record<string, unknown> {
+  switch (req.entity) {
+    case "Purchase": {
+      const f = req.fields;
+      if (f.paymentType !== "Cash" && f.paymentType !== "CreditCard") {
+        throw new Error(`QBO Purchase PaymentType must be Cash or CreditCard, got "${String(f.paymentType)}"`);
+      }
+      parseDate(f.txnDate);
+      return {
+        TxnDate: f.txnDate,
+        PaymentType: f.paymentType,
+        AccountRef: ref(f.accountId),
+        ...(f.vendorId !== undefined && { EntityRef: { ...ref(f.vendorId), type: "Vendor" } }),
+        Line: lines(f.lines, "AccountBasedExpenseLineDetail"),
+        PrivateNote: privateNote(f.memo, key),
+      };
+    }
+    case "Bill": {
+      const f = req.fields;
+      parseDate(f.txnDate);
+      if (f.dueDate !== undefined) parseDate(f.dueDate);
+      return {
+        TxnDate: f.txnDate,
+        VendorRef: ref(f.vendorId),
+        ...(f.dueDate !== undefined && { DueDate: f.dueDate }),
+        Line: lines(f.lines, "AccountBasedExpenseLineDetail"),
+        PrivateNote: privateNote(f.memo, key),
+      };
+    }
+    case "Deposit": {
+      const f = req.fields;
+      parseDate(f.txnDate);
+      return {
+        TxnDate: f.txnDate,
+        DepositToAccountRef: ref(f.depositToAccountId),
+        Line: lines(f.lines, "DepositLineDetail"),
+        PrivateNote: privateNote(f.memo, key),
+      };
+    }
+    case "Vendor": {
+      const name = req.fields.displayName.trim();
+      if (!name || [...name].some((c) => c < " " || c === "\x7f")) throw new Error("QBO Vendor DisplayName is empty or has a control character");
+      return { DisplayName: name };
+    }
+  }
 }
 
 export class QuickBooksClient {
@@ -168,6 +324,38 @@ export class QuickBooksClient {
   async vendorNamed(name: string): Promise<QboVendor | null> {
     const [v] = await this.query<QboVendor>(`SELECT * FROM Vendor WHERE DisplayName = ${qboString(name)}`);
     return v ?? null;
+  }
+
+  /** DisplayName is unique across Customers, Vendors and Employees; a new Vendor must not reuse a Customer's. */
+  async customerNamed(name: string): Promise<QboCustomer | null> {
+    const [c] = await this.query<QboCustomer>(`SELECT * FROM Customer WHERE DisplayName = ${qboString(name)}`);
+    return c ?? null;
+  }
+
+  /**
+   * The app's only QuickBooks write: create one entity of WRITABLE_ENTITIES. There is no
+   * update, delete or void. `key` is sent as `requestid`, so QBO answers a retry with the
+   * first result instead of booking twice.
+   */
+  async create(request: WriteRequest, key: string): Promise<{ Id: string }> {
+    if (!(WRITABLE_ENTITIES as readonly string[]).includes(request.entity)) {
+      throw new Error(`QBO entity "${String(request.entity)}" is not writable`);
+    }
+    assertAppKey(key);
+    assertRealmAllowed(this.realm);
+    const body = writeBody(request, key);
+    const token = await this.tokens.current();
+    const url = `${apiBase(this.realm.env)}/v3/company/${this.realm.realmId}/${request.entity.toLowerCase()}?minorversion=${MINOR_VERSION}&requestid=${encodeURIComponent(key)}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    this.lastTid = res.headers.get("intuit_tid");
+    if (!res.ok) throw new Error(`QBO create ${request.entity} failed ${res.status} (intuit_tid=${this.lastTid}): ${await res.text()}`);
+    const created = ((await res.json()) as Record<string, { Id?: string } | undefined>)[request.entity];
+    if (!created?.Id) throw new Error(`QBO create ${request.entity} returned no Id (intuit_tid=${this.lastTid})`);
+    return { Id: created.Id };
   }
 }
 

@@ -1,6 +1,7 @@
 # @inventory/quickbooks
 
-Read-only QuickBooks Online client (QB-0 and QB-1 of `docs/in-design/1272_EXPENSE_QB_INTEGRATION.md` §9).
+QuickBooks Online client (QB-0 to QB-2 of `docs/in-design/1272_EXPENSE_QB_INTEGRATION.md` §9): windowed
+reads plus one closed-enum, create-only writer.
 No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, refresh).
 
 ## Public API
@@ -25,6 +26,22 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   Claimed and excluded ids are skipped. `takeoverLine(records)` is the newest hand-booked tie's date;
   app-created ties never move it, and no hand tie means no line. `depositCandidate`, `purchaseCandidate`
   and `billCandidate` adapt reader rows.
+- The one write (QB-2): `client.create(request, key)`, create-only, for `WRITABLE_ENTITIES`
+  (`Purchase`, `Bill`, `Deposit`, `Vendor`). Anything else (BillPayment, Payment, JournalEntry, …), a
+  Check-type Purchase, an update or a delete is refused before any request. Each entity's body is built
+  from typed fields (integer cents, numeric account / Class / vendor ids), so nothing else reaches QBO.
+  `key` comes from `qbKey(lane, sourceId)` (lanes never build keys themselves): `<lane>:<sourceId>`
+  when it fits 50 chars of `[A-Za-z0-9._:/-]`, else `<lane>:h:<128-bit sha256 hex>`. The 50-char cap is
+  QBO's documented `requestid` limit, unverified live; `qbKey` is the one place to change it. The key
+  is sent as QBO `requestid` and, on Purchase/Bill/Deposit, written
+  into `PrivateNote` as `[checkin:<key>]`; `appKeyOf(entry)` reads it back for the candidate adapters.
+  Writes re-check the realm guard, so production needs `CHECKIN_ENV=prod` at write time.
+- `findOrCreate(client, request)` (`write.ts`, stateless): reads the record's window, runs `findMatch`, and
+  answers `found` / `ambiguous` (post nothing), `created` (after the takeover line), `too-old` (on or
+  before the line) or `no-line` (never create), or `failed` (any error; nothing is retried here). The
+  created `TxnDate` must sit inside the window, so a crash after QBO accepts is found by key next run.
+- `createVendor(client, name, key)`: finance's "Create new". A name a Customer holds becomes
+  `<name> (Vendor)`; an existing Vendor with the resulting name is returned as `found` with `via: "name"`.
 - `qboString` / `qboDate` — the only way a value enters a query: escaped / validated literals.
 - Local dev and operator CLI only: `envAccessTokenSource()` (`QBO_ACCESS_TOKEN`),
   `fileAccessTokenSource(path)` (refreshes and re-saves the consent token file),
