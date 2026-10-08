@@ -46,6 +46,10 @@ const ALLOWED_THIRD_PARTY_FETCH_FILES = new Set<string>([
 
 const THIRD_PARTY_HOST_RE = /(shopify\.com|myshopify\.com|resend\.com|SHOPIFY_STORE_DOMAIN)/;
 const VERB_EXPORT_RE = /export\s+(?:const|async\s+function|function)\s+(GET|POST|PUT|PATCH|DELETE)\b/g;
+/** `export { a as GET, POST }` — each specifier exports its `as` alias, else its own name. */
+const EXPORT_LIST_RE = /export\s*\{([^}]*)\}/g;
+const EXPORT_SPECIFIER_RE = /^[A-Za-z_$][\w$]*(?:\s+as\s+([A-Za-z_$][\w$]*))?$/;
+const HTTP_VERBS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 /** A registry entry for an endpoint: a JSON route or a file route. */
 export const REGISTRY_ENTRY_RE = /define(?:File)?Route\s*\(\s*\{\s*endpoint\s*:\s*['"]([^'"]+)['"]/;
 const JSON_CALL_RE = /\b(NextResponse|Response)\.json\s*\(/;
@@ -199,11 +203,16 @@ function fileToEndpointPath(file: string): string {
     return '/api' + (rel ? '/' + rel : '');
 }
 
-function extractExportedVerbs(content: string): string[] {
+export function extractExportedVerbs(content: string): string[] {
     const found = new Set<string>();
-    let m: RegExpExecArray | null;
-    VERB_EXPORT_RE.lastIndex = 0;
-    while ((m = VERB_EXPORT_RE.exec(content)) !== null) found.add(m[1]);
+    for (const m of content.matchAll(VERB_EXPORT_RE)) found.add(m[1]);
+    for (const list of content.matchAll(EXPORT_LIST_RE)) {
+        for (const spec of list[1].split(',')) {
+            const s = EXPORT_SPECIFIER_RE.exec(spec.trim());
+            const name = s && (s[1] ?? spec.trim());
+            if (name && HTTP_VERBS.has(name)) found.add(name);
+        }
+    }
     return Array.from(found);
 }
 
