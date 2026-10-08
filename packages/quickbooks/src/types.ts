@@ -36,11 +36,25 @@ export interface QboPurchase {
   TotalAmt: number;
   EntityRef?: { value: string; name?: string }; // vendor on a Purchase
   VendorRef?: { value: string; name?: string }; // vendor on a Bill
+  AccountRef?: QboRef; // the card or bank account a Purchase was paid from
+  PaymentType?: "Cash" | "Check" | "CreditCard";
   CurrencyRef?: { value: string };
   TxnTaxDetail?: { TotalTax?: number };
   DocNumber?: string;
   PrivateNote?: string; // memo — real vendor often lives here on reimbursement bills
   Line?: { Description?: string; Amount?: number }[]; // line detail — real vendor + allocated amounts
+}
+
+/** A Bill. `Balance` 0 means paid; `LinkedTxn` names the BillPayments that paid it. */
+export interface QboBill extends QboPurchase {
+  Balance?: number;
+  DueDate?: string;
+  LinkedTxn?: QboLinkedTxn[];
+}
+
+export interface QboLinkedTxn {
+  TxnId: string;
+  TxnType: string;
 }
 
 export interface QboDeposit {
@@ -58,7 +72,7 @@ export interface QboBillPayment {
   TotalAmt: number;
   VendorRef?: QboRef;
   PayType?: string;
-  Line?: { Amount?: number; LinkedTxn?: { TxnId: string; TxnType: string }[] }[];
+  Line?: { Amount?: number; LinkedTxn?: QboLinkedTxn[] }[];
 }
 
 export interface QboAccount {
