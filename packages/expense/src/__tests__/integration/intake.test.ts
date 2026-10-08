@@ -116,6 +116,24 @@ describeDb("S2 intake — applied is written only after processing commits", () 
     expect(after.payloads.map((p) => p.status)).toEqual(["applied"]);
   });
 
+  it("a crash after the expense commits but before provisionals are tracked is finished on retry", async () => {
+    await receiveCompletedReceipt(hasProvisional);
+    await db.provisionalItemMap.deleteMany();
+    await db.receivedExpensePayload.updateMany({ data: { status: "received" } });
+
+    expect((await receiveCompletedReceipt(hasProvisional)).status).toBe("already_applied");
+
+    const gtins = hasProvisional.lineItems.filter((l) => l.isProvisional && l.gtin13).map((l) => l.gtin13!);
+    expect(await db.provisionalItemMap.count({ where: { provisionalGtin13: { in: gtins } } })).toBe(new Set(gtins).size);
+  });
+
+  it("two concurrent calls with provisional lines track each GTIN once, and neither fails", async () => {
+    await Promise.all([receiveCompletedReceipt(hasProvisional), receiveCompletedReceipt(hasProvisional)]);
+
+    const gtins = hasProvisional.lineItems.filter((l) => l.isProvisional && l.gtin13).map((l) => l.gtin13!);
+    expect(await db.provisionalItemMap.count({ where: { provisionalGtin13: { in: gtins } } })).toBe(new Set(gtins).size);
+  });
+
   it("two concurrent calls create one expense and one flow, and neither fails", async () => {
     const results = await Promise.all([receiveCompletedReceipt(allRecognized), receiveCompletedReceipt(allRecognized)]);
 

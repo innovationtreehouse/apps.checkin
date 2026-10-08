@@ -71,25 +71,26 @@ export async function replayReceivedPayloads(limit = 50): Promise<{ applied: num
 
 export const expenseIntake: ExpenseIntake = { receive: receiveCompletedReceipt };
 
-/** Creates the expense and starts its flow; true when this call created it. Idempotent. */
+/**
+ * Creates the expense, tracks its provisional GTINs and starts its flow; true when this call
+ * created the expense. Every step is idempotent, so a retry or a concurrent call resumes
+ * wherever a previous call stopped.
+ */
 async function processCompletedReceipt(receipt: CompletedReceipt): Promise<boolean> {
+  let created = false;
   const existingExpense = await db.expense.findFirst({ where: { id: receipt.receiptId }, select: { id: true } });
-  if (existingExpense) {
-    await startFlow(receipt);
-    return false;
-  }
-
-  try {
-    await createExpense(receipt);
-  } catch (err) {
-    // A concurrent call created the expense; resume its flow instead.
-    if (!isUniqueConstraintError(err)) throw err;
-    await startFlow(receipt);
-    return false;
+  if (!existingExpense) {
+    try {
+      await createExpense(receipt);
+      created = true;
+    } catch (err) {
+      // A concurrent call created the expense first.
+      if (!isUniqueConstraintError(err)) throw err;
+    }
   }
   await trackProvisionals(receipt);
   await startFlow(receipt);
-  return true;
+  return created;
 }
 
 async function createExpense(receipt: CompletedReceipt): Promise<void> {
@@ -158,15 +159,10 @@ async function trackProvisionals(receipt: CompletedReceipt): Promise<void> {
 
   for (const li of receipt.lineItems) {
     if (li.isProvisional && li.gtin13) {
-      const exists = await provisionalItemMapRepo.findByGtin(receipt.orgId, li.gtin13);
-      if (!exists) {
-        await provisionalItemMapRepo.create({
-          provisionalGtin13: li.gtin13,
-          orgId: receipt.orgId,
-          status: "pending",
-          proposedAt: new Date(),
-        });
-      }
+      await db.provisionalItemMap.createMany({
+        data: [{ provisionalGtin13: li.gtin13, orgId: receipt.orgId, status: "pending" }],
+        skipDuplicates: true,
+      });
 
       // Reconcile-on-ingest: a catalog S5 resolution may have arrived before this row existed.
       // The fact is recorded durably (provisional_resolutions); the service methods are idempotent.
