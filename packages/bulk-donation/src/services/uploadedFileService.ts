@@ -5,6 +5,7 @@ import { isAutoOrganizationalLevel } from "../lib/domain-rules";
 import type { BenevityRow } from "../lib/csv-parser";
 import { ServiceError } from "./serviceError";
 import { getOwnerDirectory } from "../runtime";
+import { runOwnerAssignedCycleTx } from "../workflows/disbursement.actor";
 
 const SELECT_FILE_FIELDS = {
   id: true,
@@ -166,6 +167,12 @@ export const uploadedFileService = {
         correlationId,
         payload: { originalFilename, fileHash, rowCount, newRowCount, duplicateRowCount, allDuplicate },
       });
+
+      const audit = { actorUserId: userId, actorUsername: username, correlationId };
+      const disbursementIds = new Set(inserted.flatMap((t) => (t.disbursementId ? [t.disbursementId] : [])));
+      for (const disbursementId of disbursementIds) {
+        await runOwnerAssignedCycleTx(tx, orgId, disbursementId, audit);
+      }
 
       return { fileId: fileRecord.id, rowCount, newRowCount, duplicateRowCount, allDuplicate };
     });
