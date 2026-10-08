@@ -1,6 +1,65 @@
+import type { Prisma } from "../../generated/prisma/client";
 import type { Db } from "../db/index";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
 import { ServiceError } from "./serviceError";
+
+export type QtyChangeMeta = {
+  userId: number | null;
+  username?: string | null;
+  changeType: "manual" | "automatic" | "received";
+  receiptId: string | null;
+  // Inventory units per receipt-line unit. The delta added to the live
+  // total is rawQuantity * conversionFactor; raw/factor/derived are kept
+  // in the audit log only. Defaults to 1 ("each") for plain deltas.
+  conversionFactor?: number;
+  conversionVersion?: number;
+};
+
+/** Add a quantity to an org item and log it, inside the caller's transaction. Returns the new total. */
+export async function applyQtyChangeIn(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  gtin13: string,
+  rawQuantity: number,
+  meta: QtyChangeMeta,
+): Promise<number> {
+  const conversionFactor = meta.conversionFactor ?? 1;
+  const conversionVersion = meta.conversionVersion ?? 1;
+  const derived = rawQuantity * conversionFactor;
+  const existing = await tx.orgItem.findFirst({ where: { gtin13, orgId } });
+  const newQty = (existing?.existingQuantity ?? 0) + derived;
+
+  if (existing) {
+    await tx.orgItem.update({
+      where: { orgGtin: { orgId, gtin13 } },
+      data: { existingQuantity: newQty },
+    });
+  } else {
+    await tx.orgItem.create({
+      data: { orgId, gtin13, existingQuantity: derived, desiredQuantity: 0 },
+    });
+  }
+
+  await tx.inventoryLog.create({
+    data: {
+      orgId,
+      userId: meta.userId,
+      username: meta.username ?? null,
+      changedAt: new Date(),
+      changeType: meta.changeType,
+      gtin13,
+      fieldChanged: "existingQuantity",
+      valueBefore: String(existing?.existingQuantity ?? 0),
+      valueAfter: String(newQty),
+      receiptId: meta.receiptId,
+      rawQuantity,
+      conversionFactor,
+      conversionVersion,
+    },
+  });
+
+  return newQty;
+}
 
 export function createInventoryService({
   inventoryRepo,
@@ -125,61 +184,8 @@ export function createInventoryService({
       await inventoryRepo.delete(orgId, gtin13);
     },
 
-    async applyQtyChange(
-      orgId: string,
-      gtin13: string,
-      rawQuantity: number,
-      meta: {
-        userId: number | null;
-        username?: string | null;
-        changeType: "manual" | "automatic" | "received";
-        receiptId: string | null;
-        // Inventory units per receipt-line unit. The delta added to the live
-        // total is rawQuantity * conversionFactor; raw/factor/derived are kept
-        // in the audit log only. Defaults to 1 ("each") for plain deltas.
-        conversionFactor?: number;
-        conversionVersion?: number;
-      },
-    ): Promise<number> {
-      const conversionFactor = meta.conversionFactor ?? 1;
-      const conversionVersion = meta.conversionVersion ?? 1;
-      const derived = rawQuantity * conversionFactor;
-      let newQty = 0;
-      await db.$transaction(async (tx) => {
-        const existing = await tx.orgItem.findFirst({ where: { gtin13, orgId } });
-        newQty = (existing?.existingQuantity ?? 0) + derived;
-
-        if (existing) {
-          await tx.orgItem.update({
-            where: { orgGtin: { orgId, gtin13 } },
-            data: { existingQuantity: newQty },
-          });
-        } else {
-          await tx.orgItem.create({
-            data: { orgId, gtin13, existingQuantity: derived, desiredQuantity: 0 },
-          });
-        }
-
-        await tx.inventoryLog.create({
-          data: {
-            orgId,
-            userId: meta.userId,
-            username: meta.username ?? null,
-            changedAt: new Date(),
-            changeType: meta.changeType,
-            gtin13,
-            fieldChanged: "existingQuantity",
-            valueBefore: String(existing?.existingQuantity ?? 0),
-            valueAfter: String(newQty),
-            receiptId: meta.receiptId,
-            rawQuantity,
-            conversionFactor,
-            conversionVersion,
-          },
-        });
-      });
-
-      return newQty;
+    async applyQtyChange(orgId: string, gtin13: string, rawQuantity: number, meta: QtyChangeMeta): Promise<number> {
+      return db.$transaction((tx) => applyQtyChangeIn(tx, orgId, gtin13, rawQuantity, meta));
     },
   };
 }

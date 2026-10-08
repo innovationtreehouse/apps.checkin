@@ -653,12 +653,20 @@ does not wait on expense sign-off (#1272 §8).
 
 **The source's apply is not idempotent.** Each call re-adds the line quantities,
 so a retry double-counts stock. The **L2 apply fix** closes this as its own PR
-after the library skeleton, test first: the exported apply takes a **per-source
-key** (`receipt:<id>` or `donation:<id>`) and checks it against
-`ReceivedInventoryDelta`, which stays in full as the record of what each apply
-did; a repeat call with a key already recorded changes nothing.
-`ResolvedInventoryDeltaSchema` gains the key in the same change. The
-orchestrator's and donations' crossings are gated on this fix.
+after the library skeleton, test first: the exported apply is keyed **per
+source** (`applyReceipt` → `receipt:<id>`, `applyDonation` → `donation:<id>`),
+unique per org, and checked against `ReceivedInventoryDelta`, which stays in
+full as the record of what each apply did. The guard row and the stock change
+commit in one transaction; a repeat call with a key already applied changes
+nothing and returns the earlier result, and a concurrent duplicate is answered
+as a replay. A key already applied with a different (normalised) delta is a
+409, so a retry carrying edited lines surfaces in the caller's failure queue
+instead of leaving stale stock; a `failed` key re-applies. Provisional
+reconcile-on-ingest runs after the commit; if it throws, a replay does not
+retry it, and the S5 event for that GTIN reconciles it instead. The callee derives the key from the source id it is given, so
+`ResolvedInventoryDeltaSchema` is unchanged (its `receiptId` already names the
+source); the donation payload schema lands with the donations crossing (X11).
+The orchestrator's and donations' crossings are gated on this fix.
 
 **checkin cannot host the source's HTTP machine surface** (#1286 §8): the source
 guards it with `requireOrgBearer` / an `X-Service-Key`, and checkin has no
@@ -683,8 +691,9 @@ It does not need to: every caller is co-resident.
 
 **Known concurrency hazard to carry across** (CONCURRENCY.md #2): concurrent
 `fulfill` of one receive-queue item, and concurrent `apply` of one receipt, have
-an unverified read-check-then-write race. The per-source guard covers sequential
-replay; the concurrent window is not proven closed. Track as a **follow-up issue
+an unverified read-check-then-write race. The per-source guard closes it for
+apply (a DB-tier test drives two concurrent applies of one source); the
+`fulfill` window is not proven closed. Track as a **follow-up issue
 vs #1287** with a concurrent-drive test — do not silently "fix" during the port
 (BYDESIGN discipline: write the failing concurrent test first).
 
