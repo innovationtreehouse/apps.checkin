@@ -57,3 +57,17 @@ POST /api/catalog/provisional-items/[id]/map-to-existing
 PUT /api/catalog/reference-conflicts/[id]/resolve
 POST /api/catalog/conversion-challenges/[id]/accept
 POST /api/catalog/conversion-challenges/[id]/reject
+
+# Income (#1283 W): library route factories via handler().
+GET /api/income/payouts
+GET /api/income/payouts/[gid]
+GET /api/income/reconciliation
+GET /api/income/reconciliation/count
+GET /api/income/reconciliation/[id]/candidates
+POST /api/income/reconciliation/[id]/resolve
+POST /api/income/reconciliation/run
+GET /api/income/items
+PUT /api/income/items/[variantId]/category
+DELETE /api/income/items/[variantId]/category
+GET /api/income/qb-exclusions
+POST /api/income/qb-exclusions

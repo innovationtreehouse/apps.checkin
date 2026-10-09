@@ -375,3 +375,123 @@ export async function minRealOrderLegacyId(): Promise<bigint | null> {
     const v = rows.rows[0]?.minLegacyId;
     return v == null ? null : BigInt(v);
 }
+
+// ── income reads (the @inventory/income PayoutMirror port) ───────────────────
+//
+// Income reconciles payouts against QuickBooks, so it reads the hand-loaded
+// history too: these reads skip only TEST_LOADED rows, unlike the reconciler's
+// API-only reads above. Each row carries its raw `source`; the income library
+// maps it. No customer column is selected: income never learns who bought.
+
+export interface IncomeMirrorPayoutRow {
+    payoutGid: string;
+    issuedAt: Date;
+    status: string;
+    netCents: number;
+    currency: string | null;
+    source: string | null;
+}
+
+export interface IncomeMirrorTxnRow {
+    txnGid: string;
+    type: string;
+    orderGid: string | null;
+    orderName: string | null;
+    amountCents: number;
+    feeCents: number;
+    netCents: number;
+    source: string | null;
+}
+
+export interface IncomeMirrorLineRow {
+    orderGid: string;
+    variantId: string | null;
+    title: string | null;
+    sku: string | null;
+    quantity: number;
+    priceCents: number;
+    discountCents: number;
+}
+
+export interface IncomeMirrorItemRow {
+    variantId: string;
+    title: string | null;
+    sku: string | null;
+}
+
+const NOT_TEST_LOADED = `source IS DISTINCT FROM 'TEST_LOADED'`;
+
+const PAYOUT_COLS = `payout_gid AS "payoutGid", issued_at AT TIME ZONE 'UTC' AS "issuedAt",
+    status, net_cents AS "netCents", currency, source::text AS source`;
+
+/** Paid payouts issued on or after `from`, oldest first. */
+export async function incomePaidPayoutsSince(from: Date): Promise<IncomeMirrorPayoutRow[]> {
+    const p = getPool();
+    if (!p) return [];
+    const rows = await p.query<IncomeMirrorPayoutRow>(
+        `SELECT ${PAYOUT_COLS} FROM shop_payout
+         WHERE upper(status) = 'PAID' AND issued_at IS NOT NULL
+           AND issued_at >= ($1::timestamptz AT TIME ZONE 'UTC') AND ${NOT_TEST_LOADED}
+         ORDER BY issued_at ASC, payout_gid ASC`,
+        [from],
+    );
+    return rows.rows;
+}
+
+/** One payout in any status, or null when absent, undated or test-loaded. */
+export async function incomePayout(gid: string): Promise<IncomeMirrorPayoutRow | null> {
+    const p = getPool();
+    if (!p) return null;
+    const rows = await p.query<IncomeMirrorPayoutRow>(
+        `SELECT ${PAYOUT_COLS} FROM shop_payout
+         WHERE payout_gid = $1 AND issued_at IS NOT NULL AND ${NOT_TEST_LOADED}`,
+        [gid],
+    );
+    return rows.rows[0] ?? null;
+}
+
+/** A payout's balance transactions, with each one's order name. */
+export async function incomePayoutTransactions(payoutGid: string): Promise<IncomeMirrorTxnRow[]> {
+    const p = getPool();
+    if (!p) return [];
+    const rows = await p.query<IncomeMirrorTxnRow>(
+        `SELECT bt.txn_gid AS "txnGid", bt.type, bt.order_gid AS "orderGid", o.name AS "orderName",
+                bt.amount_cents AS "amountCents", bt.fee_cents AS "feeCents", bt.net_cents AS "netCents",
+                bt.source::text AS source
+         FROM shop_balance_transaction bt
+         LEFT JOIN shop_order o ON o.shopify_gid = bt.order_gid
+         WHERE bt.payout_gid = $1 AND bt.source IS DISTINCT FROM 'TEST_LOADED'
+         ORDER BY bt.transaction_date ASC NULLS LAST, bt.txn_gid ASC`,
+        [payoutGid],
+    );
+    return rows.rows;
+}
+
+/** The given orders' non-removed lines. */
+export async function incomeOrderLines(orderGids: string[]): Promise<IncomeMirrorLineRow[]> {
+    const p = getPool();
+    if (!p || orderGids.length === 0) return [];
+    const rows = await p.query<IncomeMirrorLineRow>(
+        `SELECT order_gid AS "orderGid", variant_legacy_id AS "variantId", title, sku, quantity,
+                price_cents AS "priceCents", discount_cents AS "discountCents"
+         FROM shop_order_line
+         WHERE order_gid = ANY($1::text[]) AND removed = false
+         ORDER BY order_gid, line_gid`,
+        [orderGids],
+    );
+    return rows.rows;
+}
+
+/** Every variant on a real order's line, with the title and SKU of its newest order. */
+export async function incomeItemsSeen(): Promise<IncomeMirrorItemRow[]> {
+    const p = getPool();
+    if (!p) return [];
+    const rows = await p.query<IncomeMirrorItemRow>(
+        `SELECT DISTINCT ON (l.variant_legacy_id) l.variant_legacy_id AS "variantId", l.title, l.sku
+         FROM shop_order_line l
+         JOIN shop_order o ON o.shopify_gid = l.order_gid
+         WHERE l.variant_legacy_id IS NOT NULL AND o.test = false AND o.${NOT_TEST_LOADED}
+         ORDER BY l.variant_legacy_id, o.updated_at DESC NULLS LAST`,
+    );
+    return rows.rows;
+}
