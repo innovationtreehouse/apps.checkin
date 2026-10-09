@@ -9,6 +9,7 @@ import { LIVE_PERSON } from "@/lib/person/filters";
 import { LIVE_VISIT } from "@/lib/visit/filters";
 import { runPersonAgreementSweep } from "@/lib/membership/personAgreementTriggers";
 import { systemActor } from "@/lib/auditActor";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 export const GET = withCron(async () => {
         const now = new Date();
@@ -59,6 +60,10 @@ export const GET = withCron(async () => {
                     return segments;
                 }))
             );
+            // After every per-visit transaction commits: the checkout's own
+            // invalidation runs inside the transaction, so a concurrent read
+            // could refill the cache from the still-open rows.
+            invalidateAttendanceCache();
             results.forEach((result, i) => {
                 if (result.status === "fulfilled") {
                     checkedOutCount += 1;
