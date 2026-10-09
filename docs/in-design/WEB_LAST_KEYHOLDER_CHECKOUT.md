@@ -30,24 +30,24 @@ choice is recorded; and names go only to people who already read the roster.
 
 ## Executive summary
 
-- **A keyholder checking out** chooses between three things: close the building
-  and check everyone out; leave, checking out only themselves, while naming the
-  keyholder they believe is still inside; or cancel. Naming that keyholder only
-  writes their name on the audit row. It does not check them in, because checking
-  someone in needs their agreement and the app cannot get it at that moment.
-- **A board member** gets the same three choices as a keyholder, keyholder or
-  not: the board is a superuser.
+- **A keyholder or board member checking out the last recorded keyholder** chooses
+  close, leave or cancel. The close choice says plainly that no other keyholder is
+  checked in. *Leave* checks out only the leaver and names, from a pick-list, the
+  keyholder they handed over to in person; the app records that and does not check
+  the named keyholder in. A named keyholder who is not checked in is emailed.
 - **A household lead** who is not a keyholder can always check the keyholder out,
-  but never closes the building: they choose leave or cancel.
-- **Correcting** an open visit closed offers the same choices and closes at the
-  typed time. **Removing** an open visit never closes the building.
-- **Names** go to keyholders and the board, who already read the full roster, so
-  checking out on the web shows what the kiosk would. A household lead gets a
-  count, which every signed-in member already receives.
+  but chooses only leave or cancel, and sees a count instead of names.
+- **Names** go to keyholders, board members and sysadmins, who already read the
+  full roster.
+- **Correcting the close time earlier** moves everyone the close checked out, and
+  every departure the close sets or moves is logged. **Removing** an open visit
+  never closes the building.
+- **The kiosk** gets the same shape: one badge from the last keyholder checks them
+  out and offers the close; a second badge closes. Today the first badge does not
+  check them out. Whether that change ships with this design is open
+  (`Q-KIOSK-SCOPE`).
 - **All four web paths** run one shared decision, including the legacy dashboard
   route and the home-page toggle that currently runs the kiosk's copy of the guard.
-- **Not changing:** the kiosk. A keyholder at the reader still closes with a double
-  badge, and the kiosk still names who is inside on a screen in the building.
 
 ## Rules this relies on or would change
 
@@ -58,7 +58,7 @@ From `docs/rules/attendance-checkin.md`:
   role, with the other keyholder's consent, or close the facility" (Art. VIII
   §VIII.3); the closing keyholder ensures two adults with a last youth (§VIII.4).
   **Policy-tier.** The "leave" choice and any close by a non-keyholder touch these;
-  §3 says how this design reads them and asks the owner to confirm the reading.
+  §3.1 records the owner's reading of them.
 - Assumption: nobody being inside without a keyholder is kept at the door; the
   app records such visits rather than refusing them. The "leave" choice relies on
   this.
@@ -161,110 +161,124 @@ people standing in the building, and this caller need not be.
 
 ### 3.1 Decided by the owner
 
-**Choices for a keyholder checking out as the last recorded keyholder: close,
-leave, or cancel.**
+**Close, leave or cancel.** Offered to a keyholder checking themselves out, and to
+a board member (keyholder or not) checking out the last keyholder.
 
-- *Close* checks the leaver out and departs every open visit, as today.
+- *Close* checks the leaver out and departs every open visit. The choice states
+  that no other keyholder is checked in, alongside the people recorded inside.
 - *Leave* checks out only the leaver. The others stay recorded inside with no
   keyholder, which every surface already shows as inside a closed facility. The
-  leaver names the keyholder they believe is still inside; the name goes on the
-  audit row with the leaver, the time and the count of people left inside. The
-  named keyholder is **not** checked in: an arrival recorded for someone needs
-  their agreement, and the app has no way to get it at that moment.
+  leaver picks, from the current keyholders, the one they handed over to. The
+  pick goes on the audit row with the leaver, the time and the count of people
+  left inside. The named keyholder is **not** checked in: recording an arrival
+  for someone needs their agreement.
 - *Cancel* changes nothing; the leaver stays recorded inside.
 
-How this reads against policy. §VIII.3 lets a primary keyholder leave an occupied
-building only by transferring the role with the other keyholder's consent. This
-design treats that transfer and its consent as happening in the room, between the
-two keyholders, and the app records the leaver's statement that it happened. That
-is an Assumption in the register's sense: handled outside the app, and recorded.
-The owner confirms this reading or takes it to the Board (§3.2, question 2).
+**The handover happens between people.** §VIII.3 lets a primary keyholder leave
+an occupied building only by transferring the role with the other keyholder's
+consent. That transfer and its consent take place in person, and the app cannot
+see them; when a keyholder hands over correctly, nothing the app reads can tell.
+The app records the leaver's statement and does not second-guess it. This is an
+Assumption: handled outside the app, and recorded. So is the stand-in that goes
+with it: the app does not model a primary keyholder, so the last recorded
+keyholder is treated as the primary one.
 
-**A non-keyholder can always check the last keyholder out.** Refusing them would
-put a gate where the visit-record rules put trust and review after the fact.
+**The named keyholder is told when they are not checked in.** An email: who left,
+when, that they named them, and how many people are recorded inside. A named
+keyholder who already has an open visit at that moment is not emailed. The
+pick-list offers keyholders without an open visit, so in practice the email goes
+unless they badged in during the dialog.
 
-**The board closes; a household lead does not.** A board member, keyholder or
-not, gets close, leave or cancel: the board is a superuser. A household lead who
-is not a keyholder gets leave or cancel. Neither is asked to name a keyholder on
-"leave"; they may not know one, and the audit row records who left the building
-open and in what capacity. The board closing without being a keyholder reads
-against Arts. VI–VII ("nobody opens or closes a facility without being an active
-keyholder"); this design takes the board's standing as superuser to cover it, and
-that reading goes with question 2.
+**The board closes; a household lead does not.** The board is a superuser and
+closes the building whether or not its member holds keys; the owner reads its
+standing as covering Arts. VI–VII. A household lead who is not a keyholder can
+always check a keyholder member out, because refusing would put a gate where the
+visit-record rules put trust and review after the fact; they choose leave or
+cancel, and are not asked to name a keyholder.
 
-**Names go to keyholders and the board, not to household leads.** A keyholder who
-checks out on the web instead of at the kiosk sees who is inside, as the kiosk
-would show them; the board already reads the full roster. A household lead sees a
-count.
+**Names go to keyholders, board members and sysadmins.** All three already read
+the full roster. A household lead sees a count.
 
-**Rejected: handing over to a named keyholder by checking them in.** It needs both
-keyholders to agree, and the app can only hear from one of them.
+**Correcting a close.** A correction that closes an open visit offers the same
+choices, and a close departs everyone at the typed departure, matching the
+kiosk's late-close rule. A keyholder who corrects the time of a close they made
+to an earlier one moves the departures that close set, for everyone. Every
+departure a close sets or moves is logged: which close, who made it, through
+which path, and each visit's departure before and after.
+
+**Removing an open visit never closes the building.** A removal says the keyholder
+was never there; closing on that basis would invent departures for everyone else.
+The confirm states the count and that they will read as inside a closed facility.
+
+**The kiosk has an implied leave.** The owner's model: the last keyholder badges
+once and is checked out; the kiosk shows the close warning in red while the close
+can still be confirmed, then a persistent "no keyholder present" warning, and keeps
+showing who is inside. A second badge within the countdown closes. This differs
+from the kiosk today; see `Q-KIOSK-SCOPE`.
+
+**Rejected: handing over by checking the named keyholder in.** It needs both
+keyholders to agree, and the app hears from only one.
 
 ### 3.2 Still to decide
 
-**1. Sysadmin.** A sysadmin who is neither a keyholder nor on the board already
-reads the full roster, so names widen nothing. Whether they may close is the open
-part: like the board, or like a household lead. Recommendation: **names, but leave
-or cancel only.** Closing the building is an operational act, not part of running
-the system, and least privilege gives a role only what its work needs.
+Each question keeps its label until answered; answered ones move to §3.1.
 
-**2. Is "leave" within §VIII.3, and a board close within Arts. VI–VII?** The
-owner's readings above: the transfer and consent happen in the room, and the
-board's superuser standing covers a close by a board member who holds no keys.
-The owner confirms both, or takes them to the Board. **Policy-tier.** The answer also
-settles a second Assumption: the app does not model a primary keyholder, so the
-last recorded keyholder stands in for the primary one.
+**`Q-SYSADMIN-CLOSE`: may a sysadmin who is neither a keyholder nor on the board
+close?** Names are settled (they get them). Recommendation: **leave or cancel
+only.** Closing the building is an operational act, not part of running the
+system, and least privilege gives a role only what its work needs.
 
-**3. Naming on "leave": required or optional, and from what list?**
+**`Q-CLOSE-LATER`: does correcting a close to a later time move the others?**
+Recommendation: **no; only an earlier correction moves them.** A later close time
+would extend visits of people who had already gone, which the closer cannot know.
+The closer's own departure still moves.
 
-| Option | What happens |
-|---|---|
-| **L1. Required, picked from current keyholders** | The leaver picks from keyholders with no open visit. |
-| L2. Required, picked or typed | As L1, plus free text for "someone not on the list". |
-| L3. Optional | The leaver may skip it. |
+**`Q-CLOSE-ARRIVALS`: someone arrived between the corrected (earlier) close time
+and the original one.** Recommendation: **leave their departure as it is.** They
+arrived after the corrected close, so the corrected close cannot have ended their
+visit; this is the same rule the kiosk's late close follows for arrivals after
+the keyholder's scan. Their visit stays logged as set by the original close.
 
-Recommendation: **L1.** A pick is a person id the audit trail can follow; free
-text is not. Listing keyholders' names to a keyholder widens nothing, since they
-already read the board contact directory.
+**`Q-CLOSE-CORRECTED`: one of the people the close checked out has since corrected
+their own departure.** Recommendation: **their correction stands**, as with the
+kiosk's late close ("a departure a person has since corrected is not" moved).
 
-**4. Is the named keyholder told?**
+**`Q-KIOSK-SCOPE`: does the kiosk change ship with this design?** Today the last
+keyholder's first badge, with others inside, does **not** check them out: it shows
+the warning, and they stay recorded until a second badge closes the building
+(`docs/rules/attendance-checkin.md`, "Any keyholder can close…"). The owner's
+model checks them out on the first badge and offers the close, which is how the
+kiosk already behaves when another keyholder is still recorded. Recommendation:
+**same design, separate implementation change**, because the offline kiosk
+(`client/client.py`) runs its own copy of the warning and confirm and needs the
+same change.
 
-| Option | What happens |
-|---|---|
-| **K1. Email the named keyholder** | "X left at 18:40 and named you as the keyholder inside; N people are recorded inside." |
-| K2. Audit row only | Nobody is told. |
-| K3. Email the board | As K1 or K2, plus the board. |
+**`Q-KIOSK-COLOURS`: which warnings.** The kiosk today shows an orange
+"Facility closed, no keyholder present" banner while people are inside with no
+keyholder, and a yellow "only one keyholder" banner while one is. The owner
+described red during the close countdown, then yellow persistent. Recommendation:
+**red for the countdown, and the existing persistent banner in yellow**, so the
+two states have one colour each; confirm.
 
-Recommendation: **K1.** It costs one email, it is the only way a wrongly named
-keyholder finds out, and it nudges the right one to badge in so the record reads
-open. It is not a request for consent and does not change any visit.
+**`Q-PRINCIPLE-TEXT`: the trust principle.** Needed; wording to agree. Draft for
+`docs/rules/principles.md`:
 
-**6. Correction and tombstone.** Previously recommended, now reconciled with the
-three choices; confirm both.
-
-- A correction that closes an open visit offers close, leave or cancel, and a
-  close departs everyone at the **typed** departure, matching the kiosk's
-  late-close rule. Anyone who arrived after it stays inside. Today it closes at
-  "now", stamping departures hours after the keyholder actually left.
-- Removing an open visit never closes the building. A removal asserts the
-  keyholder was never there; closing on that basis would invent departures for
-  everyone else, which *fail closed* forbids. The confirm states the count and
-  that they will read as inside a closed facility. No name is asked, because
-  nobody is choosing to leave.
-
-**7. Does the kiosk get "leave" too?** At the kiosk today, the last keyholder with
-others inside gets the close warning and, without a second badge, stays recorded
-inside. The other keyholder is standing in the room and can badge in, so the kiosk
-does not need "leave". Recommendation: **no change to the kiosk.** The web and the
-kiosk then differ deliberately, and the rules doc says so.
-
-**8. Write down "we trust people" as a principle?** The owner's ruling on
-non-keyholders rests on a stance the register states only for the visit record
-("integrity is after the fact rather than a gate") and the kiosk ("we trust the
-keyholder"). It is cross-cutting and a change could violate it, which is the test
-for `principles.md`. Recommendation: **yes, as its own change**, worded so it
-does not override Policy-tier rules: the app records and reviews rather than
-blocks, except where policy requires a block.
+> ## Trust, then review
+>
+> - **A person's account of what happened is accepted when they give it.** The app
+>   records it, says who gave it, and makes it reviewable. It does not refuse an
+>   account because its own record disagrees.
+> - **Where the app's record and the room disagree, the room is right.** The app
+>   cannot see a handover, a keyholder who never badged, or a walk-in nobody
+>   scanned. A gate built on what the app can see blocks the people doing it
+>   correctly.
+> - **Trust comes with a trail.** An accepted account that changes someone else's
+>   record names who gave it, and a significant one reaches someone who reviews it.
+> - **It widens nothing and overrides no policy.** Who may act is still least
+>   privilege's question; where a policy requires a block, the block stands.
+>
+> The tell is a refusal whose only reason is that the data disagrees with the
+> person in front of it.
 
 ### 3.3 The legacy `/api/attendance` route
 
@@ -307,19 +321,30 @@ names are sent.
 
 **Rules doc** (`docs/rules/attendance-checkin.md`), on merge:
 
-- Amend "The keyholder close-guard fires on every close path…": the three web
-  choices, who gets which, which paths can close (a tombstone cannot), and who
-  sees names.
+- Amend "The keyholder close-guard fires on every close path…": close, leave or
+  cancel on the web; who gets which (keyholder and board: all three; household
+  lead: leave or cancel; sysadmin per `Q-SYSADMIN-CLOSE`); a tombstone never
+  closes; names to keyholders, board and sysadmins only.
 - Add the Assumption: a keyholder who leaves the building occupied has handed over
-  in person to the keyholder they name.
+  in person to the keyholder they name; the app records the statement.
 - Add the Assumption: the last recorded keyholder stands in for the primary
   keyholder of §VIII.3, which the app does not model.
-- Add a line that the kiosk does not offer "leave", tagged deliberate limit.
-- Add who may close from the web: a keyholder or a board member, never a
-  household lead acting for a member; a household lead's checkout of a keyholder
-  always goes through.
-- Record whatever the owner or Board decides on §VIII.3 and on a board close under
-  Arts. VI–VII at the Policy lines they qualify.
+- Add: a named keyholder who is not checked in is emailed.
+- Add: correcting a close to an earlier time moves the departures it set, and
+  every departure a close sets or moves is logged (plus the answers to
+  `Q-CLOSE-LATER`, `Q-CLOSE-ARRIVALS`, `Q-CLOSE-CORRECTED`).
+- Amend "Any keyholder can close the building at the kiosk with a double scan…" to
+  the single-badge leave with a close offer, if `Q-KIOSK-SCOPE` puts it here.
+- Tag the board's close with the Arts. VI–VII citation and the owner's reading
+  that the board's superuser standing covers it.
+
+`docs/rules/principles.md` gains the trust principle once `Q-PRINCIPLE-TEXT` is
+agreed.
+
+**Logging.** A facility close today is a bulk update that writes no per-visit
+audit and does not say which close set a departure. Correcting a close's time
+needs both, so each close becomes a record (who, when, path, choice), and each
+departure it sets or moves is logged against it with before and after.
 
 **Flow tests** (`checkin-app/flow-tests/last-keyholder-checkout.flow.test.ts`).
 The seed has no household with a non-keyholder lead and a keyholder member, so
@@ -340,6 +365,14 @@ changed.
    everyone departs at that time; someone who arrived after it stays inside.
 7. Tombstone of the last keyholder's open visit with others inside: removed,
    nobody else departs.
+8. Keyholder closes, then corrects their departure to an earlier time: every
+   departure the close set moves to the new time, and the log shows each one's
+   before and after.
+9. Close choice copy: the warning to a keyholder states that no other keyholder
+   is checked in.
+
+The email to a named keyholder is not a flow-test assertion (flow tests see only
+HTTP responses); an integration test covers it.
 
 ## 5. Other open questions
 
