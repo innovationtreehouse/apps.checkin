@@ -81,10 +81,10 @@ const signoff: SignoffDirectory = {
   async householdOf(personIds) {
     if (personIds.length === 0) return [];
     const { LIVE_PERSON } = await import("@/lib/person/filters");
-    const prisma = await db();
-    const households = await prisma.person.findMany({ where: { id: { in: personIds } }, select: { householdId: true } });
-    const members = await prisma.person.findMany({
-      where: { householdId: { in: households.map((h) => h.householdId) }, ...LIVE_PERSON },
+    // Live members of every household holding one of these people (a merged-away person's
+    // household still counts, so a tombstone id never narrows the conflict set).
+    const members = await (await db()).person.findMany({
+      where: { household: { householdMembers: { some: { id: { in: personIds } } } }, ...LIVE_PERSON },
       select: { id: true },
     });
     return members.map((m) => m.id);
