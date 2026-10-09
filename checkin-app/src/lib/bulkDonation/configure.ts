@@ -17,6 +17,6 @@ async function listOwners(): Promise<OwnerInfo[]> {
   });
 }
 
-export function configureBulkDonationRuntime(): void {
+export function configureRuntime(): void {
   configureBulkDonation({ auth: { getPrincipal }, org: getOrg, owners: { list: listOwners } });
 }
