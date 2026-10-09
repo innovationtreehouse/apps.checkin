@@ -1,5 +1,5 @@
 // Public surface of the @inventory/workflow-mapping library: the domain, the route factories and
-// the runtime seams. Pages and nav are subpath exports.
+// the runtime seams. Pages are subpath exports.
 export * from "./contract";
 export * from "./runtime";
 export * from "./db";
