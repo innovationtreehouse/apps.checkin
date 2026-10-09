@@ -218,7 +218,7 @@ _For each loop: does the whole thing close, and can staff SEE/FIX it? These over
   - ✅ hygiene: synthetic (SYSTEM) visits excluded from building-hours, so lead "mark present" doesn't inflate measured hours
 
 ### B4. Comms / mailing-list loop  [CM]  — validated V6
-- ❌ **Entire mailing-list loop absent at all 3 levels** (no write/viewer/review) — but now **IN-DESIGN**: `docs/designs/MEMBERSHIP_SYNC.md` (PR #1197) covers the engine (`CM1`), coverage-drop detection (`CM2` rescoped — warn-only, no auto re-add), ghost detection (`CM3`), boundary cleanup (`CM4` mostly absorbed; DENIED-newsletter exception net-new). Board decision pending: under-13 on lists (DECISIONS SYNC-1). Was the weakest column; now the best-designed unbuilt one.
+- ❌ **Entire mailing-list loop absent at all 3 levels** (no write/viewer/review) — but now **IN-DESIGN**: `docs/in-design/MEMBERSHIP_SYNC.md` (PR #1197) covers the engine (`CM1`), coverage-drop detection (`CM2` rescoped — warn-only, no auto re-add), ghost detection (`CM3`), boundary cleanup (`CM4` mostly absorbed; DENIED-newsletter exception net-new). Board decision pending: under-13 on lists (DECISIONS SYNC-1). Was the weakest column; now the best-designed unbuilt one.
 - Oversight/breakage:
   - 🟡 **email deliverability/bounce (`CM7`) — surprisingly BUILT**: Svix-verified Resend webhook stamps/clears `Person.emailUndeliverableAt` (self-healing); household broken-email badge; nav red-pill count. Gap: no proactive "fix this address" worklist; no per-message bounce history
   - ✅ **email send-failure queue** — `IntegrationErrorLog` → **Link Status** panel with mark-resolved/reopen (the one mature exception-review surface)
