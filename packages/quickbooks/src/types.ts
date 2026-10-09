@@ -97,6 +97,11 @@ export interface QboVendor {
 }
 
 // What the vendor-join loop actually compares OCR output against.
+export interface QboCustomer {
+  Id: string;
+  DisplayName: string;
+}
+
 export interface GroundTruthRecord {
   qbId: string;
   entity: "Purchase" | "Bill";
