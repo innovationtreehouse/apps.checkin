@@ -1,10 +1,14 @@
 /**
  * Next.js server-boot hook. Runs once per server process before requests.
- * Used to wire the global-catalog library runtime (#1286 §3) — Node runtime
- * only (it pulls in next-auth + Prisma).
+ * Wires the checkin-hosted library runtimes (#1286 §3, #1287 §3) — Node
+ * runtime only. Binding touches no database.
  */
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  const { configureCatalogRuntime } = await import("@/lib/catalog/configure");
+  const [{ configureCatalogRuntime }, { configureLocalInventoryRuntime }] = await Promise.all([
+    import("@/lib/catalog/configure"),
+    import("@/lib/localInventory/configure"),
+  ]);
   configureCatalogRuntime();
+  configureLocalInventoryRuntime();
 }

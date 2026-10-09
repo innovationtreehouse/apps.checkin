@@ -6,7 +6,7 @@ import { useSession } from "next-auth/react";
 import { Box, Center, Loader, Stack, Text } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
-import { CATALOG_NAV_LINKS_CHECKIN, isCatalogViewerClient } from "@/lib/catalogNav";
+import { inventoryAreaLinks, isCatalogViewerClient } from "@/lib/catalogNav";
 
 export default function CatalogLayout({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
@@ -33,7 +33,7 @@ export default function CatalogLayout({ children }: { children: React.ReactNode 
 
   return (
     <PageContainer>
-      <SectionTabs links={CATALOG_NAV_LINKS_CHECKIN} mb="md" />
+      <SectionTabs links={inventoryAreaLinks(session?.user)} mb="md" />
       <Box style={{ minWidth: 0 }}>{children}</Box>
     </PageContainer>
   );
