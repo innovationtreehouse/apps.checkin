@@ -13,6 +13,8 @@ import { configureWorkflowMapping } from "@inventory/workflow-mapping";
 import { getOrg, getPrincipal } from "@/lib/catalog/configure";
 import { createLocalInventorySink } from "@/lib/workflowMapping/inventorySink";
 
+const HTTP_ERROR_NAME = "WorkflowMappingHttpError";
+
 /** The library's HTTP error; the route wrapper translates it into handler()'s ApiResponseError. */
 export class WorkflowMappingHttpError extends Error {
   constructor(
@@ -20,8 +22,16 @@ export class WorkflowMappingHttpError extends Error {
     message: string,
   ) {
     super(message);
-    this.name = "WorkflowMappingHttpError";
+    this.name = HTTP_ERROR_NAME;
   }
+}
+
+/**
+ * Checked by name, not `instanceof`: the error is built by the configure call in
+ * the instrumentation bundle, while routes load their own copy of this module.
+ */
+export function isWorkflowMappingHttpError(err: unknown): err is WorkflowMappingHttpError {
+  return err instanceof Error && err.name === HTTP_ERROR_NAME && typeof (err as { status?: unknown }).status === "number";
 }
 
 export function configureRuntime(): void {
