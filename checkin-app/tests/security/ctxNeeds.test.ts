@@ -51,6 +51,8 @@ import '@/security/registry';
 // rejects the real client). Its result never varies with ctx, so null is fine.
 beforeAll(() => {
     prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue(null);
+    // expense-approver's treasurer leg is the same kind of ctx-independent lookup.
+    prisma.programVolunteer.findFirst = jest.fn().mockResolvedValue(null);
 });
 
 // ─── Personas: fully-populated contexts + matching AuthResults ────────────────

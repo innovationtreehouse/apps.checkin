@@ -235,6 +235,10 @@ export type Authorize =
     // FINANCE or BOARD (#1272 §6, #1280 §4): the board acts as finance's
     // superuser. No sysadmin auto-admit, as above.
     | 'finance-or-board'
+    // A budget-bucket approver (#1272 §5/§6): FINANCE, BOARD, a program leader,
+    // or a program treasurer. No sysadmin auto-admit. Rows stay handler-filtered
+    // to the buckets the caller approves.
+    | 'expense-approver'
     // Shop certifier (a MAY_CERTIFY_OTHERS toolStatus). Admits certifiers OR
     // admins (isSysadmin/isBoardMember) — see resolveAccess. Backed by a
     // predicate because 'certifier' is not a Person role boolean.
@@ -380,6 +384,7 @@ function authorizeNeeds(authorize: Authorize): Partial<CtxNeeds> {
         case 'inventory-manager':
         case 'finance':
         case 'finance-or-board':
+        case 'expense-approver':
         case 'certifier':
         case 'household-lead':
         case 'household-member':

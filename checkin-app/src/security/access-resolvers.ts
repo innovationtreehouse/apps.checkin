@@ -344,6 +344,20 @@ export async function resolveAccess(
                     allowed: isIdentifiedSession(auth) &&
                         (auth.user.isFinance === true || auth.user.isBoardMember === true),
                 };
+            case 'expense-approver': {
+                // #1272 §5/§6: FINANCE, BOARD, or a derived bucket approver — a
+                // program leader (on the session) or a program treasurer (one DB
+                // read; the session carries no treasurer flag). Still no sysadmin.
+                if (!isIdentifiedSession(auth)) return { allowed: false };
+                const u = auth.user;
+                if (u.isFinance === true || u.isBoardMember === true) return { allowed: true };
+                if ((u.programsLed?.length ?? 0) > 0) return { allowed: true };
+                const treasurer = await prisma.programVolunteer.findFirst({
+                    where: { personId: u.id, isTreasurer: true, person: LIVE_PERSON },
+                    select: { programId: true },
+                });
+                return { allowed: treasurer !== null };
+            }
             case 'certifier':
                 // Certifiers see the shop member roster; admins always may too.
                 return { allowed: isCertifier(auth) || isAdmin };
