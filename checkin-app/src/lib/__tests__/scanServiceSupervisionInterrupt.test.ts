@@ -243,3 +243,31 @@ describe("a REPLAYED departure skips the ladder entirely (#1257)", () => {
         expect(body.type).toBe("warning");
     });
 });
+
+describe("a web (session) checkout skips the ladder (rule: badge scanner only)", () => {
+    // docs/rules/attendance-checkin.md, Supervision: whoever checks someone out
+    // from the web is not at the reader and cannot re-badge to confirm.
+    it("departs without a confirm when the room would drop below two deep", async () => {
+        const { db, update } = fakeDb([10, 20]);
+
+        const res = await processCheckout(adult, DEPARTING_VISIT, "session", db);
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(body.type).toBe("checkout");
+        expect(body.warning).toBeUndefined();
+        expect(update).not.toHaveBeenCalled();
+        expect(db.visit.findMany).not.toHaveBeenCalled();
+    });
+
+    it("leaves the kiosk badge on the ladder", async () => {
+        const { db } = fakeDb([10, 20]);
+
+        const res = await processCheckout(adult, DEPARTING_VISIT, "kiosk", db);
+        const body = await res.json();
+
+        expect(res.status).toBe(400);
+        expect(body.type).toBe("warning");
+        expect(body.error).toMatch(/within 15 seconds/);
+    });
+});
