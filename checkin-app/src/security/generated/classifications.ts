@@ -311,6 +311,14 @@ export const classifications = {
         forceCloseWarnedAt: 'internal',
         forceCloseToken: 'internal',
         supervisionWarnedAt: 'internal',
+        facilityCloseId: 'internal',
+    },
+    FacilityClose: {
+        id: 'internal',
+        closedAt: 'internal',
+        closedById: 'internal',
+        via: 'internal',
+        createdAt: 'internal',
     },
     AuditLog: {
         id: 'internal',
@@ -474,6 +482,7 @@ export const relations = {
         presenceEvents: { model: 'PresenceEvent', isList: true },
         visits: { model: 'Visit', isList: true },
         eventsConfirmedBy: { model: 'Event', isList: true },
+        facilityCloses: { model: 'FacilityClose', isList: true },
         trustedAdultRecordsAsAdult: { model: 'TrustedAdult', isList: true },
         trustedAdultsDisclosed: { model: 'TrustedAdult', isList: true },
         trustedAdultReviewsDecided: { model: 'TrustedAdultReview', isList: true },
@@ -584,6 +593,11 @@ export const relations = {
     Visit: {
         person: { model: 'Person', isList: false },
         event: { model: 'Event', isList: false },
+        facilityClose: { model: 'FacilityClose', isList: false },
+    },
+    FacilityClose: {
+        closedBy: { model: 'Person', isList: false },
+        visits: { model: 'Visit', isList: true },
     },
     AuditLog: {
     },

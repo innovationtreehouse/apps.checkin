@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { apiError, apiJson } from "@/lib/api-response";
-import type { Person } from "@/generated/prisma/client";
+import type { FacilityCloseVia, Person } from "@/generated/prisma/client";
 import { type DbClient, isRootClient } from "@/lib/db-client";
 import { withFacilityLock } from "@/lib/facilityLock";
 import { LIVE_VISIT } from "@/lib/visit/filters";
@@ -13,6 +13,7 @@ import { getKioskDisplayName, getKioskDisplayNames } from "@/lib/kiosk-names";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { logBackendError } from "@/lib/logger";
+import { type AuditActor, personActor } from "@/lib/auditActor";
 
 /**
  * What a scan response may say about who scanned: an id and the same
@@ -262,7 +263,7 @@ export async function processCheckout(
             where: { id: activeVisitId },
             data: { forceCloseWarnedAt: null, forceCloseToken: null }
         });
-        await sweepIfStandalone(db, visitTime);
+        await sweepIfStandalone(db, { closedById: participant.id, via: closeVia(authType, replayEventId, forceCloseConfirmed) }, visitTime);
     }
 
     // SUPERVISION INTERRUPT (#1436). Fires on EVERY badge departure, not just a
@@ -338,7 +339,7 @@ export async function closeOnOfferConfirm(
         });
     }
 
-    await sweepIfStandalone(db, closeTime);
+    await sweepIfStandalone(db, { closedById: participant.id, via: closeVia(authType, replayEventId, forceCloseConfirmed) }, closeTime);
     return apiJson({
         message: "Facility closed",
         type: "checkout" as const,
@@ -422,9 +423,9 @@ async function supervisionInterrupt(
  * whole operation, so run them here; under the route's tx client the route runs
  * both AFTER it commits (see finalizeFacilityClose in route.ts).
  */
-async function sweepIfStandalone(db: DbClient, closeTime: Date) {
+async function sweepIfStandalone(db: DbClient, closer: FacilityCloser, closeTime: Date) {
     if (!isRootClient(db)) return;
-    await withFacilityLock(db, (tx) => closeAllOpenVisits(tx, closeTime));
+    await withFacilityLock(db, (tx) => closeAllOpenVisits(tx, closer, closeTime));
     invalidateAttendanceCache();
     kickPostEventEmails();
 }
@@ -460,25 +461,81 @@ async function sweepIfStandalone(db: DbClient, closeTime: Date) {
 /** Kiosk-vs-server clock skew a late close absorbs on the arrival side. */
 export const LATE_CLOSE_SKEW_MS = 2 * 60_000;
 
-async function closeAllOpenVisits(db: DbClient, closeTime: Date = new Date()) {
-    const closeAt = new Date(Math.min(closeTime.getTime(), Date.now())).toISOString();
+/** Who closed the facility, and through which path. */
+export type FacilityCloser = { closedById: number; via: FacilityCloseVia };
+
+/** The path a scan-route close came through. */
+export function closeVia(authType: string, replayEventId: string | null, forceCloseConfirmed: boolean): FacilityCloseVia {
+    if (authType !== "kiosk") return "WEB_CHECKOUT";
+    return replayEventId != null && forceCloseConfirmed ? "KIOSK_OFFLINE" : "KIOSK";
+}
+
+export type DepartureChange = {
+    id: number;
+    personId: number;
+    oldDepartedAt: Date | null;
+    oldDepartedVia: string | null;
+    departedAt: Date;
+    departedVia: string;
+};
+
+/** Log each departure a facility close set, with its before and after, against
+ *  the close record. */
+export async function logCloseDepartures(
+    db: DbClient,
+    facilityCloseId: number,
+    actor: AuditActor,
+    changes: DepartureChange[],
+): Promise<void> {
+    if (changes.length === 0) return;
+    await db.auditLog.createMany({
+        data: changes.map(c => ({
+            ...actor,
+            action: "EDIT" as const,
+            tableName: "FacilityClose",
+            affectedEntityId: facilityCloseId,
+            secondaryAffectedEntity: c.id,
+            oldData: { visitId: c.id, personId: c.personId, departedAt: c.oldDepartedAt, departedVia: c.oldDepartedVia },
+            newData: { visitId: c.id, personId: c.personId, departedAt: c.departedAt, departedVia: c.departedVia },
+        })),
+    });
+}
+
+async function closeAllOpenVisits(db: DbClient, closer: FacilityCloser, closeTime: Date = new Date()) {
+    const closedAt = new Date(Math.min(closeTime.getTime(), Date.now()));
+    const closeAt = closedAt.toISOString();
+    const close = await db.facilityClose.create({
+        data: { closedAt, closedById: closer.closedById, via: closer.via },
+        select: { id: true },
+    });
     // Tombstoned visits are excluded: closing one would rewrite a record the
     // member chose to erase, and resurrect a machine departure if it is undone.
-    await db.$executeRaw`
+    // `old` locks each row before reading it, so the logged before-value is the
+    // one this statement overwrites.
+    const changes = await db.$queryRaw<DepartureChange[]>`
         WITH t AS (
             SELECT (${closeAt}::timestamptz AT TIME ZONE 'UTC') AS close_at
+        ), old AS (
+            SELECT v.id, v."departedAt", v."departedVia"
+            FROM "Visit" v, t
+            WHERE v."deletedAt" IS NULL
+              AND v."arrivedAt" <= t.close_at + ${LATE_CLOSE_SKEW_MS}::double precision * interval '1 millisecond'
+              AND (v."departedAt" IS NULL
+                   OR (v."departedVia" = 'AUTO_CLOSE'::"VisitSource" AND v."departedAt" > t.close_at))
+            FOR UPDATE OF v
         )
         UPDATE "Visit" v
         SET "departedAt" = LEAST(
                 GREATEST(t.close_at, v."arrivedAt"),
                 v."arrivedAt" + ${MAX_VISIT_MS}::double precision * interval '1 millisecond'
             ),
-            "departedVia" = 'FACILITY_CLOSE'::"VisitSource"
-        FROM t
-        WHERE v."deletedAt" IS NULL
-          AND v."arrivedAt" <= t.close_at + ${LATE_CLOSE_SKEW_MS}::double precision * interval '1 millisecond'
-          AND (v."departedAt" IS NULL
-               OR (v."departedVia" = 'AUTO_CLOSE'::"VisitSource" AND v."departedAt" > t.close_at))`;
+            "departedVia" = 'FACILITY_CLOSE'::"VisitSource",
+            "facilityCloseId" = ${close.id}
+        FROM t, old
+        WHERE v.id = old.id
+        RETURNING v.id, v."personId", old."departedAt" AS "oldDepartedAt", old."departedVia"::text AS "oldDepartedVia",
+                  v."departedAt", v."departedVia"::text AS "departedVia"`;
+    await logCloseDepartures(db, close.id, personActor(closer.closedById), changes);
 }
 
 /** Fire-and-forget post-event email run on facility close. The dynamic import
@@ -495,8 +552,8 @@ function kickPostEventEmails() {
  * last-keyholder checkout is committed — both from the scan route (via
  * finalizeFacilityClose) and from web close paths.
  */
-export async function runFacilityClose(closeTime: Date = new Date()): Promise<void> {
-    await withFacilityLock(prisma, (tx) => closeAllOpenVisits(tx, closeTime));
+export async function runFacilityClose(closer: FacilityCloser, closeTime: Date = new Date()): Promise<void> {
+    await withFacilityLock(prisma, (tx) => closeAllOpenVisits(tx, closer, closeTime));
     // After the lock/tx commits so a concurrent kiosk GET cannot refill the
     // cache from still-open rows (READ COMMITTED).
     invalidateAttendanceCache();
@@ -592,7 +649,7 @@ export async function lastKeyholderGuard(
  * can lose a lock race against an in-flight check-in); a second failure lands in
  * ErrorLog, never thrown, so it can't turn a committed checkout into a 500.
  */
-export async function finalizeFacilityClose(res: Response, closeTime: Date = new Date()): Promise<void> {
+export async function finalizeFacilityClose(res: Response, closer: FacilityCloser, closeTime: Date = new Date()): Promise<void> {
     let body: { facilityClosed?: boolean } | null;
     try {
         body = await res.clone().json();
@@ -602,10 +659,10 @@ export async function finalizeFacilityClose(res: Response, closeTime: Date = new
     if (!body?.facilityClosed) return;
 
     try {
-        await runFacilityClose(closeTime);
+        await runFacilityClose(closer, closeTime);
     } catch {
         try {
-            await runFacilityClose(closeTime);
+            await runFacilityClose(closer, closeTime);
         } catch (err) {
             await logBackendError(err, "facility-close");
         }

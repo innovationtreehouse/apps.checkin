@@ -56,6 +56,7 @@ jest.mock('@/lib/scan-service', () => ({
     processCheckin: jest.fn(),
     processCheckout: jest.fn(),
     finalizeFacilityClose: jest.fn().mockResolvedValue(undefined),
+    closeVia: jest.fn().mockReturnValue("KIOSK"),
     notifyScanOutcome: jest.fn().mockResolvedValue(undefined),
     SUPERVISION_CONFIRM_MS: 15_000,
     SUPERVISION_CONFIRM_DEADFRONT_MS: 1_000,
