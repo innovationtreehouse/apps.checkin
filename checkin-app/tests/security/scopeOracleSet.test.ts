@@ -43,6 +43,7 @@ const ORACLES = [
     'member-tier.test.ts',
     'payment-plans-strip.test.ts',
     'program-participant-pending-since-strip.test.ts',
+    'receipt-strip.test.ts',
     'rsvp-program-scope.test.ts',
     'scopeValidators.test.ts',
     'shop-certifications-strip.test.ts',

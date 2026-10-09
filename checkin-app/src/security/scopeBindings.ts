@@ -228,6 +228,10 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // only by FINANCE/BOARD (everyones:pii). A "my expense history" view is the
     // plausible future reader; that is when it earns `their_own` on `userId`.
     'ExpenseAuditLog',
+    // Receipt audit log (#1265 §6). Its `userId` is the acting Person.id, but only
+    // FINANCE reads the log (everyones:internal); a submitter never reads audit
+    // rows, so no `their_own` binding is planned.
+    'ReceiptAuditLog',
 ]);
 
 /**
