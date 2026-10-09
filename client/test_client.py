@@ -1,9 +1,10 @@
 import inspect
+import io
 import json
 import os
 import subprocess
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, Mock, patch
 
 from nacl.signing import SigningKey
@@ -14,14 +15,14 @@ from client import (
     RELEASE_TAG_GLOB,
     BackendClient,
     DEFAULT_KIOSK_PATH,
-    CLOSED_HOLD_COPY,
-    CLOSED_HOLD_DWELL_S,
-    OFFLINE_HOLD_COPY,
     FORCE_CLOSE_CONFIRM_SECONDS,
+    KioskHandler,
     _saved_banner_html,
     _scan_result_banner_html,
     attendance_poller,
     handle_scan,
+    KioskHandler,
+    local_clock_label,
     latest_release_tag,
     main,
     resolve_update_target,
@@ -39,6 +40,27 @@ def scan_banner(body, status=200):
     # handle_scan now takes an outbox and delegates the markup to this helper;
     # calling it directly tests the same banner without faking a backend.
     return _scan_result_banner_html(body, status)[0]
+
+
+class TestLocalClockReadout(unittest.TestCase):
+    """The door screen shows the Pi's clock as Python sees it, so a Pi on the
+    wrong timezone (which shifts in_closed_window) is visible at a glance."""
+
+    CDT = timezone(timedelta(hours=-5), "CDT")
+
+    def test_label_carries_time_zone_name_and_offset(self):
+        self.assertEqual(local_clock_label(datetime(2026, 10, 7, 14, 5, tzinfo=self.CDT)),
+                         "14:05 CDT (UTC-0500)")
+
+    def test_label_flags_the_closed_window(self):
+        self.assertTrue(local_clock_label(datetime(2026, 10, 7, 23, 30, tzinfo=self.CDT))
+                        .endswith("overnight"))
+
+    def test_wrapper_renders_the_clock_fed_by_the_sse_stream(self):
+        wrapper = inspect.getsource(KioskHandler._serve_wrapper)
+        self.assertIn('id="local-clock"', wrapper)
+        self.assertIn('addEventListener("clock"', wrapper)
+        self.assertIn("event: clock", inspect.getsource(KioskHandler._serve_sse))
 
 
 class TestScanBannerName(unittest.TestCase):
@@ -89,7 +111,7 @@ class TestScanBannerName(unittest.TestCase):
 
 class TestSupervisionWarningBanner(unittest.TestCase):
     """A scan that succeeds but leaves the room short of supervising adults
-    (checkin#1436) still confirms the scan — in amber, which dwells longer."""
+    (checkin#1436) still confirms the scan — in amber."""
 
     def test_warning_renders_amber_and_still_confirms_the_scan(self):
         html_out = scan_banner({
@@ -188,131 +210,38 @@ class TestReleaseChannel(unittest.TestCase):
             self.assertIn(RELEASE_CHANNEL_MARKER, f.read())
 
 class TestParkedScanBanner(unittest.TestCase):
-    """A park creates no Visit. The kiosk may not render one as a check-in, and
-    must not blame the member for a keyholder who has not badged yet."""
+    """A park creates no Visit. The kiosk may not render one as a check-in."""
 
-    CLOSED = {
-        "type": "parked",
-        "reason": "facility_closed",
-        "message": "Recorded. Will project when a keyholder is present.",
-    }
     REVIEW = {"type": "parked", "message": "Recorded for review."}
 
-    def test_the_hold_is_amber_and_confirms_the_scan(self):
-        html_out = scan_banner(self.CLOSED)
-
-        self.assertIn("banner-warning", html_out)
-        self.assertNotIn("banner-ok", html_out)
-        self.assertNotIn("banner-error", html_out)
-        self.assertIn(CLOSED_HOLD_COPY, html_out)
-
-    def test_the_copy_names_the_keyholder_as_what_is_awaited(self):
-        # The member did nothing wrong and cannot fix "no keyholder has
-        # badged" -- the banner reports their scan landed and what it waits on.
-        self.assertEqual(
-            CLOSED_HOLD_COPY,
-            "Scan successful, waiting for key holder before opening the building",
-        )
-
-    def test_holds_for_thirty_seconds_without_fading(self):
-        _, countdown, dwell = _scan_result_banner_html(self.CLOSED, 200)
-
-        self.assertEqual(dwell, 30)
-        self.assertEqual(dwell, CLOSED_HOLD_DWELL_S)
-        # The dwell is only honoured because .banner-warning suppresses the 5s
-        # fade; on any class that does not, the banner silently blanks at 5s.
-        self.assertIn("banner-warning", scan_banner(self.CLOSED))
-        # Not a force-close countdown -- nothing to tick, nothing to confirm.
-        self.assertEqual(countdown, 0)
-
-    def test_no_park_shows_the_placeholder_it_has_no_name_for(self):
-        self.assertNotIn("?", scan_banner(self.CLOSED))
-        self.assertNotIn("?", scan_banner(self.REVIEW))
-
-    def test_a_review_park_also_stops_reading_as_a_checkin(self):
-        # Double-in and out-without-in park too, and used to fall through to
-        # the green tick -- the same "reads as a check-in" look, one branch on.
+    def test_a_review_park_is_amber_not_a_checkin(self):
         html_out = scan_banner(self.REVIEW)
 
         self.assertIn("banner-warning", html_out)
         self.assertNotIn("banner-ok", html_out)
         self.assertNotIn("CHECKED IN", html_out)
         self.assertIn("Recorded for review.", html_out)
-        self.assertNotIn(CLOSED_HOLD_COPY, html_out)
+        # The park body has no name; the "?" placeholder would read as a check-in.
+        self.assertNotIn("?", html_out)
 
-    def test_a_park_from_a_server_too_old_to_send_a_reason_is_still_not_green(self):
-        # ops runs a release whose closed-facility park carries no `reason`, so
-        # until the server ships that hold arrives here indistinguishable from a
-        # review park. It must not be a green tick either.
-        html_out = scan_banner({k: v for k, v in self.CLOSED.items() if k != "reason"})
+    def test_a_closed_facility_park_from_an_older_server_is_still_not_green(self):
+        html_out = scan_banner({
+            "type": "parked",
+            "reason": "facility_closed",
+            "message": "Recorded. Will project when a keyholder is present.",
+        })
 
         self.assertIn("banner-warning", html_out)
         self.assertNotIn("banner-ok", html_out)
 
-    def test_the_dwell_reaches_the_display(self):
+
+class TestNoKeyholderPresence(unittest.TestCase):
+    """With no keyholder in, a badge still checks in: the kiosk shows the person
+    as present and its presence mirror treats them as inside."""
+
+    def test_offline_in_with_no_keyholder_is_the_ordinary_saved_checkin(self):
         state = AttendanceState()
-        pushed = []
-        state.push_event = pushed.append
-        backend = Mock(attendance_path=None)
-        backend.post_scan.return_value = (self.CLOSED, 200, None)
-
-        handle_scan(backend, state, Outbox(":memory:"), 7)
-
-        self.assertEqual(pushed[-1]["dwell"], CLOSED_HOLD_DWELL_S)
-
-
-class TestOfflineClosedHoldBanner(unittest.TestCase):
-    """A scan queued while disconnected shows a hedged hold — not a confident
-    'CHECKED IN' the server will actually park — when the last poll knew of no
-    keyholder. Hedged, not the server's CLOSED_HOLD_COPY: offline the kiosk can't
-    tell an arriving keyholder (who opens the building) from a member."""
-
-    def test_offline_in_with_no_keyholder_shows_the_hedged_hold(self):
-        html_out, dwell = _saved_banner_html(2, "IN", facility_closed=True)
-
-        self.assertIn("banner-warning", html_out)
-        self.assertNotIn("banner-saved", html_out)
-        self.assertNotIn("CHECKED IN", html_out)
-        self.assertIn(OFFLINE_HOLD_COPY, html_out)
-        # Hedged copy, never the server's "waiting for key holder" claim — wrong
-        # for a keyholder arriving to open, whom the client can't detect offline.
-        self.assertNotIn(CLOSED_HOLD_COPY, html_out)
-        # Still tells the operator it is queued, and holds as long as the online hold.
-        self.assertIn("2 waiting", html_out)
-        self.assertEqual(dwell, CLOSED_HOLD_DWELL_S)
-
-    def test_offline_in_with_a_keyholder_present_is_the_ordinary_saved_banner(self):
-        html_out, dwell = _saved_banner_html(1, "IN", facility_closed=False)
-
-        self.assertIn("banner-saved", html_out)
-        self.assertIn("CHECKED IN", html_out)
-        self.assertNotIn(OFFLINE_HOLD_COPY, html_out)
-        self.assertEqual(dwell, 0)
-
-    def test_offline_out_is_never_a_closed_hold(self):
-        # Leaving a closed building is not a hold — only an IN can be held.
-        html_out, dwell = _saved_banner_html(1, "OUT", facility_closed=True)
-
-        self.assertIn("banner-saved", html_out)
-        self.assertIn("CHECKED OUT", html_out)
-        self.assertNotIn(OFFLINE_HOLD_COPY, html_out)
-        self.assertEqual(dwell, 0)
-
-    def test_facility_closed_is_unknown_not_closed_before_the_first_poll(self):
-        # Zeroed startup counts must not read as closed, or every offline IN
-        # before the first poll would wrongly show the hold.
-        state = AttendanceState()
-        self.assertFalse(state.facility_closed())
-        # A poll flips attendance_seen; facility_closed then keys off the counts.
-        state.seed_from_attendance({"attendance": []})
-        self.assertTrue(state.facility_closed())
-        state.current_counts = {"keyholders": 1}
-        self.assertFalse(state.facility_closed())
-
-    def test_unreachable_server_renders_the_hold_when_last_poll_had_no_keyholder(self):
-        state = AttendanceState()
-        state.attendance_seen = True
-        state.current_counts = {"total": 0, "keyholders": 0, "volunteers": 0, "students": 0}
+        state.seed_from_attendance({"attendance": [], "counts": {"total": 0, "keyholders": 0}})
         pushed = []
         state.push_event = pushed.append
         backend = Mock(attendance_path=None)
@@ -320,51 +249,20 @@ class TestOfflineClosedHoldBanner(unittest.TestCase):
 
         handle_scan(backend, state, Outbox(":memory:"), 7)
 
-        self.assertIn(OFFLINE_HOLD_COPY, pushed[-1]["html"])
-        self.assertEqual(pushed[-1]["dwell"], CLOSED_HOLD_DWELL_S)
-
-    def test_unreachable_server_before_first_poll_is_the_ordinary_saved_banner(self):
-        state = AttendanceState()  # attendance_seen defaults False
-        pushed = []
-        state.push_event = pushed.append
-        backend = Mock(attendance_path=None)
-        backend.post_scan.return_value = ({}, 0, None)
-
-        handle_scan(backend, state, Outbox(":memory:"), 7)
-
-        self.assertNotIn(OFFLINE_HOLD_COPY, pushed[-1]["html"])
         self.assertIn("banner-saved", pushed[-1]["html"])
+        self.assertIn("CHECKED IN", pushed[-1]["html"])
+        # The next badge from the same person is their way out.
+        self.assertEqual(state.displayed_intent(7), "OUT")
 
-    def test_facility_closed_survives_the_pollers_overnight_counts_known_reset(self):
-        """attendance_poller resets counts_known every overnight tick so the
-        first daytime tick still fetches (otherwise a known-empty roster would
-        keep skipping past 06:45) — facility_closed() must not go blind for that
-        same window, or an offline IN at 3am would show the confident
-        CHECKED-IN banner instead of the hold. The two fields are deliberately
-        separate: attendance_seen is the hold's latch and never resets."""
+    def test_a_no_keyholder_visit_on_the_roster_is_present(self):
         state = AttendanceState()
-        state.seed_from_attendance({"attendance": [], "safety": {}})
-        self.assertTrue(state.counts_known)
-        self.assertTrue(state.facility_closed())
+        state.seed_from_attendance({
+            "attendance": [{"id": 1, "noKeyholder": True, "participant": {"id": 7, "isKeyholder": False}}],
+            "counts": {"total": 1, "keyholders": 0},
+            "safety": {"facilityOpen": False, "isLastKeyholder": False, "isTwoDeepViolation": False},
+        })
 
-        backend = Mock(attendance_path="/api/attendance")
-        calls = {"n": 0}
-
-        def fake_sleep(_secs):
-            calls["n"] += 1
-            if calls["n"] >= 2:
-                raise _StopLoop()
-
-        with self.assertRaises(_StopLoop):
-            attendance_poller(backend, state, sleep_fn=fake_sleep,
-                               in_closed_window_fn=lambda: True)
-
-        # The poller forgot occupancy for its own wake-up bookkeeping...
-        self.assertFalse(state.counts_known)
-        backend.get_attendance.assert_not_called()
-        # ...but the hold decision is unaffected: it reads attendance_seen, not
-        # the poller's internal skip-tracking state.
-        self.assertTrue(state.facility_closed())
+        self.assertEqual(state.displayed_intent(7), "OUT")
 
 
 class TestBackendClient(unittest.TestCase):
@@ -420,6 +318,12 @@ class TestExampleConfigMatchesDefaults(unittest.TestCase):
 
 class TestForceCloseConfirm(unittest.TestCase):
     """§5.23 explicit confirm: the warning arms a token, the next scan spends it."""
+
+    def setUp(self):
+        # These drive the second badge immediately; the dead-front has its own test.
+        patcher = patch("client.CONFIRM_DEADFRONT_SECONDS", 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_post_scan_sends_displayed_intent(self):
         client = BackendClient("http://fake", SigningKey(b"\x00" * 32))
@@ -477,14 +381,47 @@ class TestForceCloseConfirm(unittest.TestCase):
 
     def test_token_is_single_use_and_dies_with_the_countdown(self):
         state = AttendanceState()
-        self.assertIsNone(state.take_confirm())
+        self.assertIsNone(state.take_confirm(7))
+        state.arm_confirm(7, "tok", 15)
+        self.assertIsNone(state.take_confirm(5), "another badge must not consume it")
+        self.assertEqual(state.take_confirm(7), "tok")
+        self.assertIsNone(state.take_confirm(7), "a spent token must not confirm twice")
+        state.arm_confirm(7, "tok", 0)  # countdown already over
+        self.assertIsNone(state.take_confirm(7), "an expired countdown confirms nothing")
 
-        state.arm_confirm("tok", 15)
-        self.assertEqual(state.take_confirm(), "tok")
-        self.assertIsNone(state.take_confirm(), "a spent token must not confirm twice")
+    def test_a_double_read_inside_the_dead_front_is_dropped(self):
+        """A scanner reading the checkout badge twice must not confirm the close
+        (online or offline), nor toggle the keyholder back IN."""
+        state = AttendanceState()
+        state.push_event = lambda event: None
+        backend = Mock(attendance_path=None)
+        state.arm_confirm(7, "tok-1", 15)
+        state.arm_local_close(9, 15)
+        outbox = Outbox(":memory:")
 
-        state.arm_confirm("tok", 0)  # countdown already over
-        self.assertIsNone(state.take_confirm(), "an expired countdown confirms nothing")
+        with patch("client.CONFIRM_DEADFRONT_SECONDS", 1.0):
+            handle_scan(backend, state, outbox, 7)
+            handle_scan(backend, state, outbox, 9)
+
+        backend.post_scan.assert_not_called()
+        self.assertEqual(outbox.pending_rows(), [])
+        state.confirm_armed_at -= 2
+        self.assertEqual(state.take_confirm(7), "tok-1", "still armed for the real second badge")
+
+    def test_another_badge_during_the_countdown_scans_normally(self):
+        """A member arriving while a keyholder's close offer counts down is an
+        ordinary IN -- never pinned OUT with the keyholder's token."""
+        state = AttendanceState()
+        state.push_event = lambda event: None
+        state.arm_confirm(7, "tok-1", 15)
+        backend = Mock(attendance_path=None)
+        backend.post_scan.return_value = ({"type": "checkin", "participant": {"id": 5}}, 200, None)
+
+        handle_scan(backend, state, Outbox(":memory:"), 5)
+
+        self.assertEqual(backend.post_scan.call_args.kwargs["intent"], "IN")
+        self.assertIsNone(backend.post_scan.call_args.kwargs["force_close_token"])
+        self.assertEqual(state.take_confirm(7), "tok-1", "the keyholder's confirm survives")
 
     def test_warning_arms_the_countdown_and_the_next_scan_confirms(self):
         state = AttendanceState()
@@ -537,12 +474,43 @@ class TestForceCloseConfirm(unittest.TestCase):
                          "the confirm must repeat OUT, not toggle to IN")
         self.assertEqual(backend.post_scan.call_args.kwargs["force_close_token"], "tok-1")
 
+    def test_checkout_close_offer_arms_the_countdown_and_the_next_scan_closes_as_out(self):
+        """Another keyholder is still recorded inside: the checkout goes through
+        and offers the close. The second badge echoes the token as OUT."""
+        state = AttendanceState()
+        events = []
+        state.push_event = events.append
+        state.present_ids.add(7)
+        backend = Mock(attendance_path=None)
+        backend.post_scan.return_value = ({
+            "type": "checkout", "message": "Checked out successfully",
+            "participant": {"id": 7, "name": "Kim"},
+            "closePrompt": "Others are still recorded inside. Badge again within 15 seconds to close the building.",
+            "forceCloseToken": "tok-offer", "confirmSeconds": 15,
+        }, 200, None)
+
+        handle_scan(backend, state, Outbox(":memory:"), 7)
+
+        self.assertEqual(events[0]["countdown"], 15)
+        self.assertIn("CHECKED OUT", events[0]["html"])
+        self.assertIn("close the building", events[0]["html"])
+        self.assertIn("banner-warning", events[0]["html"])
+
+        backend.post_scan.return_value = ({
+            "type": "checkout", "message": "Facility closed", "facilityClosed": True,
+            "participant": {"id": 7, "name": "Kim"},
+        }, 200, None)
+        handle_scan(backend, state, Outbox(":memory:"), 7)
+
+        self.assertEqual(backend.post_scan.call_args.kwargs["intent"], "OUT")
+        self.assertEqual(backend.post_scan.call_args.kwargs["force_close_token"], "tok-offer")
+
     def test_a_queued_confirm_carries_its_token_into_the_outbox(self):
         """Without this the drain replays token-less and the server parks the
         close for review -- silently undoing the confirm the keyholder gave."""
         state = AttendanceState()
         state.push_event = lambda event: None
-        state.arm_confirm("tok-1", 15)
+        state.arm_confirm(7, "tok-1", 15)
         outbox = Outbox(":memory:")
         backend = Mock(attendance_path=None)
         backend.post_scan.return_value = ({"error": "unreachable"}, 0, None)
@@ -558,7 +526,7 @@ class TestForceCloseConfirm(unittest.TestCase):
         state.push_event = lambda event: None
         outbox = Outbox(":memory:")
         outbox.enqueue("evt-0", 7, "2026-08-21T10:00:00+00:00")
-        state.arm_confirm("tok-2", 15)
+        state.arm_confirm(7, "tok-2", 15)
         backend = Mock(attendance_path=None)
 
         handle_scan(backend, state, outbox, 7)
@@ -586,7 +554,7 @@ class TestAttendancePollerClosedWindow(unittest.TestCase):
                 raise _StopLoop()
 
         with self.assertRaises(_StopLoop):
-            attendance_poller(backend, state, sleep_fn=fake_sleep,
+            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep,
                                in_closed_window_fn=in_closed_window_fn)
         return backend
 
@@ -612,7 +580,7 @@ class TestAttendancePollerClosedWindow(unittest.TestCase):
                 raise _StopLoop()
 
         with self.assertRaises(_StopLoop):
-            attendance_poller(backend, state, sleep_fn=fake_sleep,
+            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep,
                                in_closed_window_fn=lambda: False)
         backend.get_attendance.assert_not_called()
 
@@ -629,9 +597,69 @@ class TestAttendancePollerClosedWindow(unittest.TestCase):
                 raise _StopLoop()
 
         with self.assertRaises(_StopLoop):
-            attendance_poller(backend, state, sleep_fn=fake_sleep,
+            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep,
                                in_closed_window_fn=lambda: False)
         backend.get_attendance.assert_called()
+
+
+class TestReseedKeepsUndeliveredScans(unittest.TestCase):
+    """The server roster lags the kiosk: queued outbox rows are not on it. A
+    reseed must not erase them, or the next badge from that person is sent in
+    the wrong direction."""
+
+    def _queue(self, ob, pid, intent, at):
+        ob.enqueue(f"evt-{pid}-{at}", pid, at, intent=intent)
+
+    def test_pending_in_survives_an_empty_roster(self):
+        ob = Outbox(":memory:")
+        self._queue(ob, 5, "IN", "2026-10-05T10:00:00Z")
+        state = AttendanceState()
+        state.seed_from_attendance({"attendance": []}, ob.pending_rows())
+        self.assertEqual(state.displayed_intent(5), "OUT")
+
+    def test_pending_out_survives_a_roster_that_still_lists_them(self):
+        ob = Outbox(":memory:")
+        self._queue(ob, 5, "OUT", "2026-10-05T10:00:00Z")
+        state = AttendanceState()
+        state.seed_from_attendance(
+            {"attendance": [{"participant": {"id": 5, "isKeyholder": True}}]}, ob.pending_rows())
+        self.assertEqual(state.displayed_intent(5), "IN")
+        self.assertEqual(state.keyholder_ids, {5}, "keyholder ids stay roster-only")
+
+    def test_last_pending_intent_wins(self):
+        ob = Outbox(":memory:")
+        self._queue(ob, 5, "IN", "2026-10-05T10:00:00Z")
+        self._queue(ob, 5, "OUT", "2026-10-05T11:00:00Z")
+        state = AttendanceState()
+        state.seed_from_attendance({"attendance": []}, ob.pending_rows())
+        self.assertEqual(state.displayed_intent(5), "IN")
+
+    def test_poller_overlays_the_outbox(self):
+        ob = Outbox(":memory:")
+        self._queue(ob, 5, "IN", "2026-10-05T10:00:00Z")
+        backend = Mock(attendance_path="/api/attendance")
+        backend.get_attendance.return_value = ({"attendance": [], "counts": {"total": 0}}, 200)
+        state = AttendanceState()
+        state.push_event = lambda e: None
+        calls = {"n": 0}
+
+        def fake_sleep(_secs):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise _StopLoop()
+
+        with self.assertRaises(_StopLoop):
+            attendance_poller(backend, state, ob, sleep_fn=fake_sleep,
+                               in_closed_window_fn=lambda: False)
+        backend.get_attendance.assert_called()
+        self.assertEqual(state.displayed_intent(5), "OUT")
+
+    def test_apply_pending_without_a_roster(self):
+        ob = Outbox(":memory:")
+        self._queue(ob, 5, "IN", "2026-10-05T10:00:00Z")
+        state = AttendanceState()
+        state.apply_pending(ob.pending_rows())
+        self.assertEqual(state.displayed_intent(5), "OUT")
 
 
 class TestProxyKeepaliveSkip(unittest.TestCase):
@@ -678,10 +706,55 @@ class TestProxyKeepaliveSkip(unittest.TestCase):
         self.assertEqual(body["safety"], {"isLastKeyholder": False, "isTwoDeepViolation": False})
         self.assertEqual(body["attendance"], [])
 
+    def test_synthetic_attendance_body_replays_the_last_real_roster(self):
+        state = AttendanceState()
+        roster = {
+            "access": "full",
+            "attendance": [{"participant": {"id": 9, "name": "Sam K.", "isKeyholder": True}}],
+            "counts": {"total": 1, "keyholders": 1, "volunteers": 0, "youth": 0},
+            "safety": {"isLastKeyholder": True, "isTwoDeepViolation": False},
+        }
+        state.seed_from_attendance(roster)
+        self.assertEqual(json.loads(synthetic_keepalive_body("/api/attendance", state)), roster)
+
+    def test_synthetic_certifications_body_is_empty_before_any_real_one(self):
+        body = json.loads(synthetic_keepalive_body("/api/kioskdisplay/certifications", AttendanceState()))
+        self.assertEqual(body, {"participants": [], "tools": []})
+
+    def _proxy_get(self, state, path, upstream_body):
+        handler = KioskHandler.__new__(KioskHandler)
+        handler.path = path
+        handler.headers = {}
+        handler.state = state
+        handler.backend = Mock(base_url="http://backend", signing_key=SigningKey.generate())
+        handler.wfile = io.BytesIO()
+        handler.send_response = handler.send_header = handler.end_headers = Mock()
+        resp = Mock(status_code=200, headers={})
+        resp.iter_content.return_value = [upstream_body]
+        with patch("client.requests.request", return_value=resp) as upstream:
+            handler._proxy_request("GET")
+        return handler.wfile.getvalue(), upstream
+
+    def test_closed_window_replays_the_last_proxied_certifications(self):
+        state = AttendanceState()
+        certs = b'{"participants": [{"id": 9, "name": "Sam K."}], "tools": [{"id": 1}]}'
+        with patch("client.skip_kiosk_keepalive", return_value=False):
+            self._proxy_get(state, "/api/kioskdisplay/certifications", certs)
+        with patch("client.skip_kiosk_keepalive", return_value=True):
+            replayed, upstream = self._proxy_get(state, "/api/kioskdisplay/certifications", b"")
+        upstream.assert_not_called()
+        self.assertEqual(replayed, certs)
+
 
 class TestOfflineForceClose(unittest.TestCase):
     """Offline the server mints no token, so the kiosk runs the last-keyholder
     warning + two-scan confirm itself and flags the queued close as confirmed."""
+
+    def setUp(self):
+        # These drive the second badge immediately; the dead-front has its own test.
+        patcher = patch("client.CONFIRM_DEADFRONT_SECONDS", 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     ROSTER = {
         "attendance": [
@@ -709,14 +782,20 @@ class TestOfflineForceClose(unittest.TestCase):
         state = self._state(two_deep_violation=True)
         self.assertEqual(state.keyholder_ids, {9})
         self.assertTrue(state.last_two_deep_violation)
-        self.assertTrue(state.offline_last_keyholder(9))
-        self.assertFalse(state.offline_last_keyholder(5), "a non-keyholder is never the last keyholder")
+        self.assertTrue(state.offline_close_offer(9))
+        self.assertFalse(state.offline_close_offer(5), "a non-keyholder never closes the building")
 
-    def test_not_last_keyholder_when_another_keyholder_present(self):
+    def test_close_offered_when_another_keyholder_is_recorded_inside(self):
+        # The other keyholder may be a forgotten badge-out: any keyholder can close.
         state = self._state()
         state.keyholder_ids = {9, 3}
         state.current_counts = {"keyholders": 2, "total": 3}
-        self.assertFalse(state.offline_last_keyholder(9))
+        self.assertTrue(state.offline_close_offer(9))
+
+    def test_no_close_offer_for_a_keyholder_alone(self):
+        state = self._state()
+        state.current_counts = {"keyholders": 1, "total": 1}
+        self.assertFalse(state.offline_close_offer(9))
 
     def test_local_close_is_bound_single_use_and_expires(self):
         state = AttendanceState()
@@ -738,7 +817,7 @@ class TestOfflineForceClose(unittest.TestCase):
         handle_scan(backend, state, ob, 9)
 
         self.assertIn("banner-warning", events[-1]["html"])
-        self.assertIn("last key holder", events[-1]["html"].lower())
+        self.assertIn("badge again to close", events[-1]["html"].lower())
         self.assertEqual(events[-1]["countdown"], FORCE_CLOSE_CONFIRM_SECONDS)
         self.assertFalse(backend.post_scan.call_args.kwargs["force_close_confirmed"])
         rows = ob.pending_rows()

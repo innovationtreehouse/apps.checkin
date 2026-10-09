@@ -50,6 +50,14 @@ async function resolveAuthResult(
     // 2. Try session
     const session = await getServerSession(authOptions);
     if (session?.user) {
+        // No positive integer id = no live person behind the session (the jwt re-sync
+        // emptied the token, or the dev guest persona). Downstream `where: { x: user.id }`
+        // filters would drop an undefined id and match every row, so this must not be a
+        // session.
+        const id: unknown = session.user.id;
+        if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0) {
+            return { type: 'unauthenticated' };
+        }
         // A denied household is locked out of the whole app. Treat it as unauthenticated
         // so every route — including authenticated-only ones — fails closed, regardless of
         // each route's role list. The jwt callback already strips role flags; this is the

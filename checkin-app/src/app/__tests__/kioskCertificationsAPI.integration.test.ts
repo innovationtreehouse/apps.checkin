@@ -162,8 +162,9 @@ describe('Kiosk Certifications API Integration Tests', () => {
              const visitMatches = data.participants.filter((v: {id: number}) => v.id === testUserId);
              expect(visitMatches.length).toBe(1);
              expect(visitMatches[0].toolStatuses.some((t: {toolId: number, level: string}) => t.toolId === toolId && t.level === 'CERTIFIED')).toBe(true);
-             // Returns a display name and never the raw email — data minimization (#329).
-             expect(visitMatches[0].name).toBe('User Kiosk Test');
+             // Returns the kiosk label — first name, never the last name or raw email.
+             expect(visitMatches[0].name).toMatch(/^User\b/);
+             expect(visitMatches[0].name).not.toContain('Test');
              expect('email' in visitMatches[0]).toBe(false);
              
              const toolMatches = data.tools.filter((t: {id: number}) => t.id === toolId);

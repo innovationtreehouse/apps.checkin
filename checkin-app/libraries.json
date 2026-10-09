@@ -1,3 +1,4 @@
 [
-  { "name": "catalog", "package": "@inventory/global-catalog" }
+  { "name": "catalog", "package": "@inventory/global-catalog" },
+  { "name": "local_inventory", "package": "@inventory/local-inventory" }
 ]

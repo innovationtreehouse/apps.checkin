@@ -8,6 +8,7 @@
 import { it, expect, beforeEach, afterAll } from "vitest";
 import { prisma } from "../../src/db/client.js";
 import { injectFixtures } from "../../src/ingest/inject.js";
+import { ingestNode } from "../../src/ingest/ingestNode.js";
 import { EventSource, ObjectType } from "../../src/generated/prisma/client.js";
 import { describeDb } from "../helpers/db.js";
 
@@ -71,6 +72,31 @@ describeDb("projection into live tables (real Postgres)", () => {
     expect(await prisma.shopifyRawEvent.count({ where: { storeId: STORE, objectType: ObjectType.ORDER } })).toBe(2);
   });
 
+  it("ignores an OLDER payload arriving after a newer one (newest-wins on updatedAt)", async () => {
+    const newer = orderNode({
+      updatedAt: "2026-03-01T00:00:00Z",
+      cancelledAt: "2026-03-01T00:00:00Z",
+      displayFinancialStatus: "REFUNDED",
+      totalRefundedSet: { shopMoney: { amount: "100.00", currencyCode: "USD" } },
+      lineItems: { nodes: [] },
+      refunds: [{ id: "gid://shopify/Refund/3001", createdAt: "2026-03-01T00:00:00Z", totalRefundedSet: { shopMoney: { amount: "100.00", currencyCode: "USD" } } }],
+    });
+    await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node: newer }], { storeId: STORE });
+    await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node: orderNode() }], { storeId: STORE });
+
+    const row = await prisma.shopOrder.findUnique({
+      where: { storeId_shopifyGid: { storeId: STORE, shopifyGid: "gid://shopify/Order/1001" } },
+    });
+    expect(row?.financialStatus).toBe("REFUNDED");
+    expect(row?.totalRefundedCents).toBe(10000);
+    expect(row?.cancelledAt).not.toBeNull();
+    expect(row?.updatedAt?.toISOString()).toBe("2026-03-01T00:00:00.000Z");
+    // The stale node's line item is not projected either — children follow the order guard.
+    expect(await prisma.shopOrderLine.count({ where: { storeId: STORE } })).toBe(0);
+    // The stale payload is still logged; only projection is skipped.
+    expect(await prisma.shopifyRawEvent.count({ where: { storeId: STORE, objectType: ObjectType.ORDER } })).toBe(2);
+  });
+
   it("stores signed balance transactions whose nets sum to the payout net", async () => {
     const fixtures = [
       { objectType: ObjectType.PAYOUT, node: { id: "gid://shopify/ShopifyPaymentsPayout/5001", net: { amount: "77.00", currencyCode: "USD" }, status: "PAID", issuedAt: "2026-02-05T00:00:00Z" } },
@@ -82,7 +108,7 @@ describeDb("projection into live tables (real Postgres)", () => {
     const payout = await prisma.shopPayout.findUnique({
       where: { storeId_payoutGid: { storeId: STORE, payoutGid: "gid://shopify/ShopifyPaymentsPayout/5001" } },
     });
-    const txns = await prisma.shopBalanceTransaction.findMany({ where: { payoutGid: "gid://shopify/ShopifyPaymentsPayout/5001" } });
+    const txns = await prisma.shopBalanceTransaction.findMany({ where: { storeId: STORE, payoutGid: "gid://shopify/ShopifyPaymentsPayout/5001" } });
     const sum = txns.reduce((s, t) => s + t.netCents, 0);
 
     expect(payout?.netCents).toBe(7700);
@@ -95,5 +121,63 @@ describeDb("projection into live tables (real Postgres)", () => {
     const events = await prisma.shopifyRawEvent.findMany({ where: { storeId: STORE } });
     expect(events).toHaveLength(1);
     expect(events[0].source).toBe(EventSource.TEST_LOADED);
+  });
+
+  const orderRow = () =>
+    prisma.shopOrder.findUnique({
+      where: { storeId_shopifyGid: { storeId: STORE, shopifyGid: "gid://shopify/Order/1001" } },
+    });
+
+  it("--test forces the order's test flag on and stamps TEST_LOADED on the live row", async () => {
+    await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node: orderNode({ test: false }) }], {
+      storeId: STORE,
+      test: true,
+    });
+    expect(await orderRow()).toMatchObject({ test: true, source: EventSource.TEST_LOADED });
+  });
+
+  it("stamps HAND_LOADED on injected payouts and balance transactions", async () => {
+    await injectFixtures(
+      prisma,
+      [
+        { objectType: ObjectType.PAYOUT, node: { id: "gid://shopify/ShopifyPaymentsPayout/5001", net: { amount: "1.00", currencyCode: "USD" } } },
+        { objectType: ObjectType.BALANCE_TXN, node: { id: "gid://shopify/ShopifyPaymentsBalanceTransaction/9001", type: "CHARGE", amount: { amount: "1.00", currencyCode: "USD" }, fee: { amount: "0.00" }, net: { amount: "1.00" } } },
+      ],
+      { storeId: STORE },
+    );
+    expect((await prisma.shopPayout.findFirst({ where: { storeId: STORE } }))?.source).toBe(EventSource.HAND_LOADED);
+    expect((await prisma.shopBalanceTransaction.findFirst({ where: { storeId: STORE } }))?.source).toBe(EventSource.HAND_LOADED);
+  });
+
+  it("an API re-ingest of the same gid restamps a hand-loaded row", async () => {
+    await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node: orderNode({ email: "fixture@example.com" }) }], {
+      storeId: STORE,
+    });
+    expect((await orderRow())?.source).toBe(EventSource.HAND_LOADED);
+
+    await ingestNode(prisma, { storeId: STORE, objectType: ObjectType.ORDER, node: orderNode(), source: EventSource.INCREMENTAL });
+    expect(await orderRow()).toMatchObject({ source: EventSource.INCREMENTAL, customerEmail: "buyer@example.com" });
+  });
+
+  it("refuses an inject that reuses the GID of an API-synced row, writing nothing", async () => {
+    await ingestNode(prisma, { storeId: STORE, objectType: ObjectType.ORDER, node: orderNode(), source: EventSource.BACKFILL });
+    const fixtures = [
+      { objectType: ObjectType.PAYOUT, node: { id: "gid://shopify/ShopifyPaymentsPayout/5001", net: { amount: "1.00", currencyCode: "USD" } } },
+      { objectType: ObjectType.ORDER, node: orderNode({ email: "fixture@example.com", updatedAt: "2030-01-01T00:00:00Z" }) },
+    ];
+
+    await expect(injectFixtures(prisma, fixtures, { storeId: STORE })).rejects.toThrow(/gid:\/\/shopify\/Order\/1001/);
+    expect(await orderRow()).toMatchObject({ source: EventSource.BACKFILL, customerEmail: "buyer@example.com" });
+    expect(await prisma.shopPayout.count({ where: { storeId: STORE } })).toBe(0);
+    expect(await prisma.shopifyRawEvent.count({ where: { storeId: STORE } })).toBe(1);
+  });
+
+  it("re-injecting a hand-loaded GID is allowed", async () => {
+    const fixture = [{ objectType: ObjectType.ORDER, node: orderNode() }];
+    await injectFixtures(prisma, fixture, { storeId: STORE });
+    await expect(
+      injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node: orderNode({ name: "#fixed" }) }], { storeId: STORE }),
+    ).resolves.toHaveLength(1);
+    expect((await orderRow())?.name).toBe("#fixed");
   });
 });

@@ -213,6 +213,21 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // bag"). If a self-serve "emails we sent you" / suppression-audit view ever ships,
     // it earns `their_own: { field: 'personId', eqCtx: 'selfId' }`.
     'BulkSendItem',
+    // Budget-owner buckets (#1280 §6). Lands ahead of the model, so the boundary
+    // change ships alone. Finance/board reads need no binding (everyones:internal).
+    // Approvers are derived from programId (the program's leader and treasurers);
+    // the expense approval route earns that programId binding when it ships.
+    'BudgetOwner',
+    // Local inventory (#1287 §5) audit logs. Their `userId` is in SCOPABLE_FIELDS,
+    // but it is a local-inventory actor id — not checkin's `selfId` — so it never
+    // earns a `their_own` binding; the internal attribution fields stay with the
+    // INVENTORY_MANAGER view.
+    'InventoryLog',
+    'LocationLog',
+    // Expense (#1272 §5) audit log. Its `userId` is the acting checkin Person.id, read
+    // only by FINANCE/BOARD (everyones:pii). A "my expense history" view is the
+    // plausible future reader; that is when it earns `their_own` on `userId`.
+    'ExpenseAuditLog',
 ]);
 
 /**

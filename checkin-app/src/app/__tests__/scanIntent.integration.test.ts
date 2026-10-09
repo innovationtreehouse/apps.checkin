@@ -3,7 +3,8 @@
  */
 /**
  * Stage-2 substrate: displayed intent is applied, not re-toggled from live
- * Visit state. Conflicts park. Closed non-keyholder INs hold for projection C.
+ * Visit state. Conflicts park. A non-keyholder IN with no keyholder present
+ * checks in all the same.
  */
 import { POST } from "@/app/api/scan/route";
 import prisma from "@/lib/prisma";
@@ -81,6 +82,8 @@ describe("Scan intent — Stage-2 projection (real DB)", () => {
         expect(open).toHaveLength(1);
         const ev = await prisma.presenceEvent.findUnique({ where: { clientEventId: "evt-double-in" } });
         expect(ev?.classification).toBe(PresenceClass.CONFLICT_DOUBLE_IN);
+        const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId: "evt-double-in" } });
+        expect(log?.reviewReason).toBe("conflict_double_in");
     });
 
     it("intent OUT with no open visit parks as ConflictOutNoIn", async () => {
@@ -90,6 +93,8 @@ describe("Scan intent — Stage-2 projection (real DB)", () => {
         expect(await prisma.visit.findFirst({ where: { personId: member.id } })).toBeNull();
         const ev = await prisma.presenceEvent.findUnique({ where: { clientEventId: "evt-out-no-in" } });
         expect(ev?.classification).toBe(PresenceClass.CONFLICT_OUT_NO_IN);
+        const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId: "evt-out-no-in" } });
+        expect(log?.reviewReason).toBe("conflict_out_no_in");
     });
 
     it("clockSuspect parks for review and does not toggle", async () => {
@@ -104,25 +109,22 @@ describe("Scan intent — Stage-2 projection (real DB)", () => {
         expect(ev?.classification).toBe(PresenceClass.PARKED_CLOCK);
     });
 
-    it("a non-keyholder IN while closed holds (C) and projects after a keyholder Visit", async () => {
-        const held = await POST(scanReq({ participantId: member.id, clientEventId: "evt-held", intent: "IN" }));
-        const heldBody = await held.json();
-        expect(heldBody.type).toBe("parked");
-        // The kiosk keys its amber "waiting for key holder" banner on this
-        // reason; without it the hold renders as an ordinary check-in.
-        expect(heldBody.reason).toBe("facility_closed");
-        expect(await prisma.visit.findFirst({ where: { personId: member.id } })).toBeNull();
-        const parked = await prisma.presenceEvent.findUnique({ where: { clientEventId: "evt-held" } });
-        expect(parked?.classification).toBe(PresenceClass.PARKED_CLOSED);
-        const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId: "evt-held" } });
+    it("a non-keyholder IN with no keyholder present checks in, and its OUT is an ordinary checkout", async () => {
+        const res = await POST(scanReq({ participantId: member.id, clientEventId: "evt-nokh-in", intent: "IN" }));
+        expect((await res.json()).type).toBe("checkin");
+        const visit = await prisma.visit.findFirst({ where: { personId: member.id, departedAt: null } });
+        expect(visit).not.toBeNull();
+        const ev = await prisma.presenceEvent.findUnique({ where: { clientEventId: "evt-nokh-in" } });
+        expect(ev?.classification).toBe(PresenceClass.PROJECTED);
+        expect(ev?.visitId).toBe(visit!.id);
+        const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId: "evt-nokh-in" } });
         expect(log?.reviewReason).toBeNull();
 
-        const open = await POST(scanReq({ participantId: keyholder.id, clientEventId: "evt-kh", intent: "IN" }));
-        expect((await open.json()).type).toBe("checkin");
-
-        const memberVisit = await prisma.visit.findFirst({ where: { personId: member.id, departedAt: null } });
-        expect(memberVisit).not.toBeNull();
-        const projected = await prisma.presenceEvent.findUnique({ where: { clientEventId: "evt-held" } });
-        expect(projected?.classification).toBe(PresenceClass.PROJECTED);
+        // Step past the scan debounce: the OUT is a later, separate badge.
+        await prisma.rawBadgeLog.updateMany({ where: { personId: member.id }, data: { timestamp: new Date(Date.now() - 60_000) } });
+        const out = await POST(scanReq({ participantId: member.id, clientEventId: "evt-nokh-out", intent: "OUT" }));
+        expect((await out.json()).type).toBe("checkout");
+        const closed = await prisma.visit.findUnique({ where: { id: visit!.id } });
+        expect(closed?.departedAt).toBeInstanceOf(Date);
     });
 });

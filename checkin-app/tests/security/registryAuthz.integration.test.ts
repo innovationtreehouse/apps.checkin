@@ -25,8 +25,8 @@ jest.unmock('@/lib/prisma');
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { allRoutes, type Authorize } from '@/security/core';
-import type { BusinessRole, AuthenticatedUser } from '@/types/auth';
+import { allRoutes, type Authorize, type SessionFlagRole } from '@/security/core';
+import type { AuthenticatedUser } from '@/types/auth';
 import prisma from '@/lib/prisma';
 import '@/security/registry';
 
@@ -36,7 +36,7 @@ const mockSession = require('next-auth/next').getServerSession;
 
 const TAG = 'registry-authz-test';
 
-type Gate = 'public' | 'session' | 'household-member' | 'anyRole' | 'certifier' | 'program-scoped' | 'catalog-viewer' | 'inventory-manager' | 'unhandled';
+type Gate = 'public' | 'session' | 'household-member' | 'anyRole' | 'certifier' | 'program-scoped' | 'catalog-viewer' | 'inventory-manager' | 'finance' | 'finance-or-board' | 'expense-approver' | 'unhandled';
 
 interface RoutePlan {
     endpoint: string;
@@ -44,10 +44,10 @@ interface RoutePlan {
     routePath: string;
     gate: Gate;
     /** Non-null only for `{ anyRole }` routes — pulled straight from the spec. */
-    requiredRoles: BusinessRole[] | null;
+    requiredRoles: SessionFlagRole[] | null;
 }
 
-function planAuthorize(authorize: Authorize): { gate: Gate; requiredRoles: BusinessRole[] | null } {
+function planAuthorize(authorize: Authorize): { gate: Gate; requiredRoles: SessionFlagRole[] | null } {
     if (authorize === 'public') return { gate: 'public', requiredRoles: null };
     if (authorize === 'authenticated' || authorize === 'self') return { gate: 'session', requiredRoles: null };
     if (authorize === 'household-member') return { gate: 'household-member', requiredRoles: null };
@@ -64,6 +64,10 @@ function planAuthorize(authorize: Authorize): { gate: Gate; requiredRoles: Busin
     // authenticated user is rejected); 'inventory-manager' admits the role only.
     if (authorize === 'catalog-viewer') return { gate: 'catalog-viewer', requiredRoles: null };
     if (authorize === 'inventory-manager') return { gate: 'inventory-manager', requiredRoles: null };
+    // Finance (#1272 §6): neither admits a plain authenticated user or a sysadmin.
+    if (authorize === 'finance') return { gate: 'finance', requiredRoles: null };
+    if (authorize === 'finance-or-board') return { gate: 'finance-or-board', requiredRoles: null };
+    if (authorize === 'expense-approver') return { gate: 'expense-approver', requiredRoles: null };
     // household-lead / kiosk: not in the current registry. Surfaced as
     // 'unhandled' so a future route can't be silently skipped — it'll fail the
     // explicit guard test below.
@@ -179,17 +183,17 @@ describe('Registry route admission gates', () => {
             // Every case using this drives the real handler, so it waits for the
             // route file. The gate check below is static and always runs.
             //
-            // Catalog routes (#1286) are the exception: they are re-export stubs
-            // over the @inventory/global-catalog library, which needs its runtime
-            // injected by configureCatalog() at server boot and its own
-            // (CATALOG_DATABASE_URL) client — neither exists in this in-process
-            // test, and importing the stub pulls the library's generated client
-            // that the jest env doesn't build. So the DRIVING cases skip; the
-            // static gate check below still runs (it proves planAuthorize handles
-            // catalog-viewer / inventory-manager). Their admission is exercised
-            // end-to-end by the track-5 flow tests instead.
-            const isCatalog = plan.routePath.startsWith('/api/catalog/');
-            const itServed = routeFileExists(plan.routePath) && !isCatalog ? it : it.skip;
+            // Library routes (catalog #1286, local inventory #1287) are the
+            // exception: they are re-export stubs over a checkin-hosted library,
+            // which needs its runtime injected at server boot and its own database
+            // client — neither exists in this in-process test, and importing the
+            // stub pulls the library's workspace deps that the jest env doesn't
+            // resolve. So the DRIVING cases skip; the static gate check below
+            // still runs (it proves planAuthorize handles catalog-viewer /
+            // inventory-manager). Their admission is exercised end-to-end by the
+            // catalog and local-inventory flow tests instead.
+            const isLibrary = ['/api/catalog/', '/api/inventory/'].some(p => plan.routePath.startsWith(p));
+            const itServed = routeFileExists(plan.routePath) && !isLibrary ? it : it.skip;
 
             it('has a handled authorize gate (route not silently skipped)', () => {
                 expect(plan.gate).not.toBe('unhandled');
@@ -232,6 +236,19 @@ describe('Registry route admission gates', () => {
                     expect((await call(plan)).status).toBe(403);
                 });
             }
+            if (plan.gate === 'finance' || plan.gate === 'finance-or-board' || plan.gate === 'expense-approver') {
+                itServed('rejects a sysadmin without FINANCE with 403', async () => {
+                    mockSession.mockResolvedValue({ user: { ...plainUser, isSysadmin: true } });
+                    expect((await call(plan)).status).toBe(403);
+                });
+            }
+            if (plan.gate === 'expense-approver') {
+                itServed('rejects an authenticated caller who approves no bucket with 403', async () => {
+                    // plainUser holds no flag, leads no program and treasures none.
+                    mockSession.mockResolvedValue({ user: plainUser });
+                    expect((await call(plan)).status).toBe(403);
+                });
+            }
             if (plan.gate === 'catalog-viewer' || plan.gate === 'inventory-manager') {
                 itServed('rejects an authenticated caller with no catalog access with 403', async () => {
                     // plainUser holds no role flag, leads no program, and has no
@@ -262,6 +279,8 @@ describe('Registry route admission gates', () => {
                     mockSession.mockResolvedValue({ user: { ...plainUser, isKeyholder: true } });
                 } else if (plan.gate === 'inventory-manager') {
                     mockSession.mockResolvedValue({ user: { ...plainUser, isInventoryManager: true } });
+                } else if (plan.gate === 'finance' || plan.gate === 'finance-or-board' || plan.gate === 'expense-approver') {
+                    mockSession.mockResolvedValue({ user: { ...plainUser, isFinance: true } });
                 } else if (plan.routePath.startsWith('/api/events/')) {
                     // events/[id] is authorize:'authenticated' (so gate 'session'), but the
                     // handler fn adds an inline staff-only roster gate the registry grammar

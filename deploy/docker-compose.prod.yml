@@ -27,6 +27,7 @@ services:
       DATABASE_URL: postgresql://prisma:${DB_PASSWORD}@db:5432/checkmein?schema=public
       # One per checkin-app/libraries.json entry: <NAME>_DATABASE_URL -> its database.
       CATALOG_DATABASE_URL: postgresql://prisma:${DB_PASSWORD}@db:5432/catalog?schema=public
+      LOCAL_INVENTORY_DATABASE_URL: postgresql://prisma:${DB_PASSWORD}@db:5432/local_inventory?schema=public
     depends_on:
       - db
 

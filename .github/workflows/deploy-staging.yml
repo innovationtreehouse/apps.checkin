@@ -59,7 +59,7 @@ name: Deploy staging
 #   - Secret VALUES set in Secrets Manager (checkin-stg/database-url*, ...).
 #   - GitHub Environment "staging": deployment branches = rel/*, required
 #     reviewers configured (approval gate) — this also pins the OIDC sub to
-#     repo:innovationtreehouse/checkin:environment:staging with no wildcard.
+#     repo:innovationtreehouse/apps.checkin:environment:staging with no wildcard.
 #   - DNS + cert SAN for ops-stg.innovationtreehouse.org.
 
 on:
@@ -308,14 +308,10 @@ jobs:
               --query 'tasks[0].[containers[0].exitCode, stoppedReason]' --output text)
             echo "Copy task exit code: $EXIT_CODE"
 
-            # Surface the container's own output either way — without this, a
-            # failure only shows the exit code here and the real error hides in
-            # CloudWatch, which is how the 2026-07-02 P3009 wedge went
-            # undiagnosed for a day (same reasoning as deploy-dev.yml's migrate step).
+            # Pointer only: this task streams prod rows, and psql errors echo
+            # them; Actions logs on this public repo are world-readable.
             TASK_ID="${TASK_ARN##*/}"
-            echo "--- copy task logs (/ecs/$COPY_TASK_FAMILY), attempt $attempt ---"
-            ./scripts/dump-task-logs.sh "/ecs/$COPY_TASK_FAMILY" "ecs/checkin-stg-copy/$TASK_ID"
-            echo "--- end copy task logs ---"
+            ./scripts/dump-task-logs.sh --pointer-only "/ecs/$COPY_TASK_FAMILY" "ecs/checkin-stg-copy/$TASK_ID"
 
             # Retry only what a retry can clear. The entrypoint runs under
             # `set -e`, so a failing psql IS the container's exit status:
@@ -483,9 +479,7 @@ jobs:
             echo "Repoint task exit code: $EXIT_CODE"
 
             TASK_ID="${TASK_ARN##*/}"
-            echo "--- repoint task logs (/ecs/$COPY_TASK_FAMILY), attempt $attempt ---"
-            ./scripts/dump-task-logs.sh "/ecs/$COPY_TASK_FAMILY" "ecs/checkin-stg-copy/$TASK_ID"
-            echo "--- end repoint task logs ---"
+            ./scripts/dump-task-logs.sh --pointer-only "/ecs/$COPY_TASK_FAMILY" "ecs/checkin-stg-copy/$TASK_ID"
 
             [ "$EXIT_CODE" = "0" ] && break
             if [[ "$STOP_REASON" == *CannotPullContainerError* ]]; then

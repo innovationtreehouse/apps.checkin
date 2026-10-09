@@ -44,6 +44,15 @@ async function seedRole(prisma: Db, personId: number, flag: RoleFlag): Promise<v
 export async function seedBaseline(prisma: Db): Promise<void> {
     console.log("🌱 Seeding database with debug personas...\n");
 
+    // 0. The org registry row (#1286 §6). The stable well-known id "treehouse" is
+    // stamped as org_id on catalog rows and is the row configure.ts resolves,
+    // so dev/test/prod all resolve the same org identity.
+    await prisma.org.upsert({
+        where: { id: "treehouse" },
+        update: { name: "Treehouse" },
+        create: { id: "treehouse", name: "Treehouse" },
+    });
+
     // 1. Households (participants require one, so these come first)
     let household1 = await prisma.household.findFirst({ where: { name: "Family" } });
     if (!household1) {
@@ -207,6 +216,22 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         },
     });
     await seedRole(prisma, bgReviewer.id, "isBackgroundCheckReviewer");
+
+    // Global catalog manager (#1286). INVENTORY_MANAGER is PersonRole-table-only
+    // (no mirror column, like isOperations), so the grant is seedRole, not a
+    // create field. Curates the catalog in flow tests; also a catalog viewer.
+    const inventoryManager = await prisma.person.upsert({
+        where: { email: "inventory.manager@example.com" },
+        update: { name: "Inventory Manager", phone: "555-555-0012", isDeclaredAdult: true },
+        create: {
+            email: "inventory.manager@example.com",
+            name: "Inventory Manager",
+            phone: "555-555-0012",
+            isDeclaredAdult: true,
+            household: { create: { name: "Inventory Manager Household" } },
+        },
+    });
+    await seedRole(prisma, inventoryManager.id, "isInventoryManager");
 
     // A member household lead used by program-pricing flow tests: an ACTIVE
     // OrgMembership so member pricing/discount-code paths have a claimable persona.

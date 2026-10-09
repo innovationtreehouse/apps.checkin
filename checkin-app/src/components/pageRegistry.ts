@@ -19,7 +19,10 @@ export type RegistryUser = {
   isKeyholder?: boolean;
   isBackgroundCheckReviewer?: boolean;
   isOperations?: boolean;
+  isInventoryManager?: boolean;
   householdLead?: boolean;
+  programsLed?: number[];
+  hasVolunteerDesignation?: boolean;
   toolStatuses?: Array<{ level: string }>;
 };
 
@@ -53,6 +56,21 @@ const SHOP_ADMIN: Visible = (u) => shopRoles(u).isAdmin;
 // Membership Ops gates per tab (Review admits reviewers, Participants admits
 // operations, the rest are admin-only). One definition in membershipOpsNav.
 const MOPS = (href: string): Visible => (u) => membershipOpsRouteVisible(href, u);
+// Global catalog (#1286 §7). Mirrors isCatalogViewerClient / the server
+// 'catalog-viewer' gate: any RBAC role, a program leader, or a volunteer
+// (hasVolunteerDesignation, set on the session by the JWT callback).
+const CATALOG_VIEWER: Visible = (u, signedIn) =>
+  signedIn &&
+  (!!u?.isSysadmin ||
+    !!u?.isBoardMember ||
+    !!u?.isKeyholder ||
+    !!u?.isBackgroundCheckReviewer ||
+    !!u?.isOperations ||
+    !!u?.isInventoryManager ||
+    (u?.programsLed?.length ?? 0) > 0 ||
+    !!u?.hasVolunteerDesignation);
+
+const INVENTORY_MANAGER: Visible = (u, signedIn) => signedIn && !!u?.isInventoryManager;
 
 export type PageEntry = {
   href: string;
@@ -104,6 +122,23 @@ export const PAGES: PageEntry[] = [
   { href: '/shop-ops/create', label: 'Create', section: 'Shop Ops', visible: SHOP_ADMIN },
   { href: '/shop-ops/live', label: 'Live', section: 'Shop Ops', visible: SHOP },
   { href: '/shop-ops/manage', label: 'Manage', section: 'Shop Ops', visible: SHOP },
+
+  // Inventory (global catalog, #1286) — any catalog viewer. The index redirects
+  // to Items. Write controls within each screen are INVENTORY_MANAGER-gated.
+  { href: '/catalog', label: 'Inventory', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: CATALOG_VIEWER },
+  { href: '/catalog/items', label: 'Items', section: 'Inventory', keywords: 'catalog parts gtin', visible: CATALOG_VIEWER },
+  { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: CATALOG_VIEWER },
+  { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: CATALOG_VIEWER },
+  { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: CATALOG_VIEWER },
+  // Org inventory (#1287) — same viewer gate; the work-queue screens are
+  // INVENTORY_MANAGER-only, like their routes.
+  { href: '/inventory/org-items', label: 'Org Inventory', section: 'Inventory', keywords: 'stock on hand quantity location', visible: CATALOG_VIEWER },
+  { href: '/inventory/locations', label: 'Locations', section: 'Inventory', keywords: 'shelf bin backstock', visible: CATALOG_VIEWER },
+  { href: '/inventory/receive-queue', label: 'Receive Queue', section: 'Inventory', keywords: 'backorder receiving', visible: CATALOG_VIEWER },
+  { href: '/inventory/received-deltas', label: 'Applied Deltas', section: 'Inventory', keywords: 'receipt delta', visible: CATALOG_VIEWER },
+  { href: '/inventory/merge-conflicts', label: 'Merge Conflicts', section: 'Inventory', keywords: 'uom mismatch', visible: INVENTORY_MANAGER },
+  { href: '/inventory/provisional-items', label: 'Provisional Map', section: 'Inventory', keywords: 'provisional part', visible: INVENTORY_MANAGER },
+  { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: INVENTORY_MANAGER },
 
   // Facility Ops — board, plus operations on the two aggregate tools (#1633:
   // operations reach attendance in aggregate only). Visits, Badges (the raw

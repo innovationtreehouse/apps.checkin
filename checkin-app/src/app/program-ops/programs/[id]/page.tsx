@@ -35,7 +35,6 @@ export type ProgramDetail = {
     person: {
       name: string | null;
       email: string;
-      phone?: string | null;
       // householdMembers is the household's leads (the parents) only. Contact
       // fields are optional because the response stripper drops them for a
       // viewer without the grant.

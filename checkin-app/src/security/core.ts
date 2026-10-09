@@ -56,20 +56,61 @@ import {
     classifications as catalogSyntheticClassifications,
     relations as catalogSyntheticRelations,
 } from './catalogSyntheticClassifications';
+import * as inventoryGenerated from './generated/inventory-classifications';
+import * as inventorySynthetic from './inventorySyntheticClassifications';
+import * as expenseGenerated from './generated/expense-classifications';
+import * as expenseSynthetic from './expenseSyntheticClassifications';
+import * as incomeGenerated from './generated/income-classifications';
+import * as incomeSynthetic from './incomeSyntheticClassifications';
+import * as donationGenerated from './generated/donation-classifications';
+import * as donationSynthetic from './donationSyntheticClassifications';
+import * as workflowGenerated from './generated/workflow-classifications';
+import * as workflowSynthetic from './workflowSyntheticClassifications';
+import * as receiptGenerated from './generated/receipt-classifications';
+import * as receiptSynthetic from './receiptSyntheticClassifications';
 import type { BusinessRole } from '@/types/auth';
 import { assertNever } from '@/lib/lifecycle/classify';
 
-// checkin and the global catalog (#1286 §5) keep separate Prisma schemas, each
-// with its own `generator security` map. Their model names are disjoint
-// (enforced by having no shared schema), so a flat merge is the whole-system
-// classification map every boundary consumer (stripper, outbound, registry)
-// reads through. This is the single merge point — import `classifications` /
-// `relations` from here, not from either generated file.
-// The synthetic map adds non-Prisma response models (e.g. CatalogItemCount, a
-// count endpoint's scalar total — #1286 §7); its keys are disjoint from both
-// generated maps, so the flat merge stays unambiguous.
-export const classifications = { ...checkinClassifications, ...catalogClassifications, ...catalogSyntheticClassifications } as const;
-export const relations = { ...checkinRelations, ...catalogRelations, ...catalogSyntheticRelations } as const;
+// Every classification source: checkin's schema, each vendored library's schema
+// (#1286 §5, its own `generator security` map), and hand-authored synthetic
+// response models (e.g. CatalogItemCount — #1286 §7). The flat merge below is
+// the whole-system map every boundary consumer (stripper, outbound, registry)
+// reads through — import `classifications` / `relations` from here, not from a
+// source file. Model keys must be disjoint across sources, or a later source
+// silently overwrites an earlier one; __tests__/classification-sources.test.ts
+// enforces that.
+export const CLASSIFICATION_SOURCES = [
+    { source: 'checkin', classifications: checkinClassifications, relations: checkinRelations },
+    { source: 'global-catalog', classifications: catalogClassifications, relations: catalogRelations },
+    { source: 'catalog-synthetic', classifications: catalogSyntheticClassifications, relations: catalogSyntheticRelations },
+    { source: 'inventory', classifications: inventoryGenerated.classifications, relations: inventoryGenerated.relations },
+    { source: 'inventory-synthetic', classifications: inventorySynthetic.classifications, relations: inventorySynthetic.relations },
+    { source: 'expense', classifications: expenseGenerated.classifications, relations: expenseGenerated.relations },
+    { source: 'expense-synthetic', classifications: expenseSynthetic.classifications, relations: expenseSynthetic.relations },
+    { source: 'income', classifications: incomeGenerated.classifications, relations: incomeGenerated.relations },
+    { source: 'income-synthetic', classifications: incomeSynthetic.classifications, relations: incomeSynthetic.relations },
+    { source: 'donation', classifications: donationGenerated.classifications, relations: donationGenerated.relations },
+    { source: 'donation-synthetic', classifications: donationSynthetic.classifications, relations: donationSynthetic.relations },
+    { source: 'workflow', classifications: workflowGenerated.classifications, relations: workflowGenerated.relations },
+    { source: 'workflow-synthetic', classifications: workflowSynthetic.classifications, relations: workflowSynthetic.relations },
+    { source: 'receipt', classifications: receiptGenerated.classifications, relations: receiptGenerated.relations },
+    { source: 'receipt-synthetic', classifications: receiptSynthetic.classifications, relations: receiptSynthetic.relations },
+] as const;
+
+type ClassificationSource = (typeof CLASSIFICATION_SOURCES)[number];
+type MergeSources<S extends readonly ClassificationSource[], K extends 'classifications' | 'relations'> =
+    S extends readonly [infer Head extends ClassificationSource, ...infer Rest extends readonly ClassificationSource[]]
+        ? Head[K] & MergeSources<Rest, K>
+        : unknown;
+
+function mergeSources(key: 'classifications' | 'relations'): Record<string, unknown> {
+    const merged: Record<string, unknown> = {};
+    for (const s of CLASSIFICATION_SOURCES) Object.assign(merged, s[key]);
+    return merged;
+}
+
+export const classifications = mergeSources('classifications') as MergeSources<typeof CLASSIFICATION_SOURCES, 'classifications'>;
+export const relations = mergeSources('relations') as MergeSources<typeof CLASSIFICATION_SOURCES, 'relations'>;
 
 export type Models = keyof typeof classifications;
 export type FieldsOf<M extends Models> = keyof (typeof classifications)[M];
@@ -113,6 +154,9 @@ export type Role =
     // Curates the global catalog (#1286 §6). A Person role boolean, stamped on
     // the session like the others; grants the manager view on catalog routes.
     | 'isInventoryManager'
+    // Finance staff (#1272 §6). A Person role boolean, stamped on the session
+    // like the others; grants the finance view on finance-library routes.
+    | 'isFinance'
     // Holds a MAY_CERTIFY_OTHERS toolStatus (a shop certifier). Not a Person
     // role boolean — derived from session.user.toolStatuses (see callerHoldsRole).
     | 'certifier'
@@ -144,6 +188,7 @@ export const VALID_ROLES = new Set<Role>([
     'isBackgroundCheckReviewer',
     'isOperations',
     'isInventoryManager',
+    'isFinance',
     'certifier',
     'householdLead',
     'programLeadMentor',
@@ -164,6 +209,9 @@ export function parseToken(
     return { scope: scope as Scope, tier: tier as SensitiveTier };
 }
 
+/** Roles backed by a Person role flag on the session — what `anyRole` checks. */
+export type SessionFlagRole = BusinessRole | 'isInventoryManager' | 'isFinance';
+
 /**
  * Admission gate — who is allowed to *call* the endpoint. Distinct from
  * `orderedView`, which controls *what* they see once admitted.
@@ -172,17 +220,25 @@ export type Authorize =
     | 'public'
     | 'authenticated'
     | 'self'
-    | { anyRole: BusinessRole[] }
+    // Admits a caller holding any listed role flag. No sysadmin/board auto-admit.
+    | { anyRole: SessionFlagRole[] }
     // Catalog read admission (#1286 §6): the single chokepoint for reading the
     // global catalog — INVENTORY_MANAGER, any RBAC-role holder, a program leader,
     // or a volunteer (keyed by email). Broader than the ops roles, deliberately:
     // the catalog is non-pii reference data (writes stay INVENTORY_MANAGER-only).
     | 'catalog-viewer'
-    // Catalog write admission (#1286 §6): INVENTORY_MANAGER only. A dedicated
-    // variant rather than `{ anyRole: ['isInventoryManager'] }` so the boundary
-    // does not depend on isInventoryManager being in BusinessRole (types/auth.ts)
-    // — keeping this a session-flag check resolved entirely inside resolveAccess.
+    // Catalog write admission (#1286 §6): INVENTORY_MANAGER only.
     | 'inventory-manager'
+    // FINANCE only (#1272 §6). No sysadmin auto-admit: Finance Ops excludes
+    // sysadmins (docs/rules/finance-payments.md).
+    | 'finance'
+    // FINANCE or BOARD (#1272 §6, #1280 §4): the board acts as finance's
+    // superuser. No sysadmin auto-admit, as above.
+    | 'finance-or-board'
+    // A budget-bucket approver (#1272 §5/§6): FINANCE, BOARD, a program leader,
+    // or a program treasurer. No sysadmin auto-admit. Rows stay handler-filtered
+    // to the buckets the caller approves.
+    | 'expense-approver'
     // Shop certifier (a MAY_CERTIFY_OTHERS toolStatus). Admits certifiers OR
     // admins (isSysadmin/isBoardMember) — see resolveAccess. Backed by a
     // predicate because 'certifier' is not a Person role boolean.
@@ -305,6 +361,7 @@ function roleNeeds(role: Role): Partial<CtxNeeds> {
         case 'isBackgroundCheckReviewer':
         case 'isOperations':
         case 'isInventoryManager':
+        case 'isFinance':
         case 'certifier':
         case 'householdLead':
             // callerHoldsRole answers these from the session alone.
@@ -325,6 +382,9 @@ function authorizeNeeds(authorize: Authorize): Partial<CtxNeeds> {
         case 'self':
         case 'catalog-viewer':
         case 'inventory-manager':
+        case 'finance':
+        case 'finance-or-board':
+        case 'expense-approver':
         case 'certifier':
         case 'household-lead':
         case 'household-member':
@@ -338,7 +398,7 @@ function authorizeNeeds(authorize: Authorize): Partial<CtxNeeds> {
     }
 }
 
-export function deriveCtxNeeds(spec: RouteSpec): CtxNeeds {
+export function deriveCtxNeeds(spec: Pick<RouteSpec, 'authorize' | 'orderedView'>): CtxNeeds {
     const needs: CtxNeeds = {
         programs: false,
         programHouseholds: false,
@@ -364,32 +424,99 @@ export interface RegisteredRoute extends RouteSpec {
     readonly ctxNeeds: CtxNeeds;
 }
 
+/**
+ * Content types a file route may serve — the owner-approved delivery allowlist.
+ * Each type's response headers are fixed by fileHandler (./fileHandler.ts), not
+ * chosen by the route.
+ */
+export const FILE_CONTENT_TYPES = [
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'application/pdf',
+    'text/plain',
+] as const;
+export type FileContentType = (typeof FILE_CONTENT_TYPES)[number];
+
+/**
+ * A file route (plan rule 7: files are not JSON). Serves the bytes of exactly
+ * one classified field, `file`, to a caller who passes `authorize` and whose
+ * view (first matching `orderedView` role) covers that field on the row. A
+ * field a file route serves is file-only: the JSON stripper never emits it.
+ * Always GET; never `public` or `kiosk` — a file goes only to an identified
+ * person.
+ */
+export interface FileRouteSpec {
+    endpoint: string;
+    authorize: Exclude<Authorize, 'public' | 'kiosk'>;
+    orderedView: readonly OrderedViewEntry[];
+    file: { model: Models; field: string };
+}
+
+export interface RegisteredFileRoute extends FileRouteSpec {
+    readonly ctxNeeds: CtxNeeds;
+}
+
 const _routes = new Map<string, RegisteredRoute>();
+const _fileRoutes = new Map<string, RegisteredFileRoute>();
+const _fileOnlyFields = new Set<string>();
 const _outbounds = new Map<string, OutboundSpec>();
 
-export function defineRoute(spec: RouteSpec): RouteSpec {
-    if (_routes.has(spec.endpoint)) {
-        throw new Error(`Duplicate route registration: ${spec.endpoint}`);
+function assertValidRegistration(endpoint: string, orderedView: readonly OrderedViewEntry[]): void {
+    if (_routes.has(endpoint) || _fileRoutes.has(endpoint)) {
+        throw new Error(`Duplicate route registration: ${endpoint}`);
     }
     const seenRoles = new Set<string>();
-    for (const [role, tokens] of spec.orderedView) {
+    for (const [role, tokens] of orderedView) {
         if (!VALID_ROLES.has(role)) {
-            throw new Error(`Route ${spec.endpoint}: unknown role '${role}'`);
+            throw new Error(`Route ${endpoint}: unknown role '${role}'`);
         }
         if (seenRoles.has(role)) {
-            throw new Error(`Route ${spec.endpoint}: duplicate role '${role}' in orderedView`);
+            throw new Error(`Route ${endpoint}: duplicate role '${role}' in orderedView`);
         }
         seenRoles.add(role);
         for (const tok of tokens) {
             if (parseToken(tok) === null) {
-                throw new Error(`Route ${spec.endpoint}: invalid token '${tok}'`);
+                throw new Error(`Route ${endpoint}: invalid token '${tok}'`);
             }
         }
     }
+}
+
+export function defineRoute(spec: RouteSpec): RouteSpec {
+    assertValidRegistration(spec.endpoint, spec.orderedView);
     // Derived AFTER validation (deriveCtxNeeds assumes tokens parse). The spread
     // order means an (illegally) author-supplied ctxNeeds is overwritten.
     _routes.set(spec.endpoint, { ...spec, ctxNeeds: deriveCtxNeeds(spec) });
     return spec;
+}
+
+export function defineFileRoute(spec: FileRouteSpec): FileRouteSpec {
+    const { endpoint, authorize, file } = spec;
+    if (!endpoint.startsWith('GET ')) {
+        throw new Error(`File route ${endpoint}: must be a GET endpoint`);
+    }
+    if (authorize === ('public' as Authorize) || authorize === ('kiosk' as Authorize)) {
+        throw new Error(`File route ${endpoint}: authorize '${authorize}' is not allowed`);
+    }
+    assertValidRegistration(endpoint, spec.orderedView);
+    const tiers = classifications[file.model] as Record<string, Tier> | undefined;
+    const tier = tiers?.[file.field];
+    if (tier === undefined) {
+        throw new Error(`File route ${endpoint}: unknown field ${file.model}.${file.field}`);
+    }
+    if (tier === 'secret') {
+        throw new Error(`File route ${endpoint}: ${file.model}.${file.field} is secret and never leaves`);
+    }
+    _fileRoutes.set(endpoint, { ...spec, ctxNeeds: deriveCtxNeeds(spec) });
+    _fileOnlyFields.add(`${file.model}.${file.field}`);
+    return spec;
+}
+
+/** True iff a registered file route serves this field — the stripper drops it. */
+export function isFileOnlyField(model: string, field: string): boolean {
+    return _fileOnlyFields.has(`${model}.${field}`);
 }
 
 export function defineOutbound(spec: OutboundSpec): OutboundSpec {
@@ -407,6 +534,14 @@ export function defineOutbound(spec: OutboundSpec): OutboundSpec {
 
 export function getRoute(endpoint: string): RegisteredRoute | undefined {
     return _routes.get(endpoint);
+}
+
+export function getFileRoute(endpoint: string): RegisteredFileRoute | undefined {
+    return _fileRoutes.get(endpoint);
+}
+
+export function allFileRoutes(): IterableIterator<[string, RegisteredFileRoute]> {
+    return _fileRoutes.entries();
 }
 
 export function getOutbound(surface: string): OutboundSpec | undefined {

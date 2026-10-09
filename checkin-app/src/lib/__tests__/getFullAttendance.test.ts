@@ -5,10 +5,12 @@
  * — that grant is deliberate (registry.ts `keyholders:personal`, pickup/emergency).
  */
 const findMany = jest.fn();
-const heldFindMany = jest.fn();
+// The keyholder-cover query is the one that selects bare times.
+const coverFindMany = jest.fn();
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {
-    visit: { findMany: (...a: unknown[]) => findMany(...a) },
-    presenceEvent: { findMany: (...a: unknown[]) => heldFindMany(...a) },
+    visit: {
+        findMany: (args: { select?: unknown }) => (args.select ? coverFindMany(args) : findMany(args)),
+    },
 } }));
 
 // Who counts as a supervising adult is lib/supervision's rule and is tested there
@@ -22,7 +24,12 @@ jest.mock("@/lib/supervision", () => ({
     supervisingAdultCount: () => 1,
 }));
 
-import { getFullAttendance, invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import {
+    NO_KEYHOLDER_GRACE_MS,
+    getFullAttendance,
+    invalidateAttendanceCache,
+    visitHadNoKeyholder,
+} from "@/lib/getFullAttendance";
 
 // Age fixtures are relative to now so they never age past the youth boundary the
 // way a hardcoded year would; the day step keeps the age unambiguous mid-year.
@@ -58,8 +65,8 @@ beforeEach(() => {
     invalidateAttendanceCache();
     findMany.mockReset();
     findMany.mockResolvedValue(rows);
-    heldFindMany.mockReset();
-    heldFindMany.mockResolvedValue([]);
+    coverFindMany.mockReset();
+    coverFindMany.mockResolvedValue([{ arrivedAt: rows[0].arrivedAt, departedAt: null }]);
     supervisingAdultVisits.mockClear();
 });
 
@@ -76,9 +83,22 @@ describe("getFullAttendance({ kiosk: true })", () => {
         expect(attendance[0]).toEqual({
             id: 201,
             arrivedAt: rows[0].arrivedAt,
-            participant: { id: 50, name: "Karen Keyholder", nickname: "Kay", isKeyholder: true, isYouth: false },
+            noKeyholder: false,
+            participant: { id: 50, name: "Kay", isKeyholder: true, isYouth: false },
             event: { program: { id: 3, name: "Robotics" } },
         });
+    });
+
+    it("ships the kiosk label, never a last name — initial only to tell two apart", async () => {
+        const kid = (id: number, name: string) => ({
+            id, arrivedAt: rows[0].arrivedAt, departedAt: null, personId: id, event: null,
+            person: { id, email: null, name, nickname: null, isKeyholder: false, dateOfBirth: yearsAgo(12), householdId: null, phone: null },
+        });
+        findMany.mockResolvedValue([kid(1, "Sam Lee"), kid(2, "Sam Park"), kid(3, "Jordan Quinlan")]);
+        const { attendance } = await getFullAttendance({ kiosk: true });
+
+        expect(attendance.map(v => v.participant.name)).toEqual(["Sam L.", "Sam P.", "Jordan"]);
+        expect(JSON.stringify(attendance)).not.toMatch(/Lee|Park|Quinlan/);
     });
 
     it("still gives the display what it renders: name fallback, youth split, program badge", async () => {
@@ -86,8 +106,8 @@ describe("getFullAttendance({ kiosk: true })", () => {
 
         // name-or-email-prefix resolved server-side; raw address never ships
         expect(attendance[1].participant.name).toBe("stu");
-        // the kiosk renders the nickname over the first name, so it has to ship
-        expect(attendance[0].participant.nickname).toBe("Kay");
+        // the nickname is folded into the label server-side
+        expect(attendance[0].participant.name).toBe("Kay");
         expect(JSON.stringify(attendance)).not.toContain("@example.com");
         // youth column still populates without dateOfBirth
         expect(attendance[1].participant.isYouth).toBe(true);
@@ -95,7 +115,7 @@ describe("getFullAttendance({ kiosk: true })", () => {
         expect(attendance[1].event).toBeNull();
         // aggregates are identical either way
         expect(counts).toEqual({ keyholders: 1, volunteers: 0, youth: 1, total: 2 });
-        expect(safety).toEqual({ isLastKeyholder: true, isTwoDeepViolation: true });
+        expect(safety).toEqual({ facilityOpen: true, isLastKeyholder: true, isTwoDeepViolation: true });
     });
 
     it("does not even fetch the emergency contacts", async () => {
@@ -127,59 +147,59 @@ describe("getFullAttendance() — privileged caller (unchanged)", () => {
     });
 });
 
-describe("held PARKED_CLOSED scans (#1782)", () => {
-    const heldRows = [
-        { id: 900, personId: 501, occurredAt: new Date("2026-07-01T09:00:00Z"), person: { name: "Held Person", nickname: "Hp", email: "held@example.com" } },
-        { id: 901, personId: 502, occurredAt: new Date("2026-07-01T09:05:00Z"), person: { name: null, nickname: null, email: "noname@example.com" } },
-    ];
+describe("visitHadNoKeyholder", () => {
+    const at = new Date("2026-07-01T09:00:00Z");
+    const plus = (ms: number) => new Date(at.getTime() + ms);
 
-    it("queries only unprojected closed-facility IN scans, oldest first, LIVE persons", async () => {
-        heldFindMany.mockResolvedValue(heldRows);
-        await getFullAttendance();
-        expect(heldFindMany.mock.calls[0][0]).toMatchObject({
-            where: { classification: "PARKED_CLOSED", direction: "IN", person: { mergedIntoId: null } },
-            orderBy: { occurredAt: "asc" },
-        });
+    it("is false when a keyholder was already present", () => {
+        expect(visitHadNoKeyholder(at, [{ arrivedAt: plus(-60_000), departedAt: null }])).toBe(false);
     });
 
-    it("ships id/name/nickname/time only — no email — on both the privileged and kiosk paths", async () => {
-        heldFindMany.mockResolvedValue(heldRows);
+    it("is cleared by a keyholder arriving within the grace window", () => {
+        expect(visitHadNoKeyholder(at, [{ arrivedAt: plus(NO_KEYHOLDER_GRACE_MS), departedAt: null }])).toBe(false);
+    });
+
+    it("stays when the keyholder arrives after the grace window", () => {
+        expect(visitHadNoKeyholder(at, [{ arrivedAt: plus(NO_KEYHOLDER_GRACE_MS + 1), departedAt: null }])).toBe(true);
+    });
+
+    it("stays when the only keyholder had already left", () => {
+        expect(visitHadNoKeyholder(at, [{ arrivedAt: plus(-3_600_000), departedAt: plus(-1) }])).toBe(true);
+    });
+});
+
+describe("no-keyholder visits", () => {
+    const loneVolunteer = { ...rows[1], person: { ...rows[1].person, dateOfBirth: yearsAgo(40) } };
+
+    it("marks a visit with no keyholder cover and reports the facility closed", async () => {
+        findMany.mockResolvedValue([loneVolunteer]);
+        coverFindMany.mockResolvedValue([]);
         for (const kiosk of [false, true]) {
-            const { held } = await getFullAttendance({ kiosk });
-            expect(held).toEqual([
-                { id: 900, occurredAt: heldRows[0].occurredAt, name: "Held Person", nickname: "Hp" },
-                { id: 901, occurredAt: heldRows[1].occurredAt, name: "noname", nickname: null },
-            ]);
-            expect(JSON.stringify(held)).not.toContain("@example.com");
+            invalidateAttendanceCache();
+            const { attendance, counts, safety } = await getFullAttendance({ kiosk });
+            expect(attendance[0].noKeyholder).toBe(true);
+            // Present and counted — the kiosk shows them — but the building is not open.
+            expect(counts.total).toBe(1);
+            expect(safety.facilityOpen).toBe(false);
         }
     });
 
-    it("never folds held scans into counts or safety", async () => {
-        heldFindMany.mockResolvedValue(heldRows);
-        const { counts, safety } = await getFullAttendance();
-        // Identical to the no-held baseline: two visits, unchanged flags.
-        expect(counts).toEqual({ keyholders: 1, volunteers: 0, youth: 1, total: 2 });
-        expect(safety).toEqual({ isLastKeyholder: true, isTwoDeepViolation: true });
+    it("never marks a keyholder, and skips the cover query when only keyholders are in", async () => {
+        findMany.mockResolvedValue([rows[0]]);
+        const { attendance, safety } = await getFullAttendance();
+        expect(attendance[0].noKeyholder).toBe(false);
+        expect(safety.facilityOpen).toBe(true);
+        expect(coverFindMany).not.toHaveBeenCalled();
     });
 
-    it("is an empty array when nothing is held", async () => {
-        const { held } = await getFullAttendance();
-        expect(held).toEqual([]);
-    });
-
-    it("dedupes a re-scan of the same person while held, keeping the earlier event", async () => {
-        // Kiosk intent comes from present_ids (Visits only, client.py), so a
-        // debounced re-scan of the same person while still held sends a second
-        // IN and parks a second PARKED_CLOSED row — the roster must show them
-        // once, at the time they first badged in, not the later duplicate.
-        heldFindMany.mockResolvedValue([
-            { id: 900, personId: 501, occurredAt: new Date("2026-07-01T09:00:00Z"), person: { name: "Held Person", nickname: "Hp", email: "held@example.com" } },
-            { id: 902, personId: 501, occurredAt: new Date("2026-07-01T09:00:05Z"), person: { name: "Held Person", nickname: "Hp", email: "held@example.com" } },
-        ]);
-        const { held } = await getFullAttendance();
-        expect(held).toEqual([
-            { id: 900, occurredAt: new Date("2026-07-01T09:00:00Z"), name: "Held Person", nickname: "Hp" },
-        ]);
+    it("asks only for live keyholder visits that could cover the arrivals", async () => {
+        await getFullAttendance();
+        expect(coverFindMany.mock.calls[0][0].where).toMatchObject({
+            deletedAt: null,
+            person: { isKeyholder: true, mergedIntoId: null },
+            arrivedAt: { lte: new Date(rows[1].arrivedAt.getTime() + NO_KEYHOLDER_GRACE_MS) },
+            OR: [{ departedAt: null }, { departedAt: { gte: rows[1].arrivedAt } }],
+        });
     });
 });
 
@@ -242,4 +262,43 @@ describe("attendance cache", () => {
         await getFullAttendance({ kiosk: true });
         expect(findMany).toHaveBeenCalledTimes(3);
     });
+
+    it("does not store a result an invalidate raced past", async () => {
+        let release!: (v: unknown) => void;
+        findMany.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+        const inFlight = getFullAttendance({ kiosk: true });
+        await Promise.resolve();
+        invalidateAttendanceCache();
+        release(rows);
+        await inFlight;
+
+        // The pre-invalidate result was returned but not cached.
+        findMany.mockResolvedValue([]);
+        const fresh = await getFullAttendance({ kiosk: true });
+        expect(fresh.counts.total).toBe(0);
+        expect(findMany).toHaveBeenCalledTimes(2);
+    });
+
+    describe("staleness bound", () => {
+        const fakeClock = (now: string) => jest.useFakeTimers({ now: new Date(now), doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
+        afterEach(() => jest.useRealTimers());
+
+        it("refills after 60s while the building is occupied", async () => {
+            fakeClock("2026-10-05T12:00:00Z");
+            await getFullAttendance({ kiosk: true });
+            jest.setSystemTime(new Date("2026-10-05T12:01:01Z"));
+            await getFullAttendance({ kiosk: true });
+            expect(findMany).toHaveBeenCalledTimes(2);
+        });
+
+        it("never expires an empty building, so the database can pause", async () => {
+            findMany.mockResolvedValue([]);
+            fakeClock("2026-10-05T12:00:00Z");
+            await getFullAttendance({ kiosk: true });
+            jest.setSystemTime(new Date("2026-10-05T18:00:00Z"));
+            await getFullAttendance({ kiosk: true });
+            expect(findMany).toHaveBeenCalledTimes(1);
+        });
+    });
 });
+

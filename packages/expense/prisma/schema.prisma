@@ -1,0 +1,524 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  runtime      = "nodejs"
+  moduleFormat = "cjs"
+}
+
+// Brings the expense schema under checkin's security regime (design #1272 §5): the
+// same generator emits a classifications map, merged in checkin-app/src/security/core.ts.
+// Paths are relative to this schema file.
+generator security {
+  provider = "node ../../checkin-app/scripts/security-generator.js"
+  output   = "../../../checkin-app/src/security/generated/expense-classifications.ts"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// The org's money thresholds, one row per org. A missing row reads as the column defaults.
+model ExpenseOrgSettings {
+  /// @sensitivity:internal
+  orgId                        String @id @map("org_id")
+  /// @sensitivity:internal
+  capitalTotalThresholdCents   Int    @default(0) @map("capital_total_threshold_cents")
+  /// @sensitivity:internal
+  capitalLineItemThresholdCents Int   @default(0) @map("capital_line_item_threshold_cents")
+  // Unit price at or over which a line raises CAPITAL_EQUIPMENT for finance.
+  /// @sensitivity:internal
+  capitalEquipmentUnitCents    Int    @default(50000) @map("capital_equipment_unit_cents")
+  // Line or receipt total at or over which THRESHOLD_CROSSED goes to the board.
+  /// @sensitivity:internal
+  boardReviewTotalCents        Int    @default(200000) @map("board_review_total_cents")
+  // A note in lieu of a receipt at or over this takes a Board member in the program-approver seat.
+  /// @sensitivity:internal
+  noteInLieuLimitCents         Int    @default(5000) @map("note_in_lieu_limit_cents")
+
+  @@map("org_settings")
+}
+
+// Audit record of each settings update: the changed fields before and after (JSON).
+model ExpenseOrgSettingsChange {
+  /// @sensitivity:internal
+  id            Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId         String   @map("org_id")
+  /// @sensitivity:pii
+  actorUserId   Int      @map("actor_user_id")
+  /// @sensitivity:pii
+  actorUsername String?  @map("actor_username")
+  /// @sensitivity:internal
+  before        String?
+  /// @sensitivity:internal
+  after         String
+  /// @sensitivity:internal
+  changedAt     DateTime @default(now()) @map("changed_at")
+
+  @@index([orgId])
+  @@map("org_settings_changes")
+}
+
+model Expense {
+  /// @sensitivity:internal
+  id                 String    @id
+  /// @sensitivity:internal
+  orgId              String    @map("org_id")
+  /// @sensitivity:pii
+  submitterId        Int       @map("submitter_id")
+  /// @sensitivity:internal
+  vendorName         String?   @map("vendor_name")
+  /// @sensitivity:internal
+  receiptNumber      String?   @map("receipt_number")
+  /// @sensitivity:internal
+  orderNumber        String?   @map("order_number")
+  /// @sensitivity:internal
+  currency           String    @default("USD")
+  /// @sensitivity:internal
+  taxCents           Int       @default(0) @map("tax_cents")
+  /// @sensitivity:internal
+  shippingCents      Int       @default(0) @map("shipping_cents")
+  /// @sensitivity:internal
+  discountCents      Int       @default(0) @map("discount_cents")
+  /// @sensitivity:internal
+  receiptTotalCents  Int       @map("receipt_total_cents")
+  /// @sensitivity:internal
+  receiptDate        String?   @map("receipt_date")
+  /// @sensitivity:internal
+  needsReimbursement Boolean   @default(false) @map("needs_reimbursement")
+  // Display only; the reimbursee is reimburseePersonId.
+  /// @sensitivity:pii
+  reimbursementFor   String?   @map("reimbursement_for")
+  // checkin Person.id owed the reimbursement (no FK; Person lives in checkin's schema).
+  /// @sensitivity:pii
+  reimburseePersonId Int?      @map("reimbursee_person_id")
+  /// @sensitivity:internal
+  submittedAt        DateTime  @map("submitted_at")
+  /// @sensitivity:internal
+  state              String    @default("pending")
+  // Historical QB-linked backfill: already booked in QuickBooks. Owner re-signoff is auto-approved
+  // and the QB posting step is skipped (lands terminal `qb_skipped`); capital review + depreciation
+  // still run so the capital register is built.
+  /// @sensitivity:internal
+  backfill           Boolean   @default(false)
+  // A signed note stands in for the receipt (F2 exception; changes who fills the program-approver seat).
+  /// @sensitivity:internal
+  noteInLieuOfReceipt Boolean  @default(false) @map("note_in_lieu_of_receipt")
+
+  lineItems          ExpenseLineItem[]
+  approvals          LineItemOwnerApproval[]
+  holds              ExpenseHold[]
+  auditLog           ExpenseAuditLog[]
+  flags              ExpenseFlag[]
+
+  @@map("expenses")
+}
+
+model ExpenseLineItem {
+  /// @sensitivity:internal
+  id                Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  expenseId         String   @map("expense_id")
+  /// @sensitivity:internal
+  receiptLineItemId Int      @map("receipt_line_item_id")
+  /// @sensitivity:internal
+  lineNumber        Int      @map("line_number")
+  /// @sensitivity:internal
+  description       String
+  /// @sensitivity:internal
+  partNumber        String?  @map("part_number")
+  /// @sensitivity:internal
+  manufacturer      String?
+  /// @sensitivity:internal
+  quantity          Float    @default(1)
+  /// @sensitivity:internal
+  unitPriceCents    Int      @map("unit_price_cents")
+  /// @sensitivity:internal
+  totalPriceCents   Int      @map("total_price_cents")
+  /// @sensitivity:internal
+  gtin13            String?
+  /// @sensitivity:internal
+  isDelayed         Boolean  @default(false) @map("is_delayed")
+  /// @sensitivity:internal
+  isCapital         Boolean  @default(false) @map("is_capital")
+  /// @sensitivity:pii
+  capitalOwnerId    Int?     @map("capital_owner_id")
+  /// @sensitivity:internal
+  depreciationYears Int?     @map("depreciation_years")
+  /// @sensitivity:internal
+  manualQbAccount   String?  @map("manual_qb_account")
+  /// @sensitivity:internal
+  allocatedTaxCents      Int?  @map("allocated_tax_cents")
+  /// @sensitivity:internal
+  allocatedShippingCents Int?  @map("allocated_shipping_cents")
+  /// @sensitivity:internal
+  allocatedDiscountCents Int?  @map("allocated_discount_cents")
+  // QuickBooks match state: UNMATCHED | MATCHED | CREATED | AMBIGUOUS | BEFORE_LINE | POST_FAILED.
+  // qb_txn_id is the claimed QuickBooks entry; unique, so an entry is claimed by one line at most.
+  /// @sensitivity:internal
+  qbMatchState      String   @default("UNMATCHED") @map("qb_match_state")
+  /// @sensitivity:internal
+  qbTxnId           String?  @unique @map("qb_txn_id")
+
+  expense           Expense                 @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  approvals         LineItemOwnerApproval[]
+  signoffs          ExpenseLineSignoff[]
+  holds             ExpenseHold[]
+  auditLog          ExpenseAuditLog[]
+
+  @@map("expense_line_items")
+}
+
+// owner_id is the line's budget-owner bucket (checkin BudgetOwner.id, another database: no FK).
+model LineItemOwnerApproval {
+  /// @sensitivity:internal
+  id                Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  expenseId         String    @map("expense_id")
+  /// @sensitivity:internal
+  lineItemId        Int       @map("line_item_id")
+  /// @sensitivity:internal
+  ownerId           Int?      @map("owner_id")
+  /// @sensitivity:internal
+  status            String    @default("pending")
+  /// @sensitivity:internal
+  decidedAt         DateTime? @map("decided_at")
+  /// @sensitivity:pii
+  decidedByUserId   Int?      @map("decided_by_user_id")
+  /// @sensitivity:personal
+  notes             String?
+
+  expense           Expense         @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  lineItem          ExpenseLineItem @relation(fields: [lineItemId], references: [id], onDelete: Cascade)
+
+  @@map("line_item_owner_approvals")
+}
+
+model AccountMapping {
+  /// @sensitivity:internal
+  id          Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId       String   @map("org_id")
+  /// @sensitivity:internal
+  category    String
+  /// @sensitivity:internal
+  subcategory String
+  /// @sensitivity:internal
+  partNumber  String   @map("part_number")
+  /// @sensitivity:internal
+  isDelayed   Boolean? @map("is_delayed")
+  /// @sensitivity:internal
+  isCapital   Boolean? @map("is_capital")
+  /// @sensitivity:internal
+  qbAccount   String   @map("qb_account")
+
+  @@map("account_mapping")
+}
+
+model ExpenseHold {
+  /// @sensitivity:internal
+  id          Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId       String    @map("org_id")
+  /// @sensitivity:internal
+  expenseId   String    @map("expense_id")
+  /// @sensitivity:internal
+  lineItemId  Int       @map("line_item_id")
+  /// @sensitivity:internal
+  reason      String
+  /// @sensitivity:internal
+  matchedRows String    @map("matched_rows")
+  /// @sensitivity:internal
+  status      String    @default("PENDING")
+  /// @sensitivity:internal
+  createdAt   DateTime  @default(now()) @map("created_at")
+  /// @sensitivity:internal
+  resolvedAt  DateTime? @map("resolved_at")
+
+  expense     Expense         @relation(fields: [expenseId], references: [id])
+  lineItem    ExpenseLineItem @relation(fields: [lineItemId], references: [id])
+
+  @@map("expense_holds")
+}
+
+model ExpenseEvent {
+  /// @sensitivity:internal
+  id        Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId     String   @map("org_id")
+  /// @sensitivity:internal
+  expenseId String   @map("expense_id")
+  /// @sensitivity:personal
+  payload   String
+  /// @sensitivity:internal
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([orgId, expenseId], name: "expense_events_org_expense_unique")
+  @@map("expense_events")
+}
+
+model ExpenseQbAccount {
+  /// @sensitivity:internal
+  id        Int    @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId     String @map("org_id")
+  /// @sensitivity:internal
+  name      String
+  /// @sensitivity:internal
+  qbAccount String @map("qb_account")
+
+  @@map("expense_qb_accounts")
+}
+
+model ExpenseAuditLog {
+  /// @sensitivity:internal
+  id           Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  expenseId    String    @map("expense_id")
+  /// @sensitivity:pii
+  userId       Int       @map("user_id")
+  /// @sensitivity:pii
+  username     String?
+  /// @sensitivity:internal
+  changedAt    DateTime  @default(now()) @map("changed_at")
+  /// @sensitivity:internal
+  action       String
+  /// @sensitivity:internal
+  fieldChanged String?   @map("field_changed")
+  /// @sensitivity:personal
+  valueBefore  String?   @map("value_before")
+  /// @sensitivity:personal
+  valueAfter   String?   @map("value_after")
+  /// @sensitivity:internal
+  lineItemId   Int?      @map("line_item_id")
+  /// @sensitivity:personal
+  notes        String?
+
+  expense      Expense          @relation(fields: [expenseId], references: [id])
+  lineItem     ExpenseLineItem? @relation(fields: [lineItemId], references: [id])
+
+  @@map("expense_audit_log")
+}
+
+// owner_id is a budget-owner bucket (checkin BudgetOwner.id, another database: no FK).
+model PartOwnerMap {
+  /// @sensitivity:internal
+  id      Int    @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId   String @map("org_id")
+  /// @sensitivity:internal
+  gtin13  String
+  /// @sensitivity:internal
+  ownerId Int    @map("owner_id")
+
+  @@unique([orgId, gtin13], name: "part_owner_map_org_gtin_unique")
+  @@map("part_owner_map")
+}
+
+model ProvisionalItemMap {
+  /// @sensitivity:internal
+  id                Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  provisionalGtin13 String    @map("provisional_gtin13")
+  /// @sensitivity:internal
+  orgId             String    @map("org_id")
+  /// @sensitivity:internal
+  status            String    @default("pending")
+  /// @sensitivity:internal
+  proposedAt        DateTime  @default(now()) @map("proposed_at")
+  /// @sensitivity:internal
+  reviewedAt        DateTime? @map("reviewed_at")
+  /// @sensitivity:personal
+  rejectionReason   String?   @map("rejection_reason")
+  /// @sensitivity:internal
+  resolvedToGtin13  String?   @map("resolved_to_gtin13")
+
+  @@unique([orgId, provisionalGtin13], name: "provisional_part_map_org_gtin_unique")
+  @@map("provisional_item_maps")
+}
+
+model ExpenseProvisionalResolution {
+  /// @sensitivity:internal
+  id                Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId             String   @map("org_id")
+  /// @sensitivity:internal
+  provisionalGtin13 String   @map("provisional_gtin13")
+  /// @sensitivity:internal
+  kind              String   // "approved" | "mapped_to_existing" | "rejected"
+  /// @sensitivity:internal
+  realGtin13        String?  @map("real_gtin13")
+  /// @sensitivity:personal
+  rejectionReason   String?  @map("rejection_reason")
+  /// @sensitivity:internal
+  recordedAt        DateTime @default(now()) @map("recorded_at")
+  /// @sensitivity:internal
+  sourceEventId     Int?     @map("source_event_id")
+
+  @@unique([orgId, provisionalGtin13], name: "provisional_resolution_org_gtin_unique")
+  @@map("provisional_resolutions")
+}
+
+model ReceivedExpensePayload {
+  /// @sensitivity:internal
+  id            Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId         String   @map("org_id")
+  /// @sensitivity:internal
+  receiptId     String   @unique @map("receipt_id")
+  /// @sensitivity:personal
+  payloadJson   String   @map("payload_json")
+  /// @sensitivity:internal
+  status        String
+  /// @sensitivity:personal
+  failureReason String?  @map("failure_reason")
+  /// @sensitivity:internal
+  receivedAt    DateTime @default(now()) @map("received_at")
+
+  @@map("received_expense_payloads")
+}
+
+// Audit record of every catalog S5 event received; max(id) is this consumer's cursor.
+model ExpenseReceivedOrgEvent {
+  /// @sensitivity:internal
+  id            Int      @id
+  /// @sensitivity:internal
+  orgId         String   @map("org_id")
+  /// @sensitivity:internal
+  eventType     String   @map("event_type")
+  /// @sensitivity:internal
+  payload       String
+  /// @sensitivity:internal
+  receivedAt    DateTime @map("received_at")
+  /// @sensitivity:internal
+  status        String   @default("pending")
+  /// @sensitivity:personal
+  failureReason String?  @map("failure_reason")
+
+  @@map("received_org_events")
+}
+
+// Capital asset register — this app is the system of record for fixed-asset numbers (ITFANN =
+// Innovation Treehouse Fixed Asset, e.g. "ITFA23"; 2-digit zero-pad, no space/dash). ONE ROW PER
+// PHYSICAL ASSET: a qty-N capital line expands to N rows, and a historical range/list is expanded to
+// individual numbers. Seeded rows carry the number hand-typed in QB (seeded=true); new assets are
+// minted here (max+1). `fullyDepreciatedDate` = acquisitionDate + depreciationYears; past it the
+// asset need not be tracked.
+model CapitalAsset {
+  /// @sensitivity:internal
+  id                   Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId                String   @map("org_id")
+  /// @sensitivity:internal
+  assetNumber          String   @map("asset_number")
+  /// @sensitivity:internal
+  parentAssetNumber    String?  @map("parent_asset_number")
+  /// @sensitivity:internal
+  description          String
+  /// @sensitivity:internal
+  acquisitionDate      String?  @map("acquisition_date")
+  /// @sensitivity:internal
+  costCents            Int?     @map("cost_cents")
+  /// @sensitivity:internal
+  depreciationYears    Int?     @map("depreciation_years")
+  /// @sensitivity:internal
+  fullyDepreciatedDate String?  @map("fully_depreciated_date")
+  /// @sensitivity:internal
+  status               String   @default("tracked")
+  /// @sensitivity:internal
+  sourceExpenseId      String?  @map("source_expense_id")
+  /// @sensitivity:internal
+  sourceLineItemId     Int?     @map("source_line_item_id")
+  /// @sensitivity:internal
+  sourceReceiptId      String?  @map("source_receipt_id")
+  /// @sensitivity:internal
+  sourceQbTxnId        String?  @map("source_qb_txn_id")
+  /// @sensitivity:internal
+  seeded               Boolean  @default(false)
+  /// @sensitivity:internal
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  @@unique([orgId, assetNumber], name: "capital_assets_org_number_unique")
+  @@map("capital_assets")
+}
+
+// A QuickBooks transaction finance has permanently removed from matching (D5).
+model ExpenseQbMatchExclusion {
+  /// @sensitivity:internal
+  id                 Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId              String   @map("org_id")
+  /// @sensitivity:internal
+  qbTxnId            String   @map("qb_txn_id")
+  /// @sensitivity:personal
+  reason             String
+  /// @sensitivity:pii
+  excludedByUserId   Int      @map("excluded_by_user_id")
+  /// @sensitivity:pii
+  excludedByUsername String?  @map("excluded_by_username")
+  /// @sensitivity:internal
+  excludedAt         DateTime @default(now()) @map("excluded_at")
+
+  @@unique([orgId, qbTxnId])
+  @@map("qb_match_exclusion")
+}
+
+// One filled sign-off seat on a reimbursement or card-charge line (Financial Policy F2 / F2-COI).
+// seat: SUBMITTER | PROGRAM_APPROVER | TREASURER; a Board member may fill the last two when nobody
+// eligible can. The two uniques make a seat fillable once and a person able to fill one seat per line.
+model ExpenseLineSignoff {
+  /// @sensitivity:internal
+  id             Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  expenseId      String   @map("expense_id")
+  /// @sensitivity:internal
+  lineItemId     Int      @map("line_item_id")
+  /// @sensitivity:internal
+  seat           String
+  /// @sensitivity:pii
+  signerUserId   Int      @map("signer_user_id")
+  /// @sensitivity:pii
+  signerUsername String?  @map("signer_username")
+  /// @sensitivity:internal
+  signedAt       DateTime @default(now()) @map("signed_at")
+
+  lineItem       ExpenseLineItem @relation(fields: [lineItemId], references: [id], onDelete: Cascade)
+
+  @@unique([lineItemId, seat])
+  @@unique([lineItemId, signerUserId])
+  @@map("expense_line_signoffs")
+}
+
+// A GC-FIN-CONTROL flag surfaced to finance or board for checkoff. kind: TAX_ATTACHED | CAPITAL_EQUIPMENT |
+// THRESHOLD_CROSSED | MISSING_RECEIPT | NON_EVERYDAY | COI |
+// REIMBURSEE_UNKNOWN. audience: FINANCE | BOARD.
+model ExpenseFlag {
+  /// @sensitivity:internal
+  id                   Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId                String    @map("org_id")
+  /// @sensitivity:internal
+  expenseId            String    @map("expense_id")
+  /// @sensitivity:internal
+  kind                 String
+  /// @sensitivity:internal
+  audience             String
+  /// @sensitivity:personal
+  detail               String?
+  /// @sensitivity:internal
+  raisedAt             DateTime  @default(now()) @map("raised_at")
+  /// @sensitivity:internal
+  checkedOffAt         DateTime? @map("checked_off_at")
+  /// @sensitivity:pii
+  checkedOffByUserId   Int?      @map("checked_off_by_user_id")
+  /// @sensitivity:pii
+  checkedOffByUsername String?   @map("checked_off_by_username")
+  /// @sensitivity:personal
+  notes                String?
+
+  expense              Expense   @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+
+  @@unique([expenseId, kind])
+  @@index([orgId, checkedOffAt])
+  @@map("expense_flags")
+}

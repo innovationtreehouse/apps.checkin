@@ -28,9 +28,17 @@ const ORACLE_DIR = path.join(__dirname, '..', '..', 'src', 'security', '__tests_
 // Each entry is a model or route whose visibility nothing else asserts.
 const ORACLES = [
     'active-visitors-tombstone.test.ts',
+    'caller-context-no-id.integration.test.ts',
+    'classification-sources.test.ts',
+    'donation-routes.test.ts',
+    'donation-strip.test.ts',
     'emergency-contact-program-scope.test.ts',
+    'expense-strip.test.ts',
+    'file-route.test.ts',
     'household-lead-program-scope.test.ts',
     'impersonatedBy-inertness.test.ts',
+    'income-strip.test.ts',
+    'inventory-strip.test.ts',
     'led-households-roster.test.ts',
     'member-tier.test.ts',
     'payment-plans-strip.test.ts',
@@ -43,6 +51,7 @@ const ORACLES = [
     'toolstatus-self-scope.test.ts',
     'visit-household-lead-scope.test.ts',
     'visit-program-scope.test.ts',
+    'workflow-strip.test.ts',
 ] as const;
 
 describe('scope oracle set', () => {

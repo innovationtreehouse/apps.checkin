@@ -230,6 +230,7 @@ enum PersonRoleKind {
   BG_REVIEWER
   OPERATIONS
   INVENTORY_MANAGER
+  FINANCE
 }
 
 /// Source of truth for role grants (expand phase of the boolean-column -> table
@@ -984,6 +985,7 @@ model Program {
   participants ProgramParticipant[]
   events       Event[]
   instances    ProgramInstance[]
+  budgetOwners BudgetOwner[]
 }
 
 // Program → Instance → Event, PHASE 1 (additive tier + 1:1 backfill; nothing
@@ -1042,6 +1044,10 @@ model ProgramVolunteer {
   personId Int
   /// @sensitivity:internal
   isCore        Boolean @default(false)
+  /// A program treasurer; a program may have several. With the program
+  /// leader, treasurers approve within the program's BudgetOwner bucket.
+  /// @sensitivity:internal
+  isTreasurer   Boolean @default(false)
 
   program Program     @relation(fields: [programId], references: [id])
   person  Person @relation(fields: [personId], references: [id])
@@ -1151,8 +1157,13 @@ model RSVP {
 model RawBadgeLog {
   /// @sensitivity:internal
   id            Int      @id @default(autoincrement())
+  /// Null only for a dead-lettered kiosk read that names no person (an
+  /// unreadable or unknown badge number); `scannedValue` then holds what was read.
   /// @sensitivity:internal
-  personId Int
+  personId Int?
+  /// The raw badge value the kiosk read, kept when it resolves to no person.
+  /// @sensitivity:internal
+  scannedValue  String?
   /// @sensitivity:personal
   timestamp     DateTime @default(now())
   /// @sensitivity:personal
@@ -1171,7 +1182,7 @@ model RawBadgeLog {
   /// nothing this reads. @sensitivity:internal
   reviewedBy    Int?
 
-  person Person @relation(fields: [personId], references: [id])
+  person Person? @relation(fields: [personId], references: [id], onDelete: Restrict)
 
   @@index([personId, timestamp]) // Double-badge detection in /api/scan
 }
@@ -1652,4 +1663,45 @@ model BulkSendItem {
   error      String?
 
   @@index([bulkSendId, status])
+}
+
+/// Organization registry: one row per org (today only the Treehouse row, which
+/// the migration inserts). checkin-app injects org identity into each Inventory
+/// library; no library reads this table directly.
+model Org {
+  /// Stable well-known id, stamped as org_id on catalog rows.
+  /// @sensitivity:public
+  id   String @id
+  /// @sensitivity:public
+  name String
+}
+
+/// An accounting bucket that expense lines and bulk-donation gifts are owned by
+/// (#1280 §6). Not a Person. Approvers are derived, never stored: a program
+/// bucket's are that program's leader and treasurers (ProgramVolunteer
+/// .isTreasurer); an org-level bucket (no program — Facility is one of several)
+/// has none, because finance assigning an item to it is the approval.
+/// Buckets are archived, never deleted — libraries hold `id` as an opaque
+/// cross-database owner id, so a deleted row would orphan their references.
+/// Finance structure — all internal.
+model BudgetOwner {
+  /// @sensitivity:internal
+  id                   Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  name                 String
+  /// Null for an org-level bucket.
+  /// @sensitivity:internal
+  programId            Int?
+  /// @sensitivity:internal
+  archivedAt           DateTime?
+  /// The QuickBooks Online id of the Class this bucket is (external id, not a
+  /// checkin FK). Null until QuickBooks sync links it; one bucket per Class.
+  /// @sensitivity:internal
+  quickBooksClassId    String?   @unique
+
+  // Restrict: a program with a bucket is not deleted out from under it, and
+  // SetNull would silently turn a program bucket into an org-level one.
+  program Program? @relation(fields: [programId], references: [id], onDelete: Restrict)
+
+  @@index([programId])
 }

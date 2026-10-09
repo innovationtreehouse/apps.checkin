@@ -243,6 +243,7 @@ export const classifications = {
         programId: 'public',
         personId: 'public',
         isCore: 'internal',
+        isTreasurer: 'internal',
     },
     ProgramParticipant: {
         programId: 'public',
@@ -277,6 +278,7 @@ export const classifications = {
     RawBadgeLog: {
         id: 'internal',
         personId: 'internal',
+        scannedValue: 'internal',
         timestamp: 'personal',
         location: 'personal',
         clientEventId: 'internal',
@@ -435,6 +437,17 @@ export const classifications = {
         sentAt: 'internal',
         error: 'internal',
     },
+    Org: {
+        id: 'public',
+        name: 'public',
+    },
+    BudgetOwner: {
+        id: 'internal',
+        name: 'internal',
+        programId: 'internal',
+        archivedAt: 'internal',
+        quickBooksClassId: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -536,6 +549,7 @@ export const relations = {
         participants: { model: 'ProgramParticipant', isList: true },
         events: { model: 'Event', isList: true },
         instances: { model: 'ProgramInstance', isList: true },
+        budgetOwners: { model: 'BudgetOwner', isList: true },
     },
     ProgramInstance: {
         program: { model: 'Program', isList: false },
@@ -605,6 +619,11 @@ export const relations = {
     },
     BulkSendItem: {
         bulkSend: { model: 'BulkSend', isList: false },
+    },
+    Org: {
+    },
+    BudgetOwner: {
+        program: { model: 'Program', isList: false },
     },
 } as const;
 
