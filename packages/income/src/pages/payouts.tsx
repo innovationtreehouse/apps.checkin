@@ -3,6 +3,7 @@ import { Fragment, useState } from "react";
 import { Anchor, Badge, Code, Table, Text, Title } from "@mantine/core";
 import { money, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
+import IncomeSubnav from "../components/IncomeSubnav";
 
 interface PayoutRow {
   payoutGid: string;
@@ -87,6 +88,7 @@ export default function PayoutsPage() {
 
   return (
     <>
+      <IncomeSubnav />
       <Title order={3} mb="md">Payouts</Title>
       {payouts.error && <LoadError what="payouts" message={payouts.error} onRetry={payouts.reload} />}
       {payouts.data === null ? <Text c="dimmed">Loading…</Text>

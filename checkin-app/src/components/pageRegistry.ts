@@ -145,6 +145,8 @@ export const PAGES: PageEntry[] = [
   { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: INVENTORY_MANAGER },
 
   // Income — FINANCE works it, BOARD reads it (the routes' finance-or-board gate).
+  // The index redirects to the reconciliation queue.
+  { href: '/income', label: 'Income', section: 'Income', keywords: 'shopify payout quickbooks', visible: INCOME },
   { href: '/income/payouts', label: 'Payouts', section: 'Income', keywords: 'shopify payout deposit', visible: INCOME },
   { href: '/income/reconciliation', label: 'Income Reconciliation', section: 'Income', keywords: 'payout deposit quickbooks drift', visible: INCOME },
   { href: '/income/items', label: 'Item Categories', section: 'Income', keywords: 'budget owner bucket class', visible: INCOME },

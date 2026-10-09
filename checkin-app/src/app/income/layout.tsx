@@ -4,9 +4,8 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { Box, Center, Loader, Stack, Text } from "@mantine/core";
-import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
-import { INCOME_LINKS, INCOME_SECTION_ROLES } from "@/lib/incomeNav";
+import { INCOME_SECTION_ROLES } from "@/lib/incomeNav";
 
 export default function IncomeLayout({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
@@ -32,7 +31,6 @@ export default function IncomeLayout({ children }: { children: React.ReactNode }
 
   return (
     <PageContainer>
-      <SectionTabs links={INCOME_LINKS} mb="md" />
       <Box style={{ minWidth: 0 }}>{children}</Box>
     </PageContainer>
   );
