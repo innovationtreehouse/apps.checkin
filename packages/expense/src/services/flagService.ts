@@ -1,7 +1,7 @@
 // GC-FIN-CONTROL flags: raised for awareness, checked off by the audience they route to, audited.
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
-import { getOrg } from "../runtime";
+import { getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { FLAG_AUDIENCE, type FlagAudience, type FlagKind } from "../lib/flags";
@@ -11,7 +11,7 @@ import { ServiceError } from "./serviceError";
 /** Raises a flag once per expense and kind; a repeat is a no-op. */
 export async function raiseFlag(expenseId: string, kind: FlagKind, detail: string | null = null): Promise<void> {
   await db.expenseFlag.createMany({
-    data: [{ orgId: getOrg().id, expenseId, kind, audience: FLAG_AUDIENCE[kind], detail }],
+    data: [{ orgId: await getOrgId(), expenseId, kind, audience: FLAG_AUDIENCE[kind], detail }],
     skipDuplicates: true,
   });
 }
@@ -23,14 +23,14 @@ function audiencesOf(principal: ExpensePrincipal): FlagAudience[] {
 export async function listOpenFlags(principal: ExpensePrincipal) {
   actorOf(principal);
   return db.expenseFlag.findMany({
-    where: { orgId: getOrg().id, checkedOffAt: null, audience: { in: audiencesOf(principal) } },
+    where: { orgId: await getOrgId(), checkedOffAt: null, audience: { in: audiencesOf(principal) } },
     orderBy: { raisedAt: "asc" },
   });
 }
 
 export async function checkOffFlag(principal: ExpensePrincipal, flagId: number, notes: string | null = null): Promise<void> {
   const actor = actorOf(principal);
-  const flag = await db.expenseFlag.findFirst({ where: { id: flagId, orgId: getOrg().id } });
+  const flag = await db.expenseFlag.findFirst({ where: { id: flagId, orgId: await getOrgId() } });
   if (!flag) throw new ServiceError(404, "Flag not found");
   if (!audiencesOf(principal).includes(flag.audience as FlagAudience)) {
     throw new ServiceError(403, `Only ${flag.audience} can check off this flag`);

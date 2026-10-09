@@ -2,7 +2,7 @@
 // exception; FINANCE assigns buckets and settles exceptions.
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
-import { getExpenseRuntime, getOrg } from "../runtime";
+import { getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf, callerId } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { checkApprovalAutoTransition, checkOwnershipAutoTransition, isOrgLevelBucket } from "../lib/financial-flow";
@@ -25,7 +25,7 @@ export async function isBucketApprover(principal: ExpensePrincipal, bucketId: nu
 }
 
 async function loadApproval(expenseId: string, approvalId: number, expectedState?: string) {
-  const expense = await expenseRepo.findExpenseById(expenseId, getOrg().id);
+  const expense = await expenseRepo.findExpenseById(expenseId, await getOrgId());
   if (!expense) throw new ServiceError(404, "Expense not found");
   if (expectedState && expense.state !== expectedState) {
     throw new ServiceError(400, `Expense is not in ${expectedState} state`);

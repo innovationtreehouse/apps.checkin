@@ -160,7 +160,7 @@ export function principal(id: number, roles: { isFinance?: boolean; isBoard?: bo
 
 /** Rebinds the runtime with test ports (org stays ORG). */
 export function bindPorts(ports: Omit<Parameters<typeof configureExpense>[0], "org">): void {
-  configureExpense({ org: () => ({ id: ORG, name: "Org One" }), ...ports });
+  configureExpense({ org: async () => ({ id: ORG, name: "Org One" }), ...ports });
 }
 
 /** A directory from plain lists; bucket 100+ is program-level with the given approvers; each `households` entry is one household. */
@@ -175,6 +175,7 @@ export function directory(d: {
 }): SignoffDirectory {
   return {
     bucketApprovers: async (b) => ({ orgLevel: (d.orgLevel ?? []).includes(b), approvers: d.approvers?.[b] ?? [] }),
+    bucketsApprovedBy: async (p) => Object.entries(d.approvers ?? {}).filter(([, a]) => a.includes(p)).map(([b]) => Number(b)),
     financeHolders: async () => d.finance ?? [],
     boardMembers: async () => d.board ?? [],
     householdOf: async (ids) => (d.households ?? []).filter((h) => h.some((id) => ids.includes(id))).flat(),

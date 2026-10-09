@@ -38,7 +38,7 @@ export async function readExpenseSettings(client: Db, orgId: string): Promise<Ex
 }
 
 export async function getExpenseSettings(orgId: string): Promise<ExpenseSettings> {
-  assertOrg(orgId);
+  await assertOrg(orgId);
   return readExpenseSettings(db, orgId);
 }
 
@@ -47,7 +47,7 @@ export async function updateExpenseSettings(
   patch: unknown,
   principal: ExpensePrincipal,
 ): Promise<ExpenseSettings> {
-  assertOrg(orgId);
+  await assertOrg(orgId);
   const actor = actorOf(principal);
   if (!principal.isFinance && !principal.isBoard) throw new ServiceError(403, "Only finance or the board can change expense settings");
   const changes = ExpenseSettingsPatchSchema.parse(patch);

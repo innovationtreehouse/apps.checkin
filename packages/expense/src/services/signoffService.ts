@@ -2,7 +2,7 @@
 // principal; a line with an unfilled seat holds its expense out of the QB outbox.
 import { db, isUniqueConstraintError } from "../db";
 import type { ExpensePrincipal, SetReimbursee } from "../contract";
-import { assertOrg, getExpenseRuntime, getOrg } from "../runtime";
+import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
@@ -14,7 +14,7 @@ import { ServiceError } from "./serviceError";
 export async function signLine(principal: ExpensePrincipal, lineItemId: number, seat: Seat): Promise<void> {
   const actor = actorOf(principal);
   const line = await db.expenseLineItem.findFirst({
-    where: { id: lineItemId, expense: { orgId: getOrg().id } },
+    where: { id: lineItemId, expense: { orgId: await getOrgId() } },
     include: { expense: true },
   });
   if (!line) throw new ServiceError(404, "Line item not found");
@@ -58,7 +58,7 @@ export async function signLine(principal: ExpensePrincipal, lineItemId: number, 
  * sign-off by someone the new reimbursee conflicts, so that seat is signed again.
  */
 export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, principal) => {
-  assertOrg(orgId);
+  await assertOrg(orgId);
   const actor = actorOf(principal);
   if (!principal.isFinance) throw new ServiceError(403, "Only FINANCE sets the reimbursee");
   if (!Number.isInteger(personId) || personId <= 0) throw new ServiceError(400, "personId must be a positive integer");
@@ -108,7 +108,7 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
 
 /** Per line: the seats filled, still missing, and blocked (held until finance or the board acts). */
 export async function signoffStatus(expenseId: string) {
-  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: getOrg().id } });
+  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
   if (!expense) throw new ServiceError(404, "Expense not found");
   const [facts, filled] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expenseId)]);
   return [...facts].map(([lineItemId, f]) => {

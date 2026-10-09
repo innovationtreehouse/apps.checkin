@@ -32,9 +32,9 @@ describe("runtime", () => {
     await expect(rt.quickbooks.writer.create("Purchase", {})).rejects.toThrow(/not bound/);
   });
 
-  it("assertOrg accepts only the injected org", () => {
-    expect(() => assertOrg(ORG)).not.toThrow();
-    expect(() => assertOrg("org-other")).toThrow(/not this org/);
+  it("assertOrg accepts only the injected org", async () => {
+    await expect(assertOrg(ORG)).resolves.toBeUndefined();
+    await expect(assertOrg("org-other")).rejects.toThrow(/not this org/);
   });
 });
 

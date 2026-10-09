@@ -23,6 +23,11 @@ export interface ExpensePrincipal {
   isBoard: boolean;
 }
 
+/** The host's session reader. Null when the caller has no integer person id. */
+export interface ExpenseAuth {
+  getPrincipal(): Promise<ExpensePrincipal | null>;
+}
+
 // ── Budget-owner buckets ──────────────────────────────────────────────────────
 
 /** A budget-owner bucket (checkin's BudgetOwner). */
@@ -51,6 +56,8 @@ export interface BucketApprovers {
  */
 export interface SignoffDirectory {
   bucketApprovers(bucketId: number): Promise<BucketApprovers>;
+  /** The buckets whose derived approvers include this person (programs led or treasured). */
+  bucketsApprovedBy(personId: number): Promise<number[]>;
   financeHolders(): Promise<number[]>;
   boardMembers(): Promise<number[]>;
   /** Everyone in the given people's households. */
@@ -64,6 +71,7 @@ export interface SignoffDirectory {
 /** Nobody approves, holds a role or is conflicted: no seat can be filled and nothing auto-approves. */
 export const inertSignoffDirectory: SignoffDirectory = {
   bucketApprovers: async () => ({ orgLevel: false, approvers: [] }),
+  bucketsApprovedBy: async () => [],
   financeHolders: async () => [],
   boardMembers: async () => [],
   householdOf: async () => [],
@@ -187,3 +195,15 @@ export interface ExpenseSettings {
   boardReviewTotalCents: number;
   noteInLieuLimitCents: number;
 }
+
+// ── Route factories (mounted by the host under its handler()) ──────────────────
+
+/** The slice of a route context a factory consumes: request + path params. */
+export interface ExpenseRouteCtx {
+  req: Request;
+  params: Record<string, string>;
+}
+
+/** A route factory's body: parse → service → model bag (stripped by the host). */
+export type ExpenseBag = Record<string, unknown>;
+export type ExpenseRouteHandler = (ctx: ExpenseRouteCtx) => Promise<ExpenseBag>;
