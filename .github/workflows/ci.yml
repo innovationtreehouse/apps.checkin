@@ -32,6 +32,12 @@ on:
         required: false
         default: ''
 
+# One live run per ref per event. A new push to a PR cancels the run it
+# supersedes; push-to-main, merge_group and workflow_call runs never cancel.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # "Run Tests (unit)", "Run Tests (integration)", "Coverage gate (merged)", and
   # "Deploy build (no deploy)" are REQUIRED status checks on main (the first three

@@ -42,6 +42,12 @@ on:
       - 'packages/s-ingest-core/prisma/migrations/**'
       - '.github/workflows/migration-safety.yml'
 
+# One live run per ref per event. A new push to a PR cancels the run it
+# supersedes; push-to-main, merge_group and workflow_call runs never cancel.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   migrate-populated:
     name: Migrations apply to populated DB
