@@ -265,14 +265,16 @@ export async function processCheckout(
         await sweepIfStandalone(db, visitTime);
     }
 
-    // SUPERVISION INTERRUPT (#1436). Fires on EVERY departure, not just a
+    // SUPERVISION INTERRUPT (#1436). Fires on EVERY badge departure, not just a
     // keyholder's — the close-guard above is a separate interrupt with its own
     // stamp. Skipped when the facility is closing: that sweep departs everyone.
     // Skipped for a REPLAY too: its 400 records nothing but the drain acks that
     // shape, so the queued departure would be dropped and the visit left open.
     // Hours-old bookkeeping has no room to warn about and nobody to re-badge.
+    // Skipped for a web checkout as well: the badge scanner is the only place
+    // anyone can re-badge (docs/rules/attendance-checkin.md, Supervision).
     let supervisionWarning: string | undefined;
-    if (!facilityClosed && !replayEventId) {
+    if (!facilityClosed && !replayEventId && authType === "kiosk") {
         const interrupt = await supervisionInterrupt(activeVisitId, db);
         if (interrupt?.confirmRequired) return interrupt.response;
         supervisionWarning = interrupt?.warning;
