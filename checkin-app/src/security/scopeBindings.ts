@@ -140,6 +140,11 @@ export const SCOPE_BINDINGS = {
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },
         keyholders: { flag: 'isKeyholder' },
     },
+    // Receipt library (#1265 §6, plan rule 6): a submitter's own receipts and
+    // their file. The uploader is the session's Person.id, never a payload field.
+    Receipt: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
+    ReceiptView: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
+    ReceiptLineView: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
     TrustedAdultReview: {
         their_households: { field: 'householdId', eqCtx: 'householdId' },
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },
@@ -232,6 +237,10 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // FINANCE reads the log (everyones:internal); a submitter never reads audit
     // rows, so no `their_own` binding is planned.
     'ReceiptAuditLog',
+    // Bulk-donation CSV uploads (#1280). `uploadedByUserId` is scopable since the
+    // receipt binding, but only FINANCE reads uploads; bulk donation's own
+    // boundary PR decides whether an uploader view earns a binding.
+    'UploadedFile',
 ]);
 
 /**

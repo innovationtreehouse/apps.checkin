@@ -4,13 +4,15 @@
 /**
  * Boundary coverage for the receipt library (#1265 §3/§6):
  *
- *   1. File bytes are `pii`, never `secret`, and no JSON response view lists a
- *      file column, so the stripper drops one under any token set.
+ *   1. File bytes are `pii`, never `secret`, file-only (a file route names
+ *      them), and no JSON response view lists a file column, so the stripper
+ *      drops them under any token set.
  *   2. Donor and reimbursee names are `pii`: an internal-only view keeps the
  *      money and ids and strips them; the finance view (pii + internal) sees them.
  *   3. ReceiptView (the flattened Receipt + ReceiptDetail row) tiers every field
  *      exactly as the generated models do.
  */
+import '@/security/registry';
 import { stripValue } from '@/security/stripper';
 import type { CallerContext } from '@/security/access-resolvers';
 import type { Token } from '@/security/core';
@@ -37,6 +39,10 @@ const INTERNAL_ONLY: readonly Token[] = ['everyones:internal', 'public'];
 const FINANCE_VIEW: readonly Token[] = ['everyones:pii', 'everyones:personal', 'everyones:internal', 'public'];
 
 const BYTES = Buffer.from('%PDF-1.7');
+
+function omit(obj: Record<string, unknown>, ...keys: string[]): Record<string, unknown> {
+    return Object.fromEntries(Object.entries(obj).filter(([k]) => !keys.includes(k)));
+}
 
 const receiptView = () => ({
     id: 'r-1',
@@ -82,8 +88,13 @@ describe('receipt file bytes', () => {
         expect(out.id).toBe('r-1');
     });
 
-    it.each(['Receipt', 'ReceiptMailItem'])('raw %s drops the file bytes under an internal-only view', (model) => {
-        const out = stripValue(model, { id: 'r-1', fileBlob: BYTES, mimeType: 'application/pdf' }, INTERNAL_ONLY, ctx());
+    it.each([
+        ['Receipt', 'internal-only', INTERNAL_ONLY],
+        ['Receipt', 'finance', FINANCE_VIEW],
+        ['ReceiptMailItem', 'internal-only', INTERNAL_ONLY],
+        ['ReceiptMailItem', 'finance', FINANCE_VIEW],
+    ] as const)('raw %s drops the file bytes under the %s view', (model, _name, tokens) => {
+        const out = stripValue(model, { id: 'r-1', fileBlob: BYTES, mimeType: 'application/pdf' }, tokens, ctx());
         expect(out).toEqual({ id: 'r-1', mimeType: 'application/pdf' });
     });
 });
@@ -102,7 +113,7 @@ describe('receipt donor and reimbursee names', () => {
     });
 
     it('the raw Receipt model strips the same names under an internal-only view', () => {
-        const { lineItems: _l, reimbursement: _r, ...row } = receiptView();
+        const row = omit(receiptView(), 'lineItems', 'reimbursement');
         const out = stripValue('Receipt', row, INTERNAL_ONLY, ctx()) as Record<string, unknown>;
         expect(out.uploadedByUserId).toBe(7);
         for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName']) {
@@ -128,9 +139,15 @@ describe('receipt donor and reimbursee names', () => {
 
 describe('ReceiptView tiering', () => {
     it('matches the generated Receipt and ReceiptDetail tiers field for field', () => {
-        const { fileBlob: _f, ...receipt } = receiptGenerated.classifications.Receipt;
-        const { id: _i, orgId: _o, ...detail } = receiptGenerated.classifications.ReceiptDetail;
-        const { financialReviewReasons: _r, complete: _c, ...view } = receiptSynthetic.classifications.ReceiptView;
+        const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob');
+        const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId');
+        const view = omit(receiptSynthetic.classifications.ReceiptView, 'financialReviewReasons', 'complete', 'reimbursement');
         expect(view).toEqual({ ...receipt, ...detail });
+    });
+
+    it('ReceiptLineView is ReceiptLineItem plus the owner stamp', () => {
+        const { uploadedByUserId, ...line } = receiptSynthetic.classifications.ReceiptLineView;
+        expect(uploadedByUserId).toBe('internal');
+        expect(line).toEqual(receiptGenerated.classifications.ReceiptLineItem);
     });
 });

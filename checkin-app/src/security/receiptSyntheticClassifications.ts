@@ -5,9 +5,15 @@
  * ReceiptView — the receipt as the library returns it: `Receipt` and its
  * `ReceiptDetail` flattened into one row (repositories/receipt.ts `ReceiptRow`),
  * plus the detail screen's line items and review reasons and "My receipts"'
- * paid status. Tiers match the generated models field for field. No file column
- * is listed, so the stripper drops one if a projection ever passes it through:
- * the file leaves only through the file route (plan rule 7).
+ * paid status (`reimbursement`: `{ paidOn }` or null). Tiers match the generated
+ * models field for field. No file column is listed, so the stripper drops one if
+ * a projection ever passes it through: the file leaves only through the file
+ * route (plan rule 7).
+ *
+ * ReceiptLineView — a line item stamped with its receipt's `uploadedByUserId`.
+ * A line row has no owner column of its own, and the stripper scopes each nested
+ * row by itself, so without the stamp a submitter's `their_own` view would strip
+ * every line of their own receipt. A line without the stamp fails closed.
  *
  * ReceiptImportResult — one row of a bulk-import response. ReceiptPushResult —
  * a manual S1 re-send's outcome. Both are financial plumbing, `internal`.
@@ -56,10 +62,20 @@ export const classifications = {
     importSourceId: "internal",
     financialReviewReasons: "internal",
     complete: "internal",
+    reimbursement: "internal",
   },
-  // "My receipts": the QuickBooks paid status of an owed receipt (X12).
-  ReceiptReimbursementView: {
-    paidOn: "internal",
+  ReceiptLineView: {
+    id: "internal",
+    receiptId: "internal",
+    uploadedByUserId: "internal",
+    lineNumber: "internal",
+    description: "internal",
+    partNumber: "internal",
+    manufacturer: "internal",
+    quantity: "internal",
+    unitPriceCents: "internal",
+    totalPriceCents: "internal",
+    isDelayed: "internal",
   },
   ReceiptImportResult: {
     importSourceId: "internal",
@@ -75,7 +91,6 @@ export const classifications = {
 
 export const relations = {
   ReceiptView: {
-    lineItems: { model: "ReceiptLineItem", isList: true },
-    reimbursement: { model: "ReceiptReimbursementView", isList: false },
+    lineItems: { model: "ReceiptLineView", isList: true },
   },
 } as const;
