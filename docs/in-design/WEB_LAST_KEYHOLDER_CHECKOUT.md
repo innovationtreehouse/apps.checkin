@@ -375,6 +375,29 @@ changed.
 The email to a named keyholder is not a flow-test assertion (flow tests see only
 HTTP responses); an integration test covers it.
 
+## 4a. Build order
+
+One design, several PRs. Each PR amends the rules-doc lines for the part it ships.
+
+1. **Close record and logging.** Each facility close becomes a record (who, when,
+   path, choice); every departure it sets is logged against it with before and
+   after. No behaviour change; it is what the later steps write to.
+2. **Web choices.** The shared guard with close, leave or cancel by caller class,
+   names gating, the keyholder pick-list and email, the one confirm dialog, the
+   legacy `DELETE` and session scan on the shared guard, tombstone never closing,
+   and the flow tests.
+3. **Correcting a close.** A correction closes at the typed time; an earlier
+   correction moves the departures its close set; a later one moves only the
+   closer.
+4. **Kiosk, server side.** The last keyholder's first badge checks them out and
+   offers the close; the banner colours. The kiosk client already handles a close
+   offer (it gets one today when another keyholder is recorded), so this ships
+   before the client change.
+5. **Kiosk, offline.** `client/client.py` runs the same single-badge leave and
+   close offer while disconnected.
+
+The trust principle ships on its own, in any order.
+
 ## 5. Other open questions
 
 - Outside this design and tracked separately: the session scan raises the
