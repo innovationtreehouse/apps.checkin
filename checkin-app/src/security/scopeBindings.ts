@@ -218,10 +218,10 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // bag"). If a self-serve "emails we sent you" / suppression-audit view ever ships,
     // it earns `their_own: { field: 'personId', eqCtx: 'selfId' }`.
     'BulkSendItem',
-    // Budget-owner buckets (#1280 §6). Lands ahead of the model, so the boundary
-    // change ships alone. Finance/board reads need no binding (everyones:internal).
-    // Approvers are derived from programId (the program's leader and treasurers);
-    // the expense approval route earns that programId binding when it ships.
+    // Budget-owner buckets (#1280 §6). Not pending: its routes exist
+    // (registry/budgetOwner.ts). `programId` makes it scopable, but every view is
+    // finance-or-board with everyones grants and no owner-scoped view; per-line
+    // approval by a bucket's approvers is a handler query filter, not a scope.
     'BudgetOwner',
     // Local inventory (#1287 §5) audit logs. Their `userId` is in SCOPABLE_FIELDS,
     // but it is a local-inventory actor id — not checkin's `selfId` — so it never
