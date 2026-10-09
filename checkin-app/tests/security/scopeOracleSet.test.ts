@@ -30,6 +30,7 @@ const ORACLES = [
     'active-visitors-tombstone.test.ts',
     'caller-context-no-id.integration.test.ts',
     'classification-sources.test.ts',
+    'donation-routes.test.ts',
     'donation-strip.test.ts',
     'emergency-contact-program-scope.test.ts',
     'file-route.test.ts',
