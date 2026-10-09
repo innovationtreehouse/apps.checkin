@@ -212,7 +212,9 @@ to an earlier one moves the departures that close set, for everyone. Correcting
 it to a later time moves only the closer's own departure; nobody else's changes.
 Someone who arrived between the corrected time and the original one keeps the
 departure the original close gave them, as with the kiosk's late close; it is a
-placeholder for a person to fix, not something the correction guesses at. Every
+placeholder for a person to fix, not something the correction guesses at.
+Someone who has since corrected their own departure keeps it; a later correction
+of the close never overwrites it. Every
 departure a close sets or moves is logged: which close, who made it, through
 which path, and each visit's departure before and after.
 
@@ -263,9 +265,7 @@ pointing to §3.1.
 
 **`Q-CLOSE-ARRIVALS`: answered.** Left as the original close set them; see §3.1.
 
-**`Q-CLOSE-CORRECTED`: one of the people the close checked out has since corrected
-their own departure.** Recommendation: **their correction stands**, as with the
-kiosk's late close ("a departure a person has since corrected is not" moved).
+**`Q-CLOSE-CORRECTED`: answered.** A person's own correction stands; see §3.1.
 
 **`Q-KIOSK-SCOPE`: answered.** One design, built in several PRs; see §3.1.
 
@@ -331,8 +331,8 @@ names are sent.
 - Add: correcting a close to an earlier time moves the departures it set, and
   every departure a close sets or moves is logged ; a later correction moves only
   the closer ; someone who arrived after
-  the corrected time keeps the original close's departure (plus the answer to
-  `Q-CLOSE-CORRECTED`).
+  the corrected time keeps the original close's departure; a departure its owner
+  has corrected is never moved.
 - Amend "Any keyholder can close the building at the kiosk with a double scan…":
   the last keyholder's first badge checks them out and offers the close, online
   and offline; a second badge within the countdown closes.
