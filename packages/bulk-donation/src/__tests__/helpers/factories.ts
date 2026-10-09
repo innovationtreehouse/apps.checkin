@@ -128,7 +128,7 @@ export const TEST_OWNERS: OwnerInfo[] = [
 export function configureTestRuntime(): void {
   configureBulkDonation({
     auth: { getPrincipal: async () => ({ id: 1, name: 'testfinance' }) },
-    org: () => ({ id: TEST_ORG_ID, name: 'Test Org' }),
+    org: async () => ({ id: TEST_ORG_ID, name: 'Test Org' }),
     owners: { list: async () => TEST_OWNERS },
   });
 }

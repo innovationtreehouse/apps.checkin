@@ -1,14 +1,17 @@
 /**
  * Next.js server-boot hook. Runs once per server process before requests.
- * Wires the checkin-hosted library runtimes (#1286 §3, #1287 §3) — Node
+ * Wires the checkin-hosted library runtimes (#1286 §3, #1287 §3, #1280 §3) — Node
  * runtime only. Binding touches no database.
  */
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  const [{ configureCatalogRuntime }, { configureLocalInventoryRuntime }] = await Promise.all([
-    import("@/lib/catalog/configure"),
-    import("@/lib/localInventory/configure"),
-  ]);
+  const [{ configureCatalogRuntime }, { configureLocalInventoryRuntime }, { configureBulkDonationRuntime }] =
+    await Promise.all([
+      import("@/lib/catalog/configure"),
+      import("@/lib/localInventory/configure"),
+      import("@/lib/bulkDonation/configure"),
+    ]);
   configureCatalogRuntime();
   configureLocalInventoryRuntime();
+  configureBulkDonationRuntime();
 }

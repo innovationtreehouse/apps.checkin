@@ -37,7 +37,7 @@ function receipt(orgId: string): CompletedReceipt {
 const configure = (extra: Partial<Parameters<typeof configureBulkDonation>[0]> = {}) =>
   configureBulkDonation({
     auth: { getPrincipal: async () => ({ id: 1, name: "finance" }) },
-    org: () => ({ id: ORG, name: "Test Org" }),
+    org: async () => ({ id: ORG, name: "Test Org" }),
     ...extra,
   });
 
@@ -56,7 +56,7 @@ describe("X9 ingestInKind (callee)", () => {
   });
 
   it("reads the org at call time, not at import", async () => {
-    configure({ org: () => ({ id: "other-org", name: "Other" }) });
+    configure({ org: async () => ({ id: "other-org", name: "Other" }) });
     await expect(ingestInKind(receipt("other-org"))).rejects.toBeInstanceOf(NotWiredError);
   });
 });
