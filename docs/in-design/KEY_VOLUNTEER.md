@@ -74,10 +74,13 @@ A Key Volunteer is a person who carries risk beyond the base membership
 agreement and is therefore required to sign the KVA. The designation is a
 **union** of two sources:
 
-1. **Automatic** — holding a BOARD or BG_REVIEWER PersonRole. Granting the role
-   makes the person a Key Volunteer; revoking it does not retroactively remove
-   the designation (a signed KVA is a fact about the past, not about the current
-   role).
+1. **Automatic** — holding any of these PersonRole kinds: BOARD, BG_REVIEWER,
+   KEYHOLDER, or FINANCE. BOARD and BG_REVIEWER are named by policy;
+   KEYHOLDER carries facility-access risk, and FINANCE handles card data and
+   donor PII — both carry risk beyond the base membership agreement by the
+   same reasoning. Granting any of these roles makes the person a Key
+   Volunteer; revoking it does not retroactively remove the designation (a
+   signed KVA is a fact about the past, not about the current role).
 
 2. **Explicit** — a board member or sysadmin designates someone as a Key
    Volunteer for reasons not captured by a role (cardholder, procurement
@@ -112,10 +115,10 @@ KVA signed at or after the current boundary covers the current year.
 
 | Event | Action |
 |-------|--------|
-| BOARD or BG_REVIEWER role granted | If no current KVA, open one |
+| BOARD, BG_REVIEWER, KEYHOLDER, or FINANCE role granted | If no current KVA, open one |
 | Board explicitly designates someone | If no current KVA, open one |
 | Annual renewal sweep | Open for every active Key Volunteer without a current KVA |
-| BOARD and BG_REVIEWER both revoked, no explicit designation | No new obligation opens; existing signed KVAs stay |
+| All automatic roles revoked, no explicit designation | No new obligation opens; existing signed KVAs stay |
 
 ### What it does not gate
 
@@ -134,9 +137,14 @@ purpose of having them on the board.
 
 **Explicit designation storage — two options:**
 
-**Option A: KeyVolunteerDesignation table** (parallel to `VolunteerDesignation`).
-A separate table with `personId`, `designatedById`, `designatedAt`, `reason`,
-`revokedAt`. Explicit designation is a first-class record with audit trail.
+**Option A: KeyVolunteerDesignation table.** A separate table with `personId`,
+`designatedById`, `designatedAt`, `reason`, `revokedAt`. Explicit designation
+is a first-class record with audit trail. Not shaped like `VolunteerDesignation`,
+which is email-keyed (canonical email → fee discount, no person FK, no reason,
+no revocation). This one keys by `personId` because: (a) the person must already
+exist to hold a role or receive a designation — there is no pre-auth-by-email
+use case; (b) it needs `designatedById`, `reason` and `revokedAt` for the audit
+trail that a fee-discount lookup does not carry.
 
 **Option B: PersonRole with a new kind** — add `KEY_VOLUNTEER` to
 `PersonRoleKind`. Simpler (reuses existing role machinery), but Key Volunteer is
@@ -163,34 +171,56 @@ why one PersonRoleKind doesn't work like the others.
 
 ### Signing flow
 
-Reuses the existing Zoho Sign integration path:
+Reuses the Zoho Sign / mock-signing infrastructure but **not**
+`resolveSigningProcess`. That function (`external.ts:293`) selects the
+household INITIAL/RENEWAL process for leads and the PERSON_AGREEMENT for
+non-leads — a board member who is a household lead would never reach a KVA
+through it.
+
+The KVA needs its own entry point — a dedicated action that resolves the
+caller's open `KEY_VOLUNTEER_AGREEMENT` process directly, bypassing the
+household/individual agreement resolver. The signing ceremony itself (Zoho
+`createRequest` → `submitRequest` → embedded sign URL → callback/sync) is
+the same; only the process-selection and the uploaded PDF differ.
+
+**Flow:**
 
 1. Person clicks "Sign Key Volunteer Agreement" (on their dashboard or from the
-   board queue).
-2. App sends the KVA template to Zoho Sign (or the mock interstitial in dev).
+   board queue). This action queries for the caller's open
+   `KEY_VOLUNTEER_AGREEMENT` process — it never falls through to
+   `resolveSigningProcess`.
+2. App uploads the KVA PDF to Zoho Sign (or routes to the mock interstitial in
+   dev) and stores the envelope/action IDs on the process.
 3. Zoho callback (or mock completion) flips the process to `ACTIVE`.
 4. The signed envelope ID is stored on the process (`zohoEnvelopeId`,
    `zohoActionId`), same as membership agreements.
 
-The KVA template is a new Zoho Sign template, configured in BoardSettings
-alongside the existing membership-agreement template reference. If no template
-is configured, the signing action is unavailable and the queue shows "template
-not configured" — the board can still designate people, but the signing flow is
-blocked on setup.
+**Template configuration:** the KVA PDF is a separate document from the
+membership agreement. The membership agreement PDF is loaded from S3
+(`AGREEMENT_PDF_S3_BUCKET`); the KVA PDF follows the same pattern — a separate
+S3 object (e.g. `key-volunteer-agreement.pdf`) loaded by the KVA signing action.
+Zoho credentials and API config are shared (env vars); only the uploaded document
+differs. If the KVA PDF is not uploaded to S3, the signing action is unavailable
+and the queue shows "agreement not configured."
 
 ---
 
 ## Open questions
 
-1. **Does the KVA gate role exercise?** This design says no — chased, not
-   enforced. If policy tightens to require a signed KVA before someone can act
-   as a reviewer, the gate is a one-line check on the review submission path.
+Questions marked **blocking** change the build shape and need owner input before
+implementation starts.
+
+1. **Does the KVA gate role exercise?** ← **blocking.** This design says no —
+   chased, not enforced. If policy tightens to require a signed KVA before
+   someone can act as a reviewer, the gate is a one-line check on the review
+   submission path but changes every trigger and the board queue's urgency.
    Confirm with owner.
 
-2. **Is the KVA really annual?** The membership agreement is annual because
-   policy says "separately for each membership year." The KVA's renewal cadence
-   is not stated in the 13 policies. If it's once-ever rather than annual, drop
-   the renewal-sweep trigger and simplify.
+2. **Is the KVA really annual?** ← **blocking.** The membership agreement is
+   annual because policy says "separately for each membership year." The KVA's
+   renewal cadence is not stated in the 13 policies. If once-ever rather than
+   annual: drop the renewal-sweep trigger, drop the dedup-floor logic, simplify
+   the process lifecycle.
 
 3. **Should revoking all roles + explicit designation close an open KVA?** This
    design keeps it open (the person still owes the signature for the period they
@@ -198,14 +228,15 @@ blocked on setup.
    membership application.
 
 4. **Is the Zoho Sign template a KVA-specific one, or does the org have a
-   single "volunteer agreement" template?** Affects template configuration but
+   single "volunteer agreement" template?** Affects which PDF is uploaded but
    not the data model.
 
 5. **Scope of "explicit" designation — is cardholder/procurement tracked here or
-   in an external system?** TOPDOWN notes "Key Volunteer Agreement gating
-   (likely QB/Benevity's lane)." If the designation lives entirely outside the
-   app, the explicit-designation half of this design is premature. The
-   automatic half (role → KVA) stands alone.
+   in an external system?** ← **blocking.** TOPDOWN notes "Key Volunteer
+   Agreement gating (likely QB/Benevity's lane)." If the designation lives
+   entirely outside the app, the explicit-designation half of this design
+   (the `KeyVolunteerDesignation` table, the board designation UI) is premature.
+   The automatic half (role → KVA) stands alone and can ship independently.
 
 ---
 
