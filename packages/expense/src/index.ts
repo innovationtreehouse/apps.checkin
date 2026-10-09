@@ -21,6 +21,7 @@ export * from "./repositories/partOwner";
 export * from "./repositories/provisionalItemMap";
 
 export * from "./services/approvalService";
+export * from "./services/badgeCounts";
 export * from "./services/capitalService";
 export * from "./services/catalogEventConsumer";
 export * from "./services/flagService";
