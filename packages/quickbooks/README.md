@@ -26,7 +26,9 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   Claimed and excluded ids are skipped. `takeoverLine(records)` is the newest hand-booked tie's date;
   app-created ties never move it, and no hand tie means no line. `depositCandidate`, `purchaseCandidate`
   and `billCandidate` adapt reader rows.
-- The one write (QB-2): `client.create(request, key)`, create-only, for `WRITABLE_ENTITIES`
+- The one write (QB-2) is package-internal: callers write only through `findOrCreate` and `createVendor`,
+  which look the key (or name) up before every create, since QBO's `requestid` dedup window is short.
+  It is create-only, for `WRITABLE_ENTITIES`
   (`Purchase`, `Bill`, `Deposit`, `Vendor`). Anything else (BillPayment, Payment, JournalEntry, …), a
   Check-type Purchase, an update or a delete is refused before any request. Each entity's body is built
   from typed fields (integer cents, numeric account / Class / vendor ids), so nothing else reaches QBO.
@@ -36,6 +38,11 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   is sent as QBO `requestid` and, on Purchase/Bill/Deposit, written
   into `PrivateNote` as `[checkin:<key>]`; `appKeyOf(entry)` reads it back for the candidate adapters.
   Writes re-check the realm guard, so production needs `CHECKIN_ENV=prod` at write time.
+- Every request has a 30 s timeout and retries a 429 once after `Retry-After` (capped at 10 s). Errors name
+  the status, `intuit_tid` and QBO fault codes only, never the fault text (it can echo names and memos).
+- An in-kind pair (clearing Deposit + Purchase) is two `findOrCreate` calls with their own keys
+  (e.g. `qbKey("in-kind", id + ".deposit")`); a crash between them leaves the second for the next run,
+  where the first is found by key.
 - `findOrCreate(client, request)` (`write.ts`, stateless): reads the record's window, runs `findMatch`, and
   answers `found` / `ambiguous` (post nothing), `created` (after the takeover line), `too-old` (on or
   before the line) or `no-line` (never create), or `failed` (any error; nothing is retried here). The

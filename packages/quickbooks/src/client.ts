@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { centsToDollars } from "@inventory/money";
+import { CREATE } from "./internal";
 import type {
   AccessTokenSource,
   QboAccount,
@@ -20,6 +21,19 @@ const PAGE_SIZE = 1000; // QBO's MAXRESULTS ceiling
 /** Widest window a reader accepts, so a reader can never walk QuickBooks history. */
 export const MAX_WINDOW_DAYS = 93;
 const DAY_MS = 86_400_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_RETRY_AFTER_S = 10;
+
+/** `: codes 6240,610` from a QBO Fault body, or nothing; never the fault's free text. */
+async function faultCodes(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { Fault?: { Error?: { code?: unknown }[] } };
+    const codes = (body.Fault?.Error ?? []).map((e) => e.code).filter((c): c is string => typeof c === "string" && /^\d+$/.test(c));
+    return codes.length ? `: codes ${codes.join(",")}` : "";
+  } catch {
+    return "";
+  }
+}
 
 function apiBase(env: QboEnv): string {
   return env === "production"
@@ -239,15 +253,8 @@ export class QuickBooksClient {
    * An expired token is an error for the caller to retry; the client never refreshes.
    */
   async query<T>(sql: string): Promise<T[]> {
-    const token = await this.tokens.current();
     const url = `${apiBase(this.realm.env)}/v3/company/${this.realm.realmId}/query?query=${encodeURIComponent(sql)}&minorversion=${MINOR_VERSION}`;
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-    });
-    // intuit_tid is Intuit's per-request trace id — capture it for support/debugging every call.
-    this.lastTid = res.headers.get("intuit_tid");
-    if (!res.ok) throw new Error(`QBO query failed ${res.status} (intuit_tid=${this.lastTid}): ${await res.text()}`);
-    const body = (await res.json()) as { QueryResponse?: Record<string, T[]> };
+    const body = (await this.send("query", url, {})) as { QueryResponse?: Record<string, T[]> };
     const resp = body.QueryResponse ?? {};
     const key = Object.keys(resp).find((k) => Array.isArray(resp[k]));
     return key ? resp[key] : [];
@@ -333,27 +340,42 @@ export class QuickBooksClient {
   }
 
   /**
-   * The app's only QuickBooks write: create one entity of WRITABLE_ENTITIES. There is no
-   * update, delete or void. `key` is sent as `requestid`, so QBO answers a retry with the
-   * first result instead of booking twice.
+   * One QBO request with a timeout and one Retry-After retry on 429. An error names the
+   * status, intuit_tid and QBO fault codes only; the fault text can echo names and memos.
    */
-  async create(request: WriteRequest, key: string): Promise<{ Id: string }> {
+  private async send(what: string, url: string, init: { method?: "POST"; body?: string }): Promise<unknown> {
+    const token = await this.tokens.current();
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: "application/json" };
+    if (init.body !== undefined) headers["Content-Type"] = "application/json";
+    for (let attempt = 1; ; attempt++) {
+      const res = await fetch(url, { ...init, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      // intuit_tid is Intuit's per-request trace id — capture it for support/debugging every call.
+      this.lastTid = res.headers.get("intuit_tid");
+      if (res.status === 429 && attempt === 1) {
+        const wait = Number(res.headers.get("Retry-After") ?? "1");
+        await new Promise((r) => setTimeout(r, Math.min(Number.isFinite(wait) ? wait : 1, MAX_RETRY_AFTER_S) * 1000));
+        continue;
+      }
+      if (!res.ok) throw new Error(`QBO ${what} failed ${res.status} (intuit_tid=${this.lastTid})${await faultCodes(res)}`);
+      return res.json();
+    }
+  }
+
+  /**
+   * The app's only QuickBooks write: create one entity of WRITABLE_ENTITIES. There is no
+   * update, delete or void. `key` is sent as `requestid`, so QBO answers a quick retry with
+   * the first result; the package's callers look the key up first for a retry days later.
+   */
+  async [CREATE](request: WriteRequest, key: string): Promise<{ Id: string }> {
     if (!(WRITABLE_ENTITIES as readonly string[]).includes(request.entity)) {
       throw new Error(`QBO entity "${String(request.entity)}" is not writable`);
     }
     assertAppKey(key);
     assertRealmAllowed(this.realm);
     const body = writeBody(request, key);
-    const token = await this.tokens.current();
     const url = `${apiBase(this.realm.env)}/v3/company/${this.realm.realmId}/${request.entity.toLowerCase()}?minorversion=${MINOR_VERSION}&requestid=${encodeURIComponent(key)}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    this.lastTid = res.headers.get("intuit_tid");
-    if (!res.ok) throw new Error(`QBO create ${request.entity} failed ${res.status} (intuit_tid=${this.lastTid}): ${await res.text()}`);
-    const created = ((await res.json()) as Record<string, { Id?: string } | undefined>)[request.entity];
+    const res = await this.send(`create ${request.entity}`, url, { method: "POST", body: JSON.stringify(body) });
+    const created = (res as Record<string, { Id?: string } | undefined>)[request.entity];
     if (!created?.Id) throw new Error(`QBO create ${request.entity} returned no Id (intuit_tid=${this.lastTid})`);
     return { Id: created.Id };
   }

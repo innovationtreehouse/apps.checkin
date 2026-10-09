@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, qbKey, type TxnWrite, type WriteRequest } from "../client";
 import { createVendor, findOrCreate, type FindOrCreateRequest } from "../write";
 import type { AccessTokenSource, QboDeposit } from "../types";
+import { CREATE } from "../internal";
+import * as pkg from "../index";
 
 const tokens: AccessTokenSource = { current: async () => "tok" };
 const sandbox = { env: "sandbox" as const, realmId: "123" };
@@ -78,13 +80,13 @@ describe("closed-enum writer", () => {
 
   it.each(["BillPayment", "Payment", "JournalEntry", "Customer", "Account", "Transfer"])("refuses %s before any request", async (entity) => {
     const forged = { entity, fields: deposit.fields } as unknown as WriteRequest;
-    await expect(client().create(forged, KEY)).rejects.toThrow(/not writable/);
+    await expect(client()[CREATE](forged, KEY)).rejects.toThrow(/not writable/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("refuses a Check-type Purchase", async () => {
     const check = { entity: "Purchase", fields: { ...purchase.fields, paymentType: "Check" } } as unknown as WriteRequest;
-    await expect(client().create(check, KEY)).rejects.toThrow(/Cash or CreditCard/);
+    await expect(client()[CREATE](check, KEY)).rejects.toThrow(/Cash or CreditCard/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -98,7 +100,7 @@ describe("closed-enum writer", () => {
 
   it("sends only allowlisted fields: never Id, SyncToken, sparse or an operation", async () => {
     fetchMock.mockResolvedValueOnce(json({ Deposit: { Id: "500" } }));
-    await expect(client().create(deposit, KEY)).resolves.toEqual({ Id: "500" });
+    await expect(client()[CREATE](deposit, KEY)).resolves.toEqual({ Id: "500" });
     const [c] = posts();
     expect(c.url.pathname).toBe("/v3/company/123/deposit");
     expect(c.url.searchParams.get("operation")).toBeNull();
@@ -116,8 +118,8 @@ describe("closed-enum writer", () => {
 
   it("builds a Purchase against the paying account and a Bill to the vendor", async () => {
     fetchMock.mockResolvedValueOnce(json({ Purchase: { Id: "1" } })).mockResolvedValueOnce(json({ Bill: { Id: "2" } }));
-    await client().create(purchase, "k-1");
-    await client().create(bill, "k-2");
+    await client()[CREATE](purchase, "k-1");
+    await client()[CREATE](bill, "k-2");
     const [p, b] = posts();
     expect(p.body).toEqual({
       TxnDate: "2025-03-05",
@@ -139,7 +141,7 @@ describe("closed-enum writer", () => {
   it("sends the caller's key as requestid on every write", async () => {
     const writes: WriteRequest[] = [deposit, purchase, bill, { entity: "Vendor", fields: { displayName: "Ann" } }];
     for (const w of writes) fetchMock.mockResolvedValueOnce(json({ [w.entity]: { Id: "9" } }));
-    for (const [i, w] of writes.entries()) await client().create(w, `key-${i}`);
+    for (const [i, w] of writes.entries()) await client()[CREATE](w, `key-${i}`);
     expect(posts().map((c) => [c.url.pathname.split("/").pop(), c.url.searchParams.get("requestid")])).toEqual([
       ["deposit", "key-0"],
       ["purchase", "key-1"],
@@ -154,7 +156,7 @@ describe("closed-enum writer", () => {
     ["empty", ""],
     ["51 chars", "k".repeat(51)],
   ])("rejects a key with %s", async (_, key) => {
-    await expect(client().create(deposit, key)).rejects.toThrow(/app key/);
+    await expect(client()[CREATE](deposit, key)).rejects.toThrow(/app key/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -166,13 +168,54 @@ describe("closed-enum writer", () => {
       { entity: "Deposit", fields: { ...deposit.fields, memo: "[checkin:other]" } },
       { entity: "Deposit", fields: { ...deposit.fields, txnDate: "2025-02-30" } },
     ];
-    for (const w of bad) await expect(client().create(w, KEY)).rejects.toThrow();
+    for (const w of bad) await expect(client()[CREATE](w, KEY)).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("surfaces a QBO rejection with the intuit_tid", async () => {
-    fetchMock.mockResolvedValueOnce(json({ Fault: {} }, 400));
-    await expect(client().create(deposit, KEY)).rejects.toThrow(/create Deposit failed 400 \(intuit_tid=tid-w\)/);
+  it("surfaces a QBO rejection with the intuit_tid and fault codes, never the fault text", async () => {
+    const fault = { Fault: { Error: [{ Message: "Duplicate Name Exists Error", Detail: "The name supplied already exists: Pat O'Neil", code: "6240" }], type: "ValidationFault" } };
+    fetchMock.mockResolvedValueOnce(json(fault, 400));
+    const err = await client()[CREATE](deposit, KEY).catch((e: Error) => e);
+    expect(String(err)).toMatch(/create Deposit failed 400 \(intuit_tid=tid-w\): codes 6240$/);
+    expect(String(err)).not.toMatch(/Pat|Duplicate/);
+  });
+
+  it("has no public create: the package exports no way to write without the key lookup", () => {
+    const c = client() as unknown as Record<string, unknown>;
+    expect(c.create).toBeUndefined();
+    expect(Object.values(pkg)).not.toContain(CREATE);
+    const pkgJson = JSON.parse(readFileSync(join(__dirname, "../../package.json"), "utf-8")) as { exports: Record<string, unknown> };
+    expect(Object.keys(pkgJson.exports)).toEqual(["."]);
+  });
+});
+
+describe("request limits", () => {
+  it("sends every request with a timeout signal", async () => {
+    fetchMock.mockResolvedValueOnce(rows("Deposit", [])).mockResolvedValueOnce(json({ Deposit: { Id: "1" } }));
+    await findOrCreate(client(), req());
+    for (const [, init] of fetchMock.mock.calls) expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("retries a 429 once after Retry-After, with the same requestid", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }))
+      .mockResolvedValueOnce(json({ Deposit: { Id: "5" } }));
+    await expect(client()[CREATE](deposit, KEY)).resolves.toEqual({ Id: "5" });
+    expect(posts().map((c) => c.url.searchParams.get("requestid"))).toEqual([KEY, KEY]);
+  });
+
+  it("fails on a second 429", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }))
+      .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }));
+    await expect(client()[CREATE](deposit, KEY)).rejects.toThrow(/failed 429/);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns failed when a request times out, without posting", async () => {
+    fetchMock.mockRejectedValueOnce(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+    await expect(findOrCreate(client(), req())).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/timeout/) });
+    expect(posts()).toEqual([]);
   });
 });
 
@@ -183,12 +226,12 @@ describe("prod-realm guard on writes", () => {
     vi.stubEnv("CHECKIN_ENV", "prod");
     const c = new QuickBooksClient(tokens, prod);
     fetchMock.mockResolvedValueOnce(json({ Deposit: { Id: "1" } }));
-    await c.create(deposit, KEY);
+    await c[CREATE](deposit, KEY);
     expect(posts()[0].url.host).toBe("quickbooks.api.intuit.com");
 
     for (const env of ["dev", "local", "", "PROD"]) {
       vi.stubEnv("CHECKIN_ENV", env);
-      await expect(c.create(deposit, KEY)).rejects.toThrow(/CHECKIN_ENV=prod/);
+      await expect(c[CREATE](deposit, KEY)).rejects.toThrow(/CHECKIN_ENV=prod/);
     }
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -196,7 +239,7 @@ describe("prod-realm guard on writes", () => {
   it("writes to the sandbox from any env", async () => {
     vi.stubEnv("CHECKIN_ENV", "dev");
     fetchMock.mockResolvedValueOnce(json({ Deposit: { Id: "1" } }));
-    await client().create(deposit, KEY);
+    await client()[CREATE](deposit, KEY);
     expect(posts()[0].url.host).toBe("sandbox-quickbooks.api.intuit.com");
   });
 });

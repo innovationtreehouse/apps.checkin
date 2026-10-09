@@ -1,6 +1,7 @@
 import { sumCents } from "@inventory/money";
 import { appKeyOf, assertAppKey, qboDate, type QuickBooksClient, type TxnWrite } from "./client";
 import { billCandidate, depositCandidate, findMatch, purchaseCandidate, type MatchCandidate, type MatchRequest } from "./match";
+import { CREATE } from "./internal";
 
 /** One lane record to find in QuickBooks, or create when it is past the takeover line. */
 export interface FindOrCreateRequest extends Pick<MatchRequest, "window" | "takeoverLine" | "claimedIds" | "excludedIds"> {
@@ -77,7 +78,7 @@ export async function findOrCreate(client: QuickBooksClient, req: FindOrCreateRe
       case "not-found-no-line":
         return { kind: "no-line" };
       case "not-found-after-line":
-        return { kind: "created", id: (await client.create(req.write, req.key)).Id };
+        return { kind: "created", id: (await client[CREATE](req.write, req.key)).Id };
     }
   } catch (e) {
     return { kind: "failed", error: e instanceof Error ? e.message : String(e) };
@@ -99,6 +100,6 @@ export async function createVendor(
   const displayName = (await client.customerNamed(trimmed)) ? `${trimmed} (Vendor)` : trimmed;
   const existing = await client.vendorNamed(displayName);
   if (existing) return { kind: "found", via: "name", id: existing.Id, displayName };
-  const created = await client.create({ entity: "Vendor", fields: { displayName } }, key);
+  const created = await client[CREATE]({ entity: "Vendor", fields: { displayName } }, key);
   return { kind: "created", id: created.Id, displayName };
 }
