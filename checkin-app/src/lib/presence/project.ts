@@ -51,7 +51,7 @@ export async function applyPresenceIntent(
         }
 
         const res = await processCheckin(args.participant, args.authType, db, args.occurredAt);
-        await classifyCheckin(db, event.id, res);
+        await classifyCheckin(db, event.id, res, args.participant.id, args.clientEventId);
         return res;
     }
 
@@ -95,7 +95,7 @@ export async function applyPresenceIntent(
 
 /** Puts a conflict park on the unsynced-scans review queue by setting
  *  reviewReason on the RawBadgeLog row /api/scan wrote for this touch. */
-async function flagForReview(
+export async function flagForReview(
     db: DbClient,
     personId: number,
     clientEventId: string | null | undefined,
@@ -121,9 +121,16 @@ async function checkoutConfirmed(res: Response): Promise<boolean> {
     }
 }
 
-/** Classify an IN event from processCheckin's actual outcome. An error
- *  response (e.g. a session check-in into a closed facility) stays unclassified. */
-async function classifyCheckin(db: DbClient, eventId: number, res: Response): Promise<void> {
+/** Classify an IN event from processCheckin's actual outcome, queueing a
+ *  double_in park for review. An error response (e.g. a session check-in into
+ *  a closed facility) stays unclassified. */
+async function classifyCheckin(
+    db: DbClient,
+    eventId: number,
+    res: Response,
+    personId: number,
+    clientEventId: string | null | undefined,
+): Promise<void> {
     let body: { type?: string; reason?: string; visit?: { id?: number } } = {};
     if (res.ok) {
         try {
@@ -136,5 +143,8 @@ async function classifyCheckin(db: DbClient, eventId: number, res: Response): Pr
         await classifyPresenceEvent(db, eventId, PresenceClass.PROJECTED, body.visit.id);
     } else if (body.type === "parked" && body.reason) {
         await classifyPresenceEvent(db, eventId, parkReasonToClass(body.reason));
+        if (body.reason === "double_in") {
+            await flagForReview(db, personId, clientEventId, "conflict_double_in");
+        }
     }
 }
