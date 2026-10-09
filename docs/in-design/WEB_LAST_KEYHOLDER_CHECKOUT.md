@@ -320,18 +320,17 @@ names are sent.
 
 - Amend "The keyholder close-guard fires on every close path…": close, leave or
   cancel on the web; who gets which (keyholder and board: all three; household
-  lead and sysadmin: leave or cancel); a tombstone never
-  closes; names to keyholders, board and sysadmins only.
+  lead and sysadmin: leave or cancel); a tombstone never closes; names to
+  keyholders, board and sysadmins only.
 - Add the Assumption: a keyholder who leaves the building occupied has handed over
   in person to the keyholder they name; the app records the statement.
 - Add the Assumption: the last recorded keyholder stands in for the primary
   keyholder of §VIII.3, which the app does not model.
 - Add: a named keyholder who is not checked in is emailed.
-- Add: correcting a close to an earlier time moves the departures it set, and
-  every departure a close sets or moves is logged ; a later correction moves only
-  the closer ; someone who arrived after
-  the corrected time keeps the original close's departure; a departure its owner
-  has corrected is never moved.
+- Add: correcting a close to an earlier time moves the departures it set; a later
+  correction moves only the closer. Someone who arrived after the corrected time
+  keeps the original close's departure, and a departure its owner has corrected
+  is never moved. Every departure a close sets or moves is logged.
 - Amend "Any keyholder can close the building at the kiosk with a double scan…":
   the last keyholder's first badge checks them out and offers the close, online
   and offline; a second badge within the countdown closes.
@@ -399,8 +398,7 @@ The trust principle ships on its own, in any order.
 
 ## 5. Other open questions
 
-- Outside this design and tracked separately: the session scan raises the
-  supervision interrupt, which the rules say is badge-only.
+- Session-scan supervision interrupt: fixed separately (claude/gracious-mestorf-9dc204, 4aa71d25).
 
 ---
 
@@ -409,6 +407,8 @@ The trust principle ships on its own, in any order.
 - Found while extending the route-coverage lint to the manual visit route
   (PR #1918); the warning body leaving through the side channel was the first
   sign.
+- Related: #1437 (primary-keyholder model); the §VIII.3 stand-in Assumption
+  touches it.
 - Journeys: `docs/backlog/CUJS.md` A7 step 6 covers the kiosk double-badge close
   only; no journey covers a web close. The flow tests above would be its first
   coverage.
