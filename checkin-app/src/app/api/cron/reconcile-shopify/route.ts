@@ -3,6 +3,8 @@ import { logger } from "@/lib/logger";
 import { withCron } from "@/lib/cronAuth";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { runSaleSweep } from "@/lib/programs/saleSweep";
+import { runReconcile as runIncomeReconcile } from "@inventory/income";
+import { getOrg } from "@/lib/catalog/configure";
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
@@ -29,11 +31,23 @@ import { runSaleSweep } from "@/lib/programs/saleSweep";
  *
  * Also runs the program-sale sweep (lib/programs/saleSweep.ts): ends sales whose
  * off-sale date has arrived and emails the board unpaid claims a week later.
+ *
+ * Then matches paid payouts to QuickBooks deposits (the income library) on the
+ * same fresh mirror. That step is isolated: its failure never fails checkin's
+ * reconcile, and the response carries its counts only, no payout ids or amounts.
  */
 export const GET = withCron(async () => {
     const result = await runReconcile();
     logger.info(`[reconcile] ${JSON.stringify(result)}`);
     const saleSweep = await runSaleSweep();
     logger.info(`[sale-sweep] ${JSON.stringify(saleSweep)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep });
+    let income: Awaited<ReturnType<typeof runIncomeReconcile>> | { status: "error" };
+    try {
+        income = await runIncomeReconcile((await getOrg()).id);
+    } catch (err) {
+        logger.error("[reconcile] income reconciliation failed:", err);
+        income = { status: "error" };
+    }
+    logger.info(`[reconcile] income ${JSON.stringify(income)}`);
+    return NextResponse.json({ success: true, ...result, saleSweep, income });
 });

@@ -136,6 +136,12 @@ export const PAGES: PageEntry[] = [
   { href: '/inventory/receiving', label: 'Receiving', section: 'Inventory', keywords: 'receipt mapping proceed apply failed', visible: released('workflow-mapping', RECEIVING) },
   { href: '/inventory/receiving/audit-log', label: 'Receiving Audit Log', section: 'Inventory', keywords: 'receipt mapping history', visible: released('workflow-mapping', RECEIVING) },
 
+  // Income — FINANCE works it, BOARD reads it (the routes' finance-or-board gate).
+  { href: '/income/payouts', label: 'Payouts', section: 'Income', keywords: 'shopify payout deposit', visible: released('income', FINANCE_OR_BOARD) },
+  { href: '/income/reconciliation', label: 'Income Reconciliation', section: 'Income', keywords: 'payout deposit quickbooks drift', visible: released('income', FINANCE_OR_BOARD) },
+  { href: '/income/items', label: 'Item Categories', section: 'Income', keywords: 'budget owner bucket class', visible: released('income', FINANCE_OR_BOARD) },
+  { href: '/income/exclusions', label: 'QB Exclusions', section: 'Income', keywords: 'quickbooks deposit exclude', visible: released('income', FINANCE_OR_BOARD) },
+
   // Facility Ops — board, plus operations on the two aggregate tools (#1633:
   // operations reach attendance in aggregate only). Visits, Badges (the raw
   // badge-event log) and Corrections are one person's record, so they stay

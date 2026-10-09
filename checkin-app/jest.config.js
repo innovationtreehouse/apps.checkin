@@ -97,6 +97,9 @@ const customJestConfig = {
         '^@inventory/gtin$': '<rootDir>/../packages/gtin/src/index.ts',
         '^@inventory/workflow-mapping/(.*)$': '<rootDir>/../packages/workflow-mapping/src/$1',
         '^@inventory/workflow-mapping$': '<rootDir>/../packages/workflow-mapping/src/index.ts',
+        '^@inventory/income/(.*)$': '<rootDir>/../packages/income/src/$1',
+        '^@inventory/income$': '<rootDir>/../packages/income/src/index.ts',
+        '^@inventory/quickbooks$': '<rootDir>/../packages/quickbooks/src/index.ts',
     },
     // The worktree ignore lives at the repo root (.claude/worktrees/), one level
     // up now that rootDir is checkin-app/. testPathIgnorePatterns matches the
