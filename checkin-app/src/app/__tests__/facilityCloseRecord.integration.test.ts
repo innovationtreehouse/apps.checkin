@@ -52,6 +52,7 @@ describe('facility close record and departure log (real DB)', () => {
     let board: Person;
     let people: Person[];
     let closeIdFloor: number;
+    const programIds: number[] = [];
 
     beforeAll(async () => {
         const mk = (name: string, flags: Partial<Pick<Person, 'isKeyholder' | 'isBoardMember'>>) => prisma.person.create({
@@ -81,6 +82,8 @@ describe('facility close record and departure log (real DB)', () => {
         await prisma.visit.deleteMany({ where: { personId: { in: ids } } });
         await prisma.rawBadgeLog.deleteMany({ where: { personId: { in: ids } } });
         await prisma.auditLog.deleteMany({ where: { actorId: { in: ids } } });
+        await prisma.event.deleteMany({ where: { programId: { in: programIds } } });
+        await prisma.program.deleteMany({ where: { id: { in: programIds.splice(0) } } });
     });
 
     afterAll(async () => {
@@ -205,6 +208,44 @@ describe('facility close record and departure log (real DB)', () => {
         });
     });
 
+    describe('kiosk replay', () => {
+        const replayBody = (extra: Record<string, unknown>) => ({
+            participantId: keyholder.id, clientEventId: `evt-dup-${TAG}`, scannedAt: new Date(Date.now() - 60_000).toISOString(), replay: true, ...extra,
+        });
+
+        it('a replayed confirm echoing a server token records KIOSK_OFFLINE', async () => {
+            asKiosk();
+            await open(keyholder);
+            await open(member);
+
+            const warn = await scanPOST(req('/api/scan', 'POST', { participantId: keyholder.id }));
+            const { forceCloseToken } = await warn.json();
+
+            const res = await scanPOST(req('/api/scan', 'POST', replayBody({ forceCloseToken })));
+            expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: true });
+
+            await expectOneClose('KIOSK_OFFLINE', keyholder.id, [{ person: member, before: fresh }], keyholder);
+        });
+
+        it('the same replayed close delivered twice writes no second close', async () => {
+            asKiosk();
+            await open(keyholder);
+            await open(member);
+
+            const first = await scanPOST(req('/api/scan', 'POST', replayBody({ forceCloseConfirmed: true })));
+            expect(await first.json()).toMatchObject({ facilityClosed: true });
+            const closes = await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } });
+            const logs = await prisma.auditLog.count({ where: { tableName: 'FacilityClose', affectedEntityId: { gt: closeIdFloor } } });
+
+            const again = await scanPOST(req('/api/scan', 'POST', replayBody({ forceCloseConfirmed: true })));
+            expect(await again.json()).toMatchObject({ type: 'duplicate_ignored' });
+            expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(closes);
+            expect(await prisma.auditLog.count({ where: { tableName: 'FacilityClose', affectedEntityId: { gt: closeIdFloor } } })).toBe(logs);
+
+            await expectOneClose('KIOSK_OFFLINE', keyholder.id, [{ person: member, before: fresh }], keyholder);
+        });
+    });
+
     describe('web', () => {
         it('a session scan (home page toggle) writes one WEB_CHECKOUT close', async () => {
             asSession(keyholder);
@@ -317,6 +358,35 @@ describe('facility close record and departure log (real DB)', () => {
             ]);
             const log = await prisma.auditLog.findFirstOrThrow({ where: { tableName: 'FacilityClose', affectedEntityId: { gt: closeIdFloor } } });
             expect(log.actorSystem).toBe('cron:nightly');
+            await prisma.auditLog.deleteMany({ where: { tableName: 'SYSTEM_NOTIFY', timestamp: { gte: new Date(Date.now() - 60_000) } } });
+        });
+
+        it('logs every segment of a visit the checkout splits across an event', async () => {
+            process.env.CRON_SECRET = 'test-secret';
+            const program = await prisma.program.create({
+                data: { name: `Program ${TAG}`, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: member.id },
+            });
+            programIds.push(program.id);
+            await prisma.event.create({
+                data: { name: `Event ${TAG}`, programId: program.id, startAt: new Date(Date.now() - 90 * 60_000), endAt: new Date(Date.now() - 30 * 60_000) },
+            });
+            const original = await open(member);
+
+            const res = await nightlyGET(cronReq());
+            expect(res.status).toBe(200);
+
+            const segments = await prisma.visit.findMany({ where: { personId: member.id }, orderBy: { arrivedAt: 'asc' } });
+            expect(segments).toHaveLength(2);
+            const [close] = await prisma.facilityClose.findMany({ where: { id: { gt: closeIdFloor } } });
+            expect(close).toMatchObject({ via: 'NIGHTLY_SWEEP', closedById: null });
+            const logs = await prisma.auditLog.findMany({ where: { tableName: 'FacilityClose', affectedEntityId: close.id } });
+            expect(logs).toHaveLength(2);
+            for (const seg of segments) {
+                expect(seg.facilityCloseId).toBe(close.id);
+                const row = logs.find(l => l.secondaryAffectedEntity === seg.id);
+                expect(row?.oldData).toEqual({ visitId: original.id, personId: member.id, departedAt: null, departedVia: null });
+                expect(row?.newData).toEqual({ visitId: seg.id, personId: member.id, departedAt: seg.departedAt!.toISOString(), departedVia: 'AUTO_CLOSE' });
+            }
             await prisma.auditLog.deleteMany({ where: { tableName: 'SYSTEM_NOTIFY', timestamp: { gte: new Date(Date.now() - 60_000) } } });
         });
 

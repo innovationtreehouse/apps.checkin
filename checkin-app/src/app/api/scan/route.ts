@@ -555,7 +555,7 @@ export const POST = withKiosk(
         // response reports facilityClosed.
         await finalizeFacilityClose(res, {
             closedById: auth.type === 'session' ? Number(auth.user.id) : participant.id,
-            via: closeVia(authType, isReplay ? clientEventId : null, forceCloseConfirmed),
+            via: closeVia(authType, isReplay ? clientEventId : null),
         }, isReplay ? eventTime : undefined);
         await notifyScanOutcome(res, eventTime);
         // After the tx (+ optional facility sweep) commits, so a concurrent

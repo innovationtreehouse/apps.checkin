@@ -36,28 +36,30 @@ export const GET = withCron(async () => {
                 data: { closedAt: now, closedById: null, via: "NIGHTLY_SWEEP" },
                 select: { id: true },
             });
-            // Force everybody out concurrently. One bad checkout must not abort the rest.
+            // Force everybody out concurrently. One bad checkout must not abort the rest,
+            // so each visit's checkout and its departure logs commit together, alone.
             const results = await Promise.allSettled(
                 // AUTO_CLOSE: stamped at cron-run time, so the member's real leave
                 // may be hours earlier. Correcting one of these is expected by
                 // construction and never flags (lib/visit/significance.ts).
-                abandonedVisits.map((visit) => processVisitCheckout(visit.id, now, undefined, "AUTO_CLOSE", close.id))
-            );
-            const departures: DepartureChange[] = [];
-            results.forEach((result, i) => {
-                // Empty: someone else departed the visit first, so this close set nothing.
-                const closed = result.status === "fulfilled" ? result.value.at(-1) : undefined;
-                if (closed?.departedAt && closed.departedVia) {
-                    const visit = abandonedVisits[i];
-                    departures.push({
-                        id: visit.id,
+                abandonedVisits.map((visit) => prisma.$transaction(async (tx) => {
+                    // Empty: someone else departed the visit first, so this close set nothing.
+                    const segments = await processVisitCheckout(visit.id, now, tx, "AUTO_CLOSE", close.id);
+                    // A visit split across events departs as several rows; each is logged.
+                    const departures: DepartureChange[] = segments.flatMap((seg) => seg.departedAt && seg.departedVia ? [{
+                        id: seg.id,
+                        previousVisitId: visit.id,
                         personId: visit.personId,
                         oldDepartedAt: visit.departedAt,
                         oldDepartedVia: visit.departedVia,
-                        departedAt: closed.departedAt,
-                        departedVia: closed.departedVia,
-                    });
-                }
+                        departedAt: seg.departedAt,
+                        departedVia: seg.departedVia,
+                    }] : []);
+                    await logCloseDepartures(tx, close.id, systemActor("cron:nightly"), departures);
+                    return segments;
+                }))
+            );
+            results.forEach((result, i) => {
                 if (result.status === "fulfilled") {
                     checkedOutCount += 1;
                 } else {
@@ -66,8 +68,6 @@ export const GET = withCron(async () => {
                     logger.error(`Failed to check out visit ${visit.id} (person ${visit.person.email}):`, result.reason);
                 }
             });
-
-            await logCloseDepartures(prisma, close.id, systemActor("cron:nightly"), departures);
 
             // If at least one was a isKeyholder, the facility was left "Open". We need to alert the board.
             const abandonedKeyholders = abandonedVisits.filter(v => v.person.isKeyholder);

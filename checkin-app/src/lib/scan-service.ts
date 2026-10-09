@@ -263,7 +263,7 @@ export async function processCheckout(
             where: { id: activeVisitId },
             data: { forceCloseWarnedAt: null, forceCloseToken: null }
         });
-        await sweepIfStandalone(db, { closedById: participant.id, via: closeVia(authType, replayEventId, forceCloseConfirmed) }, visitTime);
+        await sweepIfStandalone(db, { closedById: participant.id, via: closeVia(authType, replayEventId) }, visitTime);
     }
 
     // SUPERVISION INTERRUPT (#1436). Fires on EVERY badge departure, not just a
@@ -339,7 +339,7 @@ export async function closeOnOfferConfirm(
         });
     }
 
-    await sweepIfStandalone(db, { closedById: participant.id, via: closeVia(authType, replayEventId, forceCloseConfirmed) }, closeTime);
+    await sweepIfStandalone(db, { closedById: participant.id, via: closeVia(authType, replayEventId) }, closeTime);
     return apiJson({
         message: "Facility closed",
         type: "checkout" as const,
@@ -465,13 +465,16 @@ export const LATE_CLOSE_SKEW_MS = 2 * 60_000;
 export type FacilityCloser = { closedById: number; via: FacilityCloseVia };
 
 /** The path a scan-route close came through. */
-export function closeVia(authType: string, replayEventId: string | null, forceCloseConfirmed: boolean): FacilityCloseVia {
+export function closeVia(authType: string, replayEventId: string | null): FacilityCloseVia {
     if (authType !== "kiosk") return "WEB_CHECKOUT";
-    return replayEventId != null && forceCloseConfirmed ? "KIOSK_OFFLINE" : "KIOSK";
+    // A replay reached the server from the kiosk's offline queue, whichever confirm it carries.
+    return replayEventId != null ? "KIOSK_OFFLINE" : "KIOSK";
 }
 
 export type DepartureChange = {
     id: number;
+    /** The open visit this row replaced, when the checkout split it into segments. */
+    previousVisitId?: number;
     personId: number;
     oldDepartedAt: Date | null;
     oldDepartedVia: string | null;
@@ -495,7 +498,7 @@ export async function logCloseDepartures(
             tableName: "FacilityClose",
             affectedEntityId: facilityCloseId,
             secondaryAffectedEntity: c.id,
-            oldData: { visitId: c.id, personId: c.personId, departedAt: c.oldDepartedAt, departedVia: c.oldDepartedVia },
+            oldData: { visitId: c.previousVisitId ?? c.id, personId: c.personId, departedAt: c.oldDepartedAt, departedVia: c.oldDepartedVia },
             newData: { visitId: c.id, personId: c.personId, departedAt: c.departedAt, departedVia: c.departedVia },
         })),
     });
