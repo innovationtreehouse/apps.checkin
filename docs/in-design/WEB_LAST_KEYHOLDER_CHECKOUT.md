@@ -210,7 +210,10 @@ the full roster. A household lead sees a count.
 choices, and a close departs everyone at the typed departure, matching the
 kiosk's late-close rule. A keyholder who corrects the time of a close they made
 to an earlier one moves the departures that close set, for everyone. Correcting
-it to a later time moves only the closer's own departure; nobody else's changes. Every
+it to a later time moves only the closer's own departure; nobody else's changes.
+Someone who arrived between the corrected time and the original one keeps the
+departure the original close gave them, as with the kiosk's late close; it is a
+placeholder for a person to fix, not something the correction guesses at. Every
 departure a close sets or moves is logged: which close, who made it, through
 which path, and each visit's departure before and after.
 
@@ -256,11 +259,7 @@ pointing to §3.1.
 
 **`Q-CLOSE-LATER`: answered.** A later close time moves nobody else; see §3.1.
 
-**`Q-CLOSE-ARRIVALS`: someone arrived between the corrected (earlier) close time
-and the original one.** Recommendation: **leave their departure as it is.** They
-arrived after the corrected close, so the corrected close cannot have ended their
-visit; this is the same rule the kiosk's late close follows for arrivals after
-the keyholder's scan. Their visit stays logged as set by the original close.
+**`Q-CLOSE-ARRIVALS`: answered.** Left as the original close set them; see §3.1.
 
 **`Q-CLOSE-CORRECTED`: one of the people the close checked out has since corrected
 their own departure.** Recommendation: **their correction stands**, as with the
@@ -337,7 +336,9 @@ names are sent.
 - Add: a named keyholder who is not checked in is emailed.
 - Add: correcting a close to an earlier time moves the departures it set, and
   every departure a close sets or moves is logged ; a later correction moves only
-  the closer (plus the answers to `Q-CLOSE-ARRIVALS`, `Q-CLOSE-CORRECTED`).
+  the closer ; someone who arrived after
+  the corrected time keeps the original close's departure (plus the answer to
+  `Q-CLOSE-CORRECTED`).
 - Amend "Any keyholder can close the building at the kiosk with a double scan…" to
   the single-badge leave with a close offer, if `Q-KIOSK-SCOPE` puts it here.
 - Tag the board's close with the Arts. VI–VII citation and the owner's reading
