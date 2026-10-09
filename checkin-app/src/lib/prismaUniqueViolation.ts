@@ -7,7 +7,7 @@ interface P2002Meta {
  * Column names a P2002 collided on, or undefined if `error` is not a P2002.
  * The driver-adapter client (@prisma/adapter-pg) reports no `meta.target`; it
  * parses the fields from Postgres's `Key ("col")=(...)` detail, quotes included.
- * Pinned by src/lib/__tests__/prismaUniqueViolation.integration.test.ts.
+ * Pinned by src/app/__tests__/scanFlushRace.integration.test.ts.
  */
 export function uniqueViolationFields(error: unknown): string[] | undefined {
     if (typeof error !== "object" || error === null || (error as { code?: unknown }).code !== "P2002") {

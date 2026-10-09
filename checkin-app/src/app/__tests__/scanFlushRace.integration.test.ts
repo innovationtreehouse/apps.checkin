@@ -92,7 +92,7 @@ describe("Scan racing another check-in for the same person (real DB)", () => {
     it.each([
         ["intent IN", { intent: "IN" }],
         ["legacy toggle", {}],
-    ])("%s parks as a double IN and keeps the touch", async (_label, extra) => {
+    ])("%s parks as a double IN, keeps the touch, and queues it for review", async (_label, extra) => {
         const clientEventId = `evt-race-${_label.replace(/\s/g, "-")}`;
         const res = await POST(scanReq({ participantId: member.id, clientEventId, ...extra }));
         expect(res.status).toBe(200);
@@ -102,7 +102,8 @@ describe("Scan racing another check-in for the same person (real DB)", () => {
 
         const open = await prisma.visit.findMany({ where: { personId: member.id, departedAt: null } });
         expect(open).toHaveLength(1);
-        expect(await prisma.rawBadgeLog.findUnique({ where: { clientEventId } })).not.toBeNull();
+        const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId } });
+        expect(log?.reviewReason).toBe("conflict_double_in");
         const ev = await prisma.presenceEvent.findUnique({ where: { clientEventId } });
         expect(ev?.classification).toBe(PresenceClass.CONFLICT_DOUBLE_IN);
     });

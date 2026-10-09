@@ -3,7 +3,7 @@ import { logger } from "@/lib/logger";
 import { apiError, apiJson } from "@/lib/api-response";
 import { processCheckin, processCheckout, finalizeFacilityClose, forceCloseTokenMatches, notifyScanOutcome, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/scan-service";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
-import { applyPresenceIntent } from "@/lib/presence/project";
+import { applyPresenceIntent, flagForReview } from "@/lib/presence/project";
 import { config } from "@/lib/config";
 import { withKiosk } from "@/lib/kioskAuth";
 import { SCAN_PROTOCOL_VERSION } from "@/lib/scanProtocol";
@@ -504,15 +504,20 @@ export const POST = withKiosk(
             // toggle is PROJECTED; review parks keep their own class; warnings
             // (visit still open) stay unclassified.
             let classification: string | null = null;
+            let parkedDoubleIn = false;
             try {
                 const body = (await res.clone().json()) as { type?: string; reason?: string };
                 if (body.type === "checkin" || body.type === "checkout") {
                     classification = PresenceClass.PROJECTED;
                 } else if (body.type === "parked") {
                     classification = body.reason ? parkReasonToClass(body.reason) : null;
+                    parkedDoubleIn = body.reason === "double_in";
                 }
             } catch {
                 classification = null;
+            }
+            if (parkedDoubleIn) {
+                await flagForReview(tx, participant.id, clientEventId, "conflict_double_in");
             }
             await appendPresenceEvent(tx, {
                 personId: participant.id,
