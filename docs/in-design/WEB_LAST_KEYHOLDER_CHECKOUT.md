@@ -35,14 +35,15 @@ choice is recorded; and names go only to people who already read the roster.
   keyholder they believe is still inside; or cancel. Naming that keyholder only
   writes their name on the audit row. It does not check them in, because checking
   someone in needs their agreement and the app cannot get it at that moment.
-- **A caller who is not a keyholder** (household lead, board member, sysadmin) can
-  always check the keyholder out. What else they may choose is still open (§3,
-  question 1).
+- **A board member** gets the same three choices as a keyholder, keyholder or
+  not: the board is a superuser.
+- **A household lead** who is not a keyholder can always check the keyholder out,
+  but never closes the building: they choose leave or cancel.
 - **Correcting** an open visit closed offers the same choices and closes at the
   typed time. **Removing** an open visit never closes the building.
-- **Names** go to callers who already read the full roster: keyholders, so that
-  checking out on the web gives them what the kiosk would show. Everyone else gets
-  a count, which every signed-in member already receives.
+- **Names** go to keyholders and the board, who already read the full roster, so
+  checking out on the web shows what the kiosk would. A household lead gets a
+  count, which every signed-in member already receives.
 - **All four web paths** run one shared decision, including the legacy dashboard
   route and the home-page toggle that currently runs the kiosk's copy of the guard.
 - **Not changing:** the kiosk. A keyholder at the reader still closes with a double
@@ -180,36 +181,37 @@ is an Assumption in the register's sense: handled outside the app, and recorded.
 The owner confirms this reading or takes it to the Board (§3.2, question 2).
 
 **A non-keyholder can always check the last keyholder out.** Refusing them would
-put a gate where the visit-record rules put trust and review after the fact. What
-they may choose beyond checking the keyholder out is open (§3.2, question 1).
+put a gate where the visit-record rules put trust and review after the fact.
 
-**Names go to keyholders, not to non-keyholders.** A keyholder who checks out on
-the web instead of at the kiosk sees who is inside, as the kiosk would show them.
-A non-keyholder sees a count.
+**The board closes; a household lead does not.** A board member, keyholder or
+not, gets close, leave or cancel: the board is a superuser. A household lead who
+is not a keyholder gets leave or cancel. Neither is asked to name a keyholder on
+"leave"; they may not know one, and the audit row records who left the building
+open and in what capacity. The board closing without being a keyholder reads
+against Arts. VI–VII ("nobody opens or closes a facility without being an active
+keyholder"); this design takes the board's standing as superuser to cover it, and
+that reading goes with question 2.
+
+**Names go to keyholders and the board, not to household leads.** A keyholder who
+checks out on the web instead of at the kiosk sees who is inside, as the kiosk
+would show them; the board already reads the full roster. A household lead sees a
+count.
 
 **Rejected: handing over to a named keyholder by checking them in.** It needs both
 keyholders to agree, and the app can only hear from one of them.
 
 ### 3.2 Still to decide
 
-**1. What a non-keyholder caller may choose.** A household lead, board member or
-sysadmin who is not a keyholder, ending the last keyholder's visit with others
-inside.
+**1. Sysadmin.** A sysadmin who is neither a keyholder nor on the board already
+reads the full roster, so names widen nothing. Whether they may close is the open
+part: like the board, or like a household lead. Recommendation: **names, but leave
+or cancel only.** Closing the building is an operational act, not part of running
+the system, and least privilege gives a role only what its work needs.
 
-| Option | What happens | Trade-off |
-|---|---|---|
-| **N1. Leave or cancel** | The keyholder is checked out; the others stay inside with no keyholder. No close offered. | The checkout always works, and a non-keyholder never closes the building (Arts. VI–VII). |
-| N2. Close, leave or cancel, with a count | As a keyholder, but without names. | A close chosen blind, by someone who may not be there. **Policy-tier:** a non-keyholder closing. |
-| N3. Close, leave or cancel, names for roster-holders | Board and sysadmin see names, leads a count. | Same Policy question as N2, for board and sysadmin. |
-
-Recommendation: **N1.** It keeps the trust ruling (nothing is refused) and stays
-inside Arts. VI–VII. The non-keyholder is not asked to name a keyholder; they may
-not know one, and the audit row records that a non-keyholder left the building
-open. The board Sign Out modal loses its power to close; a board member who wants
-the building closed and is not a keyholder asks one.
-
-**2. Is "leave" within §VIII.3?** The owner's reading above, that the transfer and
-consent happen in the room, or a Board decision. **Policy-tier.** The answer also
+**2. Is "leave" within §VIII.3, and a board close within Arts. VI–VII?** The
+owner's readings above: the transfer and consent happen in the room, and the
+board's superuser standing covers a close by a board member who holds no keys.
+The owner confirms both, or takes them to the Board. **Policy-tier.** The answer also
 settles a second Assumption: the app does not model a primary keyholder, so the
 last recorded keyholder stands in for the primary one.
 
@@ -236,14 +238,6 @@ already read the board contact directory.
 Recommendation: **K1.** It costs one email, it is the only way a wrongly named
 keyholder finds out, and it nudges the right one to badge in so the record reads
 open. It is not a request for consent and does not change any visit.
-
-**5. Who gets names: keyholders only, or everyone who reads the full roster?**
-Board and sysadmin already receive every name on `GET /api/attendance`. Giving
-them names in the warning widens nothing; withholding them is consistent with
-"keyholders". Recommendation: **everyone with full roster access**, because the
-rule then reads off an existing gate rather than defining a new audience. Under
-N1, board and sysadmin who are not keyholders are never offered a close, so the
-names only tell them who they are leaving inside.
 
 **6. Correction and tombstone.** Previously recommended, now reconciled with the
 three choices; confirm both.
@@ -287,10 +281,9 @@ kiosk's inline copy; the kiosk path keeps its own.
 **Response shape.** The warning becomes a fixed body:
 
 - `type: "close_choice"`, with `othersInside` (a count), the allowed `choices`
-  (`close`, `leave`, `cancel` for a keyholder; `leave`, `cancel` for a
-  non-keyholder under N1), the token, and the seconds;
-- `names` only when the caller reads the full roster (question 5); kiosk labels,
-  as today;
+  (`close`, `leave`, `cancel` for a keyholder or board member; `leave`, `cancel`
+  for a household lead), the token, and the seconds;
+- `names` only for a keyholder, board member or sysadmin; kiosk labels, as today;
 - for a keyholder choosing `leave`, the request carries the named keyholder's id,
   and the server checks they hold the role.
 
@@ -322,8 +315,11 @@ names are sent.
 - Add the Assumption: the last recorded keyholder stands in for the primary
   keyholder of §VIII.3, which the app does not model.
 - Add a line that the kiosk does not offer "leave", tagged deliberate limit.
-- Record whatever the owner or Board decides on §VIII.3 at the Policy line it
-  qualifies.
+- Add who may close from the web: a keyholder or a board member, never a
+  household lead acting for a member; a household lead's checkout of a keyholder
+  always goes through.
+- Record whatever the owner or Board decides on §VIII.3 and on a board close under
+  Arts. VI–VII at the Policy lines they qualify.
 
 **Flow tests** (`checkin-app/flow-tests/last-keyholder-checkout.flow.test.ts`).
 The seed has no household with a non-keyholder lead and a keyholder member, so
@@ -337,8 +333,9 @@ changed.
    the facility reads closed with people inside; the audit row names keyholder2.
 4. Household lead checks out the last keyholder member: the warning has a count,
    no names, and no `close`; `leave` checks the member out and departs nobody else.
-5. Board member uses the legacy `DELETE` on the last keyholder: as test 4, with
-   names if question 5 goes that way.
+5. Board member who is not a keyholder uses the legacy `DELETE` on the last
+   keyholder: the warning carries names and the three choices; `close` departs
+   every visit.
 6. Correction closing the last keyholder's open visit at a past time, `close`:
    everyone departs at that time; someone who arrived after it stays inside.
 7. Tombstone of the last keyholder's open visit with others inside: removed,
