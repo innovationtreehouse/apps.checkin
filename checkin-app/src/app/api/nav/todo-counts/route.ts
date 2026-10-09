@@ -102,6 +102,9 @@ export type TodoCounts = {
     // `conflicts` = overlapping-visit conflicts across the caller's led programs;
     // drives the red badge on the "My Programs" nav item and the Conflicts subtab.
     lead?: { programs: LedProgram[]; conflicts?: number };
+    // Libraries the board has released (BoardSettings.releasedLibraries) — the nav's
+    // UI-only pre-release gate, see lib/libraryRelease.ts.
+    releasedLibraries?: string[];
 };
 
 /** RSVP tally (Yes/Maybe/No; NO_RESPONSE omitted). */
@@ -256,12 +259,13 @@ export const GET = withAuth({}, async (_req, auth) => {
     }
 
     // Global informational counts (not scoped to the caller).
-    const [building, buildingHousehold, activePrograms] = await Promise.all([
+    const [building, buildingHousehold, activePrograms, releaseSettings] = await Promise.all([
         prisma.visit.count({ where: { departedAt: null, deletedAt: null } }),
         user.householdId
             ? prisma.visit.count({ where: { departedAt: null, deletedAt: null, person: { householdId: user.householdId } } })
             : Promise.resolve(0),
         prisma.program.count({ where: { phase: "RUNNING" } }),
+        prisma.boardSettings.findUnique({ where: { id: 1 }, select: { releasedLibraries: true } }),
     ]);
 
     const result: TodoCounts = {
@@ -269,6 +273,7 @@ export const GET = withAuth({}, async (_req, auth) => {
         building,
         buildingHousehold,
         activePrograms,
+        releasedLibraries: releaseSettings?.releasedLibraries ?? [],
     };
 
     // ---- Lead surface (programs the caller runs as lead mentor) ----
