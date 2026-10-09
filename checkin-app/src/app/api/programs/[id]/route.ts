@@ -99,7 +99,6 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
                             id: true,
                             name: true,
                             email: true,
-                            phone: true,
                             householdId: true,
                             household: {
                                 select: {
