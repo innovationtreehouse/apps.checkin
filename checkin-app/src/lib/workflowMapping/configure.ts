@@ -24,7 +24,7 @@ export class WorkflowMappingHttpError extends Error {
   }
 }
 
-export function configureWorkflowMappingRuntime(): void {
+export function configureRuntime(): void {
   configureWorkflowMapping({
     auth: { getPrincipal },
     org: getOrg,
