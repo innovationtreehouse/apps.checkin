@@ -8,14 +8,14 @@ import { CLOSED_STATES, availableSigners, missingSeats, reimburseeUnknown } from
 import { filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
 import { listOpenFlags } from "./flagService";
 
-/** Expenses with a pending account hold, plus flags open to the caller's audience (FINANCE, Board). */
-export async function expenseOpsCount(principal: ExpensePrincipal): Promise<number> {
-  if (!principal.isFinance && !principal.isBoard) return 0;
-  const [held, flags] = await Promise.all([
+/** Expenses with a pending account hold, and flags open to the caller's audience (FINANCE, Board). */
+export async function expenseOpsCounts(principal: ExpensePrincipal): Promise<{ holds: number; openFlags: number }> {
+  if (!principal.isFinance && !principal.isBoard) return { holds: 0, openFlags: 0 };
+  const [holds, flags] = await Promise.all([
     db.expense.count({ where: { orgId: await getOrgId(), holds: { some: { status: "PENDING" } } } }),
     listOpenFlags(principal),
   ]);
-  return held + flags.length;
+  return { holds, openFlags: flags.length };
 }
 
 /** Lines in the caller's buckets with an open program-approver seat the caller may sign. */

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Button, Group, Select, Table, Text, TextInput, Title } from "@mantine/core";
 import { send, useLoad, useRoles, type Bucket } from "../components/api";
 import LoadError from "../components/LoadError";
+import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface PartOwner {
   id: number;
@@ -23,6 +24,7 @@ export default function OwnershipMapPage() {
 
   return (
     <>
+      <ExpenseSubNav current="/expense/ownership-map" />
       <Title order={3} mb="md">Ownership map</Title>
       {map.error && <LoadError what="the ownership map" message={map.error} onRetry={map.reload} />}
       <Table maw={640}>

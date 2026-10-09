@@ -4,6 +4,7 @@ import { Anchor, Badge, Button, Group, Paper, Select, Stack, Table, Text, Title 
 import { formatCents } from "@inventory/money";
 import { send, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
+import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface Hold {
   id: number;
@@ -32,6 +33,7 @@ export default function HoldsPage() {
 
   return (
     <>
+      <ExpenseSubNav current="/expense/holds" />
       <Title order={3} mb="md">Account holds</Title>
       {holds.error && <LoadError what="holds" message={holds.error} onRetry={holds.reload} />}
       {holds.data?.length === 0 && <Text c="dimmed">No pending holds.</Text>}

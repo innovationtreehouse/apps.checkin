@@ -98,6 +98,7 @@ export const PAGES: PageEntry[] = [
   // payload (leadsAnyProgram), matching the nav gate. Distinct from the attendee
   // "My Programs" tab above.
   { href: '/my-programs/attendance', label: 'My Programs (as Volunteer)', section: 'Personal', keywords: 'lead mentor program volunteer attendance', visible: LEADS_PROGRAM },
+  { href: '/my-programs/expense-approvals', label: 'Expense approvals', section: 'Personal', keywords: 'budget bucket sign-off approve expense reimbursement', visible: released('expense', LEADS_PROGRAM) },
   { href: '/my-programs/conflicts', label: 'Attendance Conflicts', section: 'Personal', keywords: 'lead mentor duplicate overlapping visit attendance', visible: LEADS_PROGRAM },
   // Stays visible to all members: also the Join/renewal entry for new applicants
   // who aren't a household lead yet (gating it on lead would break joining).
@@ -235,6 +236,7 @@ export const REGISTRY_EXCLUDED: string[] = [
   '/settings',               // redirects to /settings/membership
   '/attendance',             // redirects to /attendance/current
   '/my-programs',            // redirects to /my-programs/attendance
+  '/expense',                // redirects to /expense/expenses
   '/dev',                    // dev-tools hub, redirects to /dev/sent-mail
   '/dev/sent-mail',          // dev-only captured-email inbox (EMAIL_DEV_MOCK.md); 404s off dev
   '/dev/zoho-sign',          // dev-only Zoho Sign mock interstitial (404 in prod)

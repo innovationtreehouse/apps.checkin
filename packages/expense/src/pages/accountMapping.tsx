@@ -4,6 +4,7 @@ import { ActionIcon, Button, Group, Select, Table, Text, TextInput, Title } from
 import { IconTrash } from "@tabler/icons-react";
 import { send, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
+import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface Mapping {
   id: number;
@@ -39,6 +40,7 @@ export default function AccountMappingPage() {
 
   return (
     <>
+      <ExpenseSubNav current="/expense/account-mapping" />
       <Title order={3} mb="md">Account mapping</Title>
       {mappings.error && <LoadError what="account mapping" message={mappings.error} onRetry={mappings.reload} />}
       <Table>
