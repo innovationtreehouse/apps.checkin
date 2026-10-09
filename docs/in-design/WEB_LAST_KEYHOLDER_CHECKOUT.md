@@ -46,8 +46,7 @@ choice is recorded; and names go only to people who already read the roster.
   never closes the building.
 - **The kiosk** gets the same shape: one badge from the last keyholder checks them
   out and offers the close; a second badge closes. Today the first badge does not
-  check them out. Whether that change ships with this design is open
-  (`Q-KIOSK-SCOPE`).
+  check them out; this design changes that, server and offline kiosk alike.
 - **All four web paths** run one shared decision, including the legacy dashboard
   route and the home-page toggle that currently runs the kiosk's copy of the guard.
 
@@ -224,8 +223,11 @@ The confirm states the count and that they will read as inside a closed facility
 **The kiosk has an implied leave.** The owner's model: the last keyholder badges
 once and is checked out; the kiosk shows the close warning in red while the close
 can still be confirmed, then a persistent "no keyholder present" warning, and keeps
-showing who is inside. A second badge within the countdown closes. This differs
-from the kiosk today; see `Q-KIOSK-SCOPE`.
+showing who is inside. A second badge within the countdown closes. Today the
+last keyholder's first badge, with others inside, does not check them out: they
+stay recorded until a second badge closes. The change is part of this design and
+covers the offline kiosk (`client/client.py`) as well as the server; building it
+may take several PRs.
 
 **The trust principle.** Agreed text for `docs/rules/principles.md`, shipped as
 its own change:
@@ -265,15 +267,7 @@ pointing to §3.1.
 their own departure.** Recommendation: **their correction stands**, as with the
 kiosk's late close ("a departure a person has since corrected is not" moved).
 
-**`Q-KIOSK-SCOPE`: does the kiosk change ship with this design?** Today the last
-keyholder's first badge, with others inside, does **not** check them out: it shows
-the warning, and they stay recorded until a second badge closes the building
-(`docs/rules/attendance-checkin.md`, "Any keyholder can close…"). The owner's
-model checks them out on the first badge and offers the close, which is how the
-kiosk already behaves when another keyholder is still recorded. Recommendation:
-**same design, separate implementation change**, because the offline kiosk
-(`client/client.py`) runs its own copy of the warning and confirm and needs the
-same change.
+**`Q-KIOSK-SCOPE`: answered.** One design, built in several PRs; see §3.1.
 
 **`Q-KIOSK-COLOURS`: which warnings.** The kiosk today shows an orange
 "Facility closed, no keyholder present" banner while people are inside with no
@@ -339,8 +333,9 @@ names are sent.
   the closer ; someone who arrived after
   the corrected time keeps the original close's departure (plus the answer to
   `Q-CLOSE-CORRECTED`).
-- Amend "Any keyholder can close the building at the kiosk with a double scan…" to
-  the single-badge leave with a close offer, if `Q-KIOSK-SCOPE` puts it here.
+- Amend "Any keyholder can close the building at the kiosk with a double scan…":
+  the last keyholder's first badge checks them out and offers the close, online
+  and offline; a second badge within the countdown closes.
 - Tag the board's close with the Arts. VI–VII citation and the owner's reading
   that the board's superuser standing covers it.
 
