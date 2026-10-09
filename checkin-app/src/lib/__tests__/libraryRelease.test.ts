@@ -28,17 +28,24 @@ describe("isLibraryKey", () => {
 
 describe("inventory section tabs", () => {
   const keyholder = { id: 1, isKeyholder: true } as Parameters<typeof inventoryAreaLinks>[0];
+  const released = (releasedLibraries: string[]) => ({
+    member: { household: [], programs: [], programsAwaitingFinance: 0 },
+    building: 0,
+    buildingHousehold: 0,
+    activePrograms: 0,
+    releasedLibraries,
+  });
 
   it("drops each unreleased library's tabs for a non-board viewer", () => {
-    expect(inventoryAreaLinks(keyholder, [])).toEqual([]);
-    const catalogOnly = inventoryAreaLinks(keyholder, ["catalog"]).map((l) => l.href);
+    expect(inventoryAreaLinks(keyholder, released([]))).toEqual([]);
+    const catalogOnly = inventoryAreaLinks(keyholder, released(["catalog"])).map((l) => l.href);
     expect(catalogOnly.length).toBeGreaterThan(0);
     expect(catalogOnly.every((h) => h.startsWith("/catalog"))).toBe(true);
   });
 
   it("keeps every tab for a board member", () => {
     const board = { id: 2, isBoardMember: true } as Parameters<typeof inventoryAreaLinks>[0];
-    const hrefs = inventoryAreaLinks(board, []).map((l) => l.href);
+    const hrefs = inventoryAreaLinks(board, released([])).map((l) => l.href);
     expect(hrefs.some((h) => h.startsWith("/catalog"))).toBe(true);
     expect(hrefs.some((h) => h.startsWith("/inventory"))).toBe(true);
   });

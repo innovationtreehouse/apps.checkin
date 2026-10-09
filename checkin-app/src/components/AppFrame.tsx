@@ -30,6 +30,8 @@ import {
   IconMail,
   IconMoon,
   IconPackage,
+  IconReceipt,
+  IconReportMoney,
   IconSettings,
   IconShieldCheck,
   IconSun,
@@ -49,16 +51,22 @@ import { BuildInfoFooter } from '@/components/BuildInfoFooter';
 import { useTodoCounts } from '@/hooks/useTodoCounts';
 import { useConfirmNav } from '@/components/UnsavedChangesProvider';
 import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
-import { navBadgeFor, leadsAnyProgram } from '@/components/navBadges';
+import { sectionBadges, leadsAnyProgram } from '@/components/navBadges';
 import { CountBadge, badgeIntentFor } from '@/components/ui/CountBadge';
 import type { SessionUser } from '@/types/auth';
 import { FACILITY_SECTION_ROLES } from '@/lib/facilityNav';
-import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
+import { revenueOpsTabs } from '@/lib/financeNav';
 import { MEMBERSHIP_OPS_SECTION_ROLES } from '@/lib/membershipOpsNav';
 import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
 import { SETTINGS_SECTION_ROLES } from '@/lib/settingsNav';
-import { CATALOG_TOP_NAV, isCatalogViewerClient } from '@/lib/catalogNav';
-import { isLibraryVisible } from '@/lib/libraryRelease';
+import { CATALOG_TOP_NAV, inventoryAreaLinks } from '@/lib/catalogNav';
+import {
+  MY_PROGRAMS_LIBRARY_TABS,
+  MY_RECEIPTS_TABS,
+  expenseOpsTabs,
+  visibleLibraryTabs,
+  type NavTab,
+} from '@/lib/libraryNav';
 
 type NavItem = {
   href: string;
@@ -69,7 +77,10 @@ type NavItem = {
   visible: (user: SessionUser | undefined, signedIn: boolean, counts: TodoCounts | null) => boolean;
   // Per-role destination override. The hub (/membership-ops) redirects to the admin-only
   // first tab, so a reviewer-only user must be pointed straight at their one reachable tab.
-  hrefFor?: (user: SessionUser | undefined) => string;
+  hrefFor?: (user: SessionUser | undefined, counts: TodoCounts | null) => string;
+  // Section tabs under this entry: their routes highlight it and their pills fold
+  // into its badges. Library-slot entries also derive visibility and href from them.
+  tabs?: (user: SessionUser | undefined, counts: TodoCounts | null) => NavTab[];
   // Dev-instance-only item (hidden in prod). The target route 404s off a dev instance anyway;
   // this just keeps it out of the prod nav. Gated on useIsDevInstance() at render, not `visible`.
   devOnly?: boolean;
@@ -85,14 +96,29 @@ const NAV_ITEMS: NavItem[] = [
   },
   { href: '/my-activities', label: 'My Activities', icon: <IconActivity size={18} />, visible: (_u, signedIn) => signedIn },
   {
+    // The receipt library's own-receipt screens; hidden until it registers a tab.
+    href: '/my-receipts',
+    label: 'My Receipts',
+    icon: <IconReceipt size={18} />,
+    visible: (u, signedIn, counts) => signedIn && visibleLibraryTabs(MY_RECEIPTS_TABS, u, counts).length > 0,
+    hrefFor: (u, counts) => visibleLibraryTabs(MY_RECEIPTS_TABS, u, counts)[0]?.href ?? '/my-receipts',
+    tabs: (u, counts) => visibleLibraryTabs(MY_RECEIPTS_TABS, u, counts),
+  },
+  {
     // Staff home for program lead mentors — distinct route from the attendee
     // "My Programs" tab at /my-activities/programs. Visible only to someone who
-    // leads ≥1 program; that signal rides in on the todo-counts payload the nav
-    // already fetches (no new session field).
+    // leads ≥1 program (that signal rides in on the todo-counts payload) or who
+    // sees a library tab registered there, e.g. Expense approvals.
     href: '/my-programs',
     label: 'My Programs',
     icon: <IconUsersGroup size={18} />,
-    visible: (_u, signedIn, counts) => signedIn && leadsAnyProgram(counts),
+    visible: (u, signedIn, counts) =>
+      signedIn && (leadsAnyProgram(counts) || visibleLibraryTabs(MY_PROGRAMS_LIBRARY_TABS, u, counts).length > 0),
+    hrefFor: (u, counts) =>
+      leadsAnyProgram(counts)
+        ? '/my-programs'
+        : visibleLibraryTabs(MY_PROGRAMS_LIBRARY_TABS, u, counts)[0]?.href ?? '/my-programs',
+    tabs: (u, counts) => visibleLibraryTabs(MY_PROGRAMS_LIBRARY_TABS, u, counts),
   },
   { href: '/attendance', label: 'Attendance', icon: <IconClipboardList size={18} />, visible: (_u, signedIn) => signedIn },
   { href: '/programs', label: 'Programs', icon: <IconCalendarEvent size={18} />, visible: () => true },
@@ -107,18 +133,16 @@ const NAV_ITEMS: NavItem[] = [
       !!u?.toolStatuses?.some((ts) => ts.level === 'MAY_CERTIFY_OTHERS'),
   },
   {
-    // Global catalog (#1286 §7). Broader gate than the *-Ops items around it —
-    // any RBAC role, program leader, or volunteer sees it (isCatalogViewerClient,
-    // which mirrors the server catalog-viewer gate exactly via the session).
+    // Inventory (#1286 §7). Broader gate than the *-Ops items around it — any
+    // RBAC role, program leader, or volunteer sees it (isCatalogViewerClient,
+    // which mirrors the server catalog-viewer gate exactly via the session), plus
+    // anyone a registered Inventory library tab admits (FINANCE on Receiving).
     href: CATALOG_TOP_NAV.href,
-    label: CATALOG_TOP_NAV.label,
+    label: 'Inventory',
     icon: <IconPackage size={18} />,
-    visible: (u, signedIn, counts) =>
-      signedIn &&
-      isCatalogViewerClient(u) &&
-      (['catalog', 'local-inventory'] as const).some((lib) =>
-        isLibraryVisible(lib, { isBoardMember: u?.isBoardMember, releasedLibraries: counts?.releasedLibraries }),
-      ),
+    visible: (u, signedIn, counts) => signedIn && inventoryAreaLinks(u, counts).length > 0,
+    hrefFor: (u, counts) => inventoryAreaLinks(u, counts)[0]?.href ?? CATALOG_TOP_NAV.href,
+    tabs: inventoryAreaLinks,
   },
   {
     href: '/facility-ops',
@@ -154,11 +178,24 @@ const NAV_ITEMS: NavItem[] = [
     visible: (u) => !!u?.isSysadmin || !!u?.isBoardMember,
   },
   {
+    // Revenue Ops (path /finance-ops) admits FINANCE or BOARD; sysadmin has no
+    // access (issue #1083). Shown when the viewer has a visible tab: Board sees
+    // the finance tools, FINANCE only the registered library tabs.
     href: '/finance-ops',
-    label: 'Finance Ops',
+    label: 'Revenue Ops',
     icon: <IconCoin size={18} />,
-    // Finance Ops is board-only — sysadmin has no access (issue #1083).
-    visible: (u) => FINANCE_SECTION_ROLES.some((r) => !!u?.[r]),
+    visible: (u, _signedIn, counts) => revenueOpsTabs(u, counts).length > 0,
+    hrefFor: (u, counts) => revenueOpsTabs(u, counts)[0]?.href ?? '/finance-ops',
+    tabs: revenueOpsTabs,
+  },
+  {
+    // Expense Ops admits FINANCE or BOARD; hidden until a library tab is registered.
+    href: '/expense',
+    label: 'Expense Ops',
+    icon: <IconReportMoney size={18} />,
+    visible: (u, _signedIn, counts) => expenseOpsTabs(u, counts).length > 0,
+    hrefFor: (u, counts) => expenseOpsTabs(u, counts)[0]?.href ?? '/expense',
+    tabs: expenseOpsTabs,
   },
   {
     href: '/system-status',
@@ -331,14 +368,15 @@ function AppFrameInner({ children }: { children: React.ReactNode }) {
           style={{ overflowY: 'auto' }}
         >
           {visibleItems.map((item) => {
-            const href = item.hrefFor?.(user) ?? item.href;
-            const active = isActive(pathname, href);
+            const href = item.hrefFor?.(user, todoCounts) ?? item.href;
+            const tabs = item.tabs?.(user, todoCounts) ?? [];
+            const active = isActive(pathname, href) || isActive(pathname, item.href) || tabs.some((t) => isActive(pathname, t.href));
             // White labels on the colored sidebar; theme default (dark) elsewhere.
             const sidebarText = onColoredSidebar ? 'var(--mantine-color-white)' : undefined;
             // Badge keys off the canonical section href, not the per-role
             // destination — a reviewer-only user's link points at /review, but its
             // badges live under the /membership-ops case.
-            const badges = navBadgeFor(item.href, todoCounts);
+            const badges = sectionBadges(item.href, tabs, todoCounts);
             return (
               <NavLink
                 key={item.href}

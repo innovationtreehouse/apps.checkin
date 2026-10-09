@@ -13,6 +13,7 @@ import { apiError } from "@/lib/api-response";
 import { BROKEN_HOUSEHOLD_WHERE, UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { expiringApprovals } from "@/lib/trusted-adult/filters";
+import { collectLibraryCounts, type LibraryCounts } from "@/lib/navLibraryCounts";
 
 /**
  * Aggregate "things to do" counts for the left-nav badges. Every count is scoped
@@ -102,6 +103,10 @@ export type TodoCounts = {
     // `conflicts` = overlapping-visit conflicts across the caller's led programs;
     // drives the red badge on the "My Programs" nav item and the Conflicts subtab.
     lead?: { programs: LedProgram[]; conflicts?: number };
+    // Per-library pill counts from the providers in lib/navLibraryCounts.ts, keyed
+    // by library then by count name. A library is absent when the viewer cannot see
+    // it, its provider failed, or none is registered; the block is absent when empty.
+    libraries?: LibraryCounts;
     // Libraries the board has released (BoardSettings.releasedLibraries) — the nav's
     // UI-only pre-release gate, see lib/libraryRelease.ts.
     releasedLibraries?: string[];
@@ -461,6 +466,9 @@ export const GET = withAuth({}, async (_req, auth) => {
     if (canReviewBackgroundChecks(user)) {
         result.review = await reviewQueueCounts(user.id);
     }
+
+    const libraries = await collectLibraryCounts(user, result.releasedLibraries);
+    if (libraries) result.libraries = libraries;
 
     return NextResponse.json(result);
 });
