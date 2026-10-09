@@ -234,8 +234,9 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // plausible future reader; that is when it earns `their_own` on `userId`.
     'ExpenseAuditLog',
     // Receipt audit log (#1265 §6). Its `userId` is the acting Person.id, but only
-    // FINANCE reads the log (everyones:internal); a submitter never reads audit
-    // rows, so no `their_own` binding is planned.
+    // FINANCE and BOARD read the log (everyones grants, GET /api/receipts/[id]/
+    // audit-logs); a submitter never reads audit rows, so no `their_own` binding
+    // is planned.
     'ReceiptAuditLog',
     // Bulk-donation CSV uploads (#1280). `uploadedByUserId` is scopable since the
     // receipt binding, but uploads are finance-only (FINANCE/BOARD read, FINANCE
