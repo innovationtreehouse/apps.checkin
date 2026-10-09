@@ -74,7 +74,8 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
     await receiveCompletedReceipt({ ...allRecognized, needsReimbursement: true, reimburseePersonId: 9 });
 
     expect((await db.expense.findFirst({ where: { id: allRecognized.receiptId } }))!.reimburseePersonId).toBeNull();
-    expect(await db.expenseFlag.count({ where: { expenseId: allRecognized.receiptId, kind: "REIMBURSEE_UNKNOWN" } })).toBe(1);
+    const flags = await db.expenseFlag.findMany({ where: { expenseId: allRecognized.receiptId, kind: "REIMBURSEE_UNKNOWN" } });
+    expect(flags.map((f) => f.detail)).toEqual(["receipt named Person 9, not found"]);
   });
 
   it("a repeat call returns already_applied and changes nothing", async () => {

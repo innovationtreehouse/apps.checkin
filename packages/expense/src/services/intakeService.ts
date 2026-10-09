@@ -95,6 +95,8 @@ async function processCompletedReceipt(receipt: CompletedReceipt): Promise<boole
 
 async function createExpense(receipt: CompletedReceipt): Promise<void> {
   const reimburseePersonId = await resolvedReimbursee(receipt.reimburseePersonId ?? null);
+  const unresolvedDetail =
+    receipt.reimburseePersonId != null && reimburseePersonId === null ? `receipt named Person ${receipt.reimburseePersonId}, not found` : null;
   await db.$transaction(async (tx) => {
     await tx.expense.create({
       data: {
@@ -144,6 +146,7 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
         expenseId: receipt.receiptId,
         kind,
         audience: FLAG_AUDIENCE[kind],
+        detail: kind === "REIMBURSEE_UNKNOWN" ? unresolvedDetail : null,
       })),
       skipDuplicates: true,
     });
