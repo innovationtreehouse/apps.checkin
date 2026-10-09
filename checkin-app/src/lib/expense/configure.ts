@@ -101,6 +101,6 @@ const signoff: SignoffDirectory = {
   },
 };
 
-export function configureExpenseRuntime(): void {
+export function configureRuntime(): void {
   configureExpense({ org: getOrg, auth: { getPrincipal }, budgetOwners, signoff });
 }
