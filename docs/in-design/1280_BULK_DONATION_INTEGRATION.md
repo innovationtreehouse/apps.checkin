@@ -39,8 +39,9 @@ under the Finance area, with donor names visible only to the finance role.
 The base architecture is settled; this doc restates none of it. Read in order:
 the parallel port plan (`INVENTORY_PARALLEL_PORT_PLAN.md`, on branch
 `claude/inventory-checkin-parallel-plan-c44a41`), then
-`1286_GLOBAL_CATALOG_INTEGRATION.md` §1–§10, `1287_LOCAL_INVENTORY_INTEGRATION.md`
-§3–§5, and `1272_EXPENSE_QB_INTEGRATION.md` §5–§6 and §9. Everything below is a
+`docs/designs/COMPONENT_ARCHITECTURE.md` (the distilled global-catalog architecture),
+`1287_LOCAL_INVENTORY_INTEGRATION.md` §3–§5, and `1272_EXPENSE_QB_INTEGRATION.md`
+§5–§6 and §9. Everything below is a
 difference from those, or a decision they leave open.
 
 | Base decision | This port |

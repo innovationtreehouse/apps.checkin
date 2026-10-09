@@ -46,8 +46,8 @@ backlog CI4; it contains CI3 line→part association
 ([#1288](https://github.com/innovationtreehouse/checkin/issues/1288)) as one
 decision (§8d), not a separate app. Journey A16-2 in `docs/backlog/CUJS.md`.
 
-**Base architecture:** `1286_GLOBAL_CATALOG_INTEGRATION.md`, inherited and not
-restated; this doc states only the delta. Lane L7 of
+**Base architecture:** `docs/designs/COMPONENT_ARCHITECTURE.md` (the distilled global-catalog
+design), inherited and not restated; this doc states only the delta. Lane L7 of
 `INVENTORY_PARALLEL_PORT_PLAN.md`.
 
 **Source:** `workflow-mapping-app/` in `innovationtreehouse/Inventory` at
