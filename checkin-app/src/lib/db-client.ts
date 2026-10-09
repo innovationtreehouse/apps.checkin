@@ -1,20 +1,17 @@
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
-import prisma from "@/lib/prisma";
 
 /**
  * Shared root-or-tx client types. A transaction client exposes `$transaction`
  * too (calling it opens a savepoint), so {@link isRootClient} tells them apart
- * by identity: the root clients are the exported singleton plus any client
- * passed to {@link registerRootClient}.
+ * by identity: a root client is one passed to {@link registerRootClient}
+ * (the `@/lib/prisma` singleton registers itself).
  */
 export type TxClient = Prisma.TransactionClient;
 export type DbClient = PrismaClient | TxClient;
 
 const rootClients = new WeakSet<object>();
-// Unit tests may mock `@/lib/prisma` without a default export.
-if (prisma) rootClients.add(prisma);
 
-/** Mark a standalone client (e.g. the seed script's own) as a root client. */
+/** Mark a standalone client (the prisma singleton, the seed script's own) as a root client. */
 export function registerRootClient<T extends PrismaClient>(client: T): T {
     rootClients.add(client);
     return client;
