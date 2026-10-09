@@ -1,6 +1,6 @@
 /**
  * Nav descriptors for income. The library declares its screens; the host places them in
- * its Income section tabs and orders them.
+ * its sections; income's screens link to each other through IncomeSubnav.
  */
 
 export interface IncomeNavLink {
@@ -17,5 +17,3 @@ export const INCOME_NAV_LINKS: readonly IncomeNavLink[] = [
   { name: "QB Exclusions", href: "/income/exclusions", icon: "🚫" },
 ];
 
-/** The section's top-level nav entry. */
-export const INCOME_TOP_NAV = { label: "Income", href: "/income/payouts" } as const;

@@ -4,6 +4,7 @@ import { Button, Code, Group, Select, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { api, errorMessage, useIsFinance, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
+import IncomeSubnav from "../components/IncomeSubnav";
 
 interface ItemRow {
   variantId: string;
@@ -47,6 +48,7 @@ export default function ItemsPage() {
 
   return (
     <>
+      <IncomeSubnav />
       <Title order={3} mb="md">Item Categories</Title>
       <Text size="sm" c="dimmed" mb="md">Unmapped items book at organization level.</Text>
       {items.error && <LoadError what="items" message={items.error} onRetry={items.reload} />}

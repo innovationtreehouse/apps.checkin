@@ -137,6 +137,8 @@ export const PAGES: PageEntry[] = [
   { href: '/inventory/receiving/audit-log', label: 'Receiving Audit Log', section: 'Inventory', keywords: 'receipt mapping history', visible: released('workflow-mapping', RECEIVING) },
 
   // Income — FINANCE works it, BOARD reads it (the routes' finance-or-board gate).
+  // The index redirects to the reconciliation queue.
+  { href: '/income', label: 'Income', section: 'Income', keywords: 'shopify payout quickbooks', visible: released('income', FINANCE_OR_BOARD) },
   { href: '/income/payouts', label: 'Payouts', section: 'Income', keywords: 'shopify payout deposit', visible: released('income', FINANCE_OR_BOARD) },
   { href: '/income/reconciliation', label: 'Income Reconciliation', section: 'Income', keywords: 'payout deposit quickbooks drift', visible: released('income', FINANCE_OR_BOARD) },
   { href: '/income/items', label: 'Item Categories', section: 'Income', keywords: 'budget owner bucket class', visible: released('income', FINANCE_OR_BOARD) },
