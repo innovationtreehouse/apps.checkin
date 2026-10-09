@@ -53,8 +53,10 @@ export interface SignoffDirectory {
   bucketApprovers(bucketId: number): Promise<BucketApprovers>;
   financeHolders(): Promise<number[]>;
   boardMembers(): Promise<number[]>;
-  /** The submitter, the reimbursee, and everyone in either one's household. */
-  conflictedFor(expense: { submitterId: number; reimbursementFor: string | null }): Promise<number[]>;
+  /** Everyone in the given people's households. */
+  householdOf(personIds: number[]): Promise<number[]>;
+  /** Whether the id names a checkin Person. */
+  personExists(personId: number): Promise<boolean>;
   /** Whether the purchaser holds an org membership (a non-member's line takes a Board approver). */
   isOrgMember(personId: number): Promise<boolean>;
 }
@@ -64,7 +66,8 @@ export const inertSignoffDirectory: SignoffDirectory = {
   bucketApprovers: async () => ({ orgLevel: false, approvers: [] }),
   financeHolders: async () => [],
   boardMembers: async () => [],
-  conflictedFor: async () => [],
+  householdOf: async () => [],
+  personExists: async () => false,
   isOrgMember: async () => false,
 };
 
@@ -167,6 +170,9 @@ export const inertQbWriter: QbWriter = {
 export interface ExpenseIntake {
   receive(receipt: unknown): Promise<{ receiptId: string; status: "created" | "already_applied" }>;
 }
+
+/** FINANCE names the Person owed a reimbursement whose receipt did not carry one. */
+export type SetReimbursee = (orgId: string, expenseId: string, personId: number, principal: ExpensePrincipal) => Promise<void>;
 
 /** X12 callee: when QuickBooks recorded each receipt's reimbursement as paid; null = not yet. */
 export interface ReimbursementStatus {

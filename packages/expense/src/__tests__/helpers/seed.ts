@@ -32,6 +32,7 @@ export async function seedExpense(opts?: {
   needsReimbursement?: boolean;
   backfill?: boolean;
   noteInLieuOfReceipt?: boolean;
+  reimburseePersonId?: number;
 }): Promise<string> {
   const id = opts?.id ?? randomUUID();
   await db.expense.create({
@@ -42,6 +43,7 @@ export async function seedExpense(opts?: {
       needsReimbursement: opts?.needsReimbursement ?? false,
       backfill: opts?.backfill ?? false,
       noteInLieuOfReceipt: opts?.noteInLieuOfReceipt ?? false,
+      reimburseePersonId: opts?.reimburseePersonId ?? null,
       vendorName: opts?.vendorName ?? "Acme",
       currency: "USD",
       taxCents: opts?.taxCents ?? 0,
@@ -161,20 +163,22 @@ export function bindPorts(ports: Omit<Parameters<typeof configureExpense>[0], "o
   configureExpense({ org: () => ({ id: ORG, name: "Org One" }), ...ports });
 }
 
-/** A directory from plain lists; bucket 100+ is program-level with the given approvers. */
+/** A directory from plain lists; bucket 100+ is program-level with the given approvers; each `households` entry is one household. */
 export function directory(d: {
   approvers?: Record<number, number[]>;
   orgLevel?: number[];
   finance?: number[];
   board?: number[];
-  conflicted?: number[];
+  households?: number[][];
   nonMembers?: number[];
+  unknownPeople?: number[];
 }): SignoffDirectory {
   return {
     bucketApprovers: async (b) => ({ orgLevel: (d.orgLevel ?? []).includes(b), approvers: d.approvers?.[b] ?? [] }),
     financeHolders: async () => d.finance ?? [],
     boardMembers: async () => d.board ?? [],
-    conflictedFor: async () => d.conflicted ?? [],
+    householdOf: async (ids) => (d.households ?? []).filter((h) => h.some((id) => ids.includes(id))).flat(),
+    personExists: async (id) => !(d.unknownPeople ?? []).includes(id),
     isOrgMember: async (id) => !(d.nonMembers ?? []).includes(id),
   };
 }

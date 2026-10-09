@@ -2,7 +2,7 @@
 // receiptId — the "already applied" check lives here, so the in-process caller gets it.
 import { CompletedReceiptSchema, type CompletedReceipt } from "@inventory/receipt-types";
 import { db, isUniqueConstraintError } from "../db";
-import { assertOrg, getOrg } from "../runtime";
+import { assertOrg, getExpenseRuntime, getOrg } from "../runtime";
 import { logError } from "../lib/logger";
 import type { ExpenseIntake } from "../contract";
 import { initFinancialFlow, checkApprovalAutoTransition } from "../lib/financial-flow";
@@ -94,6 +94,9 @@ async function processCompletedReceipt(receipt: CompletedReceipt): Promise<boole
 }
 
 async function createExpense(receipt: CompletedReceipt): Promise<void> {
+  const reimburseePersonId = await resolvedReimbursee(receipt.reimburseePersonId ?? null);
+  const unresolvedDetail =
+    receipt.reimburseePersonId != null && reimburseePersonId === null ? `receipt named Person ${receipt.reimburseePersonId}, not found` : null;
   await db.$transaction(async (tx) => {
     await tx.expense.create({
       data: {
@@ -111,6 +114,7 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
         receiptDate: receipt.receiptDate,
         needsReimbursement: receipt.needsReimbursement,
         reimbursementFor: receipt.reimbursementFor,
+        reimburseePersonId,
         submittedAt: new Date(receipt.submittedAt),
         state: "pending",
         backfill: receipt.backfill,
@@ -137,15 +141,21 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
 
     const settings = await readExpenseSettings(tx, receipt.orgId);
     await tx.expenseFlag.createMany({
-      data: detectIntakeFlags(receipt, settings).map((kind) => ({
+      data: detectIntakeFlags({ ...receipt, reimburseePersonId }, settings).map((kind) => ({
         orgId: receipt.orgId,
         expenseId: receipt.receiptId,
         kind,
         audience: FLAG_AUDIENCE[kind],
+        detail: kind === "REIMBURSEE_UNKNOWN" ? unresolvedDetail : null,
       })),
       skipDuplicates: true,
     });
   });
+}
+
+/** The receipt's reimbursee when it names a checkin Person; an unresolvable id is held as unknown. */
+async function resolvedReimbursee(personId: number | null): Promise<number | null> {
+  return personId !== null && (await getExpenseRuntime().signoff.personExists(personId)) ? personId : null;
 }
 
 async function trackProvisionals(receipt: CompletedReceipt): Promise<void> {

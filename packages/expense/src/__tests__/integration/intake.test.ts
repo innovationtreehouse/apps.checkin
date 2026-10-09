@@ -6,6 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { fixture } from "@inventory/receipt-contract-fixtures";
 import { describeDb } from "../helpers/db";
+import { bindPorts, directory } from "../helpers/seed";
 import { db } from "../../db";
 import { receiveCompletedReceipt, replayReceivedPayloads } from "../../services/intakeService";
 
@@ -45,6 +46,36 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
     expect(s.payloads.map((p) => p.status)).toEqual(["applied"]);
     const expense = await db.expense.findFirst({ where: { id: allRecognized.receiptId } });
     expect(expense!.state).toBe("assign_ownership");
+  });
+
+  it("carries reimburseePersonId onto the expense; absent, the expense has no reimbursee", async () => {
+    bindPorts({ signoff: directory({}) });
+    await receiveCompletedReceipt({ ...allRecognized, needsReimbursement: true, reimburseePersonId: 9 });
+    expect((await db.expense.findFirst({ where: { id: allRecognized.receiptId } }))!.reimburseePersonId).toBe(9);
+
+    await receiveCompletedReceipt({ ...hasProvisional });
+    expect((await db.expense.findFirst({ where: { id: hasProvisional.receiptId } }))!.reimburseePersonId).toBeNull();
+  });
+
+  it("a reimbursement without reimburseePersonId raises REIMBURSEE_UNKNOWN to FINANCE; with one, or as a card charge, it does not", async () => {
+    const flagsOf = async (id: string) => (await db.expenseFlag.findMany({ where: { expenseId: id, kind: "REIMBURSEE_UNKNOWN" } })).map((f) => f.audience);
+    bindPorts({ signoff: directory({}) });
+    await receiveCompletedReceipt({ ...allRecognized, needsReimbursement: true });
+    expect(await flagsOf(allRecognized.receiptId)).toEqual(["FINANCE"]);
+
+    await receiveCompletedReceipt({ ...hasProvisional, needsReimbursement: true, reimburseePersonId: 9 });
+    await receiveCompletedReceipt({ ...allRecognized, receiptId: "r-card" });
+    expect(await flagsOf(hasProvisional.receiptId)).toEqual([]);
+    expect(await flagsOf("r-card")).toEqual([]);
+  });
+
+  it("a reimburseePersonId that names no Person is held like a missing one", async () => {
+    bindPorts({ signoff: directory({ unknownPeople: [9] }) });
+    await receiveCompletedReceipt({ ...allRecognized, needsReimbursement: true, reimburseePersonId: 9 });
+
+    expect((await db.expense.findFirst({ where: { id: allRecognized.receiptId } }))!.reimburseePersonId).toBeNull();
+    const flags = await db.expenseFlag.findMany({ where: { expenseId: allRecognized.receiptId, kind: "REIMBURSEE_UNKNOWN" } });
+    expect(flags.map((f) => f.detail)).toEqual(["receipt named Person 9, not found"]);
   });
 
   it("a repeat call returns already_applied and changes nothing", async () => {

@@ -52,7 +52,10 @@ model Expense {
   receiptTotalCents  Int       @map("receipt_total_cents")
   receiptDate        String?   @map("receipt_date")
   needsReimbursement Boolean   @default(false) @map("needs_reimbursement")
+  // Display only; the reimbursee is reimburseePersonId.
   reimbursementFor   String?   @map("reimbursement_for")
+  // checkin Person.id owed the reimbursement (no FK; Person lives in checkin's schema).
+  reimburseePersonId Int?      @map("reimbursee_person_id")
   submittedAt        DateTime  @map("submitted_at")
   state              String    @default("pending")
   // Historical QB-linked backfill: already booked in QuickBooks. Owner re-signoff is auto-approved
@@ -317,7 +320,8 @@ model ExpenseLineSignoff {
 }
 
 // A GC-FIN-CONTROL flag surfaced to finance or board for checkoff. kind: TAX_ATTACHED | CAPITAL_EQUIPMENT |
-// THRESHOLD_CROSSED | MISSING_RECEIPT | NON_EVERYDAY | COI. audience: FINANCE | BOARD.
+// THRESHOLD_CROSSED | MISSING_RECEIPT | NON_EVERYDAY | COI |
+// REIMBURSEE_UNKNOWN. audience: FINANCE | BOARD.
 model ExpenseFlag {
   id                   Int       @id @default(autoincrement())
   orgId                String    @map("org_id")

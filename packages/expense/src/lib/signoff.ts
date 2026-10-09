@@ -25,9 +25,19 @@ export interface SignoffFacts {
   conflicted: number[];
 }
 
+export const CLOSED_STATES = new Set(["qb_complete", "qb_skipped", "rejected"]);
+
 export interface FilledSeat {
   seat: Seat;
   signerUserId: number;
+}
+
+/**
+ * A reimbursement whose reimbursee is not known. Its conflict check cannot run, so it is held
+ * from the outbox and takes no sign-off until FINANCE sets the reimbursee.
+ */
+export function reimburseeUnknown(expense: { needsReimbursement: boolean; backfill: boolean; reimburseePersonId: number | null }): boolean {
+  return expense.needsReimbursement && !expense.backfill && expense.reimburseePersonId === null;
 }
 
 export function lineKind(expense: { needsReimbursement: boolean }): LineKind {

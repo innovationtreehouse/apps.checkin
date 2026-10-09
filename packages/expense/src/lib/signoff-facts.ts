@@ -7,8 +7,14 @@ import { lineKind, missingSeats, type FilledSeat, type Seat, type SignoffFacts }
 
 type SignoffExpense = Pick<
   Expense,
-  "id" | "orgId" | "submitterId" | "reimbursementFor" | "needsReimbursement" | "receiptTotalCents" | "noteInLieuOfReceipt"
+  "id" | "orgId" | "submitterId" | "reimburseePersonId" | "needsReimbursement" | "receiptTotalCents" | "noteInLieuOfReceipt"
 >;
+
+/** The submitter, the reimbursee when known, and everyone in either one's household. */
+export async function conflictedParties(expense: { submitterId: number; reimburseePersonId: number | null }): Promise<number[]> {
+  const parties = expense.reimburseePersonId === null ? [expense.submitterId] : [expense.submitterId, expense.reimburseePersonId];
+  return [...new Set([...parties, ...(await getExpenseRuntime().signoff.householdOf(parties))])];
+}
 
 /** Sign-off facts for each line of an expense, read once through the SignoffDirectory port. */
 export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promise<Map<number, SignoffFacts>> {
@@ -18,7 +24,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
     db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true } }),
     dir.financeHolders(),
     dir.boardMembers(),
-    dir.conflictedFor({ submitterId: expense.submitterId, reimbursementFor: expense.reimbursementFor }),
+    conflictedParties(expense),
     dir.isOrgMember(expense.submitterId),
     readExpenseSettings(db, expense.orgId),
   ]);

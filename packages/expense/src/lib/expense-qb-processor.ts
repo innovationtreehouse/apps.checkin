@@ -7,6 +7,7 @@ import { QbExpenseEventSchema, type QbExpenseEvent } from "../workflows/expense-
 import { lookupItems, getItem, listCategories, listSubcategories } from "./catalog";
 import { advanceWorkflow, advanceWorkflowInTx } from "./workflow-engine";
 import { unsignedLines } from "./signoff-facts";
+import { reimburseeUnknown } from "./signoff";
 import type { Expense } from "../generated/prisma/client";
 
 // ── Allocation helpers ────────────────────────────────────────────────────────
@@ -342,9 +343,9 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
   });
   if (existing) return;
 
-  // A line with an unfilled sign-off seat holds the expense out of the outbox; the last
-  // sign-off drains it.
-  if ((await unsignedLines(db, expense)).size > 0) return;
+  // An unknown reimbursee or a line with an unfilled sign-off seat holds the expense out of the
+  // outbox; setting the reimbursee or the last sign-off drains it.
+  if (reimburseeUnknown(expense) || (await unsignedLines(db, expense)).size > 0) return;
 
   try {
     await processExpenseForQb(orgId, expenseId, expense);
