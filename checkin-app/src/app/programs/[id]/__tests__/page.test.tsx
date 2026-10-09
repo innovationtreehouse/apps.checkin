@@ -37,6 +37,14 @@ async function selectMember(name: string) {
     fireEvent.click(await screen.findByLabelText(name));
 }
 
+/** Open the request modal, state which ask it is, send. The kind is required, so
+ *  "Send request" stays disabled until one is picked. */
+async function requestPlan(kind: RegExp = /^Payment plan$/) {
+    fireEvent.click(screen.getByRole("button", { name: /request a scholarship or payment plan/i }));
+    fireEvent.click(await screen.findByRole("radio", { name: kind }));
+    fireEvent.click(screen.getByRole("button", { name: /^Send request$/ }));
+}
+
 const household = {
     household: {
         householdMembers: [
@@ -359,11 +367,15 @@ describe("ProgramEnrollmentPage", () => {
         await screen.findByText("Which of your household wants to enroll?");
 
         await selectMember("Kid One");
-        fireEvent.click(screen.getByRole("button", { name: /request a scholarship or payment plan/i }));
+        await requestPlan();
         await waitFor(() =>
             expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/Requested! Please check your email/) })),
         );
         expect(fetchMock).toHaveBeenCalledWith("/api/programs/10/request-payment-plan", expect.objectContaining({ method: "POST" }));
+        const planCall = fetchMock.mock.calls.find((c) => String(c[0]).includes("request-payment-plan"));
+        expect(JSON.parse(String((planCall![1] as RequestInit).body))).toEqual(
+            expect.objectContaining({ kind: "PAYMENT_PLAN" }),
+        );
     });
 
     it("reports an error when starting enrollment for the payment plan fails", async () => {
@@ -386,7 +398,7 @@ describe("ProgramEnrollmentPage", () => {
         await screen.findByText("Which of your household wants to enroll?");
 
         await selectMember("Kid One");
-        fireEvent.click(screen.getByRole("button", { name: /request a scholarship or payment plan/i }));
+        await requestPlan();
         expect(await screen.findByText("Already pending.")).toBeInTheDocument();
     });
 
@@ -406,7 +418,7 @@ describe("ProgramEnrollmentPage", () => {
         await screen.findByText("Which of your household wants to enroll?");
 
         await selectMember("Kid One");
-        fireEvent.click(screen.getByRole("button", { name: /request a scholarship or payment plan/i }));
+        await requestPlan();
         expect(await screen.findByText(/failed to alert the Scholarship Review Team/)).toBeInTheDocument();
     });
 
@@ -420,7 +432,7 @@ describe("ProgramEnrollmentPage", () => {
 
         await selectMember("Kid One");
         global.fetch = jest.fn().mockRejectedValue(new Error("down"));
-        fireEvent.click(screen.getByRole("button", { name: /request a scholarship or payment plan/i }));
+        await requestPlan();
         await waitFor(() =>
             expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Network error requesting payment plan.", autoClose: false })),
         );

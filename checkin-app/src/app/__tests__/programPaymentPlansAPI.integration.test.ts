@@ -152,7 +152,9 @@ describe('Program payment-plan routes', () => {
         const held = (opts.held ?? opts.requested) ? new Date() : null;
         await prisma.programParticipant.upsert({
             where: { programId_personId: { programId, personId: participantId } },
-            update: { status: 'PENDING', isPaymentPlanRequested: opts.requested, pendingSince: new Date(), inventoryHeldAt: held, paymentPlanDeniedAt: null },
+            // scholarshipRequestKind resets too: the row is reused across cases, and a
+            // kind left over from a previous one would read as this request's own.
+            update: { status: 'PENDING', isPaymentPlanRequested: opts.requested, pendingSince: new Date(), inventoryHeldAt: held, paymentPlanDeniedAt: null, scholarshipRequestKind: null },
             create: { programId, personId: participantId, status: 'PENDING', isPaymentPlanRequested: opts.requested, pendingSince: new Date(), inventoryHeldAt: held },
         });
     }
@@ -448,6 +450,56 @@ describe('Program payment-plan routes', () => {
                 where: { programId_personId: { programId, personId: selfId } },
             });
             expect(row?.isPaymentPlanRequested).toBe(true);
+        });
+
+        it('records the kind the family stated', async () => {
+            await enroll(selfId, { requested: false });
+            mockSession.mockResolvedValue({ user: { id: selfId } });
+            const res = await RequestPost(requestReq({ participantId: selfId, kind: 'SCHOLARSHIP' }), params(programId));
+            expect(res.status).toBe(200);
+
+            const row = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId, personId: selfId } },
+            });
+            expect(row?.scholarshipRequestKind).toBe('SCHOLARSHIP');
+        });
+
+        it('400 on a kind that is not one of the three', async () => {
+            await enroll(selfId, { requested: false });
+            mockSession.mockResolvedValue({ user: { id: selfId } });
+            const res = await RequestPost(requestReq({ participantId: selfId, kind: 'FREE_MONEY' }), params(programId));
+            expect(res.status).toBe(400);
+
+            const row = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId, personId: selfId } },
+            });
+            expect(row?.isPaymentPlanRequested).toBe(false);
+        });
+
+        it('a kind-less request still records (drain-window client), leaving the kind null', async () => {
+            await enroll(selfId, { requested: false });
+            mockSession.mockResolvedValue({ user: { id: selfId } });
+            const res = await RequestPost(requestReq({ participantId: selfId }), params(programId));
+            expect(res.status).toBe(200);
+
+            const row = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId, personId: selfId } },
+            });
+            expect(row?.isPaymentPlanRequested).toBe(true);
+            expect(row?.scholarshipRequestKind).toBeNull();
+        });
+
+        it('a kind-less re-POST does NOT erase a kind the family already stated', async () => {
+            await enroll(selfId, { requested: false });
+            mockSession.mockResolvedValue({ user: { id: selfId } });
+            await RequestPost(requestReq({ participantId: selfId, kind: 'PAYMENT_PLAN' }), params(programId));
+            // Same shape a stale tab mid-deploy sends: no kind at all.
+            await RequestPost(requestReq({ participantId: selfId }), params(programId));
+
+            const row = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId, personId: selfId } },
+            });
+            expect(row?.scholarshipRequestKind).toBe('PAYMENT_PLAN');
         });
 
         it('409 when the enrollment is not awaiting payment (already ACTIVE)', async () => {

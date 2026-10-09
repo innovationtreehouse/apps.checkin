@@ -30,7 +30,7 @@ Status: **ALL 7 chips folded (V1–V7).** Every step tagged vs live code at base
 8. ✅ Webhook validates payment→activation (HMAC + variant-id check; H2 no-item → stays PENDING + board alert). NOTE: volunteer discount-code entitlement still NOT validated (`CO2`/#278)
 9. 🟡 Post-activation fan-out: welcome/congrats ✅ · **mailing-list `CM1` ❌ + badge-print `AT11` ❌ NOT wired to activation**
 10. ✅ 18+ student BG trigger on activation (`SA1` Trigger C)
-11. ✅ Scholarship/payment-plan request — but **scholarship not modeled distinctly**; rides the board payment-plan-certify override
+11. ✅ Scholarship/payment-plan request — the **ask** is now modeled distinctly (`scholarshipRequestKind`: SCHOLARSHIP / PAYMENT_PLAN / UNSURE, stated by the family, shown on the queue); the **grant** still rides the board payment-plan-certify override, and granted terms stay out of the app by decision
 
 ### A2. Returning family (annual renewal)  [bucket M]  — validated V1
 1. 🟡 Renewal cron OPENS the process ✅ but **auto-reminder SEND is gutted** (`renewalReminderSentAt` write-never — `CM5`); manual outreach only

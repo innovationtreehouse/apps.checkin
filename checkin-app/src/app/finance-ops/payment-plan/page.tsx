@@ -12,6 +12,7 @@ import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
 import { formatCents } from '@inventory/money';
 import { landsNextYear } from '@/lib/programYear';
+import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 type HouseholdLead = { id: number; name: string | null; email: string | null };
@@ -20,6 +21,7 @@ type PaymentPlanRequest = {
   programId: number;
   personId: number;
   pendingSince: string;
+  scholarshipRequestKind: string | null;
   person: {
     id: number;
     name: string | null;
@@ -185,6 +187,15 @@ export default function PendingParticipantsPage() {
           ? emails.map(e => <Text key={e} size="sm">{e}</Text>)
           : <Text size="sm" c="dimmed">—</Text>;
       },
+    },
+    {
+      header: 'Asked For',
+      sortBy: (req) => scholarshipRequestKindLabel(req.scholarshipRequestKind).toLowerCase(),
+      render: (req) => (
+        <Text size="sm" c={req.scholarshipRequestKind ? undefined : 'dimmed'}>
+          {scholarshipRequestKindLabel(req.scholarshipRequestKind)}
+        </Text>
+      ),
     },
     {
       header: 'Program',

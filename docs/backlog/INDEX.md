@@ -307,7 +307,7 @@ Not dropped (they're valid), not backlog (no plan to build). Revisit only if pri
 | **Formal data-subject rights + retention/disposal engine** — Know/Correct/Delete requests, retention schedule, legal-hold | Handled manually; a subject request has never been received. Only stale-membership auto-purge (M3) stays in scope. | TOPDOWN GC-DATA-RIGHTS · Q17 |
 | **Data-security ops** — 2FA/backups/unique-accounts/no-remote-access | Handled externally / already in the infra repo (AWS). Not app work. | Q18 |
 | **Financial-controls enforcement** — COI/kinship engine, segregation-of-duties enforcer, threshold *blocking* | Replaced by a flag→human-checkoff→audit model (Q14); the app records/routes, humans enforce. | Q14 |
-| **Scholarship cap engine** — 20%/50% caps, budget-line automation | Board decides case-by-case, each unique; fine as-is. | Q25 |
+| **Scholarship cap engine** — 20%/50% caps, budget-line automation | Board decides case-by-case, each unique; fine as-is. **Narrowed (2026-10-09): the request now records WHICH ask it is** (`scholarshipRequestKind`) — the review team could not tell a comp request from an installment request. The cap/budget engine stays unmodeled. | Q25 |
 | **Facility/shop/incidentals fee build** | Fees live in Shopify, paid by a few folks; no app build needed. | Q25 |
 | **Payment-plan Shopify flow** | Payment plans handled directly in QuickBooks; not building a Shopify flow. | Q25 |
 | **M9 — Corporate / Org-Partner membership** | Not needed in a real timeframe (Q33). | Q33 |
