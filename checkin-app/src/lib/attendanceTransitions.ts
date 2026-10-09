@@ -216,9 +216,8 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
     };
 
     // If we were handed a transaction client (caller already opened one — e.g.
-    // the scan route's per-participant lock), run the chunking on it directly:
-    // Postgres has no nested transactions and the tx client has no `$transaction`.
-    // Otherwise open our own transaction so the delete + recreates stay atomic.
+    // the scan route's per-participant lock), the chunking joins it as a
+    // savepoint, so it commits or rolls back with the caller. Otherwise open our own transaction so the delete + recreates stay atomic.
     const created = await withTx(db, chunk);
     invalidateAttendanceCache();
     return created;

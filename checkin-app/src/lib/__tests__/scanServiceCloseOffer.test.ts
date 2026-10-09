@@ -26,7 +26,7 @@ jest.mock("@/lib/supervision", () => ({
 
 const keyholder = { id: 1, isKeyholder: true } as Person;
 
-/** Tx-shaped fake (no `$transaction`, so isRootClient() is false). */
+/** Tx-shaped fake (not a registered root client, so isRootClient() is false). */
 function fakeDb(otherKeyholders: number, offered: { id: number } | null = null): DbClient {
     return {
         visit: {

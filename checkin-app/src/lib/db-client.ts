@@ -1,24 +1,42 @@
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
+import prisma from "@/lib/prisma";
 
 /**
- * Shared root-or-tx client types. The prisma singleton has `$transaction`; a
- * transaction client does not (it's in the ITX deny list) — that's how
- * {@link isRootClient} tells them apart at runtime.
+ * Shared root-or-tx client types. A transaction client exposes `$transaction`
+ * too (calling it opens a savepoint), so {@link isRootClient} tells them apart
+ * by identity: the root clients are the exported singleton plus any client
+ * passed to {@link registerRootClient}.
  */
 export type TxClient = Prisma.TransactionClient;
 export type DbClient = PrismaClient | TxClient;
 
+const rootClients = new WeakSet<object>();
+// Unit tests may mock `@/lib/prisma` without a default export.
+if (prisma) rootClients.add(prisma);
+
+/** Mark a standalone client (e.g. the seed script's own) as a root client. */
+export function registerRootClient<T extends PrismaClient>(client: T): T {
+    rootClients.add(client);
+    return client;
+}
+
 export function isRootClient(db: DbClient): db is PrismaClient {
+    return rootClients.has(db);
+}
+
+/** A tx client's runtime `$transaction`, which the generated TransactionClient type omits. */
+type NestableTxClient = TxClient & Pick<PrismaClient, "$transaction">;
+
+function isNestable(db: DbClient): db is NestableTxClient {
     return "$transaction" in db;
 }
 
 /**
- * Run `fn` under `db`: opens a new transaction if `db` is the root client, or
- * joins the caller's transaction (just calls `fn` directly) if `db` is
- * already a tx client. Lets a function be called standalone (owns its own
- * atomicity) or nested inside a caller's `$transaction` (joins it) without
- * double-wrapping.
+ * Run `fn` under `db`: opens a new transaction if `db` is a root client, or a
+ * SAVEPOINT inside the caller's transaction if `db` is already a tx client.
+ * Either way the work commits or rolls back with the caller, and an inner
+ * failure the caller catches rolls back only the inner writes.
  */
 export function withTx<T>(db: DbClient, fn: (tx: TxClient) => Promise<T>): Promise<T> {
-    return isRootClient(db) ? db.$transaction(fn) : fn(db);
+    return isNestable(db) ? db.$transaction(fn) : fn(db);
 }
