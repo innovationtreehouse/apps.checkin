@@ -81,7 +81,7 @@ function actionsFor(a: Approval, state: string, isFinance: boolean): Action[] {
 }
 
 /** /expense/expenses/[id] — lines, bucket approvals, sign-off seats, and FINANCE's actions. */
-export default function ExpenseDetailPage({ id }: { id: string }) {
+export default function ExpenseDetailPage({ id, listHref = "/expense/expenses" }: { id: string; listHref?: string }) {
   const base = `/expenses/${encodeURIComponent(id)}`;
   const { isFinance, isBoard } = useRoles();
   const expense = useLoad<Expense>(base);
@@ -127,7 +127,7 @@ export default function ExpenseDetailPage({ id }: { id: string }) {
 
   return (
     <Stack>
-      <Anchor href="/expense/expenses" size="sm">← Expenses</Anchor>
+      <Anchor href={listHref} size="sm">← Expenses</Anchor>
       <Group>
         <Title order={3}>{e.vendorName ?? e.id}</Title>
         <Badge color={STATE_COLORS[e.state] ?? "gray"} variant="light">{STATE_LABELS[e.state] ?? e.state}</Badge>

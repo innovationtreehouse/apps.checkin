@@ -4,6 +4,7 @@ import { ActionIcon, Button, Group, Table, Text, TextInput, Title } from "@manti
 import { IconTrash } from "@tabler/icons-react";
 import { send, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
+import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface QbAccount {
   id: number;
@@ -20,6 +21,7 @@ export default function QbAccountsPage() {
 
   return (
     <>
+      <ExpenseSubNav current="/expense/qb-accounts" />
       <Title order={3} mb="md">QuickBooks accounts</Title>
       {accounts.error && <LoadError what="QuickBooks accounts" message={accounts.error} onRetry={accounts.reload} />}
       <Table maw={640}>

@@ -9,7 +9,7 @@ import { describeDb } from "../helpers/db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { db } from "../../db";
 import { expenses } from "../../routes";
-import { expenseOpsCount, signoffsAwaitingCount } from "../../services/badgeCounts";
+import { expenseOpsCounts, signoffsAwaitingCount } from "../../services/badgeCounts";
 import type { ExpenseRouteHandler } from "../../contract";
 
 const OWN_BUCKET = 100;
@@ -119,7 +119,7 @@ describeDb("nav badge counts", () => {
     as(APPROVER);
     await db.expenseHold.create({ data: { orgId: ORG, expenseId, lineItemId, reason: "NO_MATCH", matchedRows: "[]" } });
     await db.expenseFlag.create({ data: { orgId: ORG, expenseId, kind: "TAX_ATTACHED", audience: "FINANCE" } });
-    expect(await expenseOpsCount(principal(3, { isFinance: true }))).toBe(2);
-    expect(await expenseOpsCount(principal(APPROVER))).toBe(0);
+    expect(await expenseOpsCounts(principal(3, { isFinance: true }))).toEqual({ holds: 1, openFlags: 1 });
+    expect(await expenseOpsCounts(principal(APPROVER))).toEqual({ holds: 0, openFlags: 0 });
   });
 });

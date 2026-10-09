@@ -203,6 +203,7 @@ describe("expense — approver sign-off journey", () => {
     expect((await send(finance, "POST", `${E}/line-items/${line.lineItemId}/signoffs`, { seat: "TREASURER" })).status).toBe(200);
     const status = await api<SignoffStatus[]>(approver, `${E}/signoffs`);
     expect(status.json[0]).toMatchObject({ filled: expect.arrayContaining(["PROGRAM_APPROVER", "TREASURER"]), missing: ["SUBMITTER"] });
+    expect((await api(approver, "/my-programs/expense-approvals")).status).toBe(200);
   });
 });
 

@@ -1,6 +1,7 @@
 /**
  * Nav descriptors for the expense screens (#1272 §7). The library declares them; the host
- * places them, orders them, and hides the FINANCE/Board-only ones from approvers.
+ * places them. `EXPENSE_TABS` are the host-level tabs (Expense Ops and My Programs);
+ * `EXPENSE_SUB_NAV` is the in-page navigation between FINANCE/Board screens under /expense.
  */
 
 export interface ExpenseNavLink {
@@ -8,17 +9,20 @@ export interface ExpenseNavLink {
   href: string;
   /** Emoji icon (the host's SectionTabs render an emoji string). */
   icon: string;
-  /** True for screens whose routes admit only FINANCE or Board. */
-  financeOrBoard?: boolean;
 }
 
-export const EXPENSE_NAV_LINKS: readonly ExpenseNavLink[] = [
+export const EXPENSE_TABS = {
+  expenses: { name: "Expenses", href: "/expense", icon: "🧾" },
+  settings: { name: "Settings", href: "/expense/settings", icon: "⚙️" },
+  approvals: { name: "Expense approvals", href: "/my-programs/expense-approvals", icon: "✍️" },
+} as const satisfies Record<string, ExpenseNavLink>;
+
+export const EXPENSE_SUB_NAV: readonly ExpenseNavLink[] = [
   { name: "Expenses", href: "/expense/expenses", icon: "🧾" },
-  { name: "Holds", href: "/expense/holds", icon: "⛔", financeOrBoard: true },
-  { name: "Flags", href: "/expense/flags", icon: "🚩", financeOrBoard: true },
-  { name: "Account Mapping", href: "/expense/account-mapping", icon: "🗂️", financeOrBoard: true },
-  { name: "QB Accounts", href: "/expense/qb-accounts", icon: "📒", financeOrBoard: true },
-  { name: "Ownership Map", href: "/expense/ownership-map", icon: "🪣", financeOrBoard: true },
-  { name: "Capital Seed", href: "/expense/capital-seed", icon: "🏷️", financeOrBoard: true },
-  { name: "Settings", href: "/expense/settings", icon: "⚙️", financeOrBoard: true },
+  { name: "Holds", href: "/expense/holds", icon: "⛔" },
+  { name: "Flags", href: "/expense/flags", icon: "🚩" },
+  { name: "Account Mapping", href: "/expense/account-mapping", icon: "🗂️" },
+  { name: "QB Accounts", href: "/expense/qb-accounts", icon: "📒" },
+  { name: "Ownership Map", href: "/expense/ownership-map", icon: "🪣" },
+  { name: "Capital Seed", href: "/expense/capital-seed", icon: "🏷️" },
 ];

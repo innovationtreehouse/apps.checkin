@@ -5,6 +5,7 @@ import { formatCents } from "@inventory/money";
 import { STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { PAGE_SIZE, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
+import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface ExpenseRow {
   id: string;
@@ -28,9 +29,17 @@ const VIEWS = [
   { value: "qb_pending", label: "QB pending" },
 ];
 
-/** /expense/expenses — the expense queue by view. Approvers see only their buckets' expenses. */
+/** /expense/expenses — FINANCE and Board's expense queue. */
 export default function ExpensesPage() {
-  const [view, setView] = useState("all");
+  return <ExpenseList detailBase="/expense/expenses" defaultView="all" subNav />;
+}
+
+/**
+ * The expense queue by view. The routes confine an approver to their buckets' expenses, so the
+ * same list serves Expense Ops and the approver's My Programs tab.
+ */
+export function ExpenseList({ detailBase, defaultView, subNav = false }: { detailBase: string; defaultView: string; subNav?: boolean }) {
+  const [view, setView] = useState(defaultView);
   const [page, setPage] = useState(1);
   const counts = useLoad<Record<string, number>>("/counts");
   const rows = useLoad<ExpenseRow[]>(`/expenses?view=${view}&page=${page}&limit=${PAGE_SIZE}`);
@@ -43,6 +52,7 @@ export default function ExpensesPage() {
 
   return (
     <>
+      {subNav && <ExpenseSubNav current="/expense/expenses" />}
       <Title order={3} mb="md">Expenses</Title>
       <SegmentedControl
         mb="md"
@@ -64,7 +74,7 @@ export default function ExpensesPage() {
           {(rows.data ?? []).map((e) => (
             <Table.Tr key={e.id}>
               <Table.Td>
-                <Anchor href={`/expense/expenses/${encodeURIComponent(e.id)}`}>{e.vendorName ?? e.id}</Anchor>
+                <Anchor href={`${detailBase}/${encodeURIComponent(e.id)}`}>{e.vendorName ?? e.id}</Anchor>
                 {e.needsReimbursement && <Badge ml="xs" size="xs" variant="light">Reimbursement</Badge>}
               </Table.Td>
               <Table.Td>{e.receiptDate ?? "—"}</Table.Td>

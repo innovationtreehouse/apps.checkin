@@ -2,6 +2,7 @@
 import { Badge, Button, Anchor, Table, Text, Title } from "@mantine/core";
 import { send, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
+import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface Flag {
   id: number;
@@ -17,6 +18,7 @@ export default function FlagsPage() {
   const flags = useLoad<Flag[]>("/flags");
   return (
     <>
+      <ExpenseSubNav current="/expense/flags" />
       <Title order={3} mb="md">Flags</Title>
       {flags.error && <LoadError what="flags" message={flags.error} onRetry={flags.reload} />}
       {flags.data?.length === 0 && <Text c="dimmed">No open flags.</Text>}
