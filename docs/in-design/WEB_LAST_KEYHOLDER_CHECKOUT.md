@@ -37,6 +37,8 @@ choice is recorded; and names go only to people who already read the roster.
   the named keyholder in. A named keyholder who is not checked in is emailed.
 - **A household lead** who is not a keyholder can always check the keyholder out,
   but chooses only leave or cancel, and sees a count instead of names.
+- **A sysadmin** who is neither a keyholder nor on the board also chooses only
+  leave or cancel; they do see names.
 - **Names** go to keyholders, board members and sysadmins, who already read the
   full roster.
 - **Correcting the close time earlier** moves everyone the close checked out, and
@@ -196,6 +198,11 @@ always check a keyholder member out, because refusing would put a gate where the
 visit-record rules put trust and review after the fact; they choose leave or
 cancel, and are not asked to name a keyholder.
 
+**A sysadmin does not close.** A sysadmin who is neither a keyholder nor on the
+board chooses leave or cancel, like a household lead, and is not asked to name a
+keyholder. Closing the building is an operational act, not part of running the
+system.
+
 **Names go to keyholders, board members and sysadmins.** All three already read
 the full roster. A household lead sees a count.
 
@@ -244,10 +251,7 @@ keyholders to agree, and the app hears from only one.
 Each question keeps its label; an answered one stays here as a one-line stub
 pointing to §3.1.
 
-**`Q-SYSADMIN-CLOSE`: may a sysadmin who is neither a keyholder nor on the board
-close?** Names are settled (they get them). Recommendation: **leave or cancel
-only.** Closing the building is an operational act, not part of running the
-system, and least privilege gives a role only what its work needs.
+**`Q-SYSADMIN-CLOSE`: answered.** A sysadmin does not close; see §3.1.
 
 **`Q-CLOSE-LATER`: does correcting a close to a later time move the others?**
 Recommendation: **no; only an earlier correction moves them.** A later close time
@@ -299,7 +303,7 @@ kiosk's inline copy; the kiosk path keeps its own.
 
 - `type: "close_choice"`, with `othersInside` (a count), the allowed `choices`
   (`close`, `leave`, `cancel` for a keyholder or board member; `leave`, `cancel`
-  for a household lead), the token, and the seconds;
+  for a household lead or sysadmin), the token, and the seconds;
 - `names` only for a keyholder, board member or sysadmin; kiosk labels, as today;
 - for a keyholder choosing `leave`, the request carries the named keyholder's id,
   and the server checks they hold the role.
@@ -326,7 +330,7 @@ names are sent.
 
 - Amend "The keyholder close-guard fires on every close path…": close, leave or
   cancel on the web; who gets which (keyholder and board: all three; household
-  lead: leave or cancel; sysadmin per `Q-SYSADMIN-CLOSE`); a tombstone never
+  lead and sysadmin: leave or cancel); a tombstone never
   closes; names to keyholders, board and sysadmins only.
 - Add the Assumption: a keyholder who leaves the building occupied has handed over
   in person to the keyholder they name; the app records the statement.
