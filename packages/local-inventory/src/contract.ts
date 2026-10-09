@@ -29,8 +29,11 @@ export interface InventoryAuth {
 
 export interface InventoryRuntimeConfig {
   auth: InventoryAuth;
-  /** Org identity as an accessor: single-org returns one row; multi-org resolves per request. */
-  org: () => OrgIdentity;
+  /**
+   * Org identity as an async accessor, called once per request: the host may
+   * resolve it from its own store, so it is never read at boot.
+   */
+  org: () => Promise<OrgIdentity>;
 }
 
 /** The slice of a route context a factory consumes: request + path params. */

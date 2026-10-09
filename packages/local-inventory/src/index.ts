@@ -27,6 +27,7 @@ export {
   configureLocalInventory,
   getPrincipal,
   getOrg,
+  getOrgId,
   inventoryError,
   mapServiceErrors,
   InventoryHttpError,

@@ -7,5 +7,5 @@ import { configureLocalInventory } from "@inventory/local-inventory";
 import { getPrincipal, TREEHOUSE_ORG } from "@/lib/catalog/configure";
 
 export function configureLocalInventoryRuntime(): void {
-  configureLocalInventory({ auth: { getPrincipal }, org: () => TREEHOUSE_ORG });
+  configureLocalInventory({ auth: { getPrincipal }, org: async () => TREEHOUSE_ORG });
 }

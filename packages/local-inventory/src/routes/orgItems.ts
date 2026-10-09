@@ -6,7 +6,7 @@
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
 import { db } from "../lib/db";
-import { getOrg, getPrincipal, getServices, inventoryError, mapServiceErrors } from "../runtime";
+import { getOrgId, getPrincipal, getServices, inventoryError, mapServiceErrors } from "../runtime";
 import type { InventoryRouteHandler } from "../contract";
 import { pageArgs, parseBody, query } from "./_shared";
 
@@ -24,8 +24,8 @@ const createSchema = z.object({
 const updateSchema = createSchema.omit({ gtin13: true }).strict();
 
 /** The filter shared by the list and its count, so page totals match rows. */
-function itemWhere(sp: URLSearchParams): Prisma.OrgItemWhereInput {
-  const where: Prisma.OrgItemWhereInput = { orgId: getOrg().id };
+async function itemWhere(sp: URLSearchParams): Promise<Prisma.OrgItemWhereInput> {
+  const where: Prisma.OrgItemWhereInput = { orgId: await getOrgId() };
   if (sp.get("unlocated") === "true") where.locationId = null;
   const q = sp.get("q")?.trim();
   if (q) {
@@ -39,14 +39,14 @@ function itemWhere(sp: URLSearchParams): Prisma.OrgItemWhereInput {
 }
 
 async function findItem(gtin13: string) {
-  return db.orgItem.findFirst({ where: { orgId: getOrg().id, gtin13 }, include });
+  return db.orgItem.findFirst({ where: { orgId: await getOrgId(), gtin13 }, include });
 }
 
 export const list: InventoryRouteHandler = async ({ req }) => {
   const sp = query(req);
   return {
     OrgItem: await db.orgItem.findMany({
-      where: itemWhere(sp),
+      where: await itemWhere(sp),
       orderBy: { gtin13: "asc" },
       include,
       ...pageArgs(sp),
@@ -55,7 +55,7 @@ export const list: InventoryRouteHandler = async ({ req }) => {
 };
 
 export const count: InventoryRouteHandler = async ({ req }) => ({
-  InventoryCount: { total: await db.orgItem.count({ where: itemWhere(query(req)) }) },
+  InventoryCount: { total: await db.orgItem.count({ where: await itemWhere(query(req)) }) },
 });
 
 export const get: InventoryRouteHandler = async ({ params }) => {
@@ -66,23 +66,26 @@ export const get: InventoryRouteHandler = async ({ params }) => {
 
 export const create: InventoryRouteHandler = async ({ req }) => {
   const data = await parseBody(req, createSchema);
+  const orgId = await getOrgId();
   const principal = await getPrincipal();
   await mapServiceErrors(() =>
-    getServices().inventoryService.createItem(getOrg().id, data, principal.id, principal.name ?? undefined),
+    getServices().inventoryService.createItem(orgId, data, principal.id, principal.name ?? undefined),
   );
   return { OrgItem: await findItem(data.gtin13) };
 };
 
 export const update: InventoryRouteHandler = async ({ req, params }) => {
   const data = await parseBody(req, updateSchema);
+  const orgId = await getOrgId();
   const principal = await getPrincipal();
   await mapServiceErrors(() =>
-    getServices().inventoryService.updateItem(getOrg().id, params.gtin13, data, principal.id, principal.name ?? undefined),
+    getServices().inventoryService.updateItem(orgId, params.gtin13, data, principal.id, principal.name ?? undefined),
   );
   return { OrgItem: await findItem(params.gtin13) };
 };
 
 export const remove: InventoryRouteHandler = async ({ params }) => {
-  await mapServiceErrors(() => getServices().inventoryService.deleteItem(getOrg().id, params.gtin13));
+  const orgId = await getOrgId();
+  await mapServiceErrors(() => getServices().inventoryService.deleteItem(orgId, params.gtin13));
   return {};
 };

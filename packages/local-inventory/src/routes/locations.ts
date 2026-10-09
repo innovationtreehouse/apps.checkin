@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 import { db } from "../lib/db";
-import { getOrg, getPrincipal, getServices, mapServiceErrors } from "../runtime";
+import { getOrgId, getPrincipal, getServices, mapServiceErrors } from "../runtime";
 import type { InventoryRouteHandler } from "../contract";
 import { parseBody, parseId } from "./_shared";
 
@@ -13,7 +13,7 @@ const reassignSchema = z.object({ targetLocationId: z.number().int().positive("t
 
 export const list: InventoryRouteHandler = async () => ({
   Location: await db.location.findMany({
-    where: { orgId: getOrg().id },
+    where: { orgId: await getOrgId() },
     orderBy: { name: "asc" },
     include: { _count: { select: { primaryItems: true, backstockItems: true } } },
   }),
@@ -23,7 +23,7 @@ export const create: InventoryRouteHandler = async ({ req }) => {
   const { name } = await parseBody(req, nameSchema);
   const principal = await getPrincipal();
   const location = await getServices().locationService.createLocation(
-    getOrg().id, name, principal.id, principal.name ?? undefined,
+    await getOrgId(), name, principal.id, principal.name ?? undefined,
   );
   return { Location: location };
 };
@@ -31,18 +31,20 @@ export const create: InventoryRouteHandler = async ({ req }) => {
 export const update: InventoryRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
   const { name } = await parseBody(req, nameSchema);
+  const orgId = await getOrgId();
   const principal = await getPrincipal();
   const location = await mapServiceErrors(() =>
-    getServices().locationService.updateLocation(id, getOrg().id, name, principal.id, principal.name ?? undefined),
+    getServices().locationService.updateLocation(id, orgId, name, principal.id, principal.name ?? undefined),
   );
   return { Location: location };
 };
 
 export const remove: InventoryRouteHandler = async ({ params }) => {
   const id = parseId(params.id);
+  const orgId = await getOrgId();
   const principal = await getPrincipal();
   await mapServiceErrors(() =>
-    getServices().locationService.deleteLocation(id, getOrg().id, principal.id, principal.name ?? undefined),
+    getServices().locationService.deleteLocation(id, orgId, principal.id, principal.name ?? undefined),
   );
   return {};
 };
@@ -50,10 +52,11 @@ export const remove: InventoryRouteHandler = async ({ params }) => {
 export const reassign: InventoryRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
   const { targetLocationId } = await parseBody(req, reassignSchema);
+  const orgId = await getOrgId();
   const principal = await getPrincipal();
   await mapServiceErrors(() =>
     getServices().locationService.reassignLocation(
-      id, targetLocationId, getOrg().id, principal.id, principal.name ?? undefined,
+      id, targetLocationId, orgId, principal.id, principal.name ?? undefined,
     ),
   );
   return {};

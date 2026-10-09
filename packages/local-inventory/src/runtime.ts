@@ -46,8 +46,13 @@ export async function getPrincipal(): Promise<InventoryPrincipal> {
 }
 
 /** Org identity for the current request (#1287 §6). */
-export function getOrg(): OrgIdentity {
+export function getOrg(): Promise<OrgIdentity> {
   return requireRuntime().org();
+}
+
+/** The current request's org id, the scope of every inventory row. */
+export async function getOrgId(): Promise<string> {
+  return (await getOrg()).id;
 }
 
 function buildServices() {
