@@ -1,6 +1,6 @@
 /**
  * Registry-wide admission invariants for the role-flag gates (catalog-viewer,
- * finance, finance-or-board, anyRole). Pure: no DB, no HTTP.
+ * finance, finance-or-board, expense-approver, anyRole). Pure: no DB, no HTTP.
  *
  * 1. An id-less session — a JWT whose re-sync missed after a person merge or
  *    delete — is denied on every such route, even holding every flag. Prisma
@@ -16,11 +16,11 @@ import prisma from '@/lib/prisma';
 import '@/security/registry';
 
 const isRoleFlagGate = (a: Authorize) =>
-    a === 'catalog-viewer' || a === 'finance' || a === 'finance-or-board' ||
+    a === 'catalog-viewer' || a === 'finance' || a === 'finance-or-board' || a === 'expense-approver' ||
     (typeof a === 'object' && 'anyRole' in a);
 
 const isFinanceGate = (a: Authorize) =>
-    a === 'finance' || a === 'finance-or-board' ||
+    a === 'finance' || a === 'finance-or-board' || a === 'expense-approver' ||
     (typeof a === 'object' && 'anyRole' in a && a.anyRole.includes('isFinance'));
 
 const everyFlagUser: AuthenticatedUser = {
@@ -61,8 +61,9 @@ const gated = [...allRoutes()].filter(([, r]) => isRoleFlagGate(r.authorize));
 const finance = [...allRoutes()].filter(([, r]) => isFinanceGate(r.authorize));
 
 beforeEach(() => {
-    // The designation leg would admit by email; make it match so only the id guard can deny.
+    // The designation and treasurer legs would admit by lookup; make them match so only the id guard can deny.
     prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue({ id: 1 });
+    prisma.programVolunteer.findFirst = jest.fn().mockResolvedValue({ programId: 1 });
 });
 
 describe('id-less session on role-flag gates', () => {
@@ -75,7 +76,7 @@ describe('id-less session on role-flag gates', () => {
     });
 
     test.each<Authorize>([
-        'catalog-viewer', 'finance', 'finance-or-board',
+        'catalog-viewer', 'finance', 'finance-or-board', 'expense-approver',
         { anyRole: ['isFinance'] }, { anyRole: ['isSysadmin', 'isBoardMember'] },
     ])('%j denies an id-less session holding every flag', async (authorize) => {
         expect((await resolveAccess(authorize, ctx(idless))).allowed).toBe(false);
