@@ -230,6 +230,12 @@ does not check them out: they stay recorded until a second badge closes. The
 change is part of this design and covers the offline kiosk (`client/client.py`)
 as well as the server; building it may take several PRs.
 
+Leaving at the kiosk names no keyholder. The reader has no pick-list, and a
+second keyholder in the room can badge in at the same reader, which records the
+handover properly. The audit row for a kiosk leave says the handover was not
+named. This is a deliberate limit: adding a picker to an unattended badge reader
+is not worth what it would record.
+
 The kiosk's colours stay as they are. The single-badge leave returns the same
 close offer the kiosk already shows when another keyholder is recorded: the amber
 "checked out" banner with its countdown. After it, the dashboard's existing orange
@@ -311,7 +317,15 @@ keyholder adds a keyholder picker. Kiosk wording ("badge again") leaves the web
 copy.
 
 **Guard.** `lastKeyholderGuard` takes the actor as well as the subject, works out
-the allowed choices from both, and mints a token for the choice. The audit row
+the allowed choices from both, and mints a token for the choice.
+
+**Confirm token.** The token is bound to the actor who was shown the choice: the
+visit stores the actor's id beside the token, and a confirm from any other actor
+fails as if the token did not match. The allowed choices are not carried in the
+token or trusted from the request. On confirm the server works them out again
+from the actor and subject as they stand, and refuses a choice outside them; a
+role revoked between warning and confirm takes effect. The token stays single
+use, and a new warning replaces it. The audit row
 records actor, subject, choice, named keyholder and count; the legacy `DELETE`
 writes it too, which it does not today. The guard loads person rows only when
 names are sent.
@@ -340,10 +354,30 @@ names are sent.
 `docs/rules/principles.md` gains the trust principle (text in §3.1), in its own
 change.
 
-**Logging.** A facility close today is a bulk update that writes no per-visit
-audit and does not say which close set a departure. Correcting a close's time
-needs both, so each close becomes a record (who, when, path, choice), and each
-departure it sets or moves is logged against it with before and after.
+**Close record.** A facility close today is a bulk update that writes no
+per-visit audit and does not say which close set a departure. Correcting a close's
+time needs both. Sketch, to be settled in build step 1:
+
+| `FacilityClose` field | Meaning |
+|---|---|
+| `id` | |
+| `closedAt` | The close time every departure it sets uses: the keyholder's scan time, or the typed time on a correction. Moves when the close is corrected. |
+| `closedById` | The person who closed. Always a person: every close is a keyholder's badge or a web choice. FK to `Person`. |
+| `via` | `KIOSK`, `KIOSK_OFFLINE`, `WEB_CHECKOUT`, `WEB_CORRECTION`, `WEB_DASHBOARD` (the legacy route). |
+| `createdAt` | When the server applied it; differs from `closedAt` on a late or offline close. |
+
+- `Visit.facilityCloseId`, nullable, set on every departure a close stamps. A
+  correction of the close moves visits carrying its id whose departure is still
+  `FACILITY_CLOSE`; a person's own correction restamps the departure as `TYPED`,
+  which takes it out of reach, as the owner ruled.
+- Each departure a close sets or moves writes an `AuditLog` row: actor, the visit,
+  before and after, and the `FacilityClose` id.
+- A *leave* is not a close and makes no `FacilityClose`; it writes one `AuditLog`
+  row with the choice, the named keyholder (or "not named" at the kiosk) and the
+  count left inside.
+- Both new columns are additive and nullable, so old code serving during the
+  deploy is unaffected. The `Person` FK needs a merge disposition; sensitivity
+  tiers go on the fields in the same PR.
 
 **Flow tests** (`checkin-app/flow-tests/last-keyholder-checkout.flow.test.ts`).
 The seed has no household with a non-keyholder lead and a keyholder member, so
@@ -388,11 +422,19 @@ One design, several PRs. Each PR amends the rules-doc lines for the part it ship
    correction moves the departures its close set; a later one moves only the
    closer.
 4. **Kiosk, server side.** The last keyholder's first badge checks them out and
-   offers the close, with "no other keyholder is checked in" copy. The kiosk client already handles a close
-   offer (it gets one today when another keyholder is recorded), so this ships
-   before the client change.
+   offers the close, with "no other keyholder is checked in" copy. The kiosk
+   client already handles a close offer (it gets one today when another keyholder
+   is recorded), so this ships before the client change. The scan route's
+   late-close check must change in the same PR. It accepts a confirmed close only
+   against the keyholder's visit still open, or one the overnight sweep closed
+   after the scan. After a single-badge leave the keyholder's own badge has
+   already departed them (`SCANNER`), so a confirm arriving late or replayed would
+   park. The check also accepts a visit departed by the keyholder's own scan at or
+   before the confirm, carrying the offer's token, or the offline confirm flag on
+   a replay.
 5. **Kiosk, offline.** `client/client.py` runs the same single-badge leave and
-   close offer while disconnected.
+   close offer while disconnected, and queues the leave and the confirm as two
+   events. Step 4's widened check is what lets that pair replay without parking.
 
 The trust principle ships on its own, in any order.
 
