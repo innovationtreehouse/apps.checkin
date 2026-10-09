@@ -5,65 +5,121 @@ generator client {
   moduleFormat = "cjs"
 }
 
+// Brings the bulk-donation schema under checkin's security regime (design #1280 §4):
+// the same generator emits a classifications map, merged in
+// checkin-app/src/security/core.ts. Output lands beside checkin's own
+// generated map; paths are relative to this schema file.
+generator security {
+  provider = "node ../../checkin-app/scripts/security-generator.js"
+  output   = "../../../checkin-app/src/security/generated/donation-classifications.ts"
+}
+
 datasource db {
   provider = "postgresql"
 }
 
 model UploadedFile {
+  /// @sensitivity:internal
   id                 Int       @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId              String    @map("org_id")
+  /// @sensitivity:internal
   uploadedByUserId   Int       @map("uploaded_by_user_id")
+  /// @sensitivity:internal
   uploadedAt         DateTime  @default(now()) @map("uploaded_at")
+  /// @sensitivity:internal
   originalFilename   String    @map("original_filename")
+  /// @sensitivity:pii
   fileBlob           Bytes?    @map("file_blob")
+  /// @sensitivity:internal
   fileHash           String    @map("file_hash")
+  /// @sensitivity:internal
   rowCount           Int       @default(0) @map("row_count")
+  /// @sensitivity:internal
   newRowCount        Int       @default(0) @map("new_row_count")
+  /// @sensitivity:internal
   duplicateRowCount  Int       @default(0) @map("duplicate_row_count")
+  /// @sensitivity:internal
   allDuplicate       Boolean   @default(false) @map("all_duplicate")
+  /// @sensitivity:internal
   blobDeleted        Boolean   @default(false) @map("blob_deleted")
 
   @@map("uploaded_files")
 }
 
 model Transaction {
+  /// @sensitivity:internal
   id                     Int       @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId                  String    @map("org_id")
+  /// @sensitivity:internal
   uploadedFileId         Int       @map("uploaded_file_id")
+  /// @sensitivity:internal
   transactionId          String    @map("transaction_id")
+  /// @sensitivity:internal
   importedAt             DateTime  @default(now()) @map("imported_at")
 
+  /// @sensitivity:internal
   nonprofitName          String?   @map("nonprofit_name")
+  /// @sensitivity:internal
   nonprofitId            String?   @map("nonprofit_id")
+  /// @sensitivity:internal
   disbursementId         String?   @map("disbursement_id")
+  /// @sensitivity:internal
   disbursementDate       String?   @map("disbursement_date")
+  /// @sensitivity:internal
   bankDate               String?   @map("bank_date")
+  /// @sensitivity:internal
   bankReferenceId        String?   @map("bank_reference_id")
+  /// @sensitivity:internal
   paymentMethod          String?   @map("payment_method")
+  /// @sensitivity:internal
   disbursementFrom       String?   @map("disbursement_from")
+  /// @sensitivity:internal
   projectName            String?   @map("project_name")
+  /// @sensitivity:internal
   projectId              String?   @map("project_id")
+  /// @sensitivity:internal
   donationDate           String?   @map("donation_date")
+  /// @sensitivity:internal
   donationFrequency      String?   @map("donation_frequency")
+  /// @sensitivity:internal
   currency               String    @default("USD")
+  /// @sensitivity:internal
   foreignExchangeRate    Float?    @map("foreign_exchange_rate")
 
+  /// @sensitivity:internal
   companyName            String?   @map("company_name")
+  /// @sensitivity:internal
   corporatePeerCampaign  String?   @map("corporate_peer_campaign")
+  /// @sensitivity:internal
   donationAmountCents    Int       @default(0) @map("donation_amount_cents")
+  /// @sensitivity:internal
   matchAmountCents       Int       @default(0) @map("match_amount_cents")
+  /// @sensitivity:internal
   causeSupportFeeCents   Int       @default(0) @map("cause_support_fee_cents")
+  /// @sensitivity:internal
   merchantFeeCents       Int       @default(0) @map("merchant_fee_cents")
+  /// @sensitivity:internal
   checkFeeCents          Int       @default(0) @map("check_fee_cents")
+  /// @sensitivity:internal
   donationMethod         String?   @map("donation_method")
+  /// @sensitivity:internal
   donationType           String?   @map("donation_type")
+  /// @sensitivity:pii
   donorFirstName         String?   @map("donor_first_name")
+  /// @sensitivity:pii
   donorLastName          String?   @map("donor_last_name")
+  /// @sensitivity:pii
   donorComment           String?   @map("donor_comment")
 
+  /// @sensitivity:internal
   ownerId                Int?      @map("owner_id")
+  /// @sensitivity:internal
   ownerAssignedAt        DateTime? @map("owner_assigned_at")
+  /// @sensitivity:internal
   ownerAssignedByUserId  Int?      @map("owner_assigned_by_user_id")
+  /// @sensitivity:internal
   isOrganizationalLevel  Boolean   @default(false) @map("is_organizational_level")
 
   disbursementHolds DisbursementHold[]
@@ -73,11 +129,17 @@ model Transaction {
 }
 
 model TransactionCommentRule {
+  /// @sensitivity:internal
   id                Int      @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId             String   @map("org_id")
+  /// @sensitivity:pii
   comment           String
+  /// @sensitivity:internal
   ownerId           Int      @map("owner_id")
+  /// @sensitivity:internal
   createdAt         DateTime @default(now()) @map("created_at")
+  /// @sensitivity:internal
   createdByUserId   Int      @map("created_by_user_id")
 
   @@unique([orgId, comment])
@@ -85,31 +147,51 @@ model TransactionCommentRule {
 }
 
 model AccountMap {
+  /// @sensitivity:internal
   id                    Int      @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId                 String   @map("org_id")
+  /// @sensitivity:internal
   companyName           String   @map("company_name")
+  /// @sensitivity:internal
   corporatePeerCampaign String   @map("corporate_peer_campaign")
+  /// @sensitivity:internal
   donationMethod        String?  @map("donation_method")
+  /// @sensitivity:internal
   donationType          String?  @map("donation_type")
+  /// @sensitivity:internal
   donationAccount       String   @map("donation_account")
+  /// @sensitivity:internal
   matchAccount          String   @map("match_account")
+  /// @sensitivity:internal
   feesAccount           String   @map("fees_account")
+  /// @sensitivity:internal
   createdAt             DateTime @default(now()) @map("created_at")
+  /// @sensitivity:internal
   updatedAt             DateTime @updatedAt @map("updated_at")
 
   @@map("account_map")
 }
 
 model DisbursementHold {
+  /// @sensitivity:internal
   id             Int       @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId          String    @map("org_id")
+  /// @sensitivity:internal
   disbursementId String    @map("disbursement_id")
+  /// @sensitivity:internal
   transactionId  Int       @map("transaction_id")
   transaction    Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  /// @sensitivity:internal
   reason         String
+  /// @sensitivity:internal
   matchedRows    String    @map("matched_rows")
+  /// @sensitivity:internal
   status         String    @default("PENDING")
+  /// @sensitivity:internal
   createdAt      DateTime  @default(now()) @map("created_at")
+  /// @sensitivity:internal
   resolvedAt     DateTime? @map("resolved_at")
 
   @@map("disbursement_holds")
@@ -119,12 +201,19 @@ model DisbursementHold {
 // qbTxnId is the QuickBooks entry this event is tied to (MATCHED or CREATED); an entry is
 // claimed by at most one event per org.
 model DisbursementEvent {
+  /// @sensitivity:internal
   id             Int      @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId          String   @map("org_id")
+  /// @sensitivity:internal
   disbursementId String   @map("disbursement_id")
+  /// @sensitivity:internal
   payload        String
+  /// @sensitivity:internal
   createdAt      DateTime @default(now()) @map("created_at")
+  /// @sensitivity:internal
   qbMatchState   String   @default("UNMATCHED") @map("qb_match_state")
+  /// @sensitivity:internal
   qbTxnId        String?  @map("qb_txn_id")
 
   @@unique([orgId, disbursementId])
@@ -134,11 +223,17 @@ model DisbursementEvent {
 }
 
 model DisbursementSnapshot {
+  /// @sensitivity:internal
   orgId          String   @map("org_id")
+  /// @sensitivity:internal
   disbursementId String   @map("disbursement_id")
+  /// @sensitivity:internal
   state          String
+  /// @sensitivity:internal
   context        String
+  /// @sensitivity:internal
   version        Int      @default(0)
+  /// @sensitivity:internal
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   @@id([orgId, disbursementId])
@@ -146,16 +241,27 @@ model DisbursementSnapshot {
 }
 
 model WorkflowEvent {
+  /// @sensitivity:internal
   id             Int      @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId          String   @map("org_id")
+  /// @sensitivity:internal
   disbursementId String?  @map("disbursement_id")
+  /// @sensitivity:internal
   entityType     String   @map("entity_type")
+  /// @sensitivity:internal
   entityId       String?  @map("entity_id")
+  /// @sensitivity:internal
   eventType      String   @map("event_type")
+  /// @sensitivity:internal
   actorUserId    Int?     @map("actor_user_id")
+  /// @sensitivity:internal
   actorUsername  String?  @map("actor_username")
+  /// @sensitivity:internal
   correlationId  String?  @map("correlation_id")
+  /// @sensitivity:internal
   payload        String?
+  /// @sensitivity:internal
   occurredAt     DateTime @default(now()) @map("occurred_at")
 
   @@index([orgId, disbursementId, occurredAt])
@@ -165,11 +271,17 @@ model WorkflowEvent {
 
 // A QuickBooks entry finance has permanently removed from matching (D5).
 model DonationQbMatchExclusion {
+  /// @sensitivity:internal
   id               Int      @id @default(autoincrement())
+  /// @sensitivity:internal
   orgId            String   @map("org_id")
+  /// @sensitivity:internal
   qbTxnId          String   @map("qb_txn_id")
+  /// @sensitivity:internal
   reason           String
+  /// @sensitivity:internal
   excludedByUserId Int      @map("excluded_by_user_id")
+  /// @sensitivity:internal
   excludedAt       DateTime @default(now()) @map("excluded_at")
 
   @@unique([orgId, qbTxnId])
