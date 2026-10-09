@@ -9,7 +9,7 @@ export async function register(): Promise<void> {
     { configureCatalogRuntime },
     { configureLocalInventoryRuntime },
     { configureRuntime: configureBulkDonationRuntime },
-    { configureExpenseRuntime },
+    { configureRuntime: configureExpenseRuntime },
   ] = await Promise.all([
     import("@/lib/catalog/configure"),
     import("@/lib/localInventory/configure"),
