@@ -33,6 +33,8 @@ const REASON_COPY: Record<string, string> = {
   force_close_review: "force-close replay without a valid confirm token",
   facility_closed: "badge scanned while no keyholder was present",
   "client_dead:unresolvable": "badge number matches no one on record — often two badges read as one",
+  conflict_double_in: "check-in while already checked in — they may have been leaving; fix the visit in the manual visits tool",
+  conflict_out_no_in: "check-out with no open visit — they may have been arriving; fix the visit in the manual visits tool",
 };
 
 // client_dead:<status> is a dynamic family, not a fixed key.

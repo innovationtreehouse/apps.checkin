@@ -82,6 +82,8 @@ describe("Scan intent — Stage-2 projection (real DB)", () => {
         expect(open).toHaveLength(1);
         const ev = await prisma.presenceEvent.findUnique({ where: { clientEventId: "evt-double-in" } });
         expect(ev?.classification).toBe(PresenceClass.CONFLICT_DOUBLE_IN);
+        const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId: "evt-double-in" } });
+        expect(log?.reviewReason).toBe("conflict_double_in");
     });
 
     it("intent OUT with no open visit parks as ConflictOutNoIn", async () => {
@@ -91,6 +93,8 @@ describe("Scan intent — Stage-2 projection (real DB)", () => {
         expect(await prisma.visit.findFirst({ where: { personId: member.id } })).toBeNull();
         const ev = await prisma.presenceEvent.findUnique({ where: { clientEventId: "evt-out-no-in" } });
         expect(ev?.classification).toBe(PresenceClass.CONFLICT_OUT_NO_IN);
+        const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId: "evt-out-no-in" } });
+        expect(log?.reviewReason).toBe("conflict_out_no_in");
     });
 
     it("clockSuspect parks for review and does not toggle", async () => {

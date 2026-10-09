@@ -46,6 +46,7 @@ export async function applyPresenceIntent(
     if (args.direction === "IN") {
         if (openVisit) {
             await classifyPresenceEvent(db, event.id, PresenceClass.CONFLICT_DOUBLE_IN);
+            await flagForReview(db, args.participant.id, args.clientEventId, "conflict_double_in");
             return apiJson({ type: "parked", message: "Recorded for review." });
         }
 
@@ -69,6 +70,7 @@ export async function applyPresenceIntent(
             return closed;
         }
         await classifyPresenceEvent(db, event.id, PresenceClass.CONFLICT_OUT_NO_IN);
+        await flagForReview(db, args.participant.id, args.clientEventId, "conflict_out_no_in");
         return apiJson({ type: "parked", message: "Recorded for review." });
     }
 
@@ -89,6 +91,24 @@ export async function applyPresenceIntent(
         await classifyPresenceEvent(db, event.id, PresenceClass.PROJECTED, openVisit.id);
     }
     return res;
+}
+
+/** Puts a conflict park on the unsynced-scans review queue by setting
+ *  reviewReason on the RawBadgeLog row /api/scan wrote for this touch. */
+async function flagForReview(
+    db: DbClient,
+    personId: number,
+    clientEventId: string | null | undefined,
+    reason: string,
+): Promise<void> {
+    const row = await db.rawBadgeLog.findFirst({
+        where: clientEventId ? { clientEventId, reviewReason: null } : { personId, reviewReason: null },
+        orderBy: { timestamp: "desc" },
+        select: { id: true },
+    });
+    if (row) {
+        await db.rawBadgeLog.update({ where: { id: row.id }, data: { reviewReason: reason } });
+    }
 }
 
 async function checkoutConfirmed(res: Response): Promise<boolean> {
