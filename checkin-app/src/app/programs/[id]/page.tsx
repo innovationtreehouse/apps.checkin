@@ -3,8 +3,10 @@
 import { use, useState, useEffect, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Alert, Button, Card, Center, Checkbox, Container, Divider, Group, Loader, Stack, Text, Title } from '@mantine/core';
+import { Alert, Button, Card, Center, Checkbox, Container, Divider, Group, Loader, Modal, Radio, Stack, Text, Title } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
+import { useDisclosure } from '@mantine/hooks';
+import { SCHOLARSHIP_REQUEST_KIND_OPTIONS } from '@/lib/scholarshipRequestKind';
 import { formatDateOnly } from '@/lib/time';
 import { checkProgramAge } from '@/lib/programAge';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
@@ -59,6 +61,8 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
   const [enrolling, setEnrolling] = useState(false);
   const [message, setMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [planKind, setPlanKind] = useState<string | null>(null);
+  const [confirmPlanOpened, { open: openConfirmPlan, close: closeConfirmPlan }] = useDisclosure(false);
 
   const [showEnrollmentSelection, setShowEnrollmentSelection] = useState(false);
   const [householdMembers, setHouseholdMembers] = useState<{ id: number; name: string | null; dateOfBirth: string | null; isDeclaredAdult?: boolean }[]>([]);
@@ -207,6 +211,8 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
   const handleRequestPaymentPlan = async () => {
     if (!session) return router.push('/');
     if (selectedParticipantIds.length === 0) return;
+    if (!planKind) return;
+    closeConfirmPlan();
 
     setEnrolling(true);
     setMessage("");
@@ -231,7 +237,9 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
         res = await fetch(`/api/programs/${id}/request-payment-plan`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ participantId })
+          // One choice covers the whole selected batch: the ask is the household's
+          // situation, not the individual participant's.
+          body: JSON.stringify({ participantId, kind: planKind })
         });
 
         if (res.ok) {
@@ -600,13 +608,40 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
                     size="md"
                     variant="light"
                     type="button"
-                    onClick={handleRequestPaymentPlan}
+                    onClick={openConfirmPlan}
                     disabled={enrolling || selectedParticipantIds.length === 0 || loadingHousehold}
                     styles={{ root: { height: 'auto', paddingBlock: 'var(--mantine-spacing-xs)' }, label: { whiteSpace: 'normal' } }}
                   >
                     Request a scholarship or payment plan from the Scholarship Review Team
                   </Button>
                 )}
+
+                <Modal opened={confirmPlanOpened} onClose={closeConfirmPlan} title="Request a scholarship or payment plan?" centered>
+                  <Text size="sm">
+                    This enrolls the people you selected as pending and sends your request to the
+                    board&apos;s Scholarship Review Team, who will follow up with you. You won&apos;t be
+                    charged anything now, and the spot is held while they review.
+                  </Text>
+                  <Radio.Group
+                    mt="md"
+                    value={planKind}
+                    onChange={setPlanKind}
+                    label="What would help?"
+                    description="So the team opens the right conversation. Nothing here commits you to anything."
+                  >
+                    <Stack gap="xs" mt="xs">
+                      {SCHOLARSHIP_REQUEST_KIND_OPTIONS.map((o) => (
+                        <Radio key={o.value} value={o.value} label={o.label} description={o.description} />
+                      ))}
+                    </Stack>
+                  </Radio.Group>
+                  <Group justify="flex-end" mt="md">
+                    <Button variant="default" onClick={closeConfirmPlan}>Cancel</Button>
+                    <Button onClick={handleRequestPaymentPlan} disabled={!planKind || enrolling} loading={enrolling}>
+                      Send request
+                    </Button>
+                  </Group>
+                </Modal>
               </Stack>
               )}
 

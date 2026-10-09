@@ -6,7 +6,7 @@ import { useSession } from "next-auth/react";
 import type { OrgMembershipProcessStatus, OrgMembershipStatus } from "@/generated/prisma/client";
 import {
   Alert, Anchor, Box, Button, Card, Checkbox, Container, Group, Modal,
-  SimpleGrid, Stack, Text, Textarea, TextInput, ThemeIcon, Title,
+  Radio, SimpleGrid, Stack, Text, Textarea, TextInput, ThemeIcon, Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useDisclosure } from "@mantine/hooks";
@@ -21,6 +21,7 @@ import AddressForm from "@/components/membership/AddressForm";
 import EmergencyContactForm from "@/components/membership/EmergencyContactForm";
 import ChildrenListForm from "@/components/membership/ChildrenListForm";
 import { useIsLocalInstance } from "@/components/EnvProvider";
+import { SCHOLARSHIP_REQUEST_KIND_OPTIONS } from "@/lib/scholarshipRequestKind";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 const blankAddress: StructuredAddress = { line1: "", line2: "", city: "", state: "", postalCode: "" };
@@ -158,6 +159,7 @@ export default function MembershipPage() {
   // Seeded from the server flag so a reload (or another device) still shows the
   // request as received rather than resurrecting the button.
   const [planRequested, setPlanRequested] = useState(false);
+  const [planKind, setPlanKind] = useState<string | null>(null);
   const [confirmPlanOpened, { open: openConfirmPlan, close: closeConfirmPlan }] = useDisclosure(false);
   // Self-report gate for the background-check task (#875): the confirm checkbox
   // unlocks only after the applicant has opened the Averity consent link this
@@ -555,13 +557,14 @@ export default function MembershipPage() {
   }, [state?.process?.isPaymentPlanRequested]);
 
   const requestPaymentPlan = async () => {
+    if (!planKind) return;
     closeConfirmPlan();
     if (!state?.process) return;
     try {
       const res = await fetch("/api/membership/request-payment-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId: state.process.id }),
+        body: JSON.stringify({ processId: state.process.id, kind: planKind }),
       });
       if (res.ok) {
         setPlanRequested(true);
@@ -967,9 +970,22 @@ export default function MembershipPage() {
                         your household&apos;s dues and follow up with you. You won&apos;t be charged
                         anything now, and you can still pay online at any time.
                       </Text>
+                      <Radio.Group
+                        mt="md"
+                        value={planKind}
+                        onChange={setPlanKind}
+                        label="What would help?"
+                        description="So the team opens the right conversation. Nothing here commits you to anything."
+                      >
+                        <Stack gap="xs" mt="xs">
+                          {SCHOLARSHIP_REQUEST_KIND_OPTIONS.map((o) => (
+                            <Radio key={o.value} value={o.value} label={o.label} description={o.description} />
+                          ))}
+                        </Stack>
+                      </Radio.Group>
                       <Group justify="flex-end" mt="md">
                         <Button variant="default" onClick={closeConfirmPlan}>Cancel</Button>
-                        <Button onClick={requestPaymentPlan}>Send request</Button>
+                        <Button onClick={requestPaymentPlan} disabled={!planKind}>Send request</Button>
                       </Group>
                     </Modal>
                     {planRequested ? (

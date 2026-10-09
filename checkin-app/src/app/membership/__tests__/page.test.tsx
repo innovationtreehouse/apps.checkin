@@ -1068,9 +1068,16 @@ describe("scholarship / payment-plan request", () => {
     const fetchMock = mockFetchJson({ ...pendingPayment(), "/api/membership/request-payment-plan": { ok: true } });
     renderWithProviders(<MembershipPage />);
     fireEvent.click(await screen.findByRole("button", { name: /Request a scholarship or payment plan/ }));
+    // The kind is required — "Send request" is disabled until one is picked.
+    expect(await screen.findByRole("button", { name: "Send request" })).toBeDisabled();
+    fireEvent.click(await screen.findByRole("radio", { name: /^Payment plan$/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Send request" }));
     expect(await screen.findByText(/requested — the Scholarship Review Team will follow up/)).toBeInTheDocument();
-    expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes("request-payment-plan")).length).toBe(1);
+    const planCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes("request-payment-plan"));
+    expect(planCalls.length).toBe(1);
+    expect(JSON.parse(String((planCalls[0][1] as RequestInit).body))).toEqual(
+      expect.objectContaining({ kind: "PAYMENT_PLAN" }),
+    );
     expect(screen.queryByRole("button", { name: /Request a scholarship or payment plan/ })).not.toBeInTheDocument();
   });
 

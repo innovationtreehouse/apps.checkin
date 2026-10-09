@@ -6,6 +6,8 @@ import { apiError } from "@/lib/api-response";
 import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck, resolveAckCopy } from "@/lib/scholarshipEmails";
 import { config } from "@/lib/config";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { ScholarshipRequestKind } from "@/generated/prisma/client";
+import { scholarshipRequestKindLabel } from "@/lib/scholarshipRequestKind";
 
 export const POST = withAuth({}, async (req, auth) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
@@ -15,6 +17,13 @@ export const POST = withAuth({}, async (req, auth) => {
         const processId = parseInt(body.processId, 10);
         if (Number.isNaN(processId)) {
             return apiError("processId is required", 400);
+        }
+
+        // An absent kind records as null rather than 400 — a stale tab mid-deploy
+        // still gets its request in. A present-but-wrong one is a client bug.
+        const kind = body.kind;
+        if (kind !== undefined && kind !== null && !Object.values(ScholarshipRequestKind).includes(kind)) {
+            return apiError("kind must be SCHOLARSHIP, PAYMENT_PLAN or UNSURE", 400);
         }
 
         const process = await prisma.orgMembershipProcess.findUnique({
@@ -54,7 +63,7 @@ export const POST = withAuth({}, async (req, auth) => {
         // (internal-tier zoho/shopify ids and stage timestamps) to the lead.
         await prisma.orgMembershipProcess.update({
             where: { id: processId },
-            data: { isPaymentPlanRequested: true },
+            data: { isPaymentPlanRequested: true, ...(kind ? { scholarshipRequestKind: kind as ScholarshipRequestKind } : {}) },
             select: { id: true },
         });
 
@@ -63,6 +72,7 @@ export const POST = withAuth({}, async (req, auth) => {
         await notifyReviewTeam(
             `New membership scholarship / payment-plan request (household ${householdId})`,
             `<p>The Scholarship Review Team has a new membership scholarship / payment-plan request to review.</p>`
+            + `<p>What they asked for: <strong>${scholarshipRequestKindLabel(kind)}</strong></p>`
             + `<p>Review it here: <a href="${base}/finance-ops/membership-payment-plan">${base}/finance-ops/membership-payment-plan</a></p>`,
             "Scholarship review-team notify failed (membership request):",
         );

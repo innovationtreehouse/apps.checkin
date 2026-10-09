@@ -10,6 +10,7 @@ import { useRequireRole } from '@/hooks/useRequireRole';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
+import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 
@@ -18,6 +19,7 @@ type HouseholdLead = { id: number; name: string | null; email: string | null };
 type MembershipPaymentPlanRequest = {
   id: number;
   stageEnteredAt: string | null;
+  scholarshipRequestKind: string | null;
   orgMembership: {
     isVolunteer: boolean;
     household: {
@@ -177,6 +179,15 @@ export default function MembershipPaymentPlansPage() {
           ? emails.map(e => <Text key={e} size="sm">{e}</Text>)
           : <Text size="sm" c="dimmed">—</Text>;
       },
+    },
+    {
+      header: 'Asked For',
+      sortBy: (req) => scholarshipRequestKindLabel(req.scholarshipRequestKind).toLowerCase(),
+      render: (req) => (
+        <Text size="sm" c={req.scholarshipRequestKind ? undefined : 'dimmed'}>
+          {scholarshipRequestKindLabel(req.scholarshipRequestKind)}
+        </Text>
+      ),
     },
     {
       header: 'Requested On',

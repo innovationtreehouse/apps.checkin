@@ -172,6 +172,16 @@ Things the app takes as true because they are handled outside it.
   to be agreed — finance settles those with the board and writes to the family
   itself. The app never learns those terms, so it cannot speak for them.  [Decision — *Principle: people decide about people*]
 
+- The app does record **which** of the two a household asked for — a reduced
+  amount, more time, or an explicit "not sure" — chosen by the family when they
+  send the request, shown on the review queue and in the review team's
+  notification. The terms above stay out of the app; the *ask* does not, because
+  the review team could not tell the two apart and opening with a comp for a
+  family who only needed more time is its own harm. "Not sure" is a real answer:
+  nobody owes the board a diagnosis of their own finances to ask for help. The
+  acknowledgement to the family is unchanged and does not name the ask — they
+  just chose it, and naming it would start to sound like an answer.  [Decision]
+
 - Submitting a request for a scholarship or a payment plan does not settle the
   fee it concerns. The membership stays unactivated and the enrollment stays
   unconfirmed until finance approves the request; until then the record waits

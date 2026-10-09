@@ -6,6 +6,8 @@ import { apiError } from "@/lib/api-response";
 import { isKnownAdult } from "@/lib/programAge";
 import { adjustProgramInventory } from "@/lib/shopify";
 import { fromWhere } from "@/lib/programs/enrollmentState";
+import { ScholarshipRequestKind } from "@/generated/prisma/client";
+import { scholarshipRequestKindLabel } from "@/lib/scholarshipRequestKind";
 import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck, resolveAckCopy } from "@/lib/scholarshipEmails";
 import { config } from "@/lib/config";
 import { escapeHtml } from "@/lib/email-templates/base";
@@ -21,11 +23,24 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         }
 
         const body = await req.json();
-        const { participantId } = body;
+        const { participantId, kind } = body;
 
         if (!participantId) {
             return apiError("participantId is required", 400);
         }
+
+        // An absent kind records as null rather than 400: during a rolling deploy's
+        // drain window a stale tab still POSTs without one, and losing the request
+        // is worse than not knowing which ask it was. A present-but-wrong kind is
+        // still a client bug, so that does fail.
+        if (kind !== undefined && kind !== null && !Object.values(ScholarshipRequestKind).includes(kind)) {
+            return apiError("kind must be SCHOLARSHIP, PAYMENT_PLAN or UNSURE", 400);
+        }
+        // Spread, not a plain value: writing `null` would let a kind-less re-POST
+        // erase a kind the family already stated, and branch 2's where-clause also
+        // matches an idempotent no-op re-POST. A re-request that DOES carry one
+        // overwrites, which is how a family corrects a misclick after a denial.
+        const kindData = kind ? { scholarshipRequestKind: kind as ScholarshipRequestKind } : {};
 
         const participant = await prisma.programParticipant.findUnique({
             where: {
@@ -102,14 +117,14 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         const holdResult = await prisma.programParticipant.updateMany({
             // T3 apply CAS from-state (PENDING_UNPAID); flag narrowing stays literal (#1080).
             where: { programId, personId: participantId, ...fromWhere('PENDING_UNPAID'), inventoryHeldAt: null },
-            data: { isPaymentPlanRequested: true, inventoryHeldAt: new Date(), paymentPlanDeniedAt: null },
+            data: { isPaymentPlanRequested: true, inventoryHeldAt: new Date(), paymentPlanDeniedAt: null, ...kindData },
         });
         let reCount = 0;
         if (holdResult.count === 0) {
             const re = await prisma.programParticipant.updateMany({
                 // T3 re-apply CAS from-state (PENDING_HELD_DENIED); status clause shared with UNPAID.
                 where: { programId, personId: participantId, ...fromWhere('PENDING_HELD_DENIED'), inventoryHeldAt: { not: null } },
-                data: { isPaymentPlanRequested: true, paymentPlanDeniedAt: null },
+                data: { isPaymentPlanRequested: true, paymentPlanDeniedAt: null, ...kindData },
             });
             reCount = re.count;
         }
@@ -154,6 +169,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
                 `New scholarship / payment-plan request: ${personName} — ${programName}`,
                 `<p>The Scholarship Review Team has a new request to review.</p>`
                 + `<p><strong>${escapeHtml(personName)}</strong> requested a scholarship / payment plan for <strong>${escapeHtml(programName)}</strong>.</p>`
+                + `<p>What they asked for: <strong>${escapeHtml(scholarshipRequestKindLabel(kind))}</strong></p>`
                 + `<p>Review it here: <a href="${base}/finance-ops/payment-plan">${base}/finance-ops/payment-plan</a></p>`,
                 "Scholarship review-team notify failed (program request):",
             );
