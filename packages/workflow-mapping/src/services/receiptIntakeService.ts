@@ -54,7 +54,7 @@ export interface IngestResult {
  * payload, an org mismatch, or a database failure; a failed push is recorded as `apply_failed`.
  */
 export async function ingestReceipt(input: z.input<typeof CompletedReceiptSchema>): Promise<IngestResult> {
-  const orgId = getOrg().id;
+  const orgId = (await getOrg()).id;
   const receipt = CompletedReceiptSchema.refine((r) => r.orgId === orgId, {
     message: "receipt orgId does not match this org",
     path: ["orgId"],

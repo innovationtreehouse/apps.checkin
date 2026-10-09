@@ -150,8 +150,8 @@ export const inertCatalogEventSource: CatalogEventSource = {
 
 export interface WorkflowRuntimeConfig {
   auth: WorkflowAuth;
-  /** Accessor, not a frozen value: resolved per call. */
-  org: () => OrgIdentity;
+  /** Async accessor resolved per call, never at boot: the host may read it from its own store. */
+  org: () => Promise<OrgIdentity>;
   /** Builds the host's HTTP error; the library throws what it returns. */
   httpError: (status: number, message: string) => Error;
   catalogReader?: CatalogReader;

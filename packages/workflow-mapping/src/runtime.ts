@@ -40,7 +40,7 @@ function requireRuntime(): WorkflowRuntimeConfig {
   return runtime;
 }
 
-export function getOrg(): OrgIdentity {
+export function getOrg(): Promise<OrgIdentity> {
   return requireRuntime().org();
 }
 

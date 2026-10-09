@@ -57,7 +57,7 @@ export function configure(
   const { principal = MANAGER, ...rest } = overrides;
   configureWorkflowMapping({
     auth: { getPrincipal: async () => principal },
-    org: () => ({ id: TEST_ORG_ID, name: TEST_ORG_NAME }),
+    org: async () => ({ id: TEST_ORG_ID, name: TEST_ORG_NAME }),
     httpError: (status, message) => new TestHttpError(status, message),
     ...rest,
   });
