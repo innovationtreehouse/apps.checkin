@@ -17,6 +17,7 @@
 import crypto from 'crypto';
 import { POST } from '@/app/api/webhooks/shopify/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { activateByProcessId } from '@/lib/membership/payment';
 import { DEV_MOCK_SHOPIFY_WEBHOOK_SECRET } from '@/lib/config';
 
@@ -58,7 +59,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
     let p2: number;
     let h1: number;
     let h2: number;
-    let prevMembershipVariantId: string | null = null;
+    let restoreBoardSettings: () => Promise<void>;
 
     beforeAll(async () => {
         // shopifyVariantId is the variant the enroll flow's checkout link is
@@ -87,12 +88,12 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         // Route now checks the order's line items against BoardSettings'
         // configured membership variant id(s) — seed one so the routing test
         // below can prove a matching order activates.
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevMembershipVariantId = existing?.orgMembershipVariantId ?? null;
+        // No year boundary, so an ACTIVE membership covers every program end date.
+        restoreBoardSettings = await snapshotBoardSettings();
         await prisma.boardSettings.upsert({
             where: { id: 1 },
-            create: { id: 1, orgMembershipVariantId: MEMBERSHIP_VARIANT_ID },
-            update: { orgMembershipVariantId: MEMBERSHIP_VARIANT_ID },
+            create: { id: 1, orgMembershipVariantId: MEMBERSHIP_VARIANT_ID, orgMembershipYearBoundary: null },
+            update: { orgMembershipVariantId: MEMBERSHIP_VARIANT_ID, orgMembershipYearBoundary: null },
         });
     });
 
@@ -102,7 +103,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
     });
 
     afterAll(async () => {
-        await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipVariantId: prevMembershipVariantId } });
+        await restoreBoardSettings();
         await prisma.integrationErrorLog.deleteMany({ where: { source: 'shopify-webhook' } });
         await prisma.paymentException.deleteMany({ where: { programId } });
         await prisma.programParticipant.deleteMany({ where: { programId } });

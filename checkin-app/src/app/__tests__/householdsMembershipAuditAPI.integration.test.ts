@@ -15,6 +15,7 @@
 
 import { POST } from '@/app/api/membership-ops/households/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({
@@ -51,7 +52,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
     let grantableProcessId: number;
     let grantableMembershipId: number;
 
-    let prevBoundary: Date | null = null;
+    let restoreBoardSettings: () => Promise<void>;
 
     // A household with one person, no lead/BG stamped unless the caller sets it.
     async function makeHousehold(label: string) {
@@ -72,8 +73,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         await prisma.auditLog.deleteMany({ where: { actorId: { in: leaked.map(u => u.id) } } });
         await prisma.person.deleteMany({ where: { email: { contains: TAG } } });
 
-        const existingSettings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevBoundary = existingSettings?.orgMembershipYearBoundary ?? null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await prisma.boardSettings.upsert({
             where: { id: 1 },
             create: { id: 1, standardMembershipFeeCents: 0, volunteerMembershipFeeCents: 0, orgMembershipYearBoundary: BOUNDARY, bgRecheckMonths: BG_RECHECK_MONTHS },
@@ -161,7 +161,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids.map(u => u.householdId) } } });
         await prisma.person.deleteMany({ where: { email: { contains: TAG } } });
         await prisma.household.deleteMany({ where: { id: { in: ids.map(u => u.householdId) } } });
-        await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: prevBoundary } });
+        await restoreBoardSettings();
     });
 
     it('grants an inactive household, sets ACTIVE, and writes an audit row', async () => {

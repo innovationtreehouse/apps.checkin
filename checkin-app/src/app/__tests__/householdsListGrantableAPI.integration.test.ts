@@ -9,6 +9,7 @@
  */
 import { GET } from '@/app/api/membership-ops/households/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { nextBoundary, membershipYearCycle, coveredThrough } from '@/lib/membership/renewal';
 import { getServerSession } from 'next-auth/next';
 
@@ -28,7 +29,7 @@ async function get(url = 'http://localhost:4000/api/membership-ops/households') 
 
 describe('GET /api/membership-ops/households — renewalGrantable + dates', () => {
     let adminId: number;
-    let prevBoardSettings: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number } | null = null;
+    let restoreBoardSettings: () => Promise<void>;
 
     let notStartedHouseholdId: number;
     let grantableHouseholdId: number;
@@ -49,10 +50,7 @@ describe('GET /api/membership-ops/households — renewalGrantable + dates', () =
     }
 
     beforeAll(async () => {
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevBoardSettings = existing
-            ? { orgMembershipYearBoundary: existing.orgMembershipYearBoundary, bgRecheckMonths: existing.bgRecheckMonths }
-            : null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await wipe();
 
         await prisma.boardSettings.upsert({
@@ -105,7 +103,7 @@ describe('GET /api/membership-ops/households — renewalGrantable + dates', () =
 
     afterAll(async () => {
         await wipe();
-        if (prevBoardSettings) await prisma.boardSettings.update({ where: { id: 1 }, data: prevBoardSettings });
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 
@@ -170,7 +168,7 @@ describe('GET /api/membership-ops/households — renewalGrantable + dates', () =
 describe('GET /api/membership-ops/households — settledForComingYear (fix #4)', () => {
     const TAG4 = 'households-settled-fix4-test';
     let adminId: number;
-    let prev: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number } | null = null;
+    let restoreBoardSettings: () => Promise<void>;
 
     // A boundary ~1 month ahead ⇒ windowStart ~1 month ago ⇒ now is in-season and a
     // stageEnteredAt of `now` sits inside the window.
@@ -199,8 +197,7 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
     }
 
     beforeAll(async () => {
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prev = existing ? { orgMembershipYearBoundary: existing.orgMembershipYearBoundary, bgRecheckMonths: existing.bgRecheckMonths } : null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await wipe();
         await prisma.boardSettings.upsert({
             where: { id: 1 },
@@ -252,7 +249,7 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
 
     afterAll(async () => {
         await wipe();
-        if (prev) await prisma.boardSettings.update({ where: { id: 1 }, data: prev });
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 

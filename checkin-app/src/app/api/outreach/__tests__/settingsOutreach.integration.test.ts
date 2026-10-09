@@ -8,6 +8,7 @@
  */
 import { GET, PUT } from '@/app/api/settings/outreach/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -23,20 +24,14 @@ function req(method: string, body?: unknown) {
 }
 
 describe('GET/PUT /api/settings/outreach', () => {
-    const prevValues = { outreachOpeningSubject: null as string | null, outreachOpeningBody: null as string | null, outreachReminderSubject: null as string | null, outreachReminderBody: null as string | null };
+    let restoreBoardSettings: () => Promise<void>;
 
     beforeAll(async () => {
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        if (existing) {
-            prevValues.outreachOpeningSubject = existing.outreachOpeningSubject;
-            prevValues.outreachOpeningBody = existing.outreachOpeningBody;
-            prevValues.outreachReminderSubject = existing.outreachReminderSubject;
-            prevValues.outreachReminderBody = existing.outreachReminderBody;
-        }
+        restoreBoardSettings = await snapshotBoardSettings();
     });
 
     afterAll(async () => {
-        await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, ...prevValues }, update: prevValues });
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 

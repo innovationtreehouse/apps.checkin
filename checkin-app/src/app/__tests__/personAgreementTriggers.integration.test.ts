@@ -20,6 +20,7 @@ import {
 } from '@/lib/membership/personAgreementTriggers';
 import { markContractSigned } from '@/lib/membership/external';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 
 jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
 
@@ -100,18 +101,17 @@ async function setBoundary(boundary: Date | null) {
 }
 
 describe('PERSON_AGREEMENT triggers', () => {
-    let savedBoundary: Date | null = null;
+    let restoreBoardSettings: () => Promise<void>;
 
     beforeAll(async () => {
         await cleanup();
-        const prev = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        savedBoundary = prev?.orgMembershipYearBoundary ?? null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await setBoundary(BOUNDARY_SEED);
     });
 
     afterAll(async () => {
         await cleanup();
-        await setBoundary(savedBoundary);
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 

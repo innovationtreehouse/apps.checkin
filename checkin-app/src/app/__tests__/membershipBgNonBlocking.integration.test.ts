@@ -18,6 +18,7 @@ import { certifyPaymentPlan, activate } from '@/lib/membership/payment';
 import { submitIntake } from '@/lib/membership/intake';
 import { beginRenewal } from '@/lib/membership/renewal';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { sendEmail } from '@/lib/email';
 
 jest.mock('@/lib/email', () => ({
@@ -108,24 +109,20 @@ async function setBgPolicy() {
 
 describe('background check is non-blocking', () => {
     let revA: number, revB: number;
-    let prevPolicy: { bgRecheckMonths: number; orgMembershipYearBoundary: Date | null } = { bgRecheckMonths: 0, orgMembershipYearBoundary: null };
+    let restoreBoardSettings: () => Promise<void>;
 
     beforeAll(async () => {
         await wipe();
         // BoardSettings (id=1) is a global singleton; remember what we change so the
         // auto-clear scenario doesn't pollute other suites' BoardSettings reads.
-        const prev = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevPolicy = {
-            bgRecheckMonths: prev?.bgRecheckMonths ?? 0,
-            orgMembershipYearBoundary: prev?.orgMembershipYearBoundary ?? null,
-        };
+        restoreBoardSettings = await snapshotBoardSettings();
         revA = await makeReviewer('RevA');
         revB = await makeReviewer('RevB');
         await makeBoardMember(); // recipient for the paid-reject refund alert
     });
     afterAll(async () => {
         await wipe();
-        await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, ...prevPolicy }, update: prevPolicy });
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 

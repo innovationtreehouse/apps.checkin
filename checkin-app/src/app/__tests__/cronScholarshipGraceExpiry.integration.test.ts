@@ -13,6 +13,7 @@
  */
 import { GET } from '@/app/api/cron/scholarship-grace-expiry/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const daysAgo = (d: number) => new Date(Date.now() - d * DAY_MS - DAY_MS / 2); // half-day offset keeps boundaries stable
@@ -27,7 +28,7 @@ function mkReq(auth?: string) {
 describe('Cron Scholarship-Grace-Expiry API Integration Tests', () => {
     let programId: number;
     const ids: Record<string, number> = {};
-    let prevGraceDays: number | null | undefined;
+    let restoreBoardSettings: () => Promise<void>;
 
     const mkParticipant = async (key: string) => {
         const p = await prisma.person.create({
@@ -49,8 +50,7 @@ describe('Cron Scholarship-Grace-Expiry API Integration Tests', () => {
         });
         programId = program.id;
 
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevGraceDays = existing?.scholarshipDenialGraceDays ?? null;
+        restoreBoardSettings = await snapshotBoardSettings();
 
         await mkParticipant('inside'); // denied 3 days ago — inside a 7-day grace window
         await mkParticipant('outside'); // denied 10 days ago — past a 7-day grace window
@@ -63,7 +63,7 @@ describe('Cron Scholarship-Grace-Expiry API Integration Tests', () => {
         await prisma.programParticipant.deleteMany({ where: { programId } });
         await prisma.person.deleteMany({ where: { id: { in: idList } } });
         await prisma.program.deleteMany({ where: { id: programId } });
-        await prisma.boardSettings.update({ where: { id: 1 }, data: { scholarshipDenialGraceDays: prevGraceDays } });
+        await restoreBoardSettings();
     });
 
     describe('auth', () => {

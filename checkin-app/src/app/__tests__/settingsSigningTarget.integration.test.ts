@@ -9,6 +9,7 @@
  */
 import { PUT } from '@/app/api/settings/membership/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -23,7 +24,7 @@ const ORIGINAL_CHECKIN_ENV = process.env.CHECKIN_ENV;
 describe('PUT /api/settings/membership — devSigningTarget', () => {
     let boardId: number;
     let householdId: number;
-    let prev: { devSigningTarget: string | null; bgRecheckMonths: number; standardMembershipFeeCents: number } | null = null;
+    let restoreBoardSettings: () => Promise<void>;
 
     beforeAll(async () => {
         const board = await prisma.person.create({
@@ -31,17 +32,13 @@ describe('PUT /api/settings/membership — devSigningTarget', () => {
         });
         boardId = board.id;
         householdId = board.householdId;
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prev = existing
-            ? { devSigningTarget: existing.devSigningTarget, bgRecheckMonths: existing.bgRecheckMonths, standardMembershipFeeCents: existing.standardMembershipFeeCents }
-            : null;
+        restoreBoardSettings = await snapshotBoardSettings();
     });
 
     afterAll(async () => {
-        // Restore prior settings, or null the field these tests set when no row existed
-        // yet: signingMockActive() reads devSigningTarget, so a leaked 'debug' forces the
+        // signingMockActive() reads devSigningTarget, so a leaked 'debug' forces the
         // signing mock provider on every later integration suite sharing this DB.
-        await prisma.boardSettings.updateMany({ where: { id: 1 }, data: prev ?? { devSigningTarget: null } });
+        await restoreBoardSettings();
         await prisma.person.deleteMany({ where: { id: boardId } });
         await prisma.household.deleteMany({ where: { id: householdId } });
         process.env.CHECKIN_ENV = ORIGINAL_CHECKIN_ENV;
