@@ -42,7 +42,7 @@ them rather than around them.
 
 **Status:** design. No board decision gates the mechanics below. This doc is the
 **exact parallel** of the global-catalog design ([#1286](https://github.com/innovationtreehouse/checkin/issues/1286),
-`docs/in-design/1286_GLOBAL_CATALOG_INTEGRATION.md`) and **reuses its base
+now distilled to `docs/designs/COMPONENT_ARCHITECTURE.md`) and **reuses its base
 architecture decisions verbatim** — read that doc first. Everything here is the
 same shape applied to the org-inventory app, plus the two upstream couplings
 that make local-inventory a *sink* rather than a leaf. The write role
@@ -906,13 +906,12 @@ This doc lives in `docs/in-design/` — **deleted at merge**. Planned split, so 
 extract step is a file move (not a months-later judgement call over every
 paragraph, §4.2). Content splits three ways:
 
-**(1) Standing domain rules → new register file `docs/rules/inventory.md`.**
-On-hand holdings are a new domain the eight existing register files don't cover;
-#1286 §13 explicitly reserves `inventory.md` for exactly this, kept distinct from
-`catalog.md` (the reference/definitional domain — *what items are* — vs. this one,
-*what we hold*). Create it **at merge**, not before (empty-in-advance is
-forbidden, §3). Written as Policy / Assumptions / Procedure — decisions and
-invariants only, no mechanism. Ask §3.9 of each (*could a later change violate
+**(1) Standing domain rules → the EXISTING `docs/rules/inventory.md`.** The
+catalog distilled first and created this unified inventory register (global
+catalog + local holdings are treated as one domain, per owner decision); it
+already holds the catalog rules. On-hand holdings **add their rules to that same
+file** — do not create a second one. Written as Policy / Assumptions / Procedure
+— decisions and invariants only, no mechanism. Ask §3.9 of each (*could a later change violate
 this?*); seeds that qualify:
 - **Access invariant:** on-hand inventory is operational reference data, **no
   PII**; **read** = broad viewer gate (any RBAC role / program leader /
@@ -934,8 +933,9 @@ this?*); seeds that qualify:
 - **Role decision:** writes use interim `INVENTORY_MANAGER`; strategic `ORG_MANAGER`
   split stays open in RB4 (cross-ref [#1316](https://github.com/innovationtreehouse/checkin/issues/1316)).
 
-**(2) Architecture/ops reference that stays true → `docs/designs/LOCAL_INVENTORY.md`**
-(§4 "operational reference → move, don't delete"). What later Inventory tracks
+**(2) Architecture/ops reference that stays true → the EXISTING
+`docs/designs/COMPONENT_ARCHITECTURE.md`** (the unified Inventory architecture doc the catalog
+created; add the local-inventory delta to it rather than a separate file). What later Inventory tracks
 (receipt-app, CI4) rely on: the three-crossing **port model** and its in-process
 bindings (events §8a, catalog read §8b, apply §8c), the **S5 handler** (called by
 the catalog after commit, own cursor, catch-up in the reconcile cron step, §8a),
@@ -949,10 +949,12 @@ mounting, stub tree, `NavLink[]` splice, `_shared.ts`, security-generator wiring
 handler-endpoint gotcha, S5 handler wiring, test tiers, pagination mechanics) —
 a reader derives it from the source (§3).
 
-**Cross-doc note:** because catalog (#1286) distills first, its
-`docs/rules/catalog.md` and `docs/designs/GLOBAL_CATALOG.md` will exist by the
-time local-inventory merges. `inventory.md` **references** catalog rules (org
-identity, the viewer gate, the shared crossing rule) rather than restating them.
+**Cross-doc note:** catalog (#1286) distilled first into the unified
+`docs/rules/inventory.md` and `docs/designs/COMPONENT_ARCHITECTURE.md`, which already exist and
+hold the catalog rules. Local-inventory adds its holdings rules to that same
+`inventory.md` and its architecture delta to that same
+`COMPONENT_ARCHITECTURE.md` rather than restating the catalog rules it shares (org identity, the viewer gate, the shared
+crossing rule).
 
 ---
 
