@@ -216,6 +216,8 @@ export function callerHoldsRole(
             return auth.type === 'session' && auth.user.isOperations;
         case 'isInventoryManager':
             return auth.type === 'session' && auth.user.isInventoryManager === true;
+        case 'isFinance':
+            return auth.type === 'session' && auth.user.isFinance === true;
         case 'certifier':
             return isCertifier(auth);
         case 'householdLead':
@@ -235,6 +237,20 @@ export interface ResolverContext {
     auth: AuthResult;
     params: Record<string, string>;
     callerContext: CallerContext;
+}
+
+/**
+ * A session with no integer id (its sign-in or re-sync resolved no live Person)
+ * admits nothing on the role-flag gates. Handlers behind them filter by the
+ * caller's id (receipt submitters reuse catalog-viewer and filter
+ * `uploadedByUserId = principal.id`), and Prisma drops a `where` key whose value
+ * is `undefined`, so admitting it would widen that filter to every row. That is
+ * why the email-keyed volunteer-designation leg is guarded too.
+ */
+function isIdentifiedSession(
+    auth: AuthResult,
+): auth is Extract<AuthResult, { type: 'session' }> {
+    return auth.type === 'session' && Number.isInteger(auth.user.id);
 }
 
 /**
@@ -289,15 +305,15 @@ export async function resolveAccess(
             case 'kiosk':
                 return { allowed: auth.type === 'kiosk' };
             case 'catalog-viewer': {
-                // #1286 §6: read admission for the global catalog. Any staff
-                // relationship suffices — role flag, program leadership, or a
-                // volunteer designation — because the catalog is non-pii
-                // reference data (writes stay INVENTORY_MANAGER-only).
-                if (auth.type !== 'session') return { allowed: false };
+                // #1286 §6 / #1265 §6: any Treehouse Volunteer relationship —
+                // role flag, program leadership, or a volunteer designation.
+                // Catalog reads and receipt submission share this audience.
+                if (!isIdentifiedSession(auth)) return { allowed: false };
                 const u = auth.user;
                 if (
                     u.isSysadmin || u.isBoardMember || u.isKeyholder ||
-                    u.isBackgroundCheckReviewer || u.isOperations || u.isInventoryManager
+                    u.isBackgroundCheckReviewer || u.isOperations || u.isInventoryManager ||
+                    u.isFinance
                 ) {
                     return { allowed: true };
                 }
@@ -318,6 +334,16 @@ export async function resolveAccess(
                 // #1286 §6: catalog WRITE admission — INVENTORY_MANAGER only (a
                 // sysadmin grants themselves the role; no admin auto-admit here).
                 return { allowed: auth.type === 'session' && auth.user.isInventoryManager === true };
+            case 'finance':
+                // #1272 §6: FINANCE only; sysadmins are not auto-admitted
+                // (finance-payments.md: Finance Ops excludes sysadmins).
+                return { allowed: isIdentifiedSession(auth) && auth.user.isFinance === true };
+            case 'finance-or-board':
+                // #1272 §6 / #1280 §4: FINANCE or BOARD; still no sysadmin.
+                return {
+                    allowed: isIdentifiedSession(auth) &&
+                        (auth.user.isFinance === true || auth.user.isBoardMember === true),
+                };
             case 'certifier':
                 // Certifiers see the shop member roster; admins always may too.
                 return { allowed: isCertifier(auth) || isAdmin };
@@ -341,7 +367,7 @@ export async function resolveAccess(
             }
         }
     } else if ('anyRole' in authorize) {
-        if (auth.type !== 'session') return { allowed: false };
+        if (!isIdentifiedSession(auth)) return { allowed: false };
         return { allowed: authorize.anyRole.some(r => auth.user[r] === true) };
     }
     return { allowed: false };

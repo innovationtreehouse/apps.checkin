@@ -154,6 +154,9 @@ export type Role =
     // Curates the global catalog (#1286 §6). A Person role boolean, stamped on
     // the session like the others; grants the manager view on catalog routes.
     | 'isInventoryManager'
+    // Finance staff (#1272 §6). A Person role boolean, stamped on the session
+    // like the others; grants the finance view on finance-library routes.
+    | 'isFinance'
     // Holds a MAY_CERTIFY_OTHERS toolStatus (a shop certifier). Not a Person
     // role boolean — derived from session.user.toolStatuses (see callerHoldsRole).
     | 'certifier'
@@ -185,6 +188,7 @@ export const VALID_ROLES = new Set<Role>([
     'isBackgroundCheckReviewer',
     'isOperations',
     'isInventoryManager',
+    'isFinance',
     'certifier',
     'householdLead',
     'programLeadMentor',
@@ -205,6 +209,9 @@ export function parseToken(
     return { scope: scope as Scope, tier: tier as SensitiveTier };
 }
 
+/** Roles backed by a Person role flag on the session — what `anyRole` checks. */
+export type SessionFlagRole = BusinessRole | 'isInventoryManager' | 'isFinance';
+
 /**
  * Admission gate — who is allowed to *call* the endpoint. Distinct from
  * `orderedView`, which controls *what* they see once admitted.
@@ -213,17 +220,21 @@ export type Authorize =
     | 'public'
     | 'authenticated'
     | 'self'
-    | { anyRole: BusinessRole[] }
+    // Admits a caller holding any listed role flag. No sysadmin/board auto-admit.
+    | { anyRole: SessionFlagRole[] }
     // Catalog read admission (#1286 §6): the single chokepoint for reading the
     // global catalog — INVENTORY_MANAGER, any RBAC-role holder, a program leader,
     // or a volunteer (keyed by email). Broader than the ops roles, deliberately:
     // the catalog is non-pii reference data (writes stay INVENTORY_MANAGER-only).
     | 'catalog-viewer'
-    // Catalog write admission (#1286 §6): INVENTORY_MANAGER only. A dedicated
-    // variant rather than `{ anyRole: ['isInventoryManager'] }` so the boundary
-    // does not depend on isInventoryManager being in BusinessRole (types/auth.ts)
-    // — keeping this a session-flag check resolved entirely inside resolveAccess.
+    // Catalog write admission (#1286 §6): INVENTORY_MANAGER only.
     | 'inventory-manager'
+    // FINANCE only (#1272 §6). No sysadmin auto-admit: Finance Ops excludes
+    // sysadmins (docs/rules/finance-payments.md).
+    | 'finance'
+    // FINANCE or BOARD (#1272 §6, #1280 §4): the board acts as finance's
+    // superuser. No sysadmin auto-admit, as above.
+    | 'finance-or-board'
     // Shop certifier (a MAY_CERTIFY_OTHERS toolStatus). Admits certifiers OR
     // admins (isSysadmin/isBoardMember) — see resolveAccess. Backed by a
     // predicate because 'certifier' is not a Person role boolean.
@@ -346,6 +357,7 @@ function roleNeeds(role: Role): Partial<CtxNeeds> {
         case 'isBackgroundCheckReviewer':
         case 'isOperations':
         case 'isInventoryManager':
+        case 'isFinance':
         case 'certifier':
         case 'householdLead':
             // callerHoldsRole answers these from the session alone.
@@ -366,6 +378,8 @@ function authorizeNeeds(authorize: Authorize): Partial<CtxNeeds> {
         case 'self':
         case 'catalog-viewer':
         case 'inventory-manager':
+        case 'finance':
+        case 'finance-or-board':
         case 'certifier':
         case 'household-lead':
         case 'household-member':
