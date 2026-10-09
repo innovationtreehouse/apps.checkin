@@ -92,10 +92,10 @@ describeDb("runReconcile — automatic transitions", () => {
     expect(await db.incomeAuditLog.count()).toBe(audits);
   });
 
-  it("waits inside the window, then opens NO_DEPOSIT once it elapses", async () => {
+  it("waits in the outbox inside the window, then opens NO_DEPOSIT once it elapses", async () => {
     payout("P1", "2026-06-25", 97);
     await runReconcile(ORG_A, NOW);
-    expect(await db.payoutReconciliation.count()).toBe(0);
+    expect(await rowFor("P1")).toMatchObject({ status: "WAITING", kind: null });
 
     await runReconcile(ORG_A, new Date("2026-07-03T00:00:00Z"));
     expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT" });

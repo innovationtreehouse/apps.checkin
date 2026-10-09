@@ -8,6 +8,7 @@ export * from "./lib/audit";
 export * from "./lib/deposit-lines";
 export * from "./lib/qb-deposits";
 export * from "./lib/reconcile";
+export * from "./lib/outbox";
 export * from "./services/reconciliationService";
 export * from "./services/serviceError";
 export { seedIncomeDev } from "./seed";
