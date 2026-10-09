@@ -209,7 +209,8 @@ the full roster. A household lead sees a count.
 **Correcting a close.** A correction that closes an open visit offers the same
 choices, and a close departs everyone at the typed departure, matching the
 kiosk's late-close rule. A keyholder who corrects the time of a close they made
-to an earlier one moves the departures that close set, for everyone. Every
+to an earlier one moves the departures that close set, for everyone. Correcting
+it to a later time moves only the closer's own departure; nobody else's changes. Every
 departure a close sets or moves is logged: which close, who made it, through
 which path, and each visit's departure before and after.
 
@@ -253,10 +254,7 @@ pointing to §3.1.
 
 **`Q-SYSADMIN-CLOSE`: answered.** A sysadmin does not close; see §3.1.
 
-**`Q-CLOSE-LATER`: does correcting a close to a later time move the others?**
-Recommendation: **no; only an earlier correction moves them.** A later close time
-would extend visits of people who had already gone, which the closer cannot know.
-The closer's own departure still moves.
+**`Q-CLOSE-LATER`: answered.** A later close time moves nobody else; see §3.1.
 
 **`Q-CLOSE-ARRIVALS`: someone arrived between the corrected (earlier) close time
 and the original one.** Recommendation: **leave their departure as it is.** They
@@ -338,8 +336,8 @@ names are sent.
   keyholder of §VIII.3, which the app does not model.
 - Add: a named keyholder who is not checked in is emailed.
 - Add: correcting a close to an earlier time moves the departures it set, and
-  every departure a close sets or moves is logged (plus the answers to
-  `Q-CLOSE-LATER`, `Q-CLOSE-ARRIVALS`, `Q-CLOSE-CORRECTED`).
+  every departure a close sets or moves is logged ; a later correction moves only
+  the closer (plus the answers to `Q-CLOSE-ARRIVALS`, `Q-CLOSE-CORRECTED`).
 - Amend "Any keyholder can close the building at the kiosk with a double scan…" to
   the single-badge leave with a close offer, if `Q-KIOSK-SCOPE` puts it here.
 - Tag the board's close with the Arts. VI–VII citation and the owner's reading
