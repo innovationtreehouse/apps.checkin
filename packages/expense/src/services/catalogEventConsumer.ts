@@ -4,7 +4,7 @@
 import { parseOrgEvent } from "@inventory/receipt-types";
 import { db, type Db } from "../db";
 import { CatalogOrgEventSchema, type CatalogOrgEvent } from "../contract";
-import { assertOrg, getExpenseRuntime, getOrg } from "../runtime";
+import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { logError } from "../lib/logger";
 import { createOrgEventsRepository } from "../repositories/orgEvents";
 import { createProvisionalItemMapRepository } from "../repositories/provisionalItemMap";
@@ -36,7 +36,7 @@ async function apply(tx: Db, ev: CatalogOrgEvent, payload: unknown): Promise<voi
 /** Handler the catalog's post-commit call-out invokes in-process. A failed reaction is recorded, not thrown. */
 export async function consumeCatalogEvent(raw: unknown): Promise<ConsumeResult> {
   const ev = CatalogOrgEventSchema.parse(raw);
-  assertOrg(ev.orgId);
+  await assertOrg(ev.orgId);
   const payloadText = typeof ev.payload === "string" ? ev.payload : JSON.stringify(ev.payload);
 
   const existing = await db.expenseReceivedOrgEvent.findFirst({ where: { id: ev.id }, select: { status: true } });
@@ -72,7 +72,7 @@ export async function consumeCatalogEvent(raw: unknown): Promise<ConsumeResult> 
 export async function catchUpCatalogEvents(limit = 200): Promise<Record<ConsumeResult, number>> {
   const counts: Record<ConsumeResult, number> = { processed: 0, duplicate: 0, failed: 0 };
   const repo = createOrgEventsRepository(db);
-  const failed = (await repo.findPending(getOrg().id)).slice(0, limit);
+  const failed = (await repo.findPending(await getOrgId())).slice(0, limit);
   for (const r of failed) {
     counts[await consumeCatalogEvent({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload, createdAt: r.receivedAt })]++;
   }

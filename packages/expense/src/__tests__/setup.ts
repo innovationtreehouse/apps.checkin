@@ -4,7 +4,7 @@ import { configureExpense } from "../runtime";
 import { ORG } from "./helpers/seed";
 
 // Every test starts from the inert ports; a test rebinds what it needs.
-beforeEach(() => configureExpense({ org: () => ({ id: ORG, name: "Org One" }) }));
+beforeEach(() => configureExpense({ org: async () => ({ id: ORG, name: "Org One" }) }));
 
 afterEach(async () => {
   // Only the integration tier touches the database; a Docker-less run never connects to clean up.

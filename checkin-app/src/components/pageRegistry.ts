@@ -199,6 +199,14 @@ export const PAGES: PageEntry[] = [
 
   // Expense Ops — FINANCE or BOARD
   { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: FINANCE_OR_BOARD },
+  { href: '/expense/expenses', label: 'Expenses', section: 'Expense Ops', keywords: 'receipt reimbursement approval sign-off queue', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/holds', label: 'Account Holds', section: 'Expense Ops', keywords: 'no match quickbooks account resubmit', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/flags', label: 'Expense Flags', section: 'Expense Ops', keywords: 'checkoff threshold tax conflict', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/account-mapping', label: 'Account Mapping', section: 'Expense Ops', keywords: 'quickbooks rule category', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/qb-accounts', label: 'QuickBooks Accounts', section: 'Expense Ops', keywords: 'qb account list', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/ownership-map', label: 'Ownership Map', section: 'Expense Ops', keywords: 'budget owner bucket part', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/capital-seed', label: 'Capital Seed', section: 'Expense Ops', keywords: 'itfa capital register asset', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/settings', label: 'Expense Settings', section: 'Expense Ops', keywords: 'threshold capital board review note in lieu', visible: released('expense', FINANCE_OR_BOARD) },
 
   // System Status — board
   { href: '/system-status', label: 'System Status', section: 'System Status', visible: BOARD },
