@@ -189,12 +189,28 @@ function isCertifier(auth: AuthResult): boolean {
     );
 }
 
+/**
+ * A session without a positive integer id (its sign-in or re-sync resolved no
+ * live Person) is unauthenticated: it admits only on `public` and selects only
+ * the `anyone`/`unauthenticated` view, whatever role flags it carries. Handlers
+ * filter by the caller's id, and Prisma drops a `where` key whose value is
+ * `undefined`, so admitting it would widen that filter to every row.
+ * authenticateRequest already downgrades a session with no numeric id; these
+ * resolvers deny it on their own so no caller depends on that.
+ */
+function isIdlessSession(auth: AuthResult): boolean {
+    if (auth.type !== 'session') return false;
+    const { id } = auth.user;
+    return !(typeof id === 'number' && Number.isInteger(id) && id > 0);
+}
+
 export function callerHoldsRole(
     role: Role,
     auth: AuthResult,
     params: Record<string, string>,
     ctx: CallerContext,
 ): boolean {
+    if (isIdlessSession(auth)) return role === 'anyone' || role === 'unauthenticated';
     switch (role) {
         case 'anyone':
             return true;
@@ -240,20 +256,6 @@ export interface ResolverContext {
 }
 
 /**
- * A session with no integer id (its sign-in or re-sync resolved no live Person)
- * admits nothing on the role-flag gates. Handlers behind them filter by the
- * caller's id (receipt submitters reuse catalog-viewer and filter
- * `uploadedByUserId = principal.id`), and Prisma drops a `where` key whose value
- * is `undefined`, so admitting it would widen that filter to every row. That is
- * why the email-keyed volunteer-designation leg is guarded too.
- */
-function isIdentifiedSession(
-    auth: AuthResult,
-): auth is Extract<AuthResult, { type: 'session' }> {
-    return auth.type === 'session' && Number.isInteger(auth.user.id);
-}
-
-/**
  * Admission gate — the per-route `authorize` check. Returns whether the
  * caller is even allowed to *invoke* the endpoint (401/403 if not). View
  * resolution (orderedView) is downstream.
@@ -284,6 +286,8 @@ export async function resolveAccess(
         }
     }
 
+    if (isIdlessSession(auth)) return { allowed: authorize === 'public' };
+
     const isAdmin = auth.type === 'session' && (auth.user.isSysadmin || auth.user.isBoardMember);
 
     if (typeof authorize === 'string') {
@@ -308,7 +312,7 @@ export async function resolveAccess(
                 // #1286 §6 / #1265 §6: any Treehouse Volunteer relationship —
                 // role flag, program leadership, or a volunteer designation.
                 // Catalog reads and receipt submission share this audience.
-                if (!isIdentifiedSession(auth)) return { allowed: false };
+                if (auth.type !== 'session') return { allowed: false };
                 const u = auth.user;
                 if (
                     u.isSysadmin || u.isBoardMember || u.isKeyholder ||
@@ -337,18 +341,18 @@ export async function resolveAccess(
             case 'finance':
                 // #1272 §6: FINANCE only; sysadmins are not auto-admitted
                 // (finance-payments.md: Finance Ops excludes sysadmins).
-                return { allowed: isIdentifiedSession(auth) && auth.user.isFinance === true };
+                return { allowed: auth.type === 'session' && auth.user.isFinance === true };
             case 'finance-or-board':
                 // #1272 §6 / #1280 §4: FINANCE or BOARD; still no sysadmin.
                 return {
-                    allowed: isIdentifiedSession(auth) &&
+                    allowed: auth.type === 'session' &&
                         (auth.user.isFinance === true || auth.user.isBoardMember === true),
                 };
             case 'expense-approver': {
                 // #1272 §5/§6: FINANCE, BOARD, or a derived bucket approver — a
                 // program leader (on the session) or a program treasurer (one DB
                 // read; the session carries no treasurer flag). Still no sysadmin.
-                if (!isIdentifiedSession(auth)) return { allowed: false };
+                if (auth.type !== 'session') return { allowed: false };
                 const u = auth.user;
                 if (u.isFinance === true || u.isBoardMember === true) return { allowed: true };
                 if ((u.programsLed?.length ?? 0) > 0) return { allowed: true };
@@ -381,7 +385,7 @@ export async function resolveAccess(
             }
         }
     } else if ('anyRole' in authorize) {
-        if (!isIdentifiedSession(auth)) return { allowed: false };
+        if (auth.type !== 'session') return { allowed: false };
         return { allowed: authorize.anyRole.some(r => auth.user[r] === true) };
     }
     return { allowed: false };
