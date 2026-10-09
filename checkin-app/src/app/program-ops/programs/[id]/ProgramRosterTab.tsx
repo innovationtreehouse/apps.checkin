@@ -274,7 +274,6 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
                   <Text size="sm" c="dimmed"><strong>Email:</strong> {p.person.email}</Text>
-                  <Text size="sm" c="dimmed"><strong>Phone:</strong> {p.person.phone ? formatPhone(p.person.phone) : 'N/A'}</Text>
                   {p.person.household && (
                     <>
                       <Text size="sm" c="dimmed" style={{ gridColumn: '1 / -1' }}>
@@ -310,7 +309,6 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
                   <Text size="sm" c="dimmed"><strong>Email:</strong> {p.person.email}</Text>
-                  <Text size="sm" c="dimmed"><strong>Phone:</strong> {p.person.phone ? formatPhone(p.person.phone) : 'N/A'}</Text>
                   <Text size="sm" c="dimmed"><strong>Pending Since:</strong> {p.pendingSince ? formatDateTime(p.pendingSince) : 'Unknown'}</Text>
                 </SimpleGrid>
               </Card>
