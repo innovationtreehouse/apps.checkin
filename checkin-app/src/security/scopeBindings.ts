@@ -238,9 +238,10 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // audit-logs); a submitter never reads audit rows, so no `their_own` binding
     // is planned.
     'ReceiptAuditLog',
-    // Bulk-donation CSV uploads (#1280). `uploadedByUserId` is scopable since the
-    // receipt binding, but uploads are finance-only (FINANCE/BOARD read, FINANCE
-    // writes) with no owner-scoped view, so no `their_own` binding is planned.
+    // Bulk-donation CSV uploads (#1280). Not pending: its routes exist
+    // (registry/donation.ts). `uploadedByUserId` makes it scopable, but every route
+    // is finance-or-board (GET list and blob file route; FINANCE writes) with
+    // everyones grants and no owner-scoped view, so it never earns `their_own`.
     'UploadedFile',
 ]);
 
