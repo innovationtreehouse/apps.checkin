@@ -98,22 +98,31 @@ describe("getKioskDisplayNames", () => {
         expect(map.get(2)).toBe("John S.");
     });
 
-    it("initializes the final word of a multi-word last name", () => {
+    it("keeps surname particles whole and initializes the core", () => {
         const map = getKioskDisplayNames([
             { id: 1, name: "Maria De La Cruz", email: "m1@example.com" },
             { id: 2, name: "Maria Diaz", email: "m2@example.com" },
         ]);
-        expect(map.get(1)).toBe("Maria C.");
+        expect(map.get(1)).toBe("Maria De La C.");
         expect(map.get(2)).toBe("Maria D.");
     });
 
-    it("initializes the final word of a multi-word last name in comma format", () => {
+    it("keeps surname particles whole in comma format", () => {
         const map = getKioskDisplayNames([
             { id: 1, name: "De La Cruz, Maria", email: "m1@example.com" },
             { id: 2, name: "Diaz, Maria", email: "m2@example.com" },
         ]);
-        expect(map.get(1)).toBe("Maria C.");
+        expect(map.get(1)).toBe("Maria De La C.");
         expect(map.get(2)).toBe("Maria D.");
+    });
+
+    it("shows no more than two letters of a surname, even when two still collide", () => {
+        const map = getKioskDisplayNames([
+            { id: 1, name: "Sarah Morris", email: "s1@example.com" },
+            { id: 2, name: "Sarah Moore", email: "s2@example.com" },
+        ]);
+        expect(map.get(1)).toBe("Sarah Mo.");
+        expect(map.get(2)).toBe("Sarah Mo.");
     });
 
     it("handles three-way collision with mixed last initials", () => {

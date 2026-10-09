@@ -6,7 +6,7 @@ import { addHouseholdLead, HouseholdLeadLimitError } from "@/lib/household/leads
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { mintPersonId } from "@/lib/person/mintId";
-import { nameWrite } from "@/lib/person/name";
+import { familyName, nameWrite } from "@/lib/person/name";
 import { withTx } from "@/lib/db-client";
 import { apiError } from "@/lib/api-response";
 
@@ -64,7 +64,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                     return apiError("Parent name is required when creating a new parent", 400);
                 }
                 const trimmedParentName = parentName.trim();
-                const parentLastName = trimmedParentName.split(/\s+/).pop() || "";
+                const parentFamily = familyName(trimmedParentName);
                 // No transaction in this route, so the mint gets a minimal one
                 // paired with its create — an id minted outside would be burned
                 // if the create failed. The household is created as its own
@@ -73,7 +73,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 // room for a nested relation create.
                 parent = await withTx(prisma, async (tx) => {
                     const household = await tx.household.create({
-                        data: { name: parentLastName ? `${parentLastName} Household` : "Household" }
+                        data: { name: parentFamily ? `${parentFamily} Household` : "Household" }
                     });
                     return tx.person.create({
                         data: {
@@ -113,10 +113,10 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 }
             }));
         } else {
-            const lastName = (name || "").trim().split(/\s+/).pop() || "";
+            const family = familyName(nameWrite(name));
             newParticipant = await withTx(prisma, async (tx) => {
                 const household = await tx.household.create({
-                    data: { name: lastName ? `${lastName} Household` : "Household" }
+                    data: { name: family ? `${family} Household` : "Household" }
                 });
                 return tx.person.create({
                     data: {

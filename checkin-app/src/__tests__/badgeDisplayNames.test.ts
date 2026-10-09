@@ -35,8 +35,16 @@ describe('computeDisplayNames', () => {
         expect(run(['John Frank Doe', 'John Smith'])).toEqual(['John D.', 'John S.']);
     });
 
-    it('initializes the final word of a multi-word last name', () => {
-        expect(run(['Maria De La Cruz', 'Maria Diaz'])).toEqual(['Maria C.', 'Maria D.']);
+    it('keeps surname particles whole and initializes the core', () => {
+        expect(run(['Maria De La Cruz', 'Maria Diaz'])).toEqual(['Maria De La C.', 'Maria D.']);
+    });
+
+    it('initializes the surname, not a generational suffix', () => {
+        expect(run(['Martin Luther King Jr.', 'Martin Scorsese'])).toEqual(['Martin K.', 'Martin S.']);
+    });
+
+    it('tells a father and son with the same name apart by the suffix', () => {
+        expect(run(['John Smith', 'John Smith Jr.'])).toEqual(['John S.', 'John S. Jr.']);
     });
 
     it('grows the prefix over the last name alone, ignoring the middle name', () => {
