@@ -216,12 +216,33 @@ can still be confirmed, then a persistent "no keyholder present" warning, and ke
 showing who is inside. A second badge within the countdown closes. This differs
 from the kiosk today; see `Q-KIOSK-SCOPE`.
 
+**The trust principle.** Agreed text for `docs/rules/principles.md`, shipped as
+its own change:
+
+> ## Trust, then review
+>
+> - **A person's account of what happened is accepted when they give it.** The app
+>   records it, says who gave it, and makes it reviewable. It does not refuse an
+>   account because its own record disagrees.
+> - **Where the app's record and the room disagree, the room is right.** The app
+>   cannot see a handover, a keyholder who never badged, or a walk-in nobody
+>   scanned. A gate built on what the app can see blocks the people doing it
+>   correctly.
+> - **Trust comes with a trail.** An accepted account that changes someone else's
+>   record names who gave it, and a significant one reaches someone who reviews it.
+> - **It widens nothing and overrides no policy.** Who may act is still least
+>   privilege's question; where a policy requires a block, the block stands.
+>
+> The tell is a refusal whose only reason is that the data disagrees with the
+> person in front of it.
+
 **Rejected: handing over by checking the named keyholder in.** It needs both
 keyholders to agree, and the app hears from only one.
 
 ### 3.2 Still to decide
 
-Each question keeps its label until answered; answered ones move to §3.1.
+Each question keeps its label; an answered one stays here as a one-line stub
+pointing to §3.1.
 
 **`Q-SYSADMIN-CLOSE`: may a sysadmin who is neither a keyholder nor on the board
 close?** Names are settled (they get them). Recommendation: **leave or cancel
@@ -260,25 +281,7 @@ described red during the close countdown, then yellow persistent. Recommendation
 **red for the countdown, and the existing persistent banner in yellow**, so the
 two states have one colour each; confirm.
 
-**`Q-PRINCIPLE-TEXT`: the trust principle.** Needed; wording to agree. Draft for
-`docs/rules/principles.md`:
-
-> ## Trust, then review
->
-> - **A person's account of what happened is accepted when they give it.** The app
->   records it, says who gave it, and makes it reviewable. It does not refuse an
->   account because its own record disagrees.
-> - **Where the app's record and the room disagree, the room is right.** The app
->   cannot see a handover, a keyholder who never badged, or a walk-in nobody
->   scanned. A gate built on what the app can see blocks the people doing it
->   correctly.
-> - **Trust comes with a trail.** An accepted account that changes someone else's
->   record names who gave it, and a significant one reaches someone who reviews it.
-> - **It widens nothing and overrides no policy.** Who may act is still least
->   privilege's question; where a policy requires a block, the block stands.
->
-> The tell is a refusal whose only reason is that the data disagrees with the
-> person in front of it.
+**`Q-PRINCIPLE-TEXT`: answered.** Text agreed; see §3.1.
 
 ### 3.3 The legacy `/api/attendance` route
 
@@ -338,8 +341,8 @@ names are sent.
 - Tag the board's close with the Arts. VI–VII citation and the owner's reading
   that the board's superuser standing covers it.
 
-`docs/rules/principles.md` gains the trust principle once `Q-PRINCIPLE-TEXT` is
-agreed.
+`docs/rules/principles.md` gains the trust principle (text in §3.1), in its own
+change.
 
 **Logging.** A facility close today is a bulk update that writes no per-visit
 audit and does not say which close set a departure. Correcting a close's time
