@@ -240,9 +240,12 @@ export interface ResolverContext {
 }
 
 /**
- * A session with no integer id (its JWT re-sync missed after a person merge or
- * delete) admits nothing on the role-flag gates: Prisma drops a `where` key whose
- * value is `undefined`, so a per-caller filter would widen to every row.
+ * A session with no integer id (its sign-in or re-sync resolved no live Person)
+ * admits nothing on the role-flag gates. Handlers behind them filter by the
+ * caller's id (receipt submitters reuse catalog-viewer and filter
+ * `uploadedByUserId = principal.id`), and Prisma drops a `where` key whose value
+ * is `undefined`, so admitting it would widen that filter to every row. That is
+ * why the email-keyed volunteer-designation leg is guarded too.
  */
 function isIdentifiedSession(
     auth: AuthResult,
