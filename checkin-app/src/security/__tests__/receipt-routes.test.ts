@@ -13,8 +13,9 @@
  *
  * Auth runs through the real authenticateRequest; only next-auth's
  * getServerSession is stubbed (jest.setup.js mocks it).
- *   3. FINANCE-only routes refuse a non-finance session; BOARD reads but does
- *      not act; a sysadmin gets nothing beyond the submitter view.
+ *   3. FINANCE-only routes refuse a non-finance session; BOARD reads with
+ *      FINANCE's view on every finance-or-board route but does not act; a
+ *      sysadmin gets nothing beyond the submitter view.
  *   4. The submitter view never returns donor or reimbursee names.
  *   5. The receipt file routes serve the uploader's own file and FINANCE's,
  *      and 404 anyone else's; both file columns are file-only.
@@ -22,7 +23,7 @@
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import type { AuthResult } from '@/types/auth';
-import { allFileRoutes, allRoutes, getFileRoute, getRoute, isFileOnlyField, type Token } from '@/security/core';
+import { allFileRoutes, allRoutes, classifications, getFileRoute, getRoute, isFileOnlyField, type Token } from '@/security/core';
 import { handler } from '@/security/handler';
 import { fileHandler, type FileResult } from '@/security/fileHandler';
 import { buildCallerContext, resolveAccess, scopesHeld, type CallerContext } from '@/security/access-resolvers';
@@ -160,6 +161,32 @@ describe('role admission', () => {
             expect((await handler(endpoint, async () => ({}))(request(endpoint), params)).status).toBe(403);
             signIn(5, { isBoardMember: true });
             expect((await handler(endpoint, async () => ({}))(request(endpoint), params)).status).toBe(200);
+        }
+    });
+
+    it.each(financeReads)('%s gives BOARD the same view as FINANCE, names included', async (endpoint) => {
+        const spec = getRoute(endpoint)!;
+        const views = new Map(spec.orderedView);
+        expect(views.get('isBoardMember')).toEqual(views.get('isFinance'));
+
+        const model = spec.returns![0];
+        const tiers = classifications[model as keyof typeof classifications] as Record<string, string>;
+        const row = Object.fromEntries(Object.keys(tiers).map(f => [f, 1]));
+        const sensitive = Object.keys(tiers).filter(f => tiers[f] === 'pii' || tiers[f] === 'personal');
+        const bodies: unknown[] = [];
+        for (const flags of [{ isFinance: true }, { isBoardMember: true }] as Flags[]) {
+            signIn(5, flags);
+            const res = await handler(endpoint, async () => ({ [model]: [row] }))(request(endpoint), params);
+            expect(res.status).toBe(200);
+            bodies.push(await res.json());
+        }
+        expect(bodies[1]).toEqual(bodies[0]);
+        const [first] = bodies[1] as Record<string, unknown>[];
+        for (const f of sensitive.filter(f => !isFileOnlyField(model, f))) expect(first).toHaveProperty(f, 1);
+        if (model === 'ReceiptView') {
+            for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName']) {
+                expect(first).toHaveProperty(f, 1);
+            }
         }
     });
 

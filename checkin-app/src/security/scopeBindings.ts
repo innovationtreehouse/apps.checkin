@@ -238,8 +238,8 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // rows, so no `their_own` binding is planned.
     'ReceiptAuditLog',
     // Bulk-donation CSV uploads (#1280). `uploadedByUserId` is scopable since the
-    // receipt binding, but only FINANCE reads uploads; bulk donation's own
-    // boundary PR decides whether an uploader view earns a binding.
+    // receipt binding, but uploads are finance-only (FINANCE/BOARD read, FINANCE
+    // writes) with no owner-scoped view, so no `their_own` binding is planned.
     'UploadedFile',
 ]);
 
