@@ -11,7 +11,7 @@ export async function register(): Promise<void> {
     { configureRuntime: configureBulkDonationRuntime },
     { configureRuntime: configureExpenseRuntime },
     { configureRuntime: configureWorkflowMappingRuntime },
-    { configureIncomeRuntime },
+    { configureRuntime: configureIncomeRuntime },
   ] = await Promise.all([
     import("@/lib/catalog/configure"),
     import("@/lib/localInventory/configure"),

@@ -83,7 +83,7 @@ function depositSource(): QbDepositSource | undefined {
   }
 }
 
-export function configureIncomeRuntime(): void {
+export function configureRuntime(): void {
   configureIncome({
     auth: { getPrincipal },
     org: getOrg,
