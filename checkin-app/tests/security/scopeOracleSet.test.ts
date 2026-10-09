@@ -32,6 +32,7 @@ const ORACLES = [
     'classification-sources.test.ts',
     'donation-strip.test.ts',
     'emergency-contact-program-scope.test.ts',
+    'expense-strip.test.ts',
     'file-route.test.ts',
     'household-lead-program-scope.test.ts',
     'impersonatedBy-inertness.test.ts',
