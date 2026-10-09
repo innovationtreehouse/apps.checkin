@@ -6,8 +6,10 @@
  */
 import { beforeEach, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
+import { db } from "../../db";
 import { expenses } from "../../routes";
+import { expenseOpsCount, signoffsAwaitingCount } from "../../services/badgeCounts";
 import type { ExpenseRouteHandler } from "../../contract";
 
 const OWN_BUCKET = 100;
@@ -97,5 +99,27 @@ describeDb("approver routes filter to the caller's buckets", () => {
     const other = await seedExpense({ state: "owner_approval" });
     await expect(call(expenses.sign, "/x", { ...ids(), id: other }, { seat: "PROGRAM_APPROVER" })).rejects.toMatchObject({ status: 404 });
     await expect(call(expenses.sign, "/x", ids(), { seat: "PROGRAM_APPROVER" })).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describeDb("nav badge counts", () => {
+  beforeEach(async () => {
+    expenseId = await seedExpense({ state: "owner_approval", submitterId: 1 });
+    lineItemId = await seedLineItem(expenseId);
+    approvalId = await seedApproval(expenseId, lineItemId, { ownerId: OWN_BUCKET });
+  });
+
+  it("counts a line awaiting the bucket approver's sign-off, and nothing for an outsider", async () => {
+    as(APPROVER);
+    expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(1);
+    expect(await signoffsAwaitingCount(principal(OUTSIDER))).toBe(0);
+  });
+
+  it("counts held expenses plus open flags for FINANCE, and nothing for an approver", async () => {
+    as(APPROVER);
+    await db.expenseHold.create({ data: { orgId: ORG, expenseId, lineItemId, reason: "NO_MATCH", matchedRows: "[]" } });
+    await db.expenseFlag.create({ data: { orgId: ORG, expenseId, kind: "TAX_ATTACHED", audience: "FINANCE" } });
+    expect(await expenseOpsCount(principal(3, { isFinance: true }))).toBe(2);
+    expect(await expenseOpsCount(principal(APPROVER))).toBe(0);
   });
 });
