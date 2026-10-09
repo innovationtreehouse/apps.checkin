@@ -7,11 +7,9 @@ import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
 import { conflictedParties, filledSeatsByLine, signoffFactsByLine, unsignedLines } from "../lib/signoff-facts";
-import { blockedSeats, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
+import { CLOSED_STATES, blockedSeats, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
 import { raiseFlag } from "./flagService";
 import { ServiceError } from "./serviceError";
-
-const CLOSED_STATES = new Set(["qb_complete", "qb_skipped", "rejected"]);
 
 export async function signLine(principal: ExpensePrincipal, lineItemId: number, seat: Seat): Promise<void> {
   const actor = actorOf(principal);
@@ -64,14 +62,16 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
   const actor = actorOf(principal);
   if (!principal.isFinance) throw new ServiceError(403, "Only FINANCE sets the reimbursee");
   if (!Number.isInteger(personId) || personId <= 0) throw new ServiceError(400, "personId must be a positive integer");
-  const ownHousehold = [personId, ...(await getExpenseRuntime().signoff.householdOf([personId]))];
-  if (ownHousehold.includes(actor.userId)) throw new ServiceError(403, "You cannot name yourself or your household as reimbursee");
 
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId } });
   if (!expense) throw new ServiceError(404, "Expense not found");
   if (!expense.needsReimbursement) throw new ServiceError(400, "Expense is not a reimbursement");
   if (expense.backfill) throw new ServiceError(400, "A backfilled expense is already booked; it takes no reimbursee");
   if (CLOSED_STATES.has(expense.state)) throw new ServiceError(400, `Expense is ${expense.state}`);
+  const dir = getExpenseRuntime().signoff;
+  if (!(await dir.personExists(personId))) throw new ServiceError(404, "Person not found");
+  const ownHousehold = [personId, ...(await dir.householdOf([personId]))];
+  if (ownHousehold.includes(actor.userId)) throw new ServiceError(403, "You cannot name yourself or your household as reimbursee");
 
   const conflicted = await conflictedParties({ submitterId: expense.submitterId, reimburseePersonId: personId });
   await db.$transaction(async (tx) => {

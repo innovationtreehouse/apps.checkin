@@ -25,6 +25,8 @@ export interface SignoffFacts {
   conflicted: number[];
 }
 
+export const CLOSED_STATES = new Set(["qb_complete", "qb_skipped", "rejected"]);
+
 export interface FilledSeat {
   seat: Seat;
   signerUserId: number;

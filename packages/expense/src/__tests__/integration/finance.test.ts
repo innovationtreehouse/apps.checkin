@@ -212,6 +212,24 @@ describeDb("sign-off seats", () => {
       await signLine(principal(5), li, "PROGRAM_APPROVER");
     });
 
+    it("FINANCE cannot name a reimbursee who is not a Person", async () => {
+      const { id } = await unknownReimbursee();
+      bindPorts({ signoff: directory({ finance: [3], unknownPeople: [42] }) });
+      await expect(setReimbursee(ORG, id, 42, FINANCE)).rejects.toMatchObject({ statusCode: 404 });
+      expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
+    });
+
+    it("REIMBURSEE_UNKNOWN cannot be checked off while the hold applies; it can once the expense is closed", async () => {
+      const { id } = await unknownReimbursee();
+      const [flag] = await listOpenFlags(FINANCE);
+      await expect(checkOffFlag(FINANCE, flag.id)).rejects.toMatchObject({ statusCode: 409 });
+      expect((await listOpenFlags(FINANCE)).map((f) => f.kind)).toEqual(["REIMBURSEE_UNKNOWN"]);
+
+      await db.expense.update({ where: { id }, data: { state: "rejected" } });
+      await checkOffFlag(FINANCE, flag.id);
+      expect(await listOpenFlags(FINANCE)).toEqual([]);
+    });
+
     it("a card charge or a backfilled expense takes no reimbursee", async () => {
       const card = await seedExpense({ state: "qb_pending" });
       await expect(setReimbursee(ORG, card, 7, FINANCE)).rejects.toMatchObject({ statusCode: 400 });

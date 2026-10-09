@@ -55,6 +55,8 @@ export interface SignoffDirectory {
   boardMembers(): Promise<number[]>;
   /** Everyone in the given people's households. */
   householdOf(personIds: number[]): Promise<number[]>;
+  /** Whether the id names a checkin Person. */
+  personExists(personId: number): Promise<boolean>;
   /** Whether the purchaser holds an org membership (a non-member's line takes a Board approver). */
   isOrgMember(personId: number): Promise<boolean>;
 }
@@ -65,6 +67,7 @@ export const inertSignoffDirectory: SignoffDirectory = {
   financeHolders: async () => [],
   boardMembers: async () => [],
   householdOf: async () => [],
+  personExists: async () => false,
   isOrgMember: async () => false,
 };
 

@@ -171,12 +171,14 @@ export function directory(d: {
   board?: number[];
   households?: number[][];
   nonMembers?: number[];
+  unknownPeople?: number[];
 }): SignoffDirectory {
   return {
     bucketApprovers: async (b) => ({ orgLevel: (d.orgLevel ?? []).includes(b), approvers: d.approvers?.[b] ?? [] }),
     financeHolders: async () => d.finance ?? [],
     boardMembers: async () => d.board ?? [],
     householdOf: async (ids) => (d.households ?? []).filter((h) => h.some((id) => ids.includes(id))).flat(),
+    personExists: async (id) => !(d.unknownPeople ?? []).includes(id),
     isOrgMember: async (id) => !(d.nonMembers ?? []).includes(id),
   };
 }
