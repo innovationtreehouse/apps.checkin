@@ -10,6 +10,9 @@
  */
 import { loginAs, api, type Session } from "./helpers";
 
+// The first test to touch each of the 46 routes waits on the dev server compiling it.
+jest.setTimeout(120_000);
+
 const FINANCE = "finance@example.com";
 const BOARD = "boardmember@example.com";
 const APPROVER = "inventory.manager@example.com";
