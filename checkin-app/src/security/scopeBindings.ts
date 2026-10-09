@@ -140,6 +140,11 @@ export const SCOPE_BINDINGS = {
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },
         keyholders: { flag: 'isKeyholder' },
     },
+    // Receipt library (#1265 §6, plan rule 6): a submitter's own receipts and
+    // their file. The uploader is the session's Person.id, never a payload field.
+    Receipt: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
+    ReceiptView: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
+    ReceiptLineView: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
     TrustedAdultReview: {
         their_households: { field: 'householdId', eqCtx: 'householdId' },
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },
@@ -228,6 +233,16 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // only by FINANCE/BOARD (everyones:pii). A "my expense history" view is the
     // plausible future reader; that is when it earns `their_own` on `userId`.
     'ExpenseAuditLog',
+    // Receipt audit log (#1265 §6). Its `userId` is the acting Person.id, but only
+    // FINANCE and BOARD read the log (everyones grants, GET /api/receipts/[id]/
+    // audit-logs); a submitter never reads audit rows, so no `their_own` binding
+    // is planned.
+    'ReceiptAuditLog',
+    // Bulk-donation CSV uploads (#1280). Not pending: its routes exist
+    // (registry/donation.ts). `uploadedByUserId` makes it scopable, but every route
+    // is finance-or-board (GET list and blob file route; FINANCE writes) with
+    // everyones grants and no owner-scoped view, so it never earns `their_own`.
+    'UploadedFile',
 ]);
 
 /**
