@@ -5,7 +5,7 @@
  */
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  const [{ configureCatalogRuntime }, { configureLocalInventoryRuntime }, { configureIncomeRuntime }] = await Promise.all([
+  const [{ configureCatalogRuntime }, { configureLocalInventoryRuntime }, { configureRuntime: configureIncomeRuntime }] = await Promise.all([
     import("@/lib/catalog/configure"),
     import("@/lib/localInventory/configure"),
     import("@/lib/income/configure"),
