@@ -222,14 +222,20 @@ which path, and each visit's departure before and after.
 was never there; closing on that basis would invent departures for everyone else.
 The confirm states the count and that they will read as inside a closed facility.
 
-**The kiosk has an implied leave.** The owner's model: the last keyholder badges
-once and is checked out; the kiosk shows the close warning in red while the close
-can still be confirmed, then a persistent "no keyholder present" warning, and keeps
-showing who is inside. A second badge within the countdown closes. Today the
-last keyholder's first badge, with others inside, does not check them out: they
-stay recorded until a second badge closes. The change is part of this design and
-covers the offline kiosk (`client/client.py`) as well as the server; building it
-may take several PRs.
+**The kiosk has an implied leave.** The last keyholder badges once and is checked
+out; the kiosk offers the close for the countdown, then shows the persistent
+no-keyholder banner, and keeps showing who is inside. A second badge within the
+countdown closes. Today the last keyholder's first badge, with others inside,
+does not check them out: they stay recorded until a second badge closes. The
+change is part of this design and covers the offline kiosk (`client/client.py`)
+as well as the server; building it may take several PRs.
+
+The kiosk's colours stay as they are. The single-badge leave returns the same
+close offer the kiosk already shows when another keyholder is recorded: the amber
+"checked out" banner with its countdown. After it, the dashboard's existing orange
+"Facility closed, no keyholder present" banner covers the state. Red stays
+reserved for errors and the supervision confirm. The one change is copy: the
+close offer for the last keyholder states that no other keyholder is checked in.
 
 **The trust principle.** Agreed text for `docs/rules/principles.md`, shipped as
 its own change:
@@ -269,14 +275,7 @@ pointing to §3.1.
 
 **`Q-KIOSK-SCOPE`: answered.** One design, built in several PRs; see §3.1.
 
-**`Q-KIOSK-COLOURS`: which warnings.** The kiosk today shows an orange
-"Facility closed, no keyholder present" banner while people are inside with no
-keyholder, and a yellow "only one keyholder" banner while one is. The owner
-described red during the close countdown, then yellow persistent. Recommendation:
-**red for the countdown, and the existing persistent banner in yellow**, so the
-two states have one colour each; confirm.
-
-**`Q-PRINCIPLE-TEXT`: answered.** Text agreed; see §3.1.
+**`Q-KIOSK-COLOURS`: answered.** No colour changes; see §3.1.
 
 ### 3.3 The legacy `/api/attendance` route
 
@@ -390,7 +389,7 @@ One design, several PRs. Each PR amends the rules-doc lines for the part it ship
    correction moves the departures its close set; a later one moves only the
    closer.
 4. **Kiosk, server side.** The last keyholder's first badge checks them out and
-   offers the close; the banner colours. The kiosk client already handles a close
+   offers the close, with "no other keyholder is checked in" copy. The kiosk client already handles a close
    offer (it gets one today when another keyholder is recorded), so this ships
    before the client change.
 5. **Kiosk, offline.** `client/client.py` runs the same single-badge leave and
