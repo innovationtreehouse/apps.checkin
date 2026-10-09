@@ -31,11 +31,11 @@ export interface CatalogAuth {
 export interface CatalogRuntimeConfig {
   auth: CatalogAuth;
   /**
-   * Org identity as an ACCESSOR, not a frozen value (#1286 §6): single-org
-   * returns the one row every call; multi-org later resolves the current org
-   * per request — same seam, no library change.
+   * Org identity for the current request, as an async ACCESSOR (#1286 §6): the
+   * host resolves it lazily (never at boot); single-org returns the one row,
+   * multi-org later resolves the current org per request — same seam.
    */
-  org: () => OrgIdentity;
+  org: () => Promise<OrgIdentity>;
 }
 
 /**

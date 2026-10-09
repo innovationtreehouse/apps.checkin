@@ -12,10 +12,13 @@ import { configureCatalog } from "@inventory/global-catalog";
 import type { CatalogPrincipal, OrgIdentity } from "@inventory/global-catalog";
 
 /**
- * checkin is single-org (#1286 §6); the accessor returns a constant until the
- * Org registry table lands (track 6 seeds the Treehouse row with this id).
+ * checkin is inherently single-org (#1286 §6). The org identity is a row in
+ * checkin's own `Org` registry table, seeded with this stable well-known id.
+ * The library never reaches cross-DB into this table — checkin reads it and
+ * injects the identity.
  */
-const TREEHOUSE_ORG: OrgIdentity = { id: "treehouse", name: "Treehouse" };
+const TREEHOUSE_ORG_ID = "treehouse";
+let cachedOrg: OrgIdentity | undefined;
 
 async function getPrincipal(): Promise<CatalogPrincipal | null> {
   // Lazy: importing auth-options at boot would crash a Google-credless boot.
@@ -29,6 +32,23 @@ async function getPrincipal(): Promise<CatalogPrincipal | null> {
   return { id: user.id, name: user.name ?? null };
 }
 
+/**
+ * Resolved on first use inside a request, never at boot (boot stays DB-free).
+ * Only a found row is cached; a DB error or missing row throws, so the request
+ * fails rather than running as a guessed org.
+ */
+async function getOrg(): Promise<OrgIdentity> {
+  if (cachedOrg) return cachedOrg;
+  const { default: prisma } = await import("@/lib/prisma");
+  const row = await prisma.org.findUnique({
+    where: { id: TREEHOUSE_ORG_ID },
+    select: { id: true, name: true },
+  });
+  if (!row) throw new Error(`Org row "${TREEHOUSE_ORG_ID}" not found — seed the Org registry`);
+  cachedOrg = row;
+  return row;
+}
+
 export function configureCatalogRuntime(): void {
-  configureCatalog({ auth: { getPrincipal }, org: () => TREEHOUSE_ORG });
+  configureCatalog({ auth: { getPrincipal }, org: getOrg });
 }
