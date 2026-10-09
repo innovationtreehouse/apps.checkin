@@ -3,6 +3,7 @@ import { Pool } from 'pg'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { emailNormalizeExtension } from '@/lib/prismaEmailNormalize'
 import { auroraResumeRetryExtension } from '@/lib/auroraResumeRetry'
+import { registerRootClient } from '@/lib/db-client'
 
 const connectionString = `${process.env.DATABASE_URL}`
 // Tests default to a single connection so suites don't exhaust a small CI
@@ -91,7 +92,9 @@ declare const globalThis: {
     prismaGlobal: ReturnType<typeof prismaClientSingleton>;
 } & typeof global;
 
-const prisma = globalThis.prismaGlobal ?? prismaClientSingleton()
+// Registered on every module load: a dev reload reuses the global client but
+// re-evaluates db-client's registry.
+const prisma = registerRootClient(globalThis.prismaGlobal ?? prismaClientSingleton())
 
 export default prisma
 
