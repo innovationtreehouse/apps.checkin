@@ -29,6 +29,19 @@ describe("extractExportedVerbs", () => {
         expect(extractExportedVerbs(`export { authOptions };\nexport { GET as helper };`)).toEqual([]);
     });
 
+    it("reads a destructured export, renamed or with a default", () => {
+        expect(extractExportedVerbs(`export const { GET, handler: POST, PUT = h } = handlers;`).sort())
+            .toEqual(["GET", "POST", "PUT"]);
+    });
+
+    it("reads a specifier with a comment beside it", () => {
+        expect(extractExportedVerbs(`export { h as GET /* c */, k as POST };`).sort()).toEqual(["GET", "POST"]);
+    });
+
+    it("ignores commented-out exports", () => {
+        expect(extractExportedVerbs(`// export { GET };\n/* export const POST = h; */`)).toEqual([]);
+    });
+
     it("reads a multi-line export list", () => {
         expect(extractExportedVerbs(`export {\n    a as GET,\n    b as POST,\n};`).sort())
             .toEqual(["GET", "POST"]);

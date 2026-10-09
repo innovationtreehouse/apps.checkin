@@ -25,7 +25,7 @@
     "test:coverage": "npm -w checkin-app run test:coverage",
     "test:coverage:unit": "npm -w checkin-app run test:coverage:unit",
     "test:coverage:integration": "npm -w checkin-app run test:coverage:integration",
-    "check-route-coverage": "npm -w checkin-app run check-route-coverage",
+    "check-route-coverage": "npm -w checkin-app run check-route-coverage --",
     "prepare": "husky"
   },
   "engines": {

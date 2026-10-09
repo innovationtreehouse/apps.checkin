@@ -49,6 +49,8 @@ const VERB_EXPORT_RE = /export\s+(?:const|async\s+function|function)\s+(GET|POST
 /** `export { a as GET, POST }` — each specifier exports its `as` alias, else its own name. */
 const EXPORT_LIST_RE = /export\s*\{([^}]*)\}/g;
 const EXPORT_SPECIFIER_RE = /^[A-Za-z_$][\w$]*(?:\s+as\s+([A-Za-z_$][\w$]*))?$/;
+/** `export const { GET, b: POST } = x` — each binding exports its local name (after any `:`). */
+const DESTRUCTURED_EXPORT_RE = /export\s+(?:const|let|var)\s*\{([^}]*)\}/g;
 const HTTP_VERBS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 /** A registry entry for an endpoint: a JSON route or a file route. */
 export const REGISTRY_ENTRY_RE = /define(?:File)?Route\s*\(\s*\{\s*endpoint\s*:\s*['"]([^'"]+)['"]/;
@@ -249,9 +251,16 @@ function fileToEndpointPath(file: string): string {
     return '/api' + (rel ? '/' + rel : '');
 }
 
-export function extractExportedVerbs(content: string): string[] {
+export function extractExportedVerbs(source: string): string[] {
+    const content = blankComments(source);
     const found = new Set<string>();
     for (const m of content.matchAll(VERB_EXPORT_RE)) found.add(m[1]);
+    for (const list of content.matchAll(DESTRUCTURED_EXPORT_RE)) {
+        for (const binding of list[1].split(',')) {
+            const name = binding.split('=')[0].split(':').pop()?.trim();
+            if (name && HTTP_VERBS.has(name)) found.add(name);
+        }
+    }
     for (const list of content.matchAll(EXPORT_LIST_RE)) {
         for (const spec of list[1].split(',')) {
             const s = EXPORT_SPECIFIER_RE.exec(spec.trim());
