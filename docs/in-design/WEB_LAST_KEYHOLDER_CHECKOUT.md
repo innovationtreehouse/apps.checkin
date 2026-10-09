@@ -209,7 +209,9 @@ open. The board Sign Out modal loses its power to close; a board member who want
 the building closed and is not a keyholder asks one.
 
 **2. Is "leave" within §VIII.3?** The owner's reading above, that the transfer and
-consent happen in the room, or a Board decision. **Policy-tier.**
+consent happen in the room, or a Board decision. **Policy-tier.** The answer also
+settles a second Assumption: the app does not model a primary keyholder, so the
+last recorded keyholder stands in for the primary one.
 
 **3. Naming on "leave": required or optional, and from what list?**
 
@@ -317,14 +319,16 @@ names are sent.
   sees names.
 - Add the Assumption: a keyholder who leaves the building occupied has handed over
   in person to the keyholder they name.
+- Add the Assumption: the last recorded keyholder stands in for the primary
+  keyholder of §VIII.3, which the app does not model.
 - Add a line that the kiosk does not offer "leave", tagged deliberate limit.
 - Record whatever the owner or Board decides on §VIII.3 at the Policy line it
   qualifies.
 
 **Flow tests** (`checkin-app/flow-tests/last-keyholder-checkout.flow.test.ts`).
-The seed has no household with a non-keyholder lead and a keyholder member; the
-test builds one through the lead's member-add and the board's keyholder grant, or
-the seed gains that persona (question 9).
+The seed has no household with a non-keyholder lead and a keyholder member, so
+the test builds one through the board and admin routes; the shared seed is not
+changed.
 
 1. Keyholder alone checks out: closes, no warning.
 2. Last keyholder with others inside: the warning carries names and the three
@@ -342,13 +346,8 @@ the seed gains that persona (question 9).
 
 ## 5. Other open questions
 
-9. Seed a "keyholder household member under a non-keyholder lead" persona, or have
-   the flow test build it?
-10. "Primary keyholder" (§VIII.3) is not modelled; the app treats every keyholder
-    alike. Is "the last recorded keyholder" an acceptable stand-in for the primary
-    one? If not, that is a separate gap for the tracker.
-11. Outside this design: the session scan raises the supervision interrupt, which
-    the rules say is badge-only. A separate fix or a rules correction.
+- Outside this design and tracked separately: the session scan raises the
+  supervision interrupt, which the rules say is badge-only.
 
 ---
 
