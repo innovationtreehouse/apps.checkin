@@ -33,6 +33,8 @@ RUN npm -w checkin-app exec -- prisma generate
 RUN npm -w @inventory/global-catalog exec -- prisma generate
 # Same for local inventory (#1287): its own gitignored client + classifications.
 RUN npm -w @inventory/local-inventory exec -- prisma generate
+# Same for workflow mapping (#1289).
+RUN npm -w @inventory/workflow-mapping exec -- prisma generate
 # Build stamp surfaced in the app footer: the deployed commit SHA, passed via
 # --build-arg by the deploy workflow and inlined into the bundle (NEXT_PUBLIC_*,
 # build-time). Empty in local/ad-hoc builds -> the footer shows "dev".

@@ -6,7 +6,7 @@ import { getOrg, httpError } from "../runtime";
 /** The org's receipt by id, or 404. */
 export async function loadReceipt(receiptId: number): Promise<ReceivedReceipt> {
   const received = await db.receivedReceipt.findUnique({ where: { id: receiptId } });
-  if (!received || received.orgId !== getOrg().id) throw httpError(404, "Not found");
+  if (!received || received.orgId !== (await getOrg()).id) throw httpError(404, "Not found");
   return received;
 }
 
