@@ -13,7 +13,7 @@ import { visitSubject } from "@/lib/visit/scope";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { escapeHtml } from "@/lib/email-templates/base";
 import { logBackendError } from "@/lib/logger";
-import { apiError } from "@/lib/api-response";
+import { apiError, apiJson } from "@/lib/api-response";
 import { formatDateTime } from "@/lib/time";
 import { resolveDisplayTimezone } from "@/lib/appSettings";
 
@@ -280,7 +280,7 @@ async function withCloseGuard(
     if (!pending) return result;
     const { guard, ...closeCtx } = pending;
 
-    if (guard.action === 'warn') return NextResponse.json(guard.warning, { status: 400 });
+    if (guard.action === 'warn') return apiJson(guard.warning, 400);
     if (guard.action === "refuse") return apiError(guard.error, 400);
     if (result.ok) await finishCloseGuard(guard, { ...closeCtx, via });
     return result;
