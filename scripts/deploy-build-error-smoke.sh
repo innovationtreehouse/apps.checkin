@@ -10,7 +10,9 @@
 set -euo pipefail
 
 # One write route per wired library. A malformed JSON body must answer 400.
-# A library's wiring PR adds its line here.
+# A library's wiring PR adds its line here. A 403 means the probe person lacks
+# the route's role (fix the role grant), not a pass; a route that admits more
+# roles later must still answer 400.
 MALFORMED_JSON_PROBES=(
   /api/catalog/categories
   /api/inventory/locations
@@ -85,7 +87,7 @@ docker run -d --name "$APP" --network "$NET" -p 4000:4000 \
   -e CATALOG_DATABASE_URL="$PG/catalog?sslmode=disable" \
   -e LOCAL_INVENTORY_DATABASE_URL="$PG/local_inventory?sslmode=disable" \
   -e NEXTAUTH_URL="$BASE" -e AUTH_TRUST_HOST=true -e NEXTAUTH_SECRET="$SECRET" \
-  -e GOOGLE_CLIENT_ID=smoke -e GOOGLE_CLIENT_SECRET=smoke \
+  -e GOOGLE_CLIENT_ID=smoke-placeholder -e GOOGLE_CLIENT_SECRET=smoke-placeholder \
   -e CHECKIN_ENV=dev -e AWS_REGION=us-east-2 \
   "$RUNNER_IMAGE" >/dev/null
 
