@@ -137,8 +137,7 @@ export type WriteRequest = TxnWrite | { entity: "Vendor"; fields: VendorFields }
 
 const KEY_PATTERN = /^[A-Za-z0-9._:/-]{1,50}$/;
 const KEY_MARKER = /\[checkin:([A-Za-z0-9._:/-]{1,50})\]/;
-/** A well-formed marker anywhere in the note, standing alone between whitespace or the note's ends. */
-const KEY_MARKERS = /(?<!\S)\[checkin:([A-Za-z0-9._:/-]{1,50})\](?!\S)/g;
+const KEY_MARKERS = new RegExp(KEY_MARKER.source, "g");
 const MAX_PRIVATE_NOTE = 4000;
 
 const LANE_PATTERN = /^[a-z][a-z0-9-]{0,14}$/;
@@ -165,8 +164,8 @@ export function assertAppKey(key: string): void {
 
 /**
  * The app key a created transaction carries in its PrivateNote; undefined on hand-booked entries.
- * A note carrying two different keys returns them space-joined, which equals no key (a key has no
- * space), so findMatch sends the entry to a person.
+ * A well-formed marker counts anywhere in the note. Two different keys come back space-joined,
+ * which equals no key because the key charset has no space, so findMatch sends the entry to a person.
  */
 export function appKeyOf(entry: { PrivateNote?: string }): string | undefined {
   const keys = new Set(Array.from((entry.PrivateNote ?? "").matchAll(KEY_MARKERS), (m) => m[1]));

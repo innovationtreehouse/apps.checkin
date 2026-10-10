@@ -283,9 +283,13 @@ describe("appKeyOf", () => {
     expect(appKeyOf({ PrivateNote: `[checkin:${KEY}]\n[checkin:${KEY}]` })).toBe(KEY);
   });
 
-  it("ignores an embedded or malformed marker", () => {
-    expect(appKeyOf({ PrivateNote: "x[checkin:k-1]" })).toBeUndefined();
-    expect(appKeyOf({ PrivateNote: "[checkin:k-1]x" })).toBeUndefined();
+  it("reads a marker next to punctuation or text", () => {
+    expect(appKeyOf({ PrivateNote: "Memo:[checkin:k-1]" })).toBe("k-1");
+    expect(appKeyOf({ PrivateNote: "([checkin:k-1])" })).toBe("k-1");
+    expect(appKeyOf({ PrivateNote: "x[checkin:k-1]x" })).toBe("k-1");
+  });
+
+  it("ignores a malformed marker", () => {
     expect(appKeyOf({ PrivateNote: "[checkin:k 1]" })).toBeUndefined();
     expect(appKeyOf({ PrivateNote: "[checkin:]" })).toBeUndefined();
     expect(appKeyOf({ PrivateNote: "[ checkin:k-1]" })).toBeUndefined();
