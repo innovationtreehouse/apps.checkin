@@ -1,7 +1,8 @@
 /**
  * Receipts (#1265): the route + auth matrix (submitter vs FINANCE vs BOARD vs a non-viewer vs
  * anonymous), the file route's delivery headers, and the submitter journey on the local OCR
- * mock: an auto upload finalizes and shows in "My receipts"; an owed receipt reads "not yet
+ * mock: an auto upload stops for its uploader to confirm, then finalizes and shows in "My
+ * receipts"; an owed receipt reads "not yet
  * paid" and stays when completed ones are hidden. Real HTTP against the running dev server and
  * the empty receipt DB (docker-compose.flow.yml). The S1 push (X6) is unbound, so finalized
  * receipts wait unpushed.
@@ -95,7 +96,7 @@ describe("receipts — route auth", () => {
 });
 
 describe("receipts — submitter journey", () => {
-  it("auto-reads an upload to finalized and lists it with the owed one, which stays when completed are hidden", async () => {
+  it("auto-reads an upload, finalizes it on confirm, and lists it with the owed one, which stays when completed are hidden", async () => {
     const submitter = await loginAs(SUBMITTER);
 
     // The uploader is always the principal: a payload-asserted id is refused, never used.
@@ -103,11 +104,13 @@ describe("receipts — submitter journey", () => {
     // The type is checked by content: a NUL byte is not text.
     expect((await upload(submitter, `bad\u0000${stamp}`)).status).toBe(400);
 
-    // Auto: no details, so the local OCR mock reads it in the request.
+    // Auto: no details, so the local OCR mock reads it in the request; its reading is a
+    // proposal the uploader confirms.
     const auto = await upload(submitter, `auto receipt ${stamp}`);
     expect(auto.status).toBe(200);
-    expect(auto.json).toMatchObject({ state: "receipt_finalized", retailer: "Fixture Hardware", uploadedByUserId: submitter.personaId });
+    expect(auto.json).toMatchObject({ state: "submitter_review", retailer: "Fixture Hardware", uploadedByUserId: submitter.personaId });
     expect(auto.json).not.toHaveProperty("fileBlob");
+    expect((await post(submitter, `/api/receipts/${auto.json.id}/submitter-confirm`)).json.state).toBe("receipt_finalized");
 
     // Owed: stops at the submitter's review, then finalizes on confirm.
     const owed = await upload(submitter, `owed receipt ${stamp}`, { details: details(`Flow Store ${stamp}`), needsReimbursement: true });

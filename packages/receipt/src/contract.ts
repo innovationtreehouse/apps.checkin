@@ -67,28 +67,33 @@ export interface ReimbursementStatus {
 
 // ── OCR provider ─────────────────────────────────────────────────────────────
 
+// OCR output is untrusted: it carries the manual-entry bounds, and money stays inside the
+// int4 cents columns.
+const MAX_DOLLARS = 10_000_000;
+const ocrMoney = z.number().finite().nonnegative().max(MAX_DOLLARS);
+
 export const OcrLineItemSchema = z.object({
-  description: z.string(),
-  partNumber: z.string().optional(),
-  manufacturer: z.string().optional(),
-  quantity: z.number().finite().positive(),
-  unitPrice: z.number().finite(),
+  description: z.string().min(1).max(500),
+  partNumber: z.string().max(100).optional(),
+  manufacturer: z.string().max(100).optional(),
+  quantity: z.number().finite().positive().max(MAX_DOLLARS),
+  unitPrice: ocrMoney,
   isDelayed: z.boolean(),
 });
 
 /** What OCR may fill: the receipt's own details. Never reimbursee, vendor or needsReimbursement. */
 export const OcrDataSchema = z.object({
-  retailer: z.string(),
-  receiptNumber: z.string().optional(),
-  orderNumber: z.string().optional(),
-  receiptDate: z.string(),
-  currency: z.string(),
-  shipping: z.number().finite(),
-  tax: z.number().finite(),
-  discount: z.number().finite(),
-  receiptTotal: z.number().finite(),
-  receiptTotalText: z.string().optional(),
-  lineItems: z.array(OcrLineItemSchema),
+  retailer: z.string().max(500),
+  receiptNumber: z.string().max(200).optional(),
+  orderNumber: z.string().max(200).optional(),
+  receiptDate: z.string().max(50),
+  currency: z.string().max(10),
+  shipping: ocrMoney,
+  tax: ocrMoney,
+  discount: ocrMoney,
+  receiptTotal: ocrMoney,
+  receiptTotalText: z.string().max(100).optional(),
+  lineItems: z.array(OcrLineItemSchema).max(200),
 });
 export type OcrLineItem = z.infer<typeof OcrLineItemSchema>;
 export type OcrData = z.infer<typeof OcrDataSchema>;
