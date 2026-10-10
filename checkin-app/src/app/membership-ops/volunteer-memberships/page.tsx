@@ -50,23 +50,26 @@ export default function VolunteerMembershipsPage() {
   const flash = (text: string, tone: "warning" | "error" = "error") =>
     setMessage(text ? { text, tone } : undefined);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/membership-ops/volunteer-memberships");
-      if (!res.ok) throw new Error(String(res.status));
-      setRows((await res.json()).rows || []);
-      setLoadFailed(false);
-    } catch {
-      // Without this the failed load is indistinguishable from an empty roster.
-      setRows([]);
-      setLoadFailed(true);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const fetchRows = useCallback(() =>
+    fetch("/api/membership-ops/volunteer-memberships")
+      .then(async (res) => {
+        if (!res.ok) throw new Error(String(res.status));
+        setRows((await res.json()).rows || []);
+        setLoadFailed(false);
+      })
+      .catch(() => {
+        // Without this the failed load is indistinguishable from an empty roster.
+        setRows([]);
+        setLoadFailed(true);
+      })
+      .finally(() => setLoading(false)), []);
 
-  useEffect(() => { load(); }, [load]);
+  const load = () => {
+    setLoading(true);
+    return fetchRows();
+  };
+
+  useEffect(() => { fetchRows(); }, [fetchRows]);
 
   const visibleRows = useMemo(() => {
     const q = search.trim().toLowerCase();

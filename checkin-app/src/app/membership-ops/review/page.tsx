@@ -47,32 +47,26 @@ export default function MembershipReviewPage() {
   // Reviews this reviewer already approved that have not cleared.
   const [mine, setMine] = useState<QueueItem[]>([]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/membership/reviews");
-      if (res.status === 403) {
-        setForbidden(true);
-        return;
-      }
-      if (res.ok) {
-        const data = await res.json();
-        setQueue(data.queue || []);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const fetchQueue = useCallback(() =>
+    fetch("/api/membership/reviews")
+      .then(async (res) => {
+        if (res.status === 403) setForbidden(true);
+        else if (res.ok) setQueue((await res.json()).queue || []);
+      })
+      .finally(() => setLoading(false)), []);
 
-  const loadMine = useCallback(async () => {
-    const res = await fetch("/api/membership/reviews?mine=1");
-    if (res.ok) setMine((await res.json()).queue || []);
-  }, []);
+  const load = () => {
+    setLoading(true);
+    return fetchQueue();
+  };
+
+  const loadMine = useCallback(() =>
+    fetch("/api/membership/reviews?mine=1")
+      .then(async (res) => { if (res.ok) setMine((await res.json()).queue || []); }), []);
 
   useEffect(() => {
-    if (sessionStatus === "authenticated") load();
-    else if (sessionStatus === "unauthenticated") setLoading(false);
-  }, [sessionStatus, load]);
+    if (sessionStatus === "authenticated") fetchQueue();
+  }, [sessionStatus, fetchQueue]);
 
   useEffect(() => {
     if (showMine) loadMine();
@@ -220,7 +214,7 @@ export default function MembershipReviewPage() {
     });
   };
 
-  if (sessionStatus === "loading" || loading) {
+  if (sessionStatus === "loading" || (loading && sessionStatus === "authenticated")) {
     return <PageLoader />;
   }
 
