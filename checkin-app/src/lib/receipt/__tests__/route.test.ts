@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 import { ApiResponseError } from "@/security/handler";
-import { accessOf, mapServiceErrors, OCR_DAILY_LIMIT, readCapped, spendOcrQuota } from "@/lib/receipt/route";
+import { accessOf, mapServiceErrors, OCR_DAILY_LIMIT, readCapped, readJsonCapped, spendOcrQuota } from "@/lib/receipt/route";
 
 /** A ServiceError from another loaded copy of the library: same name and shape, different class. */
 class ForeignServiceError extends Error {
@@ -71,6 +71,27 @@ describe("readCapped", () => {
     const { state, body } = endless();
     await expect(readCapped(body, null, CAP)).rejects.toMatchObject({ status: 413 });
     expect(state.read).toBe(CAP + CHUNK.byteLength);
+  });
+});
+
+describe("readJsonCapped", () => {
+  const bytes = (text: string) => new TextEncoder().encode(text);
+  async function* body(text: string) {
+    yield bytes(text);
+  }
+
+  it("parses a JSON body within the cap", async () => {
+    await expect(readJsonCapped(body('[{"a":1}]'), null, 100, "split it")).resolves.toEqual([{ a: 1 }]);
+  });
+
+  it("refuses an over-cap batch with the caller's message", async () => {
+    const big = JSON.stringify([{ fileBase64: "x".repeat(200) }]);
+    await expect(readJsonCapped(body(big), null, 100, "split it")).rejects.toMatchObject({ status: 413, message: "split it" });
+    await expect(readJsonCapped(body("[]"), "101", 100, "split it")).rejects.toMatchObject({ status: 413, message: "split it" });
+  });
+
+  it("answers 400 for a body that is not JSON", async () => {
+    await expect(readJsonCapped(body("not json"), null, 100, "split it")).rejects.toMatchObject({ status: 400 });
   });
 });
 
