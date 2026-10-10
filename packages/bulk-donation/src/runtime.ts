@@ -1,3 +1,4 @@
+import { ServiceError } from "./services/serviceError";
 import type {
   BulkDonationConfig,
   BulkDonationPrincipal,
@@ -48,12 +49,17 @@ function requireRuntime(): BulkDonationConfig {
 /** The acting host user. Throws if absent: host admission runs before any route body. */
 export async function getPrincipal(): Promise<BulkDonationPrincipal> {
   const principal = await requireRuntime().auth.getPrincipal();
-  if (!principal) throw new Error("no bulk-donation principal — host admission should have rejected this request");
+  if (!principal || !Number.isInteger(principal.id)) throw new Error("no bulk-donation principal — host admission should have rejected this request");
   return principal;
 }
 
-export function getOrg(): OrgIdentity {
+export function getOrg(): Promise<OrgIdentity> {
   return requireRuntime().org();
+}
+
+/** The current request's org id, the scope of every donation row. */
+export async function getOrgId(): Promise<string> {
+  return (await getOrg()).id;
 }
 
 export function getOwnerDirectory(): OwnerDirectory {
@@ -70,4 +76,29 @@ export function getInventoryApply(): InventoryApply {
 
 export function getQbWriter(): DonationQbWriter {
   return requireRuntime().qb ?? INERT_QB;
+}
+
+/** An HTTP-status error thrown by a route factory; the host translates it at the route boundary. */
+export class DonationHttpError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "DonationHttpError";
+  }
+}
+
+export function donationError(status: number, message: string): DonationHttpError {
+  return new DonationHttpError(status, message);
+}
+
+/** Run a service call, remapping its ServiceError to a host-rendered HTTP error. */
+export async function mapServiceErrors<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof ServiceError) throw donationError(err.statusCode, err.message);
+    throw err;
+  }
 }

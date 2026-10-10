@@ -78,6 +78,8 @@ const INVENTORY_MANAGER: Visible = (u, signedIn) => signedIn && !!u?.isInventory
 // A library's pages stay listed for board members only until the board releases it.
 const released = (lib: LibraryKey, gate: Visible): Visible => (u, signedIn, counts) =>
   gate(u, signedIn, counts) && isLibraryVisible(lib, { isBoardMember: u?.isBoardMember, releasedLibraries: counts?.releasedLibraries });
+// Bulk donation (#1280 §5): FINANCE or BOARD, like its routes, until the board releases it.
+const DONATIONS = released('bulk-donation', FINANCE_OR_BOARD);
 
 export type PageEntry = {
   href: string;
@@ -199,6 +201,17 @@ export const PAGES: PageEntry[] = [
 
   // Expense Ops — FINANCE or BOARD
   { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: FINANCE_OR_BOARD },
+
+  // Donations — FINANCE or BOARD
+  { href: '/donations', label: 'Donations', section: 'Donations', visible: DONATIONS },
+  { href: '/donations/uploads', label: 'Benevity Uploads', section: 'Donations', keywords: 'benevity csv import corporate giving', visible: DONATIONS },
+  { href: '/donations/unassigned', label: 'Unassigned Gifts', section: 'Donations', keywords: 'owner bucket assign organizational level', visible: DONATIONS },
+  { href: '/donations/transactions', label: 'Gifts', section: 'Donations', keywords: 'donation donor match benevity', visible: DONATIONS },
+  { href: '/donations/holds', label: 'Disbursement Holds', section: 'Donations', keywords: 'account map no match resubmit', visible: DONATIONS },
+  { href: '/donations/events', label: 'Booking Batches', section: 'Donations', keywords: 'disbursement quickbooks deposit', visible: DONATIONS },
+  { href: '/donations/comment-rules', label: 'Comment Rules', section: 'Donations', keywords: 'donor comment owner rule', visible: DONATIONS },
+  { href: '/donations/account-map', label: 'Account Map', section: 'Donations', keywords: 'ledger gl account donation match fees', visible: DONATIONS },
+  { href: '/donations/qb-exclusions', label: 'QuickBooks Exclusions', section: 'Donations', keywords: 'quickbooks match exclude', visible: DONATIONS },
 
   // System Status — board
   { href: '/system-status', label: 'System Status', section: 'System Status', visible: BOARD },
