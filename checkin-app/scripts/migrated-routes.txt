@@ -65,3 +65,13 @@ POST /api/budget-owners/[id]/archive
 GET /api/programs/[id]/treasurers
 PUT /api/programs/[id]/treasurers/[personId]
 DELETE /api/programs/[id]/treasurers/[personId]
+GET /api/workflow-mapping/receipts
+GET /api/workflow-mapping/receipts/counts
+GET /api/workflow-mapping/receipts/[id]
+POST /api/workflow-mapping/receipts/[id]/proceed
+POST /api/workflow-mapping/receipts/[id]/apply
+POST /api/workflow-mapping/receipts/[id]/retry-apply
+POST /api/workflow-mapping/receipts/[id]/lines/[lineStatusId]/associate
+POST /api/workflow-mapping/receipts/[id]/lines/[lineStatusId]/propose
+POST /api/workflow-mapping/receipts/[id]/lines/[lineStatusId]/non-inventory
+GET /api/workflow-mapping/audit-log

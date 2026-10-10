@@ -78,13 +78,19 @@ const customJestConfig = {
         '^@/(.*)$': '<rootDir>/src/$1',
         // Workspace TS package — point jest at its source so it transforms it.
         '^@inventory/money$': '<rootDir>/../packages/money/src/index.ts',
-        // Checkin-hosted libraries (#1286, #1287): jest's resolver doesn't honor
+        // Shared contracts the libraries import; their `exports` declare only `import`.
+        '^@inventory/receipt-types$': '<rootDir>/../packages/receipt-types/src/index.ts',
+        '^@inventory/workflows$': '<rootDir>/../packages/workflows/src/index.ts',
+        '^@inventory/gtin$': '<rootDir>/../packages/gtin/src/index.ts',
+        // Checkin-hosted libraries (#1286, #1287, #1289): jest's resolver doesn't honor
         // a package's `exports` subpaths, so map them to source. Subpath rule first (more
         // specific), then the bare entry.
         '^@inventory/global-catalog/(.*)$': '<rootDir>/../packages/global-catalog/src/$1',
         '^@inventory/global-catalog$': '<rootDir>/../packages/global-catalog/src/index.ts',
         '^@inventory/local-inventory/(.*)$': '<rootDir>/../packages/local-inventory/src/$1',
         '^@inventory/local-inventory$': '<rootDir>/../packages/local-inventory/src/index.ts',
+        '^@inventory/workflow-mapping/(.*)$': '<rootDir>/../packages/workflow-mapping/src/$1',
+        '^@inventory/workflow-mapping$': '<rootDir>/../packages/workflow-mapping/src/index.ts',
     },
     // The worktree ignore lives at the repo root (.claude/worktrees/), one level
     // up now that rootDir is checkin-app/. testPathIgnorePatterns matches the

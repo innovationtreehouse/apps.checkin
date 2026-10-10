@@ -67,7 +67,7 @@ async function remapProvisional(
 }
 
 async function applyEvent(event: OrgEventRecord): Promise<void> {
-  const orgId = getOrg().id;
+  const orgId = (await getOrg()).id;
   if (event.orgId !== orgId) {
     // Not ours to apply: record it and move past, so one stray event cannot halt the feed.
     console.error(`[workflow-mapping/org-events] event ${event.id} is for another org; skipped`);
@@ -124,7 +124,7 @@ export const orgEventConsumer: OrgEventConsumer = {
 export async function catchUpOrgEvents(opts: { limit?: number } = {}): Promise<{ applied: number; failed: number }> {
   const limit = opts.limit ?? 500;
   const cursor = await readCursor();
-  const events = (await ports().catalogEventSource.eventsSince(getOrg().id, cursor))
+  const events = (await ports().catalogEventSource.eventsSince((await getOrg()).id, cursor))
     .filter((e) => e.id > cursor)
     .sort((a, b) => a.id - b.id)
     .slice(0, limit);

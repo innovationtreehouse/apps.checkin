@@ -23,7 +23,7 @@ export const receiptService = {
     await requireActor();
     const filter = states?.map(asState);
     const rows = await db.receivedReceipt.findMany({
-      where: { orgId: getOrg().id, ...(filter ? { state: { in: filter } } : {}) },
+      where: { orgId: (await getOrg()).id, ...(filter ? { state: { in: filter } } : {}) },
       orderBy: { createdAt: "desc" },
     });
 
@@ -52,7 +52,7 @@ export const receiptService = {
     const rows = await db.receivedReceipt.groupBy({
       by: ["state"],
       _count: { _all: true },
-      where: { orgId: getOrg().id, state: { in: ["pending_review", "apply_failed", "applying"] } },
+      where: { orgId: (await getOrg()).id, state: { in: ["pending_review", "apply_failed", "applying"] } },
     });
     const counts = { pending_review: 0, apply_failed: 0, applying: 0 };
     for (const row of rows) {
@@ -183,7 +183,7 @@ export const receiptService = {
     const before = opts.before && !Number.isNaN(opts.before.getTime()) ? opts.before : null;
     const rows = await db.workflowAuditLog.findMany({
       where: {
-        orgId: getOrg().id,
+        orgId: (await getOrg()).id,
         ...(opts.receiptId ? { receivedReceiptId: opts.receiptId } : {}),
         ...(before ? { createdAt: { lt: before } } : {}),
       },

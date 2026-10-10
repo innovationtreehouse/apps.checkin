@@ -16,11 +16,17 @@ set -euo pipefail
 MALFORMED_JSON_PROBES=(
   /api/catalog/categories
   /api/inventory/locations
+  /api/workflow-mapping/receipts/1/lines/1/associate
 )
 
 # Duplicate create: the first POST must succeed, the second must answer 409.
 DUPLICATE_PROBE_PATH=/api/catalog/categories
 DUPLICATE_PROBE_BODY='{"name":"Smoke probe","letter":"Z"}'
+
+# Replayed transition: a second proceed on the same receipt must answer 409.
+# workflow-mapping's error is built in the instrumentation bundle and translated
+# in the route bundle, so this proves that translation under the production build.
+REPLAY_PROBE_RECEIPT=smoke-replay
 
 RUNNER_IMAGE=${1:?runner image}
 BUILDER_IMAGE=${2:?builder image}
@@ -51,16 +57,28 @@ for _ in $(seq 1 30); do
 done
 
 psql() { docker exec -i "$DB" psql -v ON_ERROR_STOP=1 -U prisma -d checkmein -qtA "$@"; }
-psql -c 'CREATE DATABASE catalog' -c 'CREATE DATABASE local_inventory'
+psql -c 'CREATE DATABASE catalog' -c 'CREATE DATABASE local_inventory' -c 'CREATE DATABASE workflow_mapping'
 
 docker run --rm --network "$NET" \
   -e DATABASE_URL="$PG/checkmein?sslmode=disable" \
   -e CATALOG_DATABASE_URL="$PG/catalog?sslmode=disable" \
   -e LOCAL_INVENTORY_DATABASE_URL="$PG/local_inventory?sslmode=disable" \
+  -e WORKFLOW_MAPPING_DATABASE_URL="$PG/workflow_mapping?sslmode=disable" \
   "$BUILDER_IMAGE" sh -ec '
     npm -w checkin-app exec -- prisma migrate deploy
     npm -w @inventory/global-catalog exec -- prisma migrate deploy
-    npm -w @inventory/local-inventory exec -- prisma migrate deploy'
+    npm -w @inventory/local-inventory exec -- prisma migrate deploy
+    npm -w @inventory/workflow-mapping exec -- prisma migrate deploy'
+
+# One pending_review receipt whose only line is resolved, so proceed is legal once.
+REPLAY_RECEIPT_ID=$(docker exec -i "$DB" psql -v ON_ERROR_STOP=1 -U prisma -d workflow_mapping -qtA <<SQL
+WITH r AS (INSERT INTO received_receipts (org_id, receipt_id, receipt_json)
+           VALUES ('treehouse', '$REPLAY_PROBE_RECEIPT', '{}') RETURNING id),
+     l AS (INSERT INTO received_receipt_line_statuses (received_receipt_id, receipt_line_item_id, recognition_status)
+           SELECT id, 1, 'non_inventory' FROM r)
+SELECT id FROM r;
+SQL
+)
 
 PERSON_ID=$(psql <<'SQL'
 WITH h AS (INSERT INTO "Household" (name) VALUES ('Smoke') RETURNING id),
@@ -86,6 +104,7 @@ docker run -d --name "$APP" --network "$NET" -p 4000:4000 \
   -e DATABASE_URL="$PG/checkmein?sslmode=disable" \
   -e CATALOG_DATABASE_URL="$PG/catalog?sslmode=disable" \
   -e LOCAL_INVENTORY_DATABASE_URL="$PG/local_inventory?sslmode=disable" \
+  -e WORKFLOW_MAPPING_DATABASE_URL="$PG/workflow_mapping?sslmode=disable" \
   -e NEXTAUTH_URL="$BASE" -e AUTH_TRUST_HOST=true -e NEXTAUTH_SECRET="$SECRET" \
   -e GOOGLE_CLIENT_ID=smoke-placeholder -e GOOGLE_CLIENT_SECRET=smoke-placeholder \
   -e CHECKIN_ENV=dev -e AWS_REGION=us-east-2 \
@@ -113,5 +132,9 @@ first=$(post "$DUPLICATE_PROBE_PATH" "$DUPLICATE_PROBE_BODY")
 case "$first" in 2??) echo "ok   POST $DUPLICATE_PROBE_PATH (create) -> $first" ;;
   *) echo "::error::POST $DUPLICATE_PROBE_PATH (create) -> $first (want 2xx)"; failed=1 ;; esac
 expect "POST $DUPLICATE_PROBE_PATH (duplicate)" 409 "$(post "$DUPLICATE_PROBE_PATH" "$DUPLICATE_PROBE_BODY")"
+
+proceed=/api/workflow-mapping/receipts/$REPLAY_RECEIPT_ID/proceed
+expect "POST $proceed (first)" 200 "$(post "$proceed" '{}')"
+expect "POST $proceed (replay)" 409 "$(post "$proceed" '{}')"
 
 exit "$failed"

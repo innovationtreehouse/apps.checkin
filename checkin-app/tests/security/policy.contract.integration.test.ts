@@ -29,6 +29,8 @@ interface RouteImports {
     DELETE?: (req: Request, ctx?: unknown) => Promise<Response>;
 }
 
+const LIBRARY_ROUTE_PREFIXES = ['/api/workflow-mapping/'];
+
 function endpointToRoutePath(endpoint: string): string {
     return endpoint.split(' ')[1];
 }
@@ -57,6 +59,10 @@ describe('Security policy contract', () => {
                     const personas = await loadPersonas();
                     const persona = personas[role];
                     if (!persona) return; // role exercised in route-specific tests
+                    // Library routes need the runtime the host injects at server
+                    // boot; their responses are field-checked by each library's
+                    // strip test and flow test instead.
+                    if (LIBRARY_ROUTE_PREFIXES.some(p => routePath.startsWith(p))) return;
 
                     (getServerSession as jest.Mock).mockResolvedValue(
                         persona.sessionUser ? { user: persona.sessionUser } : null,

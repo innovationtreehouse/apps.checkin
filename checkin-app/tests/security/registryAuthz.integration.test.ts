@@ -183,7 +183,7 @@ describe('Registry route admission gates', () => {
             // Every case using this drives the real handler, so it waits for the
             // route file. The gate check below is static and always runs.
             //
-            // Library routes (catalog #1286, local inventory #1287) are the
+            // Library routes (catalog #1286, local inventory #1287, workflow mapping #1289) are the
             // exception: they are re-export stubs over a checkin-hosted library,
             // which needs its runtime injected at server boot and its own database
             // client — neither exists in this in-process test, and importing the
@@ -191,8 +191,8 @@ describe('Registry route admission gates', () => {
             // resolve. So the DRIVING cases skip; the static gate check below
             // still runs (it proves planAuthorize handles catalog-viewer /
             // inventory-manager). Their admission is exercised end-to-end by the
-            // catalog and local-inventory flow tests instead.
-            const isLibrary = ['/api/catalog/', '/api/inventory/'].some(p => plan.routePath.startsWith(p));
+            // catalog, local-inventory and workflow-mapping flow tests instead.
+            const isLibrary = ['/api/catalog/', '/api/inventory/', '/api/workflow-mapping/'].some(p => plan.routePath.startsWith(p));
             const itServed = routeFileExists(plan.routePath) && !isLibrary ? it : it.skip;
 
             it('has a handled authorize gate (route not silently skipped)', () => {
