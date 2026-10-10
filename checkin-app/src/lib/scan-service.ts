@@ -615,8 +615,9 @@ export function closeActor(user: AuthenticatedUser): CloseActor {
     return { id: Number(user.id), isKeyholder: !!user.isKeyholder, isBoardMember: !!user.isBoardMember, isSysadmin: !!user.isSysadmin };
 }
 
-/** Keyholders and the board may close the building; nobody else does (Arts. VI–VII). */
-const mayClose = (actor: CloseActor) => actor.isKeyholder || actor.isBoardMember;
+/** The board, and a keyholder checking themselves out, may close the building;
+ *  nobody else does (Arts. VI–VII). */
+const mayClose = (actor: CloseActor, subjectId: number) => actor.isBoardMember || (actor.isKeyholder && actor.id === subjectId);
 
 /** Keyholders, the board and sysadmins already read the full roster. */
 const readsRoster = (actor: CloseActor) => actor.isKeyholder || actor.isBoardMember || actor.isSysadmin;
@@ -636,9 +637,10 @@ async function handoverCandidates(db: DbClient, subjectId: number) {
  * correction and removal. When the visit is the last keyholder's and others
  * are inside, the caller chooses close, leave or cancel:
  *
- * - a keyholder or board member gets all three; a leave names the keyholder
- *   handed over to, unless no keyholder is free to name;
- * - a household lead or sysadmin gets leave or cancel and names nobody;
+ * - a keyholder checking themselves out, or a board member, gets all three; a
+ *   leave names the keyholder handed over to, unless no keyholder is free to name;
+ * - anyone else — another keyholder, a household lead, a sysadmin — gets leave
+ *   or cancel and names nobody;
  * - a removal never closes, whoever makes it.
  *
  * The token is bound to the actor shown the choice, and the allowed choices are
@@ -662,7 +664,7 @@ export async function lastKeyholderGuard(
     });
     if (remainingKeyholders > 0) return proceed;
 
-    const canClose = !opts.removal && mayClose(actor);
+    const canClose = !opts.removal && mayClose(actor, subject.id);
     const othersInside = await db.visit.count({ where: { departedAt: null, deletedAt: null, id: { not: visitId } } });
     const clearToken = () => db.visit.update({
         where: { id: visitId },

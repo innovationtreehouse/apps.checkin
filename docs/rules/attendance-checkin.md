@@ -151,24 +151,25 @@ Things the app takes as true because they are handled outside it.
   second badge within the countdown. On the web, when the last recorded keyholder's
   visit ends with others inside, the caller chooses close, leave or cancel in one
   confirm dialog, answered by a server-minted token bound to the person shown the
-  choice: a keyholder or board member gets all three; a household lead or
-  sysadmin who is neither gets leave or cancel. Close checks everyone out; leave
+  choice: the keyholder checking themselves out, or a board member, gets all
+  three; anyone else — another keyholder, a household lead, a sysadmin — gets
+  leave or cancel. Close checks everyone out; leave
   checks out only the keyholder and leaves the others inside a closed facility;
   cancel changes nothing. The choices are worked out again on confirm, so a role
   revoked in between takes effect. Every choice is audited with who made it,
   whose visit it was, the choice, the keyholder named and the count left inside.  [Decision]
 
-- On the web only a keyholder or a board member closes the facility; a household
-  lead or sysadmin who is neither never does, even with the keyholder alone in
-  the record. The board closes whether or not its member holds keys: the owner
+- On the web only the keyholder checking themselves out, or a board member,
+  closes the facility; another keyholder, a household lead or a sysadmin never
+  does, even with the keyholder alone in the record. The board closes whether or not its member holds keys: the owner
   reads the board's superuser standing as covering the active-keyholder rule.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
 
-- A keyholder or board member who chooses leave names, from the keyholders not
-  checked in, the one the keyholder handed over to. Where none is free to name,
+- The keyholder checking themselves out, or a board member, who chooses leave
+  names, from the keyholders not checked in, the one the keyholder handed over to. Where none is free to name,
   the leave stands and records the handover as not named. The named keyholder is
   not checked in — that needs their agreement — and is emailed who left, when,
-  and how many are still inside, unless they are checked in by then. A household
-  lead or sysadmin's leave names nobody.  [Decision]
+  and how many are still inside, unless they are checked in by then. Anyone else's
+  leave names nobody.  [Decision]
 
 - Removing an open visit never closes the facility, whoever removes it: a
   removal says the keyholder was never there, and closing on that basis would

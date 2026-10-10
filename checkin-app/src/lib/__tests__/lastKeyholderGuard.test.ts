@@ -151,11 +151,25 @@ describe("lastKeyholderGuard", () => {
         expect(db.visit.updateMany).not.toHaveBeenCalled();
     });
 
-    it("offers a keyholder checking out a different keyholder all three choices", async () => {
+    it("offers a keyholder checking out a different keyholder leave or cancel, with names and no pick-list", async () => {
         const other = actor({ id: 11, isKeyholder: true });
         const result = await lastKeyholderGuard(42, KEYHOLDER, other, {}, {}, fakeDb({ others: [{ name: "Bob", email: null }] }));
         if (result.action !== "warn") throw new Error("expected warn");
-        expect(result.warning.choices).toEqual(["close", "leave", "cancel"]);
+        expect(result.warning.choices).toEqual(["leave", "cancel"]);
+        expect(result.warning.names).toEqual(["Bob"]);
+        expect(result.warning).not.toHaveProperty("keyholders");
+    });
+
+    it("refuses a close confirm from a keyholder checking out a different keyholder", async () => {
+        const other = actor({ id: 11, isKeyholder: true });
+        const db = fakeDb({ others: [{ name: "Bob", email: null }], stored: confirmedBy(11) });
+        expect(await lastKeyholderGuard(42, KEYHOLDER, other, { token: "tok", choice: "close" }, {}, db))
+            .toEqual({ action: "refuse", error: expect.any(String), status: 400 });
+        expect(db.visit.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("never closes for a different keyholder, even with the keyholder alone", async () => {
+        expect(await lastKeyholderGuard(42, KEYHOLDER, actor({ id: 11, isKeyholder: true }), {}, {}, fakeDb({}))).toEqual(proceed(false));
     });
 
     it("refuses a close from a caller who may only leave", async () => {
