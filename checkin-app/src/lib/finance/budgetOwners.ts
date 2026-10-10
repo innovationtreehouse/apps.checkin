@@ -125,7 +125,7 @@ export async function listProgramTreasurers(programId: number) {
  * on themself or anyone in their own household, board members included.
  */
 export async function setProgramTreasurer(actorId: number, programId: number, personId: number, on: boolean) {
-    const target = await prisma.person.findUnique({ where: { id: personId }, select: { householdId: true } });
+    const target = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { householdId: true } });
     if (!target) throw notFound("Person not found");
     if (actorId === personId || (await hasHouseholdConflict(prisma, actorId, target.householdId))) {
         throw forbidden(OWN_HOUSEHOLD_MESSAGE);
