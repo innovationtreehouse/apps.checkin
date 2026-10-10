@@ -6,6 +6,7 @@ import {
     findStaleDirectJsonEntries,
     findOrphanRegistryEntries,
     findPackageEgressLines,
+    findUnregisteredPackageSurfaces,
     findUnregisteredBareIncludeLegs,
     REGISTRY_ENTRY_RE,
 } from "../check-route-coverage";
@@ -210,8 +211,32 @@ describe("findPackageEgressLines", () => {
         expect(findPackageEgressLines(`a("x.myshopify.com");\nb("https://api.resend.com");`)).toEqual([1, 2]);
     });
 
+    it("flags any non-loopback URL, including an unlisted host and a templated one", () => {
+        expect(findPackageEgressLines('a("https://www.zohoapis.com/crm");\nb(`https://${shop}/admin`);\nc("http://api.stripe.com");'))
+            .toEqual([1, 2, 3]);
+    });
+
+    it("ignores a bare scheme prefix and a placeholder", () => {
+        expect(findPackageEgressLines(`probe("https://" + host);\n<TextInput placeholder="https://…" />`)).toEqual([]);
+    });
+
+    it("allows loopback URLs", () => {
+        expect(findPackageEgressLines(`a("http://localhost:8087/cb");\nb("http://127.0.0.1:4000");\nc("http://[::1]:5432");`))
+            .toEqual([]);
+        expect(findPackageEgressLines(`a("https://localhost.evil.com");`)).toEqual([1]);
+    });
+
     it("ignores comments and look-alike identifiers", () => {
         expect(findPackageEgressLines(`// see quickbooks.api.intuit.com\n/* @anthropic-ai/sdk */\nres.headers.get("intuit_tid");`))
             .toEqual([]);
+    });
+});
+
+describe("findUnregisteredPackageSurfaces", () => {
+    it("errors on a mapped surface with no defineOutbound entry", () => {
+        const files = new Map([["q/src/client.ts", ["quickbooks.query", "quickbooks.ghost"]]]);
+        const found = findUnregisteredPackageSurfaces(files, new Set(["quickbooks.query"]));
+        expect(found.map(f => [f.severity, f.file, f.message.includes("quickbooks.ghost")]))
+            .toEqual([["error", "packages/q/src/client.ts", true]]);
     });
 });

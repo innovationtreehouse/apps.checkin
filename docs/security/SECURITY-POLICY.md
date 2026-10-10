@@ -131,7 +131,7 @@ defineOutbound({
 });
 ```
 
-A library in `packages/*` cannot call `outboundCall`, so its surface is registered and its caller is confined instead: add the `defineOutbound` entry (comment names the file, the host and what data leaves), and add the file to `ALLOWED_PACKAGE_EGRESS_FILES` in `scripts/check-route-coverage.ts`. The lint fails on any third-party host or API SDK reference in package source outside those files (tests and fixtures excluded). A new host or SDK goes into `THIRD_PARTY_HOST_RE` / `THIRD_PARTY_SDK_RE` in the same PR as its surface.
+A library in `packages/*` cannot call `outboundCall`, so its surface is registered and its caller is confined instead: add the `defineOutbound` entry (comment names the file, the host and what data leaves), and map the file to that surface in `PACKAGE_EGRESS_FILES` in `scripts/check-route-coverage.ts`. The lint fails on any non-loopback URL literal, named third-party host or listed API SDK in package source outside those files (tests, fixtures and generated code excluded), and on a mapped surface with no `defineOutbound` entry. An SDK hides its host, so a new one goes into `THIRD_PARTY_SDK_RE` in the same PR as its surface.
 
 ### Serving a stored file
 
