@@ -491,7 +491,7 @@ export const POST = withKiosk(
                     { token: confirmToken, choice: body.closeChoice, handoverToId: body.handoverToId }, {}, tx,
                 );
                 if (guard.action === 'warn') return apiJson(guard.warning, 400);
-                if (guard.action === 'refuse') return apiError(guard.error, 400);
+                if (guard.action === 'refuse') return apiError(guard.error, guard.status);
                 web.guard = guard;
                 web.visitId = activeVisit.id;
             }

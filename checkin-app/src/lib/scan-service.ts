@@ -609,7 +609,7 @@ export type CloseChoiceMade = { choice: CloseChoice; handoverToId: number | null
 export type CloseGuardResult =
     | { action: "proceed"; facilityClosed: boolean; choice: CloseChoiceMade | null }
     | { action: "warn"; warning: CloseChoiceWarning }
-    | { action: "refuse"; error: string };
+    | { action: "refuse"; error: string; status: 400 | 409 };
 
 export function closeActor(user: AuthenticatedUser): CloseActor {
     return { id: Number(user.id), isKeyholder: !!user.isKeyholder, isBoardMember: !!user.isBoardMember, isSysadmin: !!user.isSysadmin };
@@ -663,8 +663,7 @@ export async function lastKeyholderGuard(
     if (remainingKeyholders > 0) return proceed;
 
     const canClose = !opts.removal && mayClose(actor);
-    const othersWhere = { departedAt: null, deletedAt: null, id: { not: visitId } };
-    const othersInside = await db.visit.count({ where: othersWhere });
+    const othersInside = await db.visit.count({ where: { departedAt: null, deletedAt: null, id: { not: visitId } } });
     const clearToken = () => db.visit.update({
         where: { id: visitId },
         data: { forceCloseWarnedAt: null, forceCloseToken: null, forceCloseActorId: null },
@@ -682,6 +681,12 @@ export async function lastKeyholderGuard(
     });
     const token = typeof confirm.token === "string" ? confirm.token : null;
     const confirmed = visit?.forceCloseActorId === actor.id && forceCloseTokenMatches(visit.forceCloseToken, token);
+
+    // A token that does not answer this caller's open choice — spent, replaced,
+    // or shown to someone else — is refused, never re-bound to this caller.
+    if (token != null && !confirmed) {
+        return { action: "refuse", error: "That choice has expired or was already answered.", status: 409 };
+    }
 
     if (!confirmed) {
         const fresh = randomUUID();
@@ -705,7 +710,10 @@ export async function lastKeyholderGuard(
                 forceCloseToken: fresh,
                 confirmSeconds: FORCE_CLOSE_CONFIRM_SECONDS,
                 ...(readsRoster(actor) ? {
-                    names: presentLabels(await db.visit.findMany({ where: othersWhere, include: { person: true } })),
+                    names: presentLabels(await db.visit.findMany({
+                        where: { departedAt: null, deletedAt: null, id: { not: visitId } },
+                        include: { person: true },
+                    })),
                 } : {}),
                 ...(canClose ? { keyholders: await handoverCandidates(db, subject.id) } : {}),
             },
@@ -713,14 +721,14 @@ export async function lastKeyholderGuard(
     }
 
     const choice = choices.find(c => c === confirm.choice);
-    if (!choice) return { action: "refuse", error: "That choice is not available." };
+    if (!choice) return { action: "refuse", error: "That choice is not available.", status: 400 };
 
     let handoverToId: number | null = null;
     if (choice === "leave" && canClose) {
         const candidates = await handoverCandidates(db, subject.id);
         if (confirm.handoverToId == null) {
             // Nobody free to name: the leave stands, recorded as not named.
-            if (candidates.length > 0) return { action: "refuse", error: "Name the keyholder you handed over to." };
+            if (candidates.length > 0) return { action: "refuse", error: "Name the keyholder you handed over to.", status: 400 };
         } else {
             const named = typeof confirm.handoverToId === "number" && Number.isInteger(confirm.handoverToId)
                 ? await db.person.findFirst({
@@ -728,12 +736,19 @@ export async function lastKeyholderGuard(
                     select: { id: true },
                 })
                 : null;
-            if (!named) return { action: "refuse", error: "The keyholder named is not a current keyholder." };
+            if (!named) return { action: "refuse", error: "The keyholder named is not a current keyholder.", status: 400 };
             handoverToId = named.id;
         }
     }
 
-    await clearToken();
+    // Single use: only one confirm of this token consumes it, however many race.
+    const consumed = await db.visit.updateMany({
+        where: { id: visitId, deletedAt: null, forceCloseToken: visit.forceCloseToken, forceCloseActorId: actor.id },
+        data: { forceCloseWarnedAt: null, forceCloseToken: null, forceCloseActorId: null },
+    });
+    if (consumed.count === 0) {
+        return { action: "refuse", error: "That choice has expired or was already answered.", status: 409 };
+    }
     return { action: "proceed", facilityClosed: choice === "close", choice: { choice, handoverToId, othersInside } };
 }
 

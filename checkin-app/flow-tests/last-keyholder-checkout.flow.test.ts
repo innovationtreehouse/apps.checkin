@@ -175,7 +175,7 @@ describe("flow: web checkout by the last recorded keyholder", () => {
         expect((await roster()).attendance.map(v => v.participant.id)).toEqual([otherId]);
     });
 
-    it("a confirm from someone other than the person shown the choice is not a confirm", async () => {
+    it("a confirm from someone other than the person shown the choice is refused", async () => {
         await checkIn(keyholder.personaId);
         await checkIn(otherId);
         const kv = (await visitOf(keyholder.personaId))!;
@@ -183,8 +183,7 @@ describe("flow: web checkout by the last recorded keyholder", () => {
         const warn = await signOut(keyholder, kv.id);
         const replay = await signOut(board, kv.id, { forceCloseToken: warn.json.forceCloseToken, closeChoice: "close" });
 
-        expect(replay.status).toBe(400);
-        expect(replay.json.type).toBe("close_choice");
+        expect(replay.status).toBe(409);
         expect(await visitOf(keyholder.personaId)).toBeDefined();
     });
 });

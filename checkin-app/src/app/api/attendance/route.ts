@@ -163,7 +163,7 @@ export const DELETE = withAuth({}, async (req, auth) => {
 
         const guard = await lastKeyholderGuard(visitId, visit.person, closeActor(user), { token: forceCloseToken, choice: closeChoice, handoverToId });
         if (guard.action === 'warn') return NextResponse.json(guard.warning, { status: 400 });
-        if (guard.action === 'refuse') return apiError(guard.error, 400);
+        if (guard.action === 'refuse') return apiError(guard.error, guard.status);
         const { facilityClosed } = guard;
 
         const finalVisits = await processVisitCheckout(visitId, new Date(), undefined, "TYPED");

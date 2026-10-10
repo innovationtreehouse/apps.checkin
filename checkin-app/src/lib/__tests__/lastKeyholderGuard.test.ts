@@ -29,14 +29,16 @@ function fakeDb(opts: {
     stored?: { forceCloseToken: string | null; forceCloseActorId: number | null };
     candidates?: Array<{ id: number; name: string }>;
     named?: { id: number } | null;
+    consumed?: number;
 }): DbClient {
-    const { remainingKeyholders = 0, others = [], stored = { forceCloseToken: null, forceCloseActorId: null }, candidates = [], named = null } = opts;
+    const { remainingKeyholders = 0, others = [], stored = { forceCloseToken: null, forceCloseActorId: null }, candidates = [], named = null, consumed = 1 } = opts;
     return {
         visit: {
             count: jest.fn().mockResolvedValueOnce(remainingKeyholders).mockResolvedValueOnce(others.length),
             findMany: jest.fn().mockResolvedValue(others.map((person, i) => ({ id: 100 + i, person }))),
             findUnique: jest.fn().mockResolvedValue(stored),
             update: jest.fn().mockResolvedValue({}),
+            updateMany: jest.fn().mockResolvedValue({ count: consumed }),
         },
         person: {
             findMany: jest.fn().mockResolvedValue(candidates.map(c => ({ ...c, nickname: null, email: null }))),
@@ -116,22 +118,50 @@ describe("lastKeyholderGuard", () => {
         const db = fakeDb({ others: [{ name: "Bob", email: null }], stored: confirmedBy(7) });
         const result = await lastKeyholderGuard(42, KEYHOLDER, self, { token: "tok", choice: "close" }, {}, db);
         expect(result).toEqual({ action: "proceed", facilityClosed: true, choice: { choice: "close", handoverToId: null, othersInside: 1 } });
-        expect(db.visit.update).toHaveBeenCalledWith({
-            where: { id: 42 },
+        expect(db.visit.updateMany).toHaveBeenCalledWith({
+            where: { id: 42, deletedAt: null, forceCloseToken: "tok", forceCloseActorId: 7 },
             data: { forceCloseWarnedAt: null, forceCloseToken: null, forceCloseActorId: null },
         });
     });
 
-    it("re-warns when the token was shown to another actor", async () => {
+    it("refuses with 409, and does not re-bind, a token shown to another actor", async () => {
         const db = fakeDb({ others: [{ name: "Bob", email: null }], stored: confirmedBy(99) });
-        const result = await lastKeyholderGuard(42, KEYHOLDER, self, { token: "tok", choice: "close" }, {}, db);
-        expect(result.action).toBe("warn");
+        expect(await lastKeyholderGuard(42, KEYHOLDER, self, { token: "tok", choice: "close" }, {}, db))
+            .toEqual({ action: "refuse", error: expect.any(String), status: 409 });
+        expect(db.visit.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses with 409 a token replayed after its confirm spent it", async () => {
+        const db = fakeDb({ others: [{ name: "Bob", email: null }] });
+        expect(await lastKeyholderGuard(42, KEYHOLDER, self, { token: "tok", choice: "close" }, {}, db))
+            .toEqual({ action: "refuse", error: expect.any(String), status: 409 });
+    });
+
+    it("lets only one of two racing confirms consume the token", async () => {
+        const db = fakeDb({ others: [{ name: "Bob", email: null }], stored: confirmedBy(7), consumed: 0 });
+        expect(await lastKeyholderGuard(42, KEYHOLDER, self, { token: "tok", choice: "close" }, {}, db))
+            .toEqual({ action: "refuse", error: expect.any(String), status: 409 });
+    });
+
+    it("refuses a close when the keyholder role was revoked between warning and confirm", async () => {
+        const db = fakeDb({ others: [{ name: "Bob", email: null }], stored: confirmedBy(7) });
+        const revoked = actor({ id: 7 });
+        expect(await lastKeyholderGuard(42, KEYHOLDER, revoked, { token: "tok", choice: "close" }, {}, db))
+            .toEqual({ action: "refuse", error: expect.any(String), status: 400 });
+        expect(db.visit.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("offers a keyholder checking out a different keyholder all three choices", async () => {
+        const other = actor({ id: 11, isKeyholder: true });
+        const result = await lastKeyholderGuard(42, KEYHOLDER, other, {}, {}, fakeDb({ others: [{ name: "Bob", email: null }] }));
+        if (result.action !== "warn") throw new Error("expected warn");
+        expect(result.warning.choices).toEqual(["close", "leave", "cancel"]);
     });
 
     it("refuses a close from a caller who may only leave", async () => {
         const db = fakeDb({ others: [{ name: "Bob", email: null }], stored: confirmedBy(4) });
         expect(await lastKeyholderGuard(42, KEYHOLDER, lead, { token: "tok", choice: "close" }, {}, db))
-            .toEqual({ action: "refuse", error: expect.any(String) });
+            .toEqual({ action: "refuse", error: expect.any(String), status: 400 });
     });
 
     it("lets a household lead leave without naming anyone", async () => {

@@ -281,7 +281,7 @@ async function withCloseGuard(
     const { guard, ...closeCtx } = pending;
 
     if (guard.action === 'warn') return apiJson(guard.warning, 400);
-    if (guard.action === "refuse") return apiError(guard.error, 400);
+    if (guard.action === "refuse") return apiError(guard.error, guard.status);
     if (result.ok) await finishCloseGuard(guard, { ...closeCtx, via });
     return result;
 }
