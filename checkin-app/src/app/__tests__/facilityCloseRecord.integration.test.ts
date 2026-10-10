@@ -16,6 +16,7 @@ import { authenticateRequest } from '@/lib/auth';
 import { getServerSession } from 'next-auth/next';
 import type { FacilityCloseVia, Person, Visit } from '@/generated/prisma/client';
 import type { NextRequest } from 'next/server';
+import { sendEmail } from '@/lib/email';
 
 jest.mock('@/lib/auth', () => ({
     ...jest.requireActual('@/lib/auth'),
@@ -256,7 +257,7 @@ describe('facility close record and departure log (real DB)', () => {
             expect(warn.status).toBe(400);
             const { forceCloseToken } = await warn.json();
 
-            const res = await scanPOST(req('/api/scan', 'POST', { participantId: keyholder.id, forceCloseToken }));
+            const res = await scanPOST(req('/api/scan', 'POST', { participantId: keyholder.id, forceCloseToken, closeChoice: 'close' }));
             expect(await res.json()).toMatchObject({ facilityClosed: true });
 
             await expectOneClose('WEB_CHECKOUT', keyholder.id, [{ person: member, before: fresh }], keyholder);
@@ -272,7 +273,7 @@ describe('facility close record and departure log (real DB)', () => {
             expect(warn.status).toBe(400);
             const { forceCloseToken } = await warn.json();
 
-            const res = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id, forceCloseToken }));
+            const res = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id, forceCloseToken, closeChoice: 'close' }));
             expect(res.status).toBe(200);
             expect(await res.json()).toMatchObject({ success: true, facilityClosed: true });
 
@@ -293,28 +294,56 @@ describe('facility close record and departure log (real DB)', () => {
             expect(warn.status).toBe(400);
             const { forceCloseToken } = await warn.json();
 
-            const res = await manualPATCH(req(`/api/attendance/manual/${kv.id}`, 'PATCH', { departedAt, forceCloseToken }), ctx);
+            const res = await manualPATCH(req(`/api/attendance/manual/${kv.id}`, 'PATCH', { departedAt, forceCloseToken, closeChoice: 'close' }), ctx);
             expect(res.status).toBe(200);
             expect((await visitOf(member)).departedVia).toBe('FACILITY_CLOSE');
 
             await expectOneClose('WEB_CORRECTION', keyholder.id, [{ person: member, before: fresh }], keyholder);
         });
 
-        it('a tombstone of the last keyholder\'s open visit writes one WEB_REMOVAL close', async () => {
+        it('a tombstone of the last keyholder\'s open visit never closes the facility', async () => {
             asSession(keyholder);
             const kv = await open(keyholder);
-            await open(member);
+            const mv = await open(member);
             const ctx = { params: Promise.resolve({ id: String(kv.id) }) };
 
             const warn = await manualDELETE(req(`/api/attendance/manual/${kv.id}`, 'DELETE', {}), ctx);
             expect(warn.status).toBe(400);
-            const { forceCloseToken } = await warn.json();
+            const body = await warn.json();
+            expect(body).toMatchObject({ type: 'close_choice', choices: ['leave', 'cancel'], othersInside: 1 });
 
-            const res = await manualDELETE(req(`/api/attendance/manual/${kv.id}`, 'DELETE', { forceCloseToken }), ctx);
-            expect(res.status).toBe(200);
+            const close = await manualDELETE(req(`/api/attendance/manual/${kv.id}`, 'DELETE', { forceCloseToken: body.forceCloseToken, closeChoice: 'close' }), ctx);
+            expect(close.status).toBe(400);
+            const again = await manualDELETE(req(`/api/attendance/manual/${kv.id}`, 'DELETE', { forceCloseToken: body.forceCloseToken, closeChoice: 'leave' }), ctx);
+            expect(again.status).toBe(200);
             expect((await prisma.visit.findUniqueOrThrow({ where: { id: kv.id } })).deletedAt).not.toBeNull();
+            expect((await prisma.visit.findUniqueOrThrow({ where: { id: mv.id } })).departedAt).toBeNull();
+            expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(0);
+        });
 
-            await expectOneClose('WEB_REMOVAL', keyholder.id, [{ person: member, before: fresh }], keyholder);
+        it('a keyholder\'s leave names the keyholder handed over to, departs nobody else, and emails them', async () => {
+            asSession(keyholder);
+            const kv = await open(keyholder);
+            const mv = await open(member);
+
+            const warn = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id }));
+            const body = await warn.json();
+            expect(body.keyholders).toEqual(expect.arrayContaining([expect.objectContaining({ id: keyholder2.id })]));
+
+            const unnamed = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id, forceCloseToken: body.forceCloseToken, closeChoice: 'leave' }));
+            expect(unnamed.status).toBe(400);
+
+            const res = await dashboardDELETE(req('/api/attendance', 'DELETE', {
+                visitId: kv.id, forceCloseToken: body.forceCloseToken, closeChoice: 'leave', handoverToId: keyholder2.id,
+            }));
+            expect(await res.json()).toMatchObject({ success: true, facilityClosed: false });
+            expect((await prisma.visit.findUniqueOrThrow({ where: { id: mv.id } })).departedAt).toBeNull();
+            expect(await prisma.visit.count({ where: { personId: keyholder2.id } })).toBe(0);
+            expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(0);
+
+            const choice = await prisma.auditLog.findFirstOrThrow({ where: { actorId: keyholder.id, tableName: 'Visit', affectedEntityId: kv.id } });
+            expect(choice.newData).toMatchObject({ type: 'last_keyholder_choice', choice: 'leave', handoverToId: keyholder2.id, othersInside: 1 });
+            expect(sendEmail).toHaveBeenCalledWith(keyholder2.email, expect.any(String), expect.stringContaining('1 person is'));
         });
 
         it('a keyholder alone checking out writes one close that departs nobody else', async () => {

@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { apiError, apiJson } from "@/lib/api-response";
-import { processCheckin, processCheckout, finalizeFacilityClose, closeVia, forceCloseTokenMatches, notifyScanOutcome, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/scan-service";
+import { processCheckin, processCheckout, finalizeFacilityClose, closeVia, closeActor, lastKeyholderGuard, finishCloseGuard, type CloseGuardResult, forceCloseTokenMatches, notifyScanOutcome, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/scan-service";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
 import { applyPresenceIntent, flagForReview } from "@/lib/presence/project";
 import { config } from "@/lib/config";
@@ -47,7 +47,7 @@ const maxDate = (a: Date | null, b: Date | null): Date | null =>
 // unauthenticated, and hands us the parsed body + actor. We own authorization.
 export const POST = withKiosk(
     { rateLimit: { name: "scan", limit: 300 } },
-    async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; protocolVersion?: unknown }, auth) => {
+    async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; protocolVersion?: unknown; closeChoice?: unknown; handoverToId?: unknown }, auth) => {
     const startTime = Date.now();
 
     try {
@@ -293,6 +293,10 @@ export const POST = withKiosk(
         // and branches correctly. The lock auto-releases on commit/rollback.
         const authType = auth.type;
 
+        // A session checkout's last-keyholder decision, set inside the transaction
+        // and acted on after it commits.
+        const web: { guard: Extract<CloseGuardResult, { action: "proceed" }> | null; visitId: number } = { guard: null, visitId: 0 };
+
         let res: Response;
         try {
         res = await prisma.$transaction(async (tx) => {
@@ -479,6 +483,19 @@ export const POST = withKiosk(
             });
 
 
+            // A web checkout runs the shared close choice, not the kiosk's badge
+            // confirm (docs/rules/attendance-checkin.md, Opening and closing).
+            if (auth.type === 'session' && activeVisit && intent !== 'IN') {
+                const guard = await lastKeyholderGuard(
+                    activeVisit.id, participant, closeActor(auth.user),
+                    { token: confirmToken, choice: body.closeChoice, handoverToId: body.handoverToId }, {}, tx,
+                );
+                if (guard.action === 'warn') return apiJson(guard.warning, 400);
+                if (guard.action === 'refuse') return apiError(guard.error, 400);
+                web.guard = guard;
+                web.visitId = activeVisit.id;
+            }
+
             // 6. Project. Intent-carrying events apply IN/OUT as displayed
             // (conflicts park). Legacy callers without intent still toggle from
             // live state.
@@ -493,11 +510,12 @@ export const POST = withKiosk(
                     confirmToken,
                     replayEventId: isReplay ? clientEventId : null,
                     forceCloseConfirmed,
+                    webClose: web.guard?.facilityClosed ?? false,
                 });
             }
 
             const res = activeVisit
-                ? await processCheckout(participant, activeVisit.id, authType, tx, confirmToken, eventTime, isReplay ? clientEventId : null, forceCloseConfirmed)
+                ? await processCheckout(participant, activeVisit.id, authType, tx, confirmToken, eventTime, isReplay ? clientEventId : null, forceCloseConfirmed, web.guard?.facilityClosed ?? false)
                 : await processCheckin(participant, authType, tx, eventTime);
 
             // Classification comes from the ACTUAL outcome. Only a confirmed
@@ -553,10 +571,17 @@ export const POST = withKiosk(
         // kick out of the locked section means a last-isKeyholder close no longer
         // blocks concurrent scans for other participants. No-op unless the
         // response reports facilityClosed.
-        await finalizeFacilityClose(res, {
-            closedById: auth.type === 'session' ? Number(auth.user.id) : participant.id,
-            via: closeVia(authType, isReplay ? clientEventId : null),
-        }, isReplay ? eventTime : undefined);
+        if (auth.type === 'session' && web.guard) {
+            const outcome = (await res.clone().json().catch(() => null)) as { type?: string } | null;
+            if (outcome?.type === 'checkout') {
+                await finishCloseGuard(web.guard, { actorId: Number(auth.user.id), subjectId: participant.id, visitId: web.visitId, via: "WEB_CHECKOUT" });
+            }
+        } else {
+            await finalizeFacilityClose(res, {
+                closedById: participant.id,
+                via: closeVia(authType, isReplay ? clientEventId : null),
+            }, isReplay ? eventTime : undefined);
+        }
         await notifyScanOutcome(res, eventTime);
         // After the tx (+ optional facility sweep) commits, so a concurrent
         // GET cannot refill the cache from uncommitted rows.
