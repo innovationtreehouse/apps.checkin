@@ -20,22 +20,23 @@ export default function MissingEmergencyContactsPage() {
   const [error, setError] = useState("");
   const [editHouseholdId, setEditHouseholdId] = useState<number | null>(null);
 
-  const fetchHouseholds = useCallback(async () => {
-    try {
-      const res = await fetch("/api/membership-audit/households-missing-contact");
+  const fetchHouseholds = useCallback(() => fetch("/api/membership-audit/households-missing-contact")
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setHouseholds(data.households ?? []);
       } else {
         setError("Failed to load households. Ensure you have the proper authorizations.");
       }
-    } catch (e) {
+    })
+    .catch((e) => {
       console.error("Failed to load households missing contacts:", e);
       notifications.show({ color: "red", message: "Network error loading households.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     fetchHouseholds();

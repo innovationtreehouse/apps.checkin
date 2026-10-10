@@ -52,9 +52,8 @@ export default function AdminHouseholdsPage() {
   const [pendingGrantHouseholdId, setPendingGrantHouseholdId] = useState<number | null>(null);
   const [grantReason, setGrantReason] = useState("");
 
-  const fetchHouseholds = useCallback(async () => {
-    try {
-      const res = await fetch('/api/membership-ops/households');
+  const fetchHouseholds = useCallback(() => fetch('/api/membership-ops/households')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setHouseholds(data.households);
@@ -62,12 +61,14 @@ export default function AdminHouseholdsPage() {
       } else {
         setError("Failed to fetch households.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchHouseholds();

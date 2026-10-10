@@ -1,6 +1,7 @@
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 jest.mock("@mantine/modals", () => ({ modals: { openConfirmModal: jest.fn() } }));
 
+import { useState } from "react";
 import { screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
 import { modals } from "@mantine/modals";
@@ -43,6 +44,25 @@ describe("RolesEditModal", () => {
         expect(screen.getByLabelText("Keyholder")).toBeChecked();
         expect(screen.getByLabelText("BG Reviewer")).not.toBeChecked();
         expect(screen.getByLabelText("Operations")).not.toBeChecked();
+    });
+
+    it("re-seeds the switches when a different target is opened", () => {
+        function Harness() {
+            const [target, setTarget] = useState<RolesEditTarget>(jane);
+            return (
+                <>
+                    <button onClick={() => setTarget(bob)}>Switch to Bob</button>
+                    <RolesEditModal target={target} me={{ isBoardMember: true }} onClose={jest.fn()} onSaved={jest.fn()} />
+                </>
+            );
+        }
+        renderWithProviders(<Harness />);
+        expect(screen.getByLabelText("Keyholder")).toBeChecked();
+
+        fireEvent.click(screen.getByText("Switch to Bob"));
+
+        expect(screen.getByLabelText("Keyholder")).not.toBeChecked();
+        expect(screen.getByLabelText("Board")).toBeChecked();
     });
 
     it("board actor: no switch is disabled, even for a target who is already board", () => {
