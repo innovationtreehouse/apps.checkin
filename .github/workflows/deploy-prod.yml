@@ -238,7 +238,7 @@ jobs:
             "containerOverrides": [{
               "name": "checkin-migrate",
               "command": ["sh", "-c",
-                "cd checkin-app && for i in 1 2 3 4 5; do npx prisma migrate deploy && exit 0; echo \"attempt $i failed — DB may be resuming from auto-pause; retrying in 20s\"; sleep 20; done; exit 1"]
+                "cd checkin-app && for i in 1 2 3 4 5; do ../scripts/each-library.sh exec --no -- prisma migrate deploy && npx prisma migrate deploy && exit 0; echo \"attempt $i failed — DB may be resuming from auto-pause; retrying in 20s\"; sleep 20; done; exit 1"]
             }]
           }
           EOF
