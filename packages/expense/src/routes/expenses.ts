@@ -8,6 +8,7 @@ import type { Prisma } from "../generated/prisma/client";
 import { db } from "../db";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../contract";
 import { getExpenseRuntime, getOrgId, getPrincipal } from "../runtime";
+import { callerId } from "../lib/caller";
 import { SEATS, type FilledSeat } from "../lib/signoff";
 import {
   approveLine,
@@ -211,6 +212,19 @@ export const signoffs: ExpenseRouteHandler = async ({ params }) => {
   return { ExpenseLineSignoffStatus: seatsOnly(status.filter((s) => visible.has(s.lineItemId))) };
 };
 
+/**
+ * Whether the caller has any part in signing this line: its submitter, an approver of its
+ * bucket, FINANCE or Board. Anyone else gets the same 404 as for a line that does not exist,
+ * so the route reveals nothing about an expense to a caller with no part in it.
+ */
+async function maySign(principal: ExpensePrincipal, line: { expense: { submitterId: number }; approvals: { ownerId: number | null }[] }) {
+  if (principal.isFinance || principal.isBoard) return true;
+  const me = callerId(principal);
+  if (line.expense.submitterId === me) return true;
+  const buckets = new Set(await getExpenseRuntime().signoff.bucketsApprovedBy(me));
+  return line.approvals.some((a) => a.ownerId !== null && buckets.has(a.ownerId));
+}
+
 /** The library decides which seat the caller may fill; the response is that line's status. */
 export const sign: ExpenseRouteHandler = async ({ req, params }) => {
   const lineItemId = parseId(params.lineItemId, "lineItemId");
@@ -218,9 +232,9 @@ export const sign: ExpenseRouteHandler = async ({ req, params }) => {
   const principal = await getPrincipal();
   const line = await db.expenseLineItem.findFirst({
     where: { id: lineItemId, expenseId: params.id, expense: { orgId: await getOrgId() } },
-    select: { id: true },
+    select: { expense: { select: { submitterId: true } }, approvals: { select: { ownerId: true } } },
   });
-  if (!line) throw httpError(404, "Line item not found");
+  if (!line || !(await maySign(principal, line))) throw httpError(404, "Line item not found");
   await mapServiceErrors(() => signLine(principal, lineItemId, seat));
   const status = await signoffStatus(params.id);
   return { ExpenseLineSignoffStatus: seatsOnly(status.filter((s) => s.lineItemId === lineItemId)) };

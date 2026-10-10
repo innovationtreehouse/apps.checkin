@@ -94,11 +94,15 @@ describeDb("approver routes filter to the caller's buckets", () => {
     await expect(call(expenses.raise, "/x", ids(), { notes: "not mine" })).rejects.toMatchObject({ status: 404 });
   });
 
-  it("POST …/line-items/[lineItemId]/signoffs: 404 under another expense, refused on the line", async () => {
+  it("POST …/line-items/[lineItemId]/signoffs: the same 404 whatever the expense's state", async () => {
     as(OUTSIDER);
     const other = await seedExpense({ state: "owner_approval" });
     await expect(call(expenses.sign, "/x", { ...ids(), id: other }, { seat: "PROGRAM_APPROVER" })).rejects.toMatchObject({ status: 404 });
-    await expect(call(expenses.sign, "/x", ids(), { seat: "PROGRAM_APPROVER" })).rejects.toMatchObject({ status: 403 });
+    await expect(call(expenses.sign, "/x", ids(), { seat: "PROGRAM_APPROVER" })).rejects.toMatchObject({ status: 404, message: "Line item not found" });
+    const closed = await seedExpense({ state: "rejected" });
+    const closedLine = await seedLineItem(closed);
+    await seedApproval(closed, closedLine, { ownerId: OWN_BUCKET });
+    await expect(call(expenses.sign, "/x", { id: closed, lineItemId: String(closedLine) }, { seat: "SUBMITTER" })).rejects.toMatchObject({ status: 404, message: "Line item not found" });
   });
 });
 

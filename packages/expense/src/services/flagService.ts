@@ -6,6 +6,7 @@ import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { FLAG_AUDIENCE, type FlagAudience, type FlagKind } from "../lib/flags";
 import { CLOSED_STATES, reimburseeUnknown } from "../lib/signoff";
+import { conflictedParties } from "../lib/signoff-facts";
 import { ServiceError } from "./serviceError";
 
 /** Raises a flag once per expense and kind; a repeat is a no-op. */
@@ -36,12 +37,15 @@ export async function checkOffFlag(principal: ExpensePrincipal, flagId: number, 
     throw new ServiceError(403, `Only ${flag.audience} can check off this flag`);
   }
   if (flag.checkedOffAt) throw new ServiceError(400, "Flag is already checked off");
-  if (flag.kind === "REIMBURSEE_UNKNOWN") {
-    // The flag is the queue's only sign of the hold, so it stays open while the hold applies.
-    const expense = await db.expense.findFirst({ where: { id: flag.expenseId } });
-    if (expense && reimburseeUnknown(expense) && !CLOSED_STATES.has(expense.state)) {
-      throw new ServiceError(409, "Set the reimbursee to clear this flag");
-    }
+  const expense = (await db.expense.findFirst({ where: { id: flag.expenseId } }))!;
+  // A control flag is checked off by someone independent of the expense, never by its submitter,
+  // its reimbursee, or anyone in their households.
+  if ((await conflictedParties(expense)).includes(actor.userId)) {
+    throw new ServiceError(403, "You are a party to this expense and cannot check off its flags");
+  }
+  // REIMBURSEE_UNKNOWN is the queue's only sign of the hold, so it stays open while the hold applies.
+  if (flag.kind === "REIMBURSEE_UNKNOWN" && reimburseeUnknown(expense) && !CLOSED_STATES.has(expense.state)) {
+    throw new ServiceError(409, "Set the reimbursee to clear this flag");
   }
 
   await db.$transaction(async (tx) => {
