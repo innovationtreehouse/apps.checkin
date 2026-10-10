@@ -372,6 +372,8 @@ export const authOptions: NextAuthOptions = {
                         },
                         // Program ids led — drives the client program-ops row gate.
                         programsLed: { select: { id: true } },
+                        // One row is enough to make a Program Volunteer (Treehouse Volunteer input).
+                        programVolunteers: { select: { programId: true }, take: 1 },
                         household: { include: { orgMembership: true } },
                         // Source of truth for the five authority claims (assignParticipantClaims).
                         roles: { select: { role: true } }
@@ -421,6 +423,8 @@ export const authOptions: NextAuthOptions = {
                         },
                         // Program ids led — drives the client program-ops row gate.
                         programsLed: { select: { id: true } },
+                        // One row is enough to make a Program Volunteer (Treehouse Volunteer input).
+                        programVolunteers: { select: { programId: true }, take: 1 },
                         household: { include: { orgMembership: true } },
                         // Source of truth for the five authority claims (assignParticipantClaims).
                         roles: { select: { role: true } }
@@ -463,6 +467,10 @@ export const authOptions: NextAuthOptions = {
                 session.user.canAccessStaging = token.canAccessStaging ?? false;
                 // Catalog-viewer volunteer leg (#1286) — completes the client gate.
                 session.user.hasVolunteerDesignation = token.hasVolunteerDesignation ?? false;
+                // Treehouse Volunteer inputs (lib/volunteer.ts).
+                session.user.isProgramVolunteer = token.isProgramVolunteer ?? false;
+                session.user.isVolunteerFamily = token.isVolunteerFamily ?? false;
+                session.user.isActiveOrgMember = token.isActiveOrgMember ?? false;
             }
             return session;
         }
