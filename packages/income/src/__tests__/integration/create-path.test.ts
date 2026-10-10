@@ -399,10 +399,9 @@ describeDb("drainIncomeOutbox — replay after a crash", () => {
     const p3 = payout(3, "2026-06-28", 500);
 
     await drain();
-    // Created here today; parked as ambiguous for finance once the key-marker fix (#1975) lands.
-    const row = await rowFor(p3);
-    expect(row.depositId).not.toBe(qbo.deposits.find((d) => appKeyOf(d) === qbKey("income", p2))?.Id);
-    expect(row.origin).not.toBe("matched");
+    // A fitting deposit that carries another payout's key goes to finance, never matched or created.
+    expect(await rowFor(p3)).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", depositId: null, origin: null });
+    expect(qbo.posts).toHaveLength(1);
     expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.matched" } })).toBe(1);
   });
 });
