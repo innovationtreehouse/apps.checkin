@@ -48,9 +48,9 @@ import '@/security/registry';
 // a VolunteerDesignation lookup keyed by email — for callers who hold no role
 // flag and lead no program. It's independent of CallerContext, so masked ≡ full
 // still holds; this stub just keeps the "no real DB" invariant (jest.setup
-// rejects the real client). Its result never varies with ctx, so null is fine.
+// rejects the real client). Its result never varies with ctx, so empty is fine.
 beforeAll(() => {
-    prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue(null);
+    prisma.volunteerDesignation.findMany = jest.fn().mockResolvedValue([]);
     // expense-approver's treasurer leg is the same kind of ctx-independent lookup.
     prisma.programVolunteer.findFirst = jest.fn().mockResolvedValue(null);
 });

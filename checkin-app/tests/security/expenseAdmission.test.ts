@@ -82,7 +82,7 @@ const APPROVER_ROUTES = [
 ];
 
 let treasurerRow: { programId: number } | null;
-let designationRow: { id: number } | null;
+let designationRow: { email: string } | null;
 const treasurerLookup = jest.fn(async () => treasurerRow);
 
 beforeEach(() => {
@@ -90,7 +90,7 @@ beforeEach(() => {
     designationRow = null;
     treasurerLookup.mockClear();
     prisma.programVolunteer.findFirst = treasurerLookup as unknown as typeof prisma.programVolunteer.findFirst;
-    prisma.volunteerDesignation.findFirst = jest.fn(async () => designationRow) as unknown as typeof prisma.volunteerDesignation.findFirst;
+    prisma.volunteerDesignation.findMany = jest.fn(async () => (designationRow ? [designationRow] : [])) as unknown as typeof prisma.volunteerDesignation.findMany;
 });
 
 const admitted = async (route: { authorize: Authorize }, user: Partial<AuthenticatedUser>) =>
@@ -126,7 +126,7 @@ describe('expense admission', () => {
 
     test.each(expense)('%s denies an id-less session holding every flag at resolveAccess', async (_e, route) => {
         treasurerRow = { programId: 1 };
-        designationRow = { id: 1 };
+        designationRow = { email: 'member@x.test' };
         expect((await resolveAccess(route.authorize, ctx(idless))).allowed).toBe(false);
     });
 
@@ -164,7 +164,7 @@ describe('expense admission', () => {
     });
 
     test('a receipt submitter (volunteer designation) is admitted on sign-off only', async () => {
-        designationRow = { id: 1 };
+        designationRow = { email: 'member@x.test' };
         for (const [endpoint, route] of expense) {
             expect([endpoint, await admitted(route, {})]).toEqual([endpoint, endpoint === SIGN_OFF]);
         }

@@ -62,7 +62,7 @@ const gated = [...allRoutes(), ...allFileRoutes()].filter(([, r]) => !OPEN.inclu
 
 beforeEach(() => {
     // The catalog-viewer designation leg would admit by email; make it match.
-    prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue({ id: 1 });
+    prisma.volunteerDesignation.findMany = jest.fn().mockResolvedValue([{ email: everything.email }]);
 });
 
 describe('id-less session', () => {

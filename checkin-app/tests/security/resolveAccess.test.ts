@@ -1,5 +1,6 @@
 /**
- * Unit tests for the admission gate (resolveAccess). Pure: no DB, no HTTP.
+ * Unit tests for the admission gate (resolveAccess). No DB (the one lookup is
+ * stubbed), no HTTP.
  * Focus on the 'self' case binding to the resource id param — a latent IDOR
  * guard, so it must fail closed on a present-but-mismatched id.
  */
@@ -174,6 +175,60 @@ describe("resolveAccess 'kiosk'", () => {
     });
 });
 
+describe("resolveAccess 'catalog-viewer'", () => {
+    const designated = (emails: string[]) => {
+        prisma.volunteerDesignation.findMany = jest.fn().mockResolvedValue(emails.map((email) => ({ email })));
+    };
+    const withEmail = (email: string): AuthResult => {
+        const u = session(1);
+        if (u.type === 'session') u.user.email = email;
+        return u;
+    };
+
+    beforeEach(() => designated([]));
+
+    test('any role flag → allowed', async () => {
+        const u = session(1);
+        if (u.type === 'session') u.user.isKeyholder = true;
+        expect((await resolveAccess('catalog-viewer', rctx(u))).allowed).toBe(true);
+    });
+
+    test('program lead → allowed', async () => {
+        const u = session(1);
+        if (u.type === 'session') u.user.programsLed = [5];
+        expect((await resolveAccess('catalog-viewer', rctx(u))).allowed).toBe(true);
+    });
+
+    test('designated volunteer, exact email → allowed', async () => {
+        designated(['janedoe@gmail.com']);
+        expect((await resolveAccess('catalog-viewer', rctx(withEmail('janedoe@gmail.com')))).allowed).toBe(true);
+    });
+
+    test('designated volunteer signing in with a dotted, mixed-case Gmail variant → allowed', async () => {
+        designated(['janedoe@gmail.com']);
+        expect((await resolveAccess('catalog-viewer', rctx(withEmail('Jane.Doe@gmail.com')))).allowed).toBe(true);
+    });
+
+    test('a non-canonical stored designation still matches', async () => {
+        designated(['Jane.Doe+vol@GoogleMail.com']);
+        expect((await resolveAccess('catalog-viewer', rctx(withEmail('janedoe@gmail.com')))).allowed).toBe(true);
+    });
+
+    test('dots stay significant outside Gmail → denied', async () => {
+        designated(['janedoe@outlook.com']);
+        expect((await resolveAccess('catalog-viewer', rctx(withEmail('jane.doe@outlook.com')))).allowed).toBe(false);
+    });
+
+    test('plain authenticated caller → denied', async () => {
+        expect((await resolveAccess('catalog-viewer', rctx(session(1)))).allowed).toBe(false);
+    });
+
+    test('kiosk / no session → denied', async () => {
+        expect((await resolveAccess('catalog-viewer', rctx({ type: 'kiosk' }))).allowed).toBe(false);
+        expect((await resolveAccess('catalog-viewer', rctx({ type: 'unauthenticated' }))).allowed).toBe(false);
+    });
+});
+
 // H4 finance vocabulary (#1272 §6, #1280 §4, #1265 §6). One persona per audience:
 // finance, board, inventory manager, sysadmin-only, a Treehouse Volunteer (keyholder), and a plain
 // household member with no role.
@@ -196,7 +251,7 @@ describe('finance vocabulary, catalog-viewer FINANCE admission, widened anyRole'
 
     beforeEach(() => {
         // The designation leg of the volunteer predicate reads the DB; nobody here has one.
-        prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue(null);
+        prisma.volunteerDesignation.findMany = jest.fn().mockResolvedValue([]);
     });
 
     test.each([
@@ -218,7 +273,7 @@ describe('finance vocabulary, catalog-viewer FINANCE admission, widened anyRole'
     });
 
     test("'catalog-viewer' admits a volunteer designation holder with no role", async () => {
-        prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue({ id: 1 });
+        prisma.volunteerDesignation.findMany = jest.fn().mockResolvedValue([{ email: 'u@x.test' }]);
         expect(await allowed('catalog-viewer', 'familyMember')).toBe(true);
     });
 

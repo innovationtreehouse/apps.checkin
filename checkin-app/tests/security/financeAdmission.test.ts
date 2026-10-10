@@ -62,7 +62,7 @@ const finance = [...allRoutes()].filter(([, r]) => isFinanceGate(r.authorize));
 
 beforeEach(() => {
     // The designation and treasurer legs would admit by lookup; make them match so only the id guard can deny.
-    prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue({ id: 1 });
+    prisma.volunteerDesignation.findMany = jest.fn().mockResolvedValue([{ email: everyFlagUser.email }]);
     prisma.programVolunteer.findFirst = jest.fn().mockResolvedValue({ programId: 1 });
 });
 

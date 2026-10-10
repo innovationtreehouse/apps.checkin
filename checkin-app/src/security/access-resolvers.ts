@@ -15,6 +15,7 @@
  */
 import prisma from '@/lib/prisma';
 import { config, isStagingAccessAllowed } from '@/lib/config';
+import { canonicalizeEmail } from '@/lib/emailNormalize';
 import { householdLeadship } from '@/lib/household/leads';
 import type { AuthResult } from '@/types/auth';
 import type { Authorize, CtxNeeds, Role } from './core';
@@ -322,15 +323,17 @@ export async function resolveAccess(
                     return { allowed: true };
                 }
                 if ((u.programsLed?.length ?? 0) > 0) return { allowed: true };
-                // ponytail: inline admission lookup — promote to CallerContext if
-                // a per-row catalog use appears. The session carries no volunteer
-                // flag, so this one leg needs a DB read (email is @unique).
+                // The session carries no volunteer flag, so this leg reads the
+                // designations. Both sides are canonicalized, matching the dues
+                // path: rows are stored canonical, but older rows may not be.
                 if (u.email) {
-                    const designation = await prisma.volunteerDesignation.findFirst({
-                        where: { email: u.email },
-                        select: { id: true },
+                    const callerKey = canonicalizeEmail(u.email);
+                    const designations = await prisma.volunteerDesignation.findMany({
+                        select: { email: true },
                     });
-                    if (designation) return { allowed: true };
+                    if (designations.some((d) => canonicalizeEmail(d.email) === callerKey)) {
+                        return { allowed: true };
+                    }
                 }
                 return { allowed: false };
             }
