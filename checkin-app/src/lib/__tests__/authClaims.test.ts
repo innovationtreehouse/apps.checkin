@@ -154,3 +154,35 @@ describe('assignParticipantClaims — canAccessStaging claim (ops-stg gate)', ()
         expect(token.canAccessStaging).toBe(false);
     });
 });
+
+describe('assignParticipantClaims — Treehouse Volunteer inputs', () => {
+    const volunteer = {
+        programVolunteers: [{ programId: 4 }],
+    };
+
+    it('stamps program volunteer, volunteer family and active membership', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ ...volunteer, household: { orgMembership: { status: 'ACTIVE', isVolunteer: true } } }));
+
+        expect(token.isProgramVolunteer).toBe(true);
+        expect(token.isVolunteerFamily).toBe(true);
+        expect(token.isActiveOrgMember).toBe(true);
+    });
+
+    it('reads a lapsed membership as inactive', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ ...volunteer, household: { orgMembership: { status: 'REVOKED', isVolunteer: true } } }));
+
+        expect(token.isActiveOrgMember).toBe(false);
+        expect(token.isVolunteerFamily).toBe(true);
+    });
+
+    it('forces every input false for a DENIED household', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ ...volunteer, household: { orgMembership: { status: 'DENIED', isVolunteer: true } } }));
+
+        expect(token.isProgramVolunteer).toBe(false);
+        expect(token.isVolunteerFamily).toBe(false);
+        expect(token.isActiveOrgMember).toBe(false);
+    });
+});

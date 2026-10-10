@@ -1,3 +1,4 @@
+import { isTreehouseVolunteer } from "@/lib/volunteer";
 /**
  * Placement of the Inventory section nav in checkin (#1286 §7, #1287 §7). The
  * catalog and local-inventory libraries own their screen lists (their `/nav`
@@ -23,22 +24,10 @@ export function inventoryAreaLinks(user: SessionUser | undefined): NavLink[] {
 }
 
 /**
- * Client mirror of the server `catalog-viewer` gate (§6): authenticated AND any
- * of — an RBAC role, leading ≥1 program, or a VolunteerDesignation. Every leg is
- * on the session (the volunteer leg rides in as `hasVolunteerDesignation`, set by
- * the JWT callback), so the nav matches server admission exactly — no leg the
- * client can't see. Kept in lockstep with access-resolvers' 'catalog-viewer'.
+ * Client mirror of the server `catalog-viewer` gate (§6): the shared Treehouse
+ * Volunteer definition, read from session claims so the nav admits exactly the
+ * audience the server does.
  */
 export function isCatalogViewerClient(user: SessionUser | undefined): boolean {
-  if (!user) return false;
-  return (
-    !!user.isSysadmin ||
-    !!user.isBoardMember ||
-    !!user.isKeyholder ||
-    !!user.isBackgroundCheckReviewer ||
-    !!user.isOperations ||
-    !!user.isInventoryManager ||
-    (user.programsLed?.length ?? 0) > 0 ||
-    !!user.hasVolunteerDesignation
-  );
+  return isTreehouseVolunteer(user);
 }

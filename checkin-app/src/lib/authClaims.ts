@@ -1,6 +1,6 @@
 import type { JWT } from "next-auth/jwt";
 import type { OrgMembershipStatus, PersonRoleKind } from "@/generated/prisma/client";
-import { orgMembershipStatusBlocksLogin } from "@/lib/orgMembership";
+import { orgMembershipStatusBlocksLogin, personRecordIsActiveOrgMember } from "@/lib/orgMembership";
 import { ageBand } from "@/lib/programAge";
 import { ROLE_FLAGS, rolesToFlags } from "@/lib/roles";
 
@@ -21,7 +21,9 @@ export type ClaimSourceParticipant = {
     // Programs this participant is the lead mentor of (Program.leadMentorId === id).
     // Drives the client-side program-ops row gate; mirrors access-resolvers' programsLed.
     programsLed?: { id: number }[];
-    household?: { orgMembership?: { status: OrgMembershipStatus } | null } | null;
+    // Any ProgramVolunteer row makes this person a Program Volunteer; one row is enough.
+    programVolunteers?: unknown[];
+    household?: { orgMembership?: { status: OrgMembershipStatus; isVolunteer?: boolean } | null } | null;
     // ops-stg access gate escape hatch — a plain Person column, NOT one of the
     // PersonRole-backed flags above (sysadmin-settable only; see lib/roles.ts).
     canAccessStaging: boolean;
@@ -53,4 +55,8 @@ export function assignParticipantClaims(token: JWT, p: ClaimSourceParticipant): 
     token.programsLed = denied ? [] : (p.programsLed?.map((prog) => prog.id) ?? []);
     // ops-stg access gate escape hatch — forced false on DENIED, same as every role flag.
     token.canAccessStaging = denied ? false : p.canAccessStaging;
+    // Treehouse Volunteer inputs (lib/volunteer.ts), forced false on DENIED.
+    token.isProgramVolunteer = !denied && (p.programVolunteers?.length ?? 0) > 0;
+    token.isVolunteerFamily = !denied && p.household?.orgMembership?.isVolunteer === true;
+    token.isActiveOrgMember = !denied && personRecordIsActiveOrgMember(p);
 }
