@@ -267,6 +267,24 @@ describe('order reads', () => {
         expect(sqlOf(0)).toContain('o.test = false');
     });
 
+    // Operator injects (HAND_LOADED / TEST_LOADED) must never drive activation,
+    // reversal, chargeback alerts or the audit's payment basis.
+    it.each<[string, (c: Client) => Promise<unknown>, string[]]>([
+        ['ordersChangedSince', (c) => c.ordersChangedSince(null), ['source']],
+        ['ordersByLegacyIds', (c) => c.ordersByLegacyIds(['1']), ['source']],
+        ['ordersForVariants', (c) => c.ordersForVariants(['1']), ['source']],
+        ['orderLegacyIdsPresent', (c) => c.orderLegacyIdsPresent(['1']), ['source']],
+        ['minRealOrderLegacyId', (c) => c.minRealOrderLegacyId(), ['source']],
+        ['lineVariantStats', (c) => c.lineVariantStats(), ['o.source']],
+        ['disputedOrderGids', (c) => c.disputedOrderGids(['g']), ['o.source', 'bt.source']],
+    ])('%s reads API-synced rows only', async (_name, read, cols) => {
+        queryMock.mockResolvedValue({ rows: [{}] });
+        await read(freshClient());
+        for (const col of cols) {
+            expect(sqlOf(0)).toContain(`(${col} IS NULL OR ${col} IN ('BACKFILL', 'INCREMENTAL'))`);
+        }
+    });
+
     it('neither read opens a pool when the mirror is unwired', async () => {
         delete process.env.SHOPIFY_READ_DATABASE_URL;
         const client = freshClient();
