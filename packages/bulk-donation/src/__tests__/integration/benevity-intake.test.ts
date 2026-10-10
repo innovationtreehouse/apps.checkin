@@ -10,7 +10,7 @@ import { uploadedFileService } from "../../services/uploadedFileService";
 import { transactionService } from "../../services/transactionService";
 import { commentRuleService } from "../../services/commentRuleService";
 import { getNavCounts } from "../../services/navCountsService";
-import { benevityTakeoverLine, QB_MATCH_STATE } from "../../lib/qb-match";
+import { benevityTakeoverLine, QB_MATCH_STATE, recordQbMatched } from "../../lib/qb-match";
 import { ServiceError } from "../../services/serviceError";
 import { makeAccountMapRule, configureTestRuntime, TEST_ORG_ID } from "../helpers/factories";
 
@@ -21,6 +21,7 @@ const READER = { actorUserId: 1, actorUsername: "testfinance", route: "/api/dona
 const HEADER =
   "Disbursement ID,Disbursement Date,Company Name,Transaction ID,Donation Amount,Match Amount,Cause Support Fee,Donation Method,Donation Type,Donor First Name,Donor Last Name,Donor Comment";
 const DONOR_FIELDS = ["Jane", "Doe", "Robotics team", "John", "Smith"];
+const DONOR_KEYS = ["donorFirstName", "donorLastName", "donorComment"];
 
 function csv(rows: string[]): Buffer {
   return Buffer.from([HEADER, ...rows].join("\n"));
@@ -93,6 +94,19 @@ describeDb("owner assignment", () => {
     expect(event.qbMatchState).toBe(QB_MATCH_STATE.UNMATCHED);
     expect(event.qbTxnId).toBeNull();
     expect(await getNavCounts(orgId)).toEqual({ unassignedQueue: 0, disbursementHolds: 0 });
+  });
+
+  it("the owner and organizational-level writes return no donor field", async () => {
+    await upload(FILE);
+    const t1 = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "T-1" } });
+    const t2 = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "T-2" } });
+    const assigned = await transactionService.assignOwner(orgId, t1.id, 201, false, AUDIT);
+    const orgLevel = await transactionService.markOrganizationalLevel(orgId, t2.id, AUDIT);
+    for (const row of [assigned, orgLevel]) {
+      for (const key of DONOR_KEYS) expect(row).not.toHaveProperty(key);
+    }
+    expect(assigned).toMatchObject({ id: t1.id, ownerId: 201 });
+    expect(orgLevel).toMatchObject({ id: t2.id, isOrganizationalLevel: true });
   });
 });
 
@@ -221,10 +235,25 @@ describeDb("QuickBooks match pre-seat", () => {
     await expect(db.donationQbMatchExclusion.create({ data })).rejects.toMatchObject({ code: "P2002" });
   });
 
-  it("the Benevity takeover line is the newest MATCHED disbursement date", async () => {
+  it("the Benevity takeover line is the newest matched disbursement date; CREATED never sets it", async () => {
     expect(await benevityTakeoverLine(db, orgId)).toBeNull();
     await event("D-A", "2026-08-01", QB_MATCH_STATE.MATCHED, "qb-1");
+    await recordQbMatched(db, orgId, { disbursementId: "D-A", disbursementDate: "2026-08-01", qbTxnId: "qb-1" }, AUDIT);
     await event("D-B", "2026-09-01", QB_MATCH_STATE.CREATED, "qb-2");
     expect(await benevityTakeoverLine(db, orgId)).toBe("2026-08-01");
+  });
+
+  it("un-matching the newest matched record does not move the line back", async () => {
+    await event("D-A", "2026-08-01", QB_MATCH_STATE.MATCHED, "qb-1");
+    await recordQbMatched(db, orgId, { disbursementId: "D-A", disbursementDate: "2026-08-01", qbTxnId: "qb-1" }, AUDIT);
+    await event("D-B", "2026-09-01", QB_MATCH_STATE.MATCHED, "qb-2");
+    await recordQbMatched(db, orgId, { disbursementId: "D-B", disbursementDate: "2026-09-01", qbTxnId: "qb-2" }, AUDIT);
+    expect(await benevityTakeoverLine(db, orgId)).toBe("2026-09-01");
+
+    await db.disbursementEvent.updateMany({
+      where: { orgId, disbursementId: "D-B" },
+      data: { qbMatchState: QB_MATCH_STATE.UNMATCHED, qbTxnId: null },
+    });
+    expect(await benevityTakeoverLine(db, orgId)).toBe("2026-09-01");
   });
 });

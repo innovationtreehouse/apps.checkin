@@ -194,6 +194,7 @@ describe("bulk donation — finance journey", () => {
     });
     expect(assigned.status).toBe(200);
     expect((assigned.json as GiftRow).ownerId).toBe(facility.id);
+    for (const key of ["donorFirstName", "donorLastName", "donorComment"]) expect(assigned.json).not.toHaveProperty(key);
     const rules = await api<Array<{ comment: string }>>(f, "/api/donations/comment-rules");
     expect(rules.json.some((r) => r.comment === comment)).toBe(true);
 

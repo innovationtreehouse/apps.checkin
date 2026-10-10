@@ -4,7 +4,8 @@ import { getOwnerDirectory } from "../runtime";
 import { runOwnerAssignedCycleTx, type AuditContext } from "../workflows/disbursement.actor";
 import { ServiceError } from "./serviceError";
 
-const TRANSACTION_SELECT = {
+// Owner decisions return the row without donor identity, so the writes need no donor-read audit row.
+const DECISION_SELECT = {
   id: true,
   orgId: true,
   uploadedFileId: true,
@@ -19,15 +20,19 @@ const TRANSACTION_SELECT = {
   checkFeeCents: true,
   donationMethod: true,
   donationType: true,
-  donorFirstName: true,
-  donorLastName: true,
-  donorComment: true,
   ownerId: true,
   ownerAssignedAt: true,
   ownerAssignedByUserId: true,
   isOrganizationalLevel: true,
   currency: true,
   donationDate: true,
+} as const;
+
+const TRANSACTION_SELECT = {
+  ...DECISION_SELECT,
+  donorFirstName: true,
+  donorLastName: true,
+  donorComment: true,
 } as const;
 
 export const transactionService = {
@@ -83,6 +88,7 @@ export const transactionService = {
       const row = await tx.transaction.update({
         where: { id: transactionId },
         data: { ownerId, ownerAssignedAt: now, ownerAssignedByUserId: audit.actorUserId },
+        select: DECISION_SELECT,
       });
 
       await recordEvent(tx, {
@@ -153,6 +159,7 @@ export const transactionService = {
       const row = await tx.transaction.update({
         where: { id: transactionId },
         data: { isOrganizationalLevel: true },
+        select: DECISION_SELECT,
       });
 
       await recordEvent(tx, {
