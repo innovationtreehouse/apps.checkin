@@ -170,6 +170,12 @@ Things the app takes as true because they are handled outside it.
   badge within a second of the offer is the same touch read twice, never the
   confirm. Nothing on the web can stop a kiosk close.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
 
+- Every facility close is recorded: who closed, when, and through which path
+  (kiosk, offline kiosk, a web checkout, correction or removal, or the nightly
+  sweep, which no person makes). Every departure a close sets is logged against
+  that record with the visit's departure before and after. These logs are an
+  audit trail and are never deleted.  [Decision — *Principle: accountability*]
+
 ### The kiosk
 
 - The kiosk shows only what an unattended public screen may — no dates of birth,

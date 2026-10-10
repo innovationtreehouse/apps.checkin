@@ -178,7 +178,7 @@ export const DELETE = withAuth({}, async (req, auth) => {
 
         if (facilityClosed) {
             try {
-                await runFacilityClose();
+                await runFacilityClose({ closedById: Number(user.id), via: "WEB_DASHBOARD" });
             } catch (err) {
                 logger.error("Failed to close facility-wide visits after web checkout:", err);
             }

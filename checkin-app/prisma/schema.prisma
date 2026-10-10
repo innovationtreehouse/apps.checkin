@@ -223,6 +223,7 @@ model Person {
   presenceEvents      PresenceEvent[]
   visits              Visit[]
   eventsConfirmedBy   Event[]                      @relation("EventAttendanceConfirmer")
+  facilityCloses      FacilityClose[]
 
   trustedAdultRecordsAsAdult TrustedAdult[]       @relation("TrustedAdultPerson")
   trustedAdultsDisclosed      TrustedAdult[]       @relation("TrustedAdultDiscloser")
@@ -1304,15 +1305,57 @@ model Visit {
   /// @sensitivity:internal
   supervisionWarnedAt DateTime?
 
-  person Person @relation(fields: [personId], references: [id])
-  event  Event?      @relation(fields: [associatedEventId], references: [id])
+  /// The facility close that stamped this visit's departure; null when no close did.
+  /// @sensitivity:internal
+  facilityCloseId   Int?
+
+  person        Person         @relation(fields: [personId], references: [id])
+  event         Event?         @relation(fields: [associatedEventId], references: [id])
+  facilityClose FacilityClose? @relation(fields: [facilityCloseId], references: [id], onDelete: Restrict)
 
   @@index([personId, departedAt]) // Active visits lookup in /api/scan
+  @@index([facilityCloseId])
   // Partial unique index "Visit_one_open_per_participant" — at most one open,
   // live visit (departedAt IS NULL AND deletedAt IS NULL) per participant.
   // Prisma's DSL can't express a partial unique index, so it lives in raw SQL
   // (recreated in 20260726120000_visit_tombstone). DB-level backstop against
   // double check-in races.
+}
+
+/// Which path closed the facility.
+enum FacilityCloseVia {
+  KIOSK
+  KIOSK_OFFLINE
+  WEB_CHECKOUT
+  WEB_DASHBOARD
+  WEB_CORRECTION
+  WEB_REMOVAL
+  NIGHTLY_SWEEP
+}
+
+/// One facility close: the moment every open visit was departed at once. Each
+/// departure it sets carries `Visit.facilityCloseId` and an AuditLog row with
+/// the before and after. An audit record — never deleted.
+model FacilityClose {
+  /// @sensitivity:internal
+  id         Int              @id @default(autoincrement())
+  /// The departure time the close stamps.
+  /// @sensitivity:internal
+  closedAt   DateTime
+  /// The person who closed. Null on a NIGHTLY_SWEEP close, which no person
+  /// made, and on any close whose person row was later deleted.
+  /// @sensitivity:internal
+  closedById Int?
+  /// @sensitivity:internal
+  via        FacilityCloseVia
+  /// When the server applied it; differs from closedAt on a late or offline close.
+  /// @sensitivity:internal
+  createdAt  DateTime         @default(now())
+
+  closedBy Person? @relation(fields: [closedById], references: [id], onDelete: SetNull)
+  visits   Visit[]
+
+  @@index([closedById])
 }
 
 model AuditLog {
