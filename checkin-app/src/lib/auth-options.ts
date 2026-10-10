@@ -23,6 +23,9 @@ import { nameWrite } from "@/lib/person/name";
 // Stable id for the dev/local persona-mint credential flow.
 export const PERSONA_MINT_PROVIDER_ID = "persona-mint";
 
+// /signin?error= code for a first Google sign-in refused over an unverified email.
+export const UNVERIFIED_EMAIL_SIGNIN_ERROR = "EmailNotVerified";
+
 // ── NextAuth adapter: the Int ↔ string id boundary, in ONE place ─────────────
 //
 // NextAuth models every id as a string (its cuid default); our Person.id and
@@ -332,6 +335,24 @@ export const authOptions: NextAuthOptions = {
         updateAge: 60 * 15,    // 15 minutes
     },
     callbacks: {
+        // Runs before NextAuth links a Google account to the Person holding its email
+        // (allowDangerousEmailAccountLinking), so a new link requires Google to have
+        // verified that email. An account already linked keeps signing in as before.
+        async signIn({ account, profile }) {
+            if (account?.provider !== "google") return true;
+            const linked = await prisma.account.findUnique({
+                where: {
+                    provider_providerAccountId: {
+                        provider: account.provider,
+                        providerAccountId: account.providerAccountId,
+                    },
+                },
+                select: { id: true },
+            });
+            if (linked) return true;
+            if ((profile as { email_verified?: boolean } | undefined)?.email_verified === true) return true;
+            return `/signin?error=${UNVERIFIED_EMAIL_SIGNIN_ERROR}`;
+        },
         async jwt({ token, user, account, profile }) {
             // Capture Google's hosted-domain + email_verified claims on sign-in so the dev-instance
             // middleware can gate on verified org membership (docs/ops/dev-instance.md,

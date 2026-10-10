@@ -10,6 +10,9 @@ import { ORG_DOMAIN } from "@/lib/config";
 import { useCheckinEnv, useIsDevInstance, useIsLocalInstance } from "@/components/EnvProvider";
 import DevLoginPicker from "@/components/DevLoginPicker";
 
+// Set by the signIn callback in auth-options.ts (UNVERIFIED_EMAIL_SIGNIN_ERROR).
+const UNVERIFIED_EMAIL_ERROR = "EmailNotVerified";
+
 /**
  * Custom sign-in screen for the dev instance (replaces NextAuth's bare default page). The dev
  * middleware (docs/ops/dev-instance.md, "Running the cloud dev instance") bounces every anonymous
@@ -74,6 +77,12 @@ function SignInInner() {
                 </Stack>
 
                 <Stack>
+                    {!signedIn && error === UNVERIFIED_EMAIL_ERROR && (
+                        <AlertBanner
+                            tone="error"
+                            message="Confirm your email address in your Google account, then sign in again."
+                        />
+                    )}
                     {wrongAccount ? (
                         <>
                             <AlertBanner
