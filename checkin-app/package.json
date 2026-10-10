@@ -34,6 +34,7 @@
     "@inventory/global-catalog": "*",
     "@inventory/local-inventory": "*",
     "@inventory/money": "*",
+    "@inventory/receipt": "*",
     "@mantine/core": "^7.17.8",
     "@mantine/form": "^7.17.8",
     "@mantine/hooks": "^7.17.8",

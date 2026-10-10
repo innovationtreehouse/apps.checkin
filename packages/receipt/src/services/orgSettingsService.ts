@@ -8,14 +8,14 @@ import { ServiceError } from "./serviceError";
 export const orgSettingsService = {
   async get() {
     await requireActor();
-    return getOrgSettings(getOrg().id);
+    return getOrgSettings((await getOrg()).id);
   },
 
   async update(rawUpdates: unknown) {
     await requireActor();
     const parsed = OrgSettingsSchema.safeParse(rawUpdates);
     if (!parsed.success) throw new ServiceError(400, parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
-    const orgId = getOrg().id;
+    const orgId = (await getOrg()).id;
     return db.receiptOrgSettings.upsert({ where: { orgId }, create: { orgId, ...parsed.data }, update: parsed.data });
   },
 };

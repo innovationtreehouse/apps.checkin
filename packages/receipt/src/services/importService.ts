@@ -23,7 +23,7 @@ export async function importReceipts(rawBatch: unknown) {
   const actor = await requireActor();
   const parsed = ImportBatchSchema.safeParse(rawBatch);
   if (!parsed.success) throw new ServiceError(400, parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
-  const orgId = getOrg().id;
+  const orgId = (await getOrg()).id;
 
   const results: ImportRowResult[] = [];
   for (const r of parsed.data) {

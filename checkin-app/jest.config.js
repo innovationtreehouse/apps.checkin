@@ -85,6 +85,8 @@ const customJestConfig = {
         '^@inventory/global-catalog$': '<rootDir>/../packages/global-catalog/src/index.ts',
         '^@inventory/local-inventory/(.*)$': '<rootDir>/../packages/local-inventory/src/$1',
         '^@inventory/local-inventory$': '<rootDir>/../packages/local-inventory/src/index.ts',
+        '^@inventory/receipt/(.*)$': '<rootDir>/../packages/receipt/src/$1',
+        '^@inventory/receipt$': '<rootDir>/../packages/receipt/src/index.ts',
     },
     // The worktree ignore lives at the repo root (.claude/worktrees/), one level
     // up now that rootDir is checkin-app/. testPathIgnorePatterns matches the

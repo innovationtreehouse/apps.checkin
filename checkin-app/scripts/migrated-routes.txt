@@ -57,3 +57,31 @@ POST /api/catalog/provisional-items/[id]/map-to-existing
 PUT /api/catalog/reference-conflicts/[id]/resolve
 POST /api/catalog/conversion-challenges/[id]/accept
 POST /api/catalog/conversion-challenges/[id]/reject
+
+# Receipt (#1265 W): library service calls via handler().
+POST /api/receipts/upload
+GET /api/receipts/mine
+POST /api/receipts/[id]/submitter-confirm
+POST /api/receipts/[id]/submitter-discard
+PUT /api/receipts/[id]/reimbursement
+PUT /api/receipts/[id]/in-kind
+GET /api/receipts/needs-attention
+GET /api/receipts/[id]
+PATCH /api/receipts/[id]
+POST /api/receipts/[id]/line-items
+PATCH /api/receipts/[id]/line-items/[lineItemId]
+DELETE /api/receipts/[id]/line-items/[lineItemId]
+POST /api/receipts/[id]/retry-ocr
+POST /api/receipts/[id]/discard
+POST /api/receipts/[id]/resubmit
+GET /api/receipts
+GET /api/receipts/[id]/audit-logs
+GET /api/receipts/settings
+PUT /api/receipts/settings
+POST /api/receipts/[id]/approve
+POST /api/receipts/[id]/reject
+POST /api/receipts/[id]/clear-duplicate
+POST /api/receipts/[id]/restart-flow
+POST /api/receipts/[id]/push-to-inventory
+POST /api/receipts/import
+GET /api/receipts/[id]/file
