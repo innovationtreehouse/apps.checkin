@@ -6,20 +6,21 @@ import type { FacilityCloseVia, Prisma } from "@/generated/prisma/client";
 import { parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTime } from "@/lib/visitTimes";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
-import { lastKeyholderGuard, runFacilityClose } from "@/lib/scan-service";
+import { closeActor, finishCloseGuard, lastKeyholderGuard } from "@/lib/scan-service";
 import type { CloseGuardResult } from "@/lib/scan-service";
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 import { visitSubject } from "@/lib/visit/scope";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { escapeHtml } from "@/lib/email-templates/base";
-import { logBackendError, logger } from "@/lib/logger";
+import { logBackendError } from "@/lib/logger";
+import { apiError, apiJson } from "@/lib/api-response";
 import { formatDateTime } from "@/lib/time";
 import { resolveDisplayTimezone } from "@/lib/appSettings";
 
 // Side channel: handler() returns through stripBag, so the guard result
 // can't ride the bag. A WeakMap keyed on the request lets the wrapper
 // intercept a warning or run the facility close after the handler commits.
-const guardResults = new WeakMap<Request, { guard: CloseGuardResult; actorId: number }>();
+const guardResults = new WeakMap<Request, { guard: CloseGuardResult; actorId: number; subjectId: number; visitId: number }>();
 
 // Self-correction of a member's own visits, and a household lead's correction
 // of their household members' (trust-first, see
@@ -110,12 +111,13 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
         if (closingOpenVisit) {
             const person = await prisma.person.findUnique({
                 where: { id: visit.personId },
-                select: { isKeyholder: true },
+                select: { id: true, isKeyholder: true },
             });
             if (person) {
-                const guard = await lastKeyholderGuard(visitId, person, body.forceCloseToken ?? null);
-                guardResults.set(req, { guard, actorId: userId });
-                if (guard.action === 'warn') return {};
+                const guard = await lastKeyholderGuard(visitId, person, closeActor(auth.user),
+                    { token: body.forceCloseToken, choice: body.closeChoice, handoverToId: body.handoverToId });
+                guardResults.set(req, { guard, actorId: userId, subjectId: person.id, visitId });
+                if (guard.action !== 'proceed') return {};
             }
         }
 
@@ -211,12 +213,13 @@ const _DELETE = handler<{ id: string }>('DELETE /api/attendance/manual/[id]', as
         if (!visit.departedAt) {
             const person = await prisma.person.findUnique({
                 where: { id: visit.personId },
-                select: { isKeyholder: true },
+                select: { id: true, isKeyholder: true },
             });
             if (person) {
-                const guard = await lastKeyholderGuard(visitId, person, body?.forceCloseToken ?? null);
-                guardResults.set(req, { guard, actorId: userId });
-                if (guard.action === 'warn') return {};
+                const guard = await lastKeyholderGuard(visitId, person, closeActor(auth.user),
+                    { token: body?.forceCloseToken, choice: body?.closeChoice }, { removal: true });
+                guardResults.set(req, { guard, actorId: userId, subjectId: person.id, visitId });
+                if (guard.action !== 'proceed') return {};
             }
         }
 
@@ -275,20 +278,11 @@ async function withCloseGuard(
     const pending = guardResults.get(req);
     guardResults.delete(req);
     if (!pending) return result;
-    const { guard, actorId } = pending;
+    const { guard, ...closeCtx } = pending;
 
-    if (guard.action === 'warn') {
-        return NextResponse.json({
-            error: guard.message,
-            type: "warning",
-            forceCloseToken: guard.token,
-            confirmSeconds: guard.confirmSeconds,
-        }, { status: 400 });
-    }
-    if (guard.facilityClosed && result.ok) {
-        try { await runFacilityClose({ closedById: actorId, via }); }
-        catch (err) { logger.error("Facility close after manual correction failed:", err); }
-    }
+    if (guard.action === 'warn') return apiJson(guard.warning, 400);
+    if (guard.action === "refuse") return apiError(guard.error, guard.status);
+    if (result.ok) await finishCloseGuard(guard, { ...closeCtx, via });
     return result;
 }
 

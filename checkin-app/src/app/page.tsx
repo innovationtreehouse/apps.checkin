@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession, signIn } from "next-auth/react";
 import {
@@ -26,6 +26,7 @@ import DevLoginPicker from '@/components/DevLoginPicker';
 import { useIsDevInstance, useIsLocalInstance } from '@/components/EnvProvider';
 import JoinTreehouseBanner from '@/components/JoinTreehouseBanner';
 import Notifications from '@/components/Notifications';
+import { isCloseChoiceWarning, useCloseChoice, type CloseChoiceAnswer } from '@/components/CloseChoiceDialog';
 import { RoleBadge } from '@/components/ui/RoleBadge';
 import { PageLoader } from '@/components/ui/PageLoader';
 
@@ -38,9 +39,7 @@ export default function Home() {
   const [message, setMessage] = useState("");
   const [isCheckedIn, setIsCheckedIn] = useState<boolean | null>(null);
 
-  // Force-close confirm token from the last "others are still here" warning.
-  // Echoed on the next click to confirm; dropped when its countdown lapses.
-  const forceCloseToken = useRef<string | null>(null);
+  const { ask: askCloseChoice, dialog: closeChoiceDialog } = useCloseChoice();
 
   const [isLastKeyholder, setIsLastKeyholder] = useState(false);
   const [isTwoDeepViolation, setIsTwoDeepViolation] = useState(false);
@@ -109,37 +108,32 @@ export default function Home() {
   // ternary below as-is would flash the signed-out landing at a signed-in user.
   if (status === "loading") return <PageLoader />;
 
-  const handleToggleCheckin = async () => {
+  const handleToggleCheckin = async (answer?: CloseChoiceAnswer) => {
     if (!session?.user) return;
     setLoading(true);
     setMessage("");
+    let next: CloseChoiceAnswer | null = null;
     try {
       const participantId = session.user?.id;
-      const token = forceCloseToken.current;
-      forceCloseToken.current = null; // single use, whether or not it confirms
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ participantId, ...(token ? { forceCloseToken: token } : {}) })
+        body: JSON.stringify({ participantId, ...answer })
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setMessage(`${data.type === 'checkin' ? 'Successfully checked in!' : 'Successfully checked out!'}`);
         await checkAttendanceStatus(); // Re-fetch the status securely
+      } else if (isCloseChoiceWarning(data)) {
+        next = await askCloseChoice(data);
       } else {
-        if (data.type === 'warning' && data.forceCloseToken) {
-          forceCloseToken.current = data.forceCloseToken;
-          const seconds = Number(data.confirmSeconds) || 15;
-          setTimeout(() => {
-            if (forceCloseToken.current === data.forceCloseToken) forceCloseToken.current = null;
-          }, seconds * 1000);
-        }
         setMessage(`Error: ${data.error || 'Failed to update attendance'}`);
       }
     } catch {
       notifications.show({ color: "red", message: "Failed to connect to API", autoClose: false });
     }
     setLoading(false);
+    if (next) await handleToggleCheckin(next);
   };
 
   const user = session?.user;
@@ -149,6 +143,7 @@ export default function Home() {
 
   return (
     <Container size="sm" py="xl">
+      {closeChoiceDialog}
       <Card withBorder shadow="sm" radius="md" padding="xl">
         <Stack align="center" gap="xs" mb="lg">
           <Title order={1} ta="center">
@@ -191,8 +186,8 @@ export default function Home() {
               )}
               {isLastKeyholder && (
                 <Alert color="yellow" icon={<IconAlertTriangle size={18} />} title="You are the last Keyholder present.">
-                  If you check out now, the facility will be marked as Closed and all remaining
-                  occupants will be forcibly checked out.
+                  If others are still recorded inside when you check out, you will be asked
+                  whether to close the facility or leave having handed over.
                 </Alert>
               )}
 
@@ -202,7 +197,7 @@ export default function Home() {
                   size="lg"
                   fullWidth
                   color={isCheckedIn ? 'red' : 'treehouseGreen'}
-                  onClick={handleToggleCheckin}
+                  onClick={() => handleToggleCheckin()}
                   loading={loading}
                 >
                   {isCheckedIn ? 'Check Out' : 'Check In'}
