@@ -9,6 +9,7 @@
  * PaymentException).
  */
 import prisma from "@/lib/prisma";
+import { snapshotBoardSettings } from "@/test-helpers/boardSettings";
 import { runReconcile, raiseReversalByOrderId } from "@/lib/finance/reconcile";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
 
@@ -104,8 +105,8 @@ const VOLUNTEER_CODE = "VOLFAM";
  * `unentitledMemberCodeUse` needs: a Program with dates (so `programCoverageDate`
  * yields a real through-date), a Household, and a ProgramParticipant at the given
  * status. `membership` seeds an OrgMembership at that status — REVOKED is the
- * deactivated household (no `orgMembershipYearBoundary` is configured in this
- * suite's BoardSettings, so an ACTIVE one covers any date).
+ * deactivated household (beforeAll pins `orgMembershipYearBoundary` to null, so
+ * an ACTIVE one covers any date).
  */
 async function makeProgramEnrollment(opts: {
     email: string;
@@ -130,11 +131,14 @@ async function makeProgramEnrollment(opts: {
     return { householdId: hh.id, personId: person.id, programId: program.id, variantId };
 }
 
+let restoreBoardSettings: () => Promise<void>;
+
 beforeAll(async () => {
+    restoreBoardSettings = await snapshotBoardSettings();
     await prisma.boardSettings.upsert({
         where: { id: 1 },
-        create: { id: 1, standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, volunteerDiscountCode: VOLUNTEER_CODE },
-        update: { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, volunteerDiscountCode: VOLUNTEER_CODE, shopifyReconcileCursorAt: null },
+        create: { id: 1, standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, volunteerDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null },
+        update: { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, volunteerDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null },
     });
 });
 
@@ -171,6 +175,7 @@ afterAll(async () => {
         await prisma.household.deleteMany({ where: { id: { in: ids } } });
     }
     await prisma.paymentException.deleteMany({ where: { shopifyOrderId: { startsWith: `${TAG}-` } } });
+    await restoreBoardSettings();
 });
 
 describe("forward recovery", () => {

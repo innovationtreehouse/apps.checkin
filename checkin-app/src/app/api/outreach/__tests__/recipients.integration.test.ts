@@ -9,6 +9,7 @@
  * shape, not a mocked approximation of it.
  */
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { computeRecipientSnapshot } from '@/lib/outreach/recipients';
 
 const TAG = 'outreach-recipients-test';
@@ -52,17 +53,16 @@ async function makeLead(householdId: number, email: string | null, opts: { email
 function label(email: string | null) { return email ?? 'no-email'; }
 
 describe('outreach recipient snapshot', () => {
-    let prevBoundary: Date | null = null;
+    let restoreBoardSettings: () => Promise<void>;
 
     beforeAll(async () => {
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevBoundary = existing?.orgMembershipYearBoundary ?? null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await wipe();
     });
 
     afterAll(async () => {
         await wipe();
-        await setBoundary(prevBoundary);
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 

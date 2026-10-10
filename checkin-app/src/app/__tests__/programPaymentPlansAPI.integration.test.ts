@@ -17,6 +17,7 @@ import { POST as ManualHoldPost } from '@/app/api/finance-ops/payment-plans/manu
 import { POST as RequestPost } from '@/app/api/programs/[id]/request-payment-plan/route';
 import { POST as ParticipantsPost, DELETE as ParticipantsDelete } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_PROGRAM_BODY, renderAckBody } from '@/lib/scholarshipEmails';
 
 jest.mock('next-auth/next', () => ({
@@ -1055,7 +1056,7 @@ describe('Program payment-plan routes', () => {
             return { id: p.id, email };
         }
 
-        let prevNotify: string | null = null;
+        let restoreBoardSettings: () => Promise<void>;
         beforeAll(async () => {
             const p = await prisma.program.create({
                 data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Email Behavior Program ${TAG}`, enrollmentStatus: 'OPEN' },
@@ -1064,13 +1065,12 @@ describe('Program payment-plan routes', () => {
             // Pin the review-team address list so the exact-recipients assertions are
             // hermetic: unset, the fallback emails EVERY isBoardMember row, and other
             // suites' board personas share the DB in a full CI run.
-            const settings = await prisma.boardSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
-            prevNotify = settings.scholarshipNotifyEmail;
-            await prisma.boardSettings.update({ where: { id: 1 }, data: { scholarshipNotifyEmail: REVIEW_TEAM_EMAILS.join(', ') } });
+            restoreBoardSettings = await snapshotBoardSettings();
+            await prisma.boardSettings.upsert({ where: { id: 1 }, update: { scholarshipNotifyEmail: REVIEW_TEAM_EMAILS.join(', ') }, create: { id: 1, scholarshipNotifyEmail: REVIEW_TEAM_EMAILS.join(', ') } });
         });
 
         afterAll(async () => {
-            await prisma.boardSettings.update({ where: { id: 1 }, data: { scholarshipNotifyEmail: prevNotify } });
+            await restoreBoardSettings();
             await prisma.programParticipant.deleteMany({ where: { programId: emailProgramId } });
             await prisma.person.deleteMany({ where: { id: { in: createdPersonIds } } });
             await prisma.household.deleteMany({ where: { id: { in: createdHouseholdIds } } });
@@ -1171,14 +1171,14 @@ describe('Program payment-plan routes', () => {
     describe('scholarship ACK settings (subject + program body)', () => {
         const params = (id: string | number) => ({ params: Promise.resolve({ id: String(id) }) });
         const PROGRAM_NAME = `PP Program ${TAG}`; // == the name programId was created with, in beforeAll
-        let prevAck: { scholarshipAckSubject: string | null; scholarshipAckProgramBody: string | null } | null = null;
+        let restoreBoardSettings: () => Promise<void>;
 
         beforeAll(async () => {
-            const s = await prisma.boardSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
-            prevAck = { scholarshipAckSubject: s.scholarshipAckSubject, scholarshipAckProgramBody: s.scholarshipAckProgramBody };
+            restoreBoardSettings = await snapshotBoardSettings();
+            await prisma.boardSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
         });
         afterAll(async () => {
-            await prisma.boardSettings.update({ where: { id: 1 }, data: prevAck! });
+            await restoreBoardSettings();
         });
 
         it('a configured subject + body (with {{programName}}) are used for the program ACK', async () => {

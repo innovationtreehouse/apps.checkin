@@ -11,6 +11,7 @@
  */
 import { POST } from '@/app/api/programs/[id]/discount-code/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import * as shopify from '@/lib/shopify';
 
@@ -41,7 +42,7 @@ async function post(programId: number) {
 
 describe('POST /api/programs/[id]/discount-code — membership duration', () => {
     let prevCheckinEnv: string | undefined;
-    let prevBoardSettings: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number } | null = null;
+    let restoreBoardSettings: () => Promise<void>;
 
     // now + 45 days sits inside the 2-month renewal lead window, so the
     // "settled" probe (ACTIVE process stamped inside the window) is reachable.
@@ -73,15 +74,12 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         prevCheckinEnv = process.env.CHECKIN_ENV;
         process.env.CHECKIN_ENV = 'local';
 
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevBoardSettings = existing
-            ? { orgMembershipYearBoundary: existing.orgMembershipYearBoundary, bgRecheckMonths: existing.bgRecheckMonths }
-            : null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await wipe();
 
         await prisma.boardSettings.upsert({
             where: { id: 1 },
-            create: { id: 1, orgMembershipYearBoundary: boundary, bgRecheckMonths: existing?.bgRecheckMonths ?? 12 },
+            create: { id: 1, orgMembershipYearBoundary: boundary, bgRecheckMonths: 12 },
             update: { orgMembershipYearBoundary: boundary },
         });
 
@@ -143,7 +141,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
 
     afterAll(async () => {
         await wipe();
-        if (prevBoardSettings) await prisma.boardSettings.update({ where: { id: 1 }, data: prevBoardSettings });
+        await restoreBoardSettings();
         if (prevCheckinEnv === undefined) delete process.env.CHECKIN_ENV;
         else process.env.CHECKIN_ENV = prevCheckinEnv;
         await prisma.$disconnect();

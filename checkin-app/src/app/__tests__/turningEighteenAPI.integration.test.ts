@@ -11,6 +11,7 @@
 
 import { GET } from '@/app/api/membership-audit/turning-18/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({
@@ -44,7 +45,7 @@ describe('GET /api/membership-audit/turning-18', () => {
     let leadId: number;
     let unknownDobId: number;
     let declaredAdultId: number;
-    let savedBoundary: Date | null = null;
+    let restoreBoardSettings: () => Promise<void>;
 
     const cleanup = async () => {
         const hhs = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });
@@ -59,8 +60,7 @@ describe('GET /api/membership-audit/turning-18', () => {
     beforeAll(async () => {
         await cleanup();
 
-        const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        savedBoundary = settings?.orgMembershipYearBoundary ?? null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await prisma.boardSettings.upsert({
             where: { id: 1 },
             update: { orgMembershipYearBoundary: BOUNDARY },
@@ -112,10 +112,7 @@ describe('GET /api/membership-audit/turning-18', () => {
 
     afterAll(async () => {
         await cleanup();
-        await prisma.boardSettings.update({
-            where: { id: 1 },
-            data: { orgMembershipYearBoundary: savedBoundary },
-        });
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 

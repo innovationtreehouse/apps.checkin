@@ -8,6 +8,7 @@
 
 import { GET, PATCH } from '@/app/api/programs/[id]/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import { ORG_DOMAIN } from '@/lib/config';
 // Mock NextAuth
@@ -498,7 +499,7 @@ describe('Individual Program API Integration Tests', () => {
     // computed AFTER the registry response (see route.ts) — membership pricing
     // applies only when the buyer's membership covers the program's whole run.
     describe('GET /api/programs/[id] — viewer membership-pricing fields', () => {
-        let prevBoardSettings: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number } | null = null;
+        let restoreBoardSettings: () => Promise<void>;
         let pastBoundaryProgramId: number;
         const DAY_MS = 24 * 60 * 60 * 1000;
         // Inside the 2-month renewal lead window relative to "now" — irrelevant
@@ -507,13 +508,10 @@ describe('Individual Program API Integration Tests', () => {
         const boundary = new Date(Date.now() + 45 * DAY_MS);
 
         beforeAll(async () => {
-            const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-            prevBoardSettings = existing
-                ? { orgMembershipYearBoundary: existing.orgMembershipYearBoundary, bgRecheckMonths: existing.bgRecheckMonths }
-                : null;
+            restoreBoardSettings = await snapshotBoardSettings();
             await prisma.boardSettings.upsert({
                 where: { id: 1 },
-                create: { id: 1, orgMembershipYearBoundary: boundary, bgRecheckMonths: existing?.bgRecheckMonths ?? 12 },
+                create: { id: 1, orgMembershipYearBoundary: boundary, bgRecheckMonths: 12 },
                 update: { orgMembershipYearBoundary: boundary },
             });
 
@@ -525,7 +523,7 @@ describe('Individual Program API Integration Tests', () => {
 
         afterAll(async () => {
             await prisma.program.delete({ where: { id: pastBoundaryProgramId } });
-            if (prevBoardSettings) await prisma.boardSettings.update({ where: { id: 1 }, data: prevBoardSettings });
+            await restoreBoardSettings();
         });
 
         it('an unrenewed member sees viewerIsMember: true and viewerMemberPricingEligible: false for a program past their boundary', async () => {

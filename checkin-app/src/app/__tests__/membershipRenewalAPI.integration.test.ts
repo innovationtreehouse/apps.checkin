@@ -11,6 +11,7 @@ import { runRenewalSweep, beginRenewal, nextBoundary } from '@/lib/membership/re
 import { attest } from '@/lib/membership/review';
 import { markBgConsent, markContractSigned } from '@/lib/membership/external';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 
 jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
 
@@ -25,7 +26,7 @@ function cronReq(token: string | null) {
 
 describe('Membership renewal', () => {
     const prevSecret = process.env.CRON_SECRET;
-    let prevBoundary: Date | null = null;
+    let restoreBoardSettings: () => Promise<void>;
     let rev1: number, rev2: number;
     // The sweep is global; track where we started so afterAll can remove every
     // process this test opened (including renewals on other suites' memberships).
@@ -68,8 +69,7 @@ describe('Membership renewal', () => {
         process.env.CRON_SECRET = CRON_SECRET;
         const maxRow = await prisma.orgMembershipProcess.findFirst({ orderBy: { id: 'desc' }, select: { id: true } });
         preMaxProcessId = maxRow?.id ?? 0;
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevBoundary = existing?.orgMembershipYearBoundary ?? null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await wipe();
         const r1 = await prisma.person.create({ data: { email: `rev1-${TAG}@example.com`, name: 'Rev1', isBackgroundCheckReviewer: true, household: { create: { name: `Rev1 HH ${TAG}` } } } });
         rev1 = r1.id;
@@ -81,7 +81,7 @@ describe('Membership renewal', () => {
         await prisma.backgroundCheckAttestation.deleteMany({ where: { processId: { gt: preMaxProcessId } } });
         await prisma.orgMembershipProcess.deleteMany({ where: { id: { gt: preMaxProcessId } } });
         await wipe();
-        await setBoundary(prevBoundary);
+        await restoreBoardSettings();
         if (prevSecret === undefined) delete process.env.CRON_SECRET;
         else process.env.CRON_SECRET = prevSecret;
         await prisma.$disconnect();
