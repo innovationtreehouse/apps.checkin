@@ -74,9 +74,8 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
   const [needsSetup, setNeedsSetup] = useState(false);
   const [showIntake, setShowIntake] = useState(false);
 
-  const fetchProgram = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/programs/${id}`);
+  const fetchProgram = useCallback(() => fetch(`/api/programs/${id}`)
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setProgram(data);
@@ -85,12 +84,14 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
       } else {
         setMessage("Failed to load program details.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, [id]);
+    }),
+  [id]);
 
   useEffect(() => {
     fetchProgram();
