@@ -131,6 +131,8 @@ defineOutbound({
 });
 ```
 
+A library in `packages/*` cannot call `outboundCall`, so its surface is registered and its caller is confined instead: add the `defineOutbound` entry (comment names the file, the host and what data leaves), and add the file to `ALLOWED_PACKAGE_EGRESS_FILES` in `scripts/check-route-coverage.ts`. The lint fails on any third-party host or API SDK reference in package source outside those files (tests and fixtures excluded). A new host or SDK goes into `THIRD_PARTY_HOST_RE` / `THIRD_PARTY_SDK_RE` in the same PR as its surface.
+
 ### Serving a stored file
 
 Files are not JSON. A stored file (a receipt image, a PDF) leaves only through a **file route**: `defineFileRoute` in the registry plus `fileHandler` in the route, never `handler()`.

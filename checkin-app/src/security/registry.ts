@@ -847,3 +847,32 @@ defineOutbound({
     // Email address is 'pii' tier; the address is the entire payload here.
     tiers: ['public', 'pii'],
 });
+
+// packages/* surfaces. Packages call these directly, not through outboundCall();
+// check-route-coverage confines each to the files named in ALLOWED_PACKAGE_EGRESS_FILES.
+
+defineOutbound({
+    // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
+    // Query literals: date windows, QBO ids, and account/class/vendor/customer
+    // names ('public'). Never an email, address or phone.
+    surface: 'quickbooks.query',
+    tiers: ['public'],
+});
+
+defineOutbound({
+    // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
+    // Purchase/Bill/Deposit/Vendor only: amounts, dates, account/class/vendor ids,
+    // line descriptions and memos ('internal'; memos may name a program participant,
+    // accepted by the owner), vendor DisplayName ('public'). oauth.ts sends only the
+    // app's client credentials to oauth.platform.intuit.com.
+    surface: 'quickbooks.create',
+    tiers: ['public', 'internal'],
+});
+
+defineOutbound({
+    // packages/receipt/src/lib/ocr.ts → api.anthropic.com via @anthropic-ai/sdk.
+    // The receipt file's bytes (Receipt.fileBlob, 'pii'): a receipt can show a
+    // purchaser's name, address and partial card number. Bytes only, never a URL.
+    surface: 'anthropic.receipt-ocr',
+    tiers: ['pii'],
+});

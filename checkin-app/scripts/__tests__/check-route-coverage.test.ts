@@ -5,6 +5,7 @@ import {
     findDirectJsonCalls,
     findStaleDirectJsonEntries,
     findOrphanRegistryEntries,
+    findPackageEgressLines,
     findUnregisteredBareIncludeLegs,
     REGISTRY_ENTRY_RE,
 } from "../check-route-coverage";
@@ -191,5 +192,26 @@ describe("findOrphanRegistryEntries", () => {
         expect(found[0].severity).toBe("error");
         expect(found[0].message).toContain("stale");
         expect(found[0].message).toContain("exports no PATCH");
+    });
+});
+
+describe("findPackageEgressLines", () => {
+    it("flags a QuickBooks host held in a constant, away from any fetch", () => {
+        expect(findPackageEgressLines(`const BASE = "https://sandbox-quickbooks.api.intuit.com";\nawait fetch(BASE);`))
+            .toEqual([1]);
+    });
+
+    it("flags the Anthropic host and an Anthropic SDK import", () => {
+        expect(findPackageEgressLines(`import Anthropic from "@anthropic-ai/sdk";\nconst u = "https://api.anthropic.com/v1";`))
+            .toEqual([1, 2]);
+    });
+
+    it("flags the existing Shopify and Resend hosts", () => {
+        expect(findPackageEgressLines(`a("x.myshopify.com");\nb("https://api.resend.com");`)).toEqual([1, 2]);
+    });
+
+    it("ignores comments and look-alike identifiers", () => {
+        expect(findPackageEgressLines(`// see quickbooks.api.intuit.com\n/* @anthropic-ai/sdk */\nres.headers.get("intuit_tid");`))
+            .toEqual([]);
     });
 });
