@@ -7,6 +7,7 @@ import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
+import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
 import { relTime } from '@/lib/time';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
@@ -74,7 +75,7 @@ function describeSync(run: SyncRun): string {
 
 export default function PaymentProblemsPage() {
   const { formatDateTime } = useOrgTime();
-  const { ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
+  const { ready, loading: authLoading } = useRequireRole(FINANCE_SECTION_ROLES);
 
   const [rows, setRows] = useState<PaymentException[]>([]);
   const [loading, setLoading] = useState(true);

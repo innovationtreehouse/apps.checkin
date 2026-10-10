@@ -2,8 +2,41 @@
 // without pulling in React/Mantine. AppFrame imports navBadgeFor for rendering
 // and leadsAnyProgram for the staff "My Programs" visibility gate.
 import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
+import type { LibraryKey, NavTab } from '@/lib/libraryNav';
 
 export type NavBadge = { count: number; color: string; label: string };
+
+/** One count a library's provider reported (0 when absent: not visible, failed, or unregistered). */
+export function libraryCount(counts: TodoCounts | null, lib: LibraryKey, key: string): number {
+  return counts?.libraries?.[lib]?.[key] ?? 0;
+}
+
+/**
+ * Folds badges to at most one per color (counts summed, labels joined), so a
+ * sidebar entry never shows two same-color pills side by side.
+ */
+export function foldBadges(badges: NavBadge[]): NavBadge[] {
+  const byColor = new Map<string, NavBadge>();
+  for (const b of badges) {
+    const prev = byColor.get(b.color);
+    byColor.set(b.color, prev ? { count: prev.count + b.count, color: b.color, label: `${prev.label}; ${b.label}` } : b);
+  }
+  return [...byColor.values()];
+}
+
+/** A sidebar entry's pills: its own navBadgeFor pills plus its tabs' pills, folded. */
+export function sectionBadges(href: string, tabs: readonly NavTab[], counts: TodoCounts | null): NavBadge[] {
+  const tabBadges = tabs.flatMap((t) => {
+    const b = t.badge?.(counts);
+    return b ? [b] : [];
+  });
+  return foldBadges([...navBadgeFor(href, counts), ...tabBadges]);
+}
+
+/** A section tab's pill: the shared tabBadgeFor, else the tab's own badge function. */
+export function sectionTabBadge(tabs: readonly NavTab[], href: string, counts: TodoCounts | null): NavBadge | null {
+  return tabBadgeFor(href, counts) ?? tabs.find((t) => t.href === href)?.badge?.(counts) ?? null;
+}
 
 /** True when the caller leads ≥1 program — gates the staff "My Programs" nav item. */
 export function leadsAnyProgram(counts: TodoCounts | null): boolean {

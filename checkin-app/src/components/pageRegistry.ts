@@ -6,7 +6,7 @@
 // worst shows a link that 403s. See docs/designs/INDEX_PAGE_SCOPING.md.
 
 import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
-import type { BusinessRole } from '@/types/auth';
+import type { NavRole } from '@/types/auth';
 import { leadsAnyProgram } from '@/components/navBadges';
 import { shopRoles } from '@/lib/shopNav';
 import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
@@ -49,9 +49,9 @@ const SYSADMIN: Visible = (u) => !!u?.isSysadmin;
 // (#1569). A role-list gate becomes a Visible via roleGate; sections with a
 // richer predicate (Shop resolves toolStatuses, Membership Ops gates per tab)
 // call their own exported function.
-const roleGate = (roles: BusinessRole[]): Visible => (u) => roles.some((r) => !!u?.[r]);
+const roleGate = (roles: readonly NavRole[]): Visible => (u) => roles.some((r) => !!u?.[r]);
 const SAFETY = roleGate(SAFETY_SECTION_ROLES);
-// Finance Ops is board-only — sysadmin has no access (issue #1083).
+// Revenue Ops' finance tools are board-only — sysadmin has no access (issue #1083).
 const FINANCE = roleGate(FINANCE_SECTION_ROLES);
 const SHOP: Visible = (u) => shopRoles(u).isCertifier;
 const SHOP_ADMIN: Visible = (u) => shopRoles(u).isAdmin;
@@ -190,12 +190,12 @@ export const PAGES: PageEntry[] = [
   { href: '/program-ops/sessions', label: 'Sessions', section: 'Program Ops', visible: BOARD },
   { href: '/program-ops/sessions/new', label: 'New Session', section: 'Program Ops', visible: BOARD },
 
-  // Finance Ops — board
-  { href: '/finance-ops', label: 'Finance Ops', section: 'Finance Ops', visible: FINANCE },
-  { href: '/finance-ops/payment-plan', label: 'Program Payment Plan', section: 'Finance Ops', visible: FINANCE },
-  { href: '/finance-ops/membership-payment-plan', label: 'Membership Payment Plan', section: 'Finance Ops', visible: FINANCE },
-  { href: '/finance-ops/shopify-holds', label: 'Shopify Hold Reconciliation', section: 'Finance Ops', keywords: 'seat hold failed inventory scholarship manual reconcile shopify', visible: FINANCE },
-  { href: '/finance-ops/payments', label: 'Payment problems', section: 'Finance Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: FINANCE },
+  // Revenue Ops (path /finance-ops) — the finance tools are board-only
+  { href: '/finance-ops', label: 'Revenue Ops', section: 'Revenue Ops', visible: FINANCE },
+  { href: '/finance-ops/payment-plan', label: 'Program Payment Plan', section: 'Revenue Ops', visible: FINANCE },
+  { href: '/finance-ops/membership-payment-plan', label: 'Membership Payment Plan', section: 'Revenue Ops', visible: FINANCE },
+  { href: '/finance-ops/shopify-holds', label: 'Shopify Hold Reconciliation', section: 'Revenue Ops', keywords: 'seat hold failed inventory scholarship manual reconcile shopify', visible: FINANCE },
+  { href: '/finance-ops/payments', label: 'Payment problems', section: 'Revenue Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: FINANCE },
 
   // Expense Ops — FINANCE or BOARD
   { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: FINANCE_OR_BOARD },

@@ -16,6 +16,9 @@ export type SessionUser = NonNullable<Session['user']>;
  */
 export type BusinessRole = 'isSysadmin' | 'isBoardMember' | 'isKeyholder' | 'isBackgroundCheckReviewer' | 'isOperations';
 
+/** Session role flags a client nav or page gate may check: the business roles plus FINANCE. */
+export type NavRole = BusinessRole | 'isFinance';
+
 /**
  * A session user as resolved by the auth boundary (`lib/auth.ts`
  * authenticateRequest) — narrower than `SessionUser` on two points that
