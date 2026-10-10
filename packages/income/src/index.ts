@@ -11,4 +11,5 @@ export * from "./lib/reconcile";
 export * from "./lib/outbox";
 export * from "./services/reconciliationService";
 export * from "./services/serviceError";
+export * from "./services/settingsService";
 export { seedIncomeDev } from "./seed";

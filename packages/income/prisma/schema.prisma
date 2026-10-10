@@ -21,7 +21,7 @@ datasource db {
 // finance. deposit_id is set only while the row holds a deposit, so the unique pair means a
 // deposit backs at most one payout. payout_net_cents is the net seen at the last decision.
 // status: WAITING | OPEN | MATCHED | POSTED | RESOLVED. origin: matched | created, set while
-// the row holds a deposit. WAITING, POSTED, POST_FAILED and "created" belong to the create path.
+// the row holds a deposit. WAITING, POSTED, POST_FAILED, OVER_CAP and "created" belong to the create path.
 model PayoutReconciliation {
   /// @sensitivity:public
   id                Int       @id @default(autoincrement()) @map("id")
@@ -83,6 +83,19 @@ model IncomeItemCategory {
 
   @@unique([orgId, variantId])
   @@map("income_item_categories")
+}
+
+// The org's limits on the deposits one outbox drain may create. FINANCE may lower them;
+// raising one takes the board. Every change is written to the audit log.
+model IncomeOrgSettings {
+  /// @sensitivity:internal
+  orgId                String @id @map("org_id")
+  /// @sensitivity:internal
+  maxCreatesPerRun     Int    @default(25) @map("max_creates_per_run")
+  /// @sensitivity:internal
+  maxCreateCentsPerRun Int    @default(2500000) @map("max_create_cents_per_run")
+
+  @@map("org_settings")
 }
 
 // A QuickBooks deposit finance has permanently removed from matching (D5).

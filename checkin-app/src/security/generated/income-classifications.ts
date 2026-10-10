@@ -29,6 +29,11 @@ export const classifications = {
         createdAt: 'internal',
         updatedAt: 'internal',
     },
+    IncomeOrgSettings: {
+        orgId: 'internal',
+        maxCreatesPerRun: 'internal',
+        maxCreateCentsPerRun: 'internal',
+    },
     IncomeQbMatchExclusion: {
         id: 'public',
         orgId: 'internal',
@@ -57,6 +62,8 @@ export const relations = {
     PayoutReconciliation: {
     },
     IncomeItemCategory: {
+    },
+    IncomeOrgSettings: {
     },
     IncomeQbMatchExclusion: {
     },

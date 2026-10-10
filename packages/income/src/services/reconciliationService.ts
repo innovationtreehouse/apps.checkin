@@ -177,14 +177,17 @@ export const reconciliationService = {
     }
   },
 
-  /** Re-attempt a failed deposit create, matching before it creates. Only a POST_FAILED row qualifies. */
+  /**
+   * Finance's go-ahead for a POST_FAILED or OVER_CAP payout: match before create, outside the
+   * per-run caps. The drain never touches these rows.
+   */
   async retry(orgId: string, id: number, _actor: Actor) {
     const row = await openRow(orgId, id);
-    if (row.status !== RECON_STATUS.OPEN || row.kind !== RECON_KIND.POST_FAILED) {
-      throw new ServiceError(409, "Only a failed deposit create can be retried");
+    if (row.status !== RECON_STATUS.OPEN || (row.kind !== RECON_KIND.POST_FAILED && row.kind !== RECON_KIND.OVER_CAP)) {
+      throw new ServiceError(409, "Only a failed or over-cap deposit create can be retried");
     }
     const { mirror, posting } = getIncomeConfig();
-    if (!mirror || !posting) throw new ServiceError(503, "QuickBooks deposit creation is not available");
+    if (!mirror || !posting?.mirrorNewestWins) throw new ServiceError(503, "QuickBooks deposit creation is not available");
     const turn = await postPayout(orgId, id, await incomeTakeoverLine(orgId), true);
     if (!turn) throw new ServiceError(409, "A reconciliation run is in progress");
     return turn.row;

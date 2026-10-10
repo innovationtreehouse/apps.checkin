@@ -21,6 +21,8 @@ export const RECON_KIND = {
   TXN_SUM_MISMATCH: "TXN_SUM_MISMATCH",
   DRIFT: "DRIFT",
   POST_FAILED: "POST_FAILED",
+  /** Larger than the org's per-run cents cap: never auto-created; finance retries it. */
+  OVER_CAP: "OVER_CAP",
 } as const;
 export type ReconKind = (typeof RECON_KIND)[keyof typeof RECON_KIND];
 
@@ -33,6 +35,7 @@ export const RECON_ORIGIN = { MATCHED: "matched", CREATED: "created" } as const;
 export const SETTLED_STATUSES: string[] = [RECON_STATUS.MATCHED, RECON_STATUS.POSTED, RECON_STATUS.RESOLVED];
 
 export const DEFAULT_WINDOW_DAYS = 7;
+export const DEFAULT_DATE_GRACE_DAYS = 2;
 
 /** A paid mirror payout, normalised for matching. */
 export interface PayoutFact {
@@ -61,9 +64,10 @@ export function incomeKey(payoutGid: string): string {
   return qbKey("income", payoutGid);
 }
 
-/** The days a payout's deposit may be dated: [payoutDate, payoutDate + window]. */
+/** The days a payout's deposit may be dated: [payoutDate − grace, payoutDate + window]. */
 export function matchWindow(payoutDate: string): { from: string; to: string } {
-  return { from: payoutDate, to: addDays(payoutDate, windowDays()) };
+  const grace = getIncomeConfig().dateGraceDays ?? DEFAULT_DATE_GRACE_DAYS;
+  return { from: addDays(payoutDate, -grace), to: addDays(payoutDate, windowDays()) };
 }
 
 export function depositMatchCandidate(d: QbDeposit): MatchCandidate {
@@ -122,8 +126,9 @@ function driftCause(
  * Idempotent; a no-op until a deposit source is bound. Reads the ledger only.
  */
 export async function runReconcile(orgId: string, now: Date = new Date()): Promise<ReconcileResult> {
-  const { deposits: depositSource, mirror } = getIncomeConfig();
-  if (!depositSource || !mirror) return { status: "unbound" };
+  const { deposits: depositSource, mirror, bankAccountId: bank } = getIncomeConfig();
+  // Without the bank account a deposit in any account could match, so nothing runs.
+  if (!depositSource || !mirror || !bank) return { status: "unbound" };
 
   const window = windowDays();
   const today = isoDay(now);
@@ -140,7 +145,10 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
 
   // Reads only each payout's match window and each settled deposit's booked day, never history.
   const ranges: DayRange[] = [
-    ...facts.map((f): DayRange => [f.payoutDate, addDays(f.payoutDate, window)]),
+    ...facts.map((f): DayRange => {
+      const w = matchWindow(f.payoutDate);
+      return [w.from, w.to];
+    }),
     ...settled.flatMap((r): DayRange[] => (r.depositTxnDate ? [[r.depositTxnDate, r.depositTxnDate]] : [])),
   ];
   const deposits = await depositsIn(depositSource, ranges);
@@ -185,7 +193,6 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
 
       // The lookup is the shared findMatch with the bank account findOrCreate uses, so the two
       // never disagree. A hit on the payout's own key is a deposit income created.
-      const bank = getIncomeConfig().posting?.accounts.bank;
       const candidates = deposits.map(depositMatchCandidate);
       for (const fact of facts) {
         const row = byGid.get(fact.payoutGid);
@@ -228,12 +235,13 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
           continue;
         }
 
-        // A failed create stays POST_FAILED until a deposit turns up or finance retries.
-        if (row?.kind === RECON_KIND.POST_FAILED) continue;
+        // A failed or over-cap create stays parked until a deposit turns up or finance retries.
+        if (row?.kind === RECON_KIND.POST_FAILED || row?.kind === RECON_KIND.OVER_CAP) continue;
         const windowElapsed = today > addDays(fact.payoutDate, window);
 
-        // Inside the window an unfound payout waits in the outbox for drainIncomeOutbox.
-        if (!fact.sumMismatch && !windowElapsed) {
+        // Inside the window an unfound payout waits in the outbox for drainIncomeOutbox. An
+        // ambiguous one never waits there: it goes straight to finance and is never created.
+        if (!fact.sumMismatch && !windowElapsed && match?.kind !== "ambiguous") {
           if (row) continue;
           const saved = await tx.payoutReconciliation.create({
             data: { ...base(orgId, fact), status: RECON_STATUS.WAITING },

@@ -2,7 +2,8 @@ import { findOrCreate, takeoverLine, type FindOrCreateResult, type TxnWrite, typ
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorPayout, PayoutMirror } from "../contract";
-import { getIncomeConfig, type IncomePosting } from "../runtime";
+import { getIncomeConfig, isoDay, type IncomePosting } from "../runtime";
+import { readIncomeSettings } from "../services/settingsService";
 import { buildDepositLines } from "./deposit-lines";
 import { toQbDeposit } from "./qb-deposits";
 import {
@@ -10,29 +11,34 @@ import {
   RECON_ORIGIN,
   RECON_RESOLUTION,
   RECON_STATUS,
+  addDays,
   audit,
   incomeKey,
   lockReconciliation,
   matchWindow,
   runReconcile,
+  windowDays,
   type ReconcileResult,
 } from "./reconcile";
 
-// ponytail: fixed cap so one cron step stays short; the rest post on the next run.
-export const MAX_POSTS_PER_RUN = 25;
-
 /** What one payout's turn through the outbox did. */
-export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting";
+export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "over_cap";
 
-export type PostCounts = Record<PostOutcome, number>;
+export type PostCounts = Record<PostOutcome, number> & {
+  /** The cap that stopped this drain with payouts still due, if one did. */
+  capped: "count" | "cents" | null;
+};
 
 export interface DrainResult {
   reconcile: ReconcileResult;
-  post: PostCounts | "unbound" | "busy";
+  /** "gated": posting is bound but the mirror is not declared newest-wins, so nothing is created. */
+  post: PostCounts | "unbound" | "gated" | "busy";
 }
 
+/** WAITING rows are the drain's; POST_FAILED and OVER_CAP rows move only on finance's retry. */
 const isPostable = (r: Pick<PayoutReconciliation, "status" | "kind">) =>
-  r.status === RECON_STATUS.WAITING || (r.status === RECON_STATUS.OPEN && r.kind === RECON_KIND.POST_FAILED);
+  r.status === RECON_STATUS.WAITING ||
+  (r.status === RECON_STATUS.OPEN && (r.kind === RECON_KIND.POST_FAILED || r.kind === RECON_KIND.OVER_CAP));
 
 /** Audit actions that tie a payout to a deposit by matching, automatic or by finance. */
 const MATCH_ACTIONS = ["reconciliation.matched", "reconciliation.matched_manually"];
@@ -77,11 +83,13 @@ async function depositWrite(
 
   const buckets = new Map(lines.some((l) => l.budgetOwnerId !== null) ? (await getIncomeConfig().owners?.list() ?? []).map((o) => [o.id, o]) : []);
   const { accounts } = posting;
+  const bank = getIncomeConfig().bankAccountId;
+  if (!bank) throw new Error("the bank account is not configured");
   return {
     entity: "Deposit",
     fields: {
       txnDate: payoutDate,
-      depositToAccountId: accounts.bank,
+      depositToAccountId: bank,
       memo: "Shopify payout",
       lines: lines.map((l): WriteLine => {
         if (l.budgetOwnerId === null) return { amountCents: l.amountCents, accountId: accounts[l.account] };
@@ -108,11 +116,16 @@ export async function postPayout(
   wait: boolean,
 ): Promise<{ outcome: PostOutcome; row: PayoutReconciliation } | null> {
   const { mirror, posting } = getIncomeConfig();
-  if (!mirror || !posting) throw new Error("income posting is not bound");
+  if (!mirror || !posting?.mirrorNewestWins) throw new Error("income posting is not enabled");
   const row = await db.payoutReconciliation.findUniqueOrThrow({ where: { id } });
   const payout = await mirror.payout(row.payoutGid);
-  // A payout that is no longer paid at the net it was queued with is never booked.
-  if (!isPostable(row) || payout?.status !== "paid" || payout.netCents !== row.payoutNetCents) {
+  // Booked only from an API row still paid at the net it was queued with; loaded history never.
+  if (
+    !isPostable(row) ||
+    payout?.status !== "paid" ||
+    payout.source !== "api" ||
+    payout.netCents !== row.payoutNetCents
+  ) {
     return { outcome: "waiting", row };
   }
 
@@ -195,35 +208,71 @@ export async function postPayout(
   );
 }
 
+/** Park a payout larger than the per-run cents cap for finance; it is never auto-created. */
+async function parkOverCap(orgId: string, id: number, maxCents: number): Promise<boolean> {
+  return db.$transaction(async (tx) => {
+    if (!(await lockReconciliation(tx, orgId, false))) return false;
+    const current = await tx.payoutReconciliation.findUniqueOrThrow({ where: { id } });
+    if (current.status !== RECON_STATUS.WAITING) return true;
+    const saved = await tx.payoutReconciliation.update({
+      where: { id },
+      data: { status: RECON_STATUS.OPEN, kind: RECON_KIND.OVER_CAP },
+    });
+    await audit(tx, orgId, "reconciliation.over_cap", current, saved, {
+      userId: null,
+      reason: `net ${current.payoutNetCents} cents is over the per-run cap of ${maxCents}`,
+    });
+    return true;
+  });
+}
+
 /**
- * The income cron step: match every paid payout, then post the outbox (WAITING and
- * POST_FAILED rows), at most MAX_POSTS_PER_RUN per run. The host calls it in a try/catch;
- * it returns counts only.
+ * The income cron step: match every paid payout, then post the outbox's WAITING rows still
+ * inside their match window, oldest first. Creates stop at the org's count and cents caps,
+ * which fire the finance alert; failures and amount matches do not count. The host calls it in a
+ * try/catch; it returns counts only.
  */
 export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): Promise<DrainResult> {
   const reconcile = await runReconcile(orgId, now);
   if (reconcile.status !== "ran") return { reconcile, post: reconcile.status };
-  const { mirror, posting } = getIncomeConfig();
+  const { mirror, posting, alerts } = getIncomeConfig();
   if (!mirror || !posting) return { reconcile, post: "unbound" };
+  if (!posting.mirrorNewestWins) return { reconcile, post: "gated" };
 
   const line = await incomeTakeoverLine(orgId);
-  const due = await db.payoutReconciliation.findMany({
-    where: {
-      orgId,
-      OR: [{ status: RECON_STATUS.WAITING }, { status: RECON_STATUS.OPEN, kind: RECON_KIND.POST_FAILED }],
-    },
-    orderBy: [{ payoutDate: "asc" }, { id: "asc" }],
-    select: { id: true },
-  });
+  const caps = await readIncomeSettings(db, orgId);
+  const today = isoDay(now);
+  const due = (
+    await db.payoutReconciliation.findMany({
+      where: { orgId, status: RECON_STATUS.WAITING },
+      orderBy: [{ payoutDate: "asc" }, { id: "asc" }],
+      select: { id: true, payoutDate: true, payoutNetCents: true },
+    })
+  ).filter((r) => today <= addDays(r.payoutDate, windowDays()));
 
-  const post: PostCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0 };
-  let creates = 0;
-  for (const { id } of due) {
-    if (creates >= MAX_POSTS_PER_RUN) break;
-    const turn = await postPayout(orgId, id, line, false);
+  const post: PostCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, over_cap: 0, capped: null };
+  let createdCents = 0;
+  const alert = (cap: "count" | "cents", remaining: number) =>
+    alerts?.postCapReached({ orgId, cap, created: post.posted, createdCents, remaining });
+
+  for (const [i, r] of due.entries()) {
+    const cents = Math.abs(r.payoutNetCents);
+    const afterLine = line !== null && r.payoutDate > line;
+    if (afterLine && cents > caps.maxCreateCentsPerRun) {
+      if (!(await parkOverCap(orgId, r.id, caps.maxCreateCentsPerRun))) return { reconcile, post: "busy" };
+      post.over_cap++;
+      await alert("cents", 1);
+      continue;
+    }
+    if (post.posted >= caps.maxCreatesPerRun || createdCents + cents > caps.maxCreateCentsPerRun) {
+      post.capped = post.posted >= caps.maxCreatesPerRun ? "count" : "cents";
+      await alert(post.capped, due.length - i);
+      break;
+    }
+    const turn = await postPayout(orgId, r.id, line, false);
     if (!turn) return { reconcile, post: "busy" };
     post[turn.outcome]++;
-    if (turn.outcome === "posted" || turn.outcome === "failed") creates++;
+    if (turn.outcome === "posted") createdCents += cents;
   }
   return { reconcile, post };
 }

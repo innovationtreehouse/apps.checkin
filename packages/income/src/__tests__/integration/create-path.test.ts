@@ -2,7 +2,8 @@ import { it, expect, beforeEach, afterEach, vi } from "vitest";
 import { QuickBooksClient, appKeyOf, qbKey, type QboDeposit } from "@inventory/quickbooks";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { configureIncome, type IncomeConfig } from "../../runtime";
+import { configureIncome, type IncomeConfig, type PostCapEvent } from "../../runtime";
+import { updateIncomeSettings } from "../../services/settingsService";
 import { runReconcile } from "../../lib/reconcile";
 import { drainIncomeOutbox, incomeTakeoverLine } from "../../lib/outbox";
 import { quickBooksDepositSource } from "../../lib/qb-deposits";
@@ -12,7 +13,7 @@ import { clearAll, ORG_A } from "../helpers/fixtures";
 
 const NOW = new Date("2026-06-30T12:00:00Z");
 const BANK = "35";
-const ACCOUNTS = { bank: BANK, income: "80", charge_remainder: "81", fees: "90", adjustments: "91" };
+const ACCOUNTS = { income: "80", charge_remainder: "81", fees: "90", adjustments: "91" };
 const tokens = { current: async () => "tok" };
 const realm = { env: "sandbox" as const, realmId: "123" };
 
@@ -63,6 +64,7 @@ let payouts: MirrorPayout[];
 let txns: Record<string, MirrorBalanceTxn[]>;
 let orderLines: MirrorOrderLine[];
 let owners: OwnerInfo[];
+let alerts: PostCapEvent[];
 
 const gid = (n: number) => `gid://shopify/ShopifyPaymentsPayout/${n}`;
 
@@ -91,7 +93,9 @@ function bind(over: Partial<IncomeConfig> = {}) {
     mirror,
     deposits: quickBooksDepositSource(tokens, realm),
     owners: { list: async () => owners },
-    posting: { client: new QuickBooksClient(tokens, realm), accounts: ACCOUNTS },
+    bankAccountId: BANK,
+    posting: { client: new QuickBooksClient(tokens, realm), accounts: ACCOUNTS, mirrorNewestWins: true },
+    alerts: { postCapReached: async (e) => void alerts.push(e) },
     ...over,
   });
 }
@@ -113,6 +117,7 @@ beforeEach(async () => {
   txns = {};
   orderLines = [];
   owners = [];
+  alerts = [];
   bind();
 });
 
@@ -261,7 +266,7 @@ describeDb("drainIncomeOutbox — every findOrCreate outcome", () => {
     expect(qbo.posts).toHaveLength(0);
   });
 
-  it("failed: a refused create opens POST_FAILED, and a later run posts it with the same key", async () => {
+  it("failed: a refused create opens POST_FAILED; later runs leave it, finance's retry posts it with the same key", async () => {
     const p = payout(2, "2026-06-28", 500);
     qbo.mode = "reject";
     expect(await drain()).toMatchObject({ post: { failed: 1 } });
@@ -271,6 +276,10 @@ describeDb("drainIncomeOutbox — every findOrCreate outcome", () => {
 
     qbo.mode = "ok";
     await drain();
+    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "POST_FAILED" });
+    expect(qbo.posts).toHaveLength(1);
+
+    await reconciliationService.resolve(ORG_A, (await rowFor(p)).id, { action: "retry" }, { userId: 9 });
     expect(await rowFor(p)).toMatchObject({ status: "POSTED", origin: "created", kind: null });
     expect(qbo.posts.map((x) => x.key)).toEqual([qbKey("income", p), qbKey("income", p)]);
   });
@@ -283,10 +292,71 @@ describeDb("drainIncomeOutbox — every findOrCreate outcome", () => {
     expect(qbo.posts).toHaveLength(1);
   });
 
-  it("caps the number of creates per run", async () => {
+  it("caps the number of creates per run and alerts finance when the cap stops it", async () => {
     for (let n = 10; n < 40; n++) payout(n, "2026-06-28", 100 + n);
-    expect(await drain()).toMatchObject({ post: { posted: 25 } });
-    expect(await drain()).toMatchObject({ post: { posted: 5 } });
+    expect(await drain()).toMatchObject({ post: { posted: 25, capped: "count" } });
+    expect(alerts).toEqual([expect.objectContaining({ orgId: ORG_A, cap: "count", created: 25, remaining: 5 })]);
+    expect(await drain()).toMatchObject({ post: { posted: 5, capped: null } });
+    expect(alerts).toHaveLength(1);
+  });
+
+  it("caps the cents created per run at the org setting", async () => {
+    await updateIncomeSettings(ORG_A, { maxCreateCentsPerRun: 1000 }, { userId: 9, isFinance: true, isBoard: false });
+    payout(2, "2026-06-27", 500);
+    payout(3, "2026-06-28", 400);
+    payout(4, "2026-06-29", 300);
+    expect(await drain()).toMatchObject({ post: { posted: 2, capped: "cents" } });
+    expect(alerts).toEqual([expect.objectContaining({ cap: "cents", created: 2, createdCents: 900, remaining: 1 })]);
+    expect(await rowFor(gid(4))).toMatchObject({ status: "WAITING" });
+  });
+
+  it("parks a single payout over the cents cap for finance and alerts, without stalling the rest", async () => {
+    await updateIncomeSettings(ORG_A, { maxCreateCentsPerRun: 1000 }, { userId: 9, isFinance: true, isBoard: false });
+    const big = payout(2, "2026-06-27", 5000);
+    const small = payout(3, "2026-06-28", 400);
+    expect(await drain()).toMatchObject({ post: { posted: 1, over_cap: 1 } });
+    expect(await rowFor(big)).toMatchObject({ status: "OPEN", kind: "OVER_CAP", depositId: null });
+    expect(await rowFor(small)).toMatchObject({ status: "POSTED" });
+    expect(alerts).toEqual([expect.objectContaining({ cap: "cents" })]);
+
+    await drain();
+    expect(qbo.posts).toHaveLength(1);
+    await reconciliationService.resolve(ORG_A, (await rowFor(big)).id, { action: "retry" }, { userId: 9 });
+    expect(await rowFor(big)).toMatchObject({ status: "POSTED", origin: "created" });
+  });
+
+  it("failures do not use up the cap", async () => {
+    await updateIncomeSettings(ORG_A, { maxCreatesPerRun: 2 }, { userId: 9, isFinance: true, isBoard: false });
+    qbo.mode = "reject";
+    for (let n = 10; n < 15; n++) payout(n, "2026-06-28", 100 + n);
+    expect(await drain()).toMatchObject({ post: { failed: 5, capped: null } });
+    expect(alerts).toHaveLength(0);
+  });
+
+  it("never posts a WAITING payout older than its match window", async () => {
+    const p = payout(2, "2026-06-10", 500);
+    await db.payoutReconciliation.create({
+      data: { orgId: ORG_A, payoutGid: p, payoutDate: "2026-06-10", payoutNetCents: 500, status: "WAITING" },
+    });
+    bind({ reconcileFrom: new Date("2026-06-20T00:00:00Z") });
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("a deposit dated a day before the payout is found, not created again", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.hand("EARLY", "2026-06-27", 500);
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ status: "MATCHED", origin: "matched", depositId: "EARLY" });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("a deposit dated more than the grace before the payout is not its match", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.hand("TOO_EARLY", "2026-06-25", 500);
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ status: "POSTED", origin: "created" });
   });
 });
 
@@ -410,13 +480,28 @@ describeDb("drainIncomeOutbox — mirror reverts and binding", () => {
 
   it("a WAITING payout that leaves paid is not posted", async () => {
     const p = payout(2, "2026-06-28", 500);
-    configureIncome({ mirror, deposits: quickBooksDepositSource(tokens, realm) });
+    configureIncome({ mirror, deposits: quickBooksDepositSource(tokens, realm), bankAccountId: BANK });
     await runReconcile(ORG_A, NOW);
     expect((await rowFor(p)).status).toBe("WAITING");
 
     setPayout(p, { status: "in_transit" });
     bind();
     expect(await drain()).toMatchObject({ post: { posted: 0 } });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("creates nothing until the mirror is declared newest-wins", async () => {
+    bind({ posting: { client: new QuickBooksClient(tokens, realm), accounts: ACCOUNTS, mirrorNewestWins: false } });
+    const p = payout(2, "2026-06-28", 500);
+    expect(await drain()).toMatchObject({ reconcile: { status: "ran" }, post: "gated" });
+    expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("never creates a deposit from a hand-loaded mirror payout", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    setPayout(p, { source: "hand_loaded" });
+    expect(await drain()).toMatchObject({ post: { posted: 0, waiting: 1 } });
     expect(qbo.posts).toHaveLength(0);
   });
 
@@ -439,5 +524,27 @@ describeDb("drainIncomeOutbox — mirror reverts and binding", () => {
       status: "POSTED", origin: "created",
     });
     expect(qbo.posts).toHaveLength(2);
+  });
+});
+
+describeDb("income settings", () => {
+  const finance = { userId: 9, username: "fin", isFinance: true, isBoard: false };
+  const board = { userId: 8, isFinance: false, isBoard: true };
+
+  it("defaults to 25 creates and $25,000 per run", async () => {
+    await expect(updateIncomeSettings(ORG_A, {}, finance)).resolves.toEqual({ maxCreatesPerRun: 25, maxCreateCentsPerRun: 2_500_000 });
+  });
+
+  it("finance may lower a cap; raising one takes the board; each change is audited", async () => {
+    await updateIncomeSettings(ORG_A, { maxCreatesPerRun: 10 }, finance);
+    await expect(updateIncomeSettings(ORG_A, { maxCreatesPerRun: 20 }, finance)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(updateIncomeSettings(ORG_A, { maxCreatesPerRun: 20 }, board)).resolves.toMatchObject({ maxCreatesPerRun: 20 });
+    await expect(updateIncomeSettings(ORG_A, { maxCreatesPerRun: 1 }, { userId: 7, isFinance: false, isBoard: false })).rejects.toMatchObject({ statusCode: 403 });
+
+    const changes = await db.incomeAuditLog.findMany({ where: { action: "settings.updated" }, orderBy: { id: "asc" } });
+    expect(changes.map((c) => [c.actorUserId, c.before, c.after])).toEqual([
+      [9, JSON.stringify({ maxCreatesPerRun: 25 }), JSON.stringify({ maxCreatesPerRun: 10 })],
+      [8, JSON.stringify({ maxCreatesPerRun: 10 }), JSON.stringify({ maxCreatesPerRun: 20 })],
+    ]);
   });
 });
