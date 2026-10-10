@@ -38,8 +38,9 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   when it fits 50 chars of `[A-Za-z0-9._:/-]`, else `<lane>:h:<128-bit sha256 hex>`. The 50-char cap is
   QBO's documented `requestid` limit, unverified live; `qbKey` is the one place to change it. The key
   is sent as QBO `requestid` and, on Purchase/Bill/Deposit, written
-  into `PrivateNote` as `[checkin:<key>]` on its own last line; `appKeyOf(entry)` reads back only that exact
-  form, for the candidate adapters.
+  into `PrivateNote` as `[checkin:<key>]`; `appKeyOf(entry)` reads back a well-formed marker standing
+  alone anywhere in the note, for the candidate adapters. Two different markers come back space-joined
+  and match no key, so `findMatch` sends the entry to a person.
   Writes re-check the realm guard, so production needs `CHECKIN_ENV=prod` at write time.
 - Every request has a 30 s timeout and retries a 429 once after `Retry-After` (capped at 10 s). Errors name
   the status, `intuit_tid` and QBO fault codes only, never the fault text (it can echo names and memos).

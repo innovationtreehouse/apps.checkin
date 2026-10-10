@@ -9,7 +9,7 @@ export interface MatchCandidate {
   amountCents: number;
   /** The account (Deposit, Purchase) or vendor (Bill) the entry is booked to. */
   ref?: string;
-  /** The idempotency key the app wrote into the entry; absent on hand-booked entries. */
+  /** The idempotency key the app wrote into the entry; absent on hand-booked entries. Space-joined when the entry carries several. */
   appKey?: string;
 }
 
@@ -45,8 +45,8 @@ export type MatchResult =
  * Every hit, key or hand, must have the exact amount, the request's ref when set, and a
  * date inside `req.window`. QuickBooks dates often sit a day or two off the record's, so
  * callers should pad the window with a grace on both sides; this function adds none.
- * A key hit that fails any check, or a matching entry carrying another record's key,
- * goes to a person: a copied or edited memo must never be taken as the app's own entry,
+ * A key hit that fails any check, an entry carrying the key beside another key, or a
+ * matching entry carrying another record's key goes to a person: a copied or edited memo must never be taken as the app's own entry,
  * and must never fall through to a create.
  */
 export function findMatch(candidates: readonly MatchCandidate[], req: MatchRequest): MatchResult {
@@ -63,8 +63,8 @@ export function findMatch(candidates: readonly MatchCandidate[], req: MatchReque
     (req.ref === undefined || c.ref === req.ref);
   const free = (c: MatchCandidate) => !req.excludedIds.has(c.id) && !req.claimedIds.has(c.id);
 
-  const own = candidates.filter((c) => c.appKey === req.key);
-  if (own.length === 1 && fits(own[0]) && free(own[0])) return { kind: "found", id: own[0].id, via: "key" };
+  const own = candidates.filter((c) => c.appKey?.split(" ").includes(req.key));
+  if (own.length === 1 && own[0].appKey === req.key && fits(own[0]) && free(own[0])) return { kind: "found", id: own[0].id, via: "key" };
   if (own.length > 0) return { kind: "ambiguous", ids: own.map((c) => c.id) };
 
   const hits = candidates.filter((c) => fits(c) && free(c));

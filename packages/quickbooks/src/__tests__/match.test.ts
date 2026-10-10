@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { billCandidate, depositCandidate, findMatch, purchaseCandidate, takeoverLine, type MatchRequest } from "../match";
+import { appKeyOf } from "../client";
 import type { QboBill, QboDeposit, QboPurchase } from "../types";
 
 // Recorded-shape QBO fixtures (trimmed to the fields matching reads).
@@ -96,6 +97,20 @@ describe("findMatch", () => {
     const hand = deposit("21", "2025-03-05", 123.45);
     expect(run([other])).toEqual({ kind: "ambiguous", ids: ["22"] });
     expect(run([hand, other])).toEqual({ kind: "ambiguous", ids: ["21", "22"] });
+  });
+
+  it("sends an entry carrying two different keys to a person, matching or not", () => {
+    const both = (TotalAmt: number) =>
+      depositCandidate(deposit("24", "2025-03-04", TotalAmt, { PrivateNote: "[checkin:income:1]\n[checkin:income:2]" }), appKeyOf);
+    const req = { ...base, key: "income:1" };
+    expect(findMatch([both(123.45)], req)).toEqual({ kind: "ambiguous", ids: ["24"] });
+    expect(findMatch([both(1)], req)).toEqual({ kind: "ambiguous", ids: ["24"] });
+    expect(findMatch([both(123.45)], { ...base, key: "income:3" })).toEqual({ kind: "ambiguous", ids: ["24"] });
+  });
+
+  it("finds the app's entry by key after a bookkeeper adds a line below the marker", () => {
+    const edited = depositCandidate(deposit("25", "2025-03-04", 123.45, { PrivateNote: "[checkin:income:1]\nchecked by finance" }), appKeyOf);
+    expect(findMatch([edited], { ...base, key: "income:1" })).toEqual({ kind: "found", id: "25", via: "key" });
   });
 
   it("ignores another record's key entry that does not match, or that its record already holds", () => {
