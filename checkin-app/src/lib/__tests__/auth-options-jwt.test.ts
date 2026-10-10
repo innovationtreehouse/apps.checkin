@@ -318,14 +318,14 @@ describe('jwt() callback — initial sign-in branch (user present)', () => {
 
             // Env comparison is case-insensitive (BOOTSTRAP_SYSADMINS is lowercased on parse).
             // The bootstrap promotion routes through the same write choke point every role
-            // grant uses (lib/roles.ts setRoleFlag), passing the "system" actor bypass — not
-            // a direct person.update, and not the matrix (there's no requesting user to check).
+            // grant uses (lib/roles.ts setRoleFlag), passing a named system actor — not a
+            // direct person.update, and not the matrix (there's no requesting user to check).
             expect(freshSetRoleFlag).toHaveBeenCalledWith(
                 expect.anything(),
                 7,
                 'isSysadmin',
                 true,
-                'system',
+                { system: 'system:bootstrap-sysadmin' },
             );
             expect(result.isSysadmin).toBe(true);
         } finally {

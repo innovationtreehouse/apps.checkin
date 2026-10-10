@@ -38,6 +38,16 @@ export function sharesHousehold(
 }
 
 /**
+ * The actor's household, or null when the actor id is not a positive integer or
+ * resolves to nobody. Callers treat null as "refuse" (fail closed).
+ */
+export async function resolveActorHouseholdId(db: DbClient, actorId: unknown): Promise<number | null> {
+    if (typeof actorId !== "number" || !Number.isInteger(actorId) || actorId <= 0) return null;
+    const actor = await db.person.findUnique({ where: { id: actorId }, select: { householdId: true } });
+    return actor?.householdId ?? null;
+}
+
+/**
  * Whether `actorId` has a household conflict with a subject in `subjectHouseholdId`.
  * Resolves the actor's household so callers don't re-roll the same findUnique.
  * Returns false (no conflict) only when the subject has no household to conflict with.
