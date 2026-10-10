@@ -82,8 +82,8 @@ export async function checkDuplicate(row: ReceiptRow): Promise<string | null> {
  * null with an audit row, for the catch-up step or the manual button to resend.
  */
 export async function pushReceipt(receiptId: string, actor: Actor | null): Promise<boolean> {
-  const orgId = getOrg().id;
   try {
+    const orgId = (await getOrg()).id;
     const row = await receiptRepo.find(receiptId, orgId);
     if (!row) throw new Error(`receipt ${receiptId} not found`);
     const lineItems = await receiptRepo.listLineItems(receiptId);
@@ -152,7 +152,7 @@ async function finalizeReceipt(row: ReceiptRow, actor: Actor | null): Promise<vo
 
 /** Run the intake guard chain from `uploaded` (or `flow_error`) and persist where it lands. */
 export async function runFullFlow(receiptId: string, actor: Actor | null): Promise<void> {
-  const orgId = getOrg().id;
+  const orgId = (await getOrg()).id;
   const row = await receiptRepo.find(receiptId, orgId);
   if (!row) return;
   if (!row.retailer || !row.receiptDate || row.receiptTotalCents === null) return;

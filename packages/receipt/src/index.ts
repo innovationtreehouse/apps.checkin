@@ -1,5 +1,5 @@
-// Public surface of the @inventory/receipt library (S: domain only — routes, pages and the host
-// bindings land in W).
+// Public surface of the @inventory/receipt library. Pages and nav are the ./pages/* and ./nav
+// subpath exports; the host mounts the services behind its own routes.
 export * from "./contract";
 export * from "./runtime";
 export { db, getPrisma } from "./db";

@@ -12,6 +12,7 @@ import type { NavRole, SessionUser } from "@/types/auth";
 import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
 import { EXPENSE_TABS } from "@inventory/expense/nav";
 import { libraryCount } from "@/components/navBadges";
+import { canSubmitReceipts } from "@/lib/volunteer";
 
 export type { LibraryKey };
 
@@ -71,7 +72,10 @@ export const EXPENSE_OPS_TABS: LibraryTab[] = [
 ];
 
 /** My Receipts top-level entry: the receipt library's own-receipt screens. */
-export const MY_RECEIPTS_TABS: LibraryTab[] = [];
+export const MY_RECEIPTS_TABS: LibraryTab[] = [
+  { name: "My receipts", href: "/receipts", icon: "🧾", library: "receipt", visible: canSubmitReceipts },
+  { name: "Upload", href: "/receipts/upload", icon: "📤", library: "receipt", visible: canSubmitReceipts },
+];
 
 /** My Programs section (/my-programs): Expense approvals. */
 export const MY_PROGRAMS_LIBRARY_TABS: LibraryTab[] = [

@@ -13,7 +13,7 @@ import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
 import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
 import { membershipOpsRouteVisible } from '@/lib/membershipOpsNav';
 import { isLibraryVisible, type LibraryKey } from '@/lib/libraryRelease';
-import { canSeeCatalog, type VolunteerClaims } from '@/lib/volunteer';
+import { canSeeCatalog, canSubmitReceipts, type VolunteerClaims } from '@/lib/volunteer';
 
 export type RegistryUser = VolunteerClaims & {
   householdLead?: boolean;
@@ -58,6 +58,11 @@ const CATALOG_VIEWER: Visible = (u, signedIn) => signedIn && canSeeCatalog(u);
 
 // Expense Ops: FINANCE or BOARD, no sysadmin (docs/rules/finance-payments.md).
 const FINANCE_OR_BOARD: Visible = (u) => !!u?.isFinance || !!u?.isBoardMember;
+
+// Receipts (owner ruling 2026-10-12): any signed-in adult or Treehouse Volunteer
+// submits; the review side is FINANCE or BOARD (the routes' finance-or-board gate).
+const RECEIPT_SUBMITTER: Visible = (u, signedIn) => signedIn && canSubmitReceipts(u);
+
 const INVENTORY_MANAGER: Visible = (u, signedIn) => signedIn && !!u?.isInventoryManager;
 // A library's pages stay listed for board members only until the board releases it.
 const released = (lib: LibraryKey, gate: Visible): Visible => (u, signedIn, counts) =>
@@ -146,6 +151,12 @@ export const PAGES: PageEntry[] = [
   { href: '/income/reconciliation', label: 'Income Reconciliation', section: 'Income', keywords: 'payout deposit quickbooks drift', visible: released('income', FINANCE_OR_BOARD) },
   { href: '/income/items', label: 'Item Categories', section: 'Income', keywords: 'budget owner bucket class', visible: released('income', FINANCE_OR_BOARD) },
   { href: '/income/exclusions', label: 'QB Exclusions', section: 'Income', keywords: 'quickbooks deposit exclude', visible: released('income', FINANCE_OR_BOARD) },
+
+  // Receipts — "My receipts" for anyone who may upload; review and settings for finance.
+  { href: '/receipts', label: 'My Receipts', section: 'Receipts', keywords: 'receipt reimbursement upload purchase', visible: released('receipt', RECEIPT_SUBMITTER) },
+  { href: '/receipts/upload', label: 'Upload Receipt', section: 'Receipts', keywords: 'receipt photo pdf purchase donation', visible: released('receipt', RECEIPT_SUBMITTER) },
+  { href: '/receipts/review', label: 'Receipts Review', section: 'Receipts', keywords: 'receipt finance tax duplicate', visible: released('receipt', FINANCE_OR_BOARD) },
+  { href: '/receipts/settings', label: 'Receipt Settings', section: 'Receipts', keywords: 'tax exempt age limit', visible: released('receipt', FINANCE_OR_BOARD) },
 
   // Facility Ops — board, plus operations on the two aggregate tools (#1633:
   // operations reach attendance in aggregate only). Visits, Badges (the raw

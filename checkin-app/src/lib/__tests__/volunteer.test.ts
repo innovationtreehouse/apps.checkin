@@ -1,4 +1,4 @@
-import { canSeeCatalog, isTreehouseVolunteer } from '@/lib/volunteer';
+import { canSeeCatalog, canSubmitReceipts, isTreehouseVolunteer } from '@/lib/volunteer';
 import { ROLE_FLAGS } from '@/lib/roles';
 import { ORG_DOMAIN } from '@/lib/config';
 
@@ -59,5 +59,21 @@ describe('canSeeCatalog', () => {
 
     it('denies a missing user', () => {
         expect(canSeeCatalog(undefined)).toBe(false);
+    });
+});
+
+describe('canSubmitReceipts', () => {
+    it('admits any adult, with no volunteer status or membership', () => {
+        expect(canSubmitReceipts({ ageBand: 'adult' })).toBe(true);
+    });
+
+    it('admits a Treehouse Volunteer by role', () => {
+        expect(canSubmitReceipts({ isFinance: true })).toBe(true);
+    });
+
+    it('refuses a youth or unknown age without volunteer status, and no session', () => {
+        expect(canSubmitReceipts({ ageBand: 'youth', isVolunteerFamily: true, isActiveOrgMember: true })).toBe(false);
+        expect(canSubmitReceipts({ ageBand: 'unknown' })).toBe(false);
+        expect(canSubmitReceipts(undefined)).toBe(false);
     });
 });

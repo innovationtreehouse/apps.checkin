@@ -32,6 +32,7 @@ services:
       EXPENSE_DATABASE_URL: postgresql://expense_dml:${EXPENSE_DML_DB_PASSWORD}@db:5432/expense?schema=public
       WORKFLOW_MAPPING_DATABASE_URL: postgresql://workflow_mapping_dml:${WORKFLOW_MAPPING_DML_DB_PASSWORD}@db:5432/workflow_mapping?schema=public
       INCOME_DATABASE_URL: postgresql://income_dml:${INCOME_DML_DB_PASSWORD}@db:5432/income?schema=public
+      RECEIPT_DATABASE_URL: postgresql://receipt_dml:${RECEIPT_DML_DB_PASSWORD}@db:5432/receipt?schema=public
     depends_on:
       - db
 
@@ -49,6 +50,7 @@ services:
       EXPENSE_DATABASE_URL: postgresql://expense_owner:${EXPENSE_OWNER_DB_PASSWORD}@db:5432/expense?schema=public
       WORKFLOW_MAPPING_DATABASE_URL: postgresql://workflow_mapping_owner:${WORKFLOW_MAPPING_OWNER_DB_PASSWORD}@db:5432/workflow_mapping?schema=public
       INCOME_DATABASE_URL: postgresql://income_owner:${INCOME_OWNER_DB_PASSWORD}@db:5432/income?schema=public
+      RECEIPT_DATABASE_URL: postgresql://receipt_owner:${RECEIPT_OWNER_DB_PASSWORD}@db:5432/receipt?schema=public
     command: ["scripts/each-library.sh", "exec", "--no", "--", "prisma", "migrate", "deploy"]
     depends_on:
       - db
@@ -73,6 +75,8 @@ services:
       WORKFLOW_MAPPING_DML_DB_PASSWORD: ${WORKFLOW_MAPPING_DML_DB_PASSWORD}
       INCOME_OWNER_DB_PASSWORD: ${INCOME_OWNER_DB_PASSWORD}
       INCOME_DML_DB_PASSWORD: ${INCOME_DML_DB_PASSWORD}
+      RECEIPT_OWNER_DB_PASSWORD: ${RECEIPT_OWNER_DB_PASSWORD}
+      RECEIPT_DML_DB_PASSWORD: ${RECEIPT_DML_DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # Creates each library's database and roles on first init.

@@ -89,6 +89,8 @@ const customJestConfig = {
         '^@inventory/bulk-donation$': '<rootDir>/../packages/bulk-donation/src/index.ts',
         '^@inventory/expense/(.*)$': '<rootDir>/../packages/expense/src/$1',
         '^@inventory/expense$': '<rootDir>/../packages/expense/src/index.ts',
+        '^@inventory/receipt/(.*)$': '<rootDir>/../packages/receipt/src/$1',
+        '^@inventory/receipt$': '<rootDir>/../packages/receipt/src/index.ts',
         // Shared packages the libraries import; their `exports` declare only `import`.
         '^@inventory/workflows/(.*)$': '<rootDir>/../packages/workflows/src/$1',
         '^@inventory/workflows$': '<rootDir>/../packages/workflows/src/index.ts',

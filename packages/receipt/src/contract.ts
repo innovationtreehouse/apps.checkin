@@ -102,8 +102,8 @@ export interface OcrProvider {
 
 export interface ReceiptConfig {
   auth: ReceiptAuth;
-  /** Accessor, not a frozen value: resolved per call. */
-  org: () => OrgIdentity;
+  /** Async accessor, resolved per call: the host may read the org from its own store. */
+  org: () => Promise<OrgIdentity>;
   receiptSink?: ReceiptSink;
   donorSink?: DonorSink;
   reimbursementStatus?: ReimbursementStatus;

@@ -49,3 +49,8 @@ export function isTreehouseVolunteer(c: VolunteerClaims | undefined): boolean {
 export function canSeeCatalog(c: VolunteerClaims | undefined): boolean {
     return isTreehouseVolunteer(c) || (!!c && volunteersAsMember(c));
 }
+
+/** Any adult or Treehouse Volunteer may submit receipts; mirrors the server 'receipt-submitter' gate. */
+export function canSubmitReceipts(c: VolunteerClaims | undefined): boolean {
+    return c?.ageBand === "adult" || isTreehouseVolunteer(c);
+}

@@ -25,6 +25,8 @@ services:
       WORKFLOW_MAPPING_DML_DB_PASSWORD: workflow_mapping_dml_pw
       INCOME_OWNER_DB_PASSWORD: income_owner_pw
       INCOME_DML_DB_PASSWORD: income_dml_pw
+      RECEIPT_OWNER_DB_PASSWORD: receipt_owner_pw
+      RECEIPT_DML_DB_PASSWORD: receipt_dml_pw
     volumes:
       # Creates each checkin-app/libraries.json database and its roles on first init.
       - ./prod-initdb:/docker-entrypoint-initdb.d:ro
@@ -54,6 +56,7 @@ services:
       EXPENSE_DATABASE_URL: postgresql://expense_dml:expense_dml_pw@db:5432/expense?schema=public
       WORKFLOW_MAPPING_DATABASE_URL: postgresql://workflow_mapping_dml:workflow_mapping_dml_pw@db:5432/workflow_mapping?schema=public
       INCOME_DATABASE_URL: postgresql://income_dml:income_dml_pw@db:5432/income?schema=public
+      RECEIPT_DATABASE_URL: postgresql://receipt_dml:receipt_dml_pw@db:5432/receipt?schema=public
       CHECKIN_ENV: local            # enables persona-mint login + keyless kiosk
       NEXTAUTH_URL: http://localhost:4000
       NEXTAUTH_SECRET: flow-test-secret
@@ -68,7 +71,7 @@ services:
       - -lc
       # Libraries: migrate deploy as each owner role (NOT db push — their schemas use constraints db
       # push can't express) + seed. Checkin: generate + push + seed. Then serve.
-      - npm ci && CATALOG_DATABASE_URL='postgresql://catalog_owner:catalog_owner_pw@db:5432/catalog?schema=public' LOCAL_INVENTORY_DATABASE_URL='postgresql://local_inventory_owner:local_inventory_owner_pw@db:5432/local_inventory?schema=public' BULK_DONATION_DATABASE_URL='postgresql://bulk_donation_owner:bulk_donation_owner_pw@db:5432/bulk_donation?schema=public' EXPENSE_DATABASE_URL='postgresql://expense_owner:expense_owner_pw@db:5432/expense?schema=public' WORKFLOW_MAPPING_DATABASE_URL='postgresql://workflow_mapping_owner:workflow_mapping_owner_pw@db:5432/workflow_mapping?schema=public' INCOME_DATABASE_URL='postgresql://income_owner:income_owner_pw@db:5432/income?schema=public' scripts/each-library.sh exec --no -- prisma migrate deploy && scripts/each-library.sh run db:seed && cd checkin-app && npx prisma generate && npx prisma db push && npx prisma db seed && npm run dev
+      - npm ci && CATALOG_DATABASE_URL='postgresql://catalog_owner:catalog_owner_pw@db:5432/catalog?schema=public' LOCAL_INVENTORY_DATABASE_URL='postgresql://local_inventory_owner:local_inventory_owner_pw@db:5432/local_inventory?schema=public' BULK_DONATION_DATABASE_URL='postgresql://bulk_donation_owner:bulk_donation_owner_pw@db:5432/bulk_donation?schema=public' EXPENSE_DATABASE_URL='postgresql://expense_owner:expense_owner_pw@db:5432/expense?schema=public' WORKFLOW_MAPPING_DATABASE_URL='postgresql://workflow_mapping_owner:workflow_mapping_owner_pw@db:5432/workflow_mapping?schema=public' INCOME_DATABASE_URL='postgresql://income_owner:income_owner_pw@db:5432/income?schema=public' RECEIPT_DATABASE_URL='postgresql://receipt_owner:receipt_owner_pw@db:5432/receipt?schema=public' scripts/each-library.sh exec --no -- prisma migrate deploy && scripts/each-library.sh run db:seed && cd checkin-app && npx prisma generate && npx prisma db push && npx prisma db seed && npm run dev
     healthcheck:
       # Up = the dev server answers an auth route. start_period covers npm ci + seed + first compile.
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4000/api/auth/csrf').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
