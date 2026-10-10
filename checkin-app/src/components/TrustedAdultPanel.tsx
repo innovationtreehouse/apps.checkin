@@ -55,6 +55,7 @@ const EXPIRING_SOON_DAYS = 30;
 
 export default function TrustedAdultPanel() {
     const [items, setItems] = useState<TrustedAdult[]>([]);
+    const [now] = useState(() => Date.now());
     const [loading, setLoading] = useState(true);
     const [opened, { open, close }] = useDisclosure(false);
     const [submitting, setSubmitting] = useState(false);
@@ -224,7 +225,7 @@ export default function TrustedAdultPanel() {
                 const source = liveApproval ?? latest;
                 const reviewBy = source?.reviewBy ? new Date(source.reviewBy) : null;
                 const expiringSoon =
-                    reviewBy && effectiveStatus === "APPROVED" && reviewBy.getTime() - Date.now() < EXPIRING_SOON_DAYS * 86400000;
+                    reviewBy && effectiveStatus === "APPROVED" && reviewBy.getTime() - now < EXPIRING_SOON_DAYS * 86400000;
                 const canResubmit = !changePending && (!!liveApproval || ["EXPIRED", "DENIED", "REVOKED"].includes(latest?.status ?? ""));
 
                 return (
