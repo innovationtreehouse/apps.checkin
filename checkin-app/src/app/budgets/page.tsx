@@ -63,19 +63,18 @@ export default function BudgetsPage() {
 
   const [treasurerBucket, setTreasurerBucket] = useState<Bucket | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [b, p] = await Promise.all([
-        fetch(`/api/budget-owners${showArchived ? "?includeArchived=1" : ""}`),
-        fetch("/api/budget-owners/program-options"),
-      ]);
+  const load = useCallback(() => Promise.all([
+    fetch(`/api/budget-owners${showArchived ? "?includeArchived=1" : ""}`),
+    fetch("/api/budget-owners/program-options"),
+  ])
+    .then(async ([b, p]) => {
       if (b.ok) setBuckets(await b.json());
       if (p.ok) setPrograms(await p.json());
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, [showArchived]);
+    }),
+  [showArchived]);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
 
@@ -84,6 +83,7 @@ export default function BudgetsPage() {
     const error = await send(url, method, body);
     if (error) { setMessage(error); return false; }
     notifications.show({ message: done });
+    setLoading(true);
     await load();
     return true;
   };
@@ -148,7 +148,7 @@ export default function BudgetsPage() {
         <Checkbox
           label="Show archived"
           checked={showArchived}
-          onChange={(e) => setShowArchived(e.currentTarget.checked)}
+          onChange={(e) => { setLoading(true); setShowArchived(e.currentTarget.checked); }}
         />
 
         {loading ? (
