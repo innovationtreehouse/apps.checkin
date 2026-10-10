@@ -43,9 +43,8 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
   const [loading, setLoading] = useState(true);
   const [validUntil, setValidUntil] = useState<string | null>(null);
 
-  const fetchHousehold = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/membership-ops/households?id=${id}`);
+  const fetchHousehold = useCallback(() => fetch(`/api/membership-ops/households?id=${id}`)
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setHousehold(data.household);
@@ -53,12 +52,14 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
       } else {
         notifications.show({ color: "red", message: "Failed to load household.", autoClose: false });
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, [id]);
+    }),
+  [id]);
 
   useEffect(() => {
     if (ready) fetchHousehold();
