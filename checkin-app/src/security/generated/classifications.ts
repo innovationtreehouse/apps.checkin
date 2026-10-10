@@ -144,6 +144,7 @@ export const classifications = {
         shopifyPriceSyncedAt: 'internal',
         shopifyReconcileCursorAt: 'internal',
         scholarshipDenialGraceDays: 'public',
+        releasedLibraries: 'public',
         updatedAt: 'internal',
     },
     AppSettings: {

@@ -126,6 +126,26 @@ describe('Membership settings + volunteer designations API', () => {
         }
     });
 
+    it('board releases a library, audit-logs it, and clears it again', async () => {
+        asBoard(boardId);
+        const res = await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: ['catalog', 'catalog', 'expense'] }));
+        expect(res.status).toBe(200);
+        expect((await res.json()).settings.releasedLibraries).toEqual(['catalog', 'expense']);
+        const log = await prisma.auditLog.findFirst({ where: { actorId: boardId, tableName: 'BoardSettings' }, orderBy: { id: 'desc' } });
+        expect(log?.newData).toEqual({ releasedLibraries: ['catalog', 'expense'] });
+
+        const cleared = await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: [] }));
+        expect((await cleared.json()).settings.releasedLibraries).toEqual([]);
+    });
+
+    it('rejects unknown library keys and non-board release attempts', async () => {
+        asBoard(boardId);
+        expect((await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: ['nope'] }))).status).toBe(400);
+        expect((await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: 'catalog' }))).status).toBe(400);
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isSysadmin: true, isBoardMember: false } });
+        expect((await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: ['catalog'] }))).status).toBe(403);
+    });
+
     it('adds, lists, and removes a volunteer designation', async () => {
         asBoard(boardId);
         const addRes = await DESIG_POST(jsonReq('POST', { email: `vol-${TAG}@example.com` }));

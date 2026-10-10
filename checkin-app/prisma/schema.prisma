@@ -737,6 +737,10 @@ model BoardSettings {
   /// withdrawal or payment; it never auto-expires).
   /// @sensitivity:public
   scholarshipDenialGraceDays Int?
+  /// Library keys (lib/libraryRelease.ts) the board has released: their nav
+  /// entries show to everyone with access, not just board members. UI-only.
+  /// @sensitivity:public
+  releasedLibraries          String[]  @default([])
   /// @sensitivity:internal
   updatedAt                  DateTime  @updatedAt
 }

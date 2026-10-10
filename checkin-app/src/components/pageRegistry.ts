@@ -12,6 +12,7 @@ import { shopRoles } from '@/lib/shopNav';
 import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
 import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
 import { membershipOpsRouteVisible } from '@/lib/membershipOpsNav';
+import { isLibraryVisible, type LibraryKey } from '@/lib/libraryRelease';
 
 export type RegistryUser = {
   isSysadmin?: boolean;
@@ -71,6 +72,9 @@ const CATALOG_VIEWER: Visible = (u, signedIn) =>
     !!u?.hasVolunteerDesignation);
 
 const INVENTORY_MANAGER: Visible = (u, signedIn) => signedIn && !!u?.isInventoryManager;
+// A library's pages stay listed for board members only until the board releases it.
+const released = (lib: LibraryKey, gate: Visible): Visible => (u, signedIn, counts) =>
+  gate(u, signedIn, counts) && isLibraryVisible(lib, { isBoardMember: u?.isBoardMember, releasedLibraries: counts?.releasedLibraries });
 
 export type PageEntry = {
   href: string;
@@ -125,20 +129,20 @@ export const PAGES: PageEntry[] = [
 
   // Inventory (global catalog, #1286) — any catalog viewer. The index redirects
   // to Items. Write controls within each screen are INVENTORY_MANAGER-gated.
-  { href: '/catalog', label: 'Inventory', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: CATALOG_VIEWER },
-  { href: '/catalog/items', label: 'Items', section: 'Inventory', keywords: 'catalog parts gtin', visible: CATALOG_VIEWER },
-  { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: CATALOG_VIEWER },
-  { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: CATALOG_VIEWER },
-  { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: CATALOG_VIEWER },
+  { href: '/catalog', label: 'Inventory', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/items', label: 'Items', section: 'Inventory', keywords: 'catalog parts gtin', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: released('catalog', CATALOG_VIEWER) },
   // Org inventory (#1287) — same viewer gate; the work-queue screens are
   // INVENTORY_MANAGER-only, like their routes.
-  { href: '/inventory/org-items', label: 'Org Inventory', section: 'Inventory', keywords: 'stock on hand quantity location', visible: CATALOG_VIEWER },
-  { href: '/inventory/locations', label: 'Locations', section: 'Inventory', keywords: 'shelf bin backstock', visible: CATALOG_VIEWER },
-  { href: '/inventory/receive-queue', label: 'Receive Queue', section: 'Inventory', keywords: 'backorder receiving', visible: CATALOG_VIEWER },
-  { href: '/inventory/received-deltas', label: 'Applied Deltas', section: 'Inventory', keywords: 'receipt delta', visible: CATALOG_VIEWER },
-  { href: '/inventory/merge-conflicts', label: 'Merge Conflicts', section: 'Inventory', keywords: 'uom mismatch', visible: INVENTORY_MANAGER },
-  { href: '/inventory/provisional-items', label: 'Provisional Map', section: 'Inventory', keywords: 'provisional part', visible: INVENTORY_MANAGER },
-  { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: INVENTORY_MANAGER },
+  { href: '/inventory/org-items', label: 'Org Inventory', section: 'Inventory', keywords: 'stock on hand quantity location', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/locations', label: 'Locations', section: 'Inventory', keywords: 'shelf bin backstock', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/receive-queue', label: 'Receive Queue', section: 'Inventory', keywords: 'backorder receiving', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/received-deltas', label: 'Applied Deltas', section: 'Inventory', keywords: 'receipt delta', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/merge-conflicts', label: 'Merge Conflicts', section: 'Inventory', keywords: 'uom mismatch', visible: released('local-inventory', INVENTORY_MANAGER) },
+  { href: '/inventory/provisional-items', label: 'Provisional Map', section: 'Inventory', keywords: 'provisional part', visible: released('local-inventory', INVENTORY_MANAGER) },
+  { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: released('local-inventory', INVENTORY_MANAGER) },
 
   // Facility Ops — board, plus operations on the two aggregate tools (#1633:
   // operations reach attendance in aggregate only). Visits, Badges (the raw

@@ -194,3 +194,34 @@ describe("AppFrame", () => {
     expect(router.push).not.toHaveBeenCalled();
   });
 });
+
+describe("AppFrame library release gate", () => {
+  const countsWith = (releasedLibraries: string[]) => ({
+    member: { household: [], programs: [], programsAwaitingFinance: 0 },
+    building: 0,
+    buildingHousehold: 0,
+    activePrograms: 0,
+    releasedLibraries,
+  });
+
+  it("hides the Inventory entry from a non-board catalog viewer while unreleased", () => {
+    setSession({ id: 3, isKeyholder: true });
+    mockedUseTodoCounts.mockReturnValue(countsWith([]));
+    renderFrame();
+    expect(screen.queryByText("Inventory")).not.toBeInTheDocument();
+  });
+
+  it("shows the Inventory entry to a non-board catalog viewer once released", () => {
+    setSession({ id: 3, isKeyholder: true });
+    mockedUseTodoCounts.mockReturnValue(countsWith(["catalog"]));
+    renderFrame();
+    expect(screen.getByText("Inventory")).toBeInTheDocument();
+  });
+
+  it("always shows the Inventory entry to a board member", () => {
+    setSession({ id: 4, isBoardMember: true });
+    mockedUseTodoCounts.mockReturnValue(countsWith([]));
+    renderFrame();
+    expect(screen.getByText("Inventory")).toBeInTheDocument();
+  });
+});

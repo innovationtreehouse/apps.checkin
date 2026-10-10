@@ -8,6 +8,8 @@ import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { useCheckinEnv } from "@/components/EnvProvider";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
+import { useSession } from "next-auth/react";
+import { LibraryReleaseCard } from "@/components/admin/LibraryReleaseCard";
 
 interface Settings {
   standardMembershipFeeCents: number;
@@ -19,6 +21,7 @@ interface Settings {
   bgRecheckMonths: number;
   devSigningTarget: string | null;
   scholarshipDenialGraceDays: number | null;
+  releasedLibraries: string[];
 }
 
 const dollars = (cents: number) => (cents / 100).toFixed(2);
@@ -64,6 +67,8 @@ export default function MembershipSettingsPage() {
   const [fieldErrors, setFieldErrors] = useState<{ standardFee?: string; volunteerFee?: string; variantId?: string; scholarshipGraceDays?: string }>({});
   const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
   const [renewalNotice, setRenewalNotice] = useState<{ text: string; err: boolean } | null>(null);
+  const [releasedLibraries, setReleasedLibraries] = useState<string[]>([]);
+  const isBoardMember = !!useSession().data?.user?.isBoardMember;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -91,6 +96,7 @@ export default function MembershipSettingsPage() {
         setProductUrl(snap.productUrl);
         setDiscountCode(snap.discountCode);
         setSigningTarget(snap.signingTarget);
+        setReleasedLibraries(settings.releasedLibraries ?? []);
         setInitial(snap);
       }
     } finally {
@@ -353,6 +359,8 @@ export default function MembershipSettingsPage() {
               Save settings
             </Button>
           </Card>
+
+          {isBoardMember && <LibraryReleaseCard initial={releasedLibraries} />}
 
           <Card withBorder radius="md" padding="lg" style={{ borderColor: "var(--mantine-color-yellow-5)" }}>
             <Title order={3} mb="xs">Go-live: open renewals</Title>
