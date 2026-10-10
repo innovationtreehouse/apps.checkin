@@ -100,3 +100,35 @@ export interface QbDeposit {
 export interface QbDepositSource {
   depositsBetween(from: string, to: string): Promise<QbDeposit[]>;
 }
+
+/** The acting host user, projected to what income rows stamp. */
+export interface IncomePrincipal {
+  /** Host person id, stamped as actorUserId / resolvedByUserId / excludedByUserId. */
+  id: number;
+  /** Display name, stamped as actorUsername. Null when the host has no name. */
+  name: string | null;
+}
+
+/** Org identity stamped on every income row. */
+export interface OrgIdentity {
+  id: string;
+  name: string;
+}
+
+export interface IncomeAuth {
+  /**
+   * The current host user, or null when unauthenticated. Host admission runs before any
+   * route body, so a factory that reaches getPrincipal() treats null as an invariant breach.
+   */
+  getPrincipal(): Promise<IncomePrincipal | null>;
+}
+
+/** The slice of a route context a factory consumes: request + path params. */
+export interface IncomeRouteCtx {
+  req: Request;
+  params: Record<string, string>;
+}
+
+/** A route factory's body: parse → service → model bag (stripped by the host). */
+export type IncomeBag = Record<string, unknown>;
+export type IncomeRouteHandler = (ctx: IncomeRouteCtx) => Promise<IncomeBag>;

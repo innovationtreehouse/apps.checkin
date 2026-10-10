@@ -10,6 +10,7 @@ import type { BusinessRole } from '@/types/auth';
 import { leadsAnyProgram } from '@/components/navBadges';
 import { shopRoles } from '@/lib/shopNav';
 import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
+import { INCOME_SECTION_ROLES } from '@/lib/incomeNav';
 import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
 import { membershipOpsRouteVisible } from '@/lib/membershipOpsNav';
 import { isLibraryVisible, type LibraryKey } from '@/lib/libraryRelease';
@@ -21,6 +22,7 @@ export type RegistryUser = {
   isBackgroundCheckReviewer?: boolean;
   isOperations?: boolean;
   isInventoryManager?: boolean;
+  isFinance?: boolean;
   householdLead?: boolean;
   programsLed?: number[];
   hasVolunteerDesignation?: boolean;
@@ -70,6 +72,8 @@ const CATALOG_VIEWER: Visible = (u, signedIn) =>
     !!u?.isInventoryManager ||
     (u?.programsLed?.length ?? 0) > 0 ||
     !!u?.hasVolunteerDesignation);
+
+const INCOME: Visible = (u) => INCOME_SECTION_ROLES.some((r) => !!u?.[r]);
 
 const INVENTORY_MANAGER: Visible = (u, signedIn) => signedIn && !!u?.isInventoryManager;
 // A library's pages stay listed for board members only until the board releases it.
@@ -143,6 +147,14 @@ export const PAGES: PageEntry[] = [
   { href: '/inventory/merge-conflicts', label: 'Merge Conflicts', section: 'Inventory', keywords: 'uom mismatch', visible: released('local-inventory', INVENTORY_MANAGER) },
   { href: '/inventory/provisional-items', label: 'Provisional Map', section: 'Inventory', keywords: 'provisional part', visible: released('local-inventory', INVENTORY_MANAGER) },
   { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: released('local-inventory', INVENTORY_MANAGER) },
+
+  // Income — FINANCE works it, BOARD reads it (the routes' finance-or-board gate).
+  // The index redirects to the reconciliation queue.
+  { href: '/income', label: 'Income', section: 'Income', keywords: 'shopify payout quickbooks', visible: INCOME },
+  { href: '/income/payouts', label: 'Payouts', section: 'Income', keywords: 'shopify payout deposit', visible: INCOME },
+  { href: '/income/reconciliation', label: 'Income Reconciliation', section: 'Income', keywords: 'payout deposit quickbooks drift', visible: INCOME },
+  { href: '/income/items', label: 'Item Categories', section: 'Income', keywords: 'budget owner bucket class', visible: INCOME },
+  { href: '/income/exclusions', label: 'QB Exclusions', section: 'Income', keywords: 'quickbooks deposit exclude', visible: INCOME },
 
   // Facility Ops — board, plus operations on the two aggregate tools (#1633:
   // operations reach attendance in aggregate only). Visits, Badges (the raw
