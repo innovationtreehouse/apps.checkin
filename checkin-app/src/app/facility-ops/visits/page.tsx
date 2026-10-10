@@ -135,21 +135,22 @@ export default function AdminVisitsPage() {
   const toggleSort = (key: SortKey) =>
     setSort((s) => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
 
-  const fetchVisits = useCallback(async () => {
-    try {
-      const res = await fetch('/api/facility/visits');
+  const fetchVisits = useCallback(() => fetch('/api/facility/visits')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setVisits(data.visits);
       } else {
         setMessage({ text: "Failed to load visits.", tone: "error" });
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading visits.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchVisits();

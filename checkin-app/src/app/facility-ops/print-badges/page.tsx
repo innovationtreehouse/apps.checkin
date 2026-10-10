@@ -46,7 +46,7 @@ export default function PrintBadgesPage() {
   // Filtering by year on by default would hide exactly those rows.
   const [filterByYear, setFilterByYear] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [availableYears, setAvailableYears] = useState<string[]>([]);
   const [selectedYear, setSelectedYear] = useState<string | null>(null);
   // What the admin has typed into a Nickname box, keyed by person. Held apart from
@@ -57,22 +57,23 @@ export default function PrintBadgesPage() {
   const pendingSaves = useRef<Record<number, { value: string; timer: ReturnType<typeof setTimeout> }>>({});
   const inflightSaves = useRef(new Set<Promise<SavedNickname | null>>());
 
-  const fetchParticipants = useCallback(async () => {
-    setLoading(true);
-    try {
-      const url = new URL('/api/people/search', window.location.origin);
-      if (searchTerm) url.searchParams.set('q', searchTerm);
+  const fetchParticipants = useCallback(() => {
+    const url = new URL('/api/people/search', window.location.origin);
+    if (searchTerm) url.searchParams.set('q', searchTerm);
 
-      const res = await fetch(url.toString());
-      const data = await res.json();
-      if (data.people) {
-        setParticipants(data.people);
-      }
-    } catch (e) {
-      console.error("Failed to search people for badges:", e);
-    } finally {
-      setLoading(false);
-    }
+    return fetch(url.toString())
+      .then(async (res) => {
+        const data = await res.json();
+        if (data.people) {
+          setParticipants(data.people);
+        }
+      })
+      .catch((e) => {
+        console.error("Failed to search people for badges:", e);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, [searchTerm]);
 
   useEffect(() => {
@@ -90,7 +91,10 @@ export default function PrintBadgesPage() {
       .then(res => res.ok ? res.json() : Promise.reject(new Error(`years request failed: ${res.status}`)))
       .then(data => {
         setAvailableYears(data.years ?? []);
-        if (!selectedYear && data.current) setSelectedYear(data.current);
+        if (!selectedYear && data.current) {
+          setRoster(null);
+          setSelectedYear(data.current);
+        }
       })
       .catch(e => console.error("Failed to load membership years:", e));
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -99,7 +103,6 @@ export default function PrintBadgesPage() {
   // Reload the roster when the selected year changes.
   useEffect(() => {
     if (!ready) return;
-    setRoster(null);
     const url = new URL('/api/people/search', window.location.origin);
     url.searchParams.set('roster', 'active');
     if (selectedYear) url.searchParams.set('year', selectedYear);
@@ -389,13 +392,19 @@ export default function PrintBadgesPage() {
           placeholder="Search by name, email, or ID..."
           style={{ flex: 1, minWidth: 200 }}
           value={searchTerm}
-          onChange={(e) => setSearchTerm(e.currentTarget.value)}
+          onChange={(e) => {
+            setLoading(true);
+            setSearchTerm(e.currentTarget.value);
+          }}
         />
         <Select
           label="Membership year"
           data={availableYears}
           value={selectedYear}
-          onChange={setSelectedYear}
+          onChange={(year) => {
+            if (year !== selectedYear) setRoster(null);
+            setSelectedYear(year);
+          }}
           style={{ minWidth: 140 }}
           allowDeselect={false}
         />

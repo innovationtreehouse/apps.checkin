@@ -46,21 +46,22 @@ export default function ShopifyHoldsPage() {
   const [denyOpened, { open: openDeny, close: closeDeny }] = useDisclosure(false);
   const [target, setTarget] = useState<Target>(null);
 
-  const fetchRows = useCallback(async () => {
-    try {
-      const res = await fetch('/api/finance-ops/payment-plans?queue=holds');
+  const fetchRows = useCallback(() => fetch('/api/finance-ops/payment-plans?queue=holds')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setRows(data.ProgramParticipant ?? []);
       } else {
         setMessage("Failed to load the reconciliation queue. You may not have access.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading the reconciliation queue.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchRows();

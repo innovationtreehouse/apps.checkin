@@ -32,16 +32,16 @@ export default function MyVisits() {
   const [departedAt, setDeparted] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/profile/visits");
+  const load = useCallback(() => fetch("/api/profile/visits")
+    .then(async (res) => {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) setError(data.error || "Failed to load visits.");
       else setVisits(data.visits);
-    } catch {
+    })
+    .catch(() => {
       setError("Network error occurred.");
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => { if (ready) void load(); }, [ready, load]);
 
