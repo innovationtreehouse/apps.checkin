@@ -137,6 +137,8 @@ export type WriteRequest = TxnWrite | { entity: "Vendor"; fields: VendorFields }
 
 const KEY_PATTERN = /^[A-Za-z0-9._:/-]{1,50}$/;
 const KEY_MARKER = /\[checkin:([A-Za-z0-9._:/-]{1,50})\]/;
+/** The marker as privateNote() writes it: the note's whole last line, nothing around it. */
+const KEY_MARKER_LINE = /(?:^|\n)\[checkin:([A-Za-z0-9._:/-]{1,50})\]$/;
 const MAX_PRIVATE_NOTE = 4000;
 
 const LANE_PATTERN = /^[a-z][a-z0-9-]{0,14}$/;
@@ -163,7 +165,7 @@ export function assertAppKey(key: string): void {
 
 /** The app key a created transaction carries in its PrivateNote; undefined on hand-booked entries. */
 export function appKeyOf(entry: { PrivateNote?: string }): string | undefined {
-  return KEY_MARKER.exec(entry.PrivateNote ?? "")?.[1];
+  return KEY_MARKER_LINE.exec(entry.PrivateNote ?? "")?.[1];
 }
 
 function privateNote(memo: string | undefined, key: string): string {

@@ -21,9 +21,11 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
 - `billsBetween` returns `Balance` and `LinkedTxn`; `billPaymentsByIds(ids)` reads the payments a Bill
   links, so a caller can tell when a Bill was paid.
 - Match-before-create, find half (`match.ts`, pure, no writes): `findMatch(candidates, request)` answers
-  `found` (`via: "key"` for the app's own creation, `"amount"` for a hand entry on amount, date window and
-  account or vendor), `ambiguous`, `not-found-after-line`, `not-found-before-line` or `not-found-no-line`.
-  Claimed and excluded ids are skipped. `takeoverLine(records)` is the newest hand-booked tie's date;
+  `found` (`via: "key"` for the app's own creation, `"amount"` for a hand entry), `ambiguous`,
+  `not-found-after-line`, `not-found-before-line` or `not-found-no-line`. Every hit, key or hand, must
+  match amount, date window and account or vendor; callers pad the window with a grace on both sides,
+  since QuickBooks dates drift a day or two. A key hit that fails a check, or a matching entry carrying
+  another record's key, is `ambiguous`, never `found` or not-found. Claimed and excluded ids are skipped. `takeoverLine(records)` is the newest hand-booked tie's date;
   app-created ties never move it, and no hand tie means no line. `depositCandidate`, `purchaseCandidate`
   and `billCandidate` adapt reader rows.
 - The one write (QB-2) is package-internal: callers write only through `findOrCreate` and `createVendor`,
@@ -36,7 +38,8 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   when it fits 50 chars of `[A-Za-z0-9._:/-]`, else `<lane>:h:<128-bit sha256 hex>`. The 50-char cap is
   QBO's documented `requestid` limit, unverified live; `qbKey` is the one place to change it. The key
   is sent as QBO `requestid` and, on Purchase/Bill/Deposit, written
-  into `PrivateNote` as `[checkin:<key>]`; `appKeyOf(entry)` reads it back for the candidate adapters.
+  into `PrivateNote` as `[checkin:<key>]` on its own last line; `appKeyOf(entry)` reads back only that exact
+  form, for the candidate adapters.
   Writes re-check the realm guard, so production needs `CHECKIN_ENV=prod` at write time.
 - Every request has a 30 s timeout and retries a 429 once after `Retry-After` (capped at 10 s). Errors name
   the status, `intuit_tid` and QBO fault codes only, never the fault text (it can echo names and memos).

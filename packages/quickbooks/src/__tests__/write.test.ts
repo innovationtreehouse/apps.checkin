@@ -275,6 +275,18 @@ describe("appKeyOf", () => {
     expect(appKeyOf({ PrivateNote: "Deposit from bank feed" })).toBeUndefined();
     expect(appKeyOf({})).toBeUndefined();
   });
+
+  it("reads only a marker that is the note's exact last line", () => {
+    expect(appKeyOf({ PrivateNote: `[checkin:${KEY}]` })).toBe(KEY);
+    expect(appKeyOf({ PrivateNote: `Shopify payout\r\n[checkin:${KEY}]` })).toBe(KEY);
+    expect(appKeyOf({ PrivateNote: `Shopify payout [checkin:${KEY}]` })).toBeUndefined();
+    expect(appKeyOf({ PrivateNote: `[checkin:${KEY}] copied` })).toBeUndefined();
+    expect(appKeyOf({ PrivateNote: `[checkin:${KEY}]\nnote added after` })).toBeUndefined();
+    expect(appKeyOf({ PrivateNote: "x[checkin:k-1]" })).toBeUndefined();
+    expect(appKeyOf({ PrivateNote: "[checkin:k 1]" })).toBeUndefined();
+    expect(appKeyOf({ PrivateNote: "[checkin:]" })).toBeUndefined();
+    expect(appKeyOf({ PrivateNote: `[checkin:${"k".repeat(51)}]` })).toBeUndefined();
+  });
 });
 
 describe("findOrCreate", () => {
