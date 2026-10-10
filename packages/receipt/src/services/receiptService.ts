@@ -207,6 +207,10 @@ export const receiptService = {
     if (!EDITABLE.has(row.state)) {
       throw new ServiceError(400, "Receipt can only be edited in validation_failed or submitter_review state");
     }
+    // The tax amount drives financial review, so only finance may change it.
+    if (access === "submitter" && updates.tax !== undefined && toCents(updates.tax) !== row.taxCents) {
+      throw new ServiceError(400, "Only finance can change the tax");
+    }
 
     const next = {
       retailer: updates.retailer,
@@ -358,6 +362,7 @@ export const receiptService = {
   async clearDuplicate(id: string) {
     const actor = await requireActor();
     const row = await load(id, "finance", actor);
+    refuseSelfDecision(row, actor);
     await step(row, { type: "DUPLICATE_CLEARED" }, "uploaded", { detail: { duplicateFlagClearedAt: new Date() } }, actor, "duplicate_cleared");
     await runFullFlow(id, actor);
     return load(id, "finance", actor);
@@ -443,6 +448,7 @@ export const receiptService = {
   async restartFlow(id: string) {
     const actor = await requireActor();
     const row = await load(id, "finance", actor);
+    refuseSelfDecision(row, actor);
     try {
       assertLegalTransition(row.state, { type: "RUN_PIPELINE" });
     } catch (e) {

@@ -2,7 +2,7 @@
 // its src/security/registry/receipt.ts entry.
 import { MAX_FILE_BYTES, receiptService } from "@inventory/receipt";
 import { badRequest, handler } from "@/security/handler";
-import { receiptRoute } from "@/lib/receipt/route";
+import { readUploadForm, receiptRoute, sessionId, spendOcrQuota } from "@/lib/receipt/route";
 
 /**
  * Multipart: `file` is the receipt, `data` an optional JSON string of the upload input. With
@@ -10,16 +10,10 @@ import { receiptRoute } from "@/lib/receipt/route";
  */
 export const POST = handler(
   "POST /api/receipts/upload",
-  receiptRoute(async ({ req }) => {
-    let form: FormData;
-    try {
-      form = await req.formData();
-    } catch {
-      throw badRequest("Expected multipart/form-data");
-    }
+  receiptRoute(async (ctx) => {
+    const form = await readUploadForm(ctx.req, MAX_FILE_BYTES);
     const file = form.get("file");
     if (!(file instanceof File)) throw badRequest("A receipt file is required");
-    if (file.size > MAX_FILE_BYTES) throw badRequest("Receipt file exceeds 10 MB");
     const data = form.get("data");
     let input: unknown = {};
     if (typeof data === "string" && data.trim()) {
@@ -29,6 +23,8 @@ export const POST = handler(
         throw badRequest("data must be JSON");
       }
     }
+    const manual = typeof input === "object" && input !== null && "details" in input;
+    if (!manual) spendOcrQuota(sessionId(ctx));
     return { ReceiptView: await receiptService.upload(Buffer.from(await file.arrayBuffer()), file.type, input) };
   }),
 );

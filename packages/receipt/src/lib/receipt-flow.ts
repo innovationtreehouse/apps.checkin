@@ -177,6 +177,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
     mathValid: valid,
     needsReimbursement: row.needsReimbursement,
     cameByEmail: row.intakeSource === "email",
+    readByOcr: row.ocrStartedAt !== null,
     submitterReviewed: !!row.reviewedAt || isQbLinked,
     financialApproved: !!row.approvedAt,
     needsFinancialReview: taxReview || futureReview || (ageReview && !isQbLinked),

@@ -103,11 +103,12 @@ describeDb("upload limits", () => {
 });
 
 describeDb("auto upload (OCR at intake)", () => {
-  it("reads the file in the request and runs the pipeline", async () => {
+  it("reads the file in the request, then finalizes once the uploader confirms", async () => {
     configure({ receiptSink: ports.receiptSink, ocr: okOcr() });
     const r = await receiptService.upload(textFile(), "text/plain", {});
     expect(r.retailer).toBe("OCR Hardware");
-    expect(r.state).toBe("receipt_finalized");
+    expect(r.state).toBe("submitter_review");
+    await receiptService.submitterConfirm(r.id);
     expect(await actions(r.id)).toEqual(expect.arrayContaining(["uploaded", "ocr_complete", "finalized", "pushed"]));
   });
 
@@ -125,10 +126,10 @@ describeDb("auto upload (OCR at intake)", () => {
     expect(r.reimburseePersonId).toBeNull();
   });
 
-  it("retry after a failure reads again and finalizes", async () => {
+  it("retry after a failure reads again and stops for the uploader to confirm", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", {});
     configure({ receiptSink: ports.receiptSink, ocr: okOcr() });
     await receiptService.retryOcr(r.id, "submitter");
-    expect(await stateOf(r.id)).toBe("receipt_finalized");
+    expect(await stateOf(r.id)).toBe("submitter_review");
   });
 });
