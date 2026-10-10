@@ -12,7 +12,6 @@ import { shopRoles } from '@/lib/shopNav';
 import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
 import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
 import { membershipOpsRouteVisible } from '@/lib/membershipOpsNav';
-import { isTreehouseVolunteer, type VolunteerClaims } from '@/lib/volunteer';
 
 export type RegistryUser = {
   isSysadmin?: boolean;
@@ -23,8 +22,9 @@ export type RegistryUser = {
   isInventoryManager?: boolean;
   householdLead?: boolean;
   programsLed?: number[];
+  hasVolunteerDesignation?: boolean;
   toolStatuses?: Array<{ level: string }>;
-} & VolunteerClaims;
+};
 
 // counts mirrors the nav: computed roles (leads ≥1 program) aren't on the
 // session user, they ride in on the todo-counts payload the index already fetches.
@@ -56,9 +56,19 @@ const SHOP_ADMIN: Visible = (u) => shopRoles(u).isAdmin;
 // Membership Ops gates per tab (Review admits reviewers, Participants admits
 // operations, the rest are admin-only). One definition in membershipOpsNav.
 const MOPS = (href: string): Visible => (u) => membershipOpsRouteVisible(href, u);
-// Global catalog (#1286 §7): the shared Treehouse Volunteer definition, same as
-// isCatalogViewerClient and the server 'catalog-viewer' gate.
-const CATALOG_VIEWER: Visible = (u, signedIn) => signedIn && isTreehouseVolunteer(u);
+// Global catalog (#1286 §7). Mirrors isCatalogViewerClient / the server
+// 'catalog-viewer' gate: any RBAC role, a program leader, or a volunteer
+// (hasVolunteerDesignation, set on the session by the JWT callback).
+const CATALOG_VIEWER: Visible = (u, signedIn) =>
+  signedIn &&
+  (!!u?.isSysadmin ||
+    !!u?.isBoardMember ||
+    !!u?.isKeyholder ||
+    !!u?.isBackgroundCheckReviewer ||
+    !!u?.isOperations ||
+    !!u?.isInventoryManager ||
+    (u?.programsLed?.length ?? 0) > 0 ||
+    !!u?.hasVolunteerDesignation);
 
 const INVENTORY_MANAGER: Visible = (u, signedIn) => signedIn && !!u?.isInventoryManager;
 

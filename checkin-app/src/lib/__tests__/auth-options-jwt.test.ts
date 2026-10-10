@@ -43,6 +43,8 @@ jest.mock('@/lib/prisma', () => ({
     default: {
         person: { findUnique: jest.fn(), update: jest.fn(), create: jest.fn() },
         household: { create: jest.fn() },
+        // #1286: the jwt callback resolves the catalog-viewer volunteer leg.
+        volunteerDesignation: { findMany: jest.fn().mockResolvedValue([]) },
         // createParticipantWithHousehold mints the person id through
         // mintPersonId(tx), which is one $queryRaw on the tx client (#1693).
         $queryRaw: jest.fn().mockResolvedValue([{ value: 2503 }]),
@@ -71,6 +73,8 @@ const mockFindUnique = (prisma as unknown as { person: { findUnique: jest.Mock }
     .person.findUnique;
 const mockUpdate = (prisma as unknown as { person: { update: jest.Mock } })
     .person.update;
+const mockDesignations = (prisma as unknown as { volunteerDesignation: { findMany: jest.Mock } })
+    .volunteerDesignation.findMany;
 const mockCheckinEnv = config.checkinEnv as jest.Mock;
 
 // The transaction client the `$transaction` mock above hands to its callback — same object as
@@ -204,28 +208,59 @@ describe('jwt() callback — revocation enforcement on refresh', () => {
     });
 });
 
-describe('jwt() callback — Treehouse Volunteer inputs', () => {
+describe('jwt() callback — catalog-viewer volunteer leg (#1286)', () => {
     const plainMember = { roles: [], programsLed: [] };
 
+    it('matches a designation on the Gmail dot/plus-insensitive canonical email', async () => {
+        mockFindUnique.mockResolvedValue({ ...dbParticipant({ email: 'Jane.Doe+club@gmail.com' }), ...plainMember });
+        mockDesignations.mockResolvedValue([{ email: 'janedoe@gmail.com' }]);
+        const token = await callRefresh({ id: 7 });
+        expect(token.hasVolunteerDesignation).toBe(true);
+    });
+
+    it('matches a legacy non-canonical designation row', async () => {
+        mockFindUnique.mockResolvedValue({ ...dbParticipant({ email: 'janedoe@gmail.com' }), ...plainMember });
+        mockDesignations.mockResolvedValue([{ email: 'Jane.Doe@GoogleMail.com' }]);
+        const token = await callRefresh({ id: 7 });
+        expect(token.hasVolunteerDesignation).toBe(true);
+    });
+
+    it('keeps dots significant outside Gmail', async () => {
+        mockFindUnique.mockResolvedValue({ ...dbParticipant({ email: 'jane.doe@example.com' }), ...plainMember });
+        mockDesignations.mockResolvedValue([{ email: 'janedoe@example.com' }]);
+        const token = await callRefresh({ id: 7 });
+        expect(token.hasVolunteerDesignation).toBe(false);
+    });
+
+    it('skips the lookup when a role leg already admits', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant());
+        const token = await callRefresh({ id: 7, hasVolunteerDesignation: true });
+        expect(mockDesignations).not.toHaveBeenCalled();
+        expect(token.hasVolunteerDesignation).toBe(false);
+    });
+
+    it('skips the lookup and clears the claim for a DENIED household', async () => {
+        mockFindUnique.mockResolvedValue({
+            ...dbParticipant({ household: { orgMembership: { status: 'DENIED' } } }),
+            ...plainMember,
+        });
+        mockDesignations.mockResolvedValue([{ email: 'p@example.com' }]);
+        const token = await callRefresh({ id: 7, hasVolunteerDesignation: true });
+        expect(mockDesignations).not.toHaveBeenCalled();
+        expect(token.hasVolunteerDesignation).toBe(false);
+    });
+});
+
+describe('jwt() callback — Treehouse Volunteer inputs', () => {
     it('loads one ProgramVolunteer row and stamps the volunteer inputs', async () => {
         mockFindUnique.mockResolvedValue({
             ...dbParticipant({ household: { orgMembership: { status: 'ACTIVE', isVolunteer: true } } }),
-            ...plainMember,
             programVolunteers: [{ programId: 4 }],
         });
         const token = await callRefresh({ id: 7 });
 
         expect(mockFindUnique.mock.calls[0][0].include.programVolunteers).toEqual({ select: { programId: true }, take: 1 });
         expect(token).toMatchObject({ isProgramVolunteer: true, isVolunteerFamily: true, isActiveOrgMember: true });
-    });
-
-    it('never reads a volunteer designation by email', async () => {
-        mockFindUnique.mockResolvedValue({ ...dbParticipant({ email: 'volunteer@gmail.com' }), ...plainMember, programVolunteers: [] });
-        const token = await callRefresh({ id: 7 });
-
-        expect((prisma as unknown as Record<string, unknown>).volunteerDesignation).toBeUndefined();
-        expect(token).toMatchObject({ isProgramVolunteer: false, isVolunteerFamily: false });
-        expect(token).not.toHaveProperty('hasVolunteerDesignation');
     });
 
     it('surfaces the inputs on the session', async () => {
