@@ -30,20 +30,25 @@ export default function TrustedAdultPickupPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
 
-    const load = useCallback(async () => {
-        setLoading(true);
-        setError(false);
-        try {
-            const r = await fetch("/api/trusted-adults/operational");
+    const load = useCallback(() => fetch("/api/trusted-adults/operational")
+        .then(async (r) => {
             const d = await r.json();
             setItems(d.trustedAdults ?? []);
-        } catch (err) {
+        })
+        .catch((err) => {
             console.error("Failed to load trusted adults for pickup:", err);
             setError(true);
-        } finally {
+        })
+        .finally(() => {
             setLoading(false);
-        }
-    }, []);
+        }),
+    []);
+
+    const reload = () => {
+        setLoading(true);
+        setError(false);
+        load();
+    };
 
     useEffect(() => {
         load();
@@ -70,7 +75,7 @@ export default function TrustedAdultPickupPage() {
             {error ? (
                 <Alert color="red" title="Couldn't load the pickup list.">
                     The list of approved trusted adults didn&apos;t load. Don&apos;t treat this as an empty list.
-                    <Button mt="sm" size="xs" variant="white" color="red" onClick={load}>
+                    <Button mt="sm" size="xs" variant="white" color="red" onClick={reload}>
                         Retry
                     </Button>
                 </Alert>

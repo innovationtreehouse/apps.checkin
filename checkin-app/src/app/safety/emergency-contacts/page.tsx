@@ -50,9 +50,8 @@ export default function EmergencyContactsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [error, setError] = useState("");
 
-  const fetchContacts = useCallback(async () => {
-    try {
-      const res = await fetch('/api/safety/emergency-contacts');
+  const fetchContacts = useCallback(() => fetch('/api/safety/emergency-contacts')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
 
@@ -67,13 +66,15 @@ export default function EmergencyContactsPage() {
       } else {
         setError("Failed to load emergency contacts. Ensure you have the proper authorizations.");
       }
-    } catch (e) {
+    })
+    .catch((e) => {
       console.error("Failed to load emergency contacts:", e);
       notifications.show({ color: "red", message: "Network error loading contacts.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchContacts();

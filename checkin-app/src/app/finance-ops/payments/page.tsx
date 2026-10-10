@@ -90,36 +90,37 @@ export default function PaymentProblemsPage() {
   // Read the status, keeping "couldn't read it" distinct from "read it; no runs yet".
   // Collapsing those into a bare null is what let the poll below report a failed read
   // as "still running" — a claim it had no basis for.
-  const fetchSyncRun = useCallback(async (): Promise<SyncFetch> => {
-    try {
-      const res = await fetch('/api/finance-ops/s-read/sync');
+  const fetchSyncRun = useCallback((): Promise<SyncFetch> => fetch('/api/finance-ops/s-read/sync')
+    .then(async (res): Promise<SyncFetch> => {
       // 503 (mirror not wired here) or 500 (mirror unreadable — e.g. the SELECT grant
       // isn't in place yet). Both mean: no status, and don't pretend otherwise.
       if (!res.ok) return { ok: false };
       const run: SyncRun | null = (await res.json()).run;
       setSyncRun(run);
       return { ok: true, run };
-    } catch {
+    })
+    .catch((): SyncFetch => {
       // Freshness is decoration on this page; a failed status read must never
       // surface as an error over the queue itself.
       return { ok: false };
-    }
-  }, []);
+    }),
+  []);
 
-  const fetchRows = useCallback(async () => {
-    try {
-      const res = await fetch('/api/finance-ops/payments');
+  const fetchRows = useCallback(() => fetch('/api/finance-ops/payments')
+    .then(async (res) => {
       if (res.ok) {
         setRows(await res.json());
       } else {
         setMessage("Failed to load payment problems. You may not have access.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading payment problems.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) {
