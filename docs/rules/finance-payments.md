@@ -97,6 +97,18 @@ Things the app takes as true because they are handled outside it.
 
 - Nobody decides a scholarship or payment plan for their own household.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- A budget bucket is an accounting bucket, not a person. Finance creates, renames
+  and archives buckets and maps each to a QuickBooks Class. Archiving keeps the
+  row, because finance records point at it.  [Decision]
+
+- A program bucket's approvers are the program's leader and its treasurers,
+  derived and never stored. An org-level bucket has none.  [Decision]
+
+- A program treasurer is set by the board alone, because the role comes from the
+  board-approved program budget. Nobody sets it on themself or anyone in their own
+  household. Treasurers are adult-only by corporate policy, and the app does not
+  check that.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
 - A financial control is a flag a person signs off, with the sign-off recorded.
   It is not a gate that decides on its own.  [Decision — *Principle: people decide about people*]
 

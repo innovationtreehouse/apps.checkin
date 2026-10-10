@@ -21,6 +21,7 @@ export type RegistryUser = {
   isBackgroundCheckReviewer?: boolean;
   isOperations?: boolean;
   isInventoryManager?: boolean;
+  isFinance?: boolean;
   householdLead?: boolean;
   programsLed?: number[];
   hasVolunteerDesignation?: boolean;
@@ -71,6 +72,8 @@ const CATALOG_VIEWER: Visible = (u, signedIn) =>
     (u?.programsLed?.length ?? 0) > 0 ||
     !!u?.hasVolunteerDesignation);
 
+// Expense Ops: FINANCE or BOARD, no sysadmin (docs/rules/finance-payments.md).
+const FINANCE_OR_BOARD: Visible = (u) => !!u?.isFinance || !!u?.isBoardMember;
 const INVENTORY_MANAGER: Visible = (u, signedIn) => signedIn && !!u?.isInventoryManager;
 // A library's pages stay listed for board members only until the board releases it.
 const released = (lib: LibraryKey, gate: Visible): Visible => (u, signedIn, counts) =>
@@ -193,6 +196,9 @@ export const PAGES: PageEntry[] = [
   { href: '/finance-ops/membership-payment-plan', label: 'Membership Payment Plan', section: 'Finance Ops', visible: FINANCE },
   { href: '/finance-ops/shopify-holds', label: 'Shopify Hold Reconciliation', section: 'Finance Ops', keywords: 'seat hold failed inventory scholarship manual reconcile shopify', visible: FINANCE },
   { href: '/finance-ops/payments', label: 'Payment problems', section: 'Finance Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: FINANCE },
+
+  // Expense Ops — FINANCE or BOARD
+  { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: FINANCE_OR_BOARD },
 
   // System Status — board
   { href: '/system-status', label: 'System Status', section: 'System Status', visible: BOARD },
