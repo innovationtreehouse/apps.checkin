@@ -97,6 +97,18 @@ Things the app takes as true because they are handled outside it.
 
 - Nobody decides a scholarship or payment plan for their own household.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- A budget bucket is an accounting bucket, not a person. Finance creates, renames
+  and archives buckets and maps each to a QuickBooks Class. Archiving keeps the
+  row, because finance records point at it.  [Decision]
+
+- A program bucket's approvers are the program's leader and its treasurers,
+  derived and never stored. An org-level bucket has none.  [Decision]
+
+- A program treasurer is set by the board alone, because the role comes from the
+  board-approved program budget. Nobody sets it on themself or anyone in their own
+  household. Treasurers are adult-only by corporate policy, and the app does not
+  check that.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
 - A financial control is a flag a person signs off, with the sign-off recorded.
   It is not a gate that decides on its own.  [Decision — *Principle: people decide about people*]
 
@@ -134,6 +146,15 @@ Things the app takes as true because they are handled outside it.
 - Only what the app sells reconciles: a membership, or a program. Donations and
   merchandise pass through untouched.  [Decision]
 
+- A program order activates enrollment only when it is paid and not refunded,
+  voided or cancelled, carries that program's own item, and buys a seat for every
+  person it would activate. The payment notification and reconciliation apply the
+  one same check. An order that falls short activates nobody — it cannot say which
+  of the household it was for — and is raised for the board.  [Decision]
+
+- An order that names someone outside the buyer's household is not checked
+  against household ownership; the seat and item checks are the control.  [Decision — deliberate limit]
+
 - There is no fee ledger. What a family owes and has paid for a program is the
   enrollment's own state and the store order behind it, never a separate record of
   charges and payments kept alongside.  [Decision — deliberate limit]
@@ -162,6 +183,16 @@ Things the app takes as true because they are handled outside it.
   further is needed, because the amount, the schedule and any discount are still
   to be agreed — finance settles those with the board and writes to the family
   itself. The app never learns those terms, so it cannot speak for them.  [Decision — *Principle: people decide about people*]
+
+- The app does record **which** of the two a household asked for — a reduced
+  amount, more time, or an explicit "not sure" — chosen by the family when they
+  send the request, shown on the review queue and in the review team's
+  notification. The terms above stay out of the app; the *ask* does not, because
+  the review team could not tell the two apart and opening with a comp for a
+  family who only needed more time is its own harm. "Not sure" is a real answer:
+  nobody owes the board a diagnosis of their own finances to ask for help. The
+  acknowledgement to the family is unchanged and does not name the ask — they
+  just chose it, and naming it would start to sound like an answer.  [Decision]
 
 - Submitting a request for a scholarship or a payment plan does not settle the
   fee it concerns. The membership stays unactivated and the enrollment stays

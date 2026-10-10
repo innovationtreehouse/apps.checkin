@@ -8,6 +8,7 @@
 
 import { GET, POST } from '@/app/api/membership-ops/households/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import { bgValidUntilBoundary } from '@/lib/membership/renewal';
 
@@ -41,13 +42,10 @@ describe('Admin Households API Integration Tests', () => {
     const leadALastCheck = new Date(Date.UTC(2025, 0, 1)); // raw expiry 2026-01-01 -> Aug 1 2026
     const leadBLastCheck = new Date(Date.UTC(2025, 8, 1)); // raw expiry 2026-09-01 (past Aug 1 2026) -> Aug 1 2027 — later than A
     const nonLeadCLastCheck = new Date(Date.UTC(2026, 8, 1)); // raw expiry 2027-09-01 (past Aug 1 2027) -> Aug 1 2028 — later than the household (leads-only) value
-    let prevBoardSettings: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number } | null = null;
+    let restoreBoardSettings: () => Promise<void>;
 
     beforeAll(async () => {
-        const existingSettings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevBoardSettings = existingSettings
-            ? { orgMembershipYearBoundary: existingSettings.orgMembershipYearBoundary, bgRecheckMonths: existingSettings.bgRecheckMonths }
-            : null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await prisma.boardSettings.upsert({
             where: { id: 1 },
             create: { id: 1, orgMembershipYearBoundary: bgBoundary, bgRecheckMonths },
@@ -148,7 +146,7 @@ describe('Admin Households API Integration Tests', () => {
 
         await prisma.person.deleteMany({ where: { id: { in: [leadAId, leadBId, nonLeadCId, memberDId] } } });
         await prisma.household.deleteMany({ where: { id: bgHouseholdId } });
-        if (prevBoardSettings) await prisma.boardSettings.update({ where: { id: 1 }, data: prevBoardSettings });
+        await restoreBoardSettings();
     });
 
     describe('GET /api/membership-ops/households', () => {

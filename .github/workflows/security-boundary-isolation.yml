@@ -68,6 +68,14 @@ on:
   # short-circuits to success below.
   merge_group:
 
+# pull_request runs share one group per ref, so a new push cancels the run it
+# supersedes. Every other event keys on run_id: a group of one, so main pushes,
+# merge_group entries and workflow_call validates are never queued behind or
+# replaced by each other (a group holds one running + one pending run).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   isolation:
     runs-on: ubuntu-latest
@@ -160,6 +168,9 @@ jobs:
               docs/*|*/docs/*|*.md) return 0 ;;
               .github/CODEOWNERS) return 0 ;;
               .github/workflows/security-boundary-isolation.yml) return 0 ;;
+              # The route-coverage lint parses the registry files as text, so a
+              # change to where registry entries live must update it in step.
+              checkin-app/scripts/check-route-coverage.ts) return 0 ;;
               # boundary files are their own companions — a boundary PR must be
               # able to contain them
               checkin-app/src/middleware.ts) return 0 ;;

@@ -140,7 +140,7 @@ export default function PrintBadgesPage() {
   // Read through a ref so a debounced save compares against the participants as of
   // when it fires, not as of the keystroke that scheduled it.
   const participantsRef = useRef(participants);
-  participantsRef.current = participants;
+  useEffect(() => { participantsRef.current = participants; }, [participants]);
 
   // A value that already matches the stored one is not an edit and writes nothing —
   // the debounce and blur paths both land here, and every accepted PUT writes an

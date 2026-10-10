@@ -35,12 +35,18 @@ export const CompletedReceiptSchema = z.object({
   receiptTotalCents: z.number().int(),
   receiptDate: z.string().nullable(),
   needsReimbursement: z.boolean(),
+  // Display only; the reimbursee's identity is reimburseePersonId.
   reimbursementFor: z.string().nullable(),
+  // The checkin Person.id owed the reimbursement, never free text.
+  reimburseePersonId: z.number().int().positive().optional(),
   submittedAt: z.string().datetime(),
   // Historical QB-linked backfill: the receipt is already booked in QuickBooks. Downstream apps use
   // this to skip the live QB re-post (and auto-resolve owner re-signoff) while still building the
   // mapping/recognition + capital register. Defaults false for normal live receipts.
   backfill: z.boolean().optional().default(false),
+  // In-kind donation paperwork: the money side goes to donations instead of expense; the goods
+  // load into inventory like any other receipt. Defaults false (a purchase).
+  isInKind: z.boolean().optional().default(false),
   lineItems: z.array(CompletedReceiptLineItemSchema).min(1),
 });
 

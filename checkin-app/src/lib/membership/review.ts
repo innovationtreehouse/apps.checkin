@@ -14,6 +14,7 @@ import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest"
 import { type DbClient, type TxClient } from "@/lib/db-client";
 import { awaitingBgReview } from "@/lib/membership/lifecycle";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { approvalsForSubject, establishedSubject } from "@/lib/membership/approvals";
 
 /**
  * Background-check review — now a PARALLEL track, not a blocking phase.
@@ -157,30 +158,6 @@ async function liveHouseholdLeadIds(db: DbClient, householdId: number | null): P
 export function subjectIds(raw: unknown): number[] | undefined {
     if (!Array.isArray(raw)) return undefined;
     return raw.filter((v): v is number => Number.isInteger(v) && v > 0);
-}
-
-/**
- * The adult a household review is about, fixed by whoever approved first. A review
- * covers ONE adult: the second reviewer confirms that person's report rather than
- * choosing again, so two reviewers can never split across different people. A
- * second adult with their own check is a separate obligation on the PERSON_BG
- * track, not a competing subject here.
- *
- * Null when nothing is settled yet, or on a subject-less attestation — a REJECT, a
- * PERSON_BG, or a legacy row attested before per-adult subjects existed.
- */
-export function establishedSubject(attestations: { result: string; subjectPersonId: number | null }[]): number | null {
-    return attestations.find((a) => a.result === "APPROVE" && a.subjectPersonId !== null)?.subjectPersonId ?? null;
-}
-
-/**
- * Approvals standing behind `subject` — NAMED ones only. An approval that named
- * nobody counts toward nobody: nothing records whose report it read, so counting it
- * would date a clearance on a single reviewer's reading. A review carrying one takes
- * a board reset and two fresh attestations, which is what the two-reviewer rule asks.
- */
-function approvalsForSubject(attestations: { result: string; subjectPersonId: number | null }[], subject: number): number {
-    return attestations.filter((a) => a.result === "APPROVE" && a.subjectPersonId === subject).length;
 }
 
 /**

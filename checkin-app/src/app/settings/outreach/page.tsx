@@ -58,10 +58,8 @@ export default function OutreachSettingsPage() {
   const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
   const [testSending, setTestSending] = useState<TemplateKey | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/settings/outreach");
+  const load = useCallback(() => fetch("/api/settings/outreach")
+    .then(async (res) => {
       if (res.ok) {
         const data = (await res.json()) as { settings: Settings; nextDeadline: string | null };
         const snap = {
@@ -73,10 +71,11 @@ export default function OutreachSettingsPage() {
         setInitial(snap);
         setNextDeadline(data.nextDeadline);
       }
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) load();
@@ -104,6 +103,7 @@ export default function OutreachSettingsPage() {
       });
       if (res.ok) {
         notifications.show({ color: "green", message: "Outreach templates saved." });
+        setLoading(true);
         await load();
       } else {
         const d = await res.json().catch(() => ({}));

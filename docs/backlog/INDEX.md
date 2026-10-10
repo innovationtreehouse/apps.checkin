@@ -158,7 +158,7 @@ Legend of drops: see [§ Dropped — confirmed built](#dropped--confirmed-built-
 
 | id | item | origin | readiness | size | Workaround | src | GH |
 |----|------|--------|-----------|------|----|-----|-----|
-| CI1 | **Global catalog**: GTIN items, categories, vendor-alias references, 3-pass matcher, proposals/supersession, provisional allocation, conversion challenges | PORT | IN-DESIGN | XL | ? | A,B | #1286 (open); design `docs/in-design/1286_GLOBAL_CATALOG_INTEGRATION.md` (#1814) |
+| CI1 | **Global catalog**: GTIN items, categories, vendor-alias references, 3-pass matcher, proposals/supersession, provisional allocation, conversion challenges | PORT | IN-DESIGN | XL | ? | A,B | #1286 (closed); design distilled → `docs/rules/inventory.md` + `docs/designs/COMPONENT_ARCHITECTURE.md` (#1814) |
 | CI2 | **Org inventory**: locations, receive queue, delta apply, merge-conflict resolution, provisional resolution | PORT | NEEDS-DESIGN | L | ? | A,B | #1287 (open) |
 | CI3 | Receipt line-item → **part association** (auto + manual exceptions); UoM conversion/quantity challenge | PORT | NEEDS-DESIGN | L | ? | A,B | #1288 (open) |
 | CI4 | **workflow-mapping** orchestrator (receipt→catalog→inventory→expense glue; collapses in monolith) | PORT | NEEDS-DESIGN | M | ? | A | #1289 (open) |
@@ -184,7 +184,7 @@ _Note: FR+FE+CI (+CI4 glue) are ONE dependency-chained pipeline — little value
 
 | id | item | origin | readiness | size | Workaround | src | GH |
 |----|------|--------|-----------|------|----|-----|-----|
-| CM1 | **Mailing-list auto-sync** — design doc = `docs/designs/MEMBERSHIP_SYNC.md` (PR #1197, supersedes #1156/#1157): desired-state pure function + SyncState ledger + per-target population rules, consent/audit model, 4-PR rollout. Interim under-13 rule (13+ direct; leads of enrolled minors otherwise) pending board DECISION SYNC-1. Self-removal = first-class bi-directional intent, last-wins, no auto re-add (SYNC-2) | CREATE | IN-DESIGN | L | ? | B,D2,PR#1197 | #943 (open, adjacent) |
+| CM1 | **Mailing-list auto-sync** — design doc = `docs/in-design/MEMBERSHIP_SYNC.md` (PR #1197, supersedes #1156/#1157): desired-state pure function + SyncState ledger + per-target population rules, consent/audit model, 4-PR rollout. Interim under-13 rule (13+ direct; leads of enrolled minors otherwise) pending board DECISION SYNC-1. Self-removal = first-class bi-directional intent, last-wins, no auto re-add (SYNC-2) | CREATE | IN-DESIGN | L | ? | B,D2,PR#1197 | #943 (open, adjacent) |
 | CM2 | **Coverage-drop detection** (RESCOPED per SYNC-4 — NOT auto re-add): household loses its last synced lead → notification + board dashboard surface. Warn-only, matching the app's posture elsewhere; automation reconsidered after frequency/reasons learned | CREATE | IN-DESIGN | M | ? | B,PR#1197 | #1295 (open) |
 | CM3 | Ghost / externally-added-unknown detection — shape decided (PR #1197): same `listMembers` call, reverse diff → surfaced on a screen (board / program-lead viewpoint); sync **never auto-removes anyone it didn't add**; bulk-remove = checkbox-select rows (incl. select-all), not "remove all ghosts" | CREATE | IN-DESIGN | M | ? | B,PR#1197 | #1296 (open) |
 | CM4 | Cascading list cleanup on program/membership removal — **partially absorbed by CM1's engine** (boundary removals fall out of the desired-state diff); net-new bit = the **DENIED-newsletter exception** (SYNC-3: DENIED is the one removal from the otherwise-never-removed newsletter) | CREATE | IN-DESIGN | S | ? | B,PR#1197 | #1297 (open) |
@@ -307,7 +307,7 @@ Not dropped (they're valid), not backlog (no plan to build). Revisit only if pri
 | **Formal data-subject rights + retention/disposal engine** — Know/Correct/Delete requests, retention schedule, legal-hold | Handled manually; a subject request has never been received. Only stale-membership auto-purge (M3) stays in scope. | TOPDOWN GC-DATA-RIGHTS · Q17 |
 | **Data-security ops** — 2FA/backups/unique-accounts/no-remote-access | Handled externally / already in the infra repo (AWS). Not app work. | Q18 |
 | **Financial-controls enforcement** — COI/kinship engine, segregation-of-duties enforcer, threshold *blocking* | Replaced by a flag→human-checkoff→audit model (Q14); the app records/routes, humans enforce. | Q14 |
-| **Scholarship cap engine** — 20%/50% caps, budget-line automation | Board decides case-by-case, each unique; fine as-is. | Q25 |
+| **Scholarship cap engine** — 20%/50% caps, budget-line automation | Board decides case-by-case, each unique; fine as-is. **Narrowed (2026-10-09): the request now records WHICH ask it is** (`scholarshipRequestKind`) — the review team could not tell a comp request from an installment request. The cap/budget engine stays unmodeled. | Q25 |
 | **Facility/shop/incidentals fee build** | Fees live in Shopify, paid by a few folks; no app build needed. | Q25 |
 | **Payment-plan Shopify flow** | Payment plans handled directly in QuickBooks; not building a Shopify flow. | Q25 |
 | **M9 — Corporate / Org-Partner membership** | Not needed in a real timeframe (Q33). | Q33 |

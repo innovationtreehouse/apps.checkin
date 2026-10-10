@@ -130,7 +130,6 @@ const PERSON_RELATION_NAMES = [
  *     would falsify history, not protect anyone.
  */
 const ALLOWLIST: Record<string, string> = {
-    'lib/presence/project.ts': "flushParkedClosed's include pulls each parked event's person to project it. A tombstone can only appear in the merge-vs-flush race window (merge/route.ts repoints PresenceEvent.personId), and the loop resolves it one hop to the keeper before projecting — filtering the include would instead strand the parked event unflushed forever. The keyholder-presence check in this file DOES carry LIVE_PERSON inline.",
     // ── sweeps / reconcilers (rule: "must still see tombstone rows") ──────────
     'lib/lifecycleDrift.ts': 'I1 auto-heal (releases stranded inventoryHeldAt). It never reads Person data — scanLifecycleViolations/runLifecycleReconcile read and update programParticipant fields (personId, status, inventoryHeldAt) directly — but its programParticipant.findMany calls are class-3 sites. Filtering them would be a REGRESSION, not a fix: a merge deliberately leaves colliding enrollment rows on the tombstone (merge/route.ts step 4), and those are exactly the rows whose holds need releasing. Hidden from this sweep they become immortal and leak held Shopify inventory forever. Same sweep rationale as the two cron entries below.',
     'app/api/cron/pending-participants/route.ts': '7-day clock → withdrawAndReleaseHold — must see a tombstoned participant to release its hold.',

@@ -7,6 +7,7 @@ import { notifications } from "@mantine/notifications";
 import { modals } from "@mantine/modals";
 import { type AlertTone } from "@/components/admin/AlertBanner";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
+import { clearingApprovals, establishedSubject } from "@/lib/membership/approvals";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 interface Person {
@@ -46,32 +47,26 @@ export default function MembershipReviewPage() {
   // Reviews this reviewer already approved that have not cleared.
   const [mine, setMine] = useState<QueueItem[]>([]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/membership/reviews");
-      if (res.status === 403) {
-        setForbidden(true);
-        return;
-      }
-      if (res.ok) {
-        const data = await res.json();
-        setQueue(data.queue || []);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const fetchQueue = useCallback(() =>
+    fetch("/api/membership/reviews")
+      .then(async (res) => {
+        if (res.status === 403) setForbidden(true);
+        else if (res.ok) setQueue((await res.json()).queue || []);
+      })
+      .finally(() => setLoading(false)), []);
 
-  const loadMine = useCallback(async () => {
-    const res = await fetch("/api/membership/reviews?mine=1");
-    if (res.ok) setMine((await res.json()).queue || []);
-  }, []);
+  const load = () => {
+    setLoading(true);
+    return fetchQueue();
+  };
+
+  const loadMine = useCallback(() =>
+    fetch("/api/membership/reviews?mine=1")
+      .then(async (res) => { if (res.ok) setMine((await res.json()).queue || []); }), []);
 
   useEffect(() => {
-    if (sessionStatus === "authenticated") load();
-    else if (sessionStatus === "unauthenticated") setLoading(false);
-  }, [sessionStatus, load]);
+    if (sessionStatus === "authenticated") fetchQueue();
+  }, [sessionStatus, fetchQueue]);
 
   useEffect(() => {
     if (showMine) loadMine();
@@ -154,8 +149,11 @@ export default function MembershipReviewPage() {
   // Who this review is about, once someone has approved. A review covers ONE adult:
   // the first approval fixes the subject, so a later reviewer confirms that person
   // rather than choosing again.
-  const settledSubject = (item: QueueItem) =>
-    item.attestations.find((a) => a.subjectPersonId !== null)?.subjectPersonId ?? null;
+  const settledSubject = (item: QueueItem) => establishedSubject(item.attestations);
+
+  // Approvals that count toward clearing — a household's unnamed or other-adult
+  // approvals are recorded but don't, so this can sit below the attestation count.
+  const approvalsSoFar = (item: QueueItem) => clearingApprovals(item.attestations, !!item.subjectPerson);
 
   // The subject this reviewer is about to attest — the settled one if there is one,
   // else whichever lead they picked.
@@ -183,9 +181,8 @@ export default function MembershipReviewPage() {
   // rather than "are you sure?", which trains people to click through.
   const confirmSubmit = (item: QueueItem, result: "APPROVE" | "REJECT") => {
     const who = applicantLabel(item);
-    // Either kind clears on its second approval; a household's subject is already fixed
-    // by then, so an existing attestation is enough to know this click is the last one.
-    const clearing = result === "APPROVE" && item._count.attestations >= 1;
+    // Either kind clears on its second counted approval.
+    const clearing = result === "APPROVE" && approvalsSoFar(item) >= 1;
     modals.openConfirmModal({
       title: result === "REJECT" ? "Reject this background check?" : clearing ? "Approve the background check clearance?" : "Record your attestation?",
       children: (
@@ -217,7 +214,7 @@ export default function MembershipReviewPage() {
     });
   };
 
-  if (sessionStatus === "loading" || loading) {
+  if (sessionStatus === "loading" || (loading && sessionStatus === "authenticated")) {
     return <PageLoader />;
   }
 
@@ -261,7 +258,7 @@ export default function MembershipReviewPage() {
               <Card key={item.id} withBorder radius="md" padding="lg" bg="var(--mantine-color-gray-0)">
                 <Text fw={700}>{applicantLabel(item)}</Text>
                 <Text size="xs" c="dimmed" mt={4}>
-                  You approved this. {item._count.attestations}/2 approvals so far
+                  You approved this. {approvalsSoFar(item)}/2 approvals so far
                   {settled !== null ? ` · for ${leadName(item, settled)}` : ""}.
                 </Text>
                 {unnamed && (
@@ -313,7 +310,7 @@ export default function MembershipReviewPage() {
                   </Text>
                 </>
               )}
-              <Text size="xs" c="dimmed" mt={4}>{item._count.attestations}/2 approvals so far.</Text>
+              <Text size="xs" c="dimmed" mt={4}>{approvalsSoFar(item)}/2 approvals so far.</Text>
 
               {/* Whose report did you read? The Averity report names its subject, and
                   that name is the only record of who a household's check covered — so

@@ -8,6 +8,7 @@
 import { GET as SETTINGS_GET, PUT as SETTINGS_PUT } from '@/app/api/settings/membership/route';
 import { GET as DESIG_GET, POST as DESIG_POST, DELETE as DESIG_DELETE } from '@/app/api/settings/membership/volunteer-designations/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -26,7 +27,7 @@ function jsonReq(method: string, body?: unknown, url = 'http://localhost:4000/x'
 
 describe('Membership settings + volunteer designations API', () => {
     let boardId: number, plainId: number;
-    let prevSettings: { standardMembershipFeeCents: number; volunteerMembershipFeeCents: number } | null = null;
+    let restoreBoardSettings: () => Promise<void>;
 
     async function wipe() {
         await prisma.volunteerDesignation.deleteMany({ where: { email: { contains: TAG } } });
@@ -41,8 +42,7 @@ describe('Membership settings + volunteer designations API', () => {
     }
 
     beforeAll(async () => {
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevSettings = existing ? { standardMembershipFeeCents: existing.standardMembershipFeeCents, volunteerMembershipFeeCents: existing.volunteerMembershipFeeCents } : null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await wipe();
 
         boardId = (await prisma.person.create({ data: { email: `board-${TAG}@example.com`, name: 'Board', isBoardMember: true, household: { create: { name: `Board HH ${TAG}` } } } })).id;
@@ -56,7 +56,7 @@ describe('Membership settings + volunteer designations API', () => {
 
     afterAll(async () => {
         await wipe();
-        if (prevSettings) await prisma.boardSettings.update({ where: { id: 1 }, data: prevSettings });
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 
@@ -124,6 +124,26 @@ describe('Membership settings + volunteer designations API', () => {
             const res = await SETTINGS_PUT(jsonReq('PUT', { scholarshipDenialGraceDays: bad }));
             expect(res.status).toBe(400);
         }
+    });
+
+    it('board releases a library, audit-logs it, and clears it again', async () => {
+        asBoard(boardId);
+        const res = await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: ['catalog', 'catalog', 'expense'] }));
+        expect(res.status).toBe(200);
+        expect((await res.json()).settings.releasedLibraries).toEqual(['catalog', 'expense']);
+        const log = await prisma.auditLog.findFirst({ where: { actorId: boardId, tableName: 'BoardSettings' }, orderBy: { id: 'desc' } });
+        expect(log?.newData).toEqual({ releasedLibraries: ['catalog', 'expense'] });
+
+        const cleared = await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: [] }));
+        expect((await cleared.json()).settings.releasedLibraries).toEqual([]);
+    });
+
+    it('rejects unknown library keys and non-board release attempts', async () => {
+        asBoard(boardId);
+        expect((await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: ['nope'] }))).status).toBe(400);
+        expect((await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: 'catalog' }))).status).toBe(400);
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isSysadmin: true, isBoardMember: false } });
+        expect((await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: ['catalog'] }))).status).toBe(403);
     });
 
     it('adds, lists, and removes a volunteer designation', async () => {

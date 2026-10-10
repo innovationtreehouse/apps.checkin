@@ -20,6 +20,7 @@ import { GET as REVIEW_QUEUE } from '@/app/api/membership/reviews/route';
 import { GET as COMPLIANCE } from '@/app/api/membership-audit/compliance/route';
 import { attest, eligibleReviewProcessIds } from '@/lib/membership/review';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import { sendEmail } from '@/lib/email';
 
@@ -104,13 +105,12 @@ async function cleanup() {
 }
 
 describe('Phase 3 — manual PERSON_BG submit + queue gating + e2e', () => {
-    let savedSettings: { bgRecheckMonths: number; orgMembershipYearBoundary: Date | null } | null = null;
+    let restoreBoardSettings: () => Promise<void>;
     let rev1 = 0, rev2 = 0, board = 0, nonReviewer = 0;
 
     beforeAll(async () => {
         await cleanup();
-        const prev = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        savedSettings = prev ? { bgRecheckMonths: prev.bgRecheckMonths, orgMembershipYearBoundary: prev.orgMembershipYearBoundary } : null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await setRecheckMonths(RECHECK_MONTHS);
 
         const hhA = await makeHousehold('revA');
@@ -124,7 +124,7 @@ describe('Phase 3 — manual PERSON_BG submit + queue gating + e2e', () => {
 
     afterAll(async () => {
         await cleanup();
-        if (savedSettings) await prisma.boardSettings.update({ where: { id: 1 }, data: savedSettings });
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 

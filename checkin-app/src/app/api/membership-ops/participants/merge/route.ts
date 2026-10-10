@@ -8,6 +8,7 @@ import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { personBgOpen } from "@/lib/membership/lifecycle";
 import { advanceHouseholdBgAfterMerge, householdBgFresh } from "@/lib/membership/mergeBgAdvance";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import type { TxClient } from "@/lib/db-client";
 import { KIND_TO_MIRROR } from "@/lib/roles";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
@@ -507,6 +508,7 @@ export const POST = withAuth(
                     presenceEvents: 0,
                     noteAcks: 0,
                     attendanceConfirmations: 0,
+                    facilityCloses: 0,
                     trustedAdultDecisions: 0,
                     archivedMerges: 0,
                     roleGrants: 0,
@@ -615,6 +617,7 @@ export const POST = withAuth(
                 // tombstone they read as nobody the moment the row goes.
                 moved.noteAcks = (await tx.orgMembershipProcess.updateMany({ where: { noteAckById: mergeId }, data: { noteAckById: keepId } })).count;
                 moved.attendanceConfirmations = (await tx.event.updateMany({ where: { attendanceConfirmedById: mergeId }, data: { attendanceConfirmedById: keepId } })).count;
+                moved.facilityCloses = (await tx.facilityClose.updateMany({ where: { closedById: mergeId }, data: { closedById: keepId } })).count;
                 moved.trustedAdultDecisions = (await tx.trustedAdultReview.updateMany({ where: { decidedById: mergeId }, data: { decidedById: keepId } })).count;
 
                 // Earlier merges that named THIS record as their survivor. Repointed
@@ -790,16 +793,9 @@ export const POST = withAuth(
     }
 );
 
-// Prisma known-request errors carry a string `code` and, for P2002, a
-// `meta.target` naming the colliding column(s). Duck-typed so we don't pull
-// in the generated Prisma namespace just for one check. Returns the first
-// colliding field name, or undefined if this isn't a P2002.
+// First colliding field name, or undefined if this isn't a P2002.
 function prismaUniqueConflictField(error: unknown): string | undefined {
-    if (typeof error !== 'object' || error === null || (error as { code?: unknown }).code !== 'P2002') {
-        return undefined;
-    }
-    const target = (error as { meta?: { target?: string[] | string } }).meta?.target;
-    if (Array.isArray(target)) return target[0];
-    if (typeof target === 'string') return target;
-    return 'unique';
+    const fields = uniqueViolationFields(error);
+    if (!fields) return undefined;
+    return fields[0] ?? 'unique';
 }

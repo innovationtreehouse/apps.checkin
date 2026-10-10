@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { logBackendError, logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadYouthError } from "@/lib/household/leads";
 
 export const POST = withAuth<{ params: Promise<{ id: string }> }>(
@@ -91,6 +92,8 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
                 newData: { householdId: targetHouseholdId, createNew: Boolean(createNew) },
             },
         });
+
+        invalidateAttendanceCache();
 
         return NextResponse.json({ success: true, participant: updatedParticipant });
     } catch (error) {

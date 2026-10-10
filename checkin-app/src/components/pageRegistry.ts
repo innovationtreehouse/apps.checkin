@@ -12,6 +12,7 @@ import { shopRoles } from '@/lib/shopNav';
 import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
 import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
 import { membershipOpsRouteVisible } from '@/lib/membershipOpsNav';
+import { isLibraryVisible, type LibraryKey } from '@/lib/libraryRelease';
 
 export type RegistryUser = {
   isSysadmin?: boolean;
@@ -19,7 +20,11 @@ export type RegistryUser = {
   isKeyholder?: boolean;
   isBackgroundCheckReviewer?: boolean;
   isOperations?: boolean;
+  isInventoryManager?: boolean;
+  isFinance?: boolean;
   householdLead?: boolean;
+  programsLed?: number[];
+  hasVolunteerDesignation?: boolean;
   toolStatuses?: Array<{ level: string }>;
 };
 
@@ -53,6 +58,26 @@ const SHOP_ADMIN: Visible = (u) => shopRoles(u).isAdmin;
 // Membership Ops gates per tab (Review admits reviewers, Participants admits
 // operations, the rest are admin-only). One definition in membershipOpsNav.
 const MOPS = (href: string): Visible => (u) => membershipOpsRouteVisible(href, u);
+// Global catalog (#1286 §7). Mirrors isCatalogViewerClient / the server
+// 'catalog-viewer' gate: any RBAC role, a program leader, or a volunteer
+// (hasVolunteerDesignation, set on the session by the JWT callback).
+const CATALOG_VIEWER: Visible = (u, signedIn) =>
+  signedIn &&
+  (!!u?.isSysadmin ||
+    !!u?.isBoardMember ||
+    !!u?.isKeyholder ||
+    !!u?.isBackgroundCheckReviewer ||
+    !!u?.isOperations ||
+    !!u?.isInventoryManager ||
+    (u?.programsLed?.length ?? 0) > 0 ||
+    !!u?.hasVolunteerDesignation);
+
+// Expense Ops: FINANCE or BOARD, no sysadmin (docs/rules/finance-payments.md).
+const FINANCE_OR_BOARD: Visible = (u) => !!u?.isFinance || !!u?.isBoardMember;
+const INVENTORY_MANAGER: Visible = (u, signedIn) => signedIn && !!u?.isInventoryManager;
+// A library's pages stay listed for board members only until the board releases it.
+const released = (lib: LibraryKey, gate: Visible): Visible => (u, signedIn, counts) =>
+  gate(u, signedIn, counts) && isLibraryVisible(lib, { isBoardMember: u?.isBoardMember, releasedLibraries: counts?.releasedLibraries });
 
 export type PageEntry = {
   href: string;
@@ -105,6 +130,23 @@ export const PAGES: PageEntry[] = [
   { href: '/shop-ops/live', label: 'Live', section: 'Shop Ops', visible: SHOP },
   { href: '/shop-ops/manage', label: 'Manage', section: 'Shop Ops', visible: SHOP },
 
+  // Inventory (global catalog, #1286) — any catalog viewer. The index redirects
+  // to Items. Write controls within each screen are INVENTORY_MANAGER-gated.
+  { href: '/catalog', label: 'Inventory', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/items', label: 'Items', section: 'Inventory', keywords: 'catalog parts gtin', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: released('catalog', CATALOG_VIEWER) },
+  // Org inventory (#1287) — same viewer gate; the work-queue screens are
+  // INVENTORY_MANAGER-only, like their routes.
+  { href: '/inventory/org-items', label: 'Org Inventory', section: 'Inventory', keywords: 'stock on hand quantity location', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/locations', label: 'Locations', section: 'Inventory', keywords: 'shelf bin backstock', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/receive-queue', label: 'Receive Queue', section: 'Inventory', keywords: 'backorder receiving', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/received-deltas', label: 'Applied Deltas', section: 'Inventory', keywords: 'receipt delta', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/merge-conflicts', label: 'Merge Conflicts', section: 'Inventory', keywords: 'uom mismatch', visible: released('local-inventory', INVENTORY_MANAGER) },
+  { href: '/inventory/provisional-items', label: 'Provisional Map', section: 'Inventory', keywords: 'provisional part', visible: released('local-inventory', INVENTORY_MANAGER) },
+  { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: released('local-inventory', INVENTORY_MANAGER) },
+
   // Facility Ops — board, plus operations on the two aggregate tools (#1633:
   // operations reach attendance in aggregate only). Visits, Badges (the raw
   // badge-event log) and Corrections are one person's record, so they stay
@@ -154,6 +196,9 @@ export const PAGES: PageEntry[] = [
   { href: '/finance-ops/membership-payment-plan', label: 'Membership Payment Plan', section: 'Finance Ops', visible: FINANCE },
   { href: '/finance-ops/shopify-holds', label: 'Shopify Hold Reconciliation', section: 'Finance Ops', keywords: 'seat hold failed inventory scholarship manual reconcile shopify', visible: FINANCE },
   { href: '/finance-ops/payments', label: 'Payment problems', section: 'Finance Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: FINANCE },
+
+  // Expense Ops — FINANCE or BOARD
+  { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: FINANCE_OR_BOARD },
 
   // System Status — board
   { href: '/system-status', label: 'System Status', section: 'System Status', visible: BOARD },

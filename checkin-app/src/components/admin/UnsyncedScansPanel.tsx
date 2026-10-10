@@ -10,10 +10,17 @@ type UnsyncedScan = {
   timestamp: string;
   location: string | null;
   reviewReason: string | null;
-  // Never null: RawBadgeLog.personId is required, and id/name are public-tier
-  // so the response stripper cannot drop them out from under the fallback.
-  person: { id: number; name: string | null };
+  // Set only when the kiosk read resolved to no person (person is then null).
+  scannedValue: string | null;
+  // id/name are public-tier, so the response stripper cannot drop them out
+  // from under the fallback when a person is present.
+  person: { id: number; name: string | null } | null;
 };
+
+const who = (s: UnsyncedScan) =>
+  s.person
+    ? s.person.name ?? `Person #${s.person.id}`
+    : `Unreadable badge "${s.scannedValue ?? "?"}"`;
 
 // D7's "40 min late" off lib/time's coarse relTime — the same thresholds every
 // other freshness line uses, in the tense the review copy asks for. "just now"
@@ -25,6 +32,9 @@ const REASON_COPY: Record<string, string> = {
   out_of_order: "state had already moved past this scan",
   force_close_review: "force-close replay without a valid confirm token",
   facility_closed: "badge scanned while no keyholder was present",
+  "client_dead:unresolvable": "badge number matches no one on record — often two badges read as one",
+  conflict_double_in: "check-in while already checked in — they may have been leaving; fix the visit in the manual visits tool",
+  conflict_out_no_in: "check-out with no open visit — they may have been arriving; fix the visit in the manual visits tool",
 };
 
 // client_dead:<status> is a dynamic family, not a fixed key.
@@ -157,7 +167,7 @@ export function UnsyncedScansPanel() {
                   <Stack gap={2}>
                     {/* D7 row copy: "Person X, scanned 2:14pm, 40 min late". */}
                     <Text>
-                      {s.person.name ?? `Person #${s.person.id}`}, scanned{" "}
+                      {who(s)}, scanned{" "}
                       {formatTime(s.timestamp, { hour: "numeric", minute: "2-digit" })},{" "}
                       {lateness(s.timestamp)}
                     </Text>
@@ -171,9 +181,11 @@ export function UnsyncedScansPanel() {
                 </Table.Td>
                 <Table.Td style={{ whiteSpace: "nowrap", width: 1 }}>
                   <Group gap="xs" justify="flex-end" wrap="nowrap">
-                    <Button size="xs" variant="default" onClick={() => openRecord(s)}>
-                      Record visit
-                    </Button>
+                    {s.person && (
+                      <Button size="xs" variant="default" onClick={() => openRecord(s)}>
+                        Record visit
+                      </Button>
+                    )}
                     <Button
                       size="xs"
                       variant="subtle"
@@ -201,7 +213,7 @@ export function UnsyncedScansPanel() {
               {/* Browser-local on purpose: the datetime input below is parsed in
                   the reviewer's zone, so the arrival is shown in the same zone —
                   mixing org time here invited off-by-a-timezone departures. */}
-              Writes a visit for {recording.person.name ?? `Person #${recording.person.id}`} arriving{" "}
+              Writes a visit for {who(recording)} arriving{" "}
               {new Date(recording.timestamp).toLocaleString()} (your local time) — the scan&apos;s own
               time, not now.
             </Text>

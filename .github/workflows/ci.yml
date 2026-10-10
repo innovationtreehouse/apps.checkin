@@ -32,6 +32,14 @@ on:
         required: false
         default: ''
 
+# pull_request runs share one group per ref, so a new push cancels the run it
+# supersedes. Every other event keys on run_id: a group of one, so main pushes,
+# merge_group entries and workflow_call validates are never queued behind or
+# replaced by each other (a group holds one running + one pending run).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # "Run Tests (unit)", "Run Tests (integration)", "Coverage gate (merged)", and
   # "Deploy build (no deploy)" are REQUIRED status checks on main (the first three
@@ -57,6 +65,7 @@ jobs:
       app: ${{ steps.detect.outputs.app }}
       client: ${{ steps.detect.outputs.client }}
       packages: ${{ steps.detect.outputs.packages }}
+      scripts: ${{ steps.detect.outputs.scripts }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -96,6 +105,7 @@ jobs:
             echo "app=true" >> "$GITHUB_OUTPUT"
             echo "client=true" >> "$GITHUB_OUTPUT"
             echo "packages=true" >> "$GITHUB_OUTPUT"
+            echo "scripts=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed="$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA")"
@@ -130,12 +140,22 @@ jobs:
           # from re-running the package's own vitest suite. Root package.json /
           # package-lock.json is included: a shared dep bump (vitest, prisma,
           # testcontainers) can break these suites without touching a workspace.
-          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|\.github/workflows/ci\.yml$)'; then
+          # The library boundary check also reads its own script and checkin's
+          # schema (a new checkin model can collide with a library's).
+          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|\.github/workflows/ci\.yml$|scripts/check-library-boundaries\.mjs$|checkin-app/prisma/schema\.prisma$)'; then
             echo "A package/function workspace (or this workflow) changed — running the Vitest tier."
             echo "packages=true" >> "$GITHUB_OUTPUT"
           else
             echo "No packages/** or *-function/** change — skipping the Vitest tier."
             echo "packages=false" >> "$GITHUB_OUTPUT"
+          fi
+          # dump-task-logs.sh redacts row data before task logs reach the public
+          # Actions log; its check runs when it, its test, or this workflow changes.
+          if printf '%s\n' "$changed" | grep -qE '^(scripts/(test-)?dump-task-logs\.sh|\.github/workflows/ci\.yml)$'; then
+            echo "dump-task-logs.sh (or this workflow) changed — running its check."
+            echo "scripts=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "scripts=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ---------------------------------------------------------------------------
@@ -645,6 +665,10 @@ jobs:
           npm run typecheck -w monitoring-relay-function
           npm run typecheck -w monitoring-watchdog-function
 
+      - name: Library boundary check
+        if: needs.changes.outputs.packages == 'true'
+        run: npm run check:library-boundaries
+
       - name: Test packages
         if: needs.changes.outputs.packages == 'true'
         run: npm run test:packages
@@ -694,6 +718,28 @@ jobs:
         if: needs.changes.outputs.client == 'true'
         working-directory: client
         run: python -m unittest discover -v
+
+  # Stubbed-aws check that dump-task-logs.sh keeps row data out of the public
+  # Actions log. Needs only bash + jq; runs under the runner's mawk.
+  script-tests:
+    name: Script checks (dump-task-logs)
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Skip notice (no script change)
+        if: needs.changes.outputs.scripts != 'true'
+        run: echo "No dump-task-logs change — nothing to test; reporting success."
+
+      - name: Checkout code
+        if: needs.changes.outputs.scripts == 'true'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}   # empty on push/PR = default ref; the tag when called by deploy-prod
+
+      - name: Run dump-task-logs check
+        if: needs.changes.outputs.scripts == 'true'
+        run: bash scripts/test-dump-task-logs.sh
 
   deploy-build:
     name: Deploy build (no deploy)
@@ -759,3 +805,17 @@ jobs:
           docker run --rm --entrypoint sh checkin-deploy-build:${{ github.sha }} \
             -c 'cd checkin-app && npx --no-install prisma --version' \
             || { echo "::error::prisma CLI is not resolvable inside the image — the migrate task would fall back to a registry download"; exit 1; }
+
+      # Probe each wired library's error statuses against the production image
+      # with a migrated DB and a signed-in FINANCE+BOARD+INVENTORY_MANAGER person:
+      # malformed JSON must answer 400, a duplicate create 409, never 500.
+      # The `builder` stage is already in the layer cache from the build above.
+      - name: Smoke test — library error statuses
+        if: needs.changes.outputs.app == 'true'
+        run: |
+          docker build --target builder \
+            -f checkin-app/Dockerfile \
+            -t checkin-deploy-builder:${{ github.sha }} .
+          bash scripts/deploy-build-error-smoke.sh \
+            checkin-deploy-build:${{ github.sha }} \
+            checkin-deploy-builder:${{ github.sha }}

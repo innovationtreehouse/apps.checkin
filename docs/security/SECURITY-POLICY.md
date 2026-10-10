@@ -131,6 +131,45 @@ defineOutbound({
 });
 ```
 
+A library in `packages/*` cannot call `outboundCall`, so its surface is registered and its caller is confined instead: add the `defineOutbound` entry (comment names the file, the host and what data leaves), and map the file to that surface in `PACKAGE_EGRESS_FILES` in `scripts/check-route-coverage.ts`. The lint fails on any non-loopback URL literal, named third-party host or listed API SDK in package source outside those files (tests, fixtures and generated code excluded), and on a mapped surface with no `defineOutbound` entry. An SDK hides its host, so a new one goes into `THIRD_PARTY_SDK_RE` in the same PR as its surface.
+
+### Serving a stored file
+
+Files are not JSON. A stored file (a receipt image, a PDF) leaves only through a **file route**: `defineFileRoute` in the registry plus `fileHandler` in the route, never `handler()`.
+
+```ts
+// registry/<lib>.ts
+defineFileRoute({
+    endpoint: 'GET /api/things/[id]/file',
+    authorize: 'authenticated',             // never 'public' or 'kiosk'
+    orderedView: [['authenticated', ['their_own:pii']]],
+    file: { model: 'Thing', field: 'fileBlob' },
+});
+
+// src/app/api/things/[id]/file/route.ts
+export const GET = fileHandler('GET /api/things/[id]/file', async ({ params }) => {
+    const row = await prisma.thing.findUnique({
+        where: { id: Number(params.id) },
+        select: { fileBlob: true, mimeType: true, personId: true }, // + the row's scope keys
+    });
+    if (!row) throw notFound();
+    return { row, contentType: row.mimeType as FileContentType, filename: 'receipt.pdf' };
+});
+```
+
+- **Same gates as `handler()`.** Authenticate, `authorize`, pick the first matching `orderedView` role, then a per-row check: the view must cover the served field's tier on this row (`fieldVisible` + `scopesHeld`), else 404. The row must carry the fields its scope bindings read.
+- **Identified callers only.** Unauthenticated, kiosk, and id-less sessions (no integer `user.id`) get 401.
+- **File-only.** A field named by a file route is dropped by the JSON stripper on every route; `src/security/__tests__/file-route.test.ts` sweeps every registered JSON route's views to prove it. A `secret` field cannot be served at all.
+- **Headers are fixed per content type** (owner-approved allowlist; any other type is a 500). Every response carries `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-store`.
+
+| Content type | `Content-Disposition` | `Content-Security-Policy` |
+|---|---|---|
+| `image/jpeg`, `image/png`, `image/gif`, `image/webp` | `inline` | `sandbox` |
+| `application/pdf` | `inline` | none (Chrome's PDF viewer refuses a sandboxed document) |
+| `text/plain` (sent as `; charset=utf-8`) | `attachment` | none |
+
+The file route is registered and migrated like any route: the route-coverage lint counts `defineFileRoute` entries, and the endpoint goes in `scripts/migrated-routes.txt`. The handler does not audit, check magic bytes, or stream from storage; those are the route's job (see `docs/in-design/1265_RECEIPT_INTEGRATION.md` §3).
+
 ## What this layer does NOT cover (yet)
 
 - **Error responses & logs.** The handler returns opaque `Internal Server Error` 500s, but a richer per-route policy (`errorDetail: 'admin-only'`) is future work.

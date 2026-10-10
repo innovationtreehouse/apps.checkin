@@ -84,7 +84,14 @@ export async function findAssociatedEventAt(participantId: number, targetTime: D
  *
  * It returns the final list of visits spanning their arrival to departure.
  */
-export async function processVisitCheckout(visitId: number, checkoutTime: Date, db: DbClient = prisma, source: "SCANNER" | "TYPED" | "AUTO_CLOSE") {
+export async function processVisitCheckout(
+    visitId: number,
+    checkoutTime: Date,
+    db: DbClient = prisma,
+    source: "SCANNER" | "TYPED" | "AUTO_CLOSE",
+    /** The facility close this departure belongs to, when one sets it. */
+    facilityCloseId: number | null = null,
+) {
     const originalVisit = await db.visit.findUnique({
         where: { id: visitId }
     });
@@ -107,7 +114,7 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
         // No programs enrolled, just close the visit normally
         const closed = await db.visit.update({
             where: { id: visitId },
-            data: { departedAt: departure, departedVia: source }
+            data: { departedAt: departure, departedVia: source, facilityCloseId }
         });
         invalidateAttendanceCache();
         return [closed];
@@ -128,7 +135,7 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
         // No relevant events during their stay, just close normally
         const closed = await db.visit.update({
             where: { id: visitId },
-            data: { departedAt: departure, departedVia: source }
+            data: { departedAt: departure, departedVia: source, facilityCloseId }
         });
         invalidateAttendanceCache();
         return [closed];
@@ -161,6 +168,7 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
                             departedAt: gapEnd,
                             arrivedVia,
                             departedVia: source,
+                            facilityCloseId,
                             associatedEventId: null
                         }
                     }));
@@ -191,6 +199,7 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
                         departedAt: eventVisitEnd,
                         arrivedVia,
                         departedVia: source,
+                        facilityCloseId,
                         associatedEventId: event.id
                     }
                 }));
@@ -207,6 +216,7 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
                     departedAt: departure,
                     arrivedVia,
                     departedVia: source,
+                    facilityCloseId,
                     associatedEventId: null
                 }
             }));
@@ -216,9 +226,8 @@ export async function processVisitCheckout(visitId: number, checkoutTime: Date, 
     };
 
     // If we were handed a transaction client (caller already opened one — e.g.
-    // the scan route's per-participant lock), run the chunking on it directly:
-    // Postgres has no nested transactions and the tx client has no `$transaction`.
-    // Otherwise open our own transaction so the delete + recreates stay atomic.
+    // the scan route's per-participant lock), the chunking joins it as a
+    // savepoint, so it commits or rolls back with the caller. Otherwise open our own transaction so the delete + recreates stay atomic.
     const created = await withTx(db, chunk);
     invalidateAttendanceCache();
     return created;

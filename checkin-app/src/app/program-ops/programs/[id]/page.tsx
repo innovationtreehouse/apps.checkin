@@ -35,7 +35,6 @@ export type ProgramDetail = {
     person: {
       name: string | null;
       email: string;
-      phone?: string | null;
       // householdMembers is the household's leads (the parents) only. Contact
       // fields are optional because the response stripper drops them for a
       // viewer without the grant.
@@ -106,9 +105,8 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   const [message, setMessage] = useState("");
   const [activeTab, setActiveTab] = useState<'general' | 'roster' | 'events'>('general');
 
-  const fetchProgram = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/programs/${id}`);
+  const fetchProgram = useCallback(() => fetch(`/api/programs/${id}`)
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setProgram(data);
@@ -134,12 +132,14 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
       } else {
         setMessage("Failed to load program.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, [id]);
+    }),
+  [id]);
 
   useEffect(() => {
     if (ready) fetchProgram();

@@ -30,9 +30,6 @@ jest.mock("@/lib/prisma", () => ({
     default: {
         person: { findUnique: jest.fn() },
         visit: { findMany: jest.fn() },
-        // getFullAttendance also reads held (PARKED_CLOSED) presence events; empty
-        // by default here so it doesn't perturb these PII assertions.
-        presenceEvent: { findMany: jest.fn() },
         // The supervising-adult test reads the board's background-check recheck
         // policy (#1436); unset here, which is the default.
         boardSettings: { findUnique: jest.fn() },
@@ -50,7 +47,6 @@ beforeEach(() => {
     mockPubKeys.mockReturnValue([]);
     mockVerify.mockReturnValue({ ok: false });
     mockSession.mockResolvedValue(null);
-    (prisma.presenceEvent.findMany as jest.Mock).mockResolvedValue([]);
 });
 
 describe("Participant PII minimization (M1, M2)", () => {

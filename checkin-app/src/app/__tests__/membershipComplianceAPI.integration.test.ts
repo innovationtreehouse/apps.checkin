@@ -10,6 +10,7 @@
 
 import { GET } from '@/app/api/membership-audit/compliance/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({
@@ -47,7 +48,7 @@ describe('GET /api/membership-audit/compliance', () => {
     let freshId: number;
     let revokedId: number;
     let stuckId: number;
-    let savedSettings: { bgRecheckMonths: number; orgMembershipYearBoundary: Date | null } | null = null;
+    let restoreBoardSettings: () => Promise<void>;
 
     const cleanup = async () => {
         const hhs = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });
@@ -63,8 +64,7 @@ describe('GET /api/membership-audit/compliance', () => {
         await cleanup();
 
         // Configure a real recheck window + boundary so the STALE_BG bucket is active.
-        const prev = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        savedSettings = prev ? { bgRecheckMonths: prev.bgRecheckMonths, orgMembershipYearBoundary: prev.orgMembershipYearBoundary } : null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await prisma.boardSettings.upsert({
             where: { id: 1 },
             create: { id: 1, bgRecheckMonths: RECHECK_MONTHS, orgMembershipYearBoundary: new Date('2000-06-01') },
@@ -98,9 +98,7 @@ describe('GET /api/membership-audit/compliance', () => {
 
     afterAll(async () => {
         await cleanup();
-        if (savedSettings) {
-            await prisma.boardSettings.update({ where: { id: 1 }, data: savedSettings });
-        }
+        await restoreBoardSettings();
     });
 
     it('lists each out-of-compliance household with correct reason tags and excludes a fresh one', async () => {

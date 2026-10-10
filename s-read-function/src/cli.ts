@@ -4,9 +4,19 @@
  *
  *   npm run sync:incremental
  *   npm run sync:backfill
- *   npm run inject -- <fixture.json> [--test]
+ *   INJECT_ALLOW=1 npm run inject -- <fixture.json> --reason "<why>" [--test]
  */
-import { prisma, loadDbConfig, loadShopifyConfig, injectFile, logger } from "@inventory/s-ingest-core";
+import os from "node:os";
+import {
+  prisma,
+  loadDbConfig,
+  loadShopifyConfig,
+  injectFile,
+  logger,
+  withSyncRun,
+  SyncKind,
+  PROD_STORE_DOMAIN,
+} from "@inventory/s-ingest-core";
 import { handler, armSyncDeadline } from "./handler.js";
 import { createShopifyClient } from "./shopify/client.js";
 import {
@@ -31,6 +41,15 @@ function parseLimit(args: string[], fallback: number): number {
   const i = args.indexOf("--limit");
   if (i >= 0 && args[i + 1]) return Math.max(1, Number(args[i + 1]) || fallback);
   return fallback;
+}
+
+/** Value of `--name=value` or `--name value`; undefined when absent or followed by another flag. */
+function parseFlag(args: string[], name: string): string | undefined {
+  const eq = args.find((a) => a.startsWith(`--${name}=`));
+  if (eq) return eq.slice(name.length + 3);
+  const i = args.indexOf(`--${name}`);
+  const next = i >= 0 ? args[i + 1] : undefined;
+  return next?.startsWith("--") ? undefined : next;
 }
 
 async function main(): Promise<void> {
@@ -189,18 +208,41 @@ async function main(): Promise<void> {
       break;
     }
     case "inject": {
+      // Injected rows land in the same live tables checkin reconciles memberships and
+      // payments from, so every inject is deliberate, attributed, and never test data in prod.
       const test = rest.includes("--test");
-      const file = rest.find((a) => !a.startsWith("--"));
-      if (!file) throw new Error("Usage: inject <fixture.json> [--test]");
+      const reason = parseFlag(rest, "reason")?.trim();
+      const file = rest.find((a, i) => !a.startsWith("--") && rest[i - 1] !== "--reason");
+      if (!file) throw new Error('Usage: INJECT_ALLOW=1 inject <fixture.json> --reason "<why>" [--test]');
+      if (process.env.INJECT_ALLOW !== "1") throw new Error("inject refused: set INJECT_ALLOW=1 to write to the mirror");
+      if (!reason) throw new Error("inject refused: --reason is required (recorded on the ADMIN sync_run)");
       const { storeId } = loadDbConfig();
-      const results = await injectFile(prisma, file, { storeId, test });
-      logger.info("inject done", {
-        file,
-        source: test ? "TEST_LOADED" : "HAND_LOADED",
-        count: results.length,
-        inserted: results.filter((r) => r.inserted).length,
-        gids: results.map((r) => r.shopifyGid),
-      });
+      if (test) {
+        const prodHere = await prisma.store.findUnique({ where: { myshopifyDomain: PROD_STORE_DOMAIN } });
+        if (storeId === PROD_STORE_DOMAIN || prodHere) {
+          throw new Error(`inject refused: --test fixtures may not be loaded into the ${PROD_STORE_DOMAIN} mirror`);
+        }
+      }
+      const source = test ? "TEST_LOADED" : "HAND_LOADED";
+      const actor = `cli:${os.userInfo().username}`;
+      const summary = await withSyncRun(
+        prisma,
+        storeId,
+        SyncKind.ADMIN,
+        "inject",
+        async (syncRunId) => {
+          const results = await injectFile(prisma, file, { storeId, test, syncRunId });
+          return {
+            file,
+            source,
+            count: results.length,
+            inserted: results.filter((r) => r.inserted).length,
+            gids: results.map((r) => r.shopifyGid),
+          };
+        },
+        { actor, reason },
+      );
+      logger.info("inject done", { ...summary, actor, reason });
       break;
     }
     default:

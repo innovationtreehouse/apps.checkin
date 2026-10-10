@@ -320,6 +320,25 @@ believed it covered two.
 
 ---
 
+## Trust, then review
+
+- **A person's account of what happened is accepted when they give it.** The app
+  records it, says who gave it, and makes it reviewable. It does not refuse an
+  account because its own record disagrees.
+- **Where the app's record and the room disagree, the room is right.** The app
+  cannot see a handover, a keyholder who never badged, or a walk-in nobody
+  scanned. A gate built on what the app can see blocks the people doing it
+  correctly.
+- **Trust comes with a trail.** An accepted account that changes someone else's
+  record names who gave it, and a significant one reaches someone who reviews it.
+- **It widens nothing and overrides no policy.** Who may act is still least
+  privilege's question; where a policy requires a block, the block stands.
+
+The tell is a refusal whose only reason is that the data disagrees with the
+person in front of it.
+
+---
+
 ## Accountability
 
 - **Anything that changes standing, money, or access is attributable.** Who did

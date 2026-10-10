@@ -67,6 +67,7 @@ Program roles (all Treehouse Volunteers):
 |---|---|---|---|
 | **Program Leader** | the person responsible for a program | `programLeaderId` *(rename pending from `leadMentorId`)* | policy term; **retire "lead mentor"** |
 | **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | Core's legal-authority rules are organizational (out of software scope) |
+| **Program Treasurer** | a Program Volunteer who keeps the program's money; a program may have several. With the Program Leader, approves within the program's budget-owner bucket | `ProgramVolunteer.isTreasurer` | policy term (*Sponsored Program Policy, Art. III §III.7*) |
 
 **Retired words (do not use):** `staff` / "program staff" (→ Treehouse Volunteers), `mentor` and `lead mentor` (→ Program Leader / Program Volunteer; program-specific "mentor" language is external), "program instructor" (→ `instructor` is **tool-only**, see Shop & Certification).
 
@@ -104,8 +105,13 @@ Rules:
 
 **Payment vs relief** (keep separate):
 - **Manual payment** — payment landed **outside Shopify** (recorded in QuickBooks), so a membership activates without a Shopify order. `via: "manual"` / `manualPaymentById`. **Not** a comp.
-- **Payment Plan** — installments (`isPaymentPlanRequested`).
-- **Scholarship** — a board comp (fee waived). Unnamed in code today.
+- **Payment Plan** — installments (`isPaymentPlanRequested`, kind `PAYMENT_PLAN`).
+- **Scholarship** — a board comp (fee waived). Named in code as `ScholarshipRequestKind.SCHOLARSHIP`.
+- **`isPaymentPlanRequested` is the umbrella flag**, not the payment-plan half: it means
+  "this household asked for help with a fee" and is set by a scholarship request too.
+  Which ask it was lives in `scholarshipRequestKind` (`SCHOLARSHIP` / `PAYMENT_PLAN` /
+  `UNSURE`, null on requests predating the column). Granted terms stay out of the app —
+  see `docs/rules/finance-payments.md`.
 - **Scholarship Review Team** — the board-designated recipients of scholarship / payment-plan
   request notifications (`BoardSettings.scholarshipNotifyEmail`; falls back to all board members
   when unset). The canonical UI/copy term — **retire "Finance Committee"** for this concept.

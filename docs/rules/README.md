@@ -46,6 +46,7 @@ qualify, and it belongs to the tracker alone. See `docs/DOCUMENTATION_STANDARD.m
 | `finance-payments.md` | fees, refunds, payment plans, reconciliation |
 | `attendance-checkin.md` | opening and closing, supervision, the kiosk, visits |
 | `tools-certification.md` | certification levels, who may certify, shop access |
+| `inventory.md` | the shared catalog (what parts, tools, and consumables are) and, as it lands, on-hand holdings |
 
 Two registers sit outside this directory and are not duplicated here:
 `checkin-app/docs/VOCABULARY.md` defines what the words mean, and

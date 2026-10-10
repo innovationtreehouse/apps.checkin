@@ -4,9 +4,9 @@ import { appendPresenceEvent, classifyPresenceEvent, PresenceClass } from "@/lib
 import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
 import { withinMaxDuration } from "@/lib/visitTimes";
 import { lockFacility } from "@/lib/facilityLock";
-import { flushParkedClosed } from "@/lib/presence/project";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { LIVE_VISIT } from "@/lib/visit/filters";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 // Registry-governed (POST /api/system-status/unsynced-scans/[id]): admission
 // anyRole sysadmin/board/keyholder (Q15; operations stay out — #1633);
@@ -28,9 +28,7 @@ import { LIVE_VISIT } from "@/lib/visit/filters";
 // refuses: minting an arrival from it would invert the person's day.
 //
 // Concurrency: the same per-participant advisory lock as /api/scan and the
-// manual route, plus the facility lock — flushParkedClosed self-locks the
-// facility, so a keyholder badging in mid-review cannot double-project the
-// same parked event. The updateMany where clause stamps exactly once, so a
+// manual route, plus the facility lock. The updateMany where clause stamps exactly once, so a
 // double-click (either action) 404s and its transaction rolls back.
 export const POST = handler<{ id: string }>(
     'POST /api/system-status/unsynced-scans/[id]',
@@ -74,6 +72,9 @@ export const POST = handler<{ id: string }>(
             where: { id, reviewReason: { not: null }, reviewedAt: null },
         });
         if (!row) throw notFound("No scan awaiting review with that id.");
+        if (row.personId === null) {
+            throw new ApiResponseError(409, "This scan matches no one on record — dismiss it once you have looked.");
+        }
         if (parsedDeparted && parsedDeparted <= row.timestamp) {
             throw badRequest("departedAt must be after the scan time.");
         }
@@ -98,9 +99,8 @@ export const POST = handler<{ id: string }>(
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(${person.id})`;
             await lockFacility(tx);
 
-            // The linked presence event is read under the locks: a flush runs
-            // inside the facility lock too, so its classification cannot move
-            // between this read and our commit.
+            // The linked presence event is read under the locks, so its
+            // classification cannot move between this read and our commit.
             const ev = row.clientEventId
                 ? await tx.presenceEvent.findUnique({ where: { clientEventId: row.clientEventId } })
                 : null;
@@ -189,20 +189,11 @@ export const POST = handler<{ id: string }>(
             timeout: 15000,
         });
 
-        // A keyholder minted OPEN just made the facility provably open — release
-        // the PARKED_CLOSED backlog, exactly as the manual route does.
-        if (!parsedDeparted && person.isKeyholder) {
-            await prisma.$transaction(async (tx) => {
-                await tx.$executeRaw`SELECT pg_advisory_xact_lock(${person.id})`;
-                // flushParkedClosed takes the facility lock itself (reentrant).
-                await flushParkedClosed(tx);
-            });
-        }
-
         // Same back-to-back transition handling a manual closed backfill gets.
         if (parsedDeparted) {
             await processVisitCheckout(visitId, parsedDeparted, undefined, "TYPED");
         }
+        invalidateAttendanceCache();
 
         await prisma.auditLog.create({
             data: {

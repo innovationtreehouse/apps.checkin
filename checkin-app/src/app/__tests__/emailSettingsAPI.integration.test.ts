@@ -7,6 +7,7 @@
 
 import { GET as EMAIL_GET, PUT as EMAIL_PUT } from '@/app/api/settings/email/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -25,14 +26,7 @@ const TAG = 'email-settings-test';
 
 describe('Email sender-identity settings API', () => {
     let boardId: number, plainId: number;
-    let prevSettings: {
-        emailFromAddress: string | null;
-        emailReplyToAddress: string | null;
-        scholarshipNotifyEmail: string | null;
-        scholarshipAckSubject: string | null;
-        scholarshipAckMembershipBody: string | null;
-        scholarshipAckProgramBody: string | null;
-    } | null = null;
+    let restoreBoardSettings: () => Promise<void>;
 
     async function wipe() {
         const hhs = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });
@@ -47,21 +41,11 @@ describe('Email sender-identity settings API', () => {
         await wipe();
         boardId = (await prisma.person.create({ data: { name: 'Board', isBoardMember: true, household: { create: { name: `Board HH ${TAG}` } } } })).id;
         plainId = (await prisma.person.create({ data: { name: 'Plain', household: { create: { name: `Plain HH ${TAG}` } } } })).id;
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevSettings = existing
-            ? {
-                emailFromAddress: existing.emailFromAddress,
-                emailReplyToAddress: existing.emailReplyToAddress,
-                scholarshipNotifyEmail: existing.scholarshipNotifyEmail,
-                scholarshipAckSubject: existing.scholarshipAckSubject,
-                scholarshipAckMembershipBody: existing.scholarshipAckMembershipBody,
-                scholarshipAckProgramBody: existing.scholarshipAckProgramBody,
-            }
-            : null;
+        restoreBoardSettings = await snapshotBoardSettings();
     });
 
     afterAll(async () => {
-        if (prevSettings) await prisma.boardSettings.update({ where: { id: 1 }, data: prevSettings });
+        await restoreBoardSettings();
         await wipe();
         await prisma.$disconnect();
     });

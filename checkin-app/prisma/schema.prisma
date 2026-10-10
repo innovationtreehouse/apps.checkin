@@ -80,6 +80,23 @@ enum ProgramParticipantStatus {
   ACTIVE
 }
 
+/// What a household asked for when they requested help with a fee. Recorded at
+/// the moment of the request, because the two asks need different conversations
+/// and the review team cannot tell them apart from the request alone — offering
+/// a comp to a family that only needed more time is the failure this prevents.
+/// The terms themselves are still settled by finance out of band
+/// (docs/rules/finance-payments.md); this is only which door they knocked on.
+enum ScholarshipRequestKind {
+  // Asking for the amount itself to be reduced or waived (a board comp).
+  SCHOLARSHIP
+  // Can pay in full, asking to pay it in installments.
+  PAYMENT_PLAN
+  // Does not know which applies — the review team opens the conversation. A real
+  // answer, not a missing one: a family owes nobody a diagnosis of their own
+  // finances to ask for help.
+  UNSURE
+}
+
 model Person {
   /// @sensitivity:public
   id            Int       @id @default(autoincrement())
@@ -206,6 +223,7 @@ model Person {
   presenceEvents      PresenceEvent[]
   visits              Visit[]
   eventsConfirmedBy   Event[]                      @relation("EventAttendanceConfirmer")
+  facilityCloses      FacilityClose[]
 
   trustedAdultRecordsAsAdult TrustedAdult[]       @relation("TrustedAdultPerson")
   trustedAdultsDisclosed      TrustedAdult[]       @relation("TrustedAdultDiscloser")
@@ -230,6 +248,7 @@ enum PersonRoleKind {
   BG_REVIEWER
   OPERATIONS
   INVENTORY_MANAGER
+  FINANCE
 }
 
 /// Source of truth for role grants (expand phase of the boolean-column -> table
@@ -536,6 +555,11 @@ model OrgMembershipProcess {
   renewalReminderSentAt DateTime?
   /// @sensitivity:internal
   isPaymentPlanRequested Boolean @default(false)
+  /// Which of the two asks isPaymentPlanRequested stands for. Null means the
+  /// request predates this column, which is why it is nullable and never
+  /// backfilled: what a family asked for is not a value to infer on their behalf.
+  /// @sensitivity:internal
+  scholarshipRequestKind ScholarshipRequestKind?
   /// The household's intake note as submitted with this application. A snapshot, not
   /// a live read: the household may edit or clear Household.intakeNotes afterwards,
   /// and the audit question is what the applicant actually said. Disclosure-equivalent
@@ -713,6 +737,10 @@ model BoardSettings {
   /// withdrawal or payment; it never auto-expires).
   /// @sensitivity:public
   scholarshipDenialGraceDays Int?
+  /// Library keys (lib/libraryRelease.ts) the board has released: their nav
+  /// entries show to everyone with access, not just board members. UI-only.
+  /// @sensitivity:public
+  releasedLibraries          String[]  @default([])
   /// @sensitivity:internal
   updatedAt                  DateTime  @updatedAt
 }
@@ -984,6 +1012,7 @@ model Program {
   participants ProgramParticipant[]
   events       Event[]
   instances    ProgramInstance[]
+  budgetOwners BudgetOwner[]
 }
 
 // Program → Instance → Event, PHASE 1 (additive tier + 1:1 backfill; nothing
@@ -1042,6 +1071,10 @@ model ProgramVolunteer {
   personId Int
   /// @sensitivity:internal
   isCore        Boolean @default(false)
+  /// A program treasurer; a program may have several. With the program
+  /// leader, treasurers approve within the program's BudgetOwner bucket.
+  /// @sensitivity:internal
+  isTreasurer   Boolean @default(false)
 
   program Program     @relation(fields: [programId], references: [id])
   person  Person @relation(fields: [personId], references: [id])
@@ -1058,6 +1091,17 @@ model ProgramParticipant {
   status               ProgramParticipantStatus @default(PENDING)
   /// @sensitivity:personal
   isPaymentPlanRequested Boolean                  @default(false)
+  /// Which of the two asks isPaymentPlanRequested stands for. Null means the
+  /// request predates this column; never backfilled, because what a family asked
+  /// for is not a value to infer on their behalf.
+  ///
+  /// 'internal', deliberately a tier ABOVE the flag beside it: programLeadMentor
+  /// holds their_program_participants:personal, so a 'personal' field here would
+  /// tell a program volunteer that this family asked for a fee waiver. That a
+  /// request exists is already visible to them; which door it knocked on is
+  /// board/finance-confidential, same as the request route's own gate.
+  /// @sensitivity:internal
+  scholarshipRequestKind ScholarshipRequestKind?
   /// Same tier as paymentPlanDeniedAt — workflow timestamps lead mentors need.
   /// @sensitivity:personal
   pendingSince         DateTime?                @default(now())
@@ -1151,8 +1195,13 @@ model RSVP {
 model RawBadgeLog {
   /// @sensitivity:internal
   id            Int      @id @default(autoincrement())
+  /// Null only for a dead-lettered kiosk read that names no person (an
+  /// unreadable or unknown badge number); `scannedValue` then holds what was read.
   /// @sensitivity:internal
-  personId Int
+  personId Int?
+  /// The raw badge value the kiosk read, kept when it resolves to no person.
+  /// @sensitivity:internal
+  scannedValue  String?
   /// @sensitivity:personal
   timestamp     DateTime @default(now())
   /// @sensitivity:personal
@@ -1171,7 +1220,7 @@ model RawBadgeLog {
   /// nothing this reads. @sensitivity:internal
   reviewedBy    Int?
 
-  person Person @relation(fields: [personId], references: [id])
+  person Person? @relation(fields: [personId], references: [id], onDelete: Restrict)
 
   @@index([personId, timestamp]) // Double-badge detection in /api/scan
 }
@@ -1260,15 +1309,57 @@ model Visit {
   /// @sensitivity:internal
   supervisionWarnedAt DateTime?
 
-  person Person @relation(fields: [personId], references: [id])
-  event  Event?      @relation(fields: [associatedEventId], references: [id])
+  /// The facility close that stamped this visit's departure; null when no close did.
+  /// @sensitivity:internal
+  facilityCloseId   Int?
+
+  person        Person         @relation(fields: [personId], references: [id])
+  event         Event?         @relation(fields: [associatedEventId], references: [id])
+  facilityClose FacilityClose? @relation(fields: [facilityCloseId], references: [id], onDelete: Restrict)
 
   @@index([personId, departedAt]) // Active visits lookup in /api/scan
+  @@index([facilityCloseId])
   // Partial unique index "Visit_one_open_per_participant" — at most one open,
   // live visit (departedAt IS NULL AND deletedAt IS NULL) per participant.
   // Prisma's DSL can't express a partial unique index, so it lives in raw SQL
   // (recreated in 20260726120000_visit_tombstone). DB-level backstop against
   // double check-in races.
+}
+
+/// Which path closed the facility.
+enum FacilityCloseVia {
+  KIOSK
+  KIOSK_OFFLINE
+  WEB_CHECKOUT
+  WEB_DASHBOARD
+  WEB_CORRECTION
+  WEB_REMOVAL
+  NIGHTLY_SWEEP
+}
+
+/// One facility close: the moment every open visit was departed at once. Each
+/// departure it sets carries `Visit.facilityCloseId` and an AuditLog row with
+/// the before and after. An audit record — never deleted.
+model FacilityClose {
+  /// @sensitivity:internal
+  id         Int              @id @default(autoincrement())
+  /// The departure time the close stamps.
+  /// @sensitivity:internal
+  closedAt   DateTime
+  /// The person who closed. Null on a NIGHTLY_SWEEP close, which no person
+  /// made, and on any close whose person row was later deleted.
+  /// @sensitivity:internal
+  closedById Int?
+  /// @sensitivity:internal
+  via        FacilityCloseVia
+  /// When the server applied it; differs from closedAt on a late or offline close.
+  /// @sensitivity:internal
+  createdAt  DateTime         @default(now())
+
+  closedBy Person? @relation(fields: [closedById], references: [id], onDelete: SetNull)
+  visits   Visit[]
+
+  @@index([closedById])
 }
 
 model AuditLog {
@@ -1652,4 +1743,45 @@ model BulkSendItem {
   error      String?
 
   @@index([bulkSendId, status])
+}
+
+/// Organization registry: one row per org (today only the Treehouse row, which
+/// the migration inserts). checkin-app injects org identity into each Inventory
+/// library; no library reads this table directly.
+model Org {
+  /// Stable well-known id, stamped as org_id on catalog rows.
+  /// @sensitivity:public
+  id   String @id
+  /// @sensitivity:public
+  name String
+}
+
+/// An accounting bucket that expense lines and bulk-donation gifts are owned by
+/// (#1280 §6). Not a Person. Approvers are derived, never stored: a program
+/// bucket's are that program's leader and treasurers (ProgramVolunteer
+/// .isTreasurer); an org-level bucket (no program — Facility is one of several)
+/// has none, because finance assigning an item to it is the approval.
+/// Buckets are archived, never deleted — libraries hold `id` as an opaque
+/// cross-database owner id, so a deleted row would orphan their references.
+/// Finance structure — all internal.
+model BudgetOwner {
+  /// @sensitivity:internal
+  id                   Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  name                 String
+  /// Null for an org-level bucket.
+  /// @sensitivity:internal
+  programId            Int?
+  /// @sensitivity:internal
+  archivedAt           DateTime?
+  /// The QuickBooks Online id of the Class this bucket is (external id, not a
+  /// checkin FK). Null until QuickBooks sync links it; one bucket per Class.
+  /// @sensitivity:internal
+  quickBooksClassId    String?   @unique
+
+  // Restrict: a program with a bucket is not deleted out from under it, and
+  // SetNull would silently turn a program bucket into an org-level one.
+  program Program? @relation(fields: [programId], references: [id], onDelete: Restrict)
+
+  @@index([programId])
 }

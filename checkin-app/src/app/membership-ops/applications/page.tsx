@@ -12,6 +12,7 @@ import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { StatusFilterBadge, ActiveFilterNotice, useStatusFilter } from "@/components/StatusFilter";
 import { awaitingBgReview, type ProcessStatus } from "@/lib/membership/lifecycle";
+import { clearingApprovals } from "@/lib/membership/approvals";
 
 interface Person {
   id: number;
@@ -22,6 +23,7 @@ interface Person {
 interface Attestation {
   id: number;
   result: string;
+  subjectPersonId: number | null;
   isMarkedVolunteer: boolean;
 }
 interface ProcessRow {
@@ -93,20 +95,17 @@ function ApplicationsBoard() {
   // because a blocked review has no second approval to count.
   const [overrideSubjects, setOverrideSubjects] = useState<Record<number, number>>({});
 
-  const load = useCallback(async (archived: boolean) => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/membership-ops/applications${archived ? "?archived=1" : ""}`);
-      if (res.ok) {
-        const data = await res.json();
-        setRows(data.processes || []);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const fetchRows = useCallback((archived: boolean) =>
+    fetch(`/api/membership-ops/applications${archived ? "?archived=1" : ""}`)
+      .then(async (res) => { if (res.ok) setRows((await res.json()).processes || []); })
+      .finally(() => setLoading(false)), []);
 
-  useEffect(() => { load(showArchived); }, [load, showArchived]);
+  const load = (archived: boolean) => {
+    setLoading(true);
+    return fetchRows(archived);
+  };
+
+  useEffect(() => { fetchRows(showArchived); }, [fetchRows, showArchived]);
 
   const act = async (processId: number, action: string, extra?: Record<string, unknown>) => {
     setBusyId(processId);
@@ -188,6 +187,8 @@ function ApplicationsBoard() {
 
   // An awaiting row only ever holds APPROVE attestations (any REJECT blocks it).
   const approvals = (r: ProcessRow) => r.attestations.filter((a) => a.result === "APPROVE").length;
+  // Approvals that count toward clearing; unnamed or other-adult approvals don't.
+  const counted = (r: ProcessRow) => clearingApprovals(r.attestations, r.kind === "PERSON_BG");
 
   const confirmResetReview = (r: ProcessRow) => {
     modals.openConfirmModal({
@@ -319,7 +320,7 @@ function ApplicationsBoard() {
       <Switch
         label="Show archived"
         checked={showArchived}
-        onChange={(e) => setShowArchived(e.currentTarget.checked)}
+        onChange={(e) => { setLoading(true); setShowArchived(e.currentTarget.checked); }}
       />
 
       {!loading && rows.length > 0 && !showArchived && (
@@ -412,7 +413,8 @@ function ApplicationsBoard() {
               {awaitingBg(r) && (
                 <Group mt="md" gap="md" wrap="wrap" align="center">
                   <Text size="sm" c="dimmed">
-                    Background check (in parallel) — <Text component="span" fw={600}>{approvals(r)}/2</Text> approvals recorded.
+                    Background check (in parallel) — <Text component="span" fw={600}>{counted(r)}/2</Text> approvals toward clearance.
+                    {approvals(r) > counted(r) && ` ${approvals(r) - counted(r)} more recorded that name no one or a different adult — start the review over to clear it.`}
                   </Text>
                   {/* The board's way back from a reviewer's misclick: the review is still
                       open, so discarding the attestations undoes it with nothing to unwind. */}

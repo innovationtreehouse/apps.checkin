@@ -13,6 +13,7 @@ import { POST as PROCESS_BATCH } from '@/app/api/outreach/process-batch/route';
 import { GET as STATUS_GET, POST as STATUS_POST } from '@/app/api/outreach/status/route';
 import { POST as TEST_SEND } from '@/app/api/outreach/test-send/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import { sendEmail } from '@/lib/email';
 
@@ -81,18 +82,17 @@ async function wipeLedger() {
 }
 
 describe('outreach ledger (send / process-batch / status)', () => {
-    let prevBoundary: Date | null = null;
+    let restoreBoardSettings: () => Promise<void>;
     let boardId: number;
 
     beforeAll(async () => {
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevBoundary = existing?.orgMembershipYearBoundary ?? null;
+        restoreBoardSettings = await snapshotBoardSettings();
     });
 
     afterAll(async () => {
         await wipeLedger();
         await wipeHouseholds();
-        await setBoundary(prevBoundary);
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 

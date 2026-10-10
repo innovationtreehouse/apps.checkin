@@ -155,7 +155,7 @@ describe('enrollment state — validator oracle over real transitions', () => {
     it('T4 activate (payment) from PENDING_HELD → ACTIVE, hold released', async () => {
         await seed({ req: true, held: true, den: false }); // PENDING_HELD
         const { activatedCount, releasedHoldCount } = await activateProgramEnrollment({
-            programId, personIds: [selfId], shopifyOrderId: 'order-oracle-1', hasProgramItem: true,
+            programId, personIds: [selfId], shopifyOrderId: 'order-oracle-1',
         });
         expect(activatedCount).toBe(1);
         expect(releasedHoldCount).toBe(1);
@@ -165,7 +165,7 @@ describe('enrollment state — validator oracle over real transitions', () => {
     it('T4 activate (payment) from PENDING_UNPAID → ACTIVE, no hold to release', async () => {
         await seed({ req: false, held: false, den: false }); // PENDING_UNPAID
         const { activatedCount, releasedHoldCount } = await activateProgramEnrollment({
-            programId, personIds: [selfId], shopifyOrderId: 'order-oracle-2', hasProgramItem: true,
+            programId, personIds: [selfId], shopifyOrderId: 'order-oracle-2',
         });
         expect(activatedCount).toBe(1);
         expect(releasedHoldCount).toBe(0);

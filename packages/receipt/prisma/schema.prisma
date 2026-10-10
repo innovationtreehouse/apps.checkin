@@ -1,0 +1,235 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  runtime      = "nodejs"
+  moduleFormat = "cjs"
+}
+
+// Brings the receipt schema under checkin's security regime (design #1265 §6):
+// the same generator emits a classifications map, merged in
+// checkin-app/src/security/core.ts. Paths are relative to this schema file.
+generator security {
+  provider = "node ../../checkin-app/scripts/security-generator.js"
+  output   = "../../../checkin-app/src/security/generated/receipt-classifications.ts"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model ReceiptOrgSettings {
+  /// @sensitivity:internal
+  orgId                       String  @id @map("org_id")
+  /// @sensitivity:internal
+  taxExempt                   Boolean @default(false) @map("tax_exempt")
+  /// @sensitivity:internal
+  requireFinanceReviewWithTax Boolean @default(true) @map("require_finance_review_with_tax")
+  /// @sensitivity:internal
+  enforceReceiptAgeLimit      Boolean @default(true) @map("enforce_receipt_age_limit")
+  /// @sensitivity:internal
+  receiptAgeLimitDays         Int     @default(90) @map("receipt_age_limit_days")
+
+  @@map("org_settings")
+}
+
+model Receipt {
+  /// @sensitivity:internal
+  id                 String   @id
+  /// @sensitivity:internal
+  orgId              String   @map("org_id")
+  // The uploader's checkin Person.id.
+  /// @sensitivity:internal
+  uploadedByUserId   Int      @map("uploaded_by_user_id")
+  /// @sensitivity:internal
+  uploadedAt         DateTime @default(now()) @map("uploaded_at")
+  /// @sensitivity:pii
+  fileBlob           Bytes    @map("file_blob")
+  /// @sensitivity:internal
+  fileHash           String   @map("file_hash")
+  /// @sensitivity:internal
+  mimeType           String   @map("mime_type")
+  /// @sensitivity:internal
+  needsReimbursement Boolean  @default(false) @map("needs_reimbursement")
+  // Display only; the reimbursee's identity is reimburseePersonId.
+  /// @sensitivity:pii
+  reimbursementFor   String?  @map("reimbursement_for")
+  // The checkin Person.id owed the reimbursement: always the uploader; null for backfill.
+  /// @sensitivity:internal
+  reimburseePersonId Int?     @map("reimbursee_person_id")
+  // upload | email | import
+  /// @sensitivity:internal
+  intakeSource       String   @default("upload") @map("intake_source")
+  /// @sensitivity:internal
+  isInKind           Boolean  @default(false) @map("is_in_kind")
+  /// @sensitivity:pii
+  donorFirstName     String?  @map("donor_first_name")
+  /// @sensitivity:pii
+  donorLastName      String?  @map("donor_last_name")
+  /// @sensitivity:pii
+  donorCompanyName   String?  @map("donor_company_name")
+  // X13 delivery: none (never in-kind) | pending | synced
+  /// @sensitivity:internal
+  donorSync          String   @default("none") @map("donor_sync")
+  // Stamped when the S1 push returns; null means not yet delivered.
+  /// @sensitivity:internal
+  pushedAt           DateTime? @map("pushed_at")
+
+  details   ReceiptDetail?
+  lineItems ReceiptLineItem[]
+  auditLogs ReceiptAuditLog[]
+
+  // NOT unique by design: a re-uploaded duplicate file must insert so the
+  // duplicate pathway can flag it for human review (Inventory BYDESIGN.md).
+  @@index([orgId, fileHash], name: "receipts_org_id_file_hash_idx")
+  @@index([orgId, uploadedByUserId])
+  @@map("receipts")
+}
+
+model ReceiptDetail {
+  /// @sensitivity:internal
+  id                         String    @id
+  /// @sensitivity:internal
+  orgId                      String    @map("org_id")
+  /// @sensitivity:internal
+  retailer                   String?
+  /// @sensitivity:internal
+  receiptNumber              String?   @map("receipt_number")
+  /// @sensitivity:internal
+  orderNumber                String?   @map("order_number")
+  /// @sensitivity:internal
+  receiptDate                String?   @map("receipt_date")
+  /// @sensitivity:internal
+  currency                   String    @default("USD")
+  /// @sensitivity:internal
+  shippingCents              Int       @default(0) @map("shipping_cents")
+  /// @sensitivity:internal
+  taxCents                   Int       @default(0) @map("tax_cents")
+  /// @sensitivity:internal
+  discountCents              Int       @default(0) @map("discount_cents")
+  /// @sensitivity:internal
+  receiptTotalCents          Int?      @map("receipt_total_cents")
+  /// @sensitivity:internal
+  state                      String    @default("uploaded")
+  /// @sensitivity:internal
+  ocrStartedAt               DateTime? @map("ocr_started_at")
+  /// @sensitivity:internal
+  duplicateFlaggedAt         DateTime? @map("duplicate_flagged_at")
+  /// @sensitivity:internal
+  duplicateFlagClearedAt     DateTime? @map("duplicate_flag_cleared_at")
+  /// @sensitivity:internal
+  duplicateSuspectReceiptId  String?   @map("duplicate_suspect_receipt_id")
+  /// @sensitivity:internal
+  duplicateSuspectIsRejected Boolean?  @map("duplicate_suspect_is_rejected")
+  /// @sensitivity:personal
+  validationNotes            String?   @map("validation_notes")
+  /// @sensitivity:internal
+  approvedAt                 DateTime? @map("approved_at")
+  /// @sensitivity:internal
+  reviewedAt                 DateTime? @map("reviewed_at")
+
+  // Backfill import: the pre-matched QuickBooks transaction + idempotency key (source unit).
+  /// @sensitivity:internal
+  qbTxnId        String? @map("qb_txn_id")
+  /// @sensitivity:internal
+  qbEntity       String? @map("qb_entity")
+  /// @sensitivity:internal
+  importSourceId String? @map("import_source_id")
+
+  receipt Receipt @relation(fields: [id], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, importSourceId], name: "receipt_details_org_import_source_unique")
+  @@index([orgId, state])
+  @@map("receipt_details")
+}
+
+model ReceiptLineItem {
+  /// @sensitivity:internal
+  id              Int     @id @default(autoincrement())
+  /// @sensitivity:internal
+  receiptId       String  @map("receipt_id")
+  /// @sensitivity:internal
+  lineNumber      Int     @map("line_number")
+  /// @sensitivity:internal
+  description     String
+  /// @sensitivity:internal
+  partNumber      String? @map("part_number")
+  /// @sensitivity:internal
+  manufacturer    String?
+  /// @sensitivity:internal
+  quantity        Float   @default(1)
+  /// @sensitivity:internal
+  unitPriceCents  Int     @map("unit_price_cents")
+  /// @sensitivity:internal
+  totalPriceCents Int     @map("total_price_cents")
+  /// @sensitivity:internal
+  isDelayed       Boolean @default(false) @map("is_delayed")
+
+  receipt   Receipt           @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  auditLogs ReceiptAuditLog[]
+
+  @@unique([receiptId, lineNumber], name: "receipt_line_items_receipt_id_line_number_unique")
+  @@map("receipt_line_items")
+}
+
+model ReceiptAuditLog {
+  /// @sensitivity:internal
+  id           Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  receiptId    String   @map("receipt_id")
+  // The acting Person.id; null for a system step (catch-up sweep).
+  /// @sensitivity:internal
+  userId       Int?     @map("user_id")
+  /// @sensitivity:pii
+  username     String?
+  /// @sensitivity:internal
+  changedAt    DateTime @default(now()) @map("changed_at")
+  /// @sensitivity:internal
+  action       String
+  /// @sensitivity:internal
+  fieldChanged String?  @map("field_changed")
+  /// @sensitivity:personal
+  valueBefore  String?  @map("value_before")
+  /// @sensitivity:personal
+  valueAfter   String?  @map("value_after")
+  /// @sensitivity:internal
+  lineItemId   Int?     @map("line_item_id")
+
+  receipt  Receipt          @relation(fields: [receiptId], references: [id])
+  lineItem ReceiptLineItem? @relation(fields: [lineItemId], references: [id])
+
+  @@index([receiptId])
+  @@map("receipt_audit_log")
+}
+
+// Gmail intake ledger (phase G). One row per message attachment, or per body when
+// the message has none. Inert until G binds the mailbox.
+model ReceiptMailItem {
+  /// @sensitivity:internal
+  id             Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId          String    @map("org_id")
+  /// @sensitivity:internal
+  gmailMessageId String    @map("gmail_message_id")
+  /// @sensitivity:internal
+  attachmentHash String    @map("attachment_hash")
+  /// @sensitivity:internal
+  receivedAt     DateTime  @map("received_at")
+  /// @sensitivity:pii
+  senderAddress  String    @map("sender_address")
+  // held | assigned | discarded
+  /// @sensitivity:internal
+  status         String    @default("held")
+  // Kept only while held; cleared once the item becomes a receipt or is discarded.
+  /// @sensitivity:pii
+  fileBlob       Bytes?    @map("file_blob")
+  /// @sensitivity:internal
+  mimeType       String?   @map("mime_type")
+  /// @sensitivity:internal
+  receiptId      String?   @map("receipt_id")
+  /// @sensitivity:internal
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@unique([gmailMessageId, attachmentHash])
+  @@index([orgId, status])
+  @@map("receipt_mail_items")
+}

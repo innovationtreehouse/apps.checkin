@@ -99,6 +99,7 @@ export const classifications = {
         certificationNote: 'internal',
         renewalReminderSentAt: 'internal',
         isPaymentPlanRequested: 'internal',
+        scholarshipRequestKind: 'internal',
         intakeNoteSnapshot: 'pii',
         noteAckById: 'internal',
         noteAckAt: 'internal',
@@ -143,6 +144,7 @@ export const classifications = {
         shopifyPriceSyncedAt: 'internal',
         shopifyReconcileCursorAt: 'internal',
         scholarshipDenialGraceDays: 'public',
+        releasedLibraries: 'public',
         updatedAt: 'internal',
     },
     AppSettings: {
@@ -243,12 +245,14 @@ export const classifications = {
         programId: 'public',
         personId: 'public',
         isCore: 'internal',
+        isTreasurer: 'internal',
     },
     ProgramParticipant: {
         programId: 'public',
         personId: 'public',
         status: 'public',
         isPaymentPlanRequested: 'personal',
+        scholarshipRequestKind: 'internal',
         pendingSince: 'personal',
         wasOrgMemberAtApproval: 'internal',
         inventoryHeldAt: 'internal',
@@ -277,6 +281,7 @@ export const classifications = {
     RawBadgeLog: {
         id: 'internal',
         personId: 'internal',
+        scannedValue: 'internal',
         timestamp: 'personal',
         location: 'personal',
         clientEventId: 'internal',
@@ -309,6 +314,14 @@ export const classifications = {
         forceCloseWarnedAt: 'internal',
         forceCloseToken: 'internal',
         supervisionWarnedAt: 'internal',
+        facilityCloseId: 'internal',
+    },
+    FacilityClose: {
+        id: 'internal',
+        closedAt: 'internal',
+        closedById: 'internal',
+        via: 'internal',
+        createdAt: 'internal',
     },
     AuditLog: {
         id: 'internal',
@@ -435,6 +448,17 @@ export const classifications = {
         sentAt: 'internal',
         error: 'internal',
     },
+    Org: {
+        id: 'public',
+        name: 'public',
+    },
+    BudgetOwner: {
+        id: 'internal',
+        name: 'internal',
+        programId: 'internal',
+        archivedAt: 'internal',
+        quickBooksClassId: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -461,6 +485,7 @@ export const relations = {
         presenceEvents: { model: 'PresenceEvent', isList: true },
         visits: { model: 'Visit', isList: true },
         eventsConfirmedBy: { model: 'Event', isList: true },
+        facilityCloses: { model: 'FacilityClose', isList: true },
         trustedAdultRecordsAsAdult: { model: 'TrustedAdult', isList: true },
         trustedAdultsDisclosed: { model: 'TrustedAdult', isList: true },
         trustedAdultReviewsDecided: { model: 'TrustedAdultReview', isList: true },
@@ -536,6 +561,7 @@ export const relations = {
         participants: { model: 'ProgramParticipant', isList: true },
         events: { model: 'Event', isList: true },
         instances: { model: 'ProgramInstance', isList: true },
+        budgetOwners: { model: 'BudgetOwner', isList: true },
     },
     ProgramInstance: {
         program: { model: 'Program', isList: false },
@@ -570,6 +596,11 @@ export const relations = {
     Visit: {
         person: { model: 'Person', isList: false },
         event: { model: 'Event', isList: false },
+        facilityClose: { model: 'FacilityClose', isList: false },
+    },
+    FacilityClose: {
+        closedBy: { model: 'Person', isList: false },
+        visits: { model: 'Visit', isList: true },
     },
     AuditLog: {
     },
@@ -605,6 +636,11 @@ export const relations = {
     },
     BulkSendItem: {
         bulkSend: { model: 'BulkSend', isList: false },
+    },
+    Org: {
+    },
+    BudgetOwner: {
+        program: { model: 'Program', isList: false },
     },
 } as const;
 

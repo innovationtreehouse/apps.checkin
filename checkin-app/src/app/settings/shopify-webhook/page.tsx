@@ -49,19 +49,18 @@ export default function ShopifyWebhookSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setFailed(false);
-    try {
-      const res = await fetch("/api/settings/shopify-webhook");
+  const load = useCallback(() => fetch("/api/settings/shopify-webhook")
+    .then(async (res) => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setStatus((await res.json()) as Status);
-    } catch {
+    })
+    .catch(() => {
       setFailed(true);
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) load();
@@ -123,7 +122,7 @@ export default function ShopifyWebhookSettingsPage() {
           <Card withBorder radius="md" padding="lg">
             <Group justify="space-between" mb="xs">
               <Title order={3}>Recent deliveries</Title>
-              <Button size="xs" variant="light" onClick={load} loading={loading}>
+              <Button size="xs" variant="light" onClick={() => { setLoading(true); setFailed(false); load(); }} loading={loading}>
                 Refresh
               </Button>
             </Group>

@@ -42,6 +42,14 @@ on:
       - 'packages/s-ingest-core/prisma/migrations/**'
       - '.github/workflows/migration-safety.yml'
 
+# pull_request runs share one group per ref, so a new push cancels the run it
+# supersedes. Every other event keys on run_id: a group of one, so main pushes,
+# merge_group entries and workflow_call validates are never queued behind or
+# replaced by each other (a group holds one running + one pending run).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   migrate-populated:
     name: Migrations apply to populated DB

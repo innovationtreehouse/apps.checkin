@@ -4,6 +4,7 @@ import { handler, badRequest, notFound, unauthorized } from "@/security/handler"
 import { parseVisitTime, departureAfterArrival, withinMaxDuration } from "@/lib/visitTimes";
 import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 // Staff insert-for-others at an arbitrary past time (design §3): the path for a
 // genuine unenrolled walk-in, which the event-roster mark (program-scoped, event
@@ -66,6 +67,9 @@ export const POST = handler('POST /api/facility/visits/insert', async ({ req, au
             },
         });
     });
+    // A closed keyholder visit can cover someone's arrival and clear their
+    // "no keyholder" mark on the live roster.
+    invalidateAttendanceCache();
 
     await prisma.auditLog.create({
         data: {

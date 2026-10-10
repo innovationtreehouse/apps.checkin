@@ -12,7 +12,6 @@ import { LIVE_VISIT } from "@/lib/visit/filters";
 import { visitSubject } from "@/lib/visit/scope";
 import { lockFacility } from "@/lib/facilityLock";
 import { appendPresenceEvent, PresenceClass } from "@/lib/presence/events";
-import { flushParkedClosed } from "@/lib/presence/project";
 
 // Self-service manual visit entry. INTENTIONAL by design: a member records a
 // visit for THEMSELVES, or — as a household lead — for a member of their own
@@ -167,15 +166,6 @@ export const POST = withAuth({}, async (req, auth) => {
             return apiError("Facility is closed. A Keyholder must check in first.", 403);
         }
         const { visit, freshCheckin } = result;
-
-        const subjectIsKeyholder = subjectId === userId ? auth.user.isKeyholder : subject.isKeyholder;
-        if (freshCheckin && subjectIsKeyholder) {
-            await prisma.$transaction(async (tx) => {
-                await tx.$executeRaw`SELECT pg_advisory_xact_lock(${Number(subjectId)})`;
-                // flushParkedClosed takes the facility lock itself (reentrant).
-                await flushParkedClosed(tx);
-            });
-        }
 
         // If a departure time was provided, we process the checkout logic directly
         // to handle any back-to-back event transitions.

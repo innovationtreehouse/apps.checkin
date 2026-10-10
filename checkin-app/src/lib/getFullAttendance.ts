@@ -1,9 +1,11 @@
 import prisma from "@/lib/prisma";
 import { isYouth } from "@/lib/time";
 import { LIVE_PERSON } from "@/lib/person/filters";
-import { PresenceClass } from "@/lib/presence/events";
+import { LIVE_VISIT } from "@/lib/visit/filters";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits } from "@/lib/supervision";
 import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
+import { invalidatableCache } from "@/lib/invalidatableCache";
+import { getKioskDisplayNames } from "@/lib/kiosk-names";
 
 /**
  * Current-attendance feed.
@@ -17,8 +19,9 @@ import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications
  *   emergency-contact modal on /attendance/current.
  *
  * - `{ kiosk: true }` (a signature-verified kiosk): a display-only roster —
- *   id, display name, nickname, isKeyholder, isYouth, arrival time and the
- *   program badge.
+ *   id, kiosk label, isKeyholder, isYouth, arrival time and the program badge.
+ *   The label is resolved here (getKioskDisplayNames: nickname, else first name,
+ *   a last initial only to tell two apart), so no last name reaches the device.
  *   The kiosk is an UNATTENDED device in a public room, and it forwards whatever
  *   it receives into an iframe with a wildcard postMessage origin
  *   (`client/client.py`), so no `personal`/`pii` field may reach it. It renders
@@ -29,39 +32,46 @@ import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications
  *
  * `counts`/`safety` are identical either way — they are aggregates.
  *
- * `held` is the PARKED_CLOSED backlog: non-keyholder scans accepted while the
- * facility is closed, captured as PresenceEvents but not yet projected into a
- * Visit ({@link flushParkedClosed} does that once a keyholder arrives). We show
- * them so the room reflects who has actually badged in — trust what we see — but
- * they stay OUT of `counts`/`safety`: held scans exist ONLY when no keyholder is
- * present, so the supervision math is already failing, and folding unsupervised
- * bodies into it would mask that rather than expose it. The held DTO carries only
- * id/name/time — no `personal`/`pii` field — so it is safe on the kiosk path
- * without a separate projection.
+ * `safety.facilityOpen` is the one answer to "is the building open": a keyholder
+ * is present. Never infer it from `counts.total` — a kiosk badge checks in with
+ * no keyholder present, so people can be inside a closed building. Each row's
+ * `noKeyholder` marks such a visit (see {@link visitHadNoKeyholder}).
  *
- * Per-process cache: a GET hits the DB only on a cold miss. Visit writes
- * (check-in / check-out / facility close) call `invalidateAttendanceCache`
- * so the next read refills. One ECS task; a scale-to-zero relaunch starts empty.
+ * Per-process cache (see {@link invalidatableCache}): a GET hits the DB on a cold
+ * miss, or after 60s while anyone is present. Writes that change the roster or a
+ * present person's fields call `invalidateAttendanceCache` after commit. One ECS
+ * task; a scale-to-zero relaunch starts empty.
  */
-type AttendancePayload = Awaited<ReturnType<typeof computeFullAttendance>>;
-let kioskCache: AttendancePayload | null = null;
-let fullCache: AttendancePayload | null = null;
+const occupied = (p: Awaited<ReturnType<typeof computeFullAttendance>>) => p.counts.total > 0;
+const kioskCache = invalidatableCache(() => computeFullAttendance(true), occupied);
+const fullCache = invalidatableCache(() => computeFullAttendance(false), occupied);
 
 export function invalidateAttendanceCache(): void {
-    kioskCache = null;
-    fullCache = null;
+    kioskCache.invalidate();
+    fullCache.invalidate();
     // Present-limited cert grid is occupancy; a check-in/out must refresh it too.
     invalidateKioskCertificationsCache();
 }
 
 export async function getFullAttendance(opts: { kiosk?: boolean } = {}) {
-    const kiosk = opts.kiosk === true;
-    if (kiosk) {
-        if (!kioskCache) kioskCache = await computeFullAttendance(true);
-        return kioskCache;
-    }
-    if (!fullCache) fullCache = await computeFullAttendance(false);
-    return fullCache;
+    return (opts.kiosk === true ? kioskCache : fullCache).get();
+}
+
+/** A keyholder arriving this soon after someone else still covers them. */
+export const NO_KEYHOLDER_GRACE_MS = 10 * 60_000;
+
+type Span = { arrivedAt: Date; departedAt: Date | null };
+
+/**
+ * A non-keyholder visit is "no keyholder" when no keyholder was in the building
+ * at any moment from its arrival to {@link NO_KEYHOLDER_GRACE_MS} after it.
+ * Derived from the visit record, so a keyholder visit added, edited or removed
+ * later re-decides the mark.
+ */
+export function visitHadNoKeyholder(arrivedAt: Date, keyholderVisits: Span[]): boolean {
+    const until = arrivedAt.getTime() + NO_KEYHOLDER_GRACE_MS;
+    return !keyholderVisits.some(k =>
+        k.arrivedAt.getTime() <= until && (k.departedAt === null || k.departedAt >= arrivedAt));
 }
 
 async function computeFullAttendance(kiosk: boolean) {
@@ -143,7 +153,23 @@ async function computeFullAttendance(kiosk: boolean) {
     // widening the select above, so both surfaces run one shared rule. Asked only
     // when a youth is unaccompanied — the only case the flag can be true — so an
     // adult-only room costs this poll no extra queries, as processCheckin does.
+    // Keyholder visits that could cover any present non-keyholder's arrival
+    // window. Asked only when a non-keyholder is present.
+    const otherArrivals = activeVisits.filter(v => !v.person.isKeyholder).map(v => v.arrivedAt.getTime());
+    const keyholderCover: Span[] = otherArrivals.length === 0 ? [] : await prisma.visit.findMany({
+        where: {
+            ...LIVE_VISIT,
+            person: { isKeyholder: true, ...LIVE_PERSON },
+            arrivedAt: { lte: new Date(Math.max(...otherArrivals) + NO_KEYHOLDER_GRACE_MS) },
+            OR: [{ departedAt: null }, { departedAt: { gte: new Date(Math.min(...otherArrivals)) } }],
+        },
+        select: { arrivedAt: true, departedAt: true },
+    });
+    const noKeyholder = (isKeyholder: boolean, arrivedAt: Date) =>
+        !isKeyholder && visitHadNoKeyholder(arrivedAt, keyholderCover);
+
     const safety = {
+        facilityOpen: keyholderVisits.length > 0,
         isLastKeyholder: keyholderVisits.length === 1,
         isTwoDeepViolation: unaccompaniedYouth.length > 0
             && supervisingAdultCount(await supervisingAdultVisits()) < MIN_SUPERVISING_ADULTS,
@@ -154,20 +180,21 @@ async function computeFullAttendance(kiosk: boolean) {
     // server-side, so `name` is always populated and the raw address never ships.
     // Strip the raw included `person` (carries email) out of the spread and re-emit
     // a sanitized DTO under the unchanged wire key `participant` (API contract).
+    const kioskLabels = kiosk ? getKioskDisplayNames(activeVisits.map(v => v.person)) : null;
     const attendance = activeVisits.map(({ person, ...v }) => {
         const displayName = person.name?.trim() || person.email?.split("@")[0] || null;
 
-        if (kiosk) {
+        if (kioskLabels) {
             // Display-only projection — see the header comment. The visit row itself
             // is rebuilt field by field rather than spread, so nothing new added to
             // Visit/Program later leaks onto the kiosk by default.
             return {
                 id: v.id,
                 arrivedAt: v.arrivedAt,
+                noKeyholder: noKeyholder(person.isKeyholder, v.arrivedAt),
                 participant: {
                     id: person.id,
-                    name: displayName,
-                    nickname: person.nickname,
+                    name: kioskLabels.get(person.id) || null,
                     isKeyholder: person.isKeyholder,
                     // The kiosk splits the board into keyholder/volunteer/youth
                     // columns. It gets the classification, not the birth date.
@@ -179,6 +206,7 @@ async function computeFullAttendance(kiosk: boolean) {
 
         return {
             ...v,
+            noKeyholder: noKeyholder(person.isKeyholder, v.arrivedAt),
             participant: {
                 id: person.id,
                 name: displayName,
@@ -193,31 +221,5 @@ async function computeFullAttendance(kiosk: boolean) {
         };
     });
 
-    // Held scans: badged IN while the facility was closed, awaiting a keyholder.
-    // Ordered as they occurred (the order the flush will project them). Only the
-    // display name resolves out — email is read for the same fallback the roster
-    // uses and never ships. nickname rides along so the kiosk shows the name the
-    // person goes by, same as the roster (#1813). LIVE_PERSON drops tombstones.
-    const heldEvents = await prisma.presenceEvent.findMany({
-        where: { classification: PresenceClass.PARKED_CLOSED, direction: "IN", person: LIVE_PERSON },
-        orderBy: { occurredAt: "asc" },
-        include: { person: { select: { name: true, nickname: true, email: true } } },
-    });
-    // Kiosk intent comes from present_ids (Visits only, client.py), so a second
-    // badge from the same person while still held (post-debounce re-scan) parks a
-    // second PARKED_CLOSED row for them. Ascending order means the first row seen
-    // per person is the earliest — keep that one and drop the rest, so the roster
-    // shows the person once until the flush resolves the duplicate.
-    const heldByPerson = new Map<number, (typeof heldEvents)[number]>();
-    for (const ev of heldEvents) {
-        if (!heldByPerson.has(ev.personId)) heldByPerson.set(ev.personId, ev);
-    }
-    const held = [...heldByPerson.values()].map((ev) => ({
-        id: ev.id,
-        occurredAt: ev.occurredAt,
-        name: ev.person.name?.trim() || ev.person.email?.split("@")[0] || null,
-        nickname: ev.person.nickname,
-    }));
-
-    return { attendance, held, counts, safety };
+    return { attendance, counts, safety };
 }

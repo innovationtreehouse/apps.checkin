@@ -5,9 +5,15 @@
  * back to the payout net — no special casing.
  */
 import type { DbClient } from "../ingest/rawLog.js";
+import type { EventSource } from "../generated/prisma/client.js";
 import type { NormalizedPayout, NormalizedBalanceTxn } from "../shopify/schemas.js";
 
-export async function projectPayout(db: DbClient, storeId: string, payout: NormalizedPayout): Promise<void> {
+export async function projectPayout(
+  db: DbClient,
+  storeId: string,
+  payout: NormalizedPayout,
+  source: EventSource,
+): Promise<void> {
   const fields = {
     storeId,
     legacyId: payout.legacyId ?? null,
@@ -23,6 +29,7 @@ export async function projectPayout(db: DbClient, storeId: string, payout: Norma
     adjustmentsFeeCents: payout.adjustmentsFeeCents,
     reservedFundsCents: payout.reservedFundsCents,
     retriedCents: payout.retriedCents,
+    source,
     lastSyncedAt: new Date(),
   };
   await db.shopPayout.upsert({
@@ -32,7 +39,12 @@ export async function projectPayout(db: DbClient, storeId: string, payout: Norma
   });
 }
 
-export async function projectBalanceTxn(db: DbClient, storeId: string, txn: NormalizedBalanceTxn): Promise<void> {
+export async function projectBalanceTxn(
+  db: DbClient,
+  storeId: string,
+  txn: NormalizedBalanceTxn,
+  source: EventSource,
+): Promise<void> {
   const fields = {
     storeId,
     payoutGid: txn.payoutGid ?? null,
@@ -44,6 +56,7 @@ export async function projectBalanceTxn(db: DbClient, storeId: string, txn: Norm
     currency: txn.currency ?? null,
     transactionDate: txn.transactionDate,
     sourceOrderTransactionId: txn.sourceOrderTransactionId ?? null,
+    source,
   };
   await db.shopBalanceTransaction.upsert({
     where: { storeId_txnGid: { storeId, txnGid: txn.txnGid } },

@@ -107,17 +107,17 @@ export default function HouseholdPage() {
   // so phone/email/name errors never flash while the user is still typing.
   const [contactErrors, setContactErrors] = useState<{ name?: string; phone?: string; email?: string }>({});
 
-  const fetchContacts = useCallback(async () => {
-    const res = await fetch('/api/household/emergency-contacts');
-    if (res.ok) {
-      const data = await res.json();
-      setContacts(data.contacts || []);
-    }
-  }, []);
+  const fetchContacts = useCallback(() => fetch('/api/household/emergency-contacts')
+    .then(async (res) => {
+      if (res.ok) {
+        const data = await res.json();
+        setContacts(data.contacts || []);
+      }
+    }),
+  []);
 
-  const fetchHousehold = useCallback(async () => {
-    try {
-      const res = await fetch('/api/household');
+  const fetchHousehold = useCallback(() => fetch('/api/household')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setHousehold(data.household);
@@ -128,12 +128,14 @@ export default function HouseholdPage() {
         setNotes(data.household?.intakeNotes ?? "");
         setInitialNotes(data.household?.intakeNotes ?? "");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading household.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) {

@@ -14,6 +14,7 @@ import { POST as CERTIFY } from '@/app/api/membership-ops/applications/certify-p
 import { GET as PAYMENT } from '@/app/api/membership/payment/route';
 import { ensurePaymentLink, ensurePaymentLinkForUser, activate } from '@/lib/membership/payment';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import { sendEmail } from '@/lib/email';
 
@@ -36,11 +37,11 @@ function asUser(id: number) {
     (getServerSession as jest.Mock).mockResolvedValue({ user: { id, isSysadmin: false, isBoardMember: false } });
 }
 function shopifyReq(payload: unknown, secret: string) {
-    const raw = JSON.stringify(payload);
+    const raw = JSON.stringify({ financial_status: 'paid', ...(payload as object) });
     const sig = crypto.createHmac('sha256', secret).update(raw, 'utf8').digest('base64');
     return new Request('http://localhost:4000/api/webhooks/shopify', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-shopify-hmac-sha256': sig },
+        headers: { 'content-type': 'application/json', 'x-shopify-topic': 'orders/paid', 'x-shopify-hmac-sha256': sig },
         body: raw,
     });
 }
@@ -53,7 +54,7 @@ describe('Membership payment API', () => {
     let gateProc: number, gateLeadId: number, gateNonLeadId: number;
     const prevWebhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET;
     const prevStoreDomain = process.env.SHOPIFY_STORE_DOMAIN;
-    let prevSettings: { standardMembershipFeeCents: number; volunteerMembershipFeeCents: number; orgMembershipVariantId: string | null; volunteerDiscountCode: string | null } | null = null;
+    let restoreBoardSettings: () => Promise<void>;
 
     async function makeProc(label: string, isVolunteer: boolean, withLead = false) {
         const hh = await prisma.household.create({ data: { name: `${label} ${TAG}` } });
@@ -85,8 +86,7 @@ describe('Membership payment API', () => {
     beforeAll(async () => {
         process.env.SHOPIFY_WEBHOOK_SECRET = WEBHOOK_SECRET;
         process.env.SHOPIFY_STORE_DOMAIN = STORE_DOMAIN;
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevSettings = existing ? { standardMembershipFeeCents: existing.standardMembershipFeeCents, volunteerMembershipFeeCents: existing.volunteerMembershipFeeCents, orgMembershipVariantId: existing.orgMembershipVariantId, volunteerDiscountCode: existing.volunteerDiscountCode } : null;
+        restoreBoardSettings = await snapshotBoardSettings();
         const settingsData = {
             standardMembershipFeeCents: 10000,
             volunteerMembershipFeeCents: 2500,
@@ -119,7 +119,7 @@ describe('Membership payment API', () => {
 
     afterAll(async () => {
         await wipe();
-        if (prevSettings) await prisma.boardSettings.update({ where: { id: 1 }, data: prevSettings });
+        await restoreBoardSettings();
         if (prevWebhookSecret === undefined) delete process.env.SHOPIFY_WEBHOOK_SECRET;
         else process.env.SHOPIFY_WEBHOOK_SECRET = prevWebhookSecret;
         if (prevStoreDomain === undefined) delete process.env.SHOPIFY_STORE_DOMAIN;
