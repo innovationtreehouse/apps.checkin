@@ -96,4 +96,19 @@ describe("ProfilePage", () => {
         expect(await screen.findByLabelText(/Full Name/)).toBeDisabled();
         expect(screen.queryByRole("button", { name: "Save Profile" })).not.toBeInTheDocument();
     });
+
+    it.each([
+        ["Board <board@example.org>", "This is the address you sign in with. To change it, email the board at board@example.org."],
+        [null, "This is the address you sign in with. To change it, contact the board."],
+    ])("locks the email with how-to-change help (reply-to %p)", async (boardReplyTo, help) => {
+        setSession({ id: 1 });
+        mockFetchJson({
+            "/api/profile": { profile: { name: "Jamie Adult", email: "jamie@example.com", phone: "555-1111", dateOfBirth: "1990-01-01" } },
+            "/api/household": { household: null, boardReplyTo },
+        });
+        renderWithProviders(<ProfilePage />);
+
+        expect(await screen.findByLabelText("Email Address")).toBeDisabled();
+        expect(await screen.findByText(help)).toBeInTheDocument();
+    });
 });

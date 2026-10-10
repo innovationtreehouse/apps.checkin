@@ -17,6 +17,7 @@ import { pickAddress, validateAddress, type StructuredAddress, type AddressField
 import { isValidPhone, formatPhone, PHONE_ERROR } from '@/lib/phone';
 import { isValidEmail } from '@/lib/emergencyContacts/identity';
 import { useUnsavedGuard, shallowEqual } from '@/components/UnsavedChangesProvider';
+import { signInEmailHelp } from '@/lib/person/signInEmail';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 const blankAddress: StructuredAddress = { line1: "", line2: "", city: "", state: "", postalCode: "" };
@@ -46,7 +47,7 @@ function ageBadge(p: HouseholdMember): { label: string; color: string; variant: 
   return { label: 'Age Unavailable', color: 'red', variant: 'filled' };
 }
 
-type HouseholdMember = { id: number; name?: string; nickname?: string | null; email?: string; dateOfBirth?: string; phone?: string; isDeclaredAdult?: boolean; allergies?: string | null; isHouseholdLead?: boolean };
+type HouseholdMember = { id: number; name?: string; nickname?: string | null; email?: string; dateOfBirth?: string; phone?: string; isDeclaredAdult?: boolean; allergies?: string | null; isHouseholdLead?: boolean; hasSignIn?: boolean };
 type EmergencyContact = { id: number; name: string; phone: string; email?: string | null; relationship?: string | null; priority: number; invalid: boolean };
 type HouseholdData = {
   id?: number;
@@ -63,6 +64,7 @@ export default function HouseholdPage() {
 
   const [loading, setLoading] = useState(true);
   const [household, setHousehold] = useState<HouseholdData>(null);
+  const [boardReplyTo, setBoardReplyTo] = useState<string | null>(null);
   // Open renewal for this household (lead-only, from /api/membership/renewal-status).
   // Drives the "Renew now" copy for a still-ACTIVE member whose renewal has opened.
   const [renewalDue, setRenewalDue] = useState(false);
@@ -121,6 +123,7 @@ export default function HouseholdPage() {
       if (res.ok) {
         const data = await res.json();
         setHousehold(data.household);
+        setBoardReplyTo(data.boardReplyTo ?? null);
         const a = pickAddress(data.household);
         const loaded = { line1: a.line1 ?? "", line2: a.line2 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "" };
         setAddress(loaded);
@@ -276,7 +279,7 @@ export default function HouseholdPage() {
     }
   };
 
-  const handleEditHouseholdMember = async (e: React.FormEvent, participantId: number) => {
+  const handleEditHouseholdMember = async (e: React.FormEvent, participantId: number, emailLocked: boolean) => {
     e.preventDefault();
     setMessage(null);
     const errs = validateHouseholdMemberFields(editForm);
@@ -286,7 +289,7 @@ export default function HouseholdPage() {
       const res = await fetch('/api/household/member', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ participantId, name: editForm.name, nickname: editForm.nickname, email: editForm.email, dob: editForm.over25 ? "" : editForm.dob, phone: editForm.phone, isLead: editForm.isLead, over25: editForm.over25, allergies: editForm.allergies })
+        body: JSON.stringify({ participantId, name: editForm.name, nickname: editForm.nickname, email: emailLocked ? undefined : editForm.email, dob: editForm.over25 ? "" : editForm.dob, phone: editForm.phone, isLead: editForm.isLead, over25: editForm.over25, allergies: editForm.allergies })
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -414,11 +417,11 @@ export default function HouseholdPage() {
                   return (
                     <Card key={p.id} withBorder radius="md" padding="md" bg={leadMissingPhone ? 'var(--mantine-color-red-light)' : undefined}>
                       {editingHouseholdMemberId === p.id ? (
-                        <form onSubmit={(e) => handleEditHouseholdMember(e, p.id)}>
+                        <form onSubmit={(e) => handleEditHouseholdMember(e, p.id, !!p.hasSignIn)}>
                           <Stack gap="xs">
                             <TextInput size="xs" label="Name" description="Printed on name badges exactly as typed — please double-check the spelling." value={editForm.name} error={editErrors.name} onChange={(e) => { setEditForm({ ...editForm, name: e.currentTarget.value }); setEditErrors({ ...editErrors, name: undefined }); }} />
                             <TextInput size="xs" label="Nickname (optional)" description="Printed on the name badge in place of the first name." value={editForm.nickname} onChange={(e) => setEditForm({ ...editForm, nickname: e.currentTarget.value })} />
-                            <TextInput size="xs" inputMode="email" label="Email" value={editForm.email} error={editErrors.email} onChange={(e) => { setEditForm({ ...editForm, email: e.currentTarget.value }); setEditErrors({ ...editErrors, email: undefined }); }} />
+                            <TextInput size="xs" inputMode="email" label="Email" value={editForm.email} disabled={p.hasSignIn} description={p.hasSignIn ? signInEmailHelp(boardReplyTo) : undefined} error={editErrors.email} onChange={(e) => { setEditForm({ ...editForm, email: e.currentTarget.value }); setEditErrors({ ...editErrors, email: undefined }); }} />
                             <Checkbox size="xs" label="Individual is over 25" checked={editForm.over25} onChange={(e) => { setEditForm({ ...editForm, over25: e.currentTarget.checked, dob: e.currentTarget.checked ? "" : editForm.dob }); setEditErrors({ ...editErrors, dob: undefined }); }} />
                             {!editForm.over25 && (
                               <TextInput size="xs" type="date" label="Date of Birth" value={editForm.dob} error={editErrors.dob} onChange={(e) => { setEditForm({ ...editForm, dob: e.currentTarget.value }); setEditErrors({ ...editErrors, dob: undefined }); }} />

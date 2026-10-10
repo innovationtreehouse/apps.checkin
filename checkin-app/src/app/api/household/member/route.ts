@@ -11,6 +11,8 @@ import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { getEmailSenderIdentity } from "@/lib/emailIdentity";
+import { signInEmailHelp } from "@/lib/person/signInEmail";
 
 export const PATCH = withAuth(
     {},
@@ -52,9 +54,18 @@ export const PATCH = withAuth(
                 return apiError("Only household leads can edit household members", 403);
             }
 
-            const targetHouseholdMember = await prisma.person.findUnique({ where: { id: participantId } });
+            const targetHouseholdMember = await prisma.person.findUnique({
+                where: { id: participantId },
+                include: { _count: { select: { accounts: true } } },
+            });
             if (!targetHouseholdMember || targetHouseholdMember.householdId !== householdId) {
                 return apiError("That household member was not found", 404);
+            }
+
+            // A linked sign-in's email is its sign-in address; only the board changes it.
+            if (email !== undefined && targetHouseholdMember._count.accounts > 0) {
+                const { replyTo } = await getEmailSenderIdentity();
+                return apiError(signInEmailHelp(replyTo?.[0]), 400);
             }
 
             const { updatedHouseholdMember, leadRejection, warning } = await prisma.$transaction(async (tx) => {
