@@ -6,6 +6,7 @@ import { getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf, callerId } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { checkApprovalAutoTransition, checkOwnershipAutoTransition, isOrgLevelBucket } from "../lib/financial-flow";
+import { lockExpense, voidSignoffs } from "../lib/signoff-facts";
 import { createExpenseRepository } from "../repositories/expense";
 import { createPartOwnerRepository } from "../repositories/partOwner";
 import { ServiceError } from "./serviceError";
@@ -23,6 +24,14 @@ export async function isBucketApprover(principal: ExpensePrincipal, bucketId: nu
   const { approvers } = await getExpenseRuntime().signoff.bucketApprovers(bucketId);
   return approvers.includes(callerId(principal));
 }
+
+/** A bucket a line may be assigned to: one the host lists, not archived. */
+async function requireLiveBucket(ownerId: number): Promise<void> {
+  const bucket = (await getExpenseRuntime().budgetOwners.list()).find((b) => b.id === ownerId);
+  if (!bucket || bucket.archivedAt) throw new ServiceError(400, "Unknown or archived budget bucket");
+}
+
+const BUCKET_CHANGED = "the line's budget bucket changed";
 
 async function loadApproval(expenseId: string, approvalId: number, expectedState?: string) {
   const expense = await expenseRepo.findExpenseById(expenseId, await getOrgId());
@@ -131,14 +140,17 @@ export async function financeAssign(
 ): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
+  await requireLiveBucket(ownerId);
   const { approval } = await loadApproval(expenseId, approvalId, "owner_approval");
   requireStatus(approval, "exception_raised");
 
   await db.$transaction(async (tx) => {
+    await lockExpense(tx, expenseId);
     await tx.lineItemOwnerApproval.update({
       where: { id: approvalId },
       data: { ownerId, status: "finance_assigned", decidedAt: new Date(), decidedByUserId: actor.userId },
     });
+    if (approval.ownerId !== ownerId) await voidSignoffs(tx, actor, expenseId, [approval.lineItemId], BUCKET_CHANGED);
     await writeAudit(tx, actor, {
       expenseId,
       action: "finance_assigned_exception",
@@ -164,6 +176,7 @@ export async function assignOwner(
 ): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
+  await requireLiveBucket(ownerId);
   const { expense, approval } = await loadApproval(expenseId, approvalId, "assign_ownership");
   if (approval.ownerId !== null && approval.status !== "pending") {
     throw new ServiceError(400, "This item already has an owner assigned");
@@ -183,7 +196,10 @@ export async function assignOwner(
   const assigned = { ownerId, status, decidedAt: now, decidedByUserId: actor.userId };
 
   await db.$transaction(async (tx) => {
+    // Sorted, so two assignments touching the same expenses lock them in the same order.
+    for (const id of [...new Set([expenseId, ...siblings.map((s) => s.expenseId)])].sort()) await lockExpense(tx, id);
     await tx.lineItemOwnerApproval.update({ where: { id: approvalId }, data: assigned });
+    if (approval.ownerId !== ownerId) await voidSignoffs(tx, actor, expenseId, [approval.lineItemId], BUCKET_CHANGED);
     await writeAudit(tx, actor, {
       expenseId,
       action: permanent ? "owner_assigned_permanent" : "owner_assigned_one_time",
@@ -194,6 +210,7 @@ export async function assignOwner(
 
     for (const s of [...sameExpense.map((a) => ({ ...a, expenseId })), ...siblings]) {
       await tx.lineItemOwnerApproval.update({ where: { id: s.approvalId }, data: assigned });
+      await voidSignoffs(tx, actor, s.expenseId, [s.lineItemId], BUCKET_CHANGED);
       await writeAudit(tx, actor, {
         expenseId: s.expenseId,
         action: "owner_auto_assigned_permanent",
@@ -219,11 +236,14 @@ export async function resolveUnknown(
 ): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
+  await requireLiveBucket(ownerId);
   const { approval } = await loadApproval(expenseId, approvalId);
   requireStatus(approval, "unknown");
 
   const status = (await isOrgLevelBucket(ownerId)) ? "approved" : "pending";
   await db.$transaction(async (tx) => {
+    await lockExpense(tx, expenseId);
+    if (approval.ownerId !== ownerId) await voidSignoffs(tx, actor, expenseId, [approval.lineItemId], BUCKET_CHANGED);
     await tx.lineItemOwnerApproval.update({
       where: { id: approvalId },
       data: { ownerId, status, decidedAt: new Date(), decidedByUserId: actor.userId },

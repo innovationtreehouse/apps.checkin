@@ -1,9 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { db } from "../../db";
 import { configureExpense } from "../../runtime";
-import type { ExpensePrincipal, SignoffDirectory } from "../../contract";
+import type { ExpensePrincipal, OwnerDirectory, SignoffDirectory } from "../../contract";
 
 export const ORG = "org-1";
+
+/** Live buckets 7, 100, 101 and 200, and archived bucket 999: the buckets tests assign lines to. */
+export const TEST_BUCKETS: OwnerDirectory = {
+  list: async () => [
+    ...[7, 100, 101, 200].map((id) => ({ id, name: `bucket-${id}`, archivedAt: null })),
+    { id: 999, name: "bucket-999", archivedAt: new Date("2026-01-01") },
+  ],
+};
 
 export async function seedOrgSettings(opts?: {
   orgId?: string;
@@ -160,7 +168,7 @@ export function principal(id: number, roles: { isFinance?: boolean; isBoard?: bo
 
 /** Rebinds the runtime with test ports (org stays ORG). */
 export function bindPorts(ports: Omit<Parameters<typeof configureExpense>[0], "org">): void {
-  configureExpense({ org: async () => ({ id: ORG, name: "Org One" }), ...ports });
+  configureExpense({ org: async () => ({ id: ORG, name: "Org One" }), budgetOwners: TEST_BUCKETS, ...ports });
 }
 
 /** A directory from plain lists; bucket 100+ is program-level with the given approvers; each `households` entry is one household. */

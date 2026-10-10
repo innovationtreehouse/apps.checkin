@@ -215,10 +215,11 @@ describe("expense — FINANCE journey", () => {
     const f = await loginAs(FINANCE);
     const stamp = Date.now();
 
-    // Settings: one threshold changes; the response carries the new value.
-    const settings = await send(f, "PUT", "/api/expense/org-settings", { boardReviewTotalCents: 250_000 });
+    // Settings: FINANCE tightens a threshold; loosening it past the policy value is the Board's.
+    expect((await send(f, "PUT", "/api/expense/org-settings", { boardReviewTotalCents: 250_000 })).status).toBe(403);
+    const settings = await send(f, "PUT", "/api/expense/org-settings", { boardReviewTotalCents: 150_000 });
     expect(settings.status).toBe(200);
-    expect(settings.json).toMatchObject({ boardReviewTotalCents: 250_000, noteInLieuLimitCents: 5_000 });
+    expect(settings.json).toMatchObject({ boardReviewTotalCents: 150_000, noteInLieuLimitCents: 5_000 });
     expect((await send(f, "PUT", "/api/expense/org-settings", { boardReviewTotalCents: -1 })).status).toBe(400);
 
     // QuickBooks accounts and an account-mapping rule: create, edit, delete.
