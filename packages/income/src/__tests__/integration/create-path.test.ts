@@ -33,6 +33,8 @@ class FakeQbo {
   deposits: QboDeposit[] = [];
   posts: { key: string; body: PostedDeposit }[] = [];
   mode: "ok" | "reject" | "accept-then-drop" = "ok";
+  /** Keys whose create is refused while every other create succeeds. */
+  rejectKeys = new Set<string>();
   private nextId = 1000;
 
   handle = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -46,7 +48,7 @@ class FakeQbo {
     }
     const body = JSON.parse(String(init?.body)) as PostedDeposit;
     this.posts.push({ key: url.searchParams.get("requestid") ?? "", body });
-    if (this.mode === "reject") return json({ Fault: { Error: [{ code: "6000" }] } }, 400);
+    if (this.mode === "reject" || this.rejectKeys.has(url.searchParams.get("requestid") ?? "")) return json({ Fault: { Error: [{ code: "6000" }] } }, 400);
     const Id = String(this.nextId++);
     const cents = body.Line.reduce((s, l) => s + Math.round(l.Amount * 100), 0);
     this.deposits.push({ Id, TxnDate: body.TxnDate, TotalAmt: cents / 100, DepositToAccountRef: body.DepositToAccountRef, PrivateNote: body.PrivateNote });
@@ -397,8 +399,11 @@ describeDb("drainIncomeOutbox — replay after a crash", () => {
     const p3 = payout(3, "2026-06-28", 500);
 
     await drain();
-    expect((await rowFor(p3)).depositId).not.toBe(qbo.deposits.find((d) => appKeyOf(d) === qbKey("income", p2))?.Id);
-    expect(await rowFor(p3)).toMatchObject({ status: "POSTED", origin: "created" });
+    // Created here today; parked as ambiguous for finance once the key-marker fix (#1975) lands.
+    const row = await rowFor(p3);
+    expect(row.depositId).not.toBe(qbo.deposits.find((d) => appKeyOf(d) === qbKey("income", p2))?.Id);
+    expect(row.origin).not.toBe("matched");
+    expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.matched" } })).toBe(1);
   });
 });
 
@@ -520,10 +525,37 @@ describeDb("drainIncomeOutbox — mirror reverts and binding", () => {
     const row = await rowFor(p);
     qbo.mode = "ok";
 
-    expect(await reconciliationService.resolve(ORG_A, row.id, { action: "retry" }, { userId: 9 })).toMatchObject({
+    expect(await reconciliationService.resolve(ORG_A, row.id, { action: "retry" }, { userId: 9, username: "fin" })).toMatchObject({
       status: "POSTED", origin: "created",
     });
     expect(qbo.posts).toHaveLength(2);
+    expect(await db.incomeAuditLog.findFirstOrThrow({ where: { action: "reconciliation.posted" } })).toMatchObject({
+      actorUserId: 9, actorUsername: "fin",
+    });
+  });
+
+  it("one payout failing mid-batch leaves the others posted", async () => {
+    payout(2, "2026-06-26", 500);
+    const bad = payout(3, "2026-06-27", 400);
+    payout(4, "2026-06-28", 300);
+    qbo.rejectKeys.add(qbKey("income", bad));
+
+    expect(await drain()).toMatchObject({ post: { posted: 2, failed: 1, capped: null } });
+    expect(await rowFor(gid(2))).toMatchObject({ status: "POSTED" });
+    expect(await rowFor(bad)).toMatchObject({ status: "OPEN", kind: "POST_FAILED" });
+    expect(await rowFor(gid(4))).toMatchObject({ status: "POSTED" });
+  });
+
+  it("a payout on or before the line never counts against the caps", async () => {
+    handBooked(5, "2026-06-27", 444);
+    await updateIncomeSettings(ORG_A, { maxCreateCentsPerRun: 1000 }, { userId: 9, isFinance: true, isBoard: false });
+    const old = payout(2, "2026-06-26", 5000);
+    const fresh = payout(3, "2026-06-28", 400);
+
+    expect(await drain()).toMatchObject({ post: { posted: 1, over_cap: 0, capped: null } });
+    expect(await rowFor(old)).toMatchObject({ status: "WAITING" });
+    expect(await rowFor(fresh)).toMatchObject({ status: "POSTED" });
+    expect(alerts).toHaveLength(0);
   });
 });
 

@@ -114,6 +114,7 @@ export async function postPayout(
   id: number,
   line: string | null,
   wait: boolean,
+  actor: { userId: number | null; username?: string; correlationId?: string } = { userId: null },
 ): Promise<{ outcome: PostOutcome; row: PayoutReconciliation } | null> {
   const { mirror, posting } = getIncomeConfig();
   if (!mirror || !posting?.mirrorNewestWins) throw new Error("income posting is not enabled");
@@ -161,7 +162,7 @@ export async function postPayout(
 
       const settle = async (outcome: PostOutcome, action: string, data: Partial<PayoutReconciliation>, reason?: string) => {
         const saved = await tx.payoutReconciliation.update({ where: { id }, data });
-        await audit(tx, orgId, action, current, saved, { userId: null, reason });
+        await audit(tx, orgId, action, current, saved, { ...actor, reason });
         return { outcome, row: saved };
       };
       const holding = async (depositId: string, origin: string) => {
@@ -257,17 +258,19 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
 
   for (const [i, r] of due.entries()) {
     const cents = Math.abs(r.payoutNetCents);
-    const afterLine = line !== null && r.payoutDate > line;
-    if (afterLine && cents > caps.maxCreateCentsPerRun) {
-      if (!(await parkOverCap(orgId, r.id, caps.maxCreateCentsPerRun))) return { reconcile, post: "busy" };
-      post.over_cap++;
-      await alert("cents", 1);
-      continue;
-    }
-    if (post.posted >= caps.maxCreatesPerRun || createdCents + cents > caps.maxCreateCentsPerRun) {
-      post.capped = post.posted >= caps.maxCreatesPerRun ? "count" : "cents";
-      await alert(post.capped, due.length - i);
-      break;
+    // Only a payout after the line can be created, so only it is held to the caps.
+    if (line !== null && r.payoutDate > line) {
+      if (cents > caps.maxCreateCentsPerRun) {
+        if (!(await parkOverCap(orgId, r.id, caps.maxCreateCentsPerRun))) return { reconcile, post: "busy" };
+        post.over_cap++;
+        await alert("cents", 1);
+        continue;
+      }
+      if (post.posted >= caps.maxCreatesPerRun || createdCents + cents > caps.maxCreateCentsPerRun) {
+        post.capped = post.posted >= caps.maxCreatesPerRun ? "count" : "cents";
+        await alert(post.capped, due.length - i);
+        break;
+      }
     }
     const turn = await postPayout(orgId, r.id, line, false);
     if (!turn) return { reconcile, post: "busy" };
