@@ -80,8 +80,8 @@ describe("flow: web checkout by the last recorded keyholder", () => {
 
     it("1. a keyholder alone checks out and closes, with no warning", async () => {
         await checkIn(keyholder.personaId);
-
-        const res = await api<{ facilityClosed: boolean }>(keyholder, "/api/scan", { method: "POST", body: JSON.stringify({ participantId: keyholder.personaId }) });
+        // The dashboard sign-out, not a scan: a scan here would debounce test 2's scan.
+        const res = await signOut(keyholder, (await visitOf(keyholder.personaId))!.id);
 
         expect(res.status).toBe(200);
         expect(res.json.facilityClosed).toBe(true);
