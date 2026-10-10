@@ -21,16 +21,24 @@ export const QbLineItemSchema = z.object({
   account: z.string(),
 });
 
-export const QbExpenseEventSchema = z.object({
-  schemaVersion: z.literal(1),
-  id: z.string(),
-  vendorName: z.string().nullable(),
-  receiptDate: z.string().nullable(),
-  receiptTotalCents: z.number().int().nonnegative(),
-  orgId: z.string(),
-  needsReimbursement: z.boolean(),
-  reimbursementFor: z.string().nullable(),
-  items: z.array(QbLineItemSchema),
-});
+export const QbExpenseEventSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    id: z.string(),
+    vendorName: z.string().nullable(),
+    receiptDate: z.string().nullable(),
+    receiptTotalCents: z.number().int().nonnegative(),
+    orgId: z.string(),
+    needsReimbursement: z.boolean(),
+    /** Display text from the receipt; never names the payee. */
+    reimbursementFor: z.string().nullable(),
+    /** The checkin Person the conflict checks and sign-offs were run against: the payee. */
+    reimburseePersonId: z.number().int().positive().nullable(),
+    items: z.array(QbLineItemSchema),
+  })
+  .refine((e) => !e.needsReimbursement || e.reimburseePersonId !== null, {
+    message: "a reimbursement event must name its reimburseePersonId",
+    path: ["reimburseePersonId"],
+  });
 
 export type QbExpenseEvent = z.infer<typeof QbExpenseEventSchema>;

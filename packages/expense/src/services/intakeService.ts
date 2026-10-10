@@ -2,7 +2,7 @@
 // receiptId — the "already applied" check lives here, so the in-process caller gets it.
 import { CompletedReceiptSchema, type CompletedReceipt } from "@inventory/receipt-types";
 import { db, isUniqueConstraintError } from "../db";
-import { assertOrg, getExpenseRuntime, getOrg } from "../runtime";
+import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { logError } from "../lib/logger";
 import type { ExpenseIntake } from "../contract";
 import { initFinancialFlow, checkApprovalAutoTransition } from "../lib/financial-flow";
@@ -17,7 +17,7 @@ export async function receiveCompletedReceipt(
   raw: unknown,
 ): Promise<{ receiptId: string; status: "created" | "already_applied" }> {
   const receipt = CompletedReceiptSchema.parse(raw);
-  assertOrg(receipt.orgId);
+  await assertOrg(receipt.orgId);
   const { receiptId } = receipt;
 
   const existingPayload = await db.receivedExpensePayload.findFirst({ where: { receiptId }, select: { status: true } });
@@ -51,7 +51,7 @@ export async function receiveCompletedReceipt(
 /** Catch-up sweep: re-runs payloads left received or failed. Capped; counts only. */
 export async function replayReceivedPayloads(limit = 50): Promise<{ applied: number; failed: number }> {
   const rows = await db.receivedExpensePayload.findMany({
-    where: { orgId: getOrg().id, status: { in: ["received", "failed"] } },
+    where: { orgId: await getOrgId(), status: { in: ["received", "failed"] } },
     orderBy: { receivedAt: "asc" },
     take: limit,
     select: { payloadJson: true },

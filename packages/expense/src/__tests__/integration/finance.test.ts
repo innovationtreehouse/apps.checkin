@@ -180,11 +180,12 @@ describeDb("sign-off seats", () => {
       expect(await events(id)).toBe(1);
     });
 
-    it("setting the reimbursee drains an expense whose seats were already filled", async () => {
+    it("setting the reimbursee voids seats signed before it, so they are signed again for the payee", async () => {
       const { id, li } = await unknownReimbursee();
       await signAll(id, li);
       await setReimbursee(ORG, id, 7, FINANCE);
-      expect(await events(id)).toBe(1);
+      expect(await events(id)).toBe(0);
+      expect((await signoffStatus(id))[0].missing).toEqual(["PROGRAM_APPROVER", "TREASURER"]);
     });
 
     it("only FINANCE sets the reimbursee, never to themself or their own household", async () => {

@@ -98,6 +98,7 @@ export const PAGES: PageEntry[] = [
   // payload (leadsAnyProgram), matching the nav gate. Distinct from the attendee
   // "My Programs" tab above.
   { href: '/my-programs/attendance', label: 'My Programs (as Volunteer)', section: 'Personal', keywords: 'lead mentor program volunteer attendance', visible: LEADS_PROGRAM },
+  { href: '/my-programs/expense-approvals', label: 'Expense approvals', section: 'Personal', keywords: 'budget bucket sign-off approve expense reimbursement', visible: released('expense', LEADS_PROGRAM) },
   { href: '/my-programs/conflicts', label: 'Attendance Conflicts', section: 'Personal', keywords: 'lead mentor duplicate overlapping visit attendance', visible: LEADS_PROGRAM },
   // Stays visible to all members: also the Join/renewal entry for new applicants
   // who aren't a household lead yet (gating it on lead would break joining).
@@ -199,6 +200,14 @@ export const PAGES: PageEntry[] = [
 
   // Expense Ops — FINANCE or BOARD
   { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: FINANCE_OR_BOARD },
+  { href: '/expense/expenses', label: 'Expenses', section: 'Expense Ops', keywords: 'receipt reimbursement approval sign-off queue', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/holds', label: 'Account Holds', section: 'Expense Ops', keywords: 'no match quickbooks account resubmit', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/flags', label: 'Expense Flags', section: 'Expense Ops', keywords: 'checkoff threshold tax conflict', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/account-mapping', label: 'Account Mapping', section: 'Expense Ops', keywords: 'quickbooks rule category', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/qb-accounts', label: 'QuickBooks Accounts', section: 'Expense Ops', keywords: 'qb account list', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/ownership-map', label: 'Ownership Map', section: 'Expense Ops', keywords: 'budget owner bucket part', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/capital-seed', label: 'Capital Seed', section: 'Expense Ops', keywords: 'itfa capital register asset', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/settings', label: 'Expense Settings', section: 'Expense Ops', keywords: 'threshold capital board review note in lieu', visible: released('expense', FINANCE_OR_BOARD) },
 
   // System Status — board
   { href: '/system-status', label: 'System Status', section: 'System Status', visible: BOARD },
@@ -227,6 +236,7 @@ export const REGISTRY_EXCLUDED: string[] = [
   '/settings',               // redirects to /settings/membership
   '/attendance',             // redirects to /attendance/current
   '/my-programs',            // redirects to /my-programs/attendance
+  '/expense',                // redirects to /expense/expenses
   '/dev',                    // dev-tools hub, redirects to /dev/sent-mail
   '/dev/sent-mail',          // dev-only captured-email inbox (EMAIL_DEV_MOCK.md); 404s off dev
   '/dev/zoho-sign',          // dev-only Zoho Sign mock interstitial (404 in prod)
