@@ -68,6 +68,23 @@ const sortValue = (v: Visit, key: SortKey): string | number => {
   }
 };
 
+type SortState = { key: SortKey; dir: 'asc' | 'desc' };
+
+const SortableTh = ({ k, label, sort, onSort }: { k: SortKey; label: string; sort: SortState; onSort: (key: SortKey) => void }) => {
+  const active = sort.key === k;
+  const Icon = !active ? IconSelector : sort.dir === 'asc' ? IconChevronUp : IconChevronDown;
+  return (
+    <Table.Th>
+      <UnstyledButton onClick={() => onSort(k)} style={{ font: 'inherit' }}>
+        <Group gap={4} wrap="nowrap">
+          <span>{label}</span>
+          <Icon size={14} stroke={1.5} />
+        </Group>
+      </UnstyledButton>
+    </Table.Th>
+  );
+};
+
 export default function AdminVisitsPage() {
   const { formatDateTime } = useOrgTime();
   const { ready, loading: authLoading } = useRequireRole(FACILITY_RECORD_ROLES);
@@ -91,7 +108,7 @@ export default function AdminVisitsPage() {
   const [addError, setAddError] = useState('');
   const [adding, setAdding] = useState(false);
 
-  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'arrivedAt', dir: 'desc' });
+  const [sort, setSort] = useState<SortState>({ key: 'arrivedAt', dir: 'desc' });
   const [searchTerm, setSearchTerm] = useState('');
   const [confirmEditOpened, { open: openConfirmEdit, close: closeConfirmEdit }] = useDisclosure(false);
   const [pendingEditVisit, setPendingEditVisit] = useState<Visit | null>(null);
@@ -117,21 +134,6 @@ export default function AdminVisitsPage() {
 
   const toggleSort = (key: SortKey) =>
     setSort((s) => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
-
-  const SortableTh = ({ k, label }: { k: SortKey; label: string }) => {
-    const active = sort.key === k;
-    const Icon = !active ? IconSelector : sort.dir === 'asc' ? IconChevronUp : IconChevronDown;
-    return (
-      <Table.Th>
-        <UnstyledButton onClick={() => toggleSort(k)} style={{ font: 'inherit' }}>
-          <Group gap={4} wrap="nowrap">
-            <span>{label}</span>
-            <Icon size={14} stroke={1.5} />
-          </Group>
-        </UnstyledButton>
-      </Table.Th>
-    );
-  };
 
   const fetchVisits = useCallback(async () => {
     try {
@@ -309,11 +311,11 @@ export default function AdminVisitsPage() {
         <Table verticalSpacing="sm" highlightOnHover>
           <Table.Thead>
             <Table.Tr>
-              <SortableTh k="id" label="ID" />
-              <SortableTh k="participant" label="Participant" />
-              <SortableTh k="event" label="Event" />
-              <SortableTh k="arrivedAt" label="Arrived" />
-              <SortableTh k="departedAt" label="Departed" />
+              <SortableTh sort={sort} onSort={toggleSort} k="id" label="ID" />
+              <SortableTh sort={sort} onSort={toggleSort} k="participant" label="Participant" />
+              <SortableTh sort={sort} onSort={toggleSort} k="event" label="Event" />
+              <SortableTh sort={sort} onSort={toggleSort} k="arrivedAt" label="Arrived" />
+              <SortableTh sort={sort} onSort={toggleSort} k="departedAt" label="Departed" />
               <Table.Th>Actions</Table.Th>
             </Table.Tr>
           </Table.Thead>
