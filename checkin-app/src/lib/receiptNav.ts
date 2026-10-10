@@ -10,6 +10,7 @@ import { RECEIPT_FINANCE_NAV, RECEIPT_SUBMITTER_NAV } from "@inventory/receipt/n
 import { isCatalogViewerClient } from "@/lib/catalogNav";
 
 export function isReceiptSubmitterClient(user: SessionUser | undefined): boolean {
+  // Mirrors the server catalog-viewer gate, which admits FINANCE; isCatalogViewerClient does not.
   return isCatalogViewerClient(user) || !!user?.isFinance;
 }
 
