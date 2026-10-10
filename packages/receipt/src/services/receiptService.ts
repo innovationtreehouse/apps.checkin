@@ -55,7 +55,7 @@ function transitionError(err: unknown): never {
 }
 
 async function load(id: string, access: Access, actor: ReceiptPrincipal): Promise<ReceiptRow> {
-  const row = await receiptRepo.find(id, getOrg().id, access === "submitter" ? actor.id : undefined);
+  const row = await receiptRepo.find(id, (await getOrg()).id, access === "submitter" ? actor.id : undefined);
   if (!row) throw new ServiceError(404, "Receipt not found");
   return row;
 }
@@ -173,7 +173,7 @@ export const receiptService = {
     const d = input.details;
 
     const id = await insertReceipt({
-      orgId: getOrg().id,
+      orgId: (await getOrg()).id,
       actor,
       file,
       mimeType: check.mimeType,
@@ -206,6 +206,10 @@ export const receiptService = {
     const row = await load(id, access, actor);
     if (!EDITABLE.has(row.state)) {
       throw new ServiceError(400, "Receipt can only be edited in validation_failed or submitter_review state");
+    }
+    // The tax amount drives financial review, so only finance may change it.
+    if (access === "submitter" && updates.tax !== undefined && toCents(updates.tax) !== row.taxCents) {
+      throw new ServiceError(400, "Only finance can change the tax");
     }
 
     const next = {
@@ -358,6 +362,7 @@ export const receiptService = {
   async clearDuplicate(id: string) {
     const actor = await requireActor();
     const row = await load(id, "finance", actor);
+    refuseSelfDecision(row, actor);
     await step(row, { type: "DUPLICATE_CLEARED" }, "uploaded", { detail: { duplicateFlagClearedAt: new Date() } }, actor, "duplicate_cleared");
     await runFullFlow(id, actor);
     return load(id, "finance", actor);
@@ -443,6 +448,7 @@ export const receiptService = {
   async restartFlow(id: string) {
     const actor = await requireActor();
     const row = await load(id, "finance", actor);
+    refuseSelfDecision(row, actor);
     try {
       assertLegalTransition(row.state, { type: "RUN_PIPELINE" });
     } catch (e) {
@@ -472,13 +478,16 @@ export const receiptService = {
     return { ...receipt, lineItems, financialReviewReasons: reasons };
   },
 
-  /** The stored bytes for the file route. Every read is audited; the audit holds no bytes. */
-  async getFile(id: string, access: Access): Promise<{ bytes: Buffer; mimeType: string }> {
+  /**
+   * The stored bytes for the file route, with the owner column its scope check reads. Every
+   * read is audited; the audit holds no bytes.
+   */
+  async getFile(id: string, access: Access): Promise<{ fileBlob: Uint8Array; mimeType: string; uploadedByUserId: number }> {
     const actor = await requireActor();
     await load(id, access, actor);
-    const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, mimeType: true } });
+    const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, mimeType: true, uploadedByUserId: true } });
     await audit(db, id, actor, { action: "file_viewed" });
-    return { bytes: Buffer.from(file.fileBlob), mimeType: file.mimeType };
+    return file;
   },
 
   /**
@@ -487,7 +496,7 @@ export const receiptService = {
    */
   async listMine(opts: { hideCompleted?: boolean } = {}) {
     const actor = await requireActor();
-    const rows = await receiptRepo.list({ orgId: getOrg().id, uploadedByUserId: actor.id });
+    const rows = await receiptRepo.list({ orgId: (await getOrg()).id, uploadedByUserId: actor.id });
     const owed = rows.filter((r) => r.needsReimbursement).map((r) => r.id);
     const paid = owed.length
       ? reimbursementStatusSchema.parse(await ports().reimbursementStatus.forReceipts(owed))
@@ -506,18 +515,19 @@ export const receiptService = {
 
   async listForOrg() {
     await requireActor();
-    return receiptRepo.list({ orgId: getOrg().id });
+    return receiptRepo.list({ orgId: (await getOrg()).id });
   },
 
-  async listByState(state: ReceiptState) {
+  /** An unknown state matches no rows. */
+  async listByState(state: string) {
     await requireActor();
-    return receiptRepo.list({ orgId: getOrg().id, details: { state } });
+    return receiptRepo.list({ orgId: (await getOrg()).id, details: { state } });
   },
 
   async listNeedsAttention(access: Access) {
     const actor = await requireActor();
     const rows = await receiptRepo.list({
-      orgId: getOrg().id,
+      orgId: (await getOrg()).id,
       ...(access === "submitter" ? { uploadedByUserId: actor.id } : {}),
       details: { state: { in: NEEDS_ATTENTION } },
     });

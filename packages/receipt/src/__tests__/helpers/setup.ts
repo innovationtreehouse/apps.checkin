@@ -51,7 +51,7 @@ export function configure(overrides: Partial<ReceiptConfig> = {}): void {
   current = ALICE;
   configureReceipt({
     auth: { getPrincipal: async () => current },
-    org: () => ({ id: TEST_ORG_ID, name: "Test Org" }),
+    org: async () => ({ id: TEST_ORG_ID, name: "Test Org" }),
     ...overrides,
   });
 }

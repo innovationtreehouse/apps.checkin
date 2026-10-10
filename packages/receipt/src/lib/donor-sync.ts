@@ -14,8 +14,8 @@ const MAX_SENDS = 3;
  * catch-up step. Never throws.
  */
 export async function sendDonorSync(receiptId: string, actor: Actor | null): Promise<boolean> {
-  const orgId = getOrg().id;
   try {
+    const orgId = (await getOrg()).id;
     for (let attempt = 0; attempt < MAX_SENDS; attempt++) {
       const row = await receiptRepo.find(receiptId, orgId);
       if (!row || row.donorSync !== "pending") return false;

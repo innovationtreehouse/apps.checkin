@@ -3,6 +3,8 @@ import { z } from "zod";
 
 export const MAX_LINE_ITEMS = 200;
 export const MAX_IMPORT_BATCH = 50;
+/** Base64 length of a 10 MB file, the upload cap. */
+const MAX_FILE_BASE64 = Math.ceil((10 * 1024 * 1024) / 3) * 4;
 
 const finite = z.number().finite();
 const nonNegative = finite.nonnegative();
@@ -139,7 +141,7 @@ export const ImportReceiptSchema = z
     needsReimbursement: z.boolean(),
     reimbursementFor: z.string().max(200).nullable().optional(),
     mimeType: z.string().max(100),
-    fileBase64: z.string().min(1),
+    fileBase64: z.string().min(1).max(MAX_FILE_BASE64),
     lineItems: z.array(ImportLineItemSchema).min(1).max(MAX_LINE_ITEMS),
   })
   .strict();

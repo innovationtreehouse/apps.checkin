@@ -37,7 +37,8 @@ describeDb("submitter scope", () => {
     const r = await receiptService.upload(textFile("file-bytes"), "text/plain", { details: manualDetails() });
     const file = await receiptService.getFile(r.id, "submitter");
     expect(file.mimeType).toBe("text/plain");
-    expect(file.bytes.toString()).toContain("file-bytes");
+    expect(Buffer.from(file.fileBlob).toString()).toContain("file-bytes");
+    expect(file.uploadedByUserId).toBe(ALICE.id);
     const row = await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "file_viewed" } });
     expect(row).toMatchObject({ userId: ALICE.id, valueAfter: null });
   });

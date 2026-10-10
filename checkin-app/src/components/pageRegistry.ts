@@ -20,6 +20,7 @@ export type RegistryUser = {
   isBackgroundCheckReviewer?: boolean;
   isOperations?: boolean;
   isInventoryManager?: boolean;
+  isFinance?: boolean;
   householdLead?: boolean;
   programsLed?: number[];
   hasVolunteerDesignation?: boolean;
@@ -69,6 +70,11 @@ const CATALOG_VIEWER: Visible = (u, signedIn) =>
     !!u?.isInventoryManager ||
     (u?.programsLed?.length ?? 0) > 0 ||
     !!u?.hasVolunteerDesignation);
+
+// Receipts: submitters are the catalog-viewer audience, which admits FINANCE; the
+// review side is FINANCE or BOARD (the routes' finance-or-board gate).
+const RECEIPT_SUBMITTER: Visible = (u, signedIn, counts) => CATALOG_VIEWER(u, signedIn, counts) || (signedIn && !!u?.isFinance);
+const RECEIPT_REVIEWER: Visible = (u, signedIn) => signedIn && (!!u?.isFinance || !!u?.isBoardMember);
 
 const INVENTORY_MANAGER: Visible = (u, signedIn) => signedIn && !!u?.isInventoryManager;
 
@@ -139,6 +145,12 @@ export const PAGES: PageEntry[] = [
   { href: '/inventory/merge-conflicts', label: 'Merge Conflicts', section: 'Inventory', keywords: 'uom mismatch', visible: INVENTORY_MANAGER },
   { href: '/inventory/provisional-items', label: 'Provisional Map', section: 'Inventory', keywords: 'provisional part', visible: INVENTORY_MANAGER },
   { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: INVENTORY_MANAGER },
+
+  // Receipts — "My receipts" for anyone who may upload; review and settings for finance.
+  { href: '/receipts', label: 'My Receipts', section: 'Receipts', keywords: 'receipt reimbursement upload purchase', visible: RECEIPT_SUBMITTER },
+  { href: '/receipts/upload', label: 'Upload Receipt', section: 'Receipts', keywords: 'receipt photo pdf purchase donation', visible: RECEIPT_SUBMITTER },
+  { href: '/receipts/review', label: 'Receipts Review', section: 'Receipts', keywords: 'receipt finance tax duplicate', visible: RECEIPT_REVIEWER },
+  { href: '/receipts/settings', label: 'Receipt Settings', section: 'Receipts', keywords: 'tax exempt age limit', visible: RECEIPT_REVIEWER },
 
   // Facility Ops — board, plus operations on the two aggregate tools (#1633:
   // operations reach attendance in aggregate only). Visits, Badges (the raw
