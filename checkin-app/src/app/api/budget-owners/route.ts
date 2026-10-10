@@ -4,7 +4,7 @@ import { createBudgetOwner, listBudgetOwners } from "@/lib/finance/budgetOwners"
 export const dynamic = "force-dynamic";
 
 export const GET = handler("GET /api/budget-owners", async ({ req }) => {
-    const includeArchived = req.nextUrl.searchParams.get("includeArchived") === "1";
+    const includeArchived = new URL(req.url).searchParams.get("includeArchived") === "1";
     return { BudgetOwner: await listBudgetOwners(includeArchived) };
 });
 
