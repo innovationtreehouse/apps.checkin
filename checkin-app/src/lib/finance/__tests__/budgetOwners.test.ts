@@ -4,11 +4,13 @@
 /**
  * The treasurer flag's own-household rule: nobody sets or clears it on
  * themself or anyone in their household, and a refusal writes nothing. A
- * permitted change writes the flag and one audit row together.
+ * permitted change writes the flag and one audit row together. A merged-away
+ * (tombstoned) person is refused as not found.
  */
 import { setProgramTreasurer, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
 
-const households: Record<number, number> = { 1: 10, 2: 10, 3: 20 };
+const households: Record<number, number> = { 1: 10, 2: 10, 3: 20, 4: 30 };
+const mergedInto: Record<number, number> = { 4: 3 };
 const tx = {
     programVolunteer: { findUnique: jest.fn(), update: jest.fn() },
     auditLog: { create: jest.fn() },
@@ -19,6 +21,10 @@ jest.mock('@/lib/prisma', () => ({
         person: {
             findUnique: ({ where }: { where: { id: number } }) =>
                 Promise.resolve(where.id in households ? { householdId: households[where.id] } : null),
+            findFirst: ({ where }: { where: { id: number; mergedIntoId?: null } }) => {
+                const isMatch = where.id in households && !(where.mergedIntoId === null && where.id in mergedInto);
+                return Promise.resolve(isMatch ? { householdId: households[where.id] } : null);
+            },
         },
         $transaction: (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
     },
@@ -50,6 +56,12 @@ describe('setProgramTreasurer', () => {
                 oldData: { isTreasurer: false }, newData: { isTreasurer: true },
             }),
         });
+    });
+
+    test.each([true, false])('refuses a merged-away person as not found (on=%s), writing nothing', async (on) => {
+        await expect(setProgramTreasurer(1, 7, 4, on)).rejects.toMatchObject({ status: 404, message: 'Person not found' });
+        expect(tx.programVolunteer.update).not.toHaveBeenCalled();
+        expect(tx.auditLog.create).not.toHaveBeenCalled();
     });
 
     test('an unchanged flag writes nothing', async () => {
