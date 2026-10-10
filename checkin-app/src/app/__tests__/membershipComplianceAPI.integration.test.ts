@@ -48,7 +48,7 @@ describe('GET /api/membership-audit/compliance', () => {
     let freshId: number;
     let revokedId: number;
     let stuckId: number;
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     const cleanup = async () => {
         const hhs = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });

@@ -27,7 +27,7 @@ function jsonReq(method: string, body?: unknown, url = 'http://localhost:4000/x'
 
 describe('Membership settings + volunteer designations API', () => {
     let boardId: number, plainId: number;
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     async function wipe() {
         await prisma.volunteerDesignation.deleteMany({ where: { email: { contains: TAG } } });

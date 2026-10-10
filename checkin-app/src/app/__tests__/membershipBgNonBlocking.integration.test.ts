@@ -109,7 +109,7 @@ async function setBgPolicy() {
 
 describe('background check is non-blocking', () => {
     let revA: number, revB: number;
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     beforeAll(async () => {
         await wipe();

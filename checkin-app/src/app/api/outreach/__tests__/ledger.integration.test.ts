@@ -82,7 +82,7 @@ async function wipeLedger() {
 }
 
 describe('outreach ledger (send / process-batch / status)', () => {
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
     let boardId: number;
 
     beforeAll(async () => {

@@ -105,7 +105,7 @@ async function cleanup() {
 }
 
 describe('Phase 3 — manual PERSON_BG submit + queue gating + e2e', () => {
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
     let rev1 = 0, rev2 = 0, board = 0, nonReviewer = 0;
 
     beforeAll(async () => {

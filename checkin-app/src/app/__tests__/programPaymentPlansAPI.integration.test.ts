@@ -1056,7 +1056,7 @@ describe('Program payment-plan routes', () => {
             return { id: p.id, email };
         }
 
-        let restoreBoardSettings: () => Promise<void>;
+        let restoreBoardSettings: () => Promise<void> = async () => {};
         beforeAll(async () => {
             const p = await prisma.program.create({
                 data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Email Behavior Program ${TAG}`, enrollmentStatus: 'OPEN' },
@@ -1171,7 +1171,7 @@ describe('Program payment-plan routes', () => {
     describe('scholarship ACK settings (subject + program body)', () => {
         const params = (id: string | number) => ({ params: Promise.resolve({ id: String(id) }) });
         const PROGRAM_NAME = `PP Program ${TAG}`; // == the name programId was created with, in beforeAll
-        let restoreBoardSettings: () => Promise<void>;
+        let restoreBoardSettings: () => Promise<void> = async () => {};
 
         beforeAll(async () => {
             restoreBoardSettings = await snapshotBoardSettings();
