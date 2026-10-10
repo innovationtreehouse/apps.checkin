@@ -149,6 +149,10 @@ Things the app takes as true because they are handled outside it.
 - Where someone signs in with Google, the address they sign in with is the
   address they are contacted at. There is no second one to diverge from it.  [Decision]
 
+- A signed-in member's email is their sign-in address and is not edited from the
+  household card, by them or by a lead. The board changes it; the locked field
+  says how to ask. A household member who has never signed in stays editable.  [Decision]
+
 - A person's identifier is opaque, and its only job is to be unique and to stay
   unique. It is never reissued and never worked out from the people already on
   file: issuing the highest number in use plus one hands a deleted person's
