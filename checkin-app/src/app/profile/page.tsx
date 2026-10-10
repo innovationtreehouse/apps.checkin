@@ -26,9 +26,8 @@ export default function ProfilePage() {
     dob: "",
     over25: false
   });
-  const fetchProfile = useCallback(async () => {
-    try {
-      const res = await fetch('/api/profile');
+  const fetchProfile = useCallback(() => fetch('/api/profile')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setForm({
@@ -42,12 +41,14 @@ export default function ProfilePage() {
       } else {
         setMessage({ text: "Failed to load profile.", tone: "error" });
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading profile.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (status === "unauthenticated") {

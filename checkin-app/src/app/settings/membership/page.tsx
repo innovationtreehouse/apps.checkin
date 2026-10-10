@@ -65,10 +65,8 @@ export default function MembershipSettingsPage() {
   const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
   const [renewalNotice, setRenewalNotice] = useState<{ text: string; err: boolean } | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const sRes = await fetch("/api/settings/membership");
+  const load = useCallback(() => fetch("/api/settings/membership")
+    .then(async (sRes) => {
       if (sRes.ok) {
         const { settings } = (await sRes.json()) as { settings: Settings };
         const snap = {
@@ -93,10 +91,11 @@ export default function MembershipSettingsPage() {
         setSigningTarget(snap.signingTarget);
         setInitial(snap);
       }
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -136,7 +135,7 @@ export default function MembershipSettingsPage() {
           ...(boundaryUnlocked || !boundaryWasSet ? { orgMembershipYearBoundary: boundary || null } : {}),
         }),
       });
-      if (res.ok) { notifications.show({ message: "Settings saved." }); setBoundaryUnlocked(false); notifyNavRefresh(); await load(); }
+      if (res.ok) { notifications.show({ message: "Settings saved." }); setBoundaryUnlocked(false); notifyNavRefresh(); setLoading(true); await load(); }
       else { const d = await res.json().catch(() => ({})); setSaveNotice({ text: d.error || "Save failed.", err: true }); }
     } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
     finally { setSaving(false); }

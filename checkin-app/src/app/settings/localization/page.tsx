@@ -50,20 +50,19 @@ export default function LocalizationSettingsPage() {
 
   const flash = (m: string) => setMessage(m);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/admin/settings/localization");
+  const load = useCallback(() => fetch("/api/admin/settings/localization")
+    .then(async (res) => {
       if (res.ok) {
         const { settings } = (await res.json()) as { settings: Settings };
         setTimezone(settings.timezone);
         setLocale(settings.locale);
         setInitial({ timezone: settings.timezone, locale: settings.locale });
       }
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
 
@@ -76,7 +75,7 @@ export default function LocalizationSettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ timezone, locale }),
       });
-      if (res.ok) { notifications.show({ message: "Settings saved." }); await load(); }
+      if (res.ok) { notifications.show({ message: "Settings saved." }); setLoading(true); await load(); }
       else { const d = await res.json().catch(() => ({})); flash(d.error || "Save failed."); }
     } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
     finally { setSaving(false); }
