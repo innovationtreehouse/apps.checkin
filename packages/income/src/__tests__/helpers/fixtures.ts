@@ -11,4 +11,5 @@ export async function clearAll() {
   await db.incomeAuditLog.deleteMany();
   await db.incomeItemCategory.deleteMany();
   await db.incomeQbMatchExclusion.deleteMany();
+  await db.incomeOrgSettings.deleteMany();
 }

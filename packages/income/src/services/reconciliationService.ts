@@ -15,6 +15,7 @@ import {
 } from "../lib/reconcile";
 import { recordAudit, type TxClient } from "../lib/audit";
 import { depositsIn } from "../lib/qb-deposits";
+import { incomeTakeoverLine, postPayout } from "../lib/outbox";
 import { ServiceError } from "./serviceError";
 
 export interface Actor {
@@ -96,7 +97,7 @@ export const reconciliationService = {
             status: RECON_STATUS.RESOLVED,
             kind: null,
             resolution: RECON_RESOLUTION.MANUAL,
-            origin: RECON_ORIGIN.MATCHED,
+            origin: deposit.appKey ? RECON_ORIGIN.CREATED : RECON_ORIGIN.MATCHED,
             depositId: deposit.id,
             depositTxnDate: deposit.txnDate,
             depositTotalCents: deposit.totalCents,
@@ -176,14 +177,20 @@ export const reconciliationService = {
     }
   },
 
-  /** Re-attempt a failed deposit create. Only a POST_FAILED row qualifies. */
-  async retry(orgId: string, id: number, _actor: Actor): Promise<never> {
+  /**
+   * Finance's go-ahead for a POST_FAILED or OVER_CAP payout: match before create, outside the
+   * per-run caps. The drain never touches these rows.
+   */
+  async retry(orgId: string, id: number, actor: Actor) {
     const row = await openRow(orgId, id);
-    if (row.status !== RECON_STATUS.OPEN || row.kind !== RECON_KIND.POST_FAILED) {
-      throw new ServiceError(409, "Only a failed deposit create can be retried");
+    if (row.status !== RECON_STATUS.OPEN || (row.kind !== RECON_KIND.POST_FAILED && row.kind !== RECON_KIND.OVER_CAP)) {
+      throw new ServiceError(409, "Only a failed or over-cap deposit create can be retried");
     }
-    // ponytail: no deposit write until L4 ships the shared find-or-create (design §8, PR 4).
-    throw new ServiceError(503, "QuickBooks deposit creation is not available");
+    const { mirror, posting } = getIncomeConfig();
+    if (!mirror || !posting?.mirrorNewestWins) throw new ServiceError(503, "QuickBooks deposit creation is not available");
+    const turn = await postPayout(orgId, id, await incomeTakeoverLine(orgId), true, actor);
+    if (!turn) throw new ServiceError(409, "A reconciliation run is in progress");
+    return turn.row;
   },
 
   resolve(orgId: string, id: number, req: ResolveAction, actor: Actor) {
