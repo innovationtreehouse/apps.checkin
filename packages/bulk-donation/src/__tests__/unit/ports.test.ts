@@ -111,19 +111,12 @@ describe("caller ports", () => {
 });
 
 describe("deriveTakeoverLine", () => {
-  it("is the newest MATCHED date; CREATED and others never move it", () => {
-    expect(
-      deriveTakeoverLine([
-        { date: "2026-03-01", qbMatchState: "MATCHED" },
-        { date: "2026-05-01", qbMatchState: "CREATED" },
-        { date: "2026-04-01", qbMatchState: "MATCHED" },
-        { date: "2026-06-01", qbMatchState: "AMBIGUOUS" },
-      ]),
-    ).toBe("2026-04-01");
+  it("is the newest date any record was ever matched on", () => {
+    expect(deriveTakeoverLine(["2026-03-01", "2026-04-01", null, "2026-02-01"])).toBe("2026-04-01");
   });
 
-  it("has no line without a MATCHED record (fail closed)", () => {
-    expect(deriveTakeoverLine([{ date: "2026-05-01", qbMatchState: "CREATED" }])).toBeNull();
+  it("has no line without a matched record (fail closed)", () => {
     expect(deriveTakeoverLine([])).toBeNull();
+    expect(deriveTakeoverLine([null])).toBeNull();
   });
 });
