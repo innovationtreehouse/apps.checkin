@@ -45,10 +45,14 @@ docker network create "$NET" >/dev/null
 docker run -d --name "$DB" --network "$NET" \
   -e POSTGRES_USER=prisma -e POSTGRES_PASSWORD=prisma -e POSTGRES_DB=checkmein \
   public.ecr.aws/docker/library/postgres:15 >/dev/null
+# Probe over TCP: the image's first-start init server listens only on the unix
+# socket, so a TCP answer means the post-init restart is done.
+pg_up=0
 for _ in $(seq 1 30); do
-  docker exec "$DB" pg_isready -U prisma -d checkmein >/dev/null 2>&1 && break
+  docker exec "$DB" pg_isready -h 127.0.0.1 -U prisma -d checkmein >/dev/null 2>&1 && { pg_up=1; break; }
   sleep 1
 done
+[ "$pg_up" = 1 ] || { echo "::error::Postgres not ready over TCP after 30s"; docker logs "$DB" 2>&1 | tail -40; exit 1; }
 
 psql() { docker exec -i "$DB" psql -v ON_ERROR_STOP=1 -U prisma -d checkmein -qtA "$@"; }
 psql -c 'CREATE DATABASE catalog' -c 'CREATE DATABASE local_inventory'
@@ -91,10 +95,13 @@ docker run -d --name "$APP" --network "$NET" -p 4000:4000 \
   -e CHECKIN_ENV=dev -e AWS_REGION=us-east-2 \
   "$RUNNER_IMAGE" >/dev/null
 
+app_up=0
 for _ in $(seq 1 30); do
-  [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/auth/csrf" || true)" = 200 ] && break
+  [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/auth/csrf" || true)" = 200 ] && { app_up=1; break; }
   sleep 2
 done
+# On exit the cleanup trap prints the app container's log tail.
+[ "$app_up" = 1 ] || { echo "::error::app did not answer 200 on /api/auth/csrf within 60s; container log tail follows"; exit 1; }
 
 post() { curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE$1" \
   -H "Cookie: $COOKIE" -H 'Content-Type: application/json' --data-raw "$2"; }

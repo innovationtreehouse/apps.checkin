@@ -42,7 +42,7 @@ describe('Admin Households API Integration Tests', () => {
     const leadALastCheck = new Date(Date.UTC(2025, 0, 1)); // raw expiry 2026-01-01 -> Aug 1 2026
     const leadBLastCheck = new Date(Date.UTC(2025, 8, 1)); // raw expiry 2026-09-01 (past Aug 1 2026) -> Aug 1 2027 — later than A
     const nonLeadCLastCheck = new Date(Date.UTC(2026, 8, 1)); // raw expiry 2027-09-01 (past Aug 1 2027) -> Aug 1 2028 — later than the household (leads-only) value
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     beforeAll(async () => {
         restoreBoardSettings = await snapshotBoardSettings();

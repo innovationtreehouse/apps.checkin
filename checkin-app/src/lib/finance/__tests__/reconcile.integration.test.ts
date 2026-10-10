@@ -131,7 +131,7 @@ async function makeProgramEnrollment(opts: {
     return { householdId: hh.id, personId: person.id, programId: program.id, variantId };
 }
 
-let restoreBoardSettings: () => Promise<void>;
+let restoreBoardSettings: () => Promise<void> = async () => {};
 
 beforeAll(async () => {
     restoreBoardSettings = await snapshotBoardSettings();

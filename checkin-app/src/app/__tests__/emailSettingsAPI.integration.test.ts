@@ -26,7 +26,7 @@ const TAG = 'email-settings-test';
 
 describe('Email sender-identity settings API', () => {
     let boardId: number, plainId: number;
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     async function wipe() {
         const hhs = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });
