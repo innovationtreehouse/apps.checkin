@@ -78,17 +78,36 @@ function isSearchable(query: string) {
   return query.trim().length > 2 || searchId(query) !== null;
 }
 
+// Results for a picker that is still searching. They clear once a person is picked
+// or the query gets too short, and otherwise stay up until the next response lands.
+function usePeopleSearch(query: string, picked: boolean) {
+  const [people, setPeople] = useState<ParticipantMergeView[]>([]);
+  const active = !picked && isSearchable(query);
+  const [wasActive, setWasActive] = useState(active);
+  if (wasActive !== active) {
+    setWasActive(active);
+    if (!active) setPeople([]);
+  }
+  useEffect(() => {
+    if (!active) return;
+    fetch(`/api/people/search?q=${encodeURIComponent(query)}`)
+      .then(r => r.json())
+      .then(d => setPeople(d.people || []));
+  }, [query, active]);
+  return people;
+}
+
 export default function MergeParticipants() {
   const { ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
   const router = useRouter();
   const [searchA, setSearchA] = useState("");
   const [searchB, setSearchB] = useState("");
 
-  const [resultsA, setResultsA] = useState<ParticipantMergeView[]>([]);
-  const [resultsB, setResultsB] = useState<ParticipantMergeView[]>([]);
-
   const [pA, setPA] = useState<ParticipantMergeView | null>(null);
   const [pB, setPB] = useState<ParticipantMergeView | null>(null);
+
+  const resultsA = usePeopleSearch(searchA, !!pA);
+  const resultsB = usePeopleSearch(searchB, !!pB);
 
   const [analyzedA, setAnalyzedA] = useState<ParticipantMergeView | null>(null);
   const [analyzedB, setAnalyzedB] = useState<ParticipantMergeView | null>(null);
@@ -107,8 +126,8 @@ export default function MergeParticipants() {
   const [membershipBlock, setMembershipBlock] = useState<{ aAsKeeper: string | null; bAsKeeper: string | null } | null>(null);
 
   // One choice per true conflict field ('keep' | 'merge'); default 'keep' (the
-  // keeper's value). Recomputed below (derived from analyzedA/analyzedB + keepId)
-  // and reset whenever the keeper flips (Swap Kept/Merged).
+  // keeper's value). Reset below whenever the keeper flips (Swap Kept/Merged) or
+  // analysis lands.
   const [fieldChoices, setFieldChoices] = useState<Record<string, "keep" | "merge">>({});
 
   const mergeParticipant = keepId === analyzedA?.id ? analyzedB : analyzedA;
@@ -134,41 +153,27 @@ export default function MergeParticipants() {
   const identityConflict = !!(keepParticipant && mergeParticipant
     && hasIdentity(keepParticipant) && hasIdentity(mergeParticipant));
 
-  useEffect(() => {
-    if (!keepParticipant || !mergeParticipant) return;
-    const defaults: Record<string, "keep" | "merge"> = {};
-    for (const f of conflicts) defaults[f] = "keep";
-    if (identityConflict) defaults.identity = "keep";
-    setFieldChoices(defaults);
-    // Reset defaults only when the keeper flips (or analysis first lands) — not on
-    // every keystroke the picker itself causes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keepId, analyzedA?.id, analyzedB?.id]);
-
-  useEffect(() => {
-    if (isSearchable(searchA) && !pA) {
-      fetch(`/api/people/search?q=${encodeURIComponent(searchA)}`)
-        .then(r => r.json())
-        .then(d => setResultsA(d.people || []));
-    } else {
-      setResultsA([]);
+  // Reset defaults only when the keeper flips (or analysis first lands) — not on
+  // every keystroke the picker itself causes.
+  const choicesFor = `${keepId}:${analyzedA?.id}:${analyzedB?.id}`;
+  const [choicesSetFor, setChoicesSetFor] = useState(choicesFor);
+  if (choicesSetFor !== choicesFor) {
+    setChoicesSetFor(choicesFor);
+    if (keepParticipant && mergeParticipant) {
+      const defaults: Record<string, "keep" | "merge"> = {};
+      for (const f of conflicts) defaults[f] = "keep";
+      if (identityConflict) defaults.identity = "keep";
+      setFieldChoices(defaults);
     }
-  }, [searchA, pA]);
+  }
 
-  useEffect(() => {
-    if (isSearchable(searchB) && !pB) {
-      fetch(`/api/people/search?q=${encodeURIComponent(searchB)}`)
-        .then(r => r.json())
-        .then(d => setResultsB(d.people || []));
-    } else {
-      setResultsB([]);
-    }
-  }, [searchB, pB]);
-
-  useEffect(() => {
-    if (pA && pB) {
+  // Picking (or un-picking) either side re-runs the analysis for the pair.
+  const pick = (a: ParticipantMergeView | null, b: ParticipantMergeView | null) => {
+    setPA(a);
+    setPB(b);
+    if (a && b) {
       setLoading(true);
-      fetch(`/api/membership-ops/participants/merge/analyze?a=${pA.id}&b=${pB.id}`)
+      fetch(`/api/membership-ops/participants/merge/analyze?a=${a.id}&b=${b.id}`)
         .then(r => r.json())
         .then(d => {
           if (d.participants) {
@@ -191,7 +196,7 @@ export default function MergeParticipants() {
             const sA = score(d.participants[0]);
             const sB = score(d.participants[1]);
 
-            setKeepId(sA >= sB ? pA.id : pB.id);
+            setKeepId(sA >= sB ? a.id : b.id);
           }
         })
         .catch(() => setError("Failed to analyze participants"))
@@ -203,7 +208,7 @@ export default function MergeParticipants() {
       setPreviewMode(false);
       setMembershipBlock(null);
     }
-  }, [pA, pB]);
+  };
 
   if (authLoading) {
     return <PageLoader />;
@@ -233,8 +238,7 @@ export default function MergeParticipants() {
         notifications.show({ color: "red", message: data.error, autoClose: 4000 });
         // No page-level reload here; clear the stale analyzed selection so the
         // user re-picks (and re-analyzes) against current household state.
-        setPA(null);
-        setPB(null);
+        pick(null, null);
       } else {
         setError(data.error || "Failed to merge");
       }
@@ -340,7 +344,7 @@ export default function MergeParticipants() {
         <Group justify="center">
           <Button variant="default" onClick={() => {
             setSuccess(false);
-            setPA(null); setPB(null);
+            pick(null, null);
             setSearchA(""); setSearchB("");
           }}>Merge More</Button>
           <Button onClick={() => router.push('/membership-ops/participants')}>Back to Participants</Button>
@@ -376,8 +380,8 @@ export default function MergeParticipants() {
               otherwise clips the search results dropdown below to a sliver — see renderSearch. */}
           <Card withBorder radius="md" padding="lg" style={{ overflow: "visible" }}>
             <Group align="flex-start" gap="xl" grow>
-              {renderSearch("Participant 1", searchA, setSearchA, resultsA, pA, setPA)}
-              {renderSearch("Participant 2", searchB, setSearchB, resultsB, pB, setPB)}
+              {renderSearch("Participant 1", searchA, setSearchA, resultsA, pA, (p) => pick(p, pB))}
+              {renderSearch("Participant 2", searchB, setSearchB, resultsB, pB, (p) => pick(pA, p))}
             </Group>
           </Card>
 
