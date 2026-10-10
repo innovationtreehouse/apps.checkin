@@ -4,7 +4,7 @@
 
 A developer or agent who changes one Inventory library has no light way to test
 that change on their own machine. The only commands run a whole suite: every
-unit test in the app, all 151 database-backed integration files, or every flow
+unit test in the app, all 153 database-backed integration files, or every flow
 journey on a full Docker stack. Several sessions running those suites at once
 have overloaded the shared machine and frozen its Docker runtime. So people
 either wait a long time for results that are mostly about code they did not
@@ -83,9 +83,9 @@ belongs to one area:
 
 | Changed file is in | Local tests |
 |---|---|
-| a library package | tsc for the package and every workspace that consumes it; that library's vitest unit tier; the area's app tests; the library-boundary check |
+| a library package | tsc for checkin and any function workspace that consumes it; that library's vitest unit tier; the area's app tests; the library-boundary check |
 | a library's checkin paths | tsc for checkin; eslint on the changed files; the area's app tests |
-| a shared package | tsc and vitest unit for the package and its consumers; the app unit tests related to checkin files that import it |
+| a shared package | vitest unit for the package and its consumers; tsc for checkin and any function workspace among them; the app unit tests related to checkin files that import it |
 | security or boundary files (`src/security/`, `src/middleware.ts`, `prisma/schema.prisma`, `tests/security/`) | everything the area needs, plus the whole security unit tier (about 44 files) |
 | checkin core | tsc for checkin; eslint on the changed files; app unit tests related to the changed files, found by jest's related-tests search |
 | docs, CI, deploy, root scripts | nothing |
@@ -107,7 +107,8 @@ Three details matter.
 - **Wide changes go to CI.** If the related-tests search returns more than 80
   unit files, or more than 15 integration files, the command prints the list and
   stops. `--wide` overrides this. A change to a core file such as the database
-  client is CI's to test.
+  client is CI's to test. Both caps are guesses, not measurements (see Open
+  before adoption).
 
 ## Default tier (light)
 
@@ -115,14 +116,20 @@ With no flags, the command runs only tiers that need no database or Docker:
 
 1. `prisma generate` for checkin, if the worktree has no generated client yet. A
    fresh worktree fails tsc without it.
-2. `tsc --noEmit` for each affected workspace.
+2. `tsc --noEmit` for each affected workspace that CI type-checks: checkin
+   and the four `*-function` workspaces. CI does not type-check the
+   `packages/*` workspaces, so the local run does not either. Otherwise it
+   would fail where CI passes (see Known findings).
 3. eslint, with no warnings allowed, on the changed checkin files. This matches
    CI's lint scope, which covers only checkin.
 4. The library-boundary check, if a library or the harness changed.
 5. `vitest run` for each affected workspace that has vitest, with
-   `PG_TEST_HARNESS=off` and every `*DATABASE_URL` variable removed. The harness
-   then starts no container, and each database-gated suite skips itself, as it
-   already does on a machine without Docker.
+   `PG_TEST_HARNESS=off` and every `*DATABASE_URL` variable removed. **That
+   switch does not exist on `main` yet; it is rollout step 1.** Today the
+   harness skips only when it cannot reach Docker. Until step 1 lands, this
+   step boots a Postgres container whenever Docker is up, so it is not light.
+   Once the switch exists, the harness starts no container and each
+   database-gated suite skips itself.
 6. Jest unit tests as an explicit file list (`npm test -- --ci --forceExit
    --runTestsByPath …`). The list is built with `--listTests`, so jest's own
    ignore list still applies. That list excludes integration, flow and worktree
@@ -140,6 +147,10 @@ only):
 | one line in `packages/global-catalog/src` | tsc ×2, boundaries, catalog vitest unit (5 files pass, 6 DB files skip), 3 jest files | 8.3 s |
 | one line in `checkin-app/src/lib/catalog/route.ts` | tsc, eslint, 3 jest files | 5.8 s |
 | one line in `packages/money/src` | tsc ×8, vitest unit ×7, 7 jest files | 20.7 s |
+
+These runs predate the CI-matched type-check scope. They type-checked every
+affected package, so the `money` row's 8 tsc runs would now be 3 (checkin and
+the two s-ingest functions).
 
 A first run in a fresh worktree adds about 6 s for `prisma generate` and about
 13 s for a cold checkin tsc.
@@ -160,11 +171,11 @@ All of this section is **UNPROVEN**: none of it has been run.
   It refuses unless `DATABASE_URL` points at a running Postgres, and it never
   starts one itself.
 - **Why a subset should work.** The integration setup does not depend on the
-  whole suite. It migrates one template database (about 2.7 s, measured in
-  `INTEGRATION_TEST_SPEED.md` on branch `claude/ecstatic-lehmann-02d520`) and
-  clones it once per jest worker, which is a file copy. No integration file
+  whole suite. It migrates one template database and clones it once per jest
+  worker, which is a file copy. The migrate step has not been timed here; an
+  unmerged analysis of CI logs puts it at a few seconds. No integration file
   reseeds per test, and only `seed-helpers` truncates the schema. Every other
-  file cleans up by its own tag. The slowdown that suite measured comes from 151
+  file cleans up by its own tag. The suite's known slowdown comes from all 153
   files sharing one process. A run of 2–15 files does not have that problem.
 - **Known gap.** The setup recreates and migrates the template on every run.
   For a handful of files that is the largest fixed cost. Reusing the template
@@ -224,8 +235,19 @@ migration file):
 
 - `packages/s-ingest-core` fails `tsc --noEmit` on `main`. Its
   `test/globalSetup.ts` default-exports a value whose type uses
-  `GlobalSetupContext`, which `pg-test-harness` does not export (TS4082). No CI
-  job found type-checks that package with its own `tsconfig.json`, so nothing
-  reports it. Every shared-package
-  change that reaches `s-ingest-core` will show this failure until it is fixed
-  (export the interface from `pg-test-harness`).
+  `GlobalSetupContext`, which `pg-test-harness` does not export (TS4082). CI
+  type-checks only checkin and the `*-function` workspaces, so nothing reports
+  it. The light tier skips package type-checks to match CI and will not report
+  it either. The fix is to export the interface from `pg-test-harness` (rollout
+  step 1).
+
+## Open before adoption
+
+- `--db` and `--flow` have never been run. Rollout steps 4 and 5 prove them.
+- The 80-unit and 15-integration caps are unmeasured. Set them from the timings
+  of the first real `--db` runs and from a few core-change dry runs.
+- The light vitest step depends on the harness switch (rollout step 1). Do not
+  adopt the command before that lands.
+- Should the AGENTS.md rule wait for `libraries.json` (H2b)? Until then, the
+  ownership map lives as a constant in the script and has to be kept in step by
+  hand.

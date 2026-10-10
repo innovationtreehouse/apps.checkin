@@ -109,7 +109,7 @@ const workspaces = rootPkg.workspaces.flatMap((glob) => {
     prodDeps: Object.keys(json.dependencies ?? {}),
     deps: Object.keys({ ...json.dependencies, ...json.devDependencies }),
     vitest: existsSync(join(root, dir, 'vitest.config.ts')),
-    tsconfig: existsSync(join(root, dir, 'tsconfig.json')),
+    typecheck: dir === 'checkin-app' || Boolean(json.scripts?.typecheck),
   };
 });
 const byDir = new Map(workspaces.map((w) => [w.dir, w]));
@@ -202,7 +202,8 @@ const strippedDbEnv = () => {
 if (appReached && !existsSync(join(app, 'src/generated/prisma'))) add('prisma generate checkin-app', 'npx', ['prisma', 'generate'], app);
 for (const dir of [...reached].sort()) {
   const w = byDir.get(dir);
-  if (w?.tsconfig) add(`tsc ${dir}`, 'npx', ['tsc', '--noEmit', '-p', '.'], join(root, dir));
+  // Type-check only what CI type-checks: checkin and the workspaces with a typecheck script.
+  if (w?.typecheck) add(`tsc ${dir}`, 'npx', ['tsc', '--noEmit', '-p', '.'], join(root, dir));
 }
 const lintFiles = appFiles.filter(appExists).filter((f) => /\.(t|j)sx?$|\.mjs$/.test(f));
 if (lintFiles.length) add('eslint (changed checkin-app files)', 'npx', ['eslint', '--max-warnings', '0', '--no-warn-ignored', ...lintFiles], app);
