@@ -354,7 +354,7 @@ describe('Membership payment-plan routes', () => {
         // fallback emails EVERY isBoardMember row, and other suites' board
         // personas share the DB in a full CI run.
         const REVIEW_TEAM = `review-team-${TAG}@example.com`;
-        let restoreBoardSettings: () => Promise<void>;
+        let restoreBoardSettings: () => Promise<void> = async () => {};
         beforeAll(async () => {
             restoreBoardSettings = await snapshotBoardSettings();
             await prisma.boardSettings.upsert({ where: { id: 1 }, update: { scholarshipNotifyEmail: REVIEW_TEAM }, create: { id: 1, scholarshipNotifyEmail: REVIEW_TEAM } });
@@ -447,7 +447,7 @@ describe('Membership payment-plan routes', () => {
     });
 
     describe('scholarship ACK settings (subject + membership body)', () => {
-        let restoreBoardSettings: () => Promise<void>;
+        let restoreBoardSettings: () => Promise<void> = async () => {};
         beforeAll(async () => {
             restoreBoardSettings = await snapshotBoardSettings();
             await prisma.boardSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });

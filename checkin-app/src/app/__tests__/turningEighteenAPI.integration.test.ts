@@ -45,7 +45,7 @@ describe('GET /api/membership-audit/turning-18', () => {
     let leadId: number;
     let unknownDobId: number;
     let declaredAdultId: number;
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     const cleanup = async () => {
         const hhs = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });

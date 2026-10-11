@@ -24,7 +24,7 @@ function req(method: string, body?: unknown) {
 }
 
 describe('GET/PUT /api/settings/outreach', () => {
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     beforeAll(async () => {
         restoreBoardSettings = await snapshotBoardSettings();

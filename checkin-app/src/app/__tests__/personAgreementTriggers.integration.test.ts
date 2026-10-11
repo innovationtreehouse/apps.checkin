@@ -101,7 +101,7 @@ async function setBoundary(boundary: Date | null) {
 }
 
 describe('PERSON_AGREEMENT triggers', () => {
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     beforeAll(async () => {
         await cleanup();

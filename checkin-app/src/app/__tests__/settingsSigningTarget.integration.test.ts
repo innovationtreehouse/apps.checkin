@@ -24,7 +24,7 @@ const ORIGINAL_CHECKIN_ENV = process.env.CHECKIN_ENV;
 describe('PUT /api/settings/membership — devSigningTarget', () => {
     let boardId: number;
     let householdId: number;
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     beforeAll(async () => {
         const board = await prisma.person.create({
