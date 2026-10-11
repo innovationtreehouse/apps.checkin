@@ -53,7 +53,7 @@ describe("flow: web checkout by the last recorded keyholder", () => {
         for (const v of (await roster()).attendance) {
             const res = await signOut(board, v.id);
             if (res.status === 400 && res.json.type === "close_choice") {
-                await signOut(board, v.id, { forceCloseToken: res.json.forceCloseToken, closeChoice: "close" });
+                await signOut(board, v.id, { forceCloseToken: res.json.forceCloseToken, closeChoice: "leave" });
             }
         }
         expect((await roster()).attendance).toHaveLength(0);
@@ -145,19 +145,19 @@ describe("flow: web checkout by the last recorded keyholder", () => {
         expect((await roster()).attendance.map(v => v.participant.id)).toEqual([otherId]);
     });
 
-    it("5. a board member who is not a keyholder signs out the last keyholder and closes", async () => {
+    it("5. a board member who is not a keyholder signs out the last keyholder and may only leave", async () => {
         await checkIn(keyholder.personaId);
         await checkIn(otherId);
         const kv = (await visitOf(keyholder.personaId))!;
 
         const warn = await signOut(board, kv.id);
         expect(warn.status).toBe(400);
-        expect(warn.json.choices).toEqual(["close", "leave", "cancel"]);
+        expect(warn.json.choices).toEqual(["leave", "cancel"]);
         expect(warn.json.names).toHaveLength(1);
 
-        const res = await signOut(board, kv.id, { forceCloseToken: warn.json.forceCloseToken, closeChoice: "close" });
-        expect(res.json.facilityClosed).toBe(true);
-        expect((await roster()).attendance).toHaveLength(0);
+        const res = await signOut(board, kv.id, { forceCloseToken: warn.json.forceCloseToken, closeChoice: "leave" });
+        expect(res.json.facilityClosed).toBe(false);
+        expect((await roster()).attendance.map(v => v.participant.id)).toEqual([otherId]);
     });
 
     it("7. removing the last keyholder's open visit never closes", async () => {

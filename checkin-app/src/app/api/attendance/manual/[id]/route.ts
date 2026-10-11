@@ -157,7 +157,7 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
             if (departureEdited && !closingOpenVisit) {
                 const close = await tx.facilityClose.findFirst({
                     where: { closerVisitId: visitId, closedById: userId },
-                    select: { id: true, closedAt: true },
+                    select: { id: true, closedAt: true, closedById: true },
                 });
                 if (close) await correctCloseTime(tx, close, userId, nextDeparted!);
             }

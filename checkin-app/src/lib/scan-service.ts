@@ -499,7 +499,7 @@ export async function logCloseDepartures(
     actor: AuditActor,
     changes: DepartureChange[],
     via: FacilityCloseVia,
-    moved = false,
+    note: Record<string, unknown> = {},
 ): Promise<void> {
     if (changes.length === 0) return;
     await db.auditLog.createMany({
@@ -510,7 +510,7 @@ export async function logCloseDepartures(
             affectedEntityId: facilityCloseId,
             secondaryAffectedEntity: c.id,
             oldData: { visitId: c.previousVisitId ?? c.id, personId: c.personId, departedAt: c.oldDepartedAt, departedVia: c.oldDepartedVia },
-            newData: { visitId: c.id, personId: c.personId, departedAt: c.departedAt, departedVia: c.departedVia, via, ...(moved ? { moved } : {}) },
+            newData: { visitId: c.id, personId: c.personId, departedAt: c.departedAt, departedVia: c.departedVia, via, ...note },
         })),
     });
 }
@@ -518,17 +518,20 @@ export async function logCloseDepartures(
 async function closeAllOpenVisits(db: DbClient, closer: FacilityCloser, closeTime: Date = new Date()) {
     const closedAt = new Date(Math.min(closeTime.getTime(), Date.now()));
     const closeAt = closedAt.toISOString();
-    // The closer's own departure, already written, is the close.
+    // The closer's own visit the close ends: the one their checkout departed at
+    // or before it, however long the confirm took, or one the overnight sweep
+    // departed after it — the visit a late kiosk confirm closes against.
     const closerVisit = closer.ownCheckout === false ? null : await db.visit.findFirst({
         where: {
             personId: closer.closedById,
             deletedAt: null,
-            departedAt: {
-                gte: new Date(closedAt.getTime() - LATE_CLOSE_SKEW_MS),
-                lte: new Date(closedAt.getTime() + LATE_CLOSE_SKEW_MS),
-            },
+            arrivedAt: { lte: closedAt },
+            OR: [
+                { departedVia: { in: ["SCANNER", "TYPED"] }, departedAt: { lte: closedAt } },
+                { departedVia: "AUTO_CLOSE", departedAt: { gt: closedAt } },
+            ],
         },
-        orderBy: { departedAt: "desc" },
+        orderBy: { arrivedAt: "desc" },
         select: { id: true },
     });
     const close = await db.facilityClose.create({
@@ -566,14 +569,14 @@ async function closeAllOpenVisits(db: DbClient, closer: FacilityCloser, closeTim
 }
 
 /**
- * The closer corrected their own departure, the close's time. Earlier: every
+ * The closer, or the board, corrected the closer's departure, the close's time. Earlier: every
  * departure the close set moves with it, except a visit that began after the
  * new time, or one its owner has since corrected (no longer FACILITY_CLOSE).
  * Later: nobody else moves. Runs inside the correction's transaction.
  */
 export async function correctCloseTime(
     db: TxClient,
-    close: { id: number; closedAt: Date },
+    close: { id: number; closedAt: Date; closedById: number | null },
     actorId: number,
     newTime: Date,
 ): Promise<void> {
@@ -600,7 +603,8 @@ export async function correctCloseTime(
         RETURNING v.id, v."personId", old."departedAt" AS "oldDepartedAt", old."departedVia"::text AS "oldDepartedVia",
                   v."departedAt", v."departedVia"::text AS "departedVia"`;
     await db.facilityClose.update({ where: { id: close.id }, data: { closedAt: newTime } });
-    await logCloseDepartures(db, close.id, personActor(actorId), changes, "WEB_CORRECTION", true);
+    await logCloseDepartures(db, close.id, personActor(actorId), changes, "WEB_CORRECTION",
+        { moved: true, ...(actorId !== close.closedById ? { correctedForCloserId: close.closedById } : {}) });
 }
 
 /** Fire-and-forget post-event email run on facility close. The dynamic import
@@ -669,9 +673,9 @@ export function closeActor(user: AuthenticatedUser): CloseActor {
     return { id: Number(user.id), isKeyholder: !!user.isKeyholder, isBoardMember: !!user.isBoardMember, isSysadmin: !!user.isSysadmin };
 }
 
-/** The board, and a keyholder checking themselves out, may close the building;
- *  nobody else does (Arts. VI–VII). */
-const mayClose = (actor: CloseActor, subjectId: number) => actor.isBoardMember || (actor.isKeyholder && actor.id === subjectId);
+/** Only a keyholder closes the building (Arts. VI–VII): checking themselves
+ *  out, or, on the board, checking out the last keyholder. */
+const mayClose = (actor: CloseActor, subjectId: number) => actor.isKeyholder && (actor.id === subjectId || actor.isBoardMember);
 
 /** Keyholders, the board and sysadmins already read the full roster. */
 const readsRoster = (actor: CloseActor) => actor.isKeyholder || actor.isBoardMember || actor.isSysadmin;
@@ -691,10 +695,11 @@ async function handoverCandidates(db: DbClient, subjectId: number) {
  * correction and removal. When the visit is the last keyholder's and others
  * are inside, the caller chooses close, leave or cancel:
  *
- * - a keyholder checking themselves out, or a board member, gets all three; a
- *   leave names the keyholder handed over to, unless no keyholder is free to name;
- * - anyone else — another keyholder, a household lead, a sysadmin — gets leave
- *   or cancel and names nobody;
+ * - a keyholder checking themselves out, or a board member who is a keyholder,
+ *   gets all three; a leave names the keyholder handed over to, unless no
+ *   keyholder is free to name;
+ * - anyone else — another keyholder, a board member who is not a keyholder, a
+ *   household lead, a sysadmin — gets leave or cancel and names nobody;
  * - a removal never closes, whoever makes it.
  *
  * The token is bound to the actor shown the choice, and the allowed choices are
