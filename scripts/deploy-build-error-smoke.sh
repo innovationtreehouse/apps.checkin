@@ -41,10 +41,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
+PG_IMAGE=public.ecr.aws/docker/library/postgres:15
+# Registry pulls fail transiently (rate limits) even when authenticated.
+for delay in 5 15 0; do
+  docker pull -q "$PG_IMAGE" && break
+  [ "$delay" = 0 ] && exit 1
+  echo "pull of $PG_IMAGE failed; retrying in ${delay}s"
+  sleep "$delay"
+done
+
 docker network create "$NET" >/dev/null
 docker run -d --name "$DB" --network "$NET" \
   -e POSTGRES_USER=prisma -e POSTGRES_PASSWORD=prisma -e POSTGRES_DB=checkmein \
-  public.ecr.aws/docker/library/postgres:15 >/dev/null
+  "$PG_IMAGE" >/dev/null
 for _ in $(seq 1 30); do
   docker exec "$DB" pg_isready -U prisma -d checkmein >/dev/null 2>&1 && break
   sleep 1
