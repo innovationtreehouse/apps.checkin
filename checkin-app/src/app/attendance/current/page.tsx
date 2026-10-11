@@ -53,7 +53,8 @@ type Visit = {
 
 type Counts = { keyholders: number; volunteers: number; youth: number; total: number; needReview?: number };
 type SafetyFlags = { facilityOpen: boolean; isLastKeyholder: boolean; isTwoDeepViolation: boolean };
-type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags; building?: BuildingLink };
+// kioskOffline: the kiosk proxy served its own view because the server could not be reached.
+type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; kioskOffline?: boolean };
 type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; self: Visit | null; household: Visit[] };
 type AttendanceResponse = FullResponse | LimitedResponse;
 
@@ -146,6 +147,7 @@ function KioskDisplayInner() {
   // door screen after 10 quiet minutes. Gate on mode=kiosk (the URL the
   // proxy actually loads) or the signedRequest response flag.
   const isSignedKiosk = !!(searchParams.get("sig") && searchParams.get("ts") && searchParams.get("nonce"));
+  const isKioskDisplay = searchParams.get("mode") === "kiosk" || isSignedKiosk;
 
   const fetchAttendance = useCallback(async () => {
     try {
@@ -171,13 +173,14 @@ function KioskDisplayInner() {
     } catch (error) {
       console.error("Failed to fetch attendance:", error);
       setError("Network error occurred.");
-      notifications.show({ color: "red", message: "Network error", autoClose: false });
+      if (!isKioskDisplay) notifications.show({ color: "red", message: "Network error", autoClose: false });
     } finally {
       setLoading(false);
     }
-  }, [searchParams]);
+  }, [searchParams, isKioskDisplay]);
 
-  const isKioskDisplay = searchParams.get("mode") === "kiosk" || isSignedKiosk;
+  // The door screen never blanks: a failed fetch keeps the last roster up.
+  const kioskStale = isKioskDisplay && data !== null && (error !== null || (isFull && (data as FullResponse).kioskOffline === true));
   usePolling(fetchAttendance, 60000, { idleStopMs: isKioskDisplay ? undefined : POLL_IDLE_STOP_MS });
 
   useEffect(() => {
@@ -420,6 +423,7 @@ function KioskDisplayInner() {
                 Sign out a user
               </Button>
             )}
+            {kioskStale && <Text size="sm" c="dimmed">Offline — showing last known attendance</Text>}
             <CountBadge intent="info" size="lg">
               {unconfirmed ? "Checked in (unconfirmed)" : "People Present"}: {data ? counts.total : "—"}
             </CountBadge>
@@ -504,7 +508,7 @@ function KioskDisplayInner() {
         {/* Main content */}
         {loading ? (
           <Center py="xl"><Loader /></Center>
-        ) : error ? (
+        ) : error && !kioskStale ? (
           <Alert color="red">{error === "Unauthorized" ? "Access Denied: Please sign in to view attendance." : error}</Alert>
         ) : !data ? (
           <Alert color="red">Attendance is unavailable — the roster could not be loaded.</Alert>

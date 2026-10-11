@@ -60,26 +60,32 @@ def skip_kiosk_keepalive(state, method, path, in_closed_window_fn=in_closed_wind
     return bool(in_closed_window_fn())
 
 
+# With nothing seen yet, an empty board that must include `safety` (and
+# `access`/`youth`): a missing safety object is treated as UNKNOWN and paints
+# the orange supervision fail-safe.
+EMPTY_ATTENDANCE = {
+    "access": "full",
+    "counts": {"total": 0, "keyholders": 0, "volunteers": 0, "youth": 0},
+    "safety": {"isLastKeyholder": False, "isTwoDeepViolation": False},
+    "attendance": [],
+}
+
+# Roster label for a badge the kiosk has never seen on a server roster.
+UNKNOWN_PERSON_NAME = "Checked in offline"
+
+
 def synthetic_keepalive_body(path, state):
     """JSON the iframe already knows how to parse, without a backend round-trip.
 
-    Replays the last real body for this path, so the roster the iframe was
-    already shown stays up; overnight occupancy changed off this Pi shows only
-    once a local scan refetches. With nothing seen yet, an empty board that
-    must include `safety` (and `access`/`youth`): a missing safety object is
-    treated as UNKNOWN and paints the orange supervision fail-safe.
+    Attendance is the kiosk's own view (last roster plus its scans since); other
+    paths replay the last real body, so what the iframe was shown stays up.
     """
+    if path.split("?", 1)[0] == "/api/attendance":
+        return json.dumps(state.attendance_view() if state is not None else EMPTY_ATTENDANCE)
     last = state.last_keepalive_bodies.get(path) if state is not None else None
     if last is not None:
         return last
-    if is_kiosk_keepalive_path(path) and path.startswith("/api/kioskdisplay/certifications"):
-        return json.dumps({"participants": [], "tools": []})
-    return json.dumps({
-        "access": "full",
-        "counts": {"total": 0, "keyholders": 0, "volunteers": 0, "youth": 0},
-        "safety": {"isLastKeyholder": False, "isTwoDeepViolation": False},
-        "attendance": [],
-    })
+    return json.dumps({"participants": [], "tools": []})
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -318,6 +324,10 @@ class AttendanceState:
         self.clock_watch = ClockWatch()
         # Last real 200 body per keepalive path, replayed during the closed window.
         self.last_keepalive_bodies = {}
+        # Every roster participant seen, and when this kiosk saw each badge IN:
+        # what it needs to draw someone the last roster does not show yet.
+        self.known_people = {}
+        self.local_arrivals = {}
 
     def arm_confirm(self, participant_id, token, seconds, banner_html=None):
         """Hold the confirm token the server minted with a force-close warning or
@@ -439,6 +449,18 @@ class AttendanceState:
                 return None
             return not (self.present_ids - {pid})
 
+    def others_shown(self, participant_id):
+        """Roster names of everyone but this badge the kiosk shows inside."""
+        try:
+            pid = int(participant_id)
+        except (TypeError, ValueError):
+            pid = None
+        with self.lock:
+            return sorted(
+                (self.known_people.get(other) or {}).get("name") or UNKNOWN_PERSON_NAME
+                for other in self.present_ids - {pid}
+            )
+
     def offline_supervision_warning(self):
         """Yellow supervision caution from the last known safety state, or None.
         Never red offline: the kiosk cannot re-check two-deep without the server,
@@ -485,6 +507,7 @@ class AttendanceState:
         with self.lock:
             if checking_in:
                 self.present_ids.add(pid)
+                self.local_arrivals[pid] = now_iso()
             else:
                 self.present_ids.discard(pid)
 
@@ -504,9 +527,14 @@ class AttendanceState:
             present.add(int(pid))
             if person.get("isKeyholder"):
                 keyholders.add(int(pid))
-        _overlay_pending(present, pending)
+        arrivals = {}
+        _overlay_pending(present, pending, arrivals)
         safety = att_data.get("safety") or {}
         with self.lock:
+            self.known_people.update(
+                (int(p["id"]), p) for p in (v.get("participant") for v in visits)
+                if p and p.get("id") is not None)
+            self.local_arrivals.update(arrivals)
             self.present_ids = present
             self.keyholder_ids = keyholders
             self.last_two_deep_violation = bool(safety.get("isTwoDeepViolation"))
@@ -516,11 +544,67 @@ class AttendanceState:
     def apply_pending(self, pending):
         """Overlay undelivered outbox rows when there is no roster to seed from."""
         with self.lock:
-            _overlay_pending(self.present_ids, pending)
+            _overlay_pending(self.present_ids, pending, self.local_arrivals)
 
-def _overlay_pending(present, pending):
+    def attendance_view(self, offline=False):
+        """The roster the kiosk shows: the last server roster with this kiosk's
+        presence view (its queued and live scans) applied. Unchanged membership
+        replays the roster as is; changed membership recounts and drops
+        `safety`, which the kiosk cannot recompute (the page reads that as
+        unknown). `kioskOffline` marks a body served because the server could
+        not be reached."""
+        with self.lock:
+            last = self.last_keepalive_bodies.get("/api/attendance")
+            present = set(self.present_ids)
+            people = dict(self.known_people)
+            arrivals = dict(self.local_arrivals)
+        view = json.loads(last) if last else json.loads(json.dumps(EMPTY_ATTENDANCE))
+        roster = view.get("attendance") or []
+        shown = [v for v in roster if _visit_pid(v) in present]
+        missing = present - {_visit_pid(v) for v in shown}
+        if missing or len(shown) != len(roster):
+            for pid in sorted(missing):
+                shown.append({
+                    "id": -pid,
+                    "arrivedAt": arrivals.get(pid) or now_iso(),
+                    "participant": people.get(pid) or {
+                        "id": pid, "name": UNKNOWN_PERSON_NAME, "email": "", "isKeyholder": False},
+                })
+            view["attendance"] = shown
+            view["counts"] = _roster_counts(shown, view.get("counts"))
+            view.pop("safety", None)
+        if offline:
+            view["kioskOffline"] = True
+        return view
+
+
+def _visit_pid(visit):
+    person = visit.get("participant") or visit.get("person") or {}
+    try:
+        return int(person.get("id"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _roster_counts(visits, prior):
+    """Counts as the page columns them; an unknown youth flag counts as youth."""
+    people = [v.get("participant") or {} for v in visits]
+    youth = [p.get("isYouth", True) is not False for p in people]
+    counts = {
+        "total": len(people),
+        "keyholders": sum(1 for p in people if p.get("isKeyholder")),
+        "volunteers": sum(1 for p, y in zip(people, youth) if not p.get("isKeyholder") and not y),
+        "youth": sum(youth),
+    }
+    if prior and "needReview" in prior:
+        counts["needReview"] = prior["needReview"]
+    return counts
+
+
+def _overlay_pending(present, pending, arrivals=None):
     """Apply undelivered scans (outbox.pending_rows(), scanned_at ASC) to a
-    presence set: the last intent per person wins."""
+    presence set: the last intent per person wins. `arrivals` collects each
+    queued IN's scan time."""
     for row in pending:
         try:
             pid = int(row[1])
@@ -528,6 +612,8 @@ def _overlay_pending(present, pending):
             continue
         if row[5] == "IN":
             present.add(pid)
+            if arrivals is not None:
+                arrivals[pid] = row[2]
         elif row[5] == "OUT":
             present.discard(pid)
 
@@ -537,6 +623,7 @@ def _overlay_pending(present, pending):
 class KioskHandler(BaseHTTPRequestHandler):
     state = None
     backend = None
+    outbox = None
     kiosk_path = DEFAULT_KIOSK_PATH
     disable_blackout = False
 
@@ -867,17 +954,16 @@ class KioskHandler(BaseHTTPRequestHandler):
             # Chromium is still up; don't let last_browser_seen look like a crash.
             if self.state is not None:
                 self.state.last_browser_seen = time.monotonic()
-            body = synthetic_keepalive_body(sign_path, self.state).encode()
-            try:
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-            except (BrokenPipeError, ConnectionResetError):
-                return
+            self._send_json(synthetic_keepalive_body(sign_path, self.state))
             return
-        
+
+        # The kiosk shows its own view rather than an error when the server
+        # cannot answer the roster GET.
+        own_view = self.state is not None and method == "GET" and sign_path == "/api/attendance"
+        # Snapshot before the fetch, as seed_from_attendance requires.
+        pending = self.outbox.pending_rows() if own_view and self.outbox is not None else ()
+        relayed = False
+
         try:
             # Use requests.request (stateless) so cookies flow directly between browser and backend
             resp = requests.request(
@@ -898,7 +984,13 @@ class KioskHandler(BaseHTTPRequestHandler):
                         self.state.attendance_auth_fail = False
                     elif resp.status_code in (401, 403):
                         self.state.attendance_auth_fail = True
-            
+            if own_view and resp.status_code >= 500:
+                # Unreachable, warming (503) or a gateway error.
+                resp.close()
+                self._send_json(json.dumps(self.state.attendance_view(offline=True)))
+                return
+
+            relayed = True
             try:
                 self.send_response(resp.status_code)
                 for k, v in resp.headers.items():
@@ -921,12 +1013,21 @@ class KioskHandler(BaseHTTPRequestHandler):
                 # Browser closed the connection, normal for HMR or page reloads
                 remember = False
             if remember:
-                with self.state.lock:
-                    self.state.last_keepalive_bodies[sign_path] = b"".join(chunks).decode("utf-8", "replace")
-                    
+                text = b"".join(chunks).decode("utf-8", "replace")
+                roster = _full_roster(text) if sign_path == "/api/attendance" else None
+                if roster is not None:
+                    # The iframe's roster is the newest the kiosk has: it is the view.
+                    self.state.seed_from_attendance(roster, pending)
+                else:
+                    with self.state.lock:
+                        self.state.last_keepalive_bodies[sign_path] = text
+
         except Exception as e:
             if not isinstance(e, (BrokenPipeError, ConnectionResetError)):
                 log.error(f"Proxy error for {self.path}: {e}")
+            if own_view and not relayed:
+                self._send_json(json.dumps(self.state.attendance_view(offline=True)))
+                return
             try:
                 # If we haven't sent headers yet, try to send a 502
                 self.send_response(502)
@@ -934,8 +1035,30 @@ class KioskHandler(BaseHTTPRequestHandler):
             except:
                 pass
 
+    def _send_json(self, text):
+        body = text.encode()
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def log_message(self, format, *args):
         pass
+
+
+def _full_roster(text):
+    """The parsed body when it is a full-access roster, else None."""
+    try:
+        body = json.loads(text)
+    except ValueError:
+        return None
+    if isinstance(body, dict) and body.get("access") == "full" and isinstance(body.get("attendance"), list):
+        return body
+    return None
 
 # ---------------------------------------------------------------------------
 # USB scanner listener
@@ -1054,16 +1177,18 @@ FORCE_CLOSE_CONFIRM_SECONDS = 15
 # Reads of one badge this close together are one scan (a scanner double-read).
 # A close confirm is therefore a second badge after this, inside the countdown.
 REPEAT_READ_SECONDS = 3.0
-OFFLINE_CLOSE_WARN_COPY = "Others are still recorded inside. Badge again to close the building."
+OFFLINE_CLOSE_WARN_COPY = "Badge again to close the building."
+CLOSING_ALONE_COPY = "You are closing the building. The building should be empty."
 # Yellow, never red: offline the kiosk can't re-verify two-deep, so it warns
 # and trusts the keyholder to clear the room (attendance-checkin.md).
 TWO_DEEP_CLOSE_WARNING = "Two-deep supervision may not be met -- make sure everyone is out before you close."
 
 
-def _offline_close_warning_html(supervision=None):
+def _offline_close_warning_html(supervision=None, others=()):
     """Local last-keyholder warning shown when offline: no server token, so the
-    countdown just paces the confirm the kiosk is arming itself."""
-    parts = [html.escape(OFFLINE_CLOSE_WARN_COPY)]
+    countdown just paces the confirm the kiosk is arming itself. Lists who the
+    kiosk shows still inside."""
+    parts = ["Still inside: " + html.escape(", ".join(others)), html.escape(OFFLINE_CLOSE_WARN_COPY)]
     if supervision:
         parts.append("⚠️ " + html.escape(supervision))
     parts.append(f'<span id="fc-countdown">{FORCE_CLOSE_CONFIRM_SECONDS}</span>s to confirm')
@@ -1075,9 +1200,15 @@ def _offline_close_saved_html(queued):
     the close syncs when the link returns."""
     return f'<div class="banner banner-saved">✓ BUILDING CLOSED — will sync ({queued} waiting)</div>'
 
-def _scan_result_banner_html(body, status):
+def _closing_alone_saved_html(queued):
+    """A keyholder's OUT, queued while the kiosk showed nobody else inside."""
+    return (f'<div class="banner banner-saved">✓ CHECKED OUT — {html.escape(CLOSING_ALONE_COPY)}'
+            f'<br>Will sync ({queued} waiting)</div>')
+
+def _scan_result_banner_html(body, status, confirmed=False):
     """Returns (html, countdown_seconds). Pure -- arming the confirm token is
-    the caller's job, so the drain can render a response without arming one."""
+    the caller's job, so the drain can render a response without arming one.
+    `confirmed`: this scan was the second badge of a close confirm."""
     # Build banner HTML for the wrapper page.
     # All values below originate from the backend response (participant names,
     # messages) and are ultimately assigned to the wrapper page via innerHTML.
@@ -1119,6 +1250,8 @@ def _scan_result_banner_html(body, status):
         prompt = html.escape(body.get("closePrompt", "Badge again to close the building."))
         return (f'<div class="banner banner-warning">✓ {who} — {label}<br>⚠️ {prompt}'
                 f'<br><span id="fc-countdown">{countdown}</span>s left to confirm</div>', countdown)
+    if stype == "checkout" and body.get("facilityClosed") and not confirmed:
+        return f'<div class="banner banner-ok">✓ {who} — {label}<br>🔒 {html.escape(CLOSING_ALONE_COPY)}</div>', 0
     warning = html.escape(body.get("warning", "")).replace("\n", "<br>")
     if warning:
         # Scan succeeded but the room is short of supervising adults (#1436):
@@ -1204,6 +1337,8 @@ def handle_scan(backend, state, outbox, participant_id):
         queued = outbox.pending_count()
         if force_close_confirmed:
             state.push_event({"html": _offline_close_saved_html(queued), "queued": queued})
+        elif shown_empty and not confirm_token:
+            state.push_event({"html": _closing_alone_saved_html(queued), "queued": queued})
         else:
             state.push_event({"html": _saved_banner_html(queued, intent), "queued": queued})
         log.info(f"Queued (predecessor pending or offline close): participant {participant_id} {intent}")
@@ -1234,10 +1369,14 @@ def handle_scan(backend, state, outbox, participant_id):
             # already queued (on drain it checks out, or parks if this was the
             # last keyholder -- the badge is never lost); the confirm scan queues
             # the actual close.
-            banner_html = _offline_close_warning_html(state.offline_supervision_warning())
+            banner_html = _offline_close_warning_html(
+                state.offline_supervision_warning(), state.others_shown(participant_id))
             state.arm_local_close(participant_id, FORCE_CLOSE_CONFIRM_SECONDS, banner_html)
             state.push_event({"html": banner_html, "countdown": FORCE_CLOSE_CONFIRM_SECONDS})
             log.warning(f"Offline force-close warning: keyholder {participant_id}, others present")
+        elif shown_empty and not confirm_token:
+            state.push_event({"html": _closing_alone_saved_html(queued), "queued": queued})
+            log.warning(f"Offline one-scan close, queued: keyholder {participant_id}")
         else:
             state.push_event({"html": _saved_banner_html(queued, intent), "queued": queued})
             log.warning(f"Scan queued (server unreachable/warming): participant {participant_id} {intent}")
@@ -1249,7 +1388,8 @@ def handle_scan(backend, state, outbox, participant_id):
 
     # ack or dead: server responded definitively at scan time -- render the
     # existing immediate banner, unchanged behavior for the online path.
-    banner_html, countdown = _scan_result_banner_html(body, status)
+    banner_html, countdown = _scan_result_banner_html(
+        body, status, confirmed=bool(confirm_token or force_close_confirmed))
     if countdown:
         state.arm_confirm(participant_id, body["forceCloseToken"], countdown, banner_html)
     state.push_event({"html": banner_html, "countdown": countdown})
@@ -1535,6 +1675,7 @@ def main():
 
     KioskHandler.state = state
     KioskHandler.backend = backend
+    KioskHandler.outbox = outbox
     KioskHandler.kiosk_path = kiosk_path
     KioskHandler.disable_blackout = disable_blackout
     server = ThreadingHTTPServer(("127.0.0.1", port), KioskHandler)

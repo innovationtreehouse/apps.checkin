@@ -15,7 +15,9 @@ from client import (
     RELEASE_TAG_GLOB,
     BackendClient,
     DEFAULT_KIOSK_PATH,
+    CLOSING_ALONE_COPY,
     FORCE_CLOSE_CONFIRM_SECONDS,
+    UNKNOWN_PERSON_NAME,
     KioskHandler,
     _saved_banner_html,
     _scan_result_banner_html,
@@ -1049,6 +1051,137 @@ class TestOfflineForceClose(unittest.TestCase):
         self.assertIn("banner-warning", html_out)
         self.assertNotIn("banner-error", html_out)
         self.assertIn("Two-deep", html_out)
+
+
+class TestKioskOwnView(unittest.TestCase):
+    """The kiosk never blanks: when the server can't answer the roster GET it
+    serves its own view -- last roster plus its queued scans -- marked offline."""
+
+    ROSTER = {
+        "access": "full",
+        "attendance": [
+            {"id": 1, "arrivedAt": "2026-10-11T15:00:00Z",
+             "participant": {"id": 9, "name": "Sam", "isKeyholder": True, "isYouth": False}},
+            {"id": 2, "arrivedAt": "2026-10-11T15:05:00Z",
+             "participant": {"id": 5, "name": "Ana", "isKeyholder": False, "isYouth": True}},
+        ],
+        "counts": {"total": 2, "keyholders": 1, "volunteers": 0, "youth": 1, "needReview": 3},
+        "safety": {"facilityOpen": True, "isLastKeyholder": True, "isTwoDeepViolation": False},
+    }
+
+    def _outbox(self, *scans):
+        ob = Outbox(":memory:")
+        for i, (pid, intent) in enumerate(scans):
+            ob.enqueue(f"e{i}", pid, f"2026-10-11T16:0{i}:00Z", None, intent=intent)
+        return ob
+
+    def _proxy_get(self, state, outbox, path="/api/attendance", status=200, body=b"", error=None):
+        handler = KioskHandler.__new__(KioskHandler)
+        handler.path = path
+        handler.headers = {}
+        handler.state = state
+        handler.outbox = outbox
+        handler.backend = Mock(base_url="http://backend", signing_key=SigningKey.generate())
+        handler.wfile = io.BytesIO()
+        handler.send_response = Mock()
+        handler.send_header = handler.end_headers = Mock()
+        resp = Mock(status_code=status, headers={})
+        resp.iter_content.return_value = [body]
+        upstream = patch("client.requests.request", side_effect=error) if error else \
+            patch("client.requests.request", return_value=resp)
+        with patch("client.skip_kiosk_keepalive", return_value=False), upstream:
+            handler._proxy_request("GET")
+        return handler
+
+    def test_unreachable_server_serves_the_roster_with_queued_scans(self):
+        state = AttendanceState()
+        state.seed_from_attendance(self.ROSTER)
+        ob = self._outbox(("5", "OUT"), ("7", "IN"))
+        state.apply_pending(ob.pending_rows())
+
+        handler = self._proxy_get(state, ob, error=ConnectionError("down"))
+
+        handler.send_response.assert_called_once_with(200)
+        view = json.loads(handler.wfile.getvalue())
+        self.assertTrue(view["kioskOffline"])
+        self.assertEqual([v["participant"]["id"] for v in view["attendance"]], [9, 7])
+        added = view["attendance"][1]
+        self.assertEqual(added["participant"]["name"], UNKNOWN_PERSON_NAME)
+        self.assertEqual(added["arrivedAt"], "2026-10-11T16:01:00Z")
+        self.assertEqual(view["counts"], {"total": 2, "keyholders": 1, "volunteers": 0,
+                                          "youth": 1, "needReview": 3})
+        self.assertNotIn("safety", view, "the kiosk cannot recompute supervision")
+
+    def test_warming_503_serves_the_kiosk_view_too(self):
+        state = AttendanceState()
+        state.seed_from_attendance(self.ROSTER)
+        handler = self._proxy_get(state, self._outbox(), status=503, body=b"<html>waking</html>")
+        view = json.loads(handler.wfile.getvalue())
+        self.assertTrue(view["kioskOffline"])
+        self.assertEqual(view["safety"], self.ROSTER["safety"], "unchanged roster keeps its flags")
+
+    def test_unreachable_server_before_any_roster_shows_queued_scans(self):
+        state = AttendanceState()
+        ob = self._outbox(("7", "IN"))
+        state.apply_pending(ob.pending_rows())
+        view = json.loads(self._proxy_get(state, ob, error=ConnectionError("down")).wfile.getvalue())
+        self.assertEqual([v["participant"]["id"] for v in view["attendance"]], [7])
+        self.assertEqual(view["counts"]["total"], 1)
+
+    def test_other_paths_still_answer_502(self):
+        handler = self._proxy_get(AttendanceState(), None, path="/api/scan", error=ConnectionError("down"))
+        handler.send_response.assert_called_once_with(502)
+
+    def test_a_proxied_roster_seeds_the_kiosk_view_with_queued_scans(self):
+        state = AttendanceState()
+        ob = self._outbox(("5", "OUT"))
+        self._proxy_get(state, ob, body=json.dumps(self.ROSTER).encode())
+        self.assertEqual(state.present_ids, {9})
+        self.assertEqual(state.known_people[5]["name"], "Ana")
+
+    def test_closed_window_replays_the_kiosk_view(self):
+        state = AttendanceState()
+        state.seed_from_attendance(self.ROSTER)
+        state.note_presence(5, checking_in=False)
+        view = json.loads(synthetic_keepalive_body("/api/attendance", state))
+        self.assertEqual([v["participant"]["id"] for v in view["attendance"]], [9])
+        self.assertNotIn("kioskOffline", view)
+
+
+class TestCloseBanners(unittest.TestCase):
+    ROSTER = TestKioskOwnView.ROSTER
+
+    def _offline(self):
+        backend = Mock(attendance_path=None)
+        backend.post_scan.return_value = ({"error": "Connection refused"}, 0, None)
+        return backend
+
+    def test_online_one_scan_close_says_the_building_should_be_empty(self):
+        body = {"type": "checkout", "facilityClosed": True, "participant": {"name": "Sam"},
+                "message": "Checked out and Facility closed"}
+        self.assertIn(CLOSING_ALONE_COPY, scan_banner(body))
+        self.assertNotIn(CLOSING_ALONE_COPY, _scan_result_banner_html(body, 200, confirmed=True)[0])
+        self.assertNotIn(CLOSING_ALONE_COPY, scan_banner({**body, "facilityClosed": False}))
+
+    def test_offline_keyholder_shown_alone_closes_in_one_scan(self):
+        state = AttendanceState()
+        state.seed_from_attendance(self.ROSTER)
+        state.note_presence(5, checking_in=False)
+        events = []
+        state.push_event = events.append
+        handle_scan(self._offline(), state, Outbox(":memory:"), 9)
+        self.assertIn(CLOSING_ALONE_COPY, events[-1]["html"])
+        self.assertNotIn("countdown", events[-1])
+
+    def test_offline_close_prompt_lists_who_is_shown_inside(self):
+        state = AttendanceState()
+        state.seed_from_attendance(self.ROSTER)
+        state.note_presence(7, checking_in=True)
+        events = []
+        state.push_event = events.append
+        handle_scan(self._offline(), state, Outbox(":memory:"), 9)
+        self.assertIn(f"Still inside: Ana, {UNKNOWN_PERSON_NAME}", events[-1]["html"])
+        self.assertNotIn(CLOSING_ALONE_COPY, events[-1]["html"])
 
 
 if __name__ == "__main__":

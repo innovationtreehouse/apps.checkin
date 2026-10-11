@@ -463,6 +463,56 @@ describe("attendance/current page", () => {
     );
   });
 
+  // First /api/attendance call answers the roster; later ones fail like the proxy's bodiless 502.
+  function rosterThenFailure() {
+    let calls = 0;
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/attendance")) {
+        calls += 1;
+        if (calls === 1) return { ok: true, json: async () => attendanceData } as Response;
+        return { ok: false, status: 502, json: async () => { throw new Error("no body"); } } as unknown as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+  }
+
+  it("kiosk keeps the last roster with an offline note when a refresh fails", async () => {
+    setSearchParams("mode=kiosk");
+    setSession({ id: 999 });
+    rosterThenFailure();
+    renderWithProviders(<KioskDisplay />);
+    await screen.findByText("Karen");
+
+    fireEvent(window, new MessageEvent("message", { data: "refresh-attendance" }));
+
+    expect(await screen.findByText("Offline — showing last known attendance")).toBeInTheDocument();
+    expect(screen.getByText("Karen")).toBeInTheDocument();
+    expect(screen.queryByText("Failed to load attendance")).not.toBeInTheDocument();
+  });
+
+  it("kiosk shows the offline note on the proxy's own view", async () => {
+    setSearchParams("mode=kiosk");
+    setSession({ id: 999 });
+    mockRoutes({ "/api/attendance": { ...attendanceData, kioskOffline: true } });
+    renderWithProviders(<KioskDisplay />);
+
+    expect(await screen.findByText("Offline — showing last known attendance")).toBeInTheDocument();
+    expect(screen.getByText("Karen")).toBeInTheDocument();
+  });
+
+  it("off the kiosk a failed refresh still replaces the roster with the error", async () => {
+    setAdminSession();
+    rosterThenFailure();
+    renderWithProviders(<KioskDisplay />);
+    await screen.findByText("Karen Keyholder");
+
+    fireEvent(window, new MessageEvent("message", { data: "refresh-attendance" }));
+
+    expect(await screen.findByText("Failed to load attendance")).toBeInTheDocument();
+    expect(screen.queryByText("Karen Keyholder")).not.toBeInTheDocument();
+    expect(screen.queryByText("Offline — showing last known attendance")).not.toBeInTheDocument();
+  });
+
   it("includes kiosk-signature headers on both the initial load and a post-action refresh", async () => {
     setSearchParams("sig=abc&ts=123&nonce=xyz");
     setAdminSession();
