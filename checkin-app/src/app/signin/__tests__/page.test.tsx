@@ -66,6 +66,14 @@ describe("SignInPage", () => {
         expect(screen.getByText(/OAuthCallback/)).toBeInTheDocument();
     });
 
+    it("tells a signed-out visitor refused over an unverified Google email what to do", () => {
+        setSearchParams("error=EmailNotVerified");
+        renderWithProviders(<SignInPage />);
+
+        expect(screen.getByText(/confirm your email address in your google account/i)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /sign in with google/i })).toBeInTheDocument();
+    });
+
     it("renders the wordmark lowercase", () => {
         renderWithProviders(<SignInPage />);
 
