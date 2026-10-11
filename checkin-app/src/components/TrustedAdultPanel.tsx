@@ -101,8 +101,7 @@ export default function TrustedAdultPanel() {
         open();
     }, [open]);
 
-    const load = useCallback(() => {
-        setLoading(true);
+    const fetchItems = useCallback(() => {
         fetch("/api/trusted-adults/mine")
             .then((r) => r.json())
             .then((d) => setItems(d.trustedAdults ?? []))
@@ -110,7 +109,12 @@ export default function TrustedAdultPanel() {
             .finally(() => setLoading(false));
     }, []);
 
-    useEffect(load, [load]);
+    const load = () => {
+        setLoading(true);
+        fetchItems();
+    };
+
+    useEffect(fetchItems, [fetchItems]);
 
     async function submit() {
         setSubmitting(true);

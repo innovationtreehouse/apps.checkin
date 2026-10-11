@@ -206,11 +206,10 @@ export default function CompliancePage() {
       onConfirm: () => removeStamp(lead.personId),
     });
 
-  const load = useCallback(async (since: string) => {
-    setLoading(true);
-    try {
-      const query = since ? `?bgClearedSince=${encodeURIComponent(since)}` : "";
-      const res = await fetch(`/api/membership-audit/compliance${query}`);
+  const load = useCallback((since: string) => fetch(
+    `/api/membership-audit/compliance${since ? `?bgClearedSince=${encodeURIComponent(since)}` : ""}`,
+  )
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setHouseholds(data.households ?? []);
@@ -223,13 +222,15 @@ export default function CompliancePage() {
       } else {
         setError("Failed to load compliance data. Ensure you have the proper authorizations.");
       }
-    } catch (e) {
+    })
+    .catch((e) => {
       console.error("Failed to load compliance data:", e);
       setError("Network error loading compliance data.");
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => { load(clearedSince); }, [load, clearedSince]);
 
@@ -333,7 +334,7 @@ export default function CompliancePage() {
           label="Cleared since"
           description={`Showing every clearance. Narrow to ${BLANKET_STAMP_CUTOFF} to hide anything predating the per-adult re-import.`}
           value={clearedSince}
-          onChange={(e) => setClearedSince(e.currentTarget.value)}
+          onChange={(e) => { setLoading(true); setClearedSince(e.currentTarget.value); }}
           maw={260}
         />
         {blanketStamped.length === 0 ? (

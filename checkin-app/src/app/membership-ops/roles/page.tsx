@@ -19,21 +19,20 @@ type PersonRow = RolesEditTarget & { isYouth?: boolean };
 export default function RolesPage() {
   const { user: me, loading, ready } = useRequireRole(['isSysadmin', 'isBoardMember']);
   const [people, setPeople] = useState<PersonRow[]>([]);
-  const [fetching, setFetching] = useState(false);
+  const [fetching, setFetching] = useState(true);
   const [target, setTarget] = useState<PersonRow | null>(null);
 
-  const fetchPeople = async () => {
-    setFetching(true);
-    try {
-      const res = await fetch('/api/roles');
+  const fetchPeople = () => fetch('/api/roles')
+    .then(async (res) => {
       const data = await res.json();
       if (data.people) setPeople(data.people);
-    } catch (err) {
+    })
+    .catch((err) => {
       console.error("Failed to load roles:", err);
-    } finally {
+    })
+    .finally(() => {
       setFetching(false);
-    }
-  };
+    });
 
   useEffect(() => {
     if (ready) fetchPeople();
