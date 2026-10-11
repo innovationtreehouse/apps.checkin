@@ -365,6 +365,7 @@ time needs both. Sketch, to be settled in build step 1:
 | `closedAt` | The close time every departure it sets uses: the keyholder's scan time, or the typed time on a correction. Moves when the close is corrected. |
 | `closedById` | The person who closed. Always a person: every close is a keyholder's badge or a web choice. FK to `Person`. |
 | `via` | `KIOSK`, `KIOSK_OFFLINE`, `WEB_CHECKOUT`, `WEB_CORRECTION`, `WEB_DASHBOARD` (the legacy route). |
+| `closerVisitId` | The closer's own visit, whose departure is the close; correcting it corrects the close. Null when the closer ended someone else's visit (a board member's sign-out). |
 | `createdAt` | When the server applied it; differs from `closedAt` on a late or offline close. |
 
 - `Visit.facilityCloseId`, nullable, set on every departure a close stamps. A

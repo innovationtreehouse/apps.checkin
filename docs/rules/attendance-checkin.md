@@ -213,6 +213,16 @@ Things the app takes as true because they are handled outside it.
   that record with the visit's departure before and after. These logs are an
   audit trail and are never deleted.  [Decision — *Principle: accountability*]
 
+- A correction that closes an open visit departs everyone at the typed
+  departure, as a late kiosk close does; someone who arrived after it stays
+  inside. The keyholder who made a close corrects its time by correcting their
+  own departure. Earlier: every departure the close set moves to the new time,
+  except someone who arrived after it, who keeps the original close's departure
+  as a placeholder for a person to fix, and a departure its owner has corrected,
+  which is never moved. Later: only the closer's own departure moves. Every
+  departure a correction moves is logged against the close with who moved it,
+  the path, and its before and after.  [Decision]
+
 ### The kiosk
 
 - The kiosk shows only what an unattended public screen may — no dates of birth,

@@ -136,7 +136,7 @@ describe('facility close record and departure log (real DB)', () => {
             });
             expect(rows[0].newData).toEqual({
                 visitId: v.id, personId: person.id,
-                departedAt: v.departedAt!.toISOString(), departedVia: v.departedVia,
+                departedAt: v.departedAt!.toISOString(), departedVia: v.departedVia, via,
             });
             expect(rows[0].actorId).toBe(closedById ?? 0);
         }
@@ -161,10 +161,11 @@ describe('facility close record and departure log (real DB)', () => {
             expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: true });
             expect((await visitOf(member)).departedVia).toBe('FACILITY_CLOSE');
 
-            await expectOneClose('KIOSK', keyholder.id, [
+            const close = await expectOneClose('KIOSK', keyholder.id, [
                 { person: member, before: fresh },
                 { person: member2, before: fresh },
             ], keyholder);
+            expect(close.closerVisitId).toBe((await visitOf(keyholder)).id);
         });
 
         it('a close-offer second badge, with another keyholder recorded, writes one KIOSK close', async () => {
@@ -277,10 +278,12 @@ describe('facility close record and departure log (real DB)', () => {
             expect(res.status).toBe(200);
             expect(await res.json()).toMatchObject({ success: true, facilityClosed: true });
 
-            await expectOneClose('WEB_DASHBOARD', board.id, [
+            const close = await expectOneClose('WEB_DASHBOARD', board.id, [
                 { person: member, before: fresh },
                 { person: member2, before: fresh },
             ], keyholder);
+            // The board ended someone else's visit: no visit of the board's is the close.
+            expect(close.closerVisitId).toBeNull();
         });
 
         it('a correction closing the last keyholder\'s open visit writes one WEB_CORRECTION close', async () => {
@@ -298,7 +301,8 @@ describe('facility close record and departure log (real DB)', () => {
             expect(res.status).toBe(200);
             expect((await visitOf(member)).departedVia).toBe('FACILITY_CLOSE');
 
-            await expectOneClose('WEB_CORRECTION', keyholder.id, [{ person: member, before: fresh }], keyholder);
+            const close = await expectOneClose('WEB_CORRECTION', keyholder.id, [{ person: member, before: fresh }], keyholder);
+            expect(close.closedAt.toISOString()).toBe(departedAt);
         });
 
         it('a tombstone of the last keyholder\'s open visit never closes the facility', async () => {
@@ -367,6 +371,95 @@ describe('facility close record and departure log (real DB)', () => {
         });
     });
 
+    describe('correcting a close', () => {
+        const ago = (ms: number) => new Date(Date.now() - ms);
+        const patch = (v: Visit, body: Record<string, unknown>) =>
+            manualPATCH(req(`/api/attendance/manual/${v.id}`, 'PATCH', body), { params: Promise.resolve({ id: String(v.id) }) });
+        const departedAt = async (v: Visit) => (await prisma.visit.findUniqueOrThrow({ where: { id: v.id } })).departedAt;
+        const theClose = () => prisma.facilityClose.findFirstOrThrow({ where: { id: { gt: closeIdFloor } } });
+        const moves = async (closeId: number) => prisma.auditLog.findMany({
+            where: { tableName: 'FacilityClose', affectedEntityId: closeId, newData: { path: ['via'], equals: 'WEB_CORRECTION' } },
+        });
+
+        /** The keyholder closes by correcting their open visit to `at`. */
+        async function closeByCorrection(kv: Visit, at: Date) {
+            asSession(keyholder);
+            const warn = await patch(kv, { departedAt: at.toISOString() });
+            expect(warn.status).toBe(400);
+            const { forceCloseToken } = await warn.json();
+            const res = await patch(kv, { departedAt: at.toISOString(), forceCloseToken, closeChoice: 'close' });
+            expect(res.status).toBe(200);
+        }
+
+        it('a correction that closes departs everyone at the typed time, and leaves inside whoever arrived after it', async () => {
+            const kv = await open(keyholder);
+            const mv = await open(member);
+            const late = await open(member2, { arrivedAt: ago(30 * 60_000) });
+            const at = ago(HOUR);
+
+            await closeByCorrection(kv, at);
+
+            expect(await departedAt(mv)).toEqual(at);
+            expect(await departedAt(late)).toBeNull();
+            expect(await theClose()).toMatchObject({ via: 'WEB_CORRECTION', closedAt: at, closerVisitId: kv.id });
+        });
+
+        it('an earlier correction moves the departures the close set, except a later arrival and an owner-corrected one', async () => {
+            asSession(keyholder);
+            const kv = await open(keyholder);
+            const mv = await open(member);
+            const bv = await open(board);
+            const late = await open(member2, { arrivedAt: ago(30 * 60_000) });
+
+            const warn = await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id }));
+            const { forceCloseToken } = await warn.json();
+            await dashboardDELETE(req('/api/attendance', 'DELETE', { visitId: kv.id, forceCloseToken, closeChoice: 'close' }));
+            const close = await theClose();
+            expect(close.closerVisitId).toBe(kv.id);
+            const original = close.closedAt;
+
+            const ownCorrection = ago(45 * 60_000);
+            asSession(board);
+            expect((await patch(bv, { departedAt: ownCorrection.toISOString() })).status).toBe(200);
+
+            const corrected = ago(HOUR);
+            asSession(keyholder);
+            expect((await patch(kv, { departedAt: corrected.toISOString() })).status).toBe(200);
+
+            expect(await departedAt(kv)).toEqual(corrected);
+            expect(await departedAt(mv)).toEqual(corrected);
+            expect(await departedAt(bv)).toEqual(ownCorrection);
+            expect(await departedAt(late)).toEqual(original);
+            expect((await theClose()).closedAt).toEqual(corrected);
+
+            const logged = await moves(close.id);
+            expect(logged).toHaveLength(1);
+            expect(logged[0]).toMatchObject({ actorId: keyholder.id, secondaryAffectedEntity: mv.id });
+            expect(logged[0].oldData).toMatchObject({ visitId: mv.id, departedAt: original.toISOString(), departedVia: 'FACILITY_CLOSE' });
+            expect(logged[0].newData).toMatchObject({ visitId: mv.id, departedAt: corrected.toISOString(), departedVia: 'FACILITY_CLOSE' });
+        });
+
+        it('a later correction moves only the closer; a second earlier one moves the rest from where they are', async () => {
+            const kv = await open(keyholder);
+            const mv = await open(member);
+            const at = ago(HOUR);
+            await closeByCorrection(kv, at);
+            const close = await theClose();
+
+            const later = ago(30 * 60_000);
+            expect((await patch(kv, { departedAt: later.toISOString() })).status).toBe(200);
+            expect(await departedAt(kv)).toEqual(later);
+            expect(await departedAt(mv)).toEqual(at);
+            expect((await theClose()).closedAt).toEqual(at);
+            expect(await moves(close.id)).toHaveLength(0);
+
+            const earlier = ago(90 * 60_000);
+            expect((await patch(kv, { departedAt: earlier.toISOString() })).status).toBe(200);
+            expect(await departedAt(mv)).toEqual(earlier);
+            expect((await moves(close.id))[0].oldData).toMatchObject({ departedAt: at.toISOString() });
+        });
+    });
+
     describe('overnight sweep', () => {
         const cronReq = () => req('/api/cron/nightly', 'GET', undefined, { authorization: 'Bearer test-secret' });
 
@@ -414,7 +507,7 @@ describe('facility close record and departure log (real DB)', () => {
                 expect(seg.facilityCloseId).toBe(close.id);
                 const row = logs.find(l => l.secondaryAffectedEntity === seg.id);
                 expect(row?.oldData).toEqual({ visitId: original.id, personId: member.id, departedAt: null, departedVia: null });
-                expect(row?.newData).toEqual({ visitId: seg.id, personId: member.id, departedAt: seg.departedAt!.toISOString(), departedVia: 'AUTO_CLOSE' });
+                expect(row?.newData).toEqual({ visitId: seg.id, personId: member.id, departedAt: seg.departedAt!.toISOString(), departedVia: 'AUTO_CLOSE', via: 'NIGHTLY_SWEEP' });
             }
             await prisma.auditLog.deleteMany({ where: { tableName: 'SYSTEM_NOTIFY', timestamp: { gte: new Date(Date.now() - 60_000) } } });
         });

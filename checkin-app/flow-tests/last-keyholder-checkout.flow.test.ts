@@ -32,6 +32,7 @@ describe("flow: web checkout by the last recorded keyholder", () => {
     let board: Session;
     let keyholder: Session;
     let lead: Session;
+    let other: Session;
     let keyholder2Id: number;
     let leadMemberId: number;
     let otherId: number;
@@ -64,7 +65,8 @@ describe("flow: web checkout by the last recorded keyholder", () => {
         lead = await loginAs("parent.family@example.com");       // household1 lead, not a keyholder
         keyholder2Id = (await loginAs("keyholder2@example.com")).personaId;
         leadMemberId = (await loginAs("parent2.family@example.com")).personaId;
-        otherId = (await loginAs("certified.adult@example.com")).personaId;
+        other = await loginAs("certified.adult@example.com");
+        otherId = other.personaId;
         childId = (await loginAs("child.family@example.com")).personaId;
 
         const grant = await api(board, "/api/roles", { method: "PATCH", body: JSON.stringify({ targetUserId: leadMemberId, isKeyholder: true }) });
@@ -173,6 +175,56 @@ describe("flow: web checkout by the last recorded keyholder", () => {
         });
         expect(res.status).toBe(200);
         expect((await roster()).attendance.map(v => v.participant.id)).toEqual([otherId]);
+    });
+
+    const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+    /** An open visit the person records for themselves, arrived `minutes` ago. */
+    const arrivedAgo = async (session: Session, minutes: number) => {
+        const res = await api(session, "/api/attendance/manual", { method: "POST", body: JSON.stringify({ arrivedAt: ago(minutes) }) });
+        expect(res.status).toBe(201);
+    };
+    const correct = (session: Session, visitId: number, body: Record<string, unknown>) =>
+        api<Warning>(session, `/api/attendance/manual/${visitId}`, { method: "PATCH", body: JSON.stringify(body) });
+    const departureOf = async (session: Session) =>
+        (await api<{ visits: { arrivedAt: string; departedAt: string | null }[] }>(session, "/api/profile/visits")).json.visits[0].departedAt;
+
+    it("6. a correction closing the last keyholder's visit at a past time departs everyone at it, but not a later arrival", async () => {
+        await arrivedAgo(keyholder, 180);
+        await arrivedAgo(other, 180);
+        await checkIn(childId);
+        const kv = (await visitOf(keyholder.personaId))!;
+        const at = ago(120);
+
+        const warn = await correct(keyholder, kv.id, { departedAt: at });
+        expect(warn.status).toBe(400);
+        expect(warn.json.choices).toEqual(["close", "leave", "cancel"]);
+
+        const res = await correct(keyholder, kv.id, { departedAt: at, forceCloseToken: warn.json.forceCloseToken, closeChoice: "close" });
+        expect(res.status).toBe(200);
+        expect(await departureOf(other)).toBe(at);
+        expect((await roster()).attendance.map(v => v.participant.id)).toEqual([childId]);
+    });
+
+    it("8. a keyholder who closes, then corrects their departure earlier, moves every departure the close set, and the log shows each", async () => {
+        await arrivedAgo(keyholder, 180);
+        await arrivedAgo(other, 180);
+        const kv = (await visitOf(keyholder.personaId))!;
+
+        const warn = await signOut(keyholder, kv.id);
+        const closed = await signOut(keyholder, kv.id, { forceCloseToken: warn.json.forceCloseToken, closeChoice: "close" });
+        expect(closed.json.facilityClosed).toBe(true);
+        const original = await departureOf(other);
+        expect(original).not.toBeNull();
+
+        const at = ago(60);
+        expect((await correct(keyholder, kv.id, { departedAt: at })).status).toBe(200);
+        expect(await departureOf(other)).toBe(at);
+
+        type Log = { oldData: { personId: number; departedAt: string }; newData: { personId: number; departedAt: string; via: string } };
+        const { logs } = (await api<{ logs: Log[] }>(board, `/api/system-status/audit-log?table=FacilityClose&actor=${keyholder.personaId}`)).json;
+        const moved = logs.filter(l => l.newData.via === "WEB_CORRECTION" && l.newData.personId === otherId);
+        expect(moved[0].oldData.departedAt).toBe(original);
+        expect(moved[0].newData.departedAt).toBe(at);
     });
 
     it("a confirm from someone other than the person shown the choice is refused", async () => {
