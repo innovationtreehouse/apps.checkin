@@ -320,8 +320,8 @@ class TestForceCloseConfirm(unittest.TestCase):
     """§5.23 explicit confirm: the warning arms a token, the next scan spends it."""
 
     def setUp(self):
-        # These drive the second badge immediately; the dead-front has its own test.
-        patcher = patch("client.CONFIRM_DEADFRONT_SECONDS", 0)
+        # These drive the second badge immediately; the repeat-read filter has its own tests.
+        patcher = patch("client.REPEAT_READ_SECONDS", 0)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -373,11 +373,11 @@ class TestForceCloseConfirm(unittest.TestCase):
 
             client.post_scan(7)
             self.assertEqual(json.loads(post.call_args.kwargs["data"]),
-                             {"participantId": 7, "protocolVersion": 2})
+                             {"participantId": 7, "protocolVersion": 3})
 
             client.post_scan(7, "tok-1")
             self.assertEqual(json.loads(post.call_args.kwargs["data"]),
-                             {"participantId": 7, "protocolVersion": 2, "forceCloseToken": "tok-1"})
+                             {"participantId": 7, "protocolVersion": 3, "forceCloseToken": "tok-1"})
 
     def test_token_is_single_use_and_dies_with_the_countdown(self):
         state = AttendanceState()
@@ -388,25 +388,6 @@ class TestForceCloseConfirm(unittest.TestCase):
         self.assertIsNone(state.take_confirm(7), "a spent token must not confirm twice")
         state.arm_confirm(7, "tok", 0)  # countdown already over
         self.assertIsNone(state.take_confirm(7), "an expired countdown confirms nothing")
-
-    def test_a_double_read_inside_the_dead_front_is_dropped(self):
-        """A scanner reading the checkout badge twice must not confirm the close
-        (online or offline), nor toggle the keyholder back IN."""
-        state = AttendanceState()
-        state.push_event = lambda event: None
-        backend = Mock(attendance_path=None)
-        state.arm_confirm(7, "tok-1", 15)
-        state.arm_local_close(9, 15)
-        outbox = Outbox(":memory:")
-
-        with patch("client.CONFIRM_DEADFRONT_SECONDS", 1.0):
-            handle_scan(backend, state, outbox, 7)
-            handle_scan(backend, state, outbox, 9)
-
-        backend.post_scan.assert_not_called()
-        self.assertEqual(outbox.pending_rows(), [])
-        state.confirm_armed_at -= 2
-        self.assertEqual(state.take_confirm(7), "tok-1", "still armed for the real second badge")
 
     def test_another_badge_during_the_countdown_scans_normally(self):
         """A member arriving while a keyholder's close offer counts down is an
@@ -746,13 +727,113 @@ class TestProxyKeepaliveSkip(unittest.TestCase):
         self.assertEqual(replayed, certs)
 
 
+class TestRepeatReadFilter(unittest.TestCase):
+    """Reads of one badge within REPEAT_READ_SECONDS are one scan, filtered
+    before the scan is queued or sent -- online and offline alike."""
+
+    def setUp(self):
+        self.now = 1000.0
+        patcher = patch("client.time.monotonic", lambda: self.now)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.state = AttendanceState()
+        self.state.push_event = lambda event: None
+        self.outbox = Outbox(":memory:")
+
+    def _online(self):
+        backend = Mock(attendance_path=None)
+        backend.post_scan.return_value = ({"type": "checkin", "participant": {"id": 7}}, 200, None)
+        return backend
+
+    def _offline(self):
+        backend = Mock(attendance_path=None)
+        backend.post_scan.return_value = ({"error": "Connection refused"}, 0, None)
+        return backend
+
+    def test_online_double_read_is_one_scan(self):
+        backend = self._online()
+        handle_scan(backend, self.state, self.outbox, 7)
+        self.now += 2.9
+        handle_scan(backend, self.state, self.outbox, 7)
+        self.assertEqual(backend.post_scan.call_count, 1)
+        self.assertEqual(self.outbox.pending_rows(), [])
+
+    def test_offline_double_read_is_one_queued_scan(self):
+        backend = self._offline()
+        handle_scan(backend, self.state, self.outbox, 7)
+        self.now += 0.3
+        handle_scan(backend, self.state, self.outbox, 7)
+        rows = self.outbox.pending_rows()
+        self.assertEqual([r[5] for r in rows], ["IN"], "never queued IN then OUT")
+        self.assertIn(7, self.state.present_ids)
+
+    def test_the_window_runs_from_the_accepted_read(self):
+        backend = self._offline()
+        handle_scan(backend, self.state, self.outbox, 7)
+        self.now += 2.0
+        handle_scan(backend, self.state, self.outbox, 7)   # filtered
+        self.now += 1.5                                    # 3.5 s after the first
+        handle_scan(backend, self.state, self.outbox, 7)
+        self.assertEqual([r[5] for r in self.outbox.pending_rows()], ["IN", "OUT"])
+
+    def test_in_then_out_four_seconds_apart_is_two_scans_online(self):
+        backend = self._online()
+        handle_scan(backend, self.state, self.outbox, 7)
+        self.now += 4
+        handle_scan(backend, self.state, self.outbox, 7)
+        intents = [c.kwargs["intent"] for c in backend.post_scan.call_args_list]
+        self.assertEqual(intents, ["IN", "OUT"])
+
+    def test_in_then_out_four_seconds_apart_is_two_scans_offline(self):
+        backend = self._offline()
+        handle_scan(backend, self.state, self.outbox, 7)
+        self.now += 4
+        handle_scan(backend, self.state, self.outbox, 7)
+        self.assertEqual([r[5] for r in self.outbox.pending_rows()], ["IN", "OUT"])
+
+    def test_other_badges_are_not_filtered(self):
+        backend = self._online()
+        handle_scan(backend, self.state, self.outbox, 7)
+        handle_scan(backend, self.state, self.outbox, 8)
+        self.assertEqual(backend.post_scan.call_count, 2)
+
+    def test_online_close_confirm_after_three_seconds_closes(self):
+        backend = Mock(attendance_path=None)
+        backend.post_scan.return_value = (
+            {"type": "checkout", "participant": {"id": 9}, "forceCloseToken": "tok-1", "confirmSeconds": 15},
+            200, None)
+        self.state.present_ids = {9, 5}
+        handle_scan(backend, self.state, self.outbox, 9)    # OUT, close offered
+        self.now += 1
+        handle_scan(backend, self.state, self.outbox, 9)    # double-read: no confirm
+        self.assertEqual(backend.post_scan.call_count, 1)
+        self.now += 2.5
+        handle_scan(backend, self.state, self.outbox, 9)    # the human's second badge
+        confirm = backend.post_scan.call_args.kwargs
+        self.assertEqual((confirm["force_close_token"], confirm["intent"]), ("tok-1", "OUT"))
+
+    def test_offline_close_confirm_after_three_seconds_closes(self):
+        backend = self._offline()
+        self.state.keyholder_ids = {9}
+        self.state.present_ids = {9, 5}
+        self.state.current_counts = {"keyholders": 1, "total": 2}
+        handle_scan(backend, self.state, self.outbox, 9)    # OUT, local close armed
+        self.now += 0.5
+        handle_scan(backend, self.state, self.outbox, 9)    # double-read: no confirm
+        self.assertEqual(len(self.outbox.pending_rows()), 1)
+        self.now += 3
+        handle_scan(backend, self.state, self.outbox, 9)
+        rows = self.outbox.pending_rows()
+        self.assertEqual([(r[5], r[7]) for r in rows], [("OUT", 0), ("OUT", 1)])
+
+
 class TestOfflineForceClose(unittest.TestCase):
     """Offline the server mints no token, so the kiosk runs the last-keyholder
     warning + two-scan confirm itself and flags the queued close as confirmed."""
 
     def setUp(self):
-        # These drive the second badge immediately; the dead-front has its own test.
-        patcher = patch("client.CONFIRM_DEADFRONT_SECONDS", 0)
+        # These drive the second badge immediately; the repeat-read filter has its own tests.
+        patcher = patch("client.REPEAT_READ_SECONDS", 0)
         patcher.start()
         self.addCleanup(patcher.stop)
 
