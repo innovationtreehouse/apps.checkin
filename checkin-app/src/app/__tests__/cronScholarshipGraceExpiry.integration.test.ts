@@ -28,7 +28,7 @@ function mkReq(auth?: string) {
 describe('Cron Scholarship-Grace-Expiry API Integration Tests', () => {
     let programId: number;
     const ids: Record<string, number> = {};
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     const mkParticipant = async (key: string) => {
         const p = await prisma.person.create({

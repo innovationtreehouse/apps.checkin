@@ -59,7 +59,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
     let p2: number;
     let h1: number;
     let h2: number;
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     beforeAll(async () => {
         // shopifyVariantId is the variant the enroll flow's checkout link is

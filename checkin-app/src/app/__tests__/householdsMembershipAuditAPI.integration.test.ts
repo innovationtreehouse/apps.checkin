@@ -52,7 +52,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
     let grantableProcessId: number;
     let grantableMembershipId: number;
 
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     // A household with one person, no lead/BG stamped unless the caller sets it.
     async function makeHousehold(label: string) {

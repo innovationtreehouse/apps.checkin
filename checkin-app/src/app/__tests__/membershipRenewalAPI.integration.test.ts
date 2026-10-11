@@ -26,7 +26,7 @@ function cronReq(token: string | null) {
 
 describe('Membership renewal', () => {
     const prevSecret = process.env.CRON_SECRET;
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
     let rev1: number, rev2: number;
     // The sweep is global; track where we started so afterAll can remove every
     // process this test opened (including renewals on other suites' memberships).

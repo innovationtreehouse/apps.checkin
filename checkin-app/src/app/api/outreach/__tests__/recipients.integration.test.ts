@@ -53,7 +53,7 @@ async function makeLead(householdId: number, email: string | null, opts: { email
 function label(email: string | null) { return email ?? 'no-email'; }
 
 describe('outreach recipient snapshot', () => {
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     beforeAll(async () => {
         restoreBoardSettings = await snapshotBoardSettings();
