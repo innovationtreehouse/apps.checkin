@@ -1,5 +1,5 @@
 import { dollarsToCents } from "@inventory/money";
-import { MAX_WINDOW_DAYS, QuickBooksClient, type AccessTokenSource, type QboRealm } from "@inventory/quickbooks";
+import { MAX_WINDOW_DAYS, QuickBooksClient, appKeyOf, type AccessTokenSource, type QboDeposit, type QboRealm } from "@inventory/quickbooks";
 import type { QbDeposit, QbDepositSource } from "../contract";
 import { isoDay } from "../runtime";
 
@@ -38,17 +38,22 @@ export async function depositsIn(source: QbDepositSource, ranges: DayRange[]): P
   return out;
 }
 
+export function toQbDeposit(d: QboDeposit): QbDeposit {
+  return {
+    id: d.Id,
+    txnDate: d.TxnDate,
+    totalCents: dollarsToCents(d.TotalAmt),
+    depositToAccount: d.DepositToAccountRef?.value ?? null,
+    appKey: appKeyOf(d),
+  };
+}
+
 /** The deposit port over QuickBooks, using the host's one AccessTokenSource. */
 export function quickBooksDepositSource(tokens: AccessTokenSource, realm: QboRealm): QbDepositSource {
   const client = new QuickBooksClient(tokens, realm);
   return {
     async depositsBetween(from, to) {
-      return (await client.depositsBetween(from, to)).map((d) => ({
-        id: d.Id,
-        txnDate: d.TxnDate,
-        totalCents: dollarsToCents(d.TotalAmt),
-        depositToAccount: d.DepositToAccountRef?.value ?? null,
-      }));
+      return (await client.depositsBetween(from, to)).map(toQbDeposit);
     },
   };
 }

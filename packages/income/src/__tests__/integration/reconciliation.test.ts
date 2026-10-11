@@ -14,9 +14,10 @@ let txns: Record<string, MirrorBalanceTxn[]>;
 let deposits: QbDeposit[];
 
 const NOW = new Date("2026-06-30T12:00:00Z");
+const BANK = "35";
 
 const dep = (id: string, txnDate: string, totalCents: number): QbDeposit => ({
-  id, txnDate, totalCents, depositToAccount: "Checking",
+  id, txnDate, totalCents, depositToAccount: BANK,
 });
 
 /** Add a paid payout whose transactions sum to its net unless `txnNet` says otherwise. */
@@ -41,6 +42,7 @@ const mirror: PayoutMirror = {
 function bind() {
   configureIncome({
     mirror,
+    bankAccountId: BANK,
     deposits: { depositsBetween: async (from, to) => deposits.filter((d) => d.txnDate >= from && d.txnDate <= to) },
   });
 }
@@ -62,6 +64,14 @@ describeDb("runReconcile — automatic transitions", () => {
   it("is a no-op while the deposit source is unbound", async () => {
     configureIncome({ mirror });
     payout("P1", "2026-06-01", 97);
+    expect(await runReconcile(ORG_A, NOW)).toEqual({ status: "unbound" });
+    expect(await db.payoutReconciliation.count()).toBe(0);
+  });
+
+  it("matches nothing while the bank account is unset, even with both ports bound", async () => {
+    configureIncome({ mirror, deposits: { depositsBetween: async () => deposits } });
+    payout("P1", "2026-06-01", 97);
+    deposits = [dep("D1", "2026-06-02", 97)];
     expect(await runReconcile(ORG_A, NOW)).toEqual({ status: "unbound" });
     expect(await db.payoutReconciliation.count()).toBe(0);
   });
@@ -92,10 +102,10 @@ describeDb("runReconcile — automatic transitions", () => {
     expect(await db.incomeAuditLog.count()).toBe(audits);
   });
 
-  it("waits inside the window, then opens NO_DEPOSIT once it elapses", async () => {
+  it("waits in the outbox inside the window, then opens NO_DEPOSIT once it elapses", async () => {
     payout("P1", "2026-06-25", 97);
     await runReconcile(ORG_A, NOW);
-    expect(await db.payoutReconciliation.count()).toBe(0);
+    expect(await rowFor("P1")).toMatchObject({ status: "WAITING", kind: null });
 
     await runReconcile(ORG_A, new Date("2026-07-03T00:00:00Z"));
     expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT" });
@@ -108,9 +118,9 @@ describeDb("runReconcile — automatic transitions", () => {
     expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "AMBIGUOUS_DEPOSIT", depositId: null });
   });
 
-  it("ignores deposits outside [issuedAt, issuedAt + window]", async () => {
+  it("ignores deposits outside [issuedAt − grace, issuedAt + window]", async () => {
     payout("P1", "2026-06-10", 97);
-    deposits = [dep("early", "2026-06-09", 97), dep("late", "2026-06-18", 97)];
+    deposits = [dep("early", "2026-06-07", 97), dep("late", "2026-06-18", 97)];
     await runReconcile(ORG_A, NOW);
     expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT" });
   });
@@ -288,6 +298,7 @@ describeDb("runReconcile — drift", () => {
     await matched();
     configureIncome({
       mirror,
+      bankAccountId: BANK,
       deposits: { depositsBetween: async () => deposits },
       reconcileFrom: new Date("2026-06-15T00:00:00Z"),
     });
@@ -367,7 +378,7 @@ describeDb("reconciliationService.resolve — retry and the pre-seated create st
     });
   }
 
-  it("retry is refused for any row that is not POST_FAILED", async () => {
+  it("retry is refused for any row that is not POST_FAILED or OVER_CAP", async () => {
     payout("P1", "2026-06-01", 97);
     await runReconcile(ORG_A, NOW);
     const row = await rowFor("P1");
@@ -500,6 +511,7 @@ describeDb("matchToDeposit — claims and exclusions are read under the lock", (
     const row = await rowFor("P1");
     configureIncome({
       mirror,
+      bankAccountId: BANK,
       deposits: {
         depositsBetween: async () => {
           // A concurrent exclusion lands while the QuickBooks read is in flight.
