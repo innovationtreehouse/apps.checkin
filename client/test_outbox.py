@@ -825,3 +825,103 @@ class TestSavedBanner(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _Killed(BaseException):
+    """Stands in for os._exit landing mid-POST: nothing after it runs."""
+
+
+class TestEnqueueBeforeSend(unittest.TestCase):
+    """The scan is durable before the live POST, so a restart (self-update,
+    health monitor) during the send cannot lose it."""
+
+    CHECKIN = ({"type": "checkin", "participant": {}}, 200, None)
+
+    def _drain_once(self, ob, send_fn):
+        def stop(_secs):
+            raise _StopLoop()
+        with self.assertRaises(_StopLoop):
+            replay_drain(ob, send_fn, sleep_fn=stop, in_closed_window_fn=lambda: False)
+
+    def test_a_kill_during_the_live_post_leaves_the_row_and_the_drain_delivers_it_once(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "outbox.db")
+            backend = MagicMock(attendance_path=None)
+            backend.post_scan.side_effect = _Killed()
+            with self.assertRaises(_Killed):
+                handle_scan(backend, FakeState(), Outbox(path), "9")
+            live_id = backend.post_scan.call_args.kwargs["client_event_id"]
+
+            ob = Outbox(path)  # restart
+            rows = ob.pending_rows(skip_inflight=True)
+            self.assertEqual([r[0] for r in rows], [live_id])
+            self.assertEqual(rows[0][5], "IN")
+
+            sent = []
+
+            def send_fn(pid, **kw):
+                sent.append(kw["client_event_id"])
+                return self.CHECKIN
+
+            self._drain_once(ob, send_fn)
+            self._drain_once(ob, send_fn)
+            self.assertEqual(sent, [live_id])
+            self.assertEqual(ob.pending_rows(), [])
+
+    def test_an_acked_live_scan_deletes_its_row(self):
+        ob = Outbox(":memory:")
+        backend = MagicMock(attendance_path=None)
+        backend.post_scan.return_value = self.CHECKIN
+        handle_scan(backend, FakeState(), ob, "9")
+        self.assertEqual(ob.pending_rows(), [])
+        self.assertEqual(ob.dead_count(), 0)
+
+    def test_a_dead_live_scan_deletes_its_row(self):
+        # Shown as an error at the door, never replayed -- as before.
+        ob = Outbox(":memory:")
+        backend = MagicMock(attendance_path=None)
+        backend.post_scan.return_value = ({"error": "unknown participant"}, 404, None)
+        handle_scan(backend, FakeState(), ob, "9")
+        self.assertEqual(ob.pending_rows(), [])
+        self.assertEqual(ob.dead_count(), 0)
+
+    def test_a_retry_keeps_the_row_pending_for_the_drain(self):
+        ob = Outbox(":memory:")
+        backend = MagicMock(attendance_path=None)
+        backend.post_scan.return_value = ({"error": "down"}, 0, None)
+        handle_scan(backend, FakeState(), ob, "9")
+        rows = ob.pending_rows(skip_inflight=True)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], backend.post_scan.call_args.kwargs["client_event_id"])
+
+    def test_the_drain_never_sends_a_row_the_live_post_is_sending(self):
+        ob = Outbox(":memory:")
+        drained, seen = [], {}
+
+        def drain_send(pid, **kw):
+            drained.append(kw["client_event_id"])
+            return self.CHECKIN
+
+        def live_post(pid, **kw):
+            # The drain runs while the live POST is in flight.
+            seen["overlay"] = [r[0] for r in ob.pending_rows()]
+            seen["count"] = ob.pending_count()
+            self._drain_once(ob, drain_send)
+            return self.CHECKIN
+
+        backend = MagicMock(attendance_path=None)
+        backend.post_scan.side_effect = live_post
+        handle_scan(backend, FakeState(), ob, "9")
+
+        live_id = backend.post_scan.call_args.kwargs["client_event_id"]
+        self.assertEqual(drained, [])
+        self.assertEqual(seen["overlay"], [live_id], "presence overlay still sees the in-flight scan")
+        self.assertEqual(seen["count"], 0, "the queued badge does not count the in-flight scan")
+        self.assertEqual(ob.pending_rows(), [])
+
+    def test_own_row_is_not_its_predecessor(self):
+        ob = Outbox(":memory:")
+        backend = MagicMock(attendance_path=None)
+        backend.post_scan.return_value = self.CHECKIN
+        handle_scan(backend, FakeState(), ob, "9")
+        backend.post_scan.assert_called_once()

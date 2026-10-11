@@ -819,7 +819,7 @@ class TestOfflineForceClose(unittest.TestCase):
         self.assertIn("banner-warning", events[-1]["html"])
         self.assertIn("badge again to close", events[-1]["html"].lower())
         self.assertEqual(events[-1]["countdown"], FORCE_CLOSE_CONFIRM_SECONDS)
-        self.assertFalse(backend.post_scan.call_args.kwargs["force_close_confirmed"])
+        self.assertFalse(backend.post_scan.call_args.kwargs.get("force_close_confirmed"))
         rows = ob.pending_rows()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0][5], "OUT")   # intent
@@ -843,6 +843,27 @@ class TestOfflineForceClose(unittest.TestCase):
         self.assertEqual(confirm[7], 1, "the confirm carries force_close_confirmed")
         self.assertIn("BUILDING CLOSED", events[-1]["html"])
         self.assertEqual(backend.post_scan.call_count, 1, "confirm queues behind the warning, no live post")
+
+    def test_a_confirmed_close_rides_the_drain_even_after_its_warning_drained(self):
+        # The server honours forceCloseConfirmed only on a replay, so the close
+        # must never go live, even when the warning scan is no longer pending.
+        state = self._state()
+        state.push_event = lambda e: None
+        backend = self._backend_offline()
+        ob = Outbox(":memory:")
+
+        handle_scan(backend, state, ob, 9)   # warn + arm
+        for row in ob.pending_rows():
+            ob.ack(row[0])                   # fast drain delivered the warning
+        events = []
+        state.push_event = events.append
+        handle_scan(backend, state, ob, 9)   # confirm
+
+        self.assertEqual(backend.post_scan.call_count, 1, "the confirm is never sent live")
+        rows = ob.pending_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][7], 1)
+        self.assertIn("BUILDING CLOSED", events[-1]["html"])
 
     def test_offline_supervision_caution_is_yellow_never_red(self):
         state = self._state(two_deep_violation=True)
