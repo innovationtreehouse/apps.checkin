@@ -42,6 +42,12 @@ declare module "next-auth" {
       // this email. Completes the client catalog-viewer predicate so the
       // Inventory nav matches the server gate (access-resolvers 'catalog-viewer').
       hasVolunteerDesignation?: boolean;
+      // Treehouse Volunteer inputs (lib/volunteer.ts): on a program's volunteer
+      // list, in a Volunteer Family household, and whether that household's
+      // membership is ACTIVE. All forced false on DENIED.
+      isProgramVolunteer?: boolean;
+      isVolunteerFamily?: boolean;
+      isActiveOrgMember?: boolean;
     };
   }
 
@@ -90,5 +96,9 @@ declare module "next-auth/jwt" {
     canAccessStaging?: boolean;
     // See Session.user.hasVolunteerDesignation above (#1286 catalog-viewer leg).
     hasVolunteerDesignation?: boolean;
+    // See Session.user.isProgramVolunteer above (Treehouse Volunteer inputs).
+    isProgramVolunteer?: boolean;
+    isVolunteerFamily?: boolean;
+    isActiveOrgMember?: boolean;
   }
 }
