@@ -159,12 +159,14 @@ export async function processCheckout(
     forceCloseConfirmed: boolean = false,
     /** A session checkout's close, decided by {@link lastKeyholderGuard}. */
     webClose: boolean = false,
+    /** Whether the kiosk showed nobody else inside; null when it did not say. */
+    shownEmpty: boolean | null = null,
 ) {
     let facilityClosed = authType !== "kiosk" && webClose;
     let closeOfferToken: string | null = null;
     let closePrompt = "";
-    /** Others left inside by the last keyholder's single-badge leave. */
-    let leftInside = 0;
+    /** The last keyholder's single-badge leave, with how many it left inside. */
+    let leave: { othersInside: number } | null = null;
 
     if (participant.isKeyholder && authType === "kiosk") {
         const remainingKeyholders = await db.visit.count({
@@ -183,7 +185,11 @@ export async function processCheckout(
         // server-authoritative.
         const offlineConfirmed = forceCloseConfirmed && replayEventId != null;
 
-        if (remainingKeyholders === 0) {
+        if (shownEmpty === true) {
+            // The keyholder saw nobody else inside: anyone the server still
+            // records is a forgotten badge-out or a check-in not yet delivered.
+            facilityClosed = true;
+        } else if (remainingKeyholders === 0) {
             const others = await db.visit.findMany({
                 where: { departedAt: null, deletedAt: null, id: { not: activeVisitId } },
                 include: { person: true },
@@ -196,16 +202,21 @@ export async function processCheckout(
             // before their badge checked them out.
             const confirmForceClose = forceCloseTokenMatches(ownVisit?.forceCloseToken, confirmToken);
 
-            if (others.length === 0 || confirmForceClose || offlineConfirmed) {
+            // The kiosk showed others (shownEmpty false) even when the server
+            // records nobody: its view decides, so only a second badge closes.
+            if (confirmForceClose || offlineConfirmed || (others.length === 0 && shownEmpty !== false)) {
                 facilityClosed = true;
             } else {
                 // The last keyholder's single badge is a leave: they check out and
                 // the others stay inside a closed facility. Live, the kiosk offers
                 // the close for the countdown; a replay has nobody at the reader.
-                leftInside = others.length;
+                leave = { othersInside: others.length };
                 if (!replayEventId) {
                     closeOfferToken = randomUUID();
-                    closePrompt = `No other keyholder is checked in, and others are still recorded inside: ${presentLabels(others).join(", ")}. Badge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to close the building and check everyone out.`;
+                    const inside = others.length > 0
+                        ? `, and others are still recorded inside: ${presentLabels(others).join(", ")}.`
+                        : ".";
+                    closePrompt = `No other keyholder is checked in${inside} Badge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to close the building and check everyone out.`;
                 }
             }
         } else if (offlineConfirmed) {
@@ -262,7 +273,7 @@ export async function processCheckout(
             confirmSeconds: FORCE_CLOSE_CONFIRM_SECONDS,
         }))
         : {};
-    if (leftInside > 0) {
+    if (leave) {
         // Same shape as a web leave; the kiosk has no pick-list, so the handover is not named.
         await db.auditLog.create({
             data: {
@@ -271,7 +282,7 @@ export async function processCheckout(
                 tableName: "Visit",
                 affectedEntityId: updatedVisit?.id ?? activeVisitId,
                 secondaryAffectedEntity: participant.id,
-                newData: { type: "last_keyholder_choice", choice: "leave", via: closeVia(authType, replayEventId), handoverToId: null, othersInside: leftInside },
+                newData: { type: "last_keyholder_choice", choice: "leave", via: closeVia(authType, replayEventId), handoverToId: null, othersInside: leave.othersInside },
             },
         });
     }

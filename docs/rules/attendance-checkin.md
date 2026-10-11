@@ -204,7 +204,11 @@ Things the app takes as true because they are handled outside it.
   inside a closed facility, and the leave is audited like a web leave with the
   handover not named — the reader has no pick-list, and a keyholder staying can
   badge in at the same reader. A keyholder alone closes on a single badge, and a
-  queued badge with no confirm replays as a leave. Offline the kiosk runs the
+  queued badge with no confirm replays as a leave. Who counts as inside is what
+  the kiosk showed when it says so, live or queued: shown nobody, one badge
+  closes over anyone the server still records; shown anyone, the badge is a
+  leave and only the second closes, even when the server records nobody. A kiosk
+  that does not say leaves it to the server's records. Offline the kiosk runs the
   same offer and confirm itself, and the server honours the queued confirm
   whoever else it reads as present — against the keyholder's visit still open,
   one the nightly sweep closed after the confirm, or one their own badge

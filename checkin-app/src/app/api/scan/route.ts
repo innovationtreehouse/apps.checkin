@@ -33,7 +33,7 @@ const REPLAY_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
 const isPersonId = (v: unknown): v is number =>
     typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 2147483647;
 
-const KIOSK_ONLY_FIELDS = ["replay", "dead", "deadStatus", "scannedAt", "forceCloseConfirmed", "clockSuspect"] as const;
+const KIOSK_ONLY_FIELDS = ["replay", "dead", "deadStatus", "scannedAt", "forceCloseConfirmed", "clockSuspect", "shownEmpty"] as const;
 
 // F7: the out-of-order guard needs the true latest activity across ALL of a
 // participant's visits, not just the most-recently-arrived one -- a
@@ -47,7 +47,7 @@ const maxDate = (a: Date | null, b: Date | null): Date | null =>
 // unauthenticated, and hands us the parsed body + actor. We own authorization.
 export const POST = withKiosk(
     { rateLimit: { name: "scan", limit: 300 } },
-    async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; protocolVersion?: unknown; closeChoice?: unknown; handoverToId?: unknown }, auth) => {
+    async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; shownEmpty?: unknown; protocolVersion?: unknown; closeChoice?: unknown; handoverToId?: unknown }, auth) => {
     const startTime = Date.now();
 
     try {
@@ -144,6 +144,13 @@ export const POST = withKiosk(
             return apiError("clockSuspect must be a boolean.", 400);
         }
         const clockSuspect = body.clockSuspect === true;
+        // Whether the kiosk showed anyone else inside when a keyholder badged
+        // out. The kiosk's view decides a close, live or replayed; absent, the
+        // server's records decide.
+        if (body.shownEmpty !== undefined && typeof body.shownEmpty !== 'boolean') {
+            return apiError("shownEmpty must be a boolean.", 400);
+        }
+        const shownEmpty = typeof body.shownEmpty === 'boolean' ? body.shownEmpty : null;
 
         // Contract bit (§2): a caller may declare the scan-body generation it
         // speaks. A version newer than this server refuses only the bodies
@@ -519,11 +526,12 @@ export const POST = withKiosk(
                     replayEventId: isReplay ? clientEventId : null,
                     forceCloseConfirmed,
                     webClose: web.guard?.facilityClosed ?? false,
+                    shownEmpty,
                 });
             }
 
             const res = activeVisit
-                ? await processCheckout(participant, activeVisit.id, authType, tx, confirmToken, eventTime, isReplay ? clientEventId : null, forceCloseConfirmed, web.guard?.facilityClosed ?? false)
+                ? await processCheckout(participant, activeVisit.id, authType, tx, confirmToken, eventTime, isReplay ? clientEventId : null, forceCloseConfirmed, web.guard?.facilityClosed ?? false, shownEmpty)
                 : await processCheckin(participant, authType, tx, eventTime);
 
             // Classification comes from the ACTUAL outcome. Only a confirmed

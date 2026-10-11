@@ -222,3 +222,44 @@ describe("offline force-close: a client-confirmed replay closes without a server
         expect(body.forceCloseToken).toEqual(expect.any(String));
     });
 });
+
+describe("the kiosk's view of who is inside decides (shownEmpty)", () => {
+    const present = [{ name: "Someone Inside", email: "inside@example.com" }];
+    /** processCheckout with only the kiosk's view varied: live, no token. */
+    const badge = (db: DbClient, shownEmpty: boolean | null) =>
+        processCheckout(keyholder, 42, "kiosk", db, null, new Date(), null, false, false, shownEmpty);
+
+    it("closes on one live badge when the kiosk showed nobody, whoever the server records", async () => {
+        const db = fakeDb(present);
+        const body = await (await badge(db, true)).json();
+
+        expect(body.facilityClosed).toBe(true);
+        expect(body.forceCloseToken).toBeUndefined();
+        expect(db.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("closes on one live badge when the kiosk showed nobody, even with another keyholder recorded", async () => {
+        const db = fakeDb(present);
+        jest.mocked(db.visit.count).mockResolvedValue(1);
+        expect((await (await badge(db, true)).json()).facilityClosed).toBe(true);
+    });
+
+    it("leaves and offers the close when the kiosk showed others, though the server records nobody", async () => {
+        const db = fakeDb([]);
+        const body = await (await badge(db, false)).json();
+
+        expect(body.facilityClosed).toBe(false);
+        expect(body.forceCloseToken).toEqual(expect.any(String));
+        expect(body.closePrompt).toMatch(/^No other keyholder is checked in\. Badge again/);
+        expect(db.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                newData: expect.objectContaining({ choice: "leave", via: "KIOSK", handoverToId: null, othersInside: 0 }),
+            }),
+        });
+    });
+
+    it("follows the server's records when the kiosk does not say", async () => {
+        expect((await (await badge(fakeDb([]), null)).json()).facilityClosed).toBe(true);
+        expect((await (await badge(fakeDb(present), null)).json()).facilityClosed).toBe(false);
+    });
+});

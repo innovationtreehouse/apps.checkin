@@ -697,7 +697,7 @@ describe('POST /api/scan', () => {
             const res = await POST(liveReq());
             expect((await res.json()).type).toBe('checkout');
             // Last arg null => processCheckout takes the live warn/confirm path.
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), null, expect.any(Date), null, false, false);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), null, expect.any(Date), null, false, false, null);
         });
 
         it('still dedups a clientEventId already recorded server-side', async () => {
@@ -731,7 +731,7 @@ describe('POST /api/scan', () => {
             const res = await POST(scanReq({ participantId: 1, forceCloseToken: 'tok-1' }));
 
             expect((await res.json()).facilityClosed).toBe(true);
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), 'tok-1', expect.any(Date), null, false, false);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), 'tok-1', expect.any(Date), null, false, false, null);
         });
 
         it('returns the shared close choice to a web checkout and runs no checkout', async () => {
@@ -755,7 +755,7 @@ describe('POST /api/scan', () => {
 
             expect(lastKeyholderGuard).toHaveBeenCalledWith(7, { id: 1, mergedIntoId: null }, expect.objectContaining({ id: 1 }),
                 { token: 'tok-1', choice: 'close', handoverToId: undefined }, {}, expect.anything());
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), 'tok-1', expect.any(Date), null, false, true);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), 'tok-1', expect.any(Date), null, false, true, null);
             expect(finishCloseGuard).toHaveBeenCalledWith(guard, { actorId: 1, subjectId: 1, visitId: 7, via: 'WEB_CHECKOUT' });
             expect(finalizeFacilityClose).not.toHaveBeenCalled();
         });
@@ -792,7 +792,7 @@ describe('POST /api/scan', () => {
 
             expect((await res.json()).facilityClosed).toBe(true);
             expect(processCheckout).toHaveBeenCalledWith(
-                { id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), 'tok-q', new Date(scannedAt), 'evt-q', false, false);
+                { id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), 'tok-q', new Date(scannedAt), 'evt-q', false, false, null);
         });
 
         // Precedence, pinned deliberately: §2's freshness window W runs BEFORE
@@ -860,7 +860,7 @@ describe('POST /api/scan', () => {
             const res = await POST(scanReq({ participantId: 1 }));
 
             expect((await res.json()).type).toBe('checkout');
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), null, expect.any(Date), null, false, false);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), null, expect.any(Date), null, false, false, null);
             expect(prisma.visit.count).toHaveBeenCalledWith(expect.objectContaining({
                 where: expect.objectContaining({
                     personId: 1,

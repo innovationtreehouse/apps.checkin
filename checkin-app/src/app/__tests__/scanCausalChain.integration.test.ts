@@ -31,10 +31,10 @@ jest.mock('@/lib/logger', () => ({
 const TAG = 'scan-causal-test';
 const flush = () => new Promise(r => setImmediate(r));
 
-function scanReq(participantId: number, forceCloseToken?: string, intent?: 'IN' | 'OUT') {
+function scanReq(participantId: number, forceCloseToken?: string, intent?: 'IN' | 'OUT', extra: Record<string, unknown> = {}) {
     return new Request('http://localhost/api/scan', {
         method: 'POST',
-        body: JSON.stringify({ participantId, ...(forceCloseToken ? { forceCloseToken } : {}), ...(intent ? { intent } : {}) }),
+        body: JSON.stringify({ participantId, ...(forceCloseToken ? { forceCloseToken } : {}), ...(intent ? { intent } : {}), ...extra }),
     }) as unknown as import('next/server').NextRequest;
 }
 
@@ -195,5 +195,29 @@ describe('Scan causal chain — last isKeyholder closes facility', () => {
             where: { personId: { in: [isKeyholder.id, normal.id] }, departedAt: null },
         });
         expect(open).toBe(0);
+    });
+
+    it('closes on one live badge the kiosk showed with nobody else inside, departing who the server still records', async () => {
+        await prisma.visit.create({ data: { personId: isKeyholder.id, arrivedAt: new Date() } });
+        await prisma.visit.create({ data: { personId: normal.id, arrivedAt: new Date() } });
+
+        const res = await POST(scanReq(isKeyholder.id, undefined, 'OUT', { shownEmpty: true }));
+        expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: true });
+
+        const open = await prisma.visit.count({
+            where: { personId: { in: [isKeyholder.id, normal.id] }, departedAt: null },
+        });
+        expect(open).toBe(0);
+    });
+
+    it('leaves and offers the close on one live badge the kiosk showed with others, though the server records nobody', async () => {
+        const kVisit = await prisma.visit.create({ data: { personId: isKeyholder.id, arrivedAt: new Date() } });
+
+        const res = await POST(scanReq(isKeyholder.id, undefined, 'OUT', { shownEmpty: false }));
+        const body = await res.json();
+        expect(body).toMatchObject({ type: 'checkout', facilityClosed: false });
+        expect(body.forceCloseToken).toEqual(expect.any(String));
+        expect(processPostEventEmails).not.toHaveBeenCalled();
+        await prisma.auditLog.deleteMany({ where: { tableName: 'Visit', affectedEntityId: kVisit.id } });
     });
 });
