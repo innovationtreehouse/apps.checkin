@@ -20,6 +20,7 @@ import type { AuthResult } from '@/types/auth';
 import type { Authorize, CtxNeeds, Role } from './core';
 import { LIVE_PERSON } from '@/lib/person/filters';
 import { LIVE_VISIT } from '@/lib/visit/filters';
+import { canSeeCatalog } from '@/lib/volunteer';
 
 export interface CallerContext {
     selfId?: number;
@@ -308,32 +309,10 @@ export async function resolveAccess(
             }
             case 'kiosk':
                 return { allowed: auth.type === 'kiosk' };
-            case 'catalog-viewer': {
-                // #1286 §6 / #1265 §6: any Treehouse Volunteer relationship —
-                // role flag, program leadership, or a volunteer designation.
-                // Catalog reads and receipt submission share this audience.
-                if (auth.type !== 'session') return { allowed: false };
-                const u = auth.user;
-                if (
-                    u.isSysadmin || u.isBoardMember || u.isKeyholder ||
-                    u.isBackgroundCheckReviewer || u.isOperations || u.isInventoryManager ||
-                    u.isFinance
-                ) {
-                    return { allowed: true };
-                }
-                if ((u.programsLed?.length ?? 0) > 0) return { allowed: true };
-                // ponytail: inline admission lookup — promote to CallerContext if
-                // a per-row catalog use appears. The session carries no volunteer
-                // flag, so this one leg needs a DB read (email is @unique).
-                if (u.email) {
-                    const designation = await prisma.volunteerDesignation.findFirst({
-                        where: { email: u.email },
-                        select: { id: true },
-                    });
-                    if (designation) return { allowed: true };
-                }
-                return { allowed: false };
-            }
+            case 'catalog-viewer':
+                // #1286 §6 / #1265 §6: the catalog audience (lib/volunteer.ts),
+                // read from session claims. Catalog reads and receipt submission share it.
+                return { allowed: auth.type === 'session' && canSeeCatalog(auth.user) };
             case 'inventory-manager':
                 // #1286 §6: catalog WRITE admission — INVENTORY_MANAGER only (a
                 // sysadmin grants themselves the role; no admin auto-admit here).

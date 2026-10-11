@@ -3,8 +3,8 @@
  */
 /**
  * Admission and view invariants for the expense routes (#1272 §5/§6). No DB:
- * next-auth's getServerSession is the jest.setup.js mock, and the two admission
- * lookups (program treasurer, volunteer designation) are stubbed per test.
+ * next-auth's getServerSession is the jest.setup.js mock, and the program
+ * treasurer admission lookup is stubbed per test.
  *
  * 1. An id-less session holding every flag gets 401 from handler() on every
  *    expense route, and the route body never runs: authenticateRequest turns a
@@ -82,15 +82,12 @@ const APPROVER_ROUTES = [
 ];
 
 let treasurerRow: { programId: number } | null;
-let designationRow: { id: number } | null;
 const treasurerLookup = jest.fn(async () => treasurerRow);
 
 beforeEach(() => {
     treasurerRow = null;
-    designationRow = null;
     treasurerLookup.mockClear();
     prisma.programVolunteer.findFirst = treasurerLookup as unknown as typeof prisma.programVolunteer.findFirst;
-    prisma.volunteerDesignation.findFirst = jest.fn(async () => designationRow) as unknown as typeof prisma.volunteerDesignation.findFirst;
 });
 
 const admitted = async (route: { authorize: Authorize }, user: Partial<AuthenticatedUser>) =>
@@ -126,7 +123,6 @@ describe('expense admission', () => {
 
     test.each(expense)('%s denies an id-less session holding every flag at resolveAccess', async (_e, route) => {
         treasurerRow = { programId: 1 };
-        designationRow = { id: 1 };
         expect((await resolveAccess(route.authorize, ctx(idless))).allowed).toBe(false);
     });
 
@@ -150,8 +146,12 @@ describe('expense admission', () => {
         expect(await admitted(route, { isSysadmin: true })).toBe(endpoint === SIGN_OFF);
     });
 
-    test.each(expense)('%s: a program leader is admitted on approver routes and sign-off', async (endpoint, route) => {
-        expect(await admitted(route, { programsLed: [1] })).toBe(APPROVER_ROUTES.includes(endpoint) || endpoint === SIGN_OFF);
+    test.each(expense)('%s: a program leader with an ACTIVE membership is admitted on approver routes and sign-off', async (endpoint, route) => {
+        expect(await admitted(route, { programsLed: [1], isActiveOrgMember: true })).toBe(APPROVER_ROUTES.includes(endpoint) || endpoint === SIGN_OFF);
+    });
+
+    test.each(expense)('%s: a program leader without an ACTIVE membership is admitted on approver routes only', async (endpoint, route) => {
+        expect(await admitted(route, { programsLed: [1] })).toBe(APPROVER_ROUTES.includes(endpoint));
     });
 
     test.each(expense)('%s: a treasurer with no flag is admitted only on approver routes', async (endpoint, route) => {
@@ -163,10 +163,9 @@ describe('expense admission', () => {
         expect(await admitted(route, {})).toBe(false);
     });
 
-    test('a receipt submitter (volunteer designation) is admitted on sign-off only', async () => {
-        designationRow = { id: 1 };
+    test('a Volunteer Family member with an ACTIVE membership is admitted on sign-off only', async () => {
         for (const [endpoint, route] of expense) {
-            expect([endpoint, await admitted(route, {})]).toEqual([endpoint, endpoint === SIGN_OFF]);
+            expect([endpoint, await admitted(route, { isVolunteerFamily: true, isActiveOrgMember: true })]).toEqual([endpoint, endpoint === SIGN_OFF]);
         }
     });
 

@@ -61,8 +61,7 @@ const gated = [...allRoutes()].filter(([, r]) => isRoleFlagGate(r.authorize));
 const finance = [...allRoutes()].filter(([, r]) => isFinanceGate(r.authorize));
 
 beforeEach(() => {
-    // The designation and treasurer legs would admit by lookup; make them match so only the id guard can deny.
-    prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue({ id: 1 });
+    // The treasurer leg would admit by lookup; make it match so only the id guard can deny.
     prisma.programVolunteer.findFirst = jest.fn().mockResolvedValue({ programId: 1 });
 });
 
@@ -82,17 +81,18 @@ describe('id-less session on role-flag gates', () => {
         expect((await resolveAccess(authorize, ctx(idless))).allowed).toBe(false);
     });
 
-    test('catalog-viewer denies an id-less session on the designation leg alone', async () => {
-        const designationOnly: AuthResult = {
+    test('catalog-viewer denies an id-less session on the volunteer leg alone', async () => {
+        const volunteerOnly: AuthResult = {
             type: 'session',
             user: Object.assign({
                 ...everyFlagUser,
                 isSysadmin: false, isBoardMember: false, isKeyholder: false,
                 isBackgroundCheckReviewer: false, isOperations: false,
                 isInventoryManager: false, isFinance: false, programsLed: [],
+                isVolunteerFamily: true, isActiveOrgMember: true,
             }, { id: undefined }),
         };
-        expect((await resolveAccess('catalog-viewer', ctx(designationOnly))).allowed).toBe(false);
+        expect((await resolveAccess('catalog-viewer', ctx(volunteerOnly))).allowed).toBe(false);
     });
 
     test.each<Authorize>([
