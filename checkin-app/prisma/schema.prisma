@@ -1301,6 +1301,10 @@ model Visit {
   /// is by issuance, not elapsed time, so a confirm queued through an outage
   /// still closes when it lands (§5.23a). @sensitivity:internal
   forceCloseToken   String?
+  /// Who was shown the web close choice the token answers; a web confirm from
+  /// anyone else fails as if the token did not match. Null for a kiosk token.
+  /// @sensitivity:internal
+  forceCloseActorId Int?
 
   /// When the kiosk last showed this person the "the room drops below two
   /// supervising adults" warning (#1436). Its own stamp, not forceCloseWarnedAt:

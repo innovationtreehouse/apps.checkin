@@ -30,8 +30,8 @@ choice is recorded; and names go only to people who already read the roster.
 
 ## Executive summary
 
-- **A keyholder or board member checking out the last recorded keyholder** chooses
-  close, leave or cancel. The close choice says plainly that no other keyholder is
+- **The last recorded keyholder checking themselves out, or a board member
+  checking them out,** chooses close, leave or cancel. The close choice says plainly that no other keyholder is
   checked in. *Leave* checks out only the leaver and names, from a pick-list, the
   keyholder they handed over to in person; the app records that and does not check
   the named keyholder in. A named keyholder who is not checked in is emailed.
@@ -298,8 +298,9 @@ kiosk's inline copy; the kiosk path keeps its own.
 **Response shape.** The warning becomes a fixed body:
 
 - `type: "close_choice"`, with `othersInside` (a count), the allowed `choices`
-  (`close`, `leave`, `cancel` for a keyholder or board member; `leave`, `cancel`
-  for a household lead or sysadmin), the token, and the seconds;
+  (`close`, `leave`, `cancel` for a keyholder checking themselves out or a board
+  member; `leave`, `cancel` for anyone else: another keyholder, a household lead
+  or a sysadmin), the token, and the seconds;
 - `names` only for a keyholder, board member or sysadmin; kiosk labels, as today;
 - for a keyholder choosing `leave`, the request carries the named keyholder's id,
   and the server checks they hold the role.
@@ -333,8 +334,8 @@ names are sent.
 **Rules doc** (`docs/rules/attendance-checkin.md`), on merge:
 
 - Amend "The keyholder close-guard fires on every close path…": close, leave or
-  cancel on the web; who gets which (keyholder and board: all three; household
-  lead and sysadmin: leave or cancel); a tombstone never closes; names to
+  cancel on the web; who gets which (the keyholder themselves and the board: all
+  three; another keyholder, a household lead or a sysadmin: leave or cancel); a tombstone never closes; names to
   keyholders, board and sysadmins only.
 - Add the Assumption: a keyholder who leaves the building occupied has handed over
   in person to the keyholder they name; the app records the statement.
