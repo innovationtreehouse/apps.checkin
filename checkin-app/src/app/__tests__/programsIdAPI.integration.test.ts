@@ -499,7 +499,7 @@ describe('Individual Program API Integration Tests', () => {
     // computed AFTER the registry response (see route.ts) — membership pricing
     // applies only when the buyer's membership covers the program's whole run.
     describe('GET /api/programs/[id] — viewer membership-pricing fields', () => {
-        let restoreBoardSettings: () => Promise<void>;
+        let restoreBoardSettings: () => Promise<void> = async () => {};
         let pastBoundaryProgramId: number;
         const DAY_MS = 24 * 60 * 60 * 1000;
         // Inside the 2-month renewal lead window relative to "now" — irrelevant

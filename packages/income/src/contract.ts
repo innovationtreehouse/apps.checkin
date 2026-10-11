@@ -78,6 +78,8 @@ export interface OwnerInfo {
   id: number;
   name: string;
   archivedAt: Date | null;
+  /** The QuickBooks Class id a created deposit books this bucket's lines to; null until linked. */
+  quickBooksClassId: string | null;
 }
 
 /** Read-only list of checkin's budget-owner buckets. Same port bulk donation declares. */
@@ -91,6 +93,8 @@ export interface QbDeposit {
   txnDate: string;
   totalCents: number;
   depositToAccount: string | null;
+  /** The app key a deposit the app created carries; absent on hand-booked deposits. */
+  appKey?: string;
 }
 
 /**

@@ -42,7 +42,7 @@ async function post(programId: number) {
 
 describe('POST /api/programs/[id]/discount-code — membership duration', () => {
     let prevCheckinEnv: string | undefined;
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     // now + 45 days sits inside the 2-month renewal lead window, so the
     // "settled" probe (ACTIVE process stamped inside the window) is reachable.

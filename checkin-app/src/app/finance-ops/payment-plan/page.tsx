@@ -58,9 +58,8 @@ export default function PendingParticipantsPage() {
   const [confirmRefuseOpened, { open: openConfirmRefuse, close: closeConfirmRefuse }] = useDisclosure(false);
   const [pendingRefusal, setPendingRefusal] = useState<{ programId: number; participantId: number } | null>(null);
 
-  const fetchRequests = useCallback(async () => {
-    try {
-      const res = await fetch('/api/finance-ops/payment-plans');
+  const fetchRequests = useCallback(() => fetch('/api/finance-ops/payment-plans')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setRequests(data.ProgramParticipant ?? []);
@@ -68,12 +67,14 @@ export default function PendingParticipantsPage() {
       } else {
         setMessage("Failed to load requests. You may not have access.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading requests.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchRequests();

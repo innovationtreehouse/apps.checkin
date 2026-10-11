@@ -74,6 +74,17 @@ describe("membership-audit/compliance page", () => {
     expect(fetchMock.mock.calls[0][0]).not.toContain("bgClearedSince");
   });
 
+  it("reloads with the Cleared since date when it changes", async () => {
+    const fetchMock = mockFetchJson({ "/api/membership-audit/compliance": { blanketStamped } });
+    renderPage();
+    await screen.findByText("Rivera Household");
+
+    fireEvent.change(screen.getByLabelText("Cleared since"), { target: { value: "2026-07-01" } });
+
+    expect(await screen.findByText("Rivera Household")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toBe("/api/membership-audit/compliance?bgClearedSince=2026-07-01");
+  });
+
   it("clears one lead's date through the existing board-gated PUT", async () => {
     const fetchMock = mockFetchJson({
       "/api/membership-audit/compliance": { blanketStamped },

@@ -251,6 +251,28 @@ describe('jwt() callback — catalog-viewer volunteer leg (#1286)', () => {
     });
 });
 
+describe('jwt() callback — Treehouse Volunteer inputs', () => {
+    it('loads one ProgramVolunteer row and stamps the volunteer inputs', async () => {
+        mockFindUnique.mockResolvedValue({
+            ...dbParticipant({ household: { orgMembership: { status: 'ACTIVE', isVolunteer: true } } }),
+            programVolunteers: [{ programId: 4 }],
+        });
+        const token = await callRefresh({ id: 7 });
+
+        expect(mockFindUnique.mock.calls[0][0].include.programVolunteers).toEqual({ select: { programId: true }, take: 1 });
+        expect(token).toMatchObject({ isProgramVolunteer: true, isVolunteerFamily: true, isActiveOrgMember: true });
+    });
+
+    it('surfaces the inputs on the session', async () => {
+        const result = await session({
+            session: { user: {}, expires: '' },
+            token: { id: 7, isProgramVolunteer: true, isVolunteerFamily: false, isActiveOrgMember: true },
+        } as unknown as Parameters<SessionCallback>[0]);
+
+        expect(result.user).toMatchObject({ isProgramVolunteer: true, isVolunteerFamily: false, isActiveOrgMember: true });
+    });
+});
+
 describe('jwt() callback — initial sign-in branch (user present)', () => {
     it('stamps claims from the participant resolved by user.email', async () => {
         mockFindUnique.mockResolvedValue(dbParticipant({ isSysadmin: true }));

@@ -5,14 +5,16 @@
  * Boundary coverage for the income library (#1283 §6/§7). Asserts the boundary
  * layer directly, independent of the route files:
  *
- *   1. Income's tiering: every field of the four Prisma models and the five
- *      synthetic views is `internal`, except a Prisma row's `id` (`public`).
+ *   1. Income's tiering: every field of the four Prisma row models, the settings
+ *      model and the five synthetic views is `internal`, except a Prisma row's
+ *      `id` (`public`); the settings model, keyed by org, has no public field.
  *      No pii, personal or secret anywhere.
  *   2. The §7 pins: the synthetic views list no mirror customer column and no
  *      QuickBooks deposit `Line[]`, `PrivateNote` or entity ref, so the stripper
  *      drops them even if an adapter passes one through.
  *   3. The stripper honours the map: the finance view (everyones:internal) keeps
- *      every listed field; a public-only view keeps a row's `id` and nothing else.
+ *      every listed field; a public-only view keeps a row's `id` and nothing else,
+ *      and nothing at all of the settings model.
  */
 import { stripValue } from '@/security/stripper';
 import type { CallerContext } from '@/security/access-resolvers';
@@ -39,6 +41,7 @@ function ctx(): CallerContext {
 const FINANCE_TOKENS: readonly Token[] = ['everyones:internal', 'public'];
 
 const PRISMA_MODELS = ['PayoutReconciliation', 'IncomeItemCategory', 'IncomeQbMatchExclusion', 'IncomeAuditLog'];
+const SETTINGS_MODEL = 'IncomeOrgSettings';
 
 const VIEW_FIELDS: Record<string, string[]> = {
     IncomePayoutView: ['payoutGid', 'issuedAt', 'status', 'netCents', 'currency', 'source'],
@@ -69,8 +72,16 @@ function sampleRow(fields: string[]): Record<string, unknown> {
 }
 
 describe('income tiering (§7)', () => {
-    it('the generated map holds exactly the four income models', () => {
-        expect(Object.keys(incomeGenerated.classifications).sort()).toEqual([...PRISMA_MODELS].sort());
+    it('the generated map holds exactly the four income row models and the settings model', () => {
+        expect(Object.keys(incomeGenerated.classifications).sort()).toEqual([...PRISMA_MODELS, SETTINGS_MODEL].sort());
+    });
+
+    it('IncomeOrgSettings: the per-run caps and their org key are internal', () => {
+        expect(tiersOf(SETTINGS_MODEL)).toEqual({
+            orgId: 'internal',
+            maxCreatesPerRun: 'internal',
+            maxCreateCentsPerRun: 'internal',
+        });
     });
 
     it.each(PRISMA_MODELS)('%s: id is public, every other field internal', (model) => {
@@ -109,6 +120,11 @@ describe('income field-stripping', () => {
     it.each(PRISMA_MODELS)('%s: a public-only view keeps only the row id', (model) => {
         const out = stripValue(model, sampleRow(Object.keys(tiersOf(model))), ['public'], ctx());
         expect(out).toEqual({ id: 'v0' });
+    });
+
+    it('IncomeOrgSettings: a public-only view exposes nothing', () => {
+        const out = stripValue(SETTINGS_MODEL, sampleRow(Object.keys(tiersOf(SETTINGS_MODEL))), ['public'], ctx());
+        expect(out).toEqual({});
     });
 
     it('finance reads the audit actor and before/after (§7: internal, intended view)', () => {

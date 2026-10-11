@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Suspense, useCallback, useMemo } from "react";
+import { useState, Suspense, useCallback, useMemo, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import { Alert, Badge, Box, Card, Center, Group, Loader, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -32,6 +32,14 @@ type Tool = {
 // Cert levels shown in the legend; the dot colors come from the regulated ToolLevelBadge.
 const LEGEND_LEVELS: ToolStatusLevel[] = ["BASIC", "CERTIFIED", "DOF", "INSTRUCTOR", "MAY_CERTIFY_OTHERS"];
 
+const subscribeToClock = (onTick: () => void) => {
+  const timer = setInterval(onTick, 1000);
+  return () => clearInterval(timer);
+};
+const currentMinute = () => Math.floor(Date.now() / 60000);
+// The server render and hydration show no clock, so the time never mismatches.
+const noMinute = () => null;
+
 export default function KioskCertificationsDisplay() {
   return (
     <Suspense fallback={<PageLoader minHeight="100vh" />}>
@@ -48,13 +56,8 @@ function KioskCertificationsInner() {
   const [tools, setTools] = useState<Tool[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentTime, setCurrentTime] = useState<Date | null>(null);
-
-  useEffect(() => {
-    setCurrentTime(new Date());
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+  const minute = useSyncExternalStore(subscribeToClock, currentMinute, noMinute);
+  const currentTime = minute === null ? null : new Date(minute * 60000);
 
   const fetchData = useCallback(async () => {
     try {

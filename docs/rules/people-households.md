@@ -153,6 +153,9 @@ Things the app takes as true because they are handled outside it.
   household card, by them or by a lead. The board changes it; the locked field
   says how to ask. A household member who has never signed in stays editable.  [Decision]
 
+- A Google account must have a verified email before it is first linked to a
+  person record; an account already linked keeps signing in unchanged.  [Decision]
+
 - A person's identifier is opaque, and its only job is to be unique and to stay
   unique. It is never reissued and never worked out from the people already on
   file: issuing the highest number in use plus one hands a deleted person's

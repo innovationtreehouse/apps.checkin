@@ -29,7 +29,7 @@ async function get(url = 'http://localhost:4000/api/membership-ops/households') 
 
 describe('GET /api/membership-ops/households — renewalGrantable + dates', () => {
     let adminId: number;
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     let notStartedHouseholdId: number;
     let grantableHouseholdId: number;
@@ -168,7 +168,7 @@ describe('GET /api/membership-ops/households — renewalGrantable + dates', () =
 describe('GET /api/membership-ops/households — settledForComingYear (fix #4)', () => {
     const TAG4 = 'households-settled-fix4-test';
     let adminId: number;
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     // A boundary ~1 month ahead ⇒ windowStart ~1 month ago ⇒ now is in-season and a
     // stageEnteredAt of `now` sits inside the window.

@@ -70,6 +70,13 @@ Things the app takes as true because they are handled outside it.
   says someone is there, so the app records them and marks the visit rather
   than refusing or hiding the scan.
 
+- A keyholder who leaves the building occupied has handed over in person to the
+  keyholder they name, with that keyholder's consent. The app cannot see the
+  handover; it records the leaver's statement.
+
+- The app does not model a primary keyholder, so the last recorded keyholder
+  stands in for the primary keyholder of §VIII.3.
+
 - Check-in happens at the one facility. Other locations exist and are temporary,
   and checking in at them is out of scope.
 
@@ -138,10 +145,40 @@ Things the app takes as true because they are handled outside it.
   from the web does not raise it — the person doing the checking out is not at the
   reader and cannot re-badge to confirm.  [Decision — deliberate limit]
 
-- The keyholder close-guard fires on every close path — badge, dashboard checkout,
-  self-correction edit that closes an open visit, and tombstone of an open visit.
-  On the badge path the confirm is a second badge within the countdown; on web
-  paths it is a server-minted token echoed back through a confirm dialog.  [Decision]
+- The keyholder close-guard fires on every close path — badge, the home-page
+  check-out, dashboard checkout or sign-out, self-correction edit that closes an
+  open visit, and removal of an open visit. On the badge path the confirm is a
+  second badge within the countdown. On the web, when the last recorded keyholder's
+  visit ends with others inside, the caller chooses close, leave or cancel in one
+  confirm dialog, answered by a server-minted token bound to the person shown the
+  choice: the keyholder checking themselves out, or a board member, gets all
+  three; anyone else — another keyholder, a household lead, a sysadmin — gets
+  leave or cancel. Close checks everyone out; leave
+  checks out only the keyholder and leaves the others inside a closed facility;
+  cancel changes nothing. The choices are worked out again on confirm, so a role
+  revoked in between takes effect. Every choice is audited with who made it,
+  whose visit it was, the choice, the keyholder named and the count left inside.  [Decision]
+
+- On the web only the keyholder checking themselves out, or a board member,
+  closes the facility; another keyholder, a household lead or a sysadmin never
+  does, even with the keyholder alone in the record. The board closes whether or not its member holds keys: the owner
+  reads the board's superuser standing as covering the active-keyholder rule.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
+
+- The keyholder checking themselves out, or a board member, who chooses leave
+  names, from the keyholders not checked in, the one the keyholder handed over to. Where none is free to name,
+  the leave stands and records the handover as not named. The named keyholder is
+  not checked in — that needs their agreement — and is emailed who left, when,
+  and how many are still inside, unless they are checked in by then. Anyone else's
+  leave names nobody.  [Decision]
+
+- Removing an open visit never closes the facility, whoever removes it: a
+  removal says the keyholder was never there, and closing on that basis would
+  invent departures for everyone else. The confirm states how many stay inside
+  a closed facility.  [Decision]
+
+- The names of the people inside go with the close choice only to keyholders,
+  board members and sysadmins, who already read the full roster; a household lead
+  sees a count.  [Decision — *Policy: Records Policy, Art. IV*]
 
 - A force-close is triggered only by an explicit confirm — the second badge within
   the visible countdown — never inferred from the spacing between two raw badge
@@ -171,8 +208,8 @@ Things the app takes as true because they are handled outside it.
   confirm. Nothing on the web can stop a kiosk close.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
 
 - Every facility close is recorded: who closed, when, and through which path
-  (kiosk, offline kiosk, a web checkout, correction or removal, or the nightly
-  sweep, which no person makes). Every departure a close sets is logged against
+  (kiosk, offline kiosk, a web checkout or correction, or the nightly sweep,
+  which no person makes). Every departure a close sets is logged against
   that record with the visit's departure before and after. These logs are an
   audit trail and are never deleted.  [Decision — *Principle: accountability*]
 

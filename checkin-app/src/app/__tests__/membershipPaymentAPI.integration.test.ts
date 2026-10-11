@@ -54,7 +54,7 @@ describe('Membership payment API', () => {
     let gateProc: number, gateLeadId: number, gateNonLeadId: number;
     const prevWebhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET;
     const prevStoreDomain = process.env.SHOPIFY_STORE_DOMAIN;
-    let restoreBoardSettings: () => Promise<void>;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     async function makeProc(label: string, isVolunteer: boolean, withLead = false) {
         const hh = await prisma.household.create({ data: { name: `${label} ${TAG}` } });

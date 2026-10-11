@@ -35,21 +35,22 @@ export default function AdminBadgesPage() {
   const [message, setMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  const fetchBadges = useCallback(async () => {
-    try {
-      const res = await fetch('/api/facility/badges');
+  const fetchBadges = useCallback(() => fetch('/api/facility/badges')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setBadges(data.badges);
       } else {
         setMessage({ text: "Failed to load badge events.", tone: "error" });
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading badges.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchBadges();

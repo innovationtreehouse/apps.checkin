@@ -18,4 +18,3 @@
 # Comment lines and blank lines are ignored.
 
 # close-guard warn body; redesign pending in docs/in-design/WEB_LAST_KEYHOLDER_CHECKOUT.md
-src/app/api/attendance/manual/[id]/route.ts return NextResponse.json({

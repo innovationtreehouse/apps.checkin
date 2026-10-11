@@ -313,6 +313,7 @@ export const classifications = {
         deletedById: 'internal',
         forceCloseWarnedAt: 'internal',
         forceCloseToken: 'internal',
+        forceCloseActorId: 'internal',
         supervisionWarnedAt: 'internal',
         facilityCloseId: 'internal',
     },
