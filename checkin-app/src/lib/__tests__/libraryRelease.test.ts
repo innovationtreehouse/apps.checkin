@@ -49,6 +49,7 @@ describe("index directory", () => {
     member: { household: [], programs: [], programsAwaitingFinance: 0 },
     building: 0,
     buildingHousehold: 0,
+    buildingReachable: true,
     activePrograms: 0,
     releasedLibraries,
   });

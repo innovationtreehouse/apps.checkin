@@ -78,6 +78,7 @@ describe("AppFrame", () => {
       member: { household: [], programs: [], programsAwaitingFinance: 0 },
       building: 0,
       buildingHousehold: 0,
+      buildingReachable: true,
       activePrograms: 0,
       lead: { programs: [{ id: 9, pending: [] }] },
     });
@@ -114,6 +115,7 @@ describe("AppFrame", () => {
       member: { household: [], programs: [], programsAwaitingFinance: 0 },
       building: 0,
       buildingHousehold: 0,
+      buildingReachable: true,
       activePrograms: 0,
       review: { canActOn: 4, approvedAwaitingSecond: 0 },
     });
@@ -200,6 +202,7 @@ describe("AppFrame library release gate", () => {
     member: { household: [], programs: [], programsAwaitingFinance: 0 },
     building: 0,
     buildingHousehold: 0,
+    buildingReachable: true,
     activePrograms: 0,
     releasedLibraries,
   });

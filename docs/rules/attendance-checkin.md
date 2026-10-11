@@ -276,6 +276,15 @@ hours at a time — is a normal operating mode here, not an incident.
   payload as *unknown*, never as an empty, compliant room: a failed fetch or a
   half-populated object must not render as "no violation".  [Decision — *Principle: fail closed*]
 
+- The web states the building's state — who is inside, whether it is open,
+  whether it is two deep — as fact only while the server has heard from the
+  kiosk within the last five minutes. Otherwise it says it can't confirm the
+  building's state and when the kiosk was last heard from, and what it lists is
+  the visit record, not presence. Overnight the kiosk stops checking in on
+  purpose, so that is the expected reading then. The kiosk's own screen shows
+  what the kiosk holds regardless, and checking in or out decides from the
+  visit record either way.  [Decision — *Principle: fail closed*]
+
 - Youth and two-deep math stay server-side, never computed on the kiosk. Resolving
   a parked scan runs the same fail-closed safety math the live path does.  [Decision — *Principle: fail closed*]
 

@@ -49,6 +49,8 @@ export default function EmergencyContactsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [error, setError] = useState("");
+  // Without a recent kiosk heartbeat an open visit is a record, not presence.
+  const [presenceConfirmed, setPresenceConfirmed] = useState(false);
 
   const fetchContacts = useCallback(() => fetch('/api/safety/emergency-contacts')
     .then(async (res) => {
@@ -63,6 +65,7 @@ export default function EmergencyContactsPage() {
         });
 
         setHouseholds(sorted);
+        setPresenceConfirmed(data.building?.reachable === true);
       } else {
         setError("Failed to load emergency contacts. Ensure you have the proper authorizations.");
       }
@@ -134,7 +137,9 @@ export default function EmergencyContactsPage() {
               <div>
                 <Group gap="xs" mb="xs">
                   <Text fw={600} fz="lg">{h.name || `Household #${h.id}`}</Text>
-                  {h.isPresent && <Badge color="cyan" variant="light">Present Now</Badge>}
+                  {h.isPresent && (presenceConfirmed
+                    ? <Badge color="cyan" variant="light">Present Now</Badge>
+                    : <Badge color="gray" variant="light" title="The kiosk hasn't been heard from recently, so presence can't be confirmed">Checked in (unconfirmed)</Badge>)}
                 </Group>
                 <Text size="sm" c="dimmed">Household members:</Text>
                 {h.householdMembers.length > 0 ? (

@@ -20,7 +20,7 @@ const nicknamed = [
 
 describe("KioskCertificationsDisplay", () => {
     it("loads and renders the live certifications grid", async () => {
-        mockFetchJson({ "/api/kioskdisplay/certifications": { participants, tools } });
+        mockFetchJson({ "/api/kioskdisplay/certifications": { participants, tools, building: { reachable: true, lastSeenAt: null } } });
         renderWithProviders(<KioskCertificationsDisplay />);
 
         // Kiosk display names are privacy-trimmed to first name only when unique (see getKioskDisplayNames).
@@ -30,6 +30,14 @@ describe("KioskCertificationsDisplay", () => {
         expect(await screen.findByText("Sam")).toBeInTheDocument();
         expect(screen.getByText("3D Printer")).toBeInTheDocument();
         expect(screen.getByText("2 People Present")).toBeInTheDocument();
+    });
+
+    it("labels the present count unconfirmed when the kiosk is unreachable", async () => {
+        mockFetchJson({ "/api/kioskdisplay/certifications": { participants, tools, building: { reachable: false, lastSeenAt: null } } });
+        renderWithProviders(<KioskCertificationsDisplay />);
+
+        expect(await screen.findByText("2 Checked In (unconfirmed)")).toBeInTheDocument();
+        expect(screen.queryByText("2 People Present")).not.toBeInTheDocument();
     });
 
     it("labels rows with the nickname the person goes by", async () => {

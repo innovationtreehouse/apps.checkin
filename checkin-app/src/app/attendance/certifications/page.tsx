@@ -56,6 +56,8 @@ function KioskCertificationsInner() {
   const [tools, setTools] = useState<Tool[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Off the kiosk, "present" is stated as fact only while the kiosk is reachable.
+  const [presenceConfirmed, setPresenceConfirmed] = useState(false);
   const minute = useSyncExternalStore(subscribeToClock, currentMinute, noMinute);
   const currentTime = minute === null ? null : new Date(minute * 60000);
 
@@ -78,6 +80,7 @@ function KioskCertificationsInner() {
       if (res.ok && data.participants && data.tools) {
         setParticipants(data.participants);
         setTools(data.tools);
+        setPresenceConfirmed(data.building?.reachable === true);
         setError(null);
         if (sigParam) {
           setIsKioskMode(true);
@@ -180,7 +183,11 @@ function KioskCertificationsInner() {
             <Group align="center" wrap="wrap">
               <Title order={1} fz="clamp(1.5rem, 4vw, 2rem)">Live Certifications</Title>
               <Badge color={limitToPresent ? 'teal' : 'gray'} variant="light" size="lg">
-                {limitToPresent ? `${participants.length} People Present` : `${participants.length} Total Members`}
+                {!limitToPresent
+                  ? `${participants.length} Total Members`
+                  : isKioskMode || presenceConfirmed
+                    ? `${participants.length} People Present`
+                    : `${participants.length} Checked In (unconfirmed)`}
               </Badge>
             </Group>
             <Group gap="sm" align="center">

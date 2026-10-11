@@ -22,6 +22,8 @@ import { isCloseChoiceWarning, useCloseChoice, type CloseChoiceAnswer } from "@/
 
 import { PageLoader } from "@/components/ui/PageLoader";
 import { CountBadge } from "@/components/ui/CountBadge";
+import { BuildingUnconfirmedAlert } from "@/components/BuildingUnconfirmedAlert";
+import type { BuildingLink } from "@/lib/kioskSeen";
 import { personQueryMatcher } from "@/lib/searchId";
 
 type Person = {
@@ -51,8 +53,8 @@ type Visit = {
 
 type Counts = { keyholders: number; volunteers: number; youth: number; total: number; needReview?: number };
 type SafetyFlags = { facilityOpen: boolean; isLastKeyholder: boolean; isTwoDeepViolation: boolean };
-type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags };
-type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; self: Visit | null; household: Visit[] };
+type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags; building?: BuildingLink };
+type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; self: Visit | null; household: Visit[] };
 type AttendanceResponse = FullResponse | LimitedResponse;
 
 function KioskDisplayInner() {
@@ -98,6 +100,9 @@ function KioskDisplayInner() {
       && typeof rawSafety?.facilityOpen === "boolean"
       ? rawSafety
       : null;
+  // Off the kiosk, building state is stated as fact only while the server can
+  // reach the kiosk; a missing link reads as unreachable.
+  const unconfirmed = !isKioskMode && data !== null && data.building?.reachable !== true;
 
   // Prefer the server-computed flag (the only youth signal the kiosk payload carries),
   // fall back to the birth date the privileged payload still ships. This feeds the
@@ -415,7 +420,9 @@ function KioskDisplayInner() {
                 Sign out a user
               </Button>
             )}
-            <CountBadge intent="info" size="lg">People Present: {data ? counts.total : "—"}</CountBadge>
+            <CountBadge intent="info" size="lg">
+              {unconfirmed ? "Checked in (unconfirmed)" : "People Present"}: {data ? counts.total : "—"}
+            </CountBadge>
             {/* A number only — no names, no reasons, no link that invites a
                 login on the kiosk. The panel is the copy of record. */}
             {isKioskDisplay && (counts.needReview ?? 0) > 0 && (
@@ -468,26 +475,27 @@ function KioskDisplayInner() {
         )}
 
         {/* Safety warnings — a missing roster reads as unknown, not as all-clear */}
-        {!loading && !safety && (
+        {unconfirmed && <BuildingUnconfirmedAlert lastSeenAt={data?.building?.lastSeenAt} mb="lg" />}
+        {!loading && !unconfirmed && !safety && (
           <Alert color="orange" icon="⚠️" title="Supervision status unknown" mb="lg">
             {data
               ? "Attendance loaded without safety flags, so Two-Deep Compliance and keyholder coverage cannot be checked. Verify supervision in the building."
               : "Attendance could not be loaded, so Two-Deep Compliance and keyholder coverage cannot be checked. Verify supervision in the building."}
           </Alert>
         )}
-        {data && safety?.isTwoDeepViolation && (
+        {data && !unconfirmed && safety?.isTwoDeepViolation && (
           <Alert color="red" icon="🚨" title="Critical Warning" mb="lg">
             Two-Deep Compliance is failing! An unaccompanied youth is present without sufficient
             adult supervision.
           </Alert>
         )}
-        {data && safety && !safety.facilityOpen && counts.total > 0 && (
+        {data && !unconfirmed && safety && !safety.facilityOpen && counts.total > 0 && (
           <Alert color="orange" icon="🔒" title="Facility closed — no keyholder present" mb="lg">
             The people below checked in without a keyholder in the building. The facility is not
             open until a keyholder checks in.
           </Alert>
         )}
-        {data && safety && !safety.isTwoDeepViolation && safety.isLastKeyholder && (
+        {data && !unconfirmed && safety && !safety.isTwoDeepViolation && safety.isLastKeyholder && (
           <Alert color="yellow" icon="⚠️" title="Warning" mb="lg">
             Only one isKeyholder is currently in the building.
           </Alert>
@@ -501,7 +509,7 @@ function KioskDisplayInner() {
         ) : !data ? (
           <Alert color="red">Attendance is unavailable — the roster could not be loaded.</Alert>
         ) : counts.total === 0 ? (
-          <Center py="xl"><Text c="dimmed">The facility is currently empty.</Text></Center>
+          <Center py="xl"><Text c="dimmed">{unconfirmed ? "No open visits recorded." : "The facility is currently empty."}</Text></Center>
         ) : (
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="lg">
             {renderColumn(IconKey, counts.keyholders, "Keyholders", "blue", isFull ? keyholderList : householdKeyholders)}
