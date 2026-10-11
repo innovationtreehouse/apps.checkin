@@ -378,7 +378,7 @@ describe('facility close record and departure log (real DB)', () => {
         const departedAt = async (v: Visit) => (await prisma.visit.findUniqueOrThrow({ where: { id: v.id } })).departedAt;
         const theClose = () => prisma.facilityClose.findFirstOrThrow({ where: { id: { gt: closeIdFloor } } });
         const moves = async (closeId: number) => prisma.auditLog.findMany({
-            where: { tableName: 'FacilityClose', affectedEntityId: closeId, newData: { path: ['via'], equals: 'WEB_CORRECTION' } },
+            where: { tableName: 'FacilityClose', affectedEntityId: closeId, newData: { path: ['moved'], equals: true } },
         });
 
         /** The keyholder closes by correcting their open visit to `at`. */
@@ -436,7 +436,7 @@ describe('facility close record and departure log (real DB)', () => {
             expect(logged).toHaveLength(1);
             expect(logged[0]).toMatchObject({ actorId: keyholder.id, secondaryAffectedEntity: mv.id });
             expect(logged[0].oldData).toMatchObject({ visitId: mv.id, departedAt: original.toISOString(), departedVia: 'FACILITY_CLOSE' });
-            expect(logged[0].newData).toMatchObject({ visitId: mv.id, departedAt: corrected.toISOString(), departedVia: 'FACILITY_CLOSE' });
+            expect(logged[0].newData).toMatchObject({ visitId: mv.id, departedAt: corrected.toISOString(), departedVia: 'FACILITY_CLOSE', via: 'WEB_CORRECTION' });
         });
 
         it('a later correction moves only the closer; a second earlier one moves the rest from where they are', async () => {

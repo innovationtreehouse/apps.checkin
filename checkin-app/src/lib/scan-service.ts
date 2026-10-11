@@ -491,14 +491,15 @@ export type DepartureChange = {
     departedVia: string;
 };
 
-/** Log each departure a facility close set, with its before and after, against
- *  the close record. */
+/** Log each departure a facility close set, or a correction of it moved, with
+ *  its before and after, against the close record. */
 export async function logCloseDepartures(
     db: DbClient,
     facilityCloseId: number,
     actor: AuditActor,
     changes: DepartureChange[],
     via: FacilityCloseVia,
+    moved = false,
 ): Promise<void> {
     if (changes.length === 0) return;
     await db.auditLog.createMany({
@@ -509,7 +510,7 @@ export async function logCloseDepartures(
             affectedEntityId: facilityCloseId,
             secondaryAffectedEntity: c.id,
             oldData: { visitId: c.previousVisitId ?? c.id, personId: c.personId, departedAt: c.oldDepartedAt, departedVia: c.oldDepartedVia },
-            newData: { visitId: c.id, personId: c.personId, departedAt: c.departedAt, departedVia: c.departedVia, via },
+            newData: { visitId: c.id, personId: c.personId, departedAt: c.departedAt, departedVia: c.departedVia, via, ...(moved ? { moved } : {}) },
         })),
     });
 }
@@ -599,7 +600,7 @@ export async function correctCloseTime(
         RETURNING v.id, v."personId", old."departedAt" AS "oldDepartedAt", old."departedVia"::text AS "oldDepartedVia",
                   v."departedAt", v."departedVia"::text AS "departedVia"`;
     await db.facilityClose.update({ where: { id: close.id }, data: { closedAt: newTime } });
-    await logCloseDepartures(db, close.id, personActor(actorId), changes, "WEB_CORRECTION");
+    await logCloseDepartures(db, close.id, personActor(actorId), changes, "WEB_CORRECTION", true);
 }
 
 /** Fire-and-forget post-event email run on facility close. The dynamic import
