@@ -81,14 +81,14 @@ describe('POST /api/scan facility-close lock (#254)', () => {
         await prisma.visit.create({ data: { personId: keyholderId, arrivedAt: new Date() } });
         await prisma.visit.create({ data: { personId: otherId, arrivedAt: new Date() } });
 
-        const warn = await POST(scanReq(keyholderId));
-        expect(warn.status).toBe(400);
-        const warnBody = await warn.json();
-        expect(warnBody.type).toBe('warning');
-        expect(warnBody.forceCloseToken).toEqual(expect.any(String));
+        const offer = await POST(scanReq(keyholderId, { intent: 'OUT' }));
+        expect(offer.status).toBe(200);
+        const offerBody = await offer.json();
+        expect(offerBody.type).toBe('checkout');
+        expect(offerBody.forceCloseToken).toEqual(expect.any(String));
 
         const [closeRes, checkinRes] = await Promise.all([
-            POST(scanReq(keyholderId, { forceCloseToken: warnBody.forceCloseToken })),
+            POST(scanReq(keyholderId, { intent: 'OUT', forceCloseToken: offerBody.forceCloseToken })),
             POST(scanReq(racerId)),
         ]);
 

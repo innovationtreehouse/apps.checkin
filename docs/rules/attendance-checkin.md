@@ -138,8 +138,9 @@ Things the app takes as true because they are handled outside it.
   there, that departure is warned about and goes through: two deep is owed
   whenever a youth is present, so an adult-only room locking up has nothing to
   confirm, and an interrupt raised where nothing is at stake teaches people to
-  badge through the one that matters. The keyholder close-guard is a separate
-  interrupt and both can be waiting on one person at once.  [Decision — *Policy: Event, Location and Keyholder Policy, §VIII.4*]
+  badge through the one that matters. The keyholder close offer is separate: at
+  the kiosk it comes with the checkout, so a keyholder this interrupt holds sees
+  it once they confirm.  [Decision — *Policy: Event, Location and Keyholder Policy, §VIII.4*]
 
 - The supervision interrupt is on the badge scanner only. Checking someone out
   from the web does not raise it — the person doing the checking out is not at the
@@ -185,7 +186,7 @@ Things the app takes as true because they are handled outside it.
   reads. An ordinary double-tap cannot close the building over the people standing
   in it, and an unattended countdown never becomes a confirm: the confirm is always
   a human's second badge at the door. With a server present that confirm is the
-  echoed server-minted token; with no network the kiosk runs the same warning and
+  echoed server-minted token; with no network the kiosk runs the same offer and
   second-badge confirm itself, so a keyholder can still lock up offline. The queued
   close carries the confirm, and the server honours it on the delayed replay
   whenever the badge is a keyholder's.
@@ -196,13 +197,19 @@ Things the app takes as true because they are handled outside it.
 - Any keyholder can close the building at the kiosk with a double scan, whoever
   else is recorded inside — another keyholder included. We trust the keyholder
   to know they are the last one out; another keyholder still recorded is a
-  forgotten badge-out. When another keyholder is recorded, the first badge checks
-  the keyholder out and offers the close; a second badge within the countdown
-  closes the facility. The last keyholder with others still present gets the
-  warning above instead and stays recorded until they confirm, and a keyholder
-  alone closes on a single badge. Offline the kiosk runs the same offer and
-  confirm itself, and the server honours the queued confirm whoever else it
-  reads as present. The close is bound to the badge that was shown the offer —
+  forgotten badge-out. A keyholder's first badge with others still recorded
+  inside checks them out and offers the close; a second badge within the
+  countdown closes the facility. For the last recorded keyholder that first badge
+  is a leave: the offer says no other keyholder is checked in, the others stay
+  inside a closed facility, and the leave is audited like a web leave with the
+  handover not named — the reader has no pick-list, and a keyholder staying can
+  badge in at the same reader. A keyholder alone closes on a single badge, and a
+  queued badge with no confirm replays as a leave. Offline the kiosk runs the
+  same offer and confirm itself, and the server honours the queued confirm
+  whoever else it reads as present — against the keyholder's visit still open,
+  one the nightly sweep closed after the confirm, or one their own badge
+  departed at or before it, which takes the offer's token or the offline
+  confirm. The close is bound to the badge that was shown the offer —
   someone else scanning during the countdown scans normally — and a read of that
   badge within a second of the offer is the same touch read twice, never the
   confirm. Nothing on the web can stop a kiosk close.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]

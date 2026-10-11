@@ -162,6 +162,9 @@ export async function processCheckout(
 ) {
     let facilityClosed = authType !== "kiosk" && webClose;
     let closeOfferToken: string | null = null;
+    let closePrompt = "";
+    /** Others left inside by the last keyholder's single-badge leave. */
+    let leftInside = 0;
 
     if (participant.isKeyholder && authType === "kiosk") {
         const remainingKeyholders = await db.visit.count({
@@ -175,92 +178,49 @@ export async function processCheckout(
                 ...(replayEventId ? { arrivedAt: { lte: visitTime } } : {}),
             }
         });
+        // The kiosk's offline two-scan confirm: a keyholder at the reader
+        // confirmed the room is clear. Honored only on a replay; a live scan stays
+        // server-authoritative.
+        const offlineConfirmed = forceCloseConfirmed && replayEventId != null;
 
         if (remainingKeyholders === 0) {
-            const remainingUsers = await db.visit.findMany({
-                where: {
-                    departedAt: null,
-                    deletedAt: null,
-                    id: { not: activeVisitId }
-                },
-                include: { person: true }
+            const others = await db.visit.findMany({
+                where: { departedAt: null, deletedAt: null, id: { not: activeVisitId } },
+                include: { person: true },
             });
+            const ownVisit = await db.visit.findUnique({
+                where: { id: activeVisitId },
+                select: { forceCloseToken: true }
+            });
+            // A token on the still-open visit is a close the keyholder was offered
+            // before their badge checked them out.
+            const confirmForceClose = forceCloseTokenMatches(ownVisit?.forceCloseToken, confirmToken);
 
-            if (remainingUsers.length > 0) {
-                const ownVisit = await db.visit.findUnique({
-                    where: { id: activeVisitId },
-                    select: { forceCloseToken: true }
-                });
-                // The confirm is the token this scan echoes, not the gap between
-                // badges and not the wall clock: the countdown runs on the kiosk,
-                // so a confirm queued through an outage still closes on arrival.
-                // The token is a bearer credential, so compare it timing-safely:
-                // hash both sides to a fixed length first (same idiom as
-                // cronAuth.ts) so timingSafeEqual can't throw on a length
-                // mismatch and no length leaks.
-                const stored = ownVisit?.forceCloseToken;
-                const confirmForceClose =
-                    confirmToken != null && stored != null && timingSafeEqual(
-                        createHash("sha256").update(stored).digest(),
-                        createHash("sha256").update(confirmToken).digest()
-                    );
-
-                // Offline close: while disconnected the kiosk has no server token
-                // to mint, so it runs the two-scan warning+confirm locally and
-                // flags the confirmed close on the queued event. A force-close
-                // confirm is valid by issuance (docs/rules/attendance-checkin.md,
-                // kiosk resilience), extended here to a client-issued confirm -- a
-                // keyholder standing at the reader confirmed the room is clear.
-                // Honored only on a replay (the drain); a live scan carrying the
-                // flag falls through to the server-authoritative token flow below.
-                // This bypasses ONLY the token: a client flag closes only on a
-                // keyholder's own scan.
-                const offlineConfirmed = forceCloseConfirmed && replayEventId != null;
-
-                if (!confirmForceClose && !offlineConfirmed && replayEventId) {
-                    // A replay WITHOUT a token and WITHOUT the offline-confirmed flag
-                    // was never confirmed by anyone, and nobody is at the reader hours
-                    // later to answer a warning, so park it for a human. Never mint
-                    // or stamp on a replay: an unattended countdown is not a confirm.
-                    await db.rawBadgeLog.update({
-                        where: { clientEventId: replayEventId },
-                        data: { reviewReason: 'force_close_review' },
-                    });
-                    return apiJson({ type: 'parked', reason: 'force_close_review', message: 'Recorded for review.' });
-                }
-
-                if (!confirmForceClose && !offlineConfirmed) {
-                    // Mint a fresh token with the warning; the old one dies here, so
-                    // an unconfirmed countdown cannot be redeemed later.
-                    const token = randomUUID();
-                    await db.visit.update({
-                        where: { id: activeVisitId },
-                        data: { forceCloseWarnedAt: new Date(), forceCloseToken: token }
-                    });
-
-                    const names = presentLabels(remainingUsers).join(", ");
-                    return apiJson({
-                        error: `Warning! You are the last isKeyholder, but others are here:\n${names}\n\nBadge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to confirm you've checked them and close the facility.`,
-                        type: "warning" as const,
-                        forceCloseToken: token,
-                        confirmSeconds: FORCE_CLOSE_CONFIRM_SECONDS
-                    }, 400);
+            if (others.length === 0 || confirmForceClose || offlineConfirmed) {
+                facilityClosed = true;
+            } else {
+                // The last keyholder's single badge is a leave: they check out and
+                // the others stay inside a closed facility. Live, the kiosk offers
+                // the close for the countdown; a replay has nobody at the reader.
+                leftInside = others.length;
+                if (!replayEventId) {
+                    closeOfferToken = randomUUID();
+                    closePrompt = `No other keyholder is checked in, and others are still recorded inside: ${presentLabels(others).join(", ")}. Badge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to close the building and check everyone out.`;
                 }
             }
-
-            facilityClosed = true;
-        } else if (forceCloseConfirmed && replayEventId != null) {
+        } else if (offlineConfirmed) {
             // The kiosk's offline two-scan close, from a keyholder whose visit is
             // still open while another keyholder is recorded: any keyholder may
             // close, so the other keyholder does not stop it.
             facilityClosed = true;
-        } else if (authType === "kiosk" && !replayEventId) {
+        } else if (!replayEventId) {
             // Another keyholder is still recorded inside, so this departure goes
             // through — but the keyholder may be the last one actually here, with
             // the other a forgotten badge-out. A second badge closes the building
             // (closeOnOfferConfirm). Never offered on a replay: nobody is at the
             // reader to badge again.
             closeOfferToken = randomUUID();
+            closePrompt = `Others are still recorded inside. Badge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to close the building and check everyone out.`;
         }
     }
 
@@ -297,11 +257,24 @@ export async function processCheckout(
             where: { id: updatedVisit.id },
             data: { forceCloseWarnedAt: new Date(), forceCloseToken: closeOfferToken },
         }).then(() => ({
-            closePrompt: `Others are still recorded inside. Badge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to close the building and check everyone out.`,
+            closePrompt,
             forceCloseToken: closeOfferToken,
             confirmSeconds: FORCE_CLOSE_CONFIRM_SECONDS,
         }))
         : {};
+    if (leftInside > 0) {
+        // Same shape as a web leave; the kiosk has no pick-list, so the handover is not named.
+        await db.auditLog.create({
+            data: {
+                ...personActor(participant.id),
+                action: "EDIT",
+                tableName: "Visit",
+                affectedEntityId: updatedVisit?.id ?? activeVisitId,
+                secondaryAffectedEntity: participant.id,
+                newData: { type: "last_keyholder_choice", choice: "leave", via: closeVia(authType, replayEventId), handoverToId: null, othersInside: leftInside },
+            },
+        });
+    }
 
     return apiJson({
         message: facilityClosed ? "Checked out and Facility closed" : "Checked out successfully",

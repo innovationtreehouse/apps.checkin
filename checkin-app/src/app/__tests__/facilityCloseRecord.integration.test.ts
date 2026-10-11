@@ -146,18 +146,18 @@ describe('facility close record and departure log (real DB)', () => {
     const fresh = [{ departedAt: null, departedVia: null }][0];
 
     describe('kiosk', () => {
-        it('a last-keyholder warning then confirming badge writes one KIOSK close', async () => {
+        it('the last keyholder\'s leave then confirming badge writes one KIOSK close', async () => {
             asKiosk();
             await open(keyholder);
             await open(member);
             await open(member2);
 
-            const warn = await scanPOST(req('/api/scan', 'POST', { participantId: keyholder.id }));
-            expect(warn.status).toBe(400);
-            const { forceCloseToken } = await warn.json();
+            const leave = await scanPOST(req('/api/scan', 'POST', { participantId: keyholder.id, intent: 'OUT' }));
+            expect(leave.status).toBe(200);
+            const { forceCloseToken } = await leave.json();
             expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(0);
 
-            const res = await scanPOST(req('/api/scan', 'POST', { participantId: keyholder.id, forceCloseToken }));
+            const res = await scanPOST(req('/api/scan', 'POST', { participantId: keyholder.id, intent: 'OUT', forceCloseToken }));
             expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: true });
             expect((await visitOf(member)).departedVia).toBe('FACILITY_CLOSE');
 
@@ -219,10 +219,10 @@ describe('facility close record and departure log (real DB)', () => {
             await open(keyholder);
             await open(member);
 
-            const warn = await scanPOST(req('/api/scan', 'POST', { participantId: keyholder.id }));
-            const { forceCloseToken } = await warn.json();
+            const leave = await scanPOST(req('/api/scan', 'POST', { participantId: keyholder.id, intent: 'OUT' }));
+            const { forceCloseToken } = await leave.json();
 
-            const res = await scanPOST(req('/api/scan', 'POST', replayBody({ forceCloseToken })));
+            const res = await scanPOST(req('/api/scan', 'POST', replayBody({ forceCloseToken, scannedAt: new Date().toISOString() })));
             expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: true });
 
             await expectOneClose('KIOSK_OFFLINE', keyholder.id, [{ person: member, before: fresh }], keyholder);

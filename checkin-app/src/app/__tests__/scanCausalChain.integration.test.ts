@@ -3,7 +3,7 @@
  */
 /**
  * Causal-chain coverage for the last-isKeyholder checkout: check-in → facility
- * close → post-event emails, plus the "others are still here" warning branch.
+ * close → post-event emails, plus the "others are still here" leave branch.
  * Previously post-event emails were only tested in isolation with a hand-seeded
  * visit; the trigger from an actual checkout was never exercised.
  */
@@ -31,10 +31,10 @@ jest.mock('@/lib/logger', () => ({
 const TAG = 'scan-causal-test';
 const flush = () => new Promise(r => setImmediate(r));
 
-function scanReq(participantId: number, forceCloseToken?: string) {
+function scanReq(participantId: number, forceCloseToken?: string, intent?: 'IN' | 'OUT') {
     return new Request('http://localhost/api/scan', {
         method: 'POST',
-        body: JSON.stringify({ participantId, ...(forceCloseToken ? { forceCloseToken } : {}) }),
+        body: JSON.stringify({ participantId, ...(forceCloseToken ? { forceCloseToken } : {}), ...(intent ? { intent } : {}) }),
     }) as unknown as import('next/server').NextRequest;
 }
 
@@ -148,42 +148,47 @@ describe('Scan causal chain — last isKeyholder closes facility', () => {
         expect(untouched?.departedAt).toBeNull();
     });
 
-    it('warns instead of closing when others are present and no warning has been shown', async () => {
+    it('checks the keyholder out and offers the close when others are present and no offer has been shown', async () => {
         const kVisit = await prisma.visit.create({ data: { personId: isKeyholder.id, arrivedAt: new Date() } });
         await prisma.visit.create({ data: { personId: normal.id, arrivedAt: new Date() } });
-        // An ordinary double-tap: two badge events 5s apart, no warning behind them.
+        // An ordinary double-tap: two badge events 5s apart, no offer behind them.
         await prisma.rawBadgeLog.create({ data: { personId: isKeyholder.id, timestamp: new Date(Date.now() - 5000) } });
         await prisma.rawBadgeLog.create({ data: { personId: isKeyholder.id, timestamp: new Date() } });
 
         const res = await processCheckout(isKeyholder, kVisit.id, 'kiosk');
-        expect(res.status).toBe(400);
+        expect(res.status).toBe(200);
         const json = await res.json();
-        expect(json.type).toBe('warning');
+        expect(json.type).toBe('checkout');
+        expect(json.facilityClosed).toBe(false);
+        expect(json.closePrompt).toContain('No other keyholder is checked in');
 
-        // Nothing closed: both visits remain open and no emails fired.
-        const open = await prisma.visit.count({
-            where: { personId: { in: [isKeyholder.id, normal.id] }, departedAt: null },
-        });
-        expect(open).toBe(2);
+        // Only the keyholder left: the other visit stays open and no emails fired.
+        expect(await prisma.visit.count({ where: { personId: isKeyholder.id, departedAt: null } })).toBe(0);
+        expect(await prisma.visit.count({ where: { personId: normal.id, departedAt: null } })).toBe(1);
         expect(processPostEventEmails).not.toHaveBeenCalled();
 
-        // The warning minted a token; only a scan echoing it may confirm.
+        // The offer's token rides the departed visit; only a scan echoing it may confirm.
         const stamped = await prisma.visit.findUnique({ where: { id: kVisit.id } });
-        expect(stamped?.forceCloseWarnedAt).toBeInstanceOf(Date);
+        expect(stamped?.departedVia).toBe('SCANNER');
         expect(stamped?.forceCloseToken).toEqual(json.forceCloseToken);
+
+        // The leave is audited, the handover not named.
+        const audit = await prisma.auditLog.findFirst({ where: { tableName: 'Visit', affectedEntityId: kVisit.id }, orderBy: { id: 'desc' } });
+        expect(audit?.newData).toEqual({ type: 'last_keyholder_choice', choice: 'leave', via: 'KIOSK', handoverToId: null, othersInside: 1 });
+        await prisma.auditLog.deleteMany({ where: { tableName: 'Visit', affectedEntityId: kVisit.id } });
     });
 
     it('confirms through the route inside the debounce window — the token is the confirm, not the gap', async () => {
         await prisma.visit.create({ data: { personId: isKeyholder.id, arrivedAt: new Date() } });
         await prisma.visit.create({ data: { personId: normal.id, arrivedAt: new Date() } });
 
-        const warnRes = await POST(scanReq(isKeyholder.id));
-        expect(warnRes.status).toBe(400);
-        const warn = await warnRes.json();
+        const offerRes = await POST(scanReq(isKeyholder.id, undefined, 'OUT'));
+        expect(offerRes.status).toBe(200);
+        const offer = await offerRes.json();
 
         // Badge again immediately: inside the 3s debounce, which would swallow an
         // untokened scan. The confirm carries the token, so it lands.
-        const closeRes = await POST(scanReq(isKeyholder.id, warn.forceCloseToken));
+        const closeRes = await POST(scanReq(isKeyholder.id, offer.forceCloseToken, 'OUT'));
         expect((await closeRes.json()).facilityClosed).toBe(true);
 
         const open = await prisma.visit.count({
