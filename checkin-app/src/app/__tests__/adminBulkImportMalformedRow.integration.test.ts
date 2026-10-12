@@ -18,6 +18,9 @@ jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
 }));
 
+// The CSV import module is optional and off by default.
+process.env.CSV_IMPORT_ENABLED = 'true';
+
 describe('Bulk import: malformed row among valid rows', () => {
     let testAdminId: number;
 

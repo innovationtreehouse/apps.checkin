@@ -6,6 +6,7 @@ import * as xlsx from "xlsx";
 import { parseImportDob } from "@/lib/importDob";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { config } from "@/lib/config";
 
 type RowStatus = "ready" | "update" | "warning" | "error";
 
@@ -27,6 +28,9 @@ interface RowPreview {
 }
 
 export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (req: NextRequest, auth) => {
+    if (!config.csvImportEnabled()) {
+        return apiError("Not found", 404);
+    }
     try {
         if (auth.type !== 'session') {
             return apiError("Unauthorized", 401);

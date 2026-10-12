@@ -169,7 +169,6 @@ export const PAGES: PageEntry[] = [
   { href: '/membership-ops/volunteer-memberships', label: 'Volunteers', section: 'Membership Ops', visible: MOPS('/membership-ops/volunteer-memberships') },
   { href: '/membership-ops/participants', label: 'Participants', section: 'Membership Ops', visible: MOPS('/membership-ops/participants') },
   { href: '/membership-ops/participants/new', label: 'New Participant', section: 'Membership Ops', visible: MOPS('/membership-ops/participants/new') },
-  { href: '/membership-ops/participants/import', label: 'Import Participants', section: 'Membership Ops', visible: MOPS('/membership-ops/participants/import') },
   { href: '/membership-ops/participants/merge', label: 'Merge Participants', section: 'Membership Ops', visible: MOPS('/membership-ops/participants/merge') },
   { href: '/membership-ops/participants/tombstones', label: 'Tombstone Census', section: 'Membership Ops', visible: MOPS('/membership-ops/participants/tombstones') },
   { href: '/membership-ops/review', label: 'Membership Review', section: 'Membership Ops', visible: MOPS('/membership-ops/review') },
@@ -244,5 +243,6 @@ export const REGISTRY_EXCLUDED: string[] = [
   '/dev/sent-mail',          // dev-only captured-email inbox (EMAIL_DEV_MOCK.md); 404s off dev
   '/dev/zoho-sign',          // dev-only Zoho Sign mock interstitial (404 in prod)
   '/dev/shopify',            // dev-only Shopify orders/paid mock (SHOPIFY_DEV_STORE_WEBHOOK.md); 404s off dev
+  '/membership-ops/participants/import', // optional CSV import module; 404s unless CSV_IMPORT_ENABLED=true, reached from Participants
   '/dev/bg-consent',         // dev-only background-check consent mock (docs/ops/background-check-mock.md); 404s off dev
 ];

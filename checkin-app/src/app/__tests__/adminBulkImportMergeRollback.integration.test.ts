@@ -24,6 +24,9 @@ jest.mock('next-auth/next', () => ({
 const TARGET_EMAIL = 'target-anchor-mergeroll-test@example.com';
 const SOURCE_EMAIL = 'source-member-mergeroll-test@example.com';
 
+// The CSV import module is optional and off by default.
+process.env.CSV_IMPORT_ENABLED = 'true';
+
 describe('Bulk import merge rollback', () => {
     let testAdminId: number;
     let targetHouseholdId: number;

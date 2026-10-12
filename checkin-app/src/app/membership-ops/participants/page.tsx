@@ -12,6 +12,7 @@ import { AdminEditHouseholdModal } from "@/components/admin/AdminEditHouseholdMo
 import { RoleBadge } from "@/components/ui/RoleBadge";
 import { ROLE_FLAGS } from "@/lib/roles";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useCsvImportEnabled } from "@/components/EnvProvider";
 
 type HouseholdRef = {
   id: number;
@@ -52,6 +53,7 @@ export default function AdminParticipantsIndex() {
   // role gate: board + operations, sysadmin deliberately excluded there).
   const { user: me } = useRequireRole([]);
   const isStaff = !!me?.isBoardMember || !!me?.isSysadmin;
+  const csvImportEnabled = useCsvImportEnabled();
   const canAddContact = !!me?.isBoardMember || !!me?.isOperations;
 
   const toggleSort = (col: "id" | "name" | "email" | "household") => {
@@ -265,7 +267,7 @@ export default function AdminParticipantsIndex() {
           <Text c="dimmed">Search and manage system people and households.</Text>
         </div>
         <Group>
-          {isStaff && <Button variant="light" onClick={() => router.push('/membership-ops/participants/import')}>Bulk Import</Button>}
+          {isStaff && csvImportEnabled && <Button variant="light" onClick={() => router.push('/membership-ops/participants/import')}>Bulk Import</Button>}
           {isStaff && <Button onClick={() => router.push('/membership-ops/participants/new')}>+ New Person</Button>}
           {canAddContact && <Button variant="outline" onClick={() => setAddContactOpen(true)}>+ Add contact</Button>}
         </Group>

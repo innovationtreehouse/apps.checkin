@@ -77,7 +77,7 @@ export function setStagingInstance(v: boolean) {
 export function renderWithProviders(ui: ReactElement, options?: RenderOptions) {
     return render(
         <MantineProvider>
-            <EnvProvider value={{ checkinEnv, shopifyStoreDomain, isStaging }}>{ui}</EnvProvider>
+            <EnvProvider value={{ checkinEnv, shopifyStoreDomain, isStaging, csvImportEnabled: false }}>{ui}</EnvProvider>
         </MantineProvider>,
         options,
     );

@@ -45,7 +45,7 @@ export default async function RootLayout({
           <MantineProvider theme={brand.theme} defaultColorScheme="auto">
             <ModalsProvider>
               <Notifications />
-              <EnvProvider value={{ checkinEnv: config.checkinEnv(), shopifyStoreDomain: config.shopifyStoreDomain(), isStaging: config.isStaging() }}>
+              <EnvProvider value={{ checkinEnv: config.checkinEnv(), shopifyStoreDomain: config.shopifyStoreDomain(), isStaging: config.isStaging(), csvImportEnabled: config.csvImportEnabled() }}>
                 <AuthProvider>
                   <OnboardingGate>
                     <StagingBar />
