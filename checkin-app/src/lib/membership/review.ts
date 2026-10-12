@@ -12,7 +12,8 @@ import { openPersonAgreementForNewMember } from "@/lib/membership/personAgreemen
 import { personActor, type AuditActor } from "@/lib/auditActor";
 import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest";
 import { type DbClient, type TxClient } from "@/lib/db-client";
-import { awaitingBgReview } from "@/lib/membership/lifecycle";
+import { awaitingBgReview, fromWhere } from "@/lib/membership/lifecycle";
+import { raiseDeniedHouseholdActivity, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { approvalsForSubject, establishedSubject } from "@/lib/membership/approvals";
 
@@ -274,7 +275,7 @@ export async function attest(
     // second sees the other's field set and flips ACTIVE. Mirrors leads.ts.
     type AttestOutcome =
         | { status: "BLOCKED"; notifyPaidReject: boolean }
-        | { status: OrgMembershipProcessStatus; activated: boolean; householdId: number | null; isInitial: boolean }
+        | ClearanceOutcome
         | { status: OrgMembershipProcessStatus; approvals: number };
     const result = await prisma.$transaction<AttestOutcome>(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
@@ -318,7 +319,8 @@ export async function attest(
         });
 
         if (input.result === "REJECT") {
-            await tx.orgMembershipProcess.update({ where: { id: processId }, data: { status: "BLOCKED", stageEnteredAt: new Date() } });
+            const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...awaitingBgReview.where }, data: { status: "BLOCKED", stageEnteredAt: new Date() } });
+            if (!count) throw movedOn();
             await audit(tx, personActor(reviewerId), processId, { status: process.status }, { status: "BLOCKED", reason: "reviewer reject", ...(input.note ? { note: input.note } : {}) });
             // A paid household that fails review needs a manual refund — flag the board (post-tx).
             return { status: "BLOCKED" as const, notifyPaidReject: !!process.paidAt };
@@ -334,11 +336,7 @@ export async function attest(
             : withThis.filter((a) => a.result === "APPROVE").length;
         const clears = approvals >= REQUIRED_APPROVALS;
         if (clears) {
-            const { activated, householdId, isInitial } = await clearBackgroundCheck(tx, processId, reviewerId);
-            // A cleared PERSON_BG resolves to ACTIVE too; only a household process
-            // gates on the PENDING_PAYMENT convergence.
-            const status: OrgMembershipProcessStatus = activated ? "ACTIVE" : process.subjectPersonId ? "ACTIVE" : "PENDING_PAYMENT";
-            return { status, activated, householdId, isInitial };
+            return clearBackgroundCheck(tx, processId, reviewerId, awaitingBgReview);
         }
         return { status: process.status, approvals };
     });
@@ -357,76 +355,105 @@ export async function attest(
  * status + bgClearedAt, then converge on the two-track gate:
  *   - already paid -> ACTIVE (payment finished first)
  *   - not yet paid -> PENDING_PAYMENT (applicant still needs to pay)
- * Returns whether it activated + householdId so the caller can send congrats.
- * Must run inside a tx holding a FOR UPDATE lock on the process row.
+ * A DENIED household converges nowhere: nothing is written, and the outcome
+ * carries `denied` so the caller raises it to the board after commit.
+ * Must run inside a tx holding a FOR UPDATE lock on the process row; `expected` is the
+ * state the caller expects the process to still be in, re-checked here.
  *
  * `subjectOverride` is the board force-approve, which asserts its subjects rather
  * than counting attestations — a BLOCKED process carries at most one APPROVE per
  * subject, so counting there always yields nobody.
  */
-export async function clearBackgroundCheck(tx: TxClient, processId: number, actorId: number, subjectOverride?: number[], provenance?: ClearanceProvenance): Promise<ClearanceOutcome> {
-    const process = await tx.orgMembershipProcess.findUnique({
-        where: { id: processId },
+export async function clearBackgroundCheck(
+    tx: TxClient,
+    processId: number,
+    actorId: number,
+    expected: { where: Prisma.OrgMembershipProcessWhereInput },
+    opts: { subjectOverride?: number[]; provenance?: ClearanceProvenance } = {},
+): Promise<ClearanceOutcome> {
+    const process = await tx.orgMembershipProcess.findFirst({
+        where: { id: processId, ...expected.where },
         include: { attestations: true },
     });
-    if (!process) throw new ReviewError("not_found", "Application not found.");
+    if (!process) throw movedOn();
+    const now = new Date();
 
     // PERSON_BG: subject-scoped. Stamp ONLY the subject person and resolve — there is
     // no household membership to activate/pay, so skip the payment/activation
     // convergence entirely, and do NOT touch the household-lead blanket stamp (that's
     // the household path below, whose lead-stamp change is Phase 5).
     if (process.subjectPersonId) {
-        const now = new Date();
         await tx.person.update({ where: { id: process.subjectPersonId }, data: { lastBackgroundCheck: now } });
-        await tx.orgMembershipProcess.update({ where: { id: processId }, data: { bgClearedAt: now, status: "ACTIVE", stageEnteredAt: now } });
+        const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...expected.where }, data: { bgClearedAt: now, status: "ACTIVE", stageEnteredAt: now } });
+        if (!count) throw movedOn();
         await audit(tx, personActor(actorId), processId, { status: process.status }, { status: "ACTIVE", bgCleared: true, subjectPersonId: process.subjectPersonId });
-        return { activated: false, householdId: null, isInitial: false };
+        return { status: "ACTIVE", activated: false, householdId: null, isInitial: false };
     }
 
-    // Household INITIAL/RENEWAL path (unchanged): orgMembershipId is always set here.
-    const membership = await tx.orgMembership.findUnique({ where: { id: process.orgMembershipId! }, select: { householdId: true } });
+    // Household INITIAL/RENEWAL path: orgMembershipId is always set here. Lock the
+    // household row so a concurrent deny either lands first (and is seen) or waits.
+    const orgMembershipId = process.orgMembershipId!;
+    await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
+    const membership = await tx.orgMembership.findUnique({ where: { id: orgMembershipId }, select: { householdId: true, status: true } });
     if (!membership) throw new ReviewError("not_found", "Membership not found.");
     const householdId = membership.householdId;
-    const now = new Date();
+    if (membership.status === "DENIED") {
+        return { status: process.status, activated: false, householdId: null, isInitial: false, denied: { householdId, processId } };
+    }
     const paid = !!process.paidAt;
+    const status = paid ? "ACTIVE" : "PENDING_PAYMENT";
 
     // Stamp only the adults this review actually covered — the subjects the reviewers
     // read off the Averity reports. A legacy process names nobody and so stamps nobody:
     // better a household that reads stale than another unchecked adult marked cleared.
     // Expiry is derived from this plus BoardSettings.bgRecheckMonths at read time (see
     // householdBgIsFresh) — not stored.
-    const cleared = subjectOverride ?? subjectsWithTwoApprovals(process.attestations);
+    const cleared = opts.subjectOverride ?? subjectsWithTwoApprovals(process.attestations);
     if (cleared.length) {
         await tx.person.updateMany({ where: { id: { in: cleared } }, data: { lastBackgroundCheck: now } });
     }
-    await applyVolunteerStatus(tx, process.orgMembershipId!, householdId, process.attestations.some((a) => a.isMarkedVolunteer));
+    await applyVolunteerStatus(tx, orgMembershipId, householdId, process.attestations.some((a) => a.isMarkedVolunteer));
 
-    await tx.orgMembershipProcess.update({
-        where: { id: processId },
-        data: { bgClearedAt: now, status: paid ? "ACTIVE" : "PENDING_PAYMENT", stageEnteredAt: now },
-    });
+    const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...expected.where }, data: { bgClearedAt: now, status, stageEnteredAt: now } });
+    if (!count) throw movedOn();
     if (paid) {
-        await tx.orgMembership.update({ where: { id: process.orgMembershipId! }, data: { status: "ACTIVE" } });
+        await setHouseholdStatus(tx, orgMembershipId, { from: ["NONE", "REVOKED", "ACTIVE"], to: "ACTIVE", actor: personActor(actorId), reason: "background check cleared on a paid application" });
     }
 
     // provenance is set when something other than a two-reviewer attestation
     // produced this clearance; without it the row is indistinguishable from one.
-    await audit(tx, personActor(actorId), processId, { status: process.status }, { status: paid ? "ACTIVE" : "PENDING_PAYMENT", bgCleared: true, clearedPersonIds: cleared, ...(provenance ?? {}) });
-    return { activated: paid, householdId, isInitial: process.kind === "INITIAL" };
+    await audit(tx, personActor(actorId), processId, { status: process.status }, { status, bgCleared: true, clearedPersonIds: cleared, ...(opts.provenance ?? {}) });
+    return { status, activated: paid, householdId, isInitial: process.kind === "INITIAL" };
+}
+
+/** An unlocked writer (archive) can still move the row between the locked read and the write. */
+function movedOn() {
+    return new ReviewError("wrong_phase", "This application changed while it was being reviewed. Reload and try again.");
 }
 
 /** What a clearance settled to, for the sends that run after the transaction commits. */
-export type ClearanceOutcome = { activated: boolean; householdId: number | null; isInitial: boolean };
+export type ClearanceOutcome = {
+    status: OrgMembershipProcessStatus;
+    activated: boolean;
+    householdId: number | null;
+    isInitial: boolean;
+    /** Set when the household is DENIED: nothing converged, and the board is owed an item. */
+    denied?: { householdId: number; processId: number };
+};
 
 /** Why a clearance happened, when it was not two reviewers attesting. */
 export type ClearanceProvenance = { via: string; sourcePersonId: number; reason: string };
 
 /**
  * The sends every clearance owes, outside the transaction so a slow/failed send
- * can't roll it back: congrats + the new-member triggers on activation, else the
- * payment-open notice.
+ * can't roll it back: the board item for a DENIED household, congrats + the
+ * new-member triggers on activation, else the payment-open notice.
  */
 export async function notifyClearanceOutcome(outcome: ClearanceOutcome, opts?: { paymentOpenNotice?: (householdId: number) => Promise<void> }) {
+    if (outcome.denied) {
+        await raiseDeniedHouseholdActivity({ ...outcome.denied, what: "background check cleared" });
+        return;
+    }
     if (outcome.activated) {
         await sendCongrats(outcome.householdId!, outcome.isInitial);
         // Trigger C: a brand-new (INITIAL) member just activated — open PERSON_BG
@@ -495,6 +522,7 @@ export async function applyVolunteerStatus(db: DbClient, orgMembershipId: number
 export async function overrideBlocked(processId: number, actorId: number, action: "reset" | "approve", subjectPersonIds?: number[]) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ReviewError("not_found", "Application not found.");
+    // A fast refusal only; the authoritative BLOCKED check is the one under the lock.
     if (action === "approve" && process.status !== "BLOCKED") throw new ReviewError("wrong_phase", "This application is not blocked.");
 
     // Conflict of interest: no actor may override their OWN household's blocked
@@ -511,7 +539,7 @@ export async function overrideBlocked(processId: number, actorId: number, action
             // attestation could clear the check between the phase test and the delete,
             // leaving a cleared process with no attestations behind it.
             await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
-            const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, bgConsentAt: true, bgClearedAt: true } });
+            const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, kind: true, paidAt: true, bgConsentAt: true, bgClearedAt: true } });
             if (!fresh) throw new ReviewError("not_found", "Application not found.");
             const blocked = fresh.status === "BLOCKED";
             if (!blocked && !awaitingBgReview.has({ status: fresh.status, bgConsentAt: !!fresh.bgConsentAt, bgClearedAt: !!fresh.bgClearedAt })) {
@@ -519,9 +547,13 @@ export async function overrideBlocked(processId: number, actorId: number, action
             }
             // A blocked application resumes at the review status its cycle calls for; one
             // still in review already sits there, so only its attestations go.
-            const reviewStatus = blocked ? blockedResetStatus(process) : fresh.status;
+            const reviewStatus = blocked ? blockedResetStatus(fresh) : fresh.status;
             await tx.backgroundCheckAttestation.deleteMany({ where: { processId } });
-            await tx.orgMembershipProcess.update({ where: { id: processId }, data: { status: reviewStatus, bgClearedAt: null, stageEnteredAt: new Date() } });
+            const { count } = await tx.orgMembershipProcess.updateMany({
+                where: { id: processId, ...(blocked ? fromWhere("BLOCKED") : awaitingBgReview.where) },
+                data: { status: reviewStatus, bgClearedAt: null, stageEnteredAt: new Date() },
+            });
+            if (!count) throw movedOn();
             await audit(tx, personActor(actorId), processId, { status: fresh.status }, { status: reviewStatus, action: "board reset" });
             return reviewStatus;
         });
@@ -541,16 +573,15 @@ export async function overrideBlocked(processId: number, actorId: number, action
     }
 
     // FOR UPDATE per clearBackgroundCheck's contract: serializes a board approve
-    // against a late payment webhook (activate also locks), so the override reads
-    // a fresh paidAt and converges to ACTIVE rather than parking it at PENDING_PAYMENT.
+    // against a late payment webhook (activate also locks), a second approve, an
+    // archive or a reset, so the override converges only a row still BLOCKED, with a
+    // fresh paidAt.
     const cleared = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
-        return clearBackgroundCheck(tx, processId, actorId, subjectOverride);
+        return clearBackgroundCheck(tx, processId, actorId, { where: fromWhere("BLOCKED") }, { subjectOverride });
     });
     await notifyClearanceOutcome(cleared);
-    // A cleared PERSON_BG resolves to ACTIVE; a household process gates on PENDING_PAYMENT.
-    const status: OrgMembershipProcessStatus = cleared.activated ? "ACTIVE" : process.subjectPersonId ? "ACTIVE" : "PENDING_PAYMENT";
-    return { status };
+    return { status: cleared.status };
 }
 
 type BlockedResetRow = {

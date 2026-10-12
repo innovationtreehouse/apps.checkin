@@ -170,10 +170,12 @@ async function clearHeldRow(
                 select: { status: true, bgClearedAt: true, _count: { select: { attestations: true } } },
             });
             if (!fresh || fresh.status !== status || fresh.bgClearedAt || fresh._count.attestations > 0) return null;
-            return clearBackgroundCheck(tx, process.id, actorId, undefined, {
-                via: "merge",
-                sourcePersonId: mergedPersonId,
-                reason: "still-valid background check carried in by participant merge; no reviewer attested",
+            return clearBackgroundCheck(tx, process.id, actorId, { where: from }, {
+                provenance: {
+                    via: "merge",
+                    sourcePersonId: mergedPersonId,
+                    reason: "still-valid background check carried in by participant merge; no reviewer attested",
+                },
             });
         });
         if (outcome) await notifyClearanceOutcome(outcome, { paymentOpenNotice: notifyPaymentOpenOnExistingCheck });

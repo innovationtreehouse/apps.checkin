@@ -38,9 +38,6 @@ const ALLOWLIST: Entry[] = [
     // activate(): household to ACTIVE, and the paid-while-blocked write: chip 3.
     { file: 'lib/membership/payment.ts', table: 'OrgMembership', count: 1, chip: 'chip 3' },
     { file: 'lib/membership/payment.ts', table: 'OrgMembershipProcess', count: 1, chip: 'chip 3' },
-    // clearBackgroundCheck household to ACTIVE; reject, clear and override writes: chip 4.
-    { file: 'lib/membership/review.ts', table: 'OrgMembership', count: 1, chip: 'chip 4' },
-    { file: 'lib/membership/review.ts', table: 'OrgMembershipProcess', count: 4, chip: 'chip 4' },
     // Intake's NONE upsert and the INTAKE to PENDING_EXTERNAL_ACTION submit: chip 5.
     { file: 'lib/membership/intake.ts', table: 'OrgMembership', count: 1, chip: 'chip 5' },
     { file: 'lib/membership/intake.ts', table: 'OrgMembershipProcess', count: 1, chip: 'chip 5' },
