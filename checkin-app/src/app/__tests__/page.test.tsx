@@ -33,4 +33,29 @@ describe("Home", () => {
 
         expect(await screen.findByText("Successfully checked in!")).toBeInTheDocument();
     });
+
+    const violating = { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: true };
+
+    it("warns of a two-deep violation while the kiosk is reachable", async () => {
+        setSession({ id: 1, name: "Ann Admin", isSysadmin: true });
+        mockFetchJson({
+            "/api/attendance": { access: "full", attendance: [], safety: violating, building: { reachable: true, lastSeenAt: null } },
+            "/api/membership": { membershipStatus: "ACTIVE" },
+        });
+        renderWithProviders(<Home />);
+
+        expect(await screen.findByText(/Two-Deep Compliance is failing/)).toBeInTheDocument();
+    });
+
+    it("says it can't confirm instead of stating a violation when the kiosk is unreachable", async () => {
+        setSession({ id: 1, name: "Ann Admin", isSysadmin: true });
+        mockFetchJson({
+            "/api/attendance": { access: "full", attendance: [], safety: violating, building: { reachable: false, lastSeenAt: null } },
+            "/api/membership": { membershipStatus: "ACTIVE" },
+        });
+        renderWithProviders(<Home />);
+
+        expect(await screen.findByText("Can't confirm building state")).toBeInTheDocument();
+        expect(screen.queryByText(/Two-Deep Compliance is failing/)).not.toBeInTheDocument();
+    });
 });

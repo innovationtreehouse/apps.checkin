@@ -22,6 +22,7 @@ const attendanceData = {
   ],
   counts: { keyholders: 1, volunteers: 1, youth: 1, total: 3 },
   safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+  building: { reachable: true, lastSeenAt: null },
 };
 
 const householdData = {
@@ -213,6 +214,7 @@ describe("attendance/current page", () => {
         access: "limited",
         counts: { keyholders: 0, volunteers: 0, students: 1, total: 1 },
         safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+        building: { reachable: true, lastSeenAt: null },
         self: null,
         household: [
           { id: 301, arrivedAt: "2026-07-01T14:00:00.000Z", participant: { id: 8801, email: "kid@example.com", name: "Kid Eight", isKeyholder: false, isSysadmin: false, dateOfBirth: "2015-01-01", householdId: 8 } },
@@ -237,6 +239,7 @@ describe("attendance/current page", () => {
         access: "limited",
         counts: { keyholders: 0, volunteers: 1, students: 0, total: 1 },
         safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+        building: { reachable: true, lastSeenAt: null },
         self: { id: 401, arrivedAt: "2026-07-01T14:00:00.000Z", participant: { id: 42, email: "self@example.com", name: "Self Member", isKeyholder: false, isSysadmin: false, householdId: 8 } },
         household: [],
       },
@@ -327,6 +330,7 @@ describe("attendance/current page", () => {
         ],
         counts: { keyholders: 0, volunteers: 0, youth: 1, total: 1 },
         safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: true },
+        building: { reachable: true, lastSeenAt: null },
       },
     });
     renderWithProviders(<KioskDisplay />);
@@ -347,6 +351,7 @@ describe("attendance/current page", () => {
         ],
         counts: { keyholders: 0, volunteers: 1, youth: 0, total: 1 },
         safety: { facilityOpen: false, isLastKeyholder: false, isTwoDeepViolation: false },
+        building: { reachable: true, lastSeenAt: null },
       },
     });
     renderWithProviders(<KioskDisplay />);
@@ -354,6 +359,47 @@ describe("attendance/current page", () => {
     expect(await screen.findByText("Facility closed — no keyholder present")).toBeInTheDocument();
     expect(within(columnFor("Volunteers/Adults")).getByText("Val Volunteer")).toBeInTheDocument();
     expect(screen.getByText("No keyholder")).toBeInTheDocument();
+  });
+
+  describe("when the kiosk is unreachable", () => {
+    const unreachable = {
+      ...attendanceData,
+      safety: { facilityOpen: false, isLastKeyholder: true, isTwoDeepViolation: true },
+      building: { reachable: false, lastSeenAt: null },
+    };
+
+    it("says it can't confirm building state instead of stating occupancy, closed or two-deep", async () => {
+      setAdminSession();
+      mockRoutes({ "/api/attendance": unreachable });
+      renderWithProviders(<KioskDisplay />);
+
+      expect(await screen.findByText("Can't confirm building state")).toBeInTheDocument();
+      expect(screen.getByText("Checked in (unconfirmed): 3")).toBeInTheDocument();
+      expect(screen.queryByText("People Present: 3")).not.toBeInTheDocument();
+      expect(screen.queryByText("Critical Warning")).not.toBeInTheDocument();
+      expect(screen.queryByText("Facility closed — no keyholder present")).not.toBeInTheDocument();
+      expect(screen.queryByText("Supervision status unknown")).not.toBeInTheDocument();
+    });
+
+    it("reads a payload without the link as unreachable", async () => {
+      setAdminSession();
+      const { building: _omit, ...withoutLink } = attendanceData;
+      void _omit;
+      mockRoutes({ "/api/attendance": withoutLink });
+      renderWithProviders(<KioskDisplay />);
+
+      expect(await screen.findByText("Can't confirm building state")).toBeInTheDocument();
+    });
+
+    it("leaves the kiosk's own display as it is", async () => {
+      setSearchParams("mode=kiosk");
+      mockRoutes({ "/api/attendance": unreachable });
+      renderWithProviders(<KioskDisplay />);
+
+      expect(await screen.findByText("People Present: 3")).toBeInTheDocument();
+      expect(screen.queryByText("Can't confirm building state")).not.toBeInTheDocument();
+      expect(screen.getByText("Critical Warning")).toBeInTheDocument();
+    });
   });
 
   it("reads safety without facilityOpen as unknown", async () => {
@@ -372,6 +418,7 @@ describe("attendance/current page", () => {
         attendance: [],
         counts: { keyholders: 0, volunteers: 0, students: 0, total: 0 },
         safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+        building: { reachable: true, lastSeenAt: null },
         signedRequest: true,
       },
     });
@@ -393,6 +440,7 @@ describe("attendance/current page", () => {
         attendance: [],
         counts: { keyholders: 0, volunteers: 0, students: 0, total: 0 },
         safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+        building: { reachable: true, lastSeenAt: null },
         signedRequest: true,
       },
     }));
@@ -605,6 +653,7 @@ describe("attendance/current page", () => {
         ],
         counts: { keyholders: 1, volunteers: 2, students: 0, total: 3 },
         safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+        building: { reachable: true, lastSeenAt: null },
       },
     });
     renderWithProviders(<KioskDisplay />);
@@ -670,6 +719,7 @@ describe("attendance/current page", () => {
         ],
         counts: { keyholders: 1, volunteers: 1, students: 0, total: 2 },
         safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+        building: { reachable: true, lastSeenAt: null },
       },
     });
     renderWithProviders(<KioskDisplay />);
@@ -706,6 +756,7 @@ describe("attendance/current page", () => {
             ],
             counts: { keyholders: 1, volunteers: 0, students: 0, total: 1 },
             safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+            building: { reachable: true, lastSeenAt: null },
           }),
         } as Response;
       }

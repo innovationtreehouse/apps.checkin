@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withAuth, getOptionalSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { getKioskPublicKeys, verifyKioskSignature } from "@/lib/verify-kiosk";
+import { buildingLink } from "@/lib/kioskSeen";
 import { getFullAttendance, invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
 import { closeActor, finishCloseGuard, lastKeyholderGuard } from "@/lib/scan-service";
@@ -81,6 +82,9 @@ export async function GET(req: NextRequest) {
         // which it renders. A signed-in keyholder on a non-kiosk browser still
         // gets the full payload (pickup/emergency lookups).
         const { attendance, counts, safety } = await getFullAttendance({ kiosk: isKiosk });
+        // Web surfaces state occupancy/open/supervision as fact only while the
+        // kiosk is reachable (docs/rules/attendance-checkin.md).
+        const building = buildingLink();
 
         // Determine access level
         const isAdmin = isKiosk || user?.isSysadmin || user?.isBoardMember || user?.isKeyholder;
@@ -97,6 +101,7 @@ export async function GET(req: NextRequest) {
                 attendance,
                 counts: { ...counts, needReview },
                 safety,
+                building,
                 signedRequest: isKiosk,
             });
         }
@@ -113,6 +118,7 @@ export async function GET(req: NextRequest) {
             safety,
             self: selfVisit,
             household: householdVisits,
+            building,
             signedRequest: isKiosk,
         });
     } catch (error) {

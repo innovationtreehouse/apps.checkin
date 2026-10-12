@@ -11,6 +11,7 @@
 import crypto from 'crypto';
 import { GET } from '@/app/api/attendance/route';
 import { getServerSession } from 'next-auth/next';
+import { resetKioskSeen } from '@/lib/kioskSeen';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -102,6 +103,19 @@ describe('GET /api/attendance — real kiosk signature wiring', () => {
         headers['x-kiosk-signature'] = '00'.repeat(64);
         const res = await GET(attendanceReq(headers));
         expect(res.status).toBe(401);
+    });
+
+    it('a web read reports the building reachable only after a verified kiosk request', async () => {
+        resetKioskSeen();
+        (getServerSession as jest.Mock).mockResolvedValue({
+            user: { id: 1, isKeyholder: true, isSysadmin: false, isBoardMember: false },
+        });
+        const before = await (await GET(attendanceReq({}))).json();
+        expect(before.building).toEqual({ reachable: false, lastSeenAt: null });
+
+        await GET(attendanceReq(signedHeaders(signer, freshNonce())));
+        const after = await (await GET(attendanceReq({}))).json();
+        expect(after.building.reachable).toBe(true);
     });
 
     it('a signed kiosk poll stays display-only even when a keyholder session is present', async () => {

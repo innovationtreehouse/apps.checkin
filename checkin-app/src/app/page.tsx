@@ -29,6 +29,7 @@ import Notifications from '@/components/Notifications';
 import { isCloseChoiceWarning, useCloseChoice, type CloseChoiceAnswer } from '@/components/CloseChoiceDialog';
 import { RoleBadge } from '@/components/ui/RoleBadge';
 import { PageLoader } from '@/components/ui/PageLoader';
+import { BuildingUnconfirmedAlert } from '@/components/BuildingUnconfirmedAlert';
 
 export default function Home() {
   const router = useRouter();
@@ -43,6 +44,9 @@ export default function Home() {
 
   const [isLastKeyholder, setIsLastKeyholder] = useState(false);
   const [isTwoDeepViolation, setIsTwoDeepViolation] = useState(false);
+  // Set (to the kiosk's last-seen time) when a warning would show but the kiosk
+  // is unreachable, so the building state behind it can't be confirmed.
+  const [unconfirmedSince, setUnconfirmedSince] = useState<{ lastSeenAt: string | null } | null>(null);
   // null = not loaded yet; once loaded, status/processStatus drive the join banner.
   const [membership, setMembership] = useState<{ status: string | null; processStatus: string | null } | null>(null);
 
@@ -66,14 +70,14 @@ export default function Home() {
       }
 
       // Use server-computed safety flags
-      if (data.safety) {
-        const userIsKeyholder = session.user?.isKeyholder;
-        setIsLastKeyholder(data.safety.isLastKeyholder && userIsKeyholder);
-        setIsTwoDeepViolation(data.safety.isTwoDeepViolation);
-      } else {
-        setIsLastKeyholder(false);
-        setIsTwoDeepViolation(false);
-      }
+      const lastKeyholder = Boolean(data.safety?.isLastKeyholder && session.user?.isKeyholder);
+      const twoDeep = Boolean(data.safety?.isTwoDeepViolation);
+      const reachable = data.building?.reachable === true;
+      setIsLastKeyholder(reachable && lastKeyholder);
+      setIsTwoDeepViolation(reachable && twoDeep);
+      setUnconfirmedSince(!reachable && (lastKeyholder || twoDeep)
+        ? { lastSeenAt: data.building?.lastSeenAt ?? null }
+        : null);
     } catch (err) {
       console.error("Failed to fetch attendance status", err);
     }
@@ -178,6 +182,7 @@ export default function Home() {
               <Notifications />
 
               {/* Operational Warnings */}
+              {unconfirmedSince && <BuildingUnconfirmedAlert lastSeenAt={unconfirmedSince.lastSeenAt} />}
               {isTwoDeepViolation && (
                 <Alert color="red" icon={<IconAlertTriangle size={18} />} title="Critical Warning">
                   Two-Deep Compliance is failing. An unaccompanied youth is present without

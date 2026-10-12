@@ -5,6 +5,7 @@ const base: TodoCounts = {
   member: { household: [], programs: [], programsAwaitingFinance: 0 },
   building: 0,
   buildingHousehold: 0,
+  buildingReachable: true,
   activePrograms: 0,
 };
 
@@ -340,5 +341,17 @@ describe('membership-audit nav ↔ tab agreement', () => {
 
     expect(navRed).toBe(broken);
     expect(navGray).toBe(emergency + unclaimed);
+  });
+});
+
+describe('Attendance occupancy badges', () => {
+  const occupied: TodoCounts = { ...base, building: 5, buildingHousehold: 2 };
+
+  it('shows occupancy while the kiosk is reachable', () => {
+    expect(navBadgeFor('/attendance', occupied).map(b => b.count)).toEqual([2, 5]);
+  });
+
+  it('shows nothing when the kiosk is unreachable — the count is unconfirmed', () => {
+    expect(navBadgeFor('/attendance', { ...occupied, buildingReachable: false })).toEqual([]);
   });
 });
