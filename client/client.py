@@ -1193,11 +1193,13 @@ def handle_scan(backend, state, outbox, participant_id):
             shown_empty=shown_empty,
         )
         outcome = classify_response(status, body)
-    finally:
+    except BaseException:
         outbox.release(client_event_id)
+        raise
 
     if outcome == "retry":
         # Unconfirmed: the row stays pending for the drain.
+        outbox.release(client_event_id)
         queued = outbox.pending_count()
         if intent == "OUT" and state.offline_close_offer(participant_id):
             # Offline keyholder close: no server to warn or mint a token, so the
