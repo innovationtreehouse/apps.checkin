@@ -5,6 +5,7 @@
  * No actor may grant their own household a volunteer discount or a
  * background-check date, under any role: the household volunteer flag, the
  * volunteer-designation allowlist, and the participant lastBackgroundCheck edit.
+ * A board edit that makes a lead's check stale needs an explicit confirmation.
  */
 
 import { PATCH as HOUSEHOLD_PATCH } from '@/app/api/membership-ops/households/[id]/route';
@@ -12,6 +13,7 @@ import { POST as DESIG_POST } from '@/app/api/settings/membership/volunteer-desi
 import { PUT as PARTICIPANT_PUT } from '@/app/api/membership-ops/participants/[id]/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
@@ -124,6 +126,52 @@ describe('own-household grant guards', () => {
             });
             expect((log?.oldData as { lastBackgroundCheck: string }).lastBackgroundCheck).toBe('2026-01-15T00:00:00.000Z');
             expect((log?.newData as { lastBackgroundCheck: string }).lastBackgroundCheck).toBe('2026-03-01T00:00:00.000Z');
+        });
+    });
+
+    describe('stale lead check confirmation', () => {
+        let restoreBoardSettings: () => Promise<void> = async () => {};
+        let leadId: number;
+
+        beforeAll(async () => {
+            restoreBoardSettings = await snapshotBoardSettings();
+            await prisma.boardSettings.upsert({
+                where: { id: 1 },
+                update: { orgMembershipYearBoundary: new Date('2026-08-01'), bgRecheckMonths: 24 },
+                create: { id: 1, orgMembershipYearBoundary: new Date('2026-08-01'), bgRecheckMonths: 24 },
+            });
+            leadId = (await prisma.person.create({
+                data: { email: `lead-${TAG}@example.com`, name: 'Lead', isHouseholdLead: true, householdId: otherHouseholdId, lastBackgroundCheck: new Date() },
+            })).id;
+        });
+
+        afterAll(async () => {
+            await restoreBoardSettings();
+        });
+
+        it('refuses clearing a fresh lead check without confirmation and leaves the date alone', async () => {
+            const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '' }) as never, params(leadId));
+            expect(res.status).toBe(409);
+            const data = await res.json();
+            expect(data.requiresConfirmation).toBe(true);
+            expect(data.warning).toMatch(/background check covers the membership year/);
+            expect((await prisma.person.findUnique({ where: { id: leadId } }))?.lastBackgroundCheck).not.toBeNull();
+        });
+
+        it('saves after confirmation and records the warning in the audit row', async () => {
+            const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2020-01-01', confirmBgStale: true }) as never, params(leadId));
+            expect(res.status).toBe(200);
+            const log = await prisma.auditLog.findFirst({
+                where: { actorId, tableName: 'Person', affectedEntityId: leadId },
+                orderBy: { id: 'desc' },
+            });
+            expect((log?.newData as { bgStaleWarning?: string }).bgStaleWarning).toMatch(/will not after this change/);
+        });
+
+        it('needs no confirmation for a non-lead', async () => {
+            await prisma.person.update({ where: { id: outsiderId }, data: { lastBackgroundCheck: new Date() } });
+            const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '' }) as never, params(outsiderId));
+            expect(res.status).toBe(200);
         });
     });
 });

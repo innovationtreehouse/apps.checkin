@@ -4,9 +4,22 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
-import { apiError } from "@/lib/api-response";
+import { apiError, apiJson } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
+import { monthsBefore, nextBoundary } from "@/lib/membership/renewal";
+
+/**
+ * Whether a check dated `date` covers the coming membership year — the per-lead
+ * form of householdBgIsFresh's rule. Unset policy means nothing is fresh.
+ */
+async function bgCoversComingYear(date: Date | null): Promise<{ fresh: boolean; boundary: Date | null }> {
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true, bgRecheckMonths: true } });
+    const recheckMonths = settings?.bgRecheckMonths ?? 0;
+    const boundary = settings?.orgMembershipYearBoundary ? nextBoundary(settings.orgMembershipYearBoundary, new Date()) : null;
+    if (!date || !boundary || recheckMonths <= 0) return { fresh: false, boundary };
+    return { fresh: date.getTime() >= monthsBefore(boundary, recheckMonths).getTime(), boundary };
+}
 
 export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -67,24 +80,37 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             return apiError("No fields to update provided", 400);
         }
 
-        // dateOfBirth and householdId are read for the guards below but deliberately
+        // dateOfBirth, householdId and isHouseholdLead are read for the guards below but deliberately
         // kept out of the audit payload — this route neither ships nor writes them.
         const existing = await prisma.person.findUnique({
             where: { id },
-            select: { name: true, nickname: true, email: true, phone: true, dateOfBirth: true, isDeclaredAdult: true, lastBackgroundCheck: true, householdId: true },
+            select: { name: true, nickname: true, email: true, phone: true, dateOfBirth: true, isDeclaredAdult: true, lastBackgroundCheck: true, householdId: true, isHouseholdLead: true },
         });
         if (!existing) {
             return apiError("Participant not found", 404);
         }
-        const { dateOfBirth: priorDob, householdId, ...prior } = existing;
+        const { dateOfBirth: priorDob, householdId, isHouseholdLead, ...prior } = existing;
 
         // A background-check date clears a person, so no actor may change it for
         // themselves or their own household. Compared by value because the edit form
         // resubmits the unchanged date with every save.
+        let bgStaleWarning: string | undefined;
         if (lastBackgroundCheck !== undefined) {
             const changed = (prior.lastBackgroundCheck?.getTime() ?? null) !== (lastBackgroundCheck?.getTime() ?? null);
             if (changed && (id === auth.user.id || await hasHouseholdConflict(prisma, auth.user.id, householdId))) {
                 return apiError("You cannot change the background check date for yourself or your own household — someone outside your household must.", 403);
+            }
+
+            // A lead's check going from covering the coming year to not covering it can
+            // affect the household's membership, so the board confirms before it saves.
+            if (changed && isHouseholdLead) {
+                const before = await bgCoversComingYear(prior.lastBackgroundCheck);
+                if (before.fresh && !(await bgCoversComingYear(lastBackgroundCheck)).fresh) {
+                    bgStaleWarning = `${prior.name}'s background check covers the membership year starting ${before.boundary?.toISOString().slice(0, 10)}, and will not after this change. This could affect their household's membership.`;
+                    if (body.confirmBgStale !== true) {
+                        return apiJson({ error: bgStaleWarning, warning: bgStaleWarning, requiresConfirmation: true }, 409);
+                    }
+                }
             }
         }
 
@@ -114,7 +140,7 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
                 tableName: "Person",
                 affectedEntityId: id,
                 oldData: prior,
-                newData: updateData,
+                newData: { ...updateData, ...(bgStaleWarning && { bgStaleWarning }) },
             },
         });
 
