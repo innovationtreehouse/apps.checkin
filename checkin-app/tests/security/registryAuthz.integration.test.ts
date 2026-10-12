@@ -252,7 +252,7 @@ describe('Registry route admission gates', () => {
             if (plan.gate === 'catalog-viewer' || plan.gate === 'inventory-manager') {
                 itServed('rejects an authenticated caller with no catalog access with 403', async () => {
                     // plainUser holds no role flag, leads no program, and has no
-                    // VolunteerDesignation — denied by both catalog gates.
+                    // volunteer claims — denied by both catalog gates.
                     mockSession.mockResolvedValue({ user: plainUser });
                     expect((await call(plan)).status).toBe(403);
                 });
