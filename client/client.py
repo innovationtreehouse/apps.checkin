@@ -1140,61 +1140,66 @@ def handle_scan(backend, state, outbox, participant_id):
     state.note_presence(participant_id, checking_in=(intent == "IN"))
 
     # A fresh scan must not jump its own predecessor -- if this participant
-    # already has a pending queued event, enqueue behind it instead of
-    # attempting live delivery out of order.
-    if outbox.has_pending_for_participant(participant_id):
-        outbox.enqueue(
-            client_event_id, participant_id, scanned_at, confirm_token,
-            intent=intent, clock_suspect=clock_suspect,
-            force_close_confirmed=force_close_confirmed,
-        )
+    # already has a pending queued event, queue behind it instead of attempting
+    # live delivery out of order. Checked before this scan's own row is written.
+    # A kiosk-confirmed offline close never goes live either: the server honours
+    # forceCloseConfirmed only on a replay, so it always rides the drain.
+    queue_only = force_close_confirmed or outbox.has_pending_for_participant(participant_id)
+
+    # The row is durable before anything is sent: a restart or power cut during
+    # the live POST leaves it for the drain, and the server dedups on
+    # clientEventId if the live send did land. A live row is claimed in flight,
+    # so the drain skips it until the live outcome settles it.
+    outbox.enqueue(
+        client_event_id, participant_id, scanned_at, confirm_token,
+        intent=intent, clock_suspect=clock_suspect,
+        force_close_confirmed=force_close_confirmed, inflight=not queue_only,
+    )
+
+    if queue_only:
         queued = outbox.pending_count()
-        # The offline force-close confirm normally lands here: its own warning
-        # scan is still pending ahead of it. Queue the close behind it and say so.
         if force_close_confirmed:
             state.push_event({"html": _offline_close_saved_html(queued), "queued": queued})
         else:
             state.push_event({"html": _saved_banner_html(queued, intent), "queued": queued})
-        log.info(f"Queued (predecessor pending): participant {participant_id} {intent}")
+        log.info(f"Queued (predecessor pending or offline close): participant {participant_id} {intent}")
         return
 
-    body, status, retry_after = backend.post_scan(
-        participant_id,
-        force_close_token=confirm_token,
-        client_event_id=client_event_id,
-        scanned_at=scanned_at,
-        intent=intent,
-        clock_suspect=clock_suspect,
-        force_close_confirmed=force_close_confirmed,
-    )
-    outcome = classify_response(status, body)
+    try:
+        body, status, retry_after = backend.post_scan(
+            participant_id,
+            force_close_token=confirm_token,
+            client_event_id=client_event_id,
+            scanned_at=scanned_at,
+            intent=intent,
+            clock_suspect=clock_suspect,
+        )
+        outcome = classify_response(status, body)
+    finally:
+        outbox.release(client_event_id)
 
     if outcome == "retry":
-        # Try live first; only persist to the outbox if it wasn't confirmed.
-        outbox.enqueue(
-            client_event_id, participant_id, scanned_at, confirm_token,
-            intent=intent, clock_suspect=clock_suspect,
-            force_close_confirmed=force_close_confirmed,
-        )
+        # Unconfirmed: the row stays pending for the drain.
         queued = outbox.pending_count()
-        if not force_close_confirmed and intent == "OUT" and state.offline_close_offer(participant_id):
+        if intent == "OUT" and state.offline_close_offer(participant_id):
             # Offline keyholder close: no server to warn or mint a token, so the
             # kiosk runs the warning + two-scan confirm itself. This OUT touch is
-            # already queued above (on drain it checks out, or parks if this was
-            # the last keyholder -- the badge is never lost); the confirm scan
-            # queues the actual close.
+            # already queued (on drain it checks out, or parks if this was the
+            # last keyholder -- the badge is never lost); the confirm scan queues
+            # the actual close.
             state.arm_local_close(participant_id, FORCE_CLOSE_CONFIRM_SECONDS)
             supervision = state.offline_supervision_warning()
             state.push_event({"html": _offline_close_warning_html(supervision),
                               "countdown": FORCE_CLOSE_CONFIRM_SECONDS})
             log.warning(f"Offline force-close warning: keyholder {participant_id}, others present")
-        elif force_close_confirmed:
-            state.push_event({"html": _offline_close_saved_html(queued), "queued": queued})
-            log.warning(f"Offline force-close CONFIRMED, queued: keyholder {participant_id}")
         else:
             state.push_event({"html": _saved_banner_html(queued, intent), "queued": queued})
             log.warning(f"Scan queued (server unreachable/warming): participant {participant_id} {intent}")
         return
+
+    # Answered definitively (ack, or a dead rejection the screen shows now):
+    # the row is settled either way and must not replay.
+    outbox.ack(client_event_id)
 
     # ack or dead: server responded definitively at scan time -- render the
     # existing immediate banner, unchanged behavior for the online path.

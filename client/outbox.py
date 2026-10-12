@@ -64,6 +64,10 @@ class Outbox:
         self.path = path
         self._lock = threading.RLock()
         self._conn = self._open(path)
+        # Rows a live POST is sending right now. In memory on purpose: after a
+        # restart nothing is in flight, so a claimed row the kill interrupted
+        # is drainable again.
+        self._inflight = set()
 
     # force_close_token: the confirm token (#1347) the keyholder redeemed before
     # the outage. It rides with the queued event and is sent on drain -- without
@@ -142,9 +146,13 @@ class Outbox:
             return connect_and_init()
 
     def enqueue(self, client_event_id, participant_id, scanned_at, force_close_token=None,
-                intent=None, clock_suspect=False, force_close_confirmed=False):
-        """Idempotent: a retried enqueue of the same event is a no-op."""
+                intent=None, clock_suspect=False, force_close_confirmed=False, inflight=False):
+        """Idempotent: a retried enqueue of the same event is a no-op.
+        inflight=True claims the row for the live POST in the same locked step,
+        so the drain can never pick it up between the write and the claim."""
         with self._lock:
+            if inflight:
+                self._inflight.add(client_event_id)
             self._conn.execute(
                 "INSERT OR IGNORE INTO outbox "
                 "(client_event_id, participant_id, scanned_at, created_at, force_close_token, "
@@ -175,20 +183,37 @@ class Outbox:
             ).fetchone()
             return row is not None
 
-    def pending_count(self):
+    def release(self, client_event_id):
+        """End the live claim: the row is an ordinary pending row again."""
         with self._lock:
+            self._inflight.discard(client_event_id)
+
+    def _not_inflight(self):
+        ids = tuple(self._inflight)
+        if not ids:
+            return "", ()
+        return f" AND client_event_id NOT IN ({','.join('?' * len(ids))})", ids
+
+    def pending_count(self):
+        """Rows waiting on the drain; a scan still in its live POST is not one."""
+        with self._lock:
+            clause, args = self._not_inflight()
             return self._conn.execute(
-                "SELECT COUNT(*) FROM outbox WHERE state='pending'"
+                "SELECT COUNT(*) FROM outbox WHERE state='pending'" + clause, args
             ).fetchone()[0]
 
-    def pending_rows(self):
+    def pending_rows(self, skip_inflight=False):
         """Global FIFO by scanned_at -- trivially preserves per-person order.
-        Survives restart: rows persist in the WAL file untouched."""
+        Survives restart: rows persist in the WAL file untouched. In-flight rows
+        are included by default: the presence overlay must see them, since the
+        roster does not show them yet. The drain skips them."""
         with self._lock:
+            clause, args = self._not_inflight() if skip_inflight else ("", ())
             return self._conn.execute(
                 "SELECT client_event_id, participant_id, scanned_at, attempts, force_close_token, "
                 "intent, clock_suspect, force_close_confirmed, server_errors "
-                "FROM outbox WHERE state='pending' ORDER BY scanned_at ASC"
+                "FROM outbox WHERE state='pending'" + clause + " ORDER BY scanned_at ASC",
+                args,
             ).fetchall()
 
     def mark_clock_suspect(self):
@@ -202,6 +227,7 @@ class Outbox:
     def ack(self, client_event_id):
         """Server confirmed (2xx, or a dedup/duplicate_ignored response)."""
         with self._lock:
+            self._inflight.discard(client_event_id)
             self._conn.execute("DELETE FROM outbox WHERE client_event_id=?", (client_event_id,))
             self._conn.commit()
 
@@ -365,7 +391,7 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, in_closed_w
             log.info("Outbox drain resumed: server advertises the replay protocol")
             protocol_hold_logged = False
 
-        rows = outbox.pending_rows()
+        rows = outbox.pending_rows(skip_inflight=True)
         if not rows:
             backoff = MIN_BACKOFF_SECONDS
             dead_wait, dead_backoff = _send_dead_row(outbox, send_fn, push_fn, dead_backoff)
@@ -375,13 +401,14 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, in_closed_w
         (client_event_id, participant_id, scanned_at, _attempts, force_close_token, intent,
          clock_suspect, force_close_confirmed, server_errors) = rows[0]
         # replay=True is what tells the server this is a redelivery: the live
-        # attempt already sent this clientEventId (D4 try-first), so only the
-        # drain may trip the replay-only guards. The token rides along so a
-        # confirm given before the outage still closes (§5.23a); a replay
-        # without one parks for review. force_close_confirmed rides along too:
-        # a close confirmed on the kiosk while offline had no server token to
-        # mint, so the flag is what closes on drain. Intent is the direction the
-        # kiosk displayed; the server must not re-toggle from live state.
+        # attempt may already have sent this clientEventId (the row is written
+        # before it), so only the drain may trip the replay-only guards. The
+        # token rides along so a confirm given before the outage still closes
+        # (§5.23a); a replay without one parks for review. force_close_confirmed
+        # rides along too: a close confirmed on the kiosk while offline had no
+        # server token to mint, so the flag is what closes on drain. Intent is
+        # the direction the kiosk displayed; the server must not re-toggle from
+        # live state.
         body, status, retry_after = send_fn(
             participant_id,
             force_close_token=force_close_token,
