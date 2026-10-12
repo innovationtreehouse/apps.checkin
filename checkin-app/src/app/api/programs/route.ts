@@ -37,6 +37,8 @@ const PUBLIC_PROGRAM_SELECT = {
     nonOrgMemberPriceCents: true,
     shopifyProductId: true,
     shopifyVariantId: true,
+    claimantShopifyProductId: true,
+    claimantShopifyVariantId: true,
 } as const;
 
 // GET is the PUBLIC program catalog — anonymous callers legitimately get the
