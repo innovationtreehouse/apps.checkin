@@ -318,6 +318,14 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         const newNonOrgMemberPriceCents = nonMemberPrice !== undefined
             ? dollarsToCentsOrNull(nonMemberPrice != null ? String(nonMemberPrice) : undefined)
             : undefined;
+        // Prices are sysadmin/board-only. The edit page echoes the current prices on
+        // every save, so only a value that differs from the stored one is rejected.
+        if (!isSysAdminOrBoard && (
+            (newOrgMemberPriceCents !== undefined && newOrgMemberPriceCents !== currentProgram.orgMemberPriceCents) ||
+            (newNonOrgMemberPriceCents !== undefined && newNonOrgMemberPriceCents !== currentProgram.nonOrgMemberPriceCents)
+        )) {
+            return apiError("Forbidden: Only administrators can change program prices", 403);
+        }
         // Shopify identifiers are sysadmin/board-only, so a non-privileged caller's
         // effective variant is always the current one regardless of what's in body.
         const newShopifyVariantId = (isSysAdminOrBoard && shopifyVariantId !== undefined)
