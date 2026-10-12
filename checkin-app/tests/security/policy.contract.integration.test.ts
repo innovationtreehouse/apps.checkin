@@ -18,6 +18,7 @@ import { allRoutes, classifications, relations } from '@/security/core';
 import { collectFieldKeys, tierIsGrantable } from './helpers';
 import { loadPersonas } from './personas';
 import '@/security/registry';
+import libraries from '../../libraries.json';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
@@ -29,7 +30,7 @@ interface RouteImports {
     DELETE?: (req: Request, ctx?: unknown) => Promise<Response>;
 }
 
-const LIBRARY_ROUTE_PREFIXES = ['/api/catalog/', '/api/inventory/', '/api/income/', '/api/donations/', '/api/expense/'];
+const LIBRARY_ROUTE_PREFIXES = libraries.flatMap(l => l.routePrefixes);
 
 function endpointToRoutePath(endpoint: string): string {
     return endpoint.split(' ')[1];

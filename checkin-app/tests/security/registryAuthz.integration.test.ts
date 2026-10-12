@@ -29,6 +29,7 @@ import { allRoutes, type Authorize, type SessionFlagRole } from '@/security/core
 import type { AuthenticatedUser } from '@/types/auth';
 import prisma from '@/lib/prisma';
 import '@/security/registry';
+import libraries from '../../libraries.json';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -185,7 +186,7 @@ describe('Registry route admission gates', () => {
             // Every case using this drives the real handler, so it waits for the
             // route file. The gate check below is static and always runs.
             //
-            // Library routes (catalog #1286, local inventory #1287, bulk donation #1280, expense #1272) are the
+            // Library routes (each libraries.json entry's routePrefixes) are the
             // exception: they are re-export stubs over a checkin-hosted library,
             // which needs its runtime injected at server boot and its own database
             // client — neither exists in this in-process test, and importing the
@@ -194,7 +195,7 @@ describe('Registry route admission gates', () => {
             // still runs (it proves planAuthorize handles catalog-viewer /
             // inventory-manager). Their admission is exercised end-to-end by the
             // library flow tests instead.
-            const isLibrary = ['/api/catalog/', '/api/inventory/', '/api/donations/', '/api/expense/'].some(p => plan.routePath.startsWith(p));
+            const isLibrary = libraries.flatMap(l => l.routePrefixes).some(p => plan.routePath.startsWith(p));
             const itServed = routeFileExists(plan.routePath) && !isLibrary ? it : it.skip;
 
             it('has a handled authorize gate (route not silently skipped)', () => {

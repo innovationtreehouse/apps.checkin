@@ -1,6 +1,6 @@
 [
-  { "name": "catalog", "package": "@inventory/global-catalog" },
-  { "name": "local_inventory", "package": "@inventory/local-inventory" },
-  { "name": "bulk_donation", "package": "@inventory/bulk-donation" },
-  { "name": "expense", "package": "@inventory/expense" }
+  { "name": "catalog", "package": "@inventory/global-catalog", "routePrefixes": ["/api/catalog/"] },
+  { "name": "local_inventory", "package": "@inventory/local-inventory", "routePrefixes": ["/api/inventory/"] },
+  { "name": "bulk_donation", "package": "@inventory/bulk-donation", "routePrefixes": ["/api/donations/"] },
+  { "name": "expense", "package": "@inventory/expense", "routePrefixes": ["/api/expense/"] }
 ]
