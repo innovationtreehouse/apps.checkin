@@ -6,7 +6,7 @@ import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError, apiJson } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
-import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
+import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 import { monthsBefore, nextBoundary } from "@/lib/membership/renewal";
 
 /**
@@ -97,8 +97,11 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
         let bgStaleWarning: string | undefined;
         if (lastBackgroundCheck !== undefined) {
             const changed = (prior.lastBackgroundCheck?.getTime() ?? null) !== (lastBackgroundCheck?.getTime() ?? null);
-            if (changed && (id === auth.user.id || await hasHouseholdConflict(prisma, auth.user.id, householdId))) {
-                return apiError("You cannot change the background check date for yourself or your own household — someone outside your household must.", 403);
+            if (changed && await refuseSelfGrant(prisma, auth.user.id, { personId: id, householdId }, {
+                table: "Person",
+                attempted: { lastBackgroundCheck },
+            })) {
+                return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);
             }
 
             // A lead's check going from covering the coming year to not covering it can
@@ -123,26 +126,27 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             updateData.isDeclaredAdult = false;
         }
 
-        const updatedParticipant = await prisma.person.update({
-            where: { id },
-            data: updateData,
-            include: {
-                household: true
-            }
-        });
+        const [updatedParticipant] = await prisma.$transaction([
+            prisma.person.update({
+                where: { id },
+                data: updateData,
+                include: {
+                    household: true
+                }
+            }),
+            prisma.auditLog.create({
+                data: {
+                    actorId: auth.user.id,
+                    action: "EDIT",
+                    tableName: "Person",
+                    affectedEntityId: id,
+                    oldData: prior,
+                    newData: { ...updateData, ...(bgStaleWarning && { bgStaleWarning }) },
+                },
+            }),
+        ]);
         // Name, DOB/adult and keyholder fields all feed the live roster.
         invalidateAttendanceCache();
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: auth.user.id,
-                action: "EDIT",
-                tableName: "Person",
-                affectedEntityId: id,
-                oldData: prior,
-                newData: { ...updateData, ...(bgStaleWarning && { bgStaleWarning }) },
-            },
-        });
 
         const formatted = {
             id: updatedParticipant.id,

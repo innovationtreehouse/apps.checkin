@@ -14,6 +14,7 @@ import { PUT as PARTICIPANT_PUT } from '@/app/api/membership-ops/participants/[i
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
+import { SELF_GRANT_REFUSAL_TABLE } from '@/lib/membership/selfGrantGuard';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
@@ -37,6 +38,12 @@ describe('own-household grant guards', () => {
         await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
         await prisma.person.deleteMany({ where: { householdId: { in: ids } } });
         await prisma.household.deleteMany({ where: { id: { in: ids } } });
+    }
+
+    /** The newest refusal row the shared guard wrote for this actor. */
+    async function lastRefusal() {
+        const row = await prisma.auditLog.findFirst({ where: { actorId, tableName: SELF_GRANT_REFUSAL_TABLE }, orderBy: { id: 'desc' } });
+        return row?.newData as { reason: string; table: string; attempted: Record<string, unknown> } | undefined;
     }
 
     beforeAll(async () => {
@@ -69,6 +76,7 @@ describe('own-household grant guards', () => {
             const res = await HOUSEHOLD_PATCH(jsonReq('PATCH', { isVolunteer: true }) as never, params(ownHouseholdId));
             expect(res.status).toBe(403);
             expect((await prisma.orgMembership.findUnique({ where: { householdId: ownHouseholdId } }))?.isVolunteer).toBe(false);
+            expect(await lastRefusal()).toEqual({ reason: 'own_household', table: 'OrgMembership', subject: { householdId: ownHouseholdId }, attempted: { isVolunteer: true } });
         });
 
         it('allows an own-household edit that resends the unchanged flag', async () => {
@@ -91,11 +99,26 @@ describe('own-household grant guards', () => {
             const res = await DESIG_POST(jsonReq('POST', { email }));
             expect(res.status).toBe(403);
             expect(await prisma.volunteerDesignation.count({ where: { email: { contains: TAG } } })).toBe(0);
+            expect(await lastRefusal()).toEqual(expect.objectContaining({ reason: 'own_household', table: 'VolunteerDesignation' }));
         });
 
         it('allows designating someone outside the actor’s household', async () => {
             const res = await DESIG_POST(jsonReq('POST', { email: `outsider-${TAG}@example.com` }));
             expect(res.status).toBe(201);
+            const { designation } = await res.json();
+            const log = await prisma.auditLog.findFirst({ where: { actorId, action: 'CREATE', tableName: 'VolunteerDesignation', affectedEntityId: designation.id } });
+            expect(log?.newData).toEqual({ email: `outsider-${TAG}@example.com` });
+        });
+
+        it('refuses an actor whose household cannot be resolved (fail closed)', async () => {
+            const gone = await prisma.person.create({ data: { email: `gone-${TAG}@example.com`, name: 'Gone', householdId: otherHouseholdId } });
+            await prisma.person.delete({ where: { id: gone.id } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: gone.id, isSysadmin: false, isBoardMember: true } });
+            const res = await DESIG_POST(jsonReq('POST', { email: `stranger-${TAG}@example.com` }));
+            expect(res.status).toBe(403);
+            const row = await prisma.auditLog.findFirst({ where: { actorId: gone.id, tableName: SELF_GRANT_REFUSAL_TABLE } });
+            expect((row?.newData as { reason: string }).reason).toBe('actor_household_unresolved');
+            await prisma.auditLog.deleteMany({ where: { actorId: gone.id } });
         });
     });
 
@@ -107,6 +130,7 @@ describe('own-household grant guards', () => {
             const res = await PARTICIPANT_PUT(jsonReq('PUT', { lastBackgroundCheck: '2026-01-15' }) as never, params(target()));
             expect(res.status).toBe(403);
             expect((await prisma.person.findUnique({ where: { id: target() } }))?.lastBackgroundCheck).toBeNull();
+            expect(await lastRefusal()).toEqual(expect.objectContaining({ reason: 'own_household', table: 'Person' }));
         });
 
         it('allows an own-household edit that resends the unchanged date', async () => {

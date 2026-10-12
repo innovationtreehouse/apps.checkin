@@ -5,6 +5,7 @@ import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { handler } from "@/security/handler";
+import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 
 export const dynamic = "force-dynamic";
 
@@ -41,8 +42,8 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
 
     // A designation discounts the household's dues, so no actor may designate
     // themselves or anyone in their own household.
-    if (await isOwnHouseholdEmail(auth.user.id, email)) {
-        return apiError("You cannot designate yourself or your own household — someone outside your household must.", 403);
+    if (await refuseSelfGrant(prisma, auth.user.id, { email }, { table: "VolunteerDesignation", attempted: { email } })) {
+        return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);
     }
 
     // Canonicalize both sides: rows stored before canonicalization still dedupe.
@@ -61,20 +62,21 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
         warning = "Heads up: this email already has an active full-price membership. The system can't change that — this designation only applies to their next membership cycle.";
     }
 
-    const designation = await prisma.volunteerDesignation.create({ data: { email, createdById: auth.user.id } });
+    const designation = await prisma.$transaction(async (tx) => {
+        const created = await tx.volunteerDesignation.create({ data: { email, createdById: auth.user.id } });
+        await tx.auditLog.create({
+            data: {
+                actorId: auth.user.id,
+                action: "CREATE",
+                tableName: "VolunteerDesignation",
+                affectedEntityId: created.id,
+                newData: { email },
+            },
+        });
+        return created;
+    });
     return NextResponse.json({ designation, warning }, { status: 201 });
 });
-
-/** Whether `email` (canonical) belongs to the actor or a member of the actor's household. */
-async function isOwnHouseholdEmail(actorId: number, email: string): Promise<boolean> {
-    const actor = await prisma.person.findUnique({ where: { id: actorId }, select: { email: true, householdId: true } });
-    if (!actor) return false;
-    const members = actor.householdId == null ? [] : await prisma.person.findMany({
-        where: { householdId: actor.householdId },
-        select: { email: true },
-    });
-    return [actor, ...members].some((p) => p.email != null && canonicalizeEmail(p.email) === email);
-}
 
 /** DELETE — remove a designation. Query: ?id=<n>. */
 export const DELETE = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req) => {
