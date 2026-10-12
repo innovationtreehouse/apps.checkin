@@ -622,6 +622,25 @@ describe("program order entitlement (same check as the webhook)", () => {
         expect(await kinds(oid)).toEqual([]);
     });
 
+    it("a mixed membership + program order recovers BOTH the membership and the program seat", async () => {
+        const oid = `${TAG}-607`;
+        const { processId } = await makeApplicant({ email: `mixed-mem-${TAG}@ex.com`, status: "PENDING_PAYMENT", bgCleared: true });
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `mixed-prg-${TAG}@ex.com`, status: "PENDING" });
+        orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT, variantId]);
+        orderLines.mockResolvedValue([{ variantId: MEMBERSHIP_VARIANT, quantity: 1 }, { variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([
+            order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId), Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }) }),
+        ]);
+
+        await runReconcile();
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe("ACTIVE");
+        expect(await statusOf(programId, personId)).toBe("ACTIVE");
+        expect(await kinds(oid)).toEqual([]);
+
+        await runReconcile();
+        expect(await kinds(oid)).toEqual([]);
+    });
+
     it("email fallback activates when the order carries the pending program's variant", async () => {
         const oid = `${TAG}-606`;
         const email = `ent-fallback-${TAG}@ex.com`;

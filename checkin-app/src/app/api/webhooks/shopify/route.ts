@@ -130,6 +130,7 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
         // customer segment. Neither enables over-activation on its own now that the
         // membership item is checked, but both remain honor-system until a real
         // token / Shopify-side segment exists.
+        let membershipOutcome: string | null = null;
         if (membershipProcessIdStr) {
             const processId = parseInt(membershipProcessIdStr, 10);
             // Receipt outcome for the delivery log (settings → Shopify Webhook);
@@ -160,8 +161,12 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
                     logger.info(`[SHOPIFY WEBHOOK] Payment webhook for process ${processId} — no state change (already processed)`);
                 }
             }
-            await recordShopifyWebhookReceipt(req, order, { hmacValid: true, outcome });
-            return NextResponse.json({ success: true });
+            membershipOutcome = outcome;
+            // A mixed cart also carries program seats; fall through to settle them too.
+            if (!(accountIdStr && programIdStr)) {
+                await recordShopifyWebhookReceipt(req, order, { hmacValid: true, outcome });
+                return NextResponse.json({ success: true });
+            }
         }
 
         // Receipt outcome for the delivery log — the default also covers Shopify's
@@ -210,6 +215,8 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
         } else {
              logger.info(`[SHOPIFY WEBHOOK] Payload received but missing CheckMeIn_Account_ID or Program_ID attributes. Ignoring.`);
         }
+
+        if (membershipOutcome) outcome = `${membershipOutcome}; ${outcome}`;
 
         // Always return 200 OK to Shopify to acknowledge receipt, even if missing attributes.
         await recordShopifyWebhookReceipt(req, order, { hmacValid: true, outcome });

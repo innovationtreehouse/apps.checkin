@@ -594,8 +594,9 @@ export async function runReconcile(): Promise<ReconcileResult> {
     let failed = 0;
     for (const order of orders) {
         try {
-            const claimed = await reconcileForwardMembership(order);
-            if (!claimed) await reconcileForwardProgram(order);
+            // Both passes run: a mixed cart pays for a membership AND program seats.
+            await reconcileForwardMembership(order);
+            await reconcileForwardProgram(order);
         } catch (e) {
             logger.error(`[reconcile] forward pass failed for order ${order.legacyId ?? order.orderGid}:`, e);
             failed++;
