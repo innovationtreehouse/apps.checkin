@@ -6,7 +6,7 @@
 # it has one, its Prisma schema/config (the `postinstall: prisma generate` needs
 # them). Pruned from the full source so the deps layer below re-runs only when
 # one of these files changes, not on any package source edit.
-FROM node:24-alpine AS install-inputs
+FROM public.ecr.aws/docker/library/node:24-alpine AS install-inputs
 WORKDIR /src
 COPY packages ./packages
 RUN find packages -mindepth 2 -maxdepth 2 \
