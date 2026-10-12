@@ -7,9 +7,9 @@ import { defineRoute, type OrderedViewEntry, type Token } from '../core';
 // `expense-approver` gate, and the handler filters rows to the buckets the
 // caller approves (§5: the narrow read is a route+query concern). On those rows
 // the approver sees `internal` only: amounts and state, not who submitted,
-// signed or is reimbursed. The sign-off POST admits `catalog-viewer`, the
-// receipt-submitter audience, because the submitter fills the first seat; the
-// library decides which seat a caller may fill.
+// signed or is reimbursed. The sign-off POST admits `expense-signer`, anyone who
+// may hold a seat: the submitter (`catalog-viewer`) or a bucket approver, FINANCE
+// or BOARD (`expense-approver`); the library decides which seat a caller may fill.
 // No view lists isSysadmin: Finance Ops excludes sysadmins
 // (docs/rules/finance-payments.md). Finance-only actions are `finance`.
 //
@@ -34,7 +34,7 @@ const APPROVER_VIEW: readonly OrderedViewEntry[] = [
 const EXPENSE_DETAIL = ['Expense', 'ExpenseLineItem', 'LineItemOwnerApproval', 'ExpenseLineSignoff', 'ExpenseHold', 'ExpenseAuditLog', 'ExpenseFlag'] as const;
 
 // Approver surface: queue, counts, detail and per-line approval. Rows are
-// handler-filtered to the caller's buckets. Sign-off admits submitters too.
+// handler-filtered to the caller's buckets. Sign-off admits every seat holder.
 defineRoute({ endpoint: 'GET /api/expense/expenses', authorize: 'expense-approver', envelope: null, returns: ['Expense'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/expenses/count', authorize: 'expense-approver', envelope: null, returns: ['ExpenseListCount'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]', authorize: 'expense-approver', envelope: null, returns: EXPENSE_DETAIL, orderedView: APPROVER_VIEW });
@@ -42,7 +42,7 @@ defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/line-item-approvals', au
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/approve', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/raise-exception', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/signoffs', authorize: 'expense-approver', envelope: null, returns: ['ExpenseLineSignoffStatus'], orderedView: APPROVER_VIEW });
-defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-items/[lineItemId]/signoffs', authorize: 'catalog-viewer', envelope: null, returns: ['ExpenseLineSignoffStatus'], orderedView: APPROVER_VIEW });
+defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-items/[lineItemId]/signoffs', authorize: 'expense-signer', envelope: null, returns: ['ExpenseLineSignoffStatus'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/queue', authorize: 'expense-approver', envelope: null, returns: ['Expense'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/counts', authorize: 'expense-approver', envelope: null, returns: ['ExpenseCounts'], orderedView: APPROVER_VIEW });
 

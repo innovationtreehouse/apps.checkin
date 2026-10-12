@@ -239,6 +239,10 @@ export type Authorize =
     // or a program treasurer. No sysadmin auto-admit. Rows stay handler-filtered
     // to the buckets the caller approves.
     | 'expense-approver'
+    // An expense sign-off seat holder (#1272 §6): `catalog-viewer` (the submitter
+    // seat) or `expense-approver` (program approver, Treasurer, Board seats). The
+    // library decides which seat, if any, the caller may sign.
+    | 'expense-signer'
     // Shop certifier (a MAY_CERTIFY_OTHERS toolStatus). Admits certifiers OR
     // admins (isSysadmin/isBoardMember) — see resolveAccess. Backed by a
     // predicate because 'certifier' is not a Person role boolean.
@@ -385,6 +389,7 @@ function authorizeNeeds(authorize: Authorize): Partial<CtxNeeds> {
         case 'finance':
         case 'finance-or-board':
         case 'expense-approver':
+        case 'expense-signer':
         case 'certifier':
         case 'household-lead':
         case 'household-member':
