@@ -41,7 +41,7 @@ describe('activateProgramEnrollment — atomic collapse + redelivery no-op', () 
         personId = person.id;
         // Single-pool (shopifyVariantId present) → the legacy two-pool sibling mirror is skipped.
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Redelivery Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-redeliv' },
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Redelivery Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-redeliv' },
         });
         programId = program.id;
     });
@@ -96,5 +96,22 @@ describe('activateProgramEnrollment — atomic collapse + redelivery no-op', () 
         expect(db2.status).toBe('ACTIVE');
         expect(db2.inventoryHeldAt).toBeNull();
         expect(validate(toRow(db2))).toBeNull();
+    });
+
+    it('releases the hold without a +1 once the sale has ended', async () => {
+        await prisma.program.update({ where: { id: programId }, data: { saleEndedAt: new Date() } });
+        try {
+            await prisma.programParticipant.upsert({
+                where: { programId_personId: { programId, personId } },
+                update: { status: 'PENDING', isPaymentPlanRequested: true, inventoryHeldAt: new Date(), paymentPlanDeniedAt: null, pendingSince: new Date() },
+                create: { programId, personId, status: 'PENDING', isPaymentPlanRequested: true, inventoryHeldAt: new Date(), pendingSince: new Date() },
+            });
+
+            const result = await activateProgramEnrollment({ programId, personIds: [personId], shopifyOrderId: 'order-redeliv-ended' });
+            expect(result).toEqual({ activatedCount: 1, releasedHoldCount: 1 });
+            expect(mockAdjust).not.toHaveBeenCalled();
+        } finally {
+            await prisma.program.update({ where: { id: programId }, data: { saleEndedAt: null } });
+        }
     });
 });

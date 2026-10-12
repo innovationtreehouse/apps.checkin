@@ -50,7 +50,7 @@ describe('lifecycle reconciler — invariant-driven sweep over a real DB', () =>
         });
         selfId = self.id;
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `LCR Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: VARIANT },
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `LCR Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: VARIANT },
         });
         programId = program.id;
     });
@@ -111,6 +111,25 @@ describe('lifecycle reconciler — invariant-driven sweep over a real DB', () =>
             (c) => typeof c[1]?.message === 'string' && c[1].message.includes(`person ${selfId}`),
         );
         expect(reportedMine).toBe(false);
+    });
+
+    it('I1: once the sale has ended, clears the stranded hold without a +1', async () => {
+        await prisma.program.update({ where: { id: programId }, data: { saleEndedAt: new Date() } });
+        try {
+            await prisma.programParticipant.create({
+                data: { programId, personId: selfId, status: 'ACTIVE', inventoryHeldAt: new Date() },
+            });
+
+            await runLifecycleReconcile();
+
+            const row = await prisma.programParticipant.findUniqueOrThrow({
+                where: { programId_personId: { programId, personId: selfId } },
+            });
+            expect(row.inventoryHeldAt).toBeNull();
+            expect(adjustSpy).not.toHaveBeenCalledWith(expect.objectContaining({ shopifyVariantId: VARIANT }), expect.anything());
+        } finally {
+            await prisma.program.update({ where: { id: programId }, data: { saleEndedAt: null } });
+        }
     });
 
     it('non-I1: reports a membership INTAKE-with-payment violation but does NOT mutate it', async () => {

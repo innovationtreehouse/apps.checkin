@@ -1044,6 +1044,7 @@ describe('Individual Program API Integration Tests', () => {
                 data: {
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
+                    offSaleAt: new Date('2999-01-01'),
                     name: 'Prog ID API Test Shopify Capacity',
                     phase: 'RUNNING',
                     leadMentorId: leadId,
@@ -1058,6 +1059,7 @@ describe('Individual Program API Integration Tests', () => {
                 data: {
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
+                    offSaleAt: new Date('2999-01-01'),
                     name: 'Prog ID API Test Shopify Uncapped',
                     phase: 'RUNNING',
                     leadMentorId: leadId,
@@ -1123,6 +1125,37 @@ describe('Individual Program API Integration Tests', () => {
             const data = await res.json();
             expect(data.program.maxParticipants).toBe(30);
             expect(data.warning).toMatch(/capped and uncapped/i);
+        });
+
+        it('does not push a capacity change to Shopify once the sale has ended', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            const ended = await prisma.program.create({
+                data: {
+                    startAt: new Date('2026-01-01'),
+                    endAt: new Date('2026-12-31'),
+                    name: 'Prog ID API Test Shopify Sale Ended',
+                    phase: 'RUNNING',
+                    leadMentorId: leadId,
+                    orgMemberPriceCents: 5000,
+                    maxParticipants: 20,
+                    shopifyVariantId: 'dev-mock-variant-sale-ended',
+                },
+            });
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            try {
+                const req = new Request(`http://localhost:4000/api/programs/${ended.id}`, {
+                    method: 'PATCH',
+                    headers: { cookie: 'session=test' },
+                    body: JSON.stringify({ maxParticipants: 25 }),
+                });
+                const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(ended.id) as unknown as never);
+                expect(res.status).toBe(200);
+                expect((await res.json()).program.maxParticipants).toBe(25);
+                expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory'));
+            } finally {
+                logSpy.mockRestore();
+                await prisma.program.delete({ where: { id: ended.id } });
+            }
         });
     });
 

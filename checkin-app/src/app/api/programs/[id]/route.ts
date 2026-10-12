@@ -432,7 +432,7 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         });
 
         // Shopify is the source of truth for program capacity: cap edits propagate
-        // as relative inventory adjustments.
+        // as relative inventory adjustments, until the sale has ended.
         // Only fires when the program already has Shopify checkout wired up —
         // creation and sync-shopify set inventory absolutely and are unaffected.
         let warning: string | undefined;
@@ -440,7 +440,7 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         const newMax = updatedProgram.maxParticipants;
         const hasShopifyVariant = !!updatedProgram.shopifyVariantId;
 
-        if (oldMax !== newMax && hasShopifyVariant) {
+        if (oldMax !== newMax && hasShopifyVariant && !isSaleEnded(updatedProgram)) {
             if (oldMax !== null && newMax !== null) {
                 const ok = await adjustProgramInventory(updatedProgram, newMax - oldMax);
                 if (!ok) {

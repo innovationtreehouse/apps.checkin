@@ -70,7 +70,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         // on the shared BoardSettings row (a boundary's next occurrence is
         // never in the past, so the dues-settled test can't lose that race).
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date(), name: `Webhook Test Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: PROGRAM_VARIANT_ID },
+            data: { startAt: new Date('2026-01-01'), endAt: new Date(), name: `Webhook Test Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: PROGRAM_VARIANT_ID },
         });
         programId = program.id;
 
@@ -613,7 +613,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
 
         beforeAll(async () => {
             const program = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Webhook Single-Pool Test Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: SINGLE_VARIANT_ID },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Webhook Single-Pool Test Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: SINGLE_VARIANT_ID },
             });
             singlePoolProgramId = program.id;
 
