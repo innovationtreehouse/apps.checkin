@@ -1665,6 +1665,12 @@ enum PaymentExceptionKind {
   // Something reached a DENIED household after the deny (a payment, an approval,
   // an application start). Nothing changed; the board decides.
   DENIED_HOUSEHOLD_ACTIVITY
+  // A paid program order buys a seat for a person already enrolled — paid on
+  // another order, comped, or approved. Raised for review, never blocked.
+  DUPLICATE_PAYMENT
+  // A paid program order buys seats no pending enrollment uses (withdrawn,
+  // expired, or extra quantity). Inventory is left for the board to settle.
+  UNCLAIMED_SEATS
 }
 
 enum PaymentExceptionSeverity {

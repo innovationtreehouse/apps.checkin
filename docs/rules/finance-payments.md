@@ -158,6 +158,15 @@ Things the app takes as true because they are handled outside it.
   one same check. An order that falls short activates nobody — it cannot say which
   of the household it was for — and is raised for the board.  [Decision]
 
+- A paid program order with seats no pending enrollment uses — the child was
+  comped, approved, withdrawn, expired or already paid, or the order bought extra
+  — is raised for the board to review. The app does not adjust store inventory
+  for it; the board settles the money and the seat.  [Decision — *Principle: people decide about people*]
+
+- A second payment for a child already enrolled is flagged for review, never
+  blocked. It is matched per child, so siblings paying on separate orders are
+  never flagged.  [Decision]
+
 - An order that names someone outside the buyer's household is not checked
   against household ownership; the seat and item checks are the control.  [Decision — deliberate limit]
 
