@@ -53,21 +53,21 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
     // ponytail: O(n) scan over people with an email, no indexed canonical column
     // — same tradeoff as volunteer-memberships, fine at this org's scale.
     const people = await prisma.person.findMany({
-        where: { email: { not: null }, householdId: { not: null }, ...LIVE_PERSON },
+        where: { email: { not: null }, ...LIVE_PERSON },
         select: {
             name: true,
             email: true,
             household: { select: { id: true, name: true, orgMembership: { select: { id: true, isVolunteer: true } } } },
         },
     });
-    const matches = people.filter((p) => p.household?.orgMembership && canonicalizeEmail(p.email!) === email);
+    const matches = people.filter((p) => p.household.orgMembership && canonicalizeEmail(p.email!) === email);
 
     if (matches.length > 0) {
-        if (new Set(matches.map((p) => p.household!.id)).size > 1) {
+        if (new Set(matches.map((p) => p.household.id)).size > 1) {
             return apiError("This email matches people in more than one household. Set the volunteer checkbox on the household instead.", 409);
         }
         const { name: personName, household } = matches[0];
-        const { id: householdId, name: householdName, orgMembership } = household!;
+        const { id: householdId, name: householdName, orgMembership } = household;
         const membership = orgMembership!;
         if (body.confirmHouseholdId === undefined) {
             return NextResponse.json({
