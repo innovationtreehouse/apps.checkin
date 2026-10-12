@@ -6,7 +6,7 @@ import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/pre
 import { applyPresenceIntent, flagForReview } from "@/lib/presence/project";
 import { config } from "@/lib/config";
 import { withKiosk } from "@/lib/kioskAuth";
-import { SCAN_PROTOCOL_VERSION } from "@/lib/scanProtocol";
+import { KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_PROTOCOL_VERSION } from "@/lib/scanProtocol";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 
@@ -333,7 +333,7 @@ export const POST = withKiosk(
             // debounce, or the room's warning would auto-confirm with no human
             // acknowledgment at all.
             // The token may sit on a departed visit: a close offered with a checkout.
-            const isConfirm = (confirmToken !== null && (await tx.visit.count({
+            const isConfirm = async () => (confirmToken !== null && (await tx.visit.count({
                 where: {
                     personId: participant.id,
                     deletedAt: null,
@@ -355,8 +355,12 @@ export const POST = withKiosk(
             // it sees the committed badge event of any racing scan ahead of it.
             // A dead-lettered event always skips it too: it only ever parks, and
             // the touch must never be silently dropped by a debounce window.
+            // A current kiosk filters repeat reads at the reader, so only exact
+            // duplicates (clientEventId, above) are dropped for it.
+            const kioskDebounces = typeof body.protocolVersion === 'number'
+                && body.protocolVersion >= KIOSK_DEBOUNCE_PROTOCOL_VERSION;
             const threeSecondsAgo = new Date(Date.now() - 3000);
-            const recentScan = (isConfirm || isDead) ? null : await tx.rawBadgeLog.findFirst({
+            const recentScan = (kioskDebounces || isDead || await isConfirm()) ? null : await tx.rawBadgeLog.findFirst({
                 where: {
                     personId: participant.id,
                     timestamp: {

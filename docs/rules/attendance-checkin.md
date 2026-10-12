@@ -256,6 +256,16 @@ hours at a time — is a normal operating mode here, not an incident.
   direction from its own live state at delivery, which would flip a replayed
   check-in into a check-out.  [Decision]
 
+- Repeat reads of the same badge within three seconds are one scan: the scanner
+  can read one touch twice. The kiosk filters them at the moment the badge is
+  read, before the scan is queued or sent, so the rule is the same online and
+  offline and a double-read never queues an in and an out. A keyholder's second
+  badge to confirm a close therefore comes more than three seconds after the
+  first. For a current kiosk the server drops only exact duplicates — the same
+  scan sent twice, by its event id — and applies everything else it is sent;
+  it keeps its own three-second check only for callers that do not filter
+  (older kiosk builds and the web).  [Decision]
+
 - A replayed scan applies at the time the badge was read, not the time it was
   delivered. Within a short freshness window it toggles normally; older than that
   it is held for a human, because once state has moved on a bare toggle cannot

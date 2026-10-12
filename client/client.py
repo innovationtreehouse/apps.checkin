@@ -255,10 +255,10 @@ class BackendClient:
 CLOCK_STEP_SECONDS = 180
 
 # The scan-body generation this client speaks (2 = replay/dead/intent/
-# clockSuspect). Sent with every POST /api/scan; replay behavior is enabled
+# clockSuspect; 3 = the kiosk filters repeat reads itself). Sent with every POST /api/scan; replay behavior is enabled
 # only when the server advertises at least this via kiosk-version, so an
 # auto-updated kiosk can't race a not-yet-deployed server.
-SCAN_PROTOCOL_VERSION = 2
+SCAN_PROTOCOL_VERSION = 3
 
 
 class ClockWatch:
@@ -288,14 +288,13 @@ class AttendanceState:
         self.confirm_token = None    # force-close confirm token, if a countdown is running
         self.confirm_participant = None  # the keyholder that token was shown to
         self.confirm_deadline = 0.0  # monotonic clock, end of that countdown
-        self.confirm_armed_at = 0.0
         # Offline force-close: the server mints no token while disconnected, so
         # the kiosk arms its own two-scan confirm, bound to the keyholder who
         # triggered the warning. The confirm scan carries forceCloseConfirmed.
         self.local_close_participant = None
         self.local_close_deadline = 0.0  # monotonic clock, end of that countdown
-        self.local_close_armed_at = 0.0
-        self.scan_protocol = 1       # server-advertised scan generation; drain holds below 2
+        self.last_read = {}          # participant id -> monotonic time of its last accepted read
+        self.scan_protocol = 1       # server-advertised scan generation; drain holds below ours
         self.last_browser_seen = time.monotonic()
         self.last_attendance_ok = None
         self.attendance_auth_fail = False
@@ -323,8 +322,7 @@ class AttendanceState:
         with self.lock:
             self.confirm_participant = pid
             self.confirm_token = token
-            self.confirm_armed_at = time.monotonic()
-            self.confirm_deadline = self.confirm_armed_at + seconds
+            self.confirm_deadline = time.monotonic() + seconds
 
     def take_confirm(self, participant_id):
         """Pop the confirm token for this badge's scan. Single use, and only while
@@ -354,8 +352,7 @@ class AttendanceState:
             return
         with self.lock:
             self.local_close_participant = pid
-            self.local_close_armed_at = time.monotonic()
-            self.local_close_deadline = self.local_close_armed_at + seconds
+            self.local_close_deadline = time.monotonic() + seconds
 
     def take_local_close(self, participant_id):
         """True iff a live offline-close confirm is armed for THIS badge — single
@@ -375,19 +372,18 @@ class AttendanceState:
                 self.local_close_deadline = 0.0
             return False
 
-    def in_confirm_deadfront(self, participant_id):
-        """True for this badge read within CONFIRM_DEADFRONT_SECONDS of arming
-        its confirm: the same physical touch read twice, not a second badge."""
-        try:
-            pid = int(participant_id)
-        except (TypeError, ValueError):
-            return False
+    def is_repeat_read(self, participant_id):
+        """True for a read of this badge within REPEAT_READ_SECONDS of its last
+        accepted read: the scanner reading one touch twice. Otherwise this read
+        becomes the last accepted one."""
+        pid = int(participant_id)
         now = time.monotonic()
         with self.lock:
-            return ((self.confirm_participant == pid
-                     and now - self.confirm_armed_at < CONFIRM_DEADFRONT_SECONDS)
-                    or (self.local_close_participant == pid
-                        and now - self.local_close_armed_at < CONFIRM_DEADFRONT_SECONDS))
+            last = self.last_read.get(pid)
+            if last is not None and now - last < REPEAT_READ_SECONDS:
+                return True
+            self.last_read[pid] = now
+            return False
 
     def offline_close_offer(self, participant_id):
         """From the last roster: is this badge a keyholder with anyone else
@@ -1013,9 +1009,9 @@ def stdin_scanner_listener(backend, state, outbox):
 # Offline force-close: the kiosk runs the last-keyholder warning + two-scan
 # confirm itself when the server is unreachable. Same window as the server's.
 FORCE_CLOSE_CONFIRM_SECONDS = 15
-# A scanner double-read of the warning badge lands well under this; it must not
-# count as the human's second badge (server: SUPERVISION_CONFIRM_DEADFRONT_MS).
-CONFIRM_DEADFRONT_SECONDS = 1.0
+# Reads of one badge this close together are one scan (a scanner double-read).
+# A close confirm is therefore a second badge after this, inside the countdown.
+REPEAT_READ_SECONDS = 3.0
 OFFLINE_CLOSE_WARN_COPY = "Others are still recorded inside. Badge again to close the building."
 # Yellow, never red: offline the kiosk can't re-verify two-deep, so it warns
 # and trusts the keyholder to clear the room (attendance-checkin.md).
@@ -1110,10 +1106,10 @@ def handle_scan(backend, state, outbox, participant_id):
         log.warning(f"Rejected malformed scan: {participant_id!r}")
         state.push_event({"html": '<div class="banner banner-error">✗ Badge not read — please scan again</div>'})
         return
-    if state.in_confirm_deadfront(participant_id):
-        # Dropped like the server's debounce drops it: a scanner double-read of
-        # the warning badge must neither confirm the close nor toggle back IN.
-        log.info(f"Ignored double-read of {participant_id} inside the confirm dead-front")
+    if state.is_repeat_read(participant_id):
+        # One scan, filtered before it is queued or sent, so online and offline
+        # agree: a double-read never toggles back nor confirms a close.
+        log.info(f"Ignored repeat read of {participant_id}")
         return
     client_event_id = new_event_id()
     scanned_at = now_iso()

@@ -13,6 +13,7 @@ import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
 import type { Person } from '@/generated/prisma/client';
+import { SCAN_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
 jest.mock('@/lib/notifications', () => ({
@@ -278,7 +279,7 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
     });
 
     it('accepts a declared protocolVersion this server speaks, absent included', async () => {
-        for (const extra of [{}, { protocolVersion: 1 }, { protocolVersion: 2 }]) {
+        for (const extra of [{}, { protocolVersion: 1 }, { protocolVersion: 2 }, { protocolVersion: SCAN_PROTOCOL_VERSION }]) {
             const res = await POST(scanReq({ participantId: member.id, ...extra }));
             expect(res.status).toBe(200);
             // Toggle back so each iteration starts checked out.
@@ -287,7 +288,7 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
     });
 
     it('accepts a LIVE scan declaring a newer protocolVersion — a version race must not block the door', async () => {
-        const res = await POST(scanReq({ participantId: member.id, protocolVersion: 3 }));
+        const res = await POST(scanReq({ participantId: member.id, protocolVersion: SCAN_PROTOCOL_VERSION + 1 }));
         expect(res.status).toBe(200);
         expect(await prisma.visit.findFirst({ where: { personId: member.id } })).not.toBeNull();
         await prisma.visit.deleteMany({ where: { personId: member.id } });
@@ -296,7 +297,7 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
     it('426-bounces a replay declaring a newer protocolVersion, writing nothing', async () => {
         const res = await POST(scanReq({
             participantId: member.id, clientEventId: 'evt-too-new-replay',
-            scannedAt: new Date().toISOString(), replay: true, protocolVersion: 3,
+            scannedAt: new Date().toISOString(), replay: true, protocolVersion: SCAN_PROTOCOL_VERSION + 1,
         }));
         expect(res.status).toBe(426);
         expect((await res.json()).error).toMatch(/protocolVersion/);
@@ -307,7 +308,7 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
     it('426-bounces a dead-letter declaring a newer protocolVersion, writing nothing', async () => {
         const res = await POST(scanReq({
             participantId: member.id, clientEventId: 'evt-too-new-dead',
-            scannedAt: new Date().toISOString(), dead: true, protocolVersion: 3,
+            scannedAt: new Date().toISOString(), dead: true, protocolVersion: SCAN_PROTOCOL_VERSION + 1,
         }));
         expect(res.status).toBe(426);
         expect(await prisma.rawBadgeLog.findUnique({ where: { clientEventId: 'evt-too-new-dead' } })).toBeNull();

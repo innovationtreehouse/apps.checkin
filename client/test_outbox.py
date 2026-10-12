@@ -45,7 +45,7 @@ class FakeState:
     def arm_local_close(self, participant_id, seconds):
         return
 
-    def in_confirm_deadfront(self, participant_id):
+    def is_repeat_read(self, participant_id):
         return False
 
     def offline_close_offer(self, participant_id):

@@ -7,6 +7,7 @@ import prisma from '@/lib/prisma';
 import { logger } from '@/lib/logger';
 import { processCheckin, processCheckout, notifyScanOutcome, lastKeyholderGuard, finishCloseGuard, finalizeFacilityClose } from '@/lib/scan-service';
 import { config } from '@/lib/config';
+import { KIOSK_DEBOUNCE_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 
 jest.mock('@/lib/auth', () => ({
     authenticateRequest: jest.fn(),
@@ -367,6 +368,54 @@ describe('POST /api/scan', () => {
         const json = await res.json();
         expect(json.type).toBe('ignored_debounce');
         expect(json.message).toBe('Scan ignored due to debounce.');
+    });
+
+    // A current kiosk filters repeat reads at the reader; the server keeps the
+    // 3 s debounce only for callers that don't (older kiosks, the web).
+    describe('repeat-read debounce by protocol', () => {
+        function kioskReplay(overrides: Record<string, unknown> = {}) {
+            return new Request('http://localhost/api/scan', {
+                method: 'POST',
+                body: JSON.stringify({
+                    participantId: 1, clientEventId: 'evt-r', scannedAt: new Date(Date.now() - 60_000).toISOString(),
+                    replay: true, protocolVersion: KIOSK_DEBOUNCE_PROTOCOL_VERSION, ...overrides,
+                })
+            }) as unknown as import('next/server').NextRequest;
+        }
+
+        beforeEach(() => {
+            (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null });
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            // A row from a scan under a second ago, by server time.
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue({ timestamp: new Date(Date.now() - 500) });
+            (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
+            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+        });
+
+        it('applies a current kiosk replay within 3 s of a prior row instead of dropping it', async () => {
+            const res = await POST(kioskReplay());
+
+            expect((await res.json()).type).toBe('checkin');
+            expect(processCheckin).toHaveBeenCalled();
+        });
+
+        it('still debounces an older-protocol kiosk', async () => {
+            const res = await POST(kioskReplay({ protocolVersion: KIOSK_DEBOUNCE_PROTOCOL_VERSION - 1 }));
+
+            expect((await res.json()).type).toBe('ignored_debounce');
+            expect(processCheckin).not.toHaveBeenCalled();
+        });
+
+        it('still ignores the same clientEventId sent twice', async () => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue({ id: 5, clientEventId: 'evt-r' });
+
+            const res = await POST(kioskReplay());
+
+            expect((await res.json()).type).toBe('duplicate_ignored');
+            expect(processCheckin).not.toHaveBeenCalled();
+        });
     });
 
     // Replayed-scan idempotency (docs/rules/attendance-checkin.md, kiosk
