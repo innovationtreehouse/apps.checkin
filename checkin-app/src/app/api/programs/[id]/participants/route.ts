@@ -63,6 +63,17 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return apiError("Forbidden: Not authorized to enroll this participant. Program leads cannot manually add participants.", 403);
         }
 
+        // A family that claimed in time can always pay: an existing PENDING
+        // claim skips every limit below (capacity would count its own row) and
+        // gets the 409 the program page folds back into its checkout.
+        const existingClaim = await prisma.programParticipant.findUnique({
+            where: { programId_personId: { programId, personId: participantId } },
+            select: { status: true },
+        });
+        if (existingClaim?.status === 'PENDING') {
+            return apiError("Participant is already enrolled in this program.", 409);
+        }
+
         const override = body.override === true;
 
         // Conflict of interest: an override and a comp are both one-actor
