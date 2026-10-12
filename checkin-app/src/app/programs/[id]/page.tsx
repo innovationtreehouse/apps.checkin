@@ -11,7 +11,7 @@ import { formatDateOnly } from '@/lib/time';
 import { checkProgramAge } from '@/lib/programAge';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { formatCents } from '@inventory/money';
-import { aggregateEnrollOutcomes, buildShopifyCheckoutUrl, type EnrollOutcome } from './enroll';
+import { aggregateEnrollOutcomes, buildShopifyCheckoutUrl, findRepeatPayments, type EnrollOutcome, type RepeatPayment } from './enroll';
 import FirstTimeIntakePanel from './FirstTimeIntakePanel';
 import { useIsLocalInstance, useShopifyStoreDomain } from '@/components/EnvProvider';
 
@@ -63,6 +63,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
   const [successMessage, setSuccessMessage] = useState("");
   const [planKind, setPlanKind] = useState<string | null>(null);
   const [confirmPlanOpened, { open: openConfirmPlan, close: closeConfirmPlan }] = useDisclosure(false);
+  const [repeatPayments, setRepeatPayments] = useState<RepeatPayment[]>([]);
 
   const [showEnrollmentSelection, setShowEnrollmentSelection] = useState(false);
   const [householdMembers, setHouseholdMembers] = useState<{ id: number; name: string | null; dateOfBirth: string | null; isDeclaredAdult?: boolean }[]>([]);
@@ -263,7 +264,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
     }
   };
 
-  const handleEnroll = async () => {
+  const handleEnroll = async (confirmedRepeat = false) => {
     if (!session) {
       router.push('/');
       return;
@@ -311,6 +312,23 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
             ? "Cannot enroll: Shopify store domain not configured. Contact an admin."
             : "Cannot enroll: no pricing variant set for this program — set one in program-ops." });
           return; // no enrollment created — payment path is broken
+        }
+      }
+
+      // Re-read the roster first: a child may have been paid since this page
+      // loaded, and the participants POST answers that with a 409 like any re-run.
+      if (isPayingOnShopify && !confirmedRepeat) {
+        const freshRes = await fetch(`/api/programs/${id}`);
+        const fresh: ProgramDetail | null = freshRes.ok ? await freshRes.json() : null;
+        if (fresh) setProgram(fresh);
+        const repeats = findRepeatPayments(
+          selectedParticipantIds,
+          (fresh ?? program)?.participants ?? [],
+          (personId) => householdMembers.find((m) => m.id === personId)?.name,
+        );
+        if (repeats.length > 0) {
+          setRepeatPayments(repeats);
+          return; // the warning modal re-enters with confirmedRepeat
         }
       }
 
@@ -616,6 +634,21 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
                     Request a scholarship or payment plan from the Scholarship Review Team
                   </Button>
                 )}
+
+                <Modal opened={repeatPayments.length > 0} onClose={() => setRepeatPayments([])} title="Pay again?" centered>
+                  <Stack gap="xs">
+                    {repeatPayments.map((r) => (
+                      <Text key={r.personId} size="sm">{r.name} is already paid.</Text>
+                    ))}
+                    <Text size="sm">Pay again anyway?</Text>
+                  </Stack>
+                  <Group justify="flex-end" mt="md">
+                    <Button variant="default" onClick={() => setRepeatPayments([])}>Cancel</Button>
+                    <Button color="yellow" onClick={() => { setRepeatPayments([]); handleEnroll(true); }}>
+                      Pay again anyway
+                    </Button>
+                  </Group>
+                </Modal>
 
                 <Modal opened={confirmPlanOpened} onClose={closeConfirmPlan} title="Request a scholarship or payment plan?" centered>
                   <Text size="sm">
