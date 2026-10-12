@@ -21,6 +21,10 @@ jest.mock('@/lib/shopify', () => ({
         shopifyProductId: 'mock-product-id',
         shopifyVariantId: 'mock-variant-id',
     }),
+    createClaimantProduct: jest.fn().mockResolvedValue({
+        claimantShopifyProductId: 'mock-claimant-product-id',
+        claimantShopifyVariantId: 'mock-claimant-variant-id',
+    }),
 }));
 
 // Mock Prisma
@@ -204,13 +208,14 @@ describe('Full Program Signup Integration Flow', () => {
 
         // 8. Shopify Webhook call
         (prisma.programParticipant.findUnique as jest.Mock).mockResolvedValue({ programId, personId: childParticipantId, status: 'PENDING' });
-        (prisma.program.findUnique as jest.Mock).mockResolvedValue({ id: programId, shopifyVariantId: 'mock-variant-id' });
+        // The app's checkout sells the claimant variant; a paid line on it counts as a seat.
+        (prisma.program.findUnique as jest.Mock).mockResolvedValue({ id: programId, shopifyVariantId: 'mock-variant-id', claimantShopifyVariantId: 'mock-claimant-variant-id' });
         (prisma.programParticipant.count as jest.Mock).mockResolvedValue(1);
         (prisma.programParticipant.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
 
         const webhookPayload = JSON.stringify({
             financial_status: 'paid',
-            line_items: [{ variant_id: 'mock-variant-id', quantity: 1 }],
+            line_items: [{ variant_id: 'mock-claimant-variant-id', quantity: 1 }],
             note_attributes: [
                 { name: 'CheckMeIn_Account_ID', value: String(childParticipantId) },
                 { name: 'Program_ID', value: String(programId) },
