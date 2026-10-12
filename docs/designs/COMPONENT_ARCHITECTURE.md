@@ -175,8 +175,7 @@ unchanged as each component is built.
 Each component's read/write admission is expressed against the checkin session —
 a write role plus a read gate, wired through the injected auth, never a
 component-local auth system. The catalog uses `INVENTORY_MANAGER` for writes and
-a broad viewer gate (any of several staff role flags, a program leader, or a
-volunteer designation) for reads; those specific roles are domain rules in
+a broad viewer gate (the shared catalog audience, `canSeeCatalog`) for reads; those specific roles are domain rules in
 `docs/rules/inventory.md`, not architecture. The pattern — gate at the component
 boundary against checkin's session — is what is universal.
 

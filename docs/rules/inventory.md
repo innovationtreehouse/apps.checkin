@@ -62,9 +62,13 @@ org identity, the own-database packaging — is described in
   address) breaks this and needs its own tier decision, not a default to
   `public`. `[Decision — *Principle: least privilege*]`
 
-- Read is admitted by the broad Treehouse-volunteer gate — any of several staff
-  role flags, a program leader, or a holder of a volunteer designation — while
-  write is admitted for `INVENTORY_MANAGER` only, with no admin auto-admit on
+- Read is admitted by the shared catalog audience (`canSeeCatalog`): anyone
+  holding any `PersonRoleKind` role, or a Google-verified account on the org
+  domain, with no membership needed; and a program leader, program volunteer,
+  or Volunteer Family member, youth included, only while their household
+  membership is ACTIVE. The grant reads session claims only and never keys on
+  an email address, so a volunteer designation on its own admits nothing.
+  Write is admitted for `INVENTORY_MANAGER` only, with no admin auto-admit on
   the write path. The read audience is deliberately wider than the board-only
   operations areas because the data is non-personal reference data; the narrow
   write path is what keeps that proportionate. Widening read further, or
