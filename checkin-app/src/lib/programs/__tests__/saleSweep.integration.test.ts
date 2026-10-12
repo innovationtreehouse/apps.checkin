@@ -52,7 +52,7 @@ describe('program sale sweep', () => {
     });
     afterAll(cleanup);
 
-    it('ends due sales once, closes enrollment and takes the product off sale; leaves future and finished programs alone', async () => {
+    it('ends due sales once and closes enrollment, leaving the store product on sale; leaves future and finished programs alone', async () => {
         const due = await mkProgram('due', { startAt: day('2026-10-12') });
         const early = await mkProgram('early', { startAt: day('2026-11-01'), offSaleAt: day('2026-10-05') });
         const future = await mkProgram('future', { startAt: day('2026-10-01'), offSaleAt: day('2026-10-20') });
@@ -70,24 +70,11 @@ describe('program sale sweep', () => {
             expect(byId.get(p.id)!.saleEndedAt).toBeNull();
             expect(byId.get(p.id)!.enrollmentStatus).toBe('OPEN');
         }
-        // The DB may hold other (seeded) programs whose sale is also due; count only ours.
-        const ours = () => offSale.mock.calls.map(([p]) => p.shopifyProductId).filter((id) => id?.startsWith('prod-')).sort();
-        expect(ours()).toEqual(['prod-due', 'prod-early']);
+        // Claimants still pay through the public product, so it is never taken off sale yet.
+        expect(offSale).not.toHaveBeenCalled();
 
-        offSale.mockClear();
-        await runSaleSweep(NOW);
-        expect(ours()).toEqual([]);
-    });
-
-    it('retries the next run when Shopify fails, without stamping the sale ended', async () => {
-        const due = await mkProgram('retry', { startAt: day('2026-10-12') });
-        offSale.mockResolvedValueOnce(false);
-        await runSaleSweep(NOW);
-        const row = await prisma.program.findUniqueOrThrow({ where: { id: due.id } });
-        expect(row.saleEndedAt).toBeNull();
-        expect(row.enrollmentStatus).toBe('CLOSED');
-
-        await runSaleSweep(NOW);
+        const later = new Date(NOW.getTime() + DAY_MS);
+        await runSaleSweep(later);
         expect((await prisma.program.findUniqueOrThrow({ where: { id: due.id } })).saleEndedAt).toEqual(NOW);
     });
 

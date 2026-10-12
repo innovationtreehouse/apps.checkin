@@ -731,6 +731,10 @@ export async function syncProgramPrice(
  * neither the store page nor an old cart link can buy it. Idempotent. A program
  * without a product has nothing to take down and succeeds.
  *
+ * ponytail: not called yet. Claimants still pay through the public product, so
+ * the sale sweep (lib/programs/saleSweep.ts) leaves it on sale. Call it from
+ * there once claimants have their own hidden product (claimantShopifyVariantId).
+ *
  * Never throws: logs + emails the admin via reportShopifyFailure and returns
  * false, so the caller can retry on its next run.
  */

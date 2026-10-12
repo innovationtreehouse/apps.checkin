@@ -4,7 +4,6 @@ import { logger } from "@/lib/logger";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { escapeHtml } from "@/lib/email-templates/base";
 import { LIVE_PERSON } from "@/lib/person/filters";
-import { setProgramProductOffSale } from "@/lib/shopify";
 import { orgCalendarDay } from "@/lib/time";
 
 // A week, less half a day so the daily run's start-time jitter can't push it to day 8.
@@ -16,27 +15,20 @@ const offSaleOnOrBefore = (at: Date) => ({
 });
 
 /**
- * Ends every sale whose off-sale date has arrived: closes enrollment and takes
- * the store product off sale. Only ever reduces visibility. The saleEndedAt
- * marker is stamped only after Shopify confirms, so a failed call is retried
- * on the next daily run.
+ * Ends every sale whose off-sale date has arrived: closes enrollment and stamps
+ * saleEndedAt, which stops the restock +1. Only ever reduces visibility.
+ *
+ * ponytail: the public Shopify product stays on sale, because families who
+ * claimed in time pay through it. Turn on setProgramProductOffSale (lib/shopify.ts)
+ * here once claimants have their own hidden product, gated per program on
+ * claimantShopifyVariantId being set.
  */
 async function endDueSales(now: Date): Promise<number> {
-    const due = await prisma.program.findMany({
+    const { count } = await prisma.program.updateMany({
         where: { saleEndedAt: null, phase: { not: "FINISHED" }, ...offSaleOnOrBefore(orgCalendarDay(now)) },
-        select: { id: true, shopifyProductId: true },
+        data: { enrollmentStatus: "CLOSED", saleEndedAt: now },
     });
-    let ended = 0;
-    for (const program of due) {
-        await prisma.program.update({ where: { id: program.id }, data: { enrollmentStatus: "CLOSED" } });
-        if (!(await setProgramProductOffSale(program))) continue;
-        const { count } = await prisma.program.updateMany({
-            where: { id: program.id, saleEndedAt: null },
-            data: { saleEndedAt: now },
-        });
-        ended += count;
-    }
-    return ended;
+    return count;
 }
 
 /**
