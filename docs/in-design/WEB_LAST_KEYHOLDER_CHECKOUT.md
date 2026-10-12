@@ -30,8 +30,8 @@ choice is recorded; and names go only to people who already read the roster.
 
 ## Executive summary
 
-- **The last recorded keyholder checking themselves out, or a board member
-  checking them out,** chooses close, leave or cancel. The close choice says plainly that no other keyholder is
+- **The last recorded keyholder checking themselves out, or a board member who
+  is a keyholder checking them out,** chooses close, leave or cancel. The close choice says plainly that no other keyholder is
   checked in. *Leave* checks out only the leaver and names, from a pick-list, the
   keyholder they handed over to in person; the app records that and does not check
   the named keyholder in. A named keyholder who is not checked in is emailed.
@@ -163,7 +163,7 @@ people standing in the building, and this caller need not be.
 ### 3.1 Decided by the owner
 
 **Close, leave or cancel.** Offered to a keyholder checking themselves out, and to
-a board member (keyholder or not) checking out the last keyholder.
+a board member who is a keyholder checking out the last keyholder.
 
 - *Close* checks the leaver out and departs every open visit. The choice states
   that no other keyholder is checked in, alongside the people recorded inside.
@@ -190,9 +190,9 @@ keyholder who already has an open visit at that moment is not emailed. The
 pick-list offers keyholders without an open visit, so in practice the email goes
 unless they badged in during the dialog.
 
-**The board closes; a household lead does not.** The board is a superuser and
-closes the building whether or not its member holds keys; the owner reads its
-standing as covering Arts. VI–VII. A household lead who is not a keyholder can
+**Only a keyholder closes.** Closing is a keyholder's act (Arts. VI–VII), not a
+board one: a board member who holds keys may close when checking out the last
+keyholder; one who does not chooses leave or cancel. A household lead who is not a keyholder can
 always check a keyholder member out, because refusing would put a gate where the
 visit-record rules put trust and review after the fact; they choose leave or
 cancel, and are not asked to name a keyholder.
@@ -214,7 +214,8 @@ Someone who arrived between the corrected time and the original one keeps the
 departure the original close gave them, as with the kiosk's late close; it is a
 placeholder for a person to fix, not something the correction guesses at.
 Someone who has since corrected their own departure keeps it; a later correction
-of the close never overwrites it. Every
+of the close never overwrites it. The board may correct a close's time too, by
+correcting the closer's departure: correcting is not closing. Every
 departure a close sets or moves is logged: which close, who made it, through
 which path, and each visit's departure before and after.
 
@@ -299,8 +300,9 @@ kiosk's inline copy; the kiosk path keeps its own.
 
 - `type: "close_choice"`, with `othersInside` (a count), the allowed `choices`
   (`close`, `leave`, `cancel` for a keyholder checking themselves out or a board
-  member; `leave`, `cancel` for anyone else: another keyholder, a household lead
-  or a sysadmin), the token, and the seconds;
+  member who is a keyholder; `leave`, `cancel` for anyone else: another keyholder,
+  a board member who is not a keyholder, a household lead or a sysadmin), the
+  token, and the seconds;
 - `names` only for a keyholder, board member or sysadmin; kiosk labels, as today;
 - for a keyholder choosing `leave`, the request carries the named keyholder's id,
   and the server checks they hold the role.
@@ -334,8 +336,8 @@ names are sent.
 **Rules doc** (`docs/rules/attendance-checkin.md`), on merge:
 
 - Amend "The keyholder close-guard fires on every close path…": close, leave or
-  cancel on the web; who gets which (the keyholder themselves and the board: all
-  three; another keyholder, a household lead or a sysadmin: leave or cancel); a tombstone never closes; names to
+  cancel on the web; who gets which (the keyholder themselves and a keyholder on
+  the board: all three; anyone else: leave or cancel); a tombstone never closes; names to
   keyholders, board and sysadmins only.
 - Add the Assumption: a keyholder who leaves the building occupied has handed over
   in person to the keyholder they name; the app records the statement.
@@ -345,12 +347,12 @@ names are sent.
 - Add: correcting a close to an earlier time moves the departures it set; a later
   correction moves only the closer. Someone who arrived after the corrected time
   keeps the original close's departure, and a departure its owner has corrected
-  is never moved. Every departure a close sets or moves is logged.
+  is never moved. The board may correct a close's time too. Every departure a
+  close sets or moves is logged.
 - Amend "Any keyholder can close the building at the kiosk with a double scan…":
   the last keyholder's first badge checks them out and offers the close, online
   and offline; a second badge within the countdown closes.
-- Tag the board's close with the Arts. VI–VII citation and the owner's reading
-  that the board's superuser standing covers it.
+- Only a keyholder closes on the web, a board member included (Arts. VI–VII).
 
 `docs/rules/principles.md` gains the trust principle (text in §3.1), in its own
 change.
@@ -365,6 +367,7 @@ time needs both. Sketch, to be settled in build step 1:
 | `closedAt` | The close time every departure it sets uses: the keyholder's scan time, or the typed time on a correction. Moves when the close is corrected. |
 | `closedById` | The person who closed. Always a person: every close is a keyholder's badge or a web choice. FK to `Person`. |
 | `via` | `KIOSK`, `KIOSK_OFFLINE`, `WEB_CHECKOUT`, `WEB_CORRECTION`, `WEB_DASHBOARD` (the legacy route). |
+| `closerVisitId` | The closer's own visit, whose departure is the close; correcting it corrects the close. Null when the closer ended someone else's visit (a board member's sign-out). |
 | `createdAt` | When the server applied it; differs from `closedAt` on a late or offline close. |
 
 - `Visit.facilityCloseId`, nullable, set on every departure a close stamps. A
@@ -393,8 +396,8 @@ changed.
 4. Household lead checks out the last keyholder member: the warning has a count,
    no names, and no `close`; `leave` checks the member out and departs nobody else.
 5. Board member who is not a keyholder uses the legacy `DELETE` on the last
-   keyholder: the warning carries names and the three choices; `close` departs
-   every visit.
+   keyholder: the warning carries names and only leave or cancel; `leave` departs
+   only the keyholder.
 6. Correction closing the last keyholder's open visit at a past time, `close`:
    everyone departs at that time; someone who arrived after it stays inside.
 7. Tombstone of the last keyholder's open visit with others inside: removed,

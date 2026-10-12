@@ -3,8 +3,8 @@ import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTra
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { apiError, apiJson } from "@/lib/api-response";
 import type { FacilityCloseVia, Person } from "@/generated/prisma/client";
-import { type DbClient, isRootClient } from "@/lib/db-client";
-import { withFacilityLock } from "@/lib/facilityLock";
+import { type DbClient, type TxClient, isRootClient } from "@/lib/db-client";
+import { lockFacility, withFacilityLock } from "@/lib/facilityLock";
 import { LIVE_VISIT } from "@/lib/visit/filters";
 import { MAX_VISIT_MS } from "@/lib/visitTimes";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, youthIsPresent } from "@/lib/supervision";
@@ -453,8 +453,9 @@ async function sweepIfStandalone(db: DbClient, closer: FacilityCloser, closeTime
 /** Kiosk-vs-server clock skew a late close absorbs on the arrival side. */
 export const LATE_CLOSE_SKEW_MS = 2 * 60_000;
 
-/** Who closed the facility, and through which path. */
-export type FacilityCloser = { closedById: number; via: FacilityCloseVia };
+/** Who closed the facility, and through which path. `ownCheckout` is false
+ *  when the closer ended someone else's visit, so no visit of theirs is the close. */
+export type FacilityCloser = { closedById: number; via: FacilityCloseVia; ownCheckout?: boolean };
 
 /** The path a scan-route close came through. */
 export function closeVia(authType: string, replayEventId: string | null): FacilityCloseVia {
@@ -474,13 +475,15 @@ export type DepartureChange = {
     departedVia: string;
 };
 
-/** Log each departure a facility close set, with its before and after, against
- *  the close record. */
+/** Log each departure a facility close set, or a correction of it moved, with
+ *  its before and after, against the close record. */
 export async function logCloseDepartures(
     db: DbClient,
     facilityCloseId: number,
     actor: AuditActor,
     changes: DepartureChange[],
+    via: FacilityCloseVia,
+    note: Record<string, unknown> = {},
 ): Promise<void> {
     if (changes.length === 0) return;
     await db.auditLog.createMany({
@@ -491,7 +494,7 @@ export async function logCloseDepartures(
             affectedEntityId: facilityCloseId,
             secondaryAffectedEntity: c.id,
             oldData: { visitId: c.previousVisitId ?? c.id, personId: c.personId, departedAt: c.oldDepartedAt, departedVia: c.oldDepartedVia },
-            newData: { visitId: c.id, personId: c.personId, departedAt: c.departedAt, departedVia: c.departedVia },
+            newData: { visitId: c.id, personId: c.personId, departedAt: c.departedAt, departedVia: c.departedVia, via, ...note },
         })),
     });
 }
@@ -499,8 +502,25 @@ export async function logCloseDepartures(
 async function closeAllOpenVisits(db: DbClient, closer: FacilityCloser, closeTime: Date = new Date()) {
     const closedAt = new Date(Math.min(closeTime.getTime(), Date.now()));
     const closeAt = closedAt.toISOString();
+    // The closer's own visit the close ends: their latest departure at or before
+    // it, with no time bound (a late kiosk confirm can come long after the leave),
+    // or one the overnight sweep departed after it.
+    const closerVisit = closer.ownCheckout === false ? null : await db.visit.findFirst({
+        where: {
+            personId: closer.closedById,
+            deletedAt: null,
+            arrivedAt: { lte: closedAt },
+            OR: [
+                { departedVia: { in: ["SCANNER", "TYPED"] }, departedAt: { lte: closedAt } },
+                { departedVia: "AUTO_CLOSE", departedAt: { gt: closedAt } },
+            ],
+        },
+        // By departure, not arrival: a backdated visit can arrive before one that left earlier.
+        orderBy: { departedAt: "desc" },
+        select: { id: true },
+    });
     const close = await db.facilityClose.create({
-        data: { closedAt, closedById: closer.closedById, via: closer.via },
+        data: { closedAt, closedById: closer.closedById, via: closer.via, closerVisitId: closerVisit?.id ?? null },
         select: { id: true },
     });
     // Tombstoned visits are excluded: closing one would rewrite a record the
@@ -530,7 +550,46 @@ async function closeAllOpenVisits(db: DbClient, closer: FacilityCloser, closeTim
         WHERE v.id = old.id
         RETURNING v.id, v."personId", old."departedAt" AS "oldDepartedAt", old."departedVia"::text AS "oldDepartedVia",
                   v."departedAt", v."departedVia"::text AS "departedVia"`;
-    await logCloseDepartures(db, close.id, personActor(closer.closedById), changes);
+    await logCloseDepartures(db, close.id, personActor(closer.closedById), changes, closer.via);
+}
+
+/**
+ * The closer, or the board, corrected the closer's departure, the close's time. Earlier: every
+ * departure the close set moves with it, except a visit that began after the
+ * new time, or one its owner has since corrected (no longer FACILITY_CLOSE).
+ * Later: nobody else moves. Runs inside the correction's transaction.
+ */
+export async function correctCloseTime(
+    db: TxClient,
+    close: { id: number; closedAt: Date; closedById: number | null },
+    actorId: number,
+    newTime: Date,
+): Promise<void> {
+    if (newTime >= close.closedAt) return;
+    await lockFacility(db);
+    const at = newTime.toISOString();
+    const changes = await db.$queryRaw<DepartureChange[]>`
+        WITH t AS (
+            SELECT (${at}::timestamptz AT TIME ZONE 'UTC') AS close_at
+        ), old AS (
+            SELECT v.id, v."departedAt", v."departedVia"
+            FROM "Visit" v, t
+            WHERE v."facilityCloseId" = ${close.id}
+              AND v."deletedAt" IS NULL
+              AND v."departedVia" = 'FACILITY_CLOSE'::"VisitSource"
+              AND v."arrivedAt" < t.close_at
+              AND v."departedAt" > t.close_at
+            FOR UPDATE OF v
+        )
+        UPDATE "Visit" v
+        SET "departedAt" = t.close_at
+        FROM t, old
+        WHERE v.id = old.id
+        RETURNING v.id, v."personId", old."departedAt" AS "oldDepartedAt", old."departedVia"::text AS "oldDepartedVia",
+                  v."departedAt", v."departedVia"::text AS "departedVia"`;
+    await db.facilityClose.update({ where: { id: close.id }, data: { closedAt: newTime } });
+    await logCloseDepartures(db, close.id, personActor(actorId), changes, "WEB_CORRECTION",
+        { moved: true, ...(actorId !== close.closedById ? { correctedForCloserId: close.closedById } : {}) });
 }
 
 /** Fire-and-forget post-event email run on facility close. The dynamic import
@@ -599,9 +658,9 @@ export function closeActor(user: AuthenticatedUser): CloseActor {
     return { id: Number(user.id), isKeyholder: !!user.isKeyholder, isBoardMember: !!user.isBoardMember, isSysadmin: !!user.isSysadmin };
 }
 
-/** The board, and a keyholder checking themselves out, may close the building;
- *  nobody else does (Arts. VI–VII). */
-const mayClose = (actor: CloseActor, subjectId: number) => actor.isBoardMember || (actor.isKeyholder && actor.id === subjectId);
+/** Only a keyholder closes the building (Arts. VI–VII): checking themselves
+ *  out, or, on the board, checking out the last keyholder. */
+const mayClose = (actor: CloseActor, subjectId: number) => actor.isKeyholder && (actor.id === subjectId || actor.isBoardMember);
 
 /** Keyholders, the board and sysadmins already read the full roster. */
 const readsRoster = (actor: CloseActor) => actor.isKeyholder || actor.isBoardMember || actor.isSysadmin;
@@ -621,10 +680,11 @@ async function handoverCandidates(db: DbClient, subjectId: number) {
  * correction and removal. When the visit is the last keyholder's and others
  * are inside, the caller chooses close, leave or cancel:
  *
- * - a keyholder checking themselves out, or a board member, gets all three; a
- *   leave names the keyholder handed over to, unless no keyholder is free to name;
- * - anyone else — another keyholder, a household lead, a sysadmin — gets leave
- *   or cancel and names nobody;
+ * - a keyholder checking themselves out, or a board member who is a keyholder,
+ *   gets all three; a leave names the keyholder handed over to, unless no
+ *   keyholder is free to name;
+ * - anyone else — another keyholder, a board member who is not a keyholder, a
+ *   household lead, a sysadmin — gets leave or cancel and names nobody;
  * - a removal never closes, whoever makes it.
  *
  * The token is bound to the actor shown the choice, and the allowed choices are
@@ -745,9 +805,11 @@ export async function lastKeyholderGuard(
  */
 export async function finishCloseGuard(
     guard: Extract<CloseGuardResult, { action: "proceed" }>,
-    ctx: { actorId: number; subjectId: number; visitId: number; via: FacilityCloseVia },
+    ctx: { actorId: number; subjectId: number; visitId: number; via: FacilityCloseVia; closeTime?: Date },
 ): Promise<void> {
-    if (guard.facilityClosed) await closeWithRetry({ closedById: ctx.actorId, via: ctx.via });
+    if (guard.facilityClosed) {
+        await closeWithRetry({ closedById: ctx.actorId, via: ctx.via, ownCheckout: ctx.actorId === ctx.subjectId }, ctx.closeTime);
+    }
     if (!guard.choice) return;
     const { choice, handoverToId, othersInside } = guard.choice;
     try {

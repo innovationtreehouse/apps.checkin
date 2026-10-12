@@ -152,18 +152,18 @@ Things the app takes as true because they are handled outside it.
   second badge within the countdown. On the web, when the last recorded keyholder's
   visit ends with others inside, the caller chooses close, leave or cancel in one
   confirm dialog, answered by a server-minted token bound to the person shown the
-  choice: the keyholder checking themselves out, or a board member, gets all
-  three; anyone else — another keyholder, a household lead, a sysadmin — gets
-  leave or cancel. Close checks everyone out; leave
+  choice: the keyholder checking themselves out, or a board member who is a
+  keyholder, gets all three; anyone else gets leave or cancel. Close checks everyone out; leave
   checks out only the keyholder and leaves the others inside a closed facility;
   cancel changes nothing. The choices are worked out again on confirm, so a role
   revoked in between takes effect. Every choice is audited with who made it,
   whose visit it was, the choice, the keyholder named and the count left inside.  [Decision]
 
-- On the web only the keyholder checking themselves out, or a board member,
-  closes the facility; another keyholder, a household lead or a sysadmin never
-  does, even with the keyholder alone in the record. The board closes whether or not its member holds keys: the owner
-  reads the board's superuser standing as covering the active-keyholder rule.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
+- On the web only a keyholder closes the facility: one checking themselves out,
+  or a board member who is a keyholder checking out the last keyholder. Anyone
+  else — another keyholder, a board member who is not a keyholder, a household
+  lead or a sysadmin — gets leave or cancel, even with the keyholder alone in the
+  record. Correcting a close's time is not closing: the board may do it.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
 
 - The keyholder checking themselves out, or a board member, who chooses leave
   names, from the keyholders not checked in, the one the keyholder handed over to. Where none is free to name,
@@ -223,6 +223,17 @@ Things the app takes as true because they are handled outside it.
   which no person makes). Every departure a close sets is logged against
   that record with the visit's departure before and after. These logs are an
   audit trail and are never deleted.  [Decision — *Principle: accountability*]
+
+- A correction that closes an open visit departs everyone at the typed
+  departure, as a late kiosk close does; someone who arrived after it stays
+  inside. The keyholder who made a close, or the board, corrects its time by
+  correcting the closer's departure; the log names who moved it and, for the
+  board, whose close it was. Earlier: every departure the close set moves to the new time,
+  except someone who arrived after it, who keeps the original close's departure
+  as a placeholder for a person to fix, and a departure its owner has corrected,
+  which is never moved. Later: only the closer's own departure moves. Every
+  departure a correction moves is logged against the close with who moved it,
+  the path, and its before and after.  [Decision]
 
 ### The kiosk
 
