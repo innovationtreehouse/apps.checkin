@@ -531,7 +531,8 @@ async function closeAllOpenVisits(db: DbClient, closer: FacilityCloser, closeTim
                 { departedVia: "AUTO_CLOSE", departedAt: { gt: closedAt } },
             ],
         },
-        orderBy: { arrivedAt: "desc" },
+        // By departure, not arrival: a backdated visit can arrive before one that left earlier.
+        orderBy: { departedAt: "desc" },
         select: { id: true },
     });
     const close = await db.facilityClose.create({
