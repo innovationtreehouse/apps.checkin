@@ -42,13 +42,7 @@ cleanup() {
 trap cleanup EXIT
 
 PG_IMAGE=public.ecr.aws/docker/library/postgres:15
-# Registry pulls fail transiently (rate limits) even when authenticated.
-for delay in 5 15 0; do
-  docker pull -q "$PG_IMAGE" && break
-  [ "$delay" = 0 ] && exit 1
-  echo "pull of $PG_IMAGE failed; retrying in ${delay}s"
-  sleep "$delay"
-done
+bash "$(dirname "$0")/ci-pull-image.sh" "$PG_IMAGE"
 
 docker network create "$NET" >/dev/null
 docker run -d --name "$DB" --network "$NET" \

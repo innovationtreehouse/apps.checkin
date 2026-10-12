@@ -3,7 +3,7 @@
 # Build with:  docker build -f checkin-app/Dockerfile .
 
 # Stage 1: Install dependencies (whole workspace, hoisted to /app/node_modules)
-FROM node:24-alpine AS deps
+FROM public.ecr.aws/docker/library/node:24-alpine AS deps
 WORKDIR /app
 # Copy only the manifests + lockfile first for a cache-friendly `npm ci` layer.
 # Add packages/*/package.json here when @checkin/* packages land (item 4).
@@ -12,7 +12,7 @@ COPY checkin-app/package.json ./checkin-app/package.json
 RUN npm ci
 
 # Stage 2: Build the app
-FROM node:24-alpine AS builder
+FROM public.ecr.aws/docker/library/node:24-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 # npm does not hoist remote-tarball deps (xlsx is pinned to the SheetJS CDN
@@ -76,7 +76,7 @@ RUN mkdir /prisma-cli && cd /prisma-cli && npm init -y >/dev/null \
       prisma@"$(node -p "require('/app/node_modules/prisma/package.json').version")"
 
 # Stage 3: Production image
-FROM node:24-alpine AS runner
+FROM public.ecr.aws/docker/library/node:24-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
