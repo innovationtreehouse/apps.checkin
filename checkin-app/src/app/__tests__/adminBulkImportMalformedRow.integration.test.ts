@@ -30,10 +30,16 @@ describe('Bulk import: malformed row among valid rows', () => {
         } catch {}
     };
 
+    // The actor's email/name sit outside cleanup's patterns: cleanup runs after every
+    // test, and an actor that no longer exists is refused by the route.
+    const ACTOR_EMAIL = 'admin-malrow-actor@example.com';
+    const removeActor = () => prisma.person.deleteMany({ where: { email: ACTOR_EMAIL } });
+
     beforeAll(async () => {
+        await removeActor();
         await cleanup();
         const admin = await prisma.person.create({
-            data: { email: 'admin-malrow-import-test@example.com', name: 'Admin Malrow Import Test', isSysadmin: true, household: { create: { name: "Test HH" } } }
+            data: { email: ACTOR_EMAIL, name: 'Admin Malrow Actor', isSysadmin: true, household: { create: { name: "Test HH" } } }
         });
         testAdminId = admin.id;
         (getServerSession as jest.Mock).mockResolvedValue({
@@ -41,7 +47,10 @@ describe('Bulk import: malformed row among valid rows', () => {
         });
     });
 
-    afterAll(cleanup);
+    afterAll(async () => {
+        await removeActor();
+        await cleanup();
+    });
     afterEach(cleanup);
 
     const csvForm = (data: (string | number)[][]) => {

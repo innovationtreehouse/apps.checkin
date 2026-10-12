@@ -30,6 +30,8 @@ export const SYSTEM_ACTORS = [
     "system:membership-external-advance",
     "system:person-bg-open",
     "system:person-agreement-open",
+    "system:bootstrap-sysadmin",
+    "system:dev-seed",
     "webhook:zoho-contract",
     "webhook:shopify-order",
     "webhook:shopify-receipt",
