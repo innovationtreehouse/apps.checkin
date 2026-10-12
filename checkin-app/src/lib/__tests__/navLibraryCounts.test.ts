@@ -52,6 +52,7 @@ describe("library badge pattern", () => {
     member: { household: [], programs: [], programsAwaitingFinance: 0 },
     building: 0,
     buildingHousehold: 0,
+    buildingReachable: true,
     activePrograms: 0,
     libraries: { expense: { holds: 3 } },
   } as TodoCounts;

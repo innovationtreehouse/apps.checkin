@@ -57,10 +57,11 @@ beforeEach(() => {
   mockedUseTodoCounts.mockReturnValue(counts());
 });
 
-const counts = (extra: Partial<TodoCounts> = {}): TodoCounts => ({
+const counts = (extra: Partial<Pick<TodoCounts, "lead" | "libraries" | "releasedLibraries">> = {}): TodoCounts => ({
   member: { household: [], programs: [], programsAwaitingFinance: 0 },
   building: 0,
   buildingHousehold: 0,
+  buildingReachable: true,
   activePrograms: 0,
   releasedLibraries: [...LIBRARY_KEYS],
   ...extra,
