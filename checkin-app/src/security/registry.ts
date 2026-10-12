@@ -322,6 +322,21 @@ defineRoute({
     ],
 });
 
+// Board records a membership refund already made in Shopify. Board-only: a refund
+// is a money decision the policy gives the board, and sysadmin has no counterpart
+// there. The response echoes the application's id and new status and nothing
+// else, so the grant stops at internal with no pii/personal band.
+defineRoute({
+    endpoint: 'POST /api/membership-ops/applications/refund',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: 'process',
+    // Bag: { OrgMembershipProcess }, no relations.
+    returns: ['OrgMembershipProcess'],
+    orderedView: [
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+
 // Board's in-flight membership applications. Exposes every applicant household's
 // PII (parents + children names/emails), so only isSysadmin/board may see it, and
 // the field grant is explicit per role.
