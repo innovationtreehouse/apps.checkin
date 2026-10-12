@@ -90,7 +90,7 @@ describe("AppFrame library nav slots", () => {
   });
 
   it("program lead: My Programs and Inventory, no Ops sections", () => {
-    setSession({ id: 3, programsLed: [9] });
+    setSession({ id: 3, programsLed: [9], ageBand: "adult", isActiveOrgMember: true });
     mockedUseTodoCounts.mockReturnValue(counts({ lead: { programs: [{ id: 9, name: "P", totalEnrolled: 0, pending: [], upcoming: [] }] } }));
     renderFrame();
     expect(hrefOf("My Programs")).toBe("/my-programs");
@@ -107,6 +107,24 @@ describe("AppFrame library nav slots", () => {
     const labels = screen.getAllByRole("link").map((a) => a.textContent);
     expect(labels.indexOf("My Receipts")).toBe(labels.indexOf("My Activities") + 1);
     expect(screen.queryByText("Revenue Ops")).not.toBeInTheDocument();
+  });
+
+  it("volunteer designation alone: no Inventory", () => {
+    setSession({ id: 6, hasVolunteerDesignation: true });
+    renderFrame();
+    expect(screen.queryByText("Inventory")).not.toBeInTheDocument();
+  });
+
+  it("active youth program volunteer: Inventory", () => {
+    setSession({ id: 7, ageBand: "youth", isProgramVolunteer: true, isActiveOrgMember: true });
+    renderFrame();
+    expect(hrefOf("Inventory")).toBe("/catalog/items");
+  });
+
+  it("program volunteer without an ACTIVE membership: no Inventory", () => {
+    setSession({ id: 8, ageBand: "adult", isProgramVolunteer: true, isActiveOrgMember: false });
+    renderFrame();
+    expect(screen.queryByText("Inventory")).not.toBeInTheDocument();
   });
 
   it("hides an unreleased library's tab from non-Board and keeps it for Board", () => {
