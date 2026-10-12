@@ -33,6 +33,23 @@ runs:
       shell: bash
       run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+    # The deploy role has no ECR Public access; the pull-only role authenticates
+    # the base-image pull, then the deploy role is assumed below.
+    - name: Configure AWS credentials for image pulls (OIDC)
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
+        aws-region: ${{ inputs.aws-region }}
+
+    - name: Log in to Amazon ECR Public
+      uses: aws-actions/amazon-ecr-login@v2
+      with:
+        registry-type: public
+
+    - name: Pull base image
+      shell: bash
+      run: bash scripts/ci-pull-image.sh public.ecr.aws/docker/library/node:22-slim
+
     - name: Configure AWS credentials (OIDC)
       uses: aws-actions/configure-aws-credentials@v6
       with:

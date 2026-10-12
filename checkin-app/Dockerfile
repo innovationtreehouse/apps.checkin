@@ -14,7 +14,7 @@ RUN find packages -mindepth 2 -maxdepth 2 \
       -exec rm -rf {} +
 
 # Stage 1: Install dependencies (whole workspace, hoisted to /app/node_modules)
-FROM node:24-alpine AS deps
+FROM public.ecr.aws/docker/library/node:24-alpine AS deps
 WORKDIR /app
 # Copy only the manifests + lockfile first for a cache-friendly `npm ci` layer.
 COPY package.json package-lock.json* ./
@@ -26,7 +26,7 @@ COPY checkin-app/scripts ./checkin-app/scripts
 RUN npm ci
 
 # Stage 2: Build the app
-FROM node:24-alpine AS builder
+FROM public.ecr.aws/docker/library/node:24-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 # npm does not hoist remote-tarball deps (xlsx is pinned to the SheetJS CDN
@@ -95,7 +95,7 @@ RUN mkdir /libs && scripts/each-library.sh exec --call 'out="/libs/packages/${PW
       && ln -s ../../checkin-app/node_modules "$out/node_modules"'
 
 # Stage 3: Production image
-FROM node:24-alpine AS runner
+FROM public.ecr.aws/docker/library/node:24-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 

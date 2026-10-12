@@ -44,6 +44,7 @@ env:
   APP_TASK_FAMILY: checkin-dev
   MIGRATE_TASK_FAMILY: checkin-migrate-dev
   DEPLOY_ROLE: arn:aws:iam::639595353568:role/checkin-deploy-dev
+  PULL_ROLE: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
   APP_URL: https://ops-dev.innovationtreehouse.org
 
 jobs:
@@ -84,6 +85,22 @@ jobs:
           DESCRIBE=$(git describe --tags --long --abbrev=7 --always)
           echo "describe=$DESCRIBE" >> "$GITHUB_OUTPUT"
           echo "build describe: $DESCRIBE"
+
+      # The deploy role has no ECR Public access; the pull-only role authenticates
+      # the base-image pull, then the deploy role is assumed below.
+      - name: Configure AWS credentials for image pulls (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.PULL_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR Public
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - name: Pull base image
+        run: bash scripts/ci-pull-image.sh public.ecr.aws/docker/library/node:24-alpine
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
