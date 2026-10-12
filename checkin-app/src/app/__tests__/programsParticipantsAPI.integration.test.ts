@@ -924,7 +924,7 @@ describe('Program Participants API Integration Tests', () => {
                 expect(res.status).toBe(200);
                 const withdrawData = await res.json();
                 expect(withdrawData.warning).toBeUndefined();
-                // Scholarship release path already fires +1 (released:true); it is
+                // Scholarship release path already fires +1; it is
                 // NOT the manual-restock notice case.
                 expect(withdrawData.notice).toBeUndefined();
                 expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory by 1 for variant: dev-mock-variant-withdraw-partic'));
@@ -1147,6 +1147,81 @@ describe('Program Participants API Integration Tests', () => {
                 process.env.CHECKIN_ENV = prevCheckinEnv;
                 await prisma.programParticipant.deleteMany({ where: { programId: uncappedProgram.id } });
                 await prisma.program.delete({ where: { id: uncappedProgram.id } });
+            }
+        });
+
+        it('allows a household lead to withdraw their own child', async () => {
+            await prisma.programParticipant.upsert({
+                where: { programId_personId: { programId: freeProgramId, personId: youthDepId } },
+                create: { programId: freeProgramId, personId: youthDepId, status: 'ACTIVE' },
+                update: { status: 'ACTIVE' },
+            });
+            // No board flag on the session: the household-lead path alone must admit it.
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId } });
+
+            const res = await DELETE(
+                new Request(`http://localhost:4000/api/programs/${freeProgramId}/participants`, {
+                    method: 'DELETE',
+                    body: JSON.stringify({ participantId: youthDepId }),
+                }) as unknown as import("next/server").NextRequest,
+                createParams(freeProgramId) as unknown as never,
+            );
+            expect(res.status).toBe(200);
+            const row = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId: freeProgramId, personId: youthDepId } },
+            });
+            expect(row).toBeNull();
+        });
+
+        it("refuses a household lead withdrawing another household's child", async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId } });
+
+            const res = await DELETE(
+                new Request(`http://localhost:4000/api/programs/${fullProgramId}/participants`, {
+                    method: 'DELETE',
+                    body: JSON.stringify({ participantId: otherId }),
+                }) as unknown as import("next/server").NextRequest,
+                createParams(fullProgramId) as unknown as never,
+            );
+            expect(res.status).toBe(403);
+            const row = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId: fullProgramId, personId: otherId } },
+            });
+            expect(row).not.toBeNull();
+        });
+
+        // Lead mentors must never learn scholarship / payment-plan status, so
+        // withdrawing a scholarship-held seat must look like any other removal.
+        it('gives a lead mentor no scholarship information when withdrawing a held seat', async () => {
+            const prevCheckinEnv = process.env.CHECKIN_ENV;
+            process.env.CHECKIN_ENV = 'local';
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            const shopifyProgram = await prisma.program.create({
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Held Lead Partic API Test', enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-held-lead', leadMentorId: leadId },
+            });
+            try {
+                await prisma.programParticipant.create({
+                    data: { programId: shopifyProgram.id, personId: commonId, status: 'PENDING', inventoryHeldAt: new Date(), paymentPlanDeniedAt: new Date() },
+                });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
+                        method: 'DELETE',
+                        headers: { cookie: 'session=test' },
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(shopifyProgram.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                expect(await res.json()).toEqual({ success: true });
+                // The hold is still released server-side.
+                expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory by 1 for variant: dev-mock-variant-held-lead'));
+            } finally {
+                logSpy.mockRestore();
+                process.env.CHECKIN_ENV = prevCheckinEnv;
+                await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
+                await prisma.program.delete({ where: { id: shopifyProgram.id } });
             }
         });
     });
