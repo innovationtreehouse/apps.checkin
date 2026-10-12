@@ -20,6 +20,7 @@
 import type { Prisma, OrgMembershipStatus } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 import type { AuditActor } from "@/lib/auditActor";
+import { LIVE_PERSON } from "@/lib/person/filters";
 import { fromStatusWhere, isLegalTransition, type Transition, type Expect, type Equal } from "@/lib/lifecycle";
 
 export type HouseholdStatus = "NONE" | "ACTIVE" | "REVOKED" | "DENIED";
@@ -132,7 +133,7 @@ export async function raiseDeniedHouseholdActivity(ref: {
     const personId = ref.processId || ref.personId
         ? ref.personId ?? null
         : (await prisma.person.findFirst({
-              where: { householdId: ref.householdId },
+              where: { householdId: ref.householdId, ...LIVE_PERSON },
               orderBy: [{ isHouseholdLead: "desc" }, { id: "asc" }],
               select: { id: true },
           }))?.id ?? null;
