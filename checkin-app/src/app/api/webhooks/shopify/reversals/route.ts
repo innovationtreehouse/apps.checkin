@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { logger } from "@/lib/logger";
 import { withWebhook } from "@/lib/webhookAuth";
 import { config } from "@/lib/config";
-import { raiseReversalByOrderId, type PaymentExceptionKind } from "@/lib/finance/reconcile";
+import { raiseReversalByOrderId, type PaymentExceptionKind, type RestockedLine } from "@/lib/finance/reconcile";
 import { recordShopifyWebhookReceipt } from "@/lib/shopifyWebhookReceipt";
 
 /**
@@ -16,7 +16,8 @@ import { recordShopifyWebhookReceipt } from "@/lib/shopifyWebhookReceipt";
  *
  * Each maps the affected Shopify order id to the membership process / program
  * enrollment it activated and raises a PaymentException (board decides — we never
- * auto-revert access). Whatever this drops, the daily reconciler still catches (within ~24h).
+ * auto-revert access, except removing a program enrollment whose seat the refund
+ * restocked; see raiseReversalByOrderId). Whatever this drops, the daily reconciler still catches (within ~24h).
  * Same HMAC verify as the orders/paid route; the topic rides the x-shopify-topic
  * header.
  */
@@ -25,6 +26,14 @@ interface ReversalPayload {
     // orders/cancelled: the order object → id. refunds/create & disputes/*: order_id.
     id?: number | string;
     order_id?: number | string;
+    // refunds/create only.
+    refund_line_items?: { quantity?: number; restock_type?: string; line_item?: { variant_id?: number | string | null } }[];
+}
+
+function restockedLines(payload: ReversalPayload): RestockedLine[] {
+    return (payload.refund_line_items ?? [])
+        .filter((l) => l.restock_type && l.restock_type !== "no_restock" && l.line_item?.variant_id != null)
+        .map((l) => ({ variantId: String(l.line_item?.variant_id), quantity: l.quantity ?? 1 }));
 }
 
 function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: false; status: number; error: string } {
@@ -67,7 +76,7 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
         outcome = `${topic}: no order id in payload — ignored`;
         logger.warn(`[SHOPIFY REVERSAL] ${outcome}`);
     } else {
-        const matched = await raiseReversalByOrderId(String(orderId), kind);
+        const matched = await raiseReversalByOrderId(String(orderId), kind, restockedLines(payload));
         outcome = matched
             ? `${topic}: raised ${kind} for order ${orderId}`
             : `${topic}: order ${orderId} not tied to any membership/enrollment — ignored`;

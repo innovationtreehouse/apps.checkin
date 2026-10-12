@@ -1695,9 +1695,10 @@ model PaymentException {
   /// @sensitivity:internal
   detectedAt           DateTime                 @default(now())
 
-  // Idempotent re-detection: one open row per (kind, order) across daily runs —
-  // the reconciler upserts on this key instead of duplicating each run.
-  @@unique([kind, shopifyOrderId])
+  // Idempotent re-detection: one row per (kind, order, person) across daily runs —
+  // the reconciler upserts on this key, so every person on a multi-person order
+  // gets their own row.
+  @@unique([kind, shopifyOrderId, personId])
   @@index([status, severity])
 }
 
