@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Alert, Badge, Box, Button, Card, Group, Modal, Paper, Stack, Switch, Table, Text, TextInput, UnstyledButton } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { modals } from "@mantine/modals";
 import { IconChevronDown, IconChevronUp, IconSelector } from "@tabler/icons-react";
 import { EntityPicker } from "@/components/admin/EntityPicker";
 import { AdminEditHouseholdModal } from "@/components/admin/AdminEditHouseholdModal";
@@ -172,16 +173,35 @@ export default function AdminParticipantsIndex() {
     }
   };
 
-  const handleEditParticipant = async (e: React.FormEvent) => {
+  const handleEditParticipant = (e: React.FormEvent) => {
     e.preventDefault();
+    saveParticipant(false);
+  };
+
+  const saveParticipant = async (confirmBgStale: boolean) => {
     if (!editingParticipant) return;
     setSavingDetails(true);
     try {
       const res = await fetch(`/api/membership-ops/participants/${editingParticipant.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editForm)
+        body: JSON.stringify({ ...editForm, confirmBgStale })
       });
+      if (res.status === 409) {
+        const data = await res.json().catch(() => ({}));
+        if (data.requiresConfirmation) {
+          modals.openConfirmModal({
+            title: "Background check will no longer be valid",
+            children: <Text size="sm">{data.warning}</Text>,
+            labels: { confirm: "Save anyway", cancel: "Cancel" },
+            confirmProps: { color: "orange" },
+            onConfirm: () => saveParticipant(true),
+          });
+        } else {
+          showNotification(data.error || "Failed to update person", "error");
+        }
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setResults(results.map(p => p.id === editingParticipant.id ? { ...p, ...data.participant } : p));
