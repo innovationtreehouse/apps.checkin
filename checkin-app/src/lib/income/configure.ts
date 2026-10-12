@@ -11,6 +11,9 @@
  * - deposits: QuickBooks deposit reads over checkin's one token source, bound
  *   only where QBO_REALM_ID is set. Without a published token every read
  *   throws, so a run fails and writes nothing.
+ * - bankAccountId: the QuickBooks bank account payouts land in, from
+ *   QBO_INCOME_BANK_ACCOUNT_ID. Unset, a run answers "unbound" and matches
+ *   nothing.
  * - owners: checkin's budget-owner buckets.
  */
 import {
@@ -89,6 +92,7 @@ export function configureRuntime(): void {
     org: getOrg,
     mirror: mirrorConfigured() ? payoutMirror : undefined,
     deposits: depositSource(),
+    bankAccountId: process.env.QBO_INCOME_BANK_ACCOUNT_ID || undefined,
     owners,
   });
 }
