@@ -1,13 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Button, Card, Group, Stack, Text, Textarea, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { APP_TIMEZONE, formatDate } from "@/lib/time";
 
-type Signing = {
+export type Signing = {
   processId: number;
-  status: string;
   contractStarted: boolean;
   signerName: string | null;
   contractSignedAt: string | null;
@@ -15,18 +14,10 @@ type Signing = {
 
 // Board view of a household's agreement signing: who signed, or whose request is
 // open, with "Reset signing" to recall a stuck request so another lead can sign.
-export function SigningStatusCard({ householdId }: { householdId: number }) {
-  const [signing, setSigning] = useState<Signing | null>(null);
+export function SigningStatusCard({ signing, onChange }: { signing: Signing | null; onChange: () => void }) {
   const [resetting, setResetting] = useState(false);
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
-
-  const load = useCallback(() => fetch(`/api/membership-ops/applications/external?householdId=${householdId}`)
-    .then((res) => (res.ok ? res.json() : null))
-    .then((data) => setSigning(data?.signing ?? null))
-    .catch(() => { /* card stays hidden */ }), [householdId]);
-
-  useEffect(() => { load(); }, [load]);
 
   if (!signing || (!signing.contractSignedAt && !signing.contractStarted && !signing.signerName)) return null;
 
@@ -43,7 +34,7 @@ export function SigningStatusCard({ householdId }: { householdId: number }) {
         notifications.show({ message: "Signing reset. The next lead to click sign gets a new request." });
         setResetting(false);
         setReason("");
-        await load();
+        onChange();
       } else {
         notifications.show({ color: "red", message: data?.error ?? "Couldn't reset the signing.", autoClose: false });
       }

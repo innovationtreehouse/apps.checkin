@@ -31,7 +31,8 @@ jest.mock('@/lib/membership/contract/zohoClient', () => ({
 
 // Imported AFTER the mocks so the route picks up the mocked client.
 import { POST as SIGN } from '@/app/api/membership/contract/sign/route';
-import { POST as BOARD_EXTERNAL, GET as BOARD_EXTERNAL_GET } from '@/app/api/membership-ops/applications/external/route';
+import { POST as BOARD_EXTERNAL } from '@/app/api/membership-ops/applications/external/route';
+import { GET as HOUSEHOLD_GET } from '@/app/api/membership-ops/households/route';
 // loadAgreementPdf is the jest.fn from the mock above; AgreementUnavailableError is
 // the real class (requireActual spread) so `instanceof` in external.ts matches.
 import { loadAgreementPdf, AgreementUnavailableError } from '@/lib/membership/contract/agreementDocument';
@@ -289,11 +290,10 @@ describe('POST /api/membership/contract/sign', () => {
         });
         expect(zoho.createRequest).toHaveBeenCalledTimes(1);
 
-        const signingReq = () => new Request(`http://localhost:4000/api/membership-ops/applications/external?householdId=${hh.id}`) as unknown as Parameters<typeof BOARD_EXTERNAL_GET>[0];
-        expect((await BOARD_EXTERNAL_GET(signingReq())).status).toBe(403); // a lead is not the board
-
+        // The board's household detail shows who the open request is addressed to.
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: board.id, isSysadmin: false, isBoardMember: true } });
-        expect((await (await BOARD_EXTERNAL_GET(signingReq())).json()).signing).toMatchObject({
+        const householdReq = new Request(`http://localhost:4000/api/membership-ops/households?id=${hh.id}`) as unknown as Parameters<typeof HOUSEHOLD_GET>[0];
+        expect((await (await HOUSEHOLD_GET(householdReq)).json()).signing).toMatchObject({
             processId: proc.id, contractStarted: true, signerName: 'Alex Lead', contractSignedAt: null,
         });
         const boardReq = (body: object) => new Request('http://localhost:4000/api/membership-ops/applications/external', {

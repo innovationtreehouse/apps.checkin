@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { markContractSigned, markBgConsent, setZohoEnvelope, resetSigning, getExternalStatus, ExternalError } from "@/lib/membership/external";
+import { markContractSigned, markBgConsent, setZohoEnvelope, resetSigning, ExternalError } from "@/lib/membership/external";
 import { applicantHousehold } from "@/lib/membership/review";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { apiError } from "@/lib/api-response";
@@ -21,24 +21,6 @@ export const dynamic = "force-dynamic";
  * Completing the contract + background-check consent advances the application to
  * PENDING_PAYMENT; the background check then reviews in parallel with payment.
  */
-/**
- * GET /api/membership-ops/applications/external?householdId=N — the signing state
- * of the household's latest application: who the request is addressed to (or who
- * signed), so the board can see it and reset a stuck request.
- */
-export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req) => {
-    const householdId = Number(new URL(req.url).searchParams.get("householdId"));
-    if (!Number.isInteger(householdId) || householdId <= 0) return apiError("householdId is required", 400);
-    const process = await prisma.orgMembershipProcess.findFirst({
-        where: { orgMembership: { householdId } },
-        orderBy: { id: "desc" },
-        select: { id: true, status: true, contractSignedAt: true, bgConsentAt: true, bgClearedAt: true, zohoEnvelopeId: true, zohoSignerPersonId: true },
-    });
-    if (!process) return NextResponse.json({ signing: null });
-    const { contractStarted, signerName, contractSignedAt } = await getExternalStatus(process);
-    return NextResponse.json({ signing: { processId: process.id, status: process.status, contractStarted, signerName, contractSignedAt } });
-});
-
 export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
     const actorId = auth.user.id;

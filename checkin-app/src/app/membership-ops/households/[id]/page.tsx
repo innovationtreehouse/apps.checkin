@@ -8,7 +8,7 @@ import { useRequireRole } from "@/hooks/useRequireRole";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { formatDateOnly } from "@/lib/time";
 import { isMembershipLapsed } from "@/lib/membership/lapsed";
-import { SigningStatusCard } from "@/components/membership/SigningStatusCard";
+import { SigningStatusCard, type Signing } from "@/components/membership/SigningStatusCard";
 
 type Enrollment = {
   status: "PENDING" | "ACTIVE";
@@ -44,6 +44,7 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
   const [household, setHousehold] = useState<Household | null>(null);
   const [loading, setLoading] = useState(true);
   const [validUntil, setValidUntil] = useState<string | null>(null);
+  const [signing, setSigning] = useState<Signing | null>(null);
 
   const fetchHousehold = useCallback(() => fetch(`/api/membership-ops/households?id=${id}`)
     .then(async (res) => {
@@ -51,6 +52,7 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
         const data = await res.json();
         setHousehold(data.household);
         setValidUntil(data.validUntil ?? null);
+        setSigning(data.signing ?? null);
       } else {
         notifications.show({ color: "red", message: "Failed to load household.", autoClose: false });
       }
@@ -109,7 +111,7 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
         <Text size="sm" c="dimmed">BG valid until: {fmtDate(household.bgValidUntil)}</Text>
       </Group>
 
-      <SigningStatusCard householdId={household.id} />
+      <SigningStatusCard signing={signing} onChange={fetchHousehold} />
 
       {members.length === 0 ? (
         <Text c="dimmed" fs="italic">No people in this household.</Text>
