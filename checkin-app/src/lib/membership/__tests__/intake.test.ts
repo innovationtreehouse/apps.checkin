@@ -34,6 +34,7 @@ jest.mock('@/lib/prisma', () => ({
         orgMembershipProcess: { findFirst: jest.fn(), update: jest.fn() },
         boardSettings: { findUnique: jest.fn() },
         auditLog: { create: jest.fn() },
+        volunteerDesignation: { findMany: jest.fn() },
         $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(tx)),
     },
 }));
@@ -275,6 +276,24 @@ describe('saveIntake', () => {
     beforeEach(() => {
         prisma.person.findUnique.mockResolvedValue(baseUser);
         getExternalStatus.mockResolvedValue(null);
+        prisma.volunteerDesignation.findMany.mockResolvedValue([{ email: 'volunteer@gmail.com' }]);
+    });
+
+    // Designated addresses are set on a person only by the board.
+    it('refuses a new second parent with a designated address, saving nothing', async () => {
+        await expect(saveIntake(1, {
+            household: { notes: 'n' },
+            secondaryParent: { name: 'New Parent', email: 'Volun.teer+x@gmail.com' },
+        })).rejects.toMatchObject({ code: 'email_designated', fields: ['secondaryParent'] });
+        expect(prisma.household.update).not.toHaveBeenCalled();
+        expect(prisma.person.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a new child with a designated address, saving nothing', async () => {
+        await expect(saveIntake(1, {
+            children: [{ name: 'Kid', email: 'VOLUNTEER@googlemail.com' }],
+        })).rejects.toMatchObject({ code: 'email_designated', fields: ['children'] });
+        expect(prisma.person.create).not.toHaveBeenCalled();
     });
 
     it('no_household when the caller has no participant row', async () => {

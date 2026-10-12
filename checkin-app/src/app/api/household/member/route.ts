@@ -13,6 +13,7 @@ import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { getEmailSenderIdentity } from "@/lib/emailIdentity";
 import { signInEmailHelp } from "@/lib/person/signInEmail";
+import { isDesignatedEmail, DESIGNATED_EMAIL_REFUSAL } from "@/lib/membership/volunteerDesignation";
 
 export const PATCH = withAuth(
     {},
@@ -66,6 +67,10 @@ export const PATCH = withAuth(
             if (email !== undefined && targetHouseholdMember._count.accounts > 0) {
                 const { replyTo } = await getEmailSenderIdentity();
                 return apiError(signInEmailHelp(replyTo?.[0]), 400);
+            }
+
+            if (email && await isDesignatedEmail(prisma, email)) {
+                return apiError(DESIGNATED_EMAIL_REFUSAL, 400);
             }
 
             const { updatedHouseholdMember, leadRejection, warning } = await prisma.$transaction(async (tx) => {

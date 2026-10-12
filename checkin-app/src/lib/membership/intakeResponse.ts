@@ -11,6 +11,7 @@ const STATUS_FOR: Record<IntakeError["code"], number> = {
     incomplete: 400,
     lead_limit: 400,
     name_required: 400,
+    email_designated: 400,
 };
 
 /**

@@ -31,6 +31,7 @@ jest.mock("@/lib/prisma", () => ({
     default: {
         person: { findUnique: jest.fn() },
         boardSettings: { findUnique: jest.fn() },
+        volunteerDesignation: { findMany: jest.fn().mockResolvedValue([]) },
         $transaction: jest.fn((fn: (t: unknown) => unknown) => fn(tx)),
     },
 }));

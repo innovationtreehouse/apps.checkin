@@ -15,6 +15,7 @@ import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { getEmailSenderIdentity } from "@/lib/emailIdentity";
 import { membershipValidThrough } from "@/lib/orgMembership";
+import { isDesignatedEmail, DESIGNATED_EMAIL_REFUSAL } from "@/lib/membership/volunteerDesignation";
 
 export const GET = withAuth(
     {},
@@ -101,6 +102,10 @@ export const PATCH = withAuth(
 
             if (memberEmail && !isValidEmail(memberEmail)) {
                 return apiError("Invalid email format", 400);
+            }
+
+            if (memberEmail && await isDesignatedEmail(prisma, memberEmail)) {
+                return apiError(DESIGNATED_EMAIL_REFUSAL, 400);
             }
 
             if (memberPhone && !isValidPhone(memberPhone)) {

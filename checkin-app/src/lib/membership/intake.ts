@@ -13,6 +13,7 @@ import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
 import { withTx } from "@/lib/db-client";
+import { isDesignatedEmail, DESIGNATED_EMAIL_REFUSAL } from "@/lib/membership/volunteerDesignation";
 
 /**
  * Membership intake service — the write/read model behind the "Join the
@@ -33,7 +34,7 @@ export class IntakeError extends Error {
      *                "primaryName".
      */
     constructor(
-        public readonly code: "no_household" | "not_lead" | "already_member" | "no_process" | "incomplete" | "lead_limit" | "name_required",
+        public readonly code: "no_household" | "not_lead" | "already_member" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated",
         message: string,
         public readonly fields?: string[],
     ) {
@@ -234,6 +235,19 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
     assertLead(user);
     const householdId = user.householdId!;
     const householdMemberIds = new Set((user.household?.householdMembers ?? []).map((p) => p.id));
+
+    // Checked before any write: the save is a sequence of autocommit statements.
+    // Only a newly created person takes an email here.
+    const isNew = (p: { id?: number }) => !(p.id && householdMemberIds.has(p.id));
+    const newPeople = [
+        ...(input.secondaryParent && isNew(input.secondaryParent) ? [{ email: input.secondaryParent.email, field: "secondaryParent" }] : []),
+        ...(input.children ?? []).filter(isNew).map((c) => ({ email: c.email, field: "children" })),
+    ];
+    for (const { email, field } of newPeople) {
+        if (email && await isDesignatedEmail(prisma, email)) {
+            throw new IntakeError("email_designated", DESIGNATED_EMAIL_REFUSAL, [field]);
+        }
+    }
 
     // Promote a guardian to household lead. The per-household cap (#269) is a
     // soft stop here, not a hard failure: the guardian's other details are still

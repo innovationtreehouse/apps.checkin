@@ -48,7 +48,7 @@ describe('Membership settings + volunteer designations API', () => {
         boardId = (await prisma.person.create({ data: { email: `board-${TAG}@example.com`, name: 'Board', isBoardMember: true, household: { create: { name: `Board HH ${TAG}` } } } })).id;
         plainId = (await prisma.person.create({ data: { email: `plain-${TAG}@example.com`, name: 'Plain', household: { create: { name: `Plain HH ${TAG}` } } } })).id;
 
-        // A full-price active member, for the designation warning.
+        // A full-price active member, for the designation confirm flow.
         await prisma.person.create({
             data: { email: `fullmember-${TAG}@example.com`, name: 'Full', household: { create: { name: `Full HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE', isVolunteer: false } } } } },
         });
@@ -163,12 +163,22 @@ describe('Membership settings + volunteer designations API', () => {
         expect(after).toBeNull();
     });
 
-    it('warns when designating an already-active full-price member', async () => {
+    it("shows an existing member's household and sets isVolunteer only on confirm", async () => {
         asBoard(boardId);
-        const res = await DESIG_POST(jsonReq('POST', { email: `fullmember-${TAG}@example.com` }));
-        expect(res.status).toBe(201);
-        const data = await res.json();
-        expect(data.warning).toBeTruthy();
+        const email = `fullmember-${TAG}@example.com`;
+        const household = await prisma.household.findFirstOrThrow({ where: { name: `Full HH ${TAG}` }, include: { orgMembership: true } });
+
+        const preview = await DESIG_POST(jsonReq('POST', { email }));
+        expect(preview.status).toBe(200);
+        expect(await preview.json()).toMatchObject({ requiresConfirmation: true, match: { householdId: household.id, householdName: `Full HH ${TAG}` } });
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: household.orgMembership!.id } })).isVolunteer).toBe(false);
+
+        const confirm = await DESIG_POST(jsonReq('POST', { email, confirmHouseholdId: household.id }));
+        expect(confirm.status).toBe(200);
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: household.orgMembership!.id } })).isVolunteer).toBe(true);
+        const audit = await prisma.auditLog.findFirst({ where: { tableName: 'OrgMembership', affectedEntityId: household.orgMembership!.id, actorId: boardId } });
+        expect(audit?.newData).toEqual({ isVolunteer: true });
+        expect(await prisma.volunteerDesignation.count({ where: { email } })).toBe(0);
     });
 
     it('treats inbox variants of a designated email as already designated', async () => {

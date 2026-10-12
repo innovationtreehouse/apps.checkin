@@ -21,12 +21,16 @@ export const GET = handler('GET /api/settings/membership/volunteer-designations'
 });
 
 /**
- * POST — designate an email as a volunteer household. Body: { email }.
- * Non-blocking warning if that email already has an ACTIVE, full-price membership.
+ * POST — designate a volunteer household. Body: { email, confirmHouseholdId? }.
+ *
+ * An address that canonically matches a person already in the app is never
+ * stored: the response shows the match, and only a confirm naming that person's
+ * household sets its OrgMembership.isVolunteer (audited). An address with no
+ * such household membership is stored as a designation, the dues preload.
  */
 export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
-    let body: { email?: string };
+    let body: { email?: string; confirmHouseholdId?: number };
     try {
         body = await req.json();
     } catch {
@@ -46,21 +50,55 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
         return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);
     }
 
+    // ponytail: O(n) scan over people with an email, no indexed canonical column
+    // — same tradeoff as volunteer-memberships, fine at this org's scale.
+    const people = await prisma.person.findMany({
+        where: { email: { not: null }, householdId: { not: null }, ...LIVE_PERSON },
+        select: {
+            name: true,
+            email: true,
+            household: { select: { id: true, name: true, orgMembership: { select: { id: true, isVolunteer: true } } } },
+        },
+    });
+    const matches = people.filter((p) => p.household?.orgMembership && canonicalizeEmail(p.email!) === email);
+
+    if (matches.length > 0) {
+        if (new Set(matches.map((p) => p.household!.id)).size > 1) {
+            return apiError("This email matches people in more than one household. Set the volunteer checkbox on the household instead.", 409);
+        }
+        const { name: personName, household } = matches[0];
+        const { id: householdId, name: householdName, orgMembership } = household!;
+        const membership = orgMembership!;
+        if (body.confirmHouseholdId === undefined) {
+            return NextResponse.json({
+                requiresConfirmation: true,
+                match: { personName, householdId, householdName, isVolunteer: membership.isVolunteer },
+            });
+        }
+        if (body.confirmHouseholdId !== householdId) {
+            return apiError("This email no longer matches that household. Look it up again.", 409);
+        }
+        await prisma.$transaction(async (tx) => {
+            await tx.orgMembership.update({ where: { id: membership.id }, data: { isVolunteer: true } });
+            await tx.auditLog.create({
+                data: {
+                    actorId: auth.user.id,
+                    action: "EDIT",
+                    tableName: "OrgMembership",
+                    affectedEntityId: membership.id,
+                    secondaryAffectedEntity: householdId,
+                    oldData: { isVolunteer: membership.isVolunteer },
+                    newData: { isVolunteer: true },
+                },
+            });
+        });
+        return NextResponse.json({ household: { id: householdId, name: householdName }, isVolunteer: true });
+    }
+
     // Canonicalize both sides: rows stored before canonicalization still dedupe.
     const all = await prisma.volunteerDesignation.findMany();
     const existing = all.find((d) => canonicalizeEmail(d.email) === email);
     if (existing) return NextResponse.json({ designation: existing, warning: "This email is already designated." });
-
-    // Non-blocking warning: is this email already an active full-price member?
-    let warning: string | undefined;
-    const participant = await prisma.person.findFirst({
-        where: { email: { equals: email, mode: "insensitive" }, ...LIVE_PERSON },
-        select: { household: { select: { orgMembership: { select: { status: true, isVolunteer: true } } } } },
-    });
-    const m = participant?.household?.orgMembership;
-    if (m?.status === "ACTIVE" && !m.isVolunteer) {
-        warning = "Heads up: this email already has an active full-price membership. The system can't change that — this designation only applies to their next membership cycle.";
-    }
 
     const designation = await prisma.$transaction(async (tx) => {
         const created = await tx.volunteerDesignation.create({ data: { email, createdById: auth.user.id } });
@@ -75,7 +113,7 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
         });
         return created;
     });
-    return NextResponse.json({ designation, warning }, { status: 201 });
+    return NextResponse.json({ designation }, { status: 201 });
 });
 
 /** DELETE — remove a designation. Query: ?id=<n>. */
