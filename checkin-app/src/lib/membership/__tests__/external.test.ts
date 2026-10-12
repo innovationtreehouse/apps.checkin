@@ -111,14 +111,14 @@ describe('setZohoEnvelope', () => {
 });
 
 describe('findProcessByEnvelope', () => {
-    it('looks up the live process by zohoEnvelopeId — archived/blocked never match', async () => {
+    it('looks up the process by zohoEnvelopeId — archived never matches, blocked still does', async () => {
         prisma.orgMembershipProcess.findFirst.mockResolvedValue({ id: 9 });
         const result = await findProcessByEnvelope('req-9');
         expect(prisma.orgMembershipProcess.findFirst).toHaveBeenCalledWith({
             where: { zohoEnvelopeId: 'req-9', status: { in: expect.not.arrayContaining(['ARCHIVED']) } },
         });
         const where = prisma.orgMembershipProcess.findFirst.mock.calls[0][0].where;
-        expect(where.status.in).not.toContain('BLOCKED');
+        expect(where.status.in).toContain('BLOCKED');
         expect(where.status.in).toContain('PENDING_EXTERNAL_ACTION');
         expect(result).toEqual({ id: 9 });
     });
@@ -364,9 +364,15 @@ describe('getOrCreateContractSigningUrl', () => {
         expect(stampWatermark).not.toHaveBeenCalled();
         expect(zohoSign.createRequest).toHaveBeenCalledTimes(1);
         expect(zohoSign.submitRequest).toHaveBeenCalledTimes(1);
-        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith(
-            expect.objectContaining({ data: { zohoEnvelopeId: 'req-1', zohoActionId: 'act-1', zohoSignerPersonId: 1 } }),
-        );
+        // Claimed for the caller BEFORE Zoho is called, then the ids stored under that claim.
+        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenNthCalledWith(1, {
+            where: { id: 20, zohoSignerPersonId: null, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
+            data: { zohoSignerPersonId: 1 },
+        });
+        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenNthCalledWith(2, {
+            where: { id: 20, zohoSignerPersonId: 1 },
+            data: { zohoEnvelopeId: 'req-1', zohoActionId: 'act-1' },
+        });
         expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
         expect(url).toBe('https://sign.example/embed');
     });
@@ -432,6 +438,7 @@ describe('getOrCreateContractSigningUrl', () => {
         prisma.person.findUnique.mockResolvedValue(leadUser);
         zohoSign.getAccessToken.mockResolvedValue('token-1');
         loadAgreementPdf.mockRejectedValue(new AgreementUnavailableError('no pdf yet'));
+        prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 }); // wins the claim, then releases it
 
         await expect(getOrCreateContractSigningUrl(1)).rejects.toMatchObject({ code: 'agreement_unavailable' });
     });
@@ -491,17 +498,41 @@ describe('getOrCreateContractSigningUrl', () => {
         expect(zohoSign.getEmbeddedSignUrl).not.toHaveBeenCalled();
     });
 
-    it("lost the create race to another lead → signing_in_progress, the winner's request is not embedded", async () => {
+    it('lost the claim to another lead → signing_in_progress before any Zoho request is created', async () => {
         prisma.person.findUnique
             .mockResolvedValueOnce(leadUser)
             .mockResolvedValueOnce({ name: 'Alex Lead', email: 'alex@example.com' });
         zohoSign.getAccessToken.mockResolvedValue('token-1');
-        zohoSign.createRequest.mockResolvedValue({ requestId: 'req-b', actionId: 'act-b', documentId: 'doc-b' });
         prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
-        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...pendingProcess, zohoEnvelopeId: 'req-a', zohoActionId: 'act-a', zohoSignerPersonId: 2 });
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...pendingProcess, zohoSignerPersonId: 2 });
 
         await expect(getOrCreateContractSigningUrl(1)).rejects.toMatchObject({ code: 'signing_in_progress' });
+        expect(zohoSign.createRequest).not.toHaveBeenCalled();
         expect(zohoSign.getEmbeddedSignUrl).not.toHaveBeenCalled();
+    });
+
+    it('own concurrent click still creating → wait message, no second Zoho request', async () => {
+        prisma.person.findUnique.mockResolvedValue(leadUser);
+        zohoSign.getAccessToken.mockResolvedValue('token-1');
+        prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...pendingProcess, zohoSignerPersonId: 1 });
+
+        await expect(getOrCreateContractSigningUrl(1)).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect(zohoSign.createRequest).not.toHaveBeenCalled();
+    });
+
+    it('a failed Zoho create releases the claim so the next click can retry', async () => {
+        prisma.person.findUnique.mockResolvedValue(leadUser);
+        zohoSign.getAccessToken.mockResolvedValue('token-1');
+        prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+        zohoSign.createRequest.mockRejectedValue(new Error('Zoho 500'));
+
+        await expect(getOrCreateContractSigningUrl(1)).rejects.toThrow('Zoho 500');
+        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenLastCalledWith({
+            where: { id: 20, zohoSignerPersonId: 1, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
+            data: { zohoSignerPersonId: null },
+        });
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
     });
 });
 
@@ -537,7 +568,7 @@ describe('resetSigning', () => {
 
         expect(zohoSign.recallRequest).toHaveBeenCalledWith('token-1', 'req-a');
         expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
-            where: { id: 20, zohoEnvelopeId: 'req-a', contractSignedAt: null },
+            where: { id: 20, zohoEnvelopeId: 'req-a', zohoSignerPersonId: 2, contractSignedAt: null },
             data: { zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null },
         });
         expect(prisma.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({
@@ -567,10 +598,22 @@ describe('resetSigning', () => {
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 
+    it('clears a claim whose create never finished, without calling Zoho', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...open, zohoEnvelopeId: null, zohoActionId: null });
+        prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+
+        await resetSigning(20, 9, 'stuck');
+
+        expect(zohoSign.recallRequest).not.toHaveBeenCalled();
+        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: 20, zohoEnvelopeId: null, zohoSignerPersonId: 2, contractSignedAt: null },
+        }));
+    });
+
     it('wrong_phase when already signed or nothing is open — Zoho is never called', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...open, contractSignedAt: new Date() });
         await expect(resetSigning(20, 9, 'x')).rejects.toMatchObject({ code: 'wrong_phase' });
-        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...open, zohoEnvelopeId: null });
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...open, zohoEnvelopeId: null, zohoSignerPersonId: null });
         await expect(resetSigning(20, 9, 'x')).rejects.toMatchObject({ code: 'wrong_phase' });
         expect(zohoSign.recallRequest).not.toHaveBeenCalled();
     });

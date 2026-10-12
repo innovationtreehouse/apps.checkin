@@ -31,7 +31,7 @@ jest.mock('@/lib/membership/contract/zohoClient', () => ({
 
 // Imported AFTER the mocks so the route picks up the mocked client.
 import { POST as SIGN } from '@/app/api/membership/contract/sign/route';
-import { POST as BOARD_EXTERNAL } from '@/app/api/membership-ops/applications/external/route';
+import { POST as BOARD_EXTERNAL, GET as BOARD_EXTERNAL_GET } from '@/app/api/membership-ops/applications/external/route';
 // loadAgreementPdf is the jest.fn from the mock above; AgreementUnavailableError is
 // the real class (requireActual spread) so `instanceof` in external.ts matches.
 import { loadAgreementPdf, AgreementUnavailableError } from '@/lib/membership/contract/agreementDocument';
@@ -133,22 +133,25 @@ describe('POST /api/membership/contract/sign', () => {
         expect(zoho.createRequest).toHaveBeenCalledTimes(1);
     });
 
-    it('survives two concurrent clicks: stores one request and embeds the same id for both', async () => {
+    it('survives two concurrent clicks: creates ONE Zoho request (claim first) and embeds only that id', async () => {
         // Distinct ids per create so a double-create would be detectable.
         let n = 0;
         (zoho.createRequest as jest.Mock).mockImplementation(async () => {
             n += 1;
             return { requestId: `REQ-C${n}`, actionId: `ACT-C${n}`, documentId: `DOC-C${n}` };
         });
-        await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { zohoEnvelopeId: null, zohoActionId: null } });
+        await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null } });
         asUser(leadId);
 
         const [r1, r2] = await Promise.all([SIGN(signReq()), SIGN(signReq())]);
-        expect(r1.status).toBe(200);
-        expect(r2.status).toBe(200);
+        // The claim's loser either reuses the stored request or is told to wait.
+        const statuses = [r1.status, r2.status].sort();
+        expect(statuses[0]).toBe(200);
+        expect([200, 409]).toContain(statuses[1]);
+        // Zoho bills per request: the claim lets only one click create.
+        expect(zoho.createRequest).toHaveBeenCalledTimes(1);
 
-        // Exactly one canonical request persisted, and every embed URL was minted
-        // against THAT id — no split brain even if both calls created at Zoho.
+        // Every embed URL was minted against the one stored request.
         const p = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(p?.zohoEnvelopeId).toBeTruthy();
         expect(p?.zohoActionId).toBeTruthy();
@@ -166,7 +169,7 @@ describe('POST /api/membership/contract/sign', () => {
         // setZohoEnvelope stores zohoEnvelopeId WITHOUT an action id — that pair
         // can't be embedded, so the in-app flow must re-create and overwrite it
         // rather than 409 forever on the incomplete pair.
-        await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { zohoEnvelopeId: 'LEGACY-ENV', zohoActionId: null } });
+        await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { zohoEnvelopeId: 'LEGACY-ENV', zohoActionId: null, zohoSignerPersonId: null } });
         asUser(leadId);
         const res = await SIGN(signReq());
         expect(res.status).toBe(200);
@@ -286,7 +289,13 @@ describe('POST /api/membership/contract/sign', () => {
         });
         expect(zoho.createRequest).toHaveBeenCalledTimes(1);
 
+        const signingReq = () => new Request(`http://localhost:4000/api/membership-ops/applications/external?householdId=${hh.id}`) as unknown as Parameters<typeof BOARD_EXTERNAL_GET>[0];
+        expect((await BOARD_EXTERNAL_GET(signingReq())).status).toBe(403); // a lead is not the board
+
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: board.id, isSysadmin: false, isBoardMember: true } });
+        expect((await (await BOARD_EXTERNAL_GET(signingReq())).json()).signing).toMatchObject({
+            processId: proc.id, contractStarted: true, signerName: 'Alex Lead', contractSignedAt: null,
+        });
         const boardReq = (body: object) => new Request('http://localhost:4000/api/membership-ops/applications/external', {
             method: 'POST', body: JSON.stringify(body),
         }) as unknown as Parameters<typeof BOARD_EXTERNAL>[0];

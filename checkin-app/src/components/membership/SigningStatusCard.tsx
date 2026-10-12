@@ -28,7 +28,7 @@ export function SigningStatusCard({ householdId }: { householdId: number }) {
 
   useEffect(() => { load(); }, [load]);
 
-  if (!signing || (!signing.contractSignedAt && !signing.contractStarted)) return null;
+  if (!signing || (!signing.contractSignedAt && !signing.contractStarted && !signing.signerName)) return null;
 
   const reset = async () => {
     setSaving(true);

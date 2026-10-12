@@ -425,10 +425,10 @@ export const RESTORABLE_STATUSES: ReadonlySet<ProcessStatus> = new Set(
 );
 
 /**
- * Processes a Zoho completion webhook may land on: anything but the closed states,
- * so an archived or blocked process is never stamped signed (and an archived
- * PERSON_AGREEMENT never revived).
+ * Processes a Zoho completion webhook may land on: anything but a closed
+ * (ARCHIVED) one, so an archived PERSON_AGREEMENT is never revived. BLOCKED is
+ * still live — the board may reset it — so a signature arriving then still counts.
  */
 export const zohoWebhookMatchable = defineStateSet<Where>()({
-    statuses: ALL_STATUSES.filter((s) => s !== "ARCHIVED" && s !== "BLOCKED"),
+    statuses: ALL_STATUSES.filter((s) => s !== "ARCHIVED"),
 });
