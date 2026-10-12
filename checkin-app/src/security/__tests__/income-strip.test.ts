@@ -122,6 +122,11 @@ describe('income field-stripping', () => {
         expect(out).toEqual({ id: 'v0' });
     });
 
+    it('IncomeOrgSettings: the finance view keeps every cap', () => {
+        const row = { orgId: 'treehouse', maxCreatesPerRun: 25, maxCreateCentsPerRun: 2_500_000 };
+        expect(stripValue(SETTINGS_MODEL, row, FINANCE_TOKENS, ctx())).toEqual(row);
+    });
+
     it('IncomeOrgSettings: a public-only view exposes nothing', () => {
         const out = stripValue(SETTINGS_MODEL, sampleRow(Object.keys(tiersOf(SETTINGS_MODEL))), ['public'], ctx());
         expect(out).toEqual({});

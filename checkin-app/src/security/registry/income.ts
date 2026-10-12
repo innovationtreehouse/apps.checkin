@@ -1,9 +1,10 @@
 // income library (#1283 §6/§7) route policy. Aggregated by ../registry.ts.
 import { defineRoute, type OrderedViewEntry } from '../core';
 
-// Reads admit FINANCE or BOARD; resolve, run, category mapping and exclusion
-// writes are FINANCE-only. Every income field except a row's `id` is `internal`
-// (§7), so both roles get the full internal view. No sysadmin view: Finance Ops
+// Reads and the settings PATCH admit FINANCE or BOARD; resolve, run, category
+// mapping and exclusion writes are FINANCE-only. The library, not the gate, lets
+// FINANCE only lower a settings cap; raising one takes BOARD. Every income field
+// except a row's `id` is `internal` (§7), so both roles get the full internal view. No sysadmin view: Finance Ops
 // excludes sysadmins (docs/rules/finance-payments.md).
 //
 // QB exclusions are GET + POST only — an exclusion is permanent, so there is no
@@ -16,13 +17,15 @@ const FINANCE_VIEW: readonly OrderedViewEntry[] = [
     ['isFinance', ['everyones:internal', 'public']],
 ];
 
-// Reads — FINANCE or BOARD.
+// FINANCE or BOARD — the reads, then the settings write.
 defineRoute({ endpoint: 'GET /api/income/payouts', authorize: 'finance-or-board', envelope: null, returns: ['IncomePayoutView'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/income/payouts/[gid]', authorize: 'finance-or-board', envelope: null, returns: ['IncomePayoutView', 'IncomeBalanceTxnView', 'PayoutReconciliation'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/income/reconciliation', authorize: 'finance-or-board', envelope: null, returns: ['PayoutReconciliation'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/income/reconciliation/count', authorize: 'finance-or-board', envelope: null, returns: ['IncomeReconciliationCount'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/income/items', authorize: 'finance-or-board', envelope: null, returns: ['IncomeItemView'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/income/qb-exclusions', authorize: 'finance-or-board', envelope: null, returns: ['IncomeQbMatchExclusion'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'GET /api/income/settings', authorize: 'finance-or-board', envelope: null, returns: ['IncomeOrgSettings'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'PATCH /api/income/settings', authorize: 'finance-or-board', envelope: null, returns: ['IncomeOrgSettings'], orderedView: FINANCE_OR_BOARD_VIEW });
 
 // FINANCE only — the live-QB candidate read, then the writes.
 defineRoute({ endpoint: 'GET /api/income/reconciliation/[id]/candidates', authorize: 'finance', envelope: null, returns: ['IncomeQbDepositView'], orderedView: FINANCE_VIEW });
