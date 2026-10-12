@@ -1,8 +1,10 @@
 import prisma from "@/lib/prisma";
-import { Prisma } from "@/generated/prisma/client";
+import { Prisma, type OrgMembershipProcess } from "@/generated/prisma/client";
 import { IN_FLIGHT_INITIAL_STATUSES } from "@/lib/membership/phases";
 import { getExternalStatus, advanceExternalIfComplete } from "@/lib/membership/external";
-import { householdBgIsFresh, nextBoundary } from "@/lib/membership/renewal";
+import { householdBgIsFresh, nextBoundary, householdApplicationOpenOrBlockedWhere } from "@/lib/membership/renewal";
+import { ensureHouseholdMembership, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+import { fromWhere } from "@/lib/membership/lifecycle";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
 import { applyVolunteerStatus } from "@/lib/membership/review";
 import { addHouseholdLead, HouseholdLeadLimitError, MAX_HOUSEHOLD_LEADS } from "@/lib/household/leads";
@@ -34,7 +36,7 @@ export class IntakeError extends Error {
      *                "primaryName".
      */
     constructor(
-        public readonly code: "no_household" | "not_lead" | "already_member" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated",
+        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated",
         message: string,
         public readonly fields?: string[],
     ) {
@@ -157,17 +159,19 @@ export async function getIntakeState(userId: number) {
 }
 
 /**
- * Begin (or resume) an INITIAL application for the caller's household. Ensures a
- * household exists, anchors a Membership (status NONE), and opens a
- * OrgMembershipProcess at INTAKE. Idempotent: an in-flight process is returned as-is.
+ * Begin (or resume) an INITIAL application for the caller's household. Anchors a
+ * Membership (∅→NONE via ensureHouseholdMembership) and opens an
+ * OrgMembershipProcess at INTAKE. Idempotent: an in-flight INITIAL is returned as-is.
  *
- * The caller's own read of `user.household.orgMembership.processes` (above) is stale
- * the instant it's read, so a double-click or two tabs can both pass it and both
- * reach the create. Mirrors renewal's createRenewalProcess: the check+create is
- * re-run inside a transaction holding a `SELECT ... FOR UPDATE` lock on the
- * Membership row, so a concurrent caller blocks until the winner commits, then
- * sees the winner's in-flight process instead of inserting a duplicate. The
- * partial unique index `membership_one_inflight_initial` is defense-in-depth.
+ * Refused when the household is DENIED (raised to the board), ACTIVE (renewals
+ * only), has a BLOCKED application (only the board moves it on), or has an open
+ * renewal (one open household application at a time; a REVOKED household
+ * continues that renewal instead).
+ *
+ * Every check runs inside a transaction holding a `SELECT ... FOR UPDATE` lock on
+ * the Membership row, so overlapping starts, renewal opens and status changes
+ * serialize here. The partial unique index `membership_one_inflight_initial` is
+ * defense-in-depth.
  */
 export async function startIntake(userId: number) {
     const user = await loadUserWithHousehold(userId);
@@ -176,25 +180,22 @@ export async function startIntake(userId: number) {
     assertLead(user);
     const householdId = user.householdId!;
 
-    if (user.household?.orgMembership?.status === "ACTIVE") {
-        throw new IntakeError("already_member", "Your household is already an active member.");
-    }
-
-    const membership = await prisma.orgMembership.upsert({
-        where: { householdId },
-        create: { householdId, status: "NONE" },
-        update: {},
-    });
+    const membership = await ensureHouseholdMembership(prisma, householdId);
 
     try {
-        return await prisma.$transaction(async (tx) => {
-            // Lock the membership row so overlapping starts serialize here, not at the INSERT.
-            await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${membership.id} FOR UPDATE`;
-            const existing = await tx.orgMembershipProcess.findFirst({
-                where: { orgMembershipId: membership.id, kind: "INITIAL", status: { in: IN_FLIGHT_INITIAL_STATUSES } },
+        const outcome = await prisma.$transaction(async (tx): Promise<{ process: OrgMembershipProcess } | { refuse: StartRefusal }> => {
+            const [locked] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE id = ${membership.id} FOR UPDATE`;
+            if (locked?.status === "DENIED") return { refuse: "denied" };
+            if (locked?.status === "ACTIVE") return { refuse: "already_member" };
+
+            const open = await tx.orgMembershipProcess.findMany({
+                where: { orgMembershipId: membership.id, ...householdApplicationOpenOrBlockedWhere },
                 orderBy: { id: "desc" },
             });
-            if (existing) return existing;
+            if (open.some((p) => p.status === "BLOCKED")) return { refuse: "blocked" };
+            const existing = open.find((p) => p.kind === "INITIAL");
+            if (existing) return { process: existing };
+            if (open.length > 0) return { refuse: "renewal_open" };
 
             const process = await tx.orgMembershipProcess.create({
                 data: { orgMembershipId: membership.id, kind: "INITIAL", status: "INTAKE" },
@@ -210,13 +211,13 @@ export async function startIntake(userId: number) {
                 },
             });
 
-            return process;
+            return { process };
         });
+        if ("process" in outcome) return outcome.process;
+        throw await startRefusal(outcome.refuse, householdId, userId);
     } catch (e) {
-        // The FOR UPDATE lock serializes same-version callers, but a rolling deploy can
-        // leave a pre-fix instance (no lock) inserting concurrently — the partial unique
-        // index membership_one_inflight_initial then rejects the duplicate with P2002.
-        // Return the winner instead of surfacing a 500 to the applicant (mirrors renewal).
+        // A rolling deploy can leave a pre-lock instance inserting concurrently — the
+        // partial unique index then rejects the duplicate with P2002. Return the winner.
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
             const winner = await prisma.orgMembershipProcess.findFirst({
                 where: { orgMembershipId: membership.id, kind: "INITIAL", status: { in: IN_FLIGHT_INITIAL_STATUSES } },
@@ -225,6 +226,22 @@ export async function startIntake(userId: number) {
             if (winner) return winner;
         }
         throw e;
+    }
+}
+
+type StartRefusal = "denied" | "already_member" | "blocked" | "renewal_open";
+
+async function startRefusal(code: StartRefusal, householdId: number, userId: number) {
+    switch (code) {
+        case "denied":
+            await raiseDeniedHouseholdActivity({ householdId, personId: userId, what: "startIntake refused" });
+            return new IntakeError("denied", "Your household can't start a membership application. Please contact the board.");
+        case "already_member":
+            return new IntakeError("already_member", "Your household is already an active member.");
+        case "blocked":
+            return new IntakeError("blocked", "Your household's application is with the board. Please contact the board.");
+        case "renewal_open":
+            return new IntakeError("renewal_open", "Your household has a renewal open. Continue the renewal instead.");
     }
 }
 
@@ -455,14 +472,15 @@ export async function submitIntake(userId: number) {
     const boundary = settings?.orgMembershipYearBoundary ? nextBoundary(settings.orgMembershipYearBoundary, new Date()) : null;
     const bgFresh = await householdBgIsFresh(household.id, boundary, settings?.bgRecheckMonths ?? 0);
 
-    const advanced = await prisma.orgMembershipProcess.update({
-        where: { id: process.id },
+    const { count } = await prisma.orgMembershipProcess.updateMany({
+        where: { id: process.id, ...fromWhere("INTAKE") },
         data: {
             status: "PENDING_EXTERNAL_ACTION",
             stageEnteredAt: new Date(),
             ...(bgFresh ? { bgClearedAt: new Date() } : {}),
         },
     });
+    if (count !== 1) throw new IntakeError("no_process", "No application is awaiting your information.");
 
     await prisma.auditLog.create({
         data: {
@@ -486,5 +504,5 @@ export async function submitIntake(userId: number) {
     // (status wasn't PENDING_EXTERNAL_ACTION yet), so without this the process would
     // strand here with its gate already met. Re-run the advance now — it's a no-op
     // (status guard, contract/BG checks) when the actions aren't actually done.
-    return (await advanceExternalIfComplete(process.id)) ?? advanced;
+    return (await advanceExternalIfComplete(process.id)) ?? prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: process.id } });
 }
