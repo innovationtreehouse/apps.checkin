@@ -944,6 +944,42 @@ describe('Individual Program API Integration Tests', () => {
             expect(res.status).toBe(400);
         });
 
+        // ── Date range ──
+        it('rejects an inverted or invalid date range (400) and leaves dates unchanged', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            const before = await prisma.program.findUnique({ where: { id: publicProgramId } });
+
+            for (const [body, error] of [
+                [{ startAt: '2026-06-01', endAt: '2026-05-01' }, 'Start date must be on or before the end date'],
+                // one-sided: stored startAt is 2026-01-01
+                [{ endAt: '2025-12-31' }, 'Start date must be on or before the end date'],
+                [{ startAt: 'not-a-date' }, 'Invalid start date'],
+                [{ endAt: 20260101 }, 'Invalid end date'],
+            ] as const) {
+                const req = new Request(`http://localhost:4000/api/programs/${publicProgramId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(body)
+                });
+                const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(publicProgramId) as unknown as never);
+                expect(res.status).toBe(400);
+                expect((await res.json()).error).toBe(error);
+            }
+
+            const after = await prisma.program.findUnique({ where: { id: publicProgramId } });
+            expect(after?.startAt).toEqual(before?.startAt);
+            expect(after?.endAt).toEqual(before?.endAt);
+        });
+
+        it('accepts a same-day start and end', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            const req = new Request(`http://localhost:4000/api/programs/${noEventsProgramId}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ startAt: '2026-03-01', endAt: '2026-03-01' })
+            });
+            const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(noEventsProgramId) as unknown as never);
+            expect(res.status).toBe(200);
+        });
+
         // ── Enum / type validation ──
         it('rejects bad announceOnOpen / phase / enrollmentStatus with 400', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
