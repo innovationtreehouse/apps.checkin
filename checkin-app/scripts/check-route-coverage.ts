@@ -9,6 +9,9 @@
  *   2. Every registry entry corresponds to an existing route file.
  *   3. Migrated routes (listed in scripts/migrated-routes.txt) must NOT call NextResponse.json / Response.json directly.
  *   4. Calls to third-party hosts (shopify.com, myshopify.com, resend.com, SHOPIFY_STORE_DOMAIN) live only in src/lib/shopify.ts and src/lib/email.ts.
+ *   4b. In packages/* source (tests, fixtures and generated code excluded), any non-loopback
+ *      URL literal, third-party host or API SDK lives only in a file of PACKAGE_EGRESS_FILES,
+ *      and every surface that map names is a defineOutbound entry in the registry.
  *   5. src/security/generated/classifications.ts is up to date with prisma/schema.prisma.
  *   6. RATCHET (blocking even in advisory mode): every exported route method is
  *      either in src/security/registry.ts or in the frozen legacy baseline
@@ -44,7 +47,27 @@ const ALLOWED_THIRD_PARTY_FETCH_FILES = new Set<string>([
     path.join(REPO_ROOT, 'src/lib/email.ts'),
 ]);
 
-const THIRD_PARTY_HOST_RE = /(shopify\.com|myshopify\.com|resend\.com|SHOPIFY_STORE_DOMAIN)/;
+// Each package egress file names the outbound surfaces it serves; every surface
+// must be a defineOutbound entry in the registry, so adding a file here is a
+// boundary change.
+const PACKAGES_DIR = path.resolve(REPO_ROOT, '../packages');
+export const PACKAGE_EGRESS_FILES: ReadonlyMap<string, readonly string[]> = new Map([
+    ['quickbooks/src/client.ts', ['quickbooks.query', 'quickbooks.create']],
+    ['quickbooks/src/oauth.ts', ['quickbooks.oauth']],
+    ['receipt/src/lib/ocr.ts', ['anthropic.receipt-ocr']],
+    // Builds the endpoint; s-read-function makes the call.
+    ['s-ingest-core/src/config.ts', ['shopify.admin-read']],
+]);
+
+export const THIRD_PARTY_HOST_RE =
+    /(shopify\.com|myshopify\.com|resend\.com|SHOPIFY_STORE_DOMAIN|intuit\.com|api\.anthropic\.com)/;
+/** An absolute URL with a host (literal, `${…}` or `[ipv6]`), except loopback. A bare
+ *  scheme prefix (`"https://" + host`) is not a fixed destination and does not match. */
+const NON_LOOPBACK_URL_RE = /\bhttps?:\/\/(?!(?:localhost|127\.0\.0\.1|\[::1\])(?![\w.-]))[\w$[]/;
+/** An API SDK hides its host (the Anthropic SDK defaults to api.anthropic.com). */
+const THIRD_PARTY_SDK_RE = /['"]@anthropic-ai\/sdk['"]/;
+const PACKAGE_SKIP_DIR_RE = /^(node_modules|dist|generated|__tests__|__fixtures__|fixtures|test|tests)$/;
+const PACKAGE_SKIP_FILE_RE = /\.(test|spec)\.tsx?$/;
 const VERB_EXPORT_RE = /export\s+(?:const|async\s+function|function)\s+(GET|POST|PUT|PATCH|DELETE)\b/g;
 /** `export { a as GET, POST }` — each specifier exports its `as` alias, else its own name. */
 const EXPORT_LIST_RE = /export\s*\{([^}]*)\}/g;
@@ -306,6 +329,45 @@ function walkTsFiles(dir: string, out: string[] = []): string[] {
     return out;
 }
 
+/** Package egress entries whose surface has no defineOutbound in the registry. */
+export function findUnregisteredPackageSurfaces(
+    egressFiles: ReadonlyMap<string, readonly string[]>, outbounds: ReadonlySet<string>,
+): Finding[] {
+    return Array.from(egressFiles).flatMap(([file, surfaces]) => surfaces
+        .filter(surface => !outbounds.has(surface))
+        .map(surface => ({
+            severity: 'error' as const,
+            rule: 'package-third-party-egress',
+            file: `packages/${file}`,
+            message: `serves outbound surface '${surface}', which has no defineOutbound entry in the registry`,
+        })));
+}
+
+/** Rule 4b. Any host, URL or SDK reference counts, not just `fetch(` on the same line:
+ *  package clients keep the base URL in a constant, and an SDK names no host. */
+export function findPackageEgressLines(source: string): number[] {
+    const hits: number[] = [];
+    blankComments(source).split('\n').forEach((line, i) => {
+        if (THIRD_PARTY_HOST_RE.test(line) || NON_LOOPBACK_URL_RE.test(line) || THIRD_PARTY_SDK_RE.test(line)) {
+            hits.push(i + 1);
+        }
+    });
+    return hits;
+}
+
+// ponytail: .ts/.tsx only, like walkTsFiles; widen if a package ships .js/.mjs source.
+function walkPackageSourceFiles(dir: string, out: string[] = []): string[] {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            if (!PACKAGE_SKIP_DIR_RE.test(entry.name)) walkPackageSourceFiles(full, out);
+        } else if (/\.tsx?$/.test(entry.name) && !PACKAGE_SKIP_FILE_RE.test(entry.name)) {
+            out.push(full);
+        }
+    }
+    return out;
+}
+
 function checkGeneratedFileFresh() {
     try {
         execSync('git diff --exit-code src/security/generated/classifications.ts', {
@@ -322,7 +384,7 @@ function main() {
     const migrated = loadMigratedRoutes();
     const legacyAuthz = loadLegacyAuthzRoutes();
     const directJsonAllowance = loadDirectJsonBaseline();
-    const { routes: registered } = loadRegisteredEndpoints();
+    const { routes: registered, outbounds } = loadRegisteredEndpoints();
     const routeFiles = findRouteFiles(API_DIR);
 
     const allRouteEndpoints = new Set<string>();
@@ -412,6 +474,25 @@ function main() {
                     i + 1);
             }
         });
+    }
+
+    findings.push(...findUnregisteredPackageSurfaces(PACKAGE_EGRESS_FILES, outbounds));
+    for (const rel of PACKAGE_EGRESS_FILES.keys()) {
+        if (!fs.existsSync(path.join(PACKAGES_DIR, rel))) {
+            report('error', 'package-third-party-egress', `packages/${rel}`,
+                'PACKAGE_EGRESS_FILES names a file that does not exist — remove or fix the entry');
+        }
+    }
+    for (const file of walkPackageSourceFiles(PACKAGES_DIR)) {
+        const rel = path.relative(PACKAGES_DIR, file);
+        if (PACKAGE_EGRESS_FILES.has(rel)) continue;
+        for (const line of findPackageEgressLines(fs.readFileSync(file, 'utf-8'))) {
+            report('error', 'package-third-party-egress', `packages/${rel}`,
+                `third-party host, URL or SDK outside a package egress file — register an ` +
+                `outbound surface in src/security/registry.ts and map the file to it in ` +
+                `PACKAGE_EGRESS_FILES`,
+                line);
+        }
     }
 
     checkGeneratedFileFresh();

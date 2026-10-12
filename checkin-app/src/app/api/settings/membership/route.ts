@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
 import { config } from "@/lib/config";
 import { handler } from "@/security/handler";
+import { isLibraryKey } from "@/lib/libraryRelease";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,8 @@ export const GET = handler('GET /api/settings/membership', async () => {
  * Body may include: standardMembershipFeeCents, volunteerMembershipFeeCents, orgMembershipYearBoundary (ISO|null),
  * orgMembershipVariantId (string|null),
  * orgMembershipProductUrl (string|null), volunteerDiscountCode (string|null),
- * scholarshipDenialGraceDays (positive int|null — null disables the grace-period expiry cron).
+ * scholarshipDenialGraceDays (positive int|null — null disables the grace-period expiry cron),
+ * releasedLibraries (LibraryKey[] — board members only; the nav's UI-only release gate).
  * Membership fees must be finite and >= 0; an invalid value rejects the whole update (400) so the
  * previous value survives rather than silently collapsing to zero. (The Averity consent
  * link is an env var, not a board setting. Email sender identity lives in /api/settings/email.)
@@ -42,6 +44,7 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         bgRecheckMonths?: number;
         devSigningTarget?: string | null;
         scholarshipDenialGraceDays?: number | null;
+        releasedLibraries?: unknown;
     };
     try {
         body = await req.json();
@@ -94,6 +97,14 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             }
         }
         data.scholarshipDenialGraceDays = body.scholarshipDenialGraceDays;
+    }
+
+    if (body.releasedLibraries !== undefined) {
+        if (!auth.user.isBoardMember) return apiError("Only board members can release libraries", 403);
+        if (!Array.isArray(body.releasedLibraries) || !body.releasedLibraries.every(isLibraryKey)) {
+            return apiError("releasedLibraries must be an array of library keys", 400);
+        }
+        data.releasedLibraries = [...new Set(body.releasedLibraries)];
     }
 
     const settings = await prisma.boardSettings.upsert({

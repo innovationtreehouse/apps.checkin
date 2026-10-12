@@ -1,4 +1,5 @@
 [
   { "name": "catalog", "package": "@inventory/global-catalog" },
-  { "name": "local_inventory", "package": "@inventory/local-inventory" }
+  { "name": "local_inventory", "package": "@inventory/local-inventory" },
+  { "name": "bulk_donation", "package": "@inventory/bulk-donation" }
 ]

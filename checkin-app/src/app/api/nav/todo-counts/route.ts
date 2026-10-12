@@ -13,6 +13,7 @@ import { apiError } from "@/lib/api-response";
 import { BROKEN_HOUSEHOLD_WHERE, UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { expiringApprovals } from "@/lib/trusted-adult/filters";
+import { buildingLink } from "@/lib/kioskSeen";
 
 /**
  * Aggregate "things to do" counts for the left-nav badges. Every count is scoped
@@ -61,6 +62,9 @@ export type TodoCounts = {
     // Of the people currently in the building, how many belong to the caller's
     // household — lets the Attendance badge show "mine" (green) vs "others" (gray).
     buildingHousehold: number;
+    // False when the kiosk hasn't been heard from recently: the building counts
+    // are the visit record, not confirmed occupancy, and are not shown.
+    buildingReachable: boolean;
     activePrograms: number;
     // Admin keys stay numeric — each admin nav link already deep-links to a page
     // that lists its own queue, so the number is enough.
@@ -102,6 +106,9 @@ export type TodoCounts = {
     // `conflicts` = overlapping-visit conflicts across the caller's led programs;
     // drives the red badge on the "My Programs" nav item and the Conflicts subtab.
     lead?: { programs: LedProgram[]; conflicts?: number };
+    // Libraries the board has released (BoardSettings.releasedLibraries) — the nav's
+    // UI-only pre-release gate, see lib/libraryRelease.ts.
+    releasedLibraries?: string[];
 };
 
 /** RSVP tally (Yes/Maybe/No; NO_RESPONSE omitted). */
@@ -256,19 +263,22 @@ export const GET = withAuth({}, async (_req, auth) => {
     }
 
     // Global informational counts (not scoped to the caller).
-    const [building, buildingHousehold, activePrograms] = await Promise.all([
+    const [building, buildingHousehold, activePrograms, releaseSettings] = await Promise.all([
         prisma.visit.count({ where: { departedAt: null, deletedAt: null } }),
         user.householdId
             ? prisma.visit.count({ where: { departedAt: null, deletedAt: null, person: { householdId: user.householdId } } })
             : Promise.resolve(0),
         prisma.program.count({ where: { phase: "RUNNING" } }),
+        prisma.boardSettings.findUnique({ where: { id: 1 }, select: { releasedLibraries: true } }),
     ]);
 
     const result: TodoCounts = {
         member: { household: householdTodos, programs: programTodos, programsAwaitingFinance },
         building,
         buildingHousehold,
+        buildingReachable: buildingLink().reachable,
         activePrograms,
+        releasedLibraries: releaseSettings?.releasedLibraries ?? [],
     };
 
     // ---- Lead surface (programs the caller runs as lead mentor) ----

@@ -1,5 +1,5 @@
-// Public surface of the @inventory/bulk-donation library (S: domain and ports; routes, pages and
-// the host bindings land in W).
+// Public surface of the @inventory/bulk-donation library: domain, ports and route factories;
+// screens and nav are the ./pages/* and ./nav exports.
 export * from "./contract";
 export * from "./runtime";
 export * from "./inKind";
@@ -31,3 +31,4 @@ export { ServiceError } from "./services/serviceError";
 export { disbursementMachine, STATES } from "./workflows/disbursement.machine";
 export { sendDisbursementEvent, type AuditContext } from "./workflows/disbursement.actor";
 export { WorkflowTransitionError } from "@inventory/workflows";
+export * as routes from "./routes";

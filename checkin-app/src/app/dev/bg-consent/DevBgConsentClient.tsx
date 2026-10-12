@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 /**
  * Dev background-check consent mock UI (the page 404s off a dev instance). Stands in
@@ -9,6 +10,7 @@ import { useState } from "react";
  * (dev/zoho-sign).
  */
 export default function DevBgConsentClient() {
+    const router = useRouter();
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -23,7 +25,7 @@ export default function DevBgConsentClient() {
                 setBusy(false);
                 return;
             }
-            window.location.href = "/membership";
+            router.push("/membership");
         } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
             setBusy(false);

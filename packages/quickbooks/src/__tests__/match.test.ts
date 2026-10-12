@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { billCandidate, depositCandidate, findMatch, purchaseCandidate, takeoverLine, type MatchRequest } from "../match";
+import { appKeyOf } from "../client";
 import type { QboBill, QboDeposit, QboPurchase } from "../types";
 
 // Recorded-shape QBO fixtures (trimmed to the fields matching reads).
@@ -65,15 +66,58 @@ describe("findMatch", () => {
     });
   });
 
-  it("finds the app's own creation by the caller's key, whatever its amount or date", () => {
-    const own = deposit("20", "2025-01-15", 1, { PrivateNote: "app:gid://shopify/Payout/1" });
+  it("finds the app's own creation by the caller's key, ahead of a hand entry of the same amount", () => {
+    const own = deposit("20", "2025-03-04", 123.45, { PrivateNote: "app:gid://shopify/Payout/1" });
     const hand = deposit("21", "2025-03-04", 123.45);
     expect(run([own, hand])).toEqual({ kind: "found", id: "20", via: "key" });
   });
 
-  it("never offers another record's app-created entry as a hand match", () => {
+  it("finds a key hit dated a day or two off, as long as it is inside the window", () => {
+    const own = deposit("20", "2025-03-01", 123.45, { PrivateNote: "app:gid://shopify/Payout/1" });
+    expect(run([own], { date: "2025-03-03", window: { from: "2025-03-01", to: "2025-03-10" } })).toEqual({
+      kind: "found",
+      id: "20",
+      via: "key",
+    });
+  });
+
+  it.each([
+    ["for another amount", deposit("20", "2025-03-04", 1, { PrivateNote: "app:gid://shopify/Payout/1" })],
+    ["on another account", deposit("20", "2025-03-04", 123.45, { PrivateNote: "app:gid://shopify/Payout/1", DepositToAccountRef: { value: "36" } })],
+    ["dated before the window", deposit("20", "2025-03-02", 123.45, { PrivateNote: "app:gid://shopify/Payout/1" })],
+    ["dated after the window", deposit("20", "2025-03-11", 123.45, { PrivateNote: "app:gid://shopify/Payout/1" })],
+  ])("sends a key hit %s to a person, never found and never not-found", (_, own) => {
+    const hand = deposit("21", "2025-03-04", 123.45);
+    expect(run([own])).toEqual({ kind: "ambiguous", ids: ["20"] });
+    expect(run([own, hand])).toEqual({ kind: "ambiguous", ids: ["20"] });
+  });
+
+  it("sends a matching entry carrying another record's key to a person (a copied memo)", () => {
     const other = deposit("22", "2025-03-04", 123.45, { PrivateNote: "app:gid://shopify/Payout/2" });
-    expect(run([other])).toEqual({ kind: "not-found-after-line" });
+    const hand = deposit("21", "2025-03-05", 123.45);
+    expect(run([other])).toEqual({ kind: "ambiguous", ids: ["22"] });
+    expect(run([hand, other])).toEqual({ kind: "ambiguous", ids: ["21", "22"] });
+  });
+
+  it("sends an entry carrying two different keys to a person, matching or not", () => {
+    const both = (TotalAmt: number) =>
+      depositCandidate(deposit("24", "2025-03-04", TotalAmt, { PrivateNote: "[checkin:income:1]\n[checkin:income:2]" }), appKeyOf);
+    const req = { ...base, key: "income:1" };
+    expect(findMatch([both(123.45)], req)).toEqual({ kind: "ambiguous", ids: ["24"] });
+    expect(findMatch([both(1)], req)).toEqual({ kind: "ambiguous", ids: ["24"] });
+    expect(findMatch([both(123.45)], { ...base, key: "income:3" })).toEqual({ kind: "ambiguous", ids: ["24"] });
+  });
+
+  it("finds the app's entry by key after a bookkeeper adds a line below the marker", () => {
+    const edited = depositCandidate(deposit("25", "2025-03-04", 123.45, { PrivateNote: "[checkin:income:1]\nchecked by finance" }), appKeyOf);
+    expect(findMatch([edited], { ...base, key: "income:1" })).toEqual({ kind: "found", id: "25", via: "key" });
+  });
+
+  it("ignores another record's key entry that does not match, or that its record already holds", () => {
+    const off = deposit("22", "2025-03-04", 99, { PrivateNote: "app:gid://shopify/Payout/2" });
+    const held = deposit("23", "2025-03-04", 123.45, { PrivateNote: "app:gid://shopify/Payout/2" });
+    expect(run([off])).toEqual({ kind: "not-found-after-line" });
+    expect(run([held], { claimedIds: new Set(["23"]) })).toEqual({ kind: "not-found-after-line" });
   });
 
   it("sends a key hit that is excluded, claimed or duplicated to a person", () => {

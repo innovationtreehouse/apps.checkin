@@ -44,10 +44,8 @@ export default function EmailSettingsPage() {
   const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ from?: string; replyTo?: string; scholarshipNotify?: string }>({});
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/settings/email");
+  const load = useCallback(() => fetch("/api/settings/email")
+    .then(async (res) => {
       if (res.ok) {
         const { settings } = (await res.json()) as { settings: Settings };
         const snap = {
@@ -66,10 +64,11 @@ export default function EmailSettingsPage() {
         setAckProgramBody(snap.ackProgramBody);
         setInitial(snap);
       }
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
 
@@ -106,7 +105,7 @@ export default function EmailSettingsPage() {
           scholarshipAckProgramBody: ackProgramBody.trim() || null,
         }),
       });
-      if (res.ok) { notifications.show({ message: "Email settings saved." }); setUnlocked(false); await load(); }
+      if (res.ok) { notifications.show({ message: "Email settings saved." }); setUnlocked(false); setLoading(true); await load(); }
       else { const d = await res.json().catch(() => ({})); setSaveNotice({ text: d.error || "Save failed.", err: true }); }
     } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
     finally { setSaving(false); }

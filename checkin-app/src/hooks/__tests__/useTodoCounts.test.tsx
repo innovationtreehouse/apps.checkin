@@ -8,6 +8,7 @@ const makeCounts = (building: number): TodoCounts =>
     member: { household: [], programs: [], programsAwaitingFinance: 0 },
     building,
     buildingHousehold: 0,
+    buildingReachable: true,
     activePrograms: 0,
   }) as TodoCounts;
 

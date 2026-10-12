@@ -6,7 +6,7 @@ import { useSession } from "next-auth/react";
 import type { OrgMembershipProcessStatus, OrgMembershipStatus } from "@/generated/prisma/client";
 import {
   Alert, Anchor, Box, Button, Card, Checkbox, Container, Group, Modal,
-  SimpleGrid, Stack, Text, Textarea, TextInput, ThemeIcon, Title,
+  Radio, SimpleGrid, Stack, Text, Textarea, TextInput, ThemeIcon, Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useDisclosure } from "@mantine/hooks";
@@ -21,6 +21,7 @@ import AddressForm from "@/components/membership/AddressForm";
 import EmergencyContactForm from "@/components/membership/EmergencyContactForm";
 import ChildrenListForm from "@/components/membership/ChildrenListForm";
 import { useIsLocalInstance } from "@/components/EnvProvider";
+import { SCHOLARSHIP_REQUEST_KIND_OPTIONS } from "@/lib/scholarshipRequestKind";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 const blankAddress: StructuredAddress = { line1: "", line2: "", city: "", state: "", postalCode: "" };
@@ -158,6 +159,7 @@ export default function MembershipPage() {
   // Seeded from the server flag so a reload (or another device) still shows the
   // request as received rather than resurrecting the button.
   const [planRequested, setPlanRequested] = useState(false);
+  const [planKind, setPlanKind] = useState<string | null>(null);
   const [confirmPlanOpened, { open: openConfirmPlan, close: closeConfirmPlan }] = useDisclosure(false);
   // Self-report gate for the background-check task (#875): the confirm checkbox
   // unlocks only after the applicant has opened the Averity consent link this
@@ -178,6 +180,21 @@ export default function MembershipPage() {
 
   const hydrate = useCallback((s: IntakeState) => {
     setState(s);
+    // Restore an in-flight payment holdoff after a tab refresh mid-Shopify-checkout.
+    // Once the process has moved out of PENDING_PAYMENT — the orders/paid webhook
+    // settled it, or (possibly, in the future) an s-read reconciliation did — drop
+    // the holdoff and its sessionStorage record. Deliberately no background
+    // polling: the dev instance scales to zero, and an idle tab must not keep it
+    // (and the database) awake. The one exception is below — a visibility refetch
+    // while a payment holdoff is active — which is user-driven (a hidden tab fires
+    // nothing) and saves the "pay on Shopify, come back, refresh by hand" step.
+    const processId = s.process?.id;
+    if (processId && s.process?.status === "PENDING_PAYMENT") {
+      if (sessionStorage.getItem(awaitingPaymentKey(processId))) setAwaitingPayment({ processId });
+    } else if (processId) {
+      sessionStorage.removeItem(awaitingPaymentKey(processId));
+      setAwaitingPayment(null);
+    }
     const h = s.prefill.household;
     const a = pickAddress(h);
     const address = { line1: a.line1 ?? "", line2: a.line2 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "" };
@@ -232,22 +249,16 @@ export default function MembershipPage() {
     }));
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/membership");
-      if (res.ok) hydrate(await res.json());
-    } catch {
-      /* shown via empty state */
-    } finally {
-      setLoading(false);
-    }
-  }, [hydrate]);
+  const fetchState = useCallback(() =>
+    fetch("/api/membership")
+      .then(async (res) => { if (res.ok) hydrate(await res.json()); })
+      .catch(() => { /* shown via empty state */ })
+      .finally(() => setLoading(false)), [hydrate]);
 
-  useEffect(() => {
-    if (sessionStatus === "authenticated") load();
-    else if (sessionStatus === "unauthenticated") setLoading(false);
-  }, [sessionStatus, load]);
+  const load = useCallback(() => {
+    setLoading(true);
+    return fetchState();
+  }, [fetchState]);
 
   // Return from embedded signing: Zoho redirects back with ?signed=1 (or
   // ?declined=1). Sync the contract status straight from Zoho rather than waiting
@@ -255,34 +266,41 @@ export default function MembershipPage() {
   // fires it), refresh, then strip the query so a manual reload doesn't re-run.
   const signReturnHandled = useRef(false);
   useEffect(() => {
-    if (sessionStatus !== "authenticated" || signReturnHandled.current) return;
-    const params = new URLSearchParams(window.location.search);
-    const signed = params.get("signed") === "1";
-    const declined = params.get("declined") === "1";
-    if (!signed && !declined) return;
-    signReturnHandled.current = true;
-    window.history.replaceState(null, "", window.location.pathname);
-    if (declined) {
-      setMessage({ text: "You declined the agreement. You can restart signing when you're ready.", tone: "error" });
-      return;
-    }
-    (async () => {
-      let signedNow = false;
-      try {
-        const res = await fetch("/api/membership/contract/sync", { method: "POST" });
-        const data = await res.json().catch(() => null);
-        signedNow = !!data?.status?.contractSigned;
-      } catch {
-        /* best-effort — the Zoho webhook is still a backstop */
+    if (sessionStatus !== "authenticated") return;
+    let declined = false;
+    if (!signReturnHandled.current) {
+      const params = new URLSearchParams(window.location.search);
+      const signed = params.get("signed") === "1";
+      declined = params.get("declined") === "1";
+      if (signed || declined) {
+        signReturnHandled.current = true;
+        window.history.replaceState(null, "", window.location.pathname);
       }
-      await load();
-      notifications.show({
-        message: signedNow
-          ? "Thanks — your signature was received."
-          : "Signature received — finalizing. If it doesn't update shortly, use “Refresh status”.",
-      });
-    })();
-  }, [sessionStatus, load]);
+      if (signed) {
+        (async () => {
+          let signedNow = false;
+          try {
+            const res = await fetch("/api/membership/contract/sync", { method: "POST" });
+            const data = await res.json().catch(() => null);
+            signedNow = !!data?.status?.contractSigned;
+          } catch {
+            /* best-effort — the Zoho webhook is still a backstop */
+          }
+          await load();
+          notifications.show({
+            message: signedNow
+              ? "Thanks — your signature was received."
+              : "Signature received — finalizing. If it doesn't update shortly, use “Refresh status”.",
+          });
+        })();
+      }
+    }
+    // The page shows the loader until this first load settles, so the decline
+    // message lands with the first visible render.
+    fetchState().then(() => {
+      if (declined) setMessage({ text: "You declined the agreement. You can restart signing when you're ready.", tone: "error" });
+    });
+  }, [sessionStatus, fetchState, load]);
 
   // When awaiting payment, fetch the membership-fee amount and Shopify checkout link. Leads
   // only — the route refuses anyone else, and the card hides the money from them.
@@ -295,28 +313,6 @@ export default function MembershipPage() {
       .catch(() => { /* shown as link-unavailable */ });
     return () => { cancelled = true; };
   }, [state?.process?.status, state?.isLead]);
-
-  // Restore an in-flight payment holdoff after a tab refresh mid-Shopify-checkout.
-  useEffect(() => {
-    const processId = state?.process?.id;
-    if (!processId || state?.process?.status !== "PENDING_PAYMENT") return;
-    if (sessionStorage.getItem(awaitingPaymentKey(processId))) setAwaitingPayment({ processId });
-  }, [state?.process?.id, state?.process?.status]);
-
-  // Implicit clearing, at page-load time: if the process has moved out of
-  // PENDING_PAYMENT — the orders/paid webhook settled it, or (possibly, in the
-  // future) an s-read reconciliation did — drop the holdoff and its
-  // sessionStorage record. Deliberately no background polling: the dev
-  // instance scales to zero, and an idle tab must not keep it (and the
-  // database) awake. The one exception is below — a visibility refetch while
-  // a payment holdoff is active — which is user-driven (a hidden tab fires
-  // nothing) and saves the "pay on Shopify, come back, refresh by hand" step.
-  useEffect(() => {
-    const processId = state?.process?.id;
-    if (!processId || state?.process?.status === "PENDING_PAYMENT") return;
-    sessionStorage.removeItem(awaitingPaymentKey(processId));
-    setAwaitingPayment(null);
-  }, [state?.process?.id, state?.process?.status]);
 
   // Returning from the Shopify checkout tab: refetch once when this tab becomes
   // visible again, ONLY while a payment holdoff is active — so the paid state
@@ -548,20 +544,24 @@ export default function MembershipPage() {
   // clears isPaymentPlanRequested — surfaced on the next state refetch — reverts
   // the button to requestable instead of latching "requested" forever. The
   // request button's own optimistic setPlanRequested(true) after a successful
-  // POST (below) is untouched by this: it doesn't change `state`, so this effect
-  // doesn't re-run and clobber it.
-  useEffect(() => {
-    setPlanRequested(!!state?.process?.isPaymentPlanRequested);
-  }, [state?.process?.isPaymentPlanRequested]);
+  // POST (below) is untouched by this: it doesn't change the server flag, so this
+  // sync doesn't re-run and clobber it.
+  const serverPlanRequested = !!state?.process?.isPaymentPlanRequested;
+  const [seenServerPlanRequested, setSeenServerPlanRequested] = useState(serverPlanRequested);
+  if (serverPlanRequested !== seenServerPlanRequested) {
+    setSeenServerPlanRequested(serverPlanRequested);
+    setPlanRequested(serverPlanRequested);
+  }
 
   const requestPaymentPlan = async () => {
+    if (!planKind) return;
     closeConfirmPlan();
     if (!state?.process) return;
     try {
       const res = await fetch("/api/membership/request-payment-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId: state.process.id }),
+        body: JSON.stringify({ processId: state.process.id, kind: planKind }),
       });
       if (res.ok) {
         setPlanRequested(true);
@@ -633,7 +633,7 @@ export default function MembershipPage() {
   useUnsavedGuard(isDirty);
   const confirmNav = useConfirmNav();
 
-  if (sessionStatus === "loading" || loading) {
+  if (sessionStatus === "loading" || (loading && sessionStatus === "authenticated")) {
     return <PageLoader />;
   }
 
@@ -967,9 +967,22 @@ export default function MembershipPage() {
                         your household&apos;s dues and follow up with you. You won&apos;t be charged
                         anything now, and you can still pay online at any time.
                       </Text>
+                      <Radio.Group
+                        mt="md"
+                        value={planKind}
+                        onChange={setPlanKind}
+                        label="What would help?"
+                        description="So the team opens the right conversation. Nothing here commits you to anything."
+                      >
+                        <Stack gap="xs" mt="xs">
+                          {SCHOLARSHIP_REQUEST_KIND_OPTIONS.map((o) => (
+                            <Radio key={o.value} value={o.value} label={o.label} description={o.description} />
+                          ))}
+                        </Stack>
+                      </Radio.Group>
                       <Group justify="flex-end" mt="md">
                         <Button variant="default" onClick={closeConfirmPlan}>Cancel</Button>
-                        <Button onClick={requestPaymentPlan}>Send request</Button>
+                        <Button onClick={requestPaymentPlan} disabled={!planKind}>Send request</Button>
                       </Group>
                     </Modal>
                     {planRequested ? (

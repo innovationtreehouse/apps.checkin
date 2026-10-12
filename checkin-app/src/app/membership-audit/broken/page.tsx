@@ -19,23 +19,28 @@ export default function BrokenHouseholdsPage() {
   // reliably vanish on success. Keyed by household id, cleared on the next click.
   const [notice, setNotice] = useState<Record<number, { ok: boolean; text: string }>>({});
 
-  const fetchHouseholds = useCallback(async () => {
-    setError(false);
-    try {
-      const res = await fetch("/api/admin/broken-households");
+  const loadHouseholds = useCallback(() => fetch("/api/admin/broken-households")
+    .then(async (res) => {
       const data = await res.json();
       if (data.households) setHouseholds(data.households);
-    } catch (err) {
+    })
+    .catch((err) => {
       console.error("Failed to load broken households:", err);
       setError(true);
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
+
+  const fetchHouseholds = () => {
+    setError(false);
+    return loadHouseholds();
+  };
 
   useEffect(() => {
-    fetchHouseholds();
-  }, [fetchHouseholds]);
+    loadHouseholds();
+  }, [loadHouseholds]);
 
   const makeLead = async (householdId: number, participantId: number) => {
     setPromoting(participantId);

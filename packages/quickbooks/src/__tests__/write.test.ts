@@ -275,6 +275,30 @@ describe("appKeyOf", () => {
     expect(appKeyOf({ PrivateNote: "Deposit from bank feed" })).toBeUndefined();
     expect(appKeyOf({})).toBeUndefined();
   });
+
+  it("reads a well-formed marker anywhere in the note, standing alone", () => {
+    expect(appKeyOf({ PrivateNote: `[checkin:${KEY}]` })).toBe(KEY);
+    expect(appKeyOf({ PrivateNote: `[checkin:${KEY}]\nnote added after` })).toBe(KEY);
+    expect(appKeyOf({ PrivateNote: `Shopify payout [checkin:${KEY}] copied` })).toBe(KEY);
+    expect(appKeyOf({ PrivateNote: `[checkin:${KEY}]\n[checkin:${KEY}]` })).toBe(KEY);
+  });
+
+  it("reads a marker next to punctuation or text", () => {
+    expect(appKeyOf({ PrivateNote: "Memo:[checkin:k-1]" })).toBe("k-1");
+    expect(appKeyOf({ PrivateNote: "([checkin:k-1])" })).toBe("k-1");
+    expect(appKeyOf({ PrivateNote: "x[checkin:k-1]x" })).toBe("k-1");
+  });
+
+  it("ignores a malformed marker", () => {
+    expect(appKeyOf({ PrivateNote: "[checkin:k 1]" })).toBeUndefined();
+    expect(appKeyOf({ PrivateNote: "[checkin:]" })).toBeUndefined();
+    expect(appKeyOf({ PrivateNote: "[ checkin:k-1]" })).toBeUndefined();
+    expect(appKeyOf({ PrivateNote: `[checkin:${"k".repeat(51)}]` })).toBeUndefined();
+  });
+
+  it("returns two different markers space-joined, so they equal no key", () => {
+    expect(appKeyOf({ PrivateNote: "[checkin:k-1]\n[checkin:k-2]" })).toBe("k-1 k-2");
+  });
 });
 
 describe("findOrCreate", () => {

@@ -29,9 +29,8 @@ export default function CommunicationPage() {
   });
   const [emailSuppressed, setEmailSuppressed] = useState(false);
 
-  const fetchSettings = useCallback(async () => {
-    try {
-      const res = await fetch('/api/profile');
+  const fetchSettings = useCallback(() => fetch('/api/profile')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         const s = data.profile.notificationSettings || {};
@@ -44,12 +43,14 @@ export default function CommunicationPage() {
       } else {
         setMessage("Failed to load settings.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading settings.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (status === "unauthenticated") {

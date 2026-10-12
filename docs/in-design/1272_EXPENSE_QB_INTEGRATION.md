@@ -74,7 +74,7 @@ keyword** (design-doc rule); #1314 tracks only the residual sub-actor detail
 **third in a series** and **reuses the base architecture** established by the
 global-catalog design
 ([#1286](https://github.com/innovationtreehouse/checkin/issues/1286),
-`docs/in-design/1286_GLOBAL_CATALOG_INTEGRATION.md`) and the local-inventory
+now distilled to `docs/designs/COMPONENT_ARCHITECTURE.md`) and the local-inventory
 design
 ([#1287](https://github.com/innovationtreehouse/checkin/issues/1287),
 `docs/in-design/1287_LOCAL_INVENTORY_INTEGRATION.md`) — **read those two first.**
@@ -1475,8 +1475,8 @@ keeps the extract step a file move, not a months-later judgement call over every
 paragraph (§4.2). Content splits three ways.
 
 **(1) Standing domain rules → the EXISTING `docs/rules/finance-payments.md`.**
-Unlike catalog (which created `docs/rules/catalog.md`) and local-inventory
-(`inventory.md`), expense is **not** a new domain — `finance-payments.md` already
+Unlike catalog and local-inventory (both in `docs/rules/inventory.md`), expense
+is **not** a new domain — `finance-payments.md` already
 covers *"fees, refunds, payment plans, and reconciliation,"* and expense→QB is
 reconciliation's core. So **add rules to that file, do not create a new one**
 (creating a near-duplicate finance file would fragment the register). Run the §3.9
@@ -1555,12 +1555,12 @@ mounting, stub tree, `NavLink[]` splice, `_shared.ts`, security-generator wiring
 handler-endpoint gotcha, pagination/count mechanics, outbox-drain wiring, test
 tiers) — a reader derives it from the source (§3).
 
-**Cross-doc note:** catalog (#1286) and local-inventory (#1287) distill first, so
-`docs/rules/{catalog,inventory}.md` and their `docs/designs/*` will exist by the
-time expense merges. The finance rules here **reference** the shared decisions
-(org identity, the crossing rule, the security regime) rather than restating them;
-`EXPENSE_QB.md` references `GLOBAL_CATALOG.md`/`LOCAL_INVENTORY.md` for the shared
-library-isolation and DB-topology substrate.
+**Cross-doc note:** catalog (#1286) and local-inventory (#1287) distill first into
+the unified `docs/rules/inventory.md` and `docs/designs/COMPONENT_ARCHITECTURE.md`, which exist
+by the time expense merges. The finance rules here **reference** the shared
+decisions (org identity, the crossing rule, the security regime) rather than
+restating them; `EXPENSE_QB.md` references `docs/designs/COMPONENT_ARCHITECTURE.md` for the
+shared library-isolation and DB-topology substrate.
 
 ---
 

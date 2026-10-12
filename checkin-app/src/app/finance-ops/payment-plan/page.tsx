@@ -12,6 +12,7 @@ import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
 import { formatCents } from '@inventory/money';
 import { landsNextYear } from '@/lib/programYear';
+import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 type HouseholdLead = { id: number; name: string | null; email: string | null };
@@ -20,6 +21,7 @@ type PaymentPlanRequest = {
   programId: number;
   personId: number;
   pendingSince: string;
+  scholarshipRequestKind: string | null;
   person: {
     id: number;
     name: string | null;
@@ -56,9 +58,8 @@ export default function PendingParticipantsPage() {
   const [confirmRefuseOpened, { open: openConfirmRefuse, close: closeConfirmRefuse }] = useDisclosure(false);
   const [pendingRefusal, setPendingRefusal] = useState<{ programId: number; participantId: number } | null>(null);
 
-  const fetchRequests = useCallback(async () => {
-    try {
-      const res = await fetch('/api/finance-ops/payment-plans');
+  const fetchRequests = useCallback(() => fetch('/api/finance-ops/payment-plans')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setRequests(data.ProgramParticipant ?? []);
@@ -66,12 +67,14 @@ export default function PendingParticipantsPage() {
       } else {
         setMessage("Failed to load requests. You may not have access.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading requests.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchRequests();
@@ -185,6 +188,15 @@ export default function PendingParticipantsPage() {
           ? emails.map(e => <Text key={e} size="sm">{e}</Text>)
           : <Text size="sm" c="dimmed">—</Text>;
       },
+    },
+    {
+      header: 'Asked For',
+      sortBy: (req) => scholarshipRequestKindLabel(req.scholarshipRequestKind).toLowerCase(),
+      render: (req) => (
+        <Text size="sm" c={req.scholarshipRequestKind ? undefined : 'dimmed'}>
+          {scholarshipRequestKindLabel(req.scholarshipRequestKind)}
+        </Text>
+      ),
     },
     {
       header: 'Program',

@@ -58,6 +58,7 @@ import { MEMBERSHIP_OPS_SECTION_ROLES } from '@/lib/membershipOpsNav';
 import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
 import { SETTINGS_SECTION_ROLES } from '@/lib/settingsNav';
 import { CATALOG_TOP_NAV, isCatalogViewerClient } from '@/lib/catalogNav';
+import { isLibraryVisible } from '@/lib/libraryRelease';
 
 type NavItem = {
   href: string;
@@ -112,7 +113,12 @@ const NAV_ITEMS: NavItem[] = [
     href: CATALOG_TOP_NAV.href,
     label: CATALOG_TOP_NAV.label,
     icon: <IconPackage size={18} />,
-    visible: (u, signedIn) => signedIn && isCatalogViewerClient(u),
+    visible: (u, signedIn, counts) =>
+      signedIn &&
+      isCatalogViewerClient(u) &&
+      (['catalog', 'local-inventory'] as const).some((lib) =>
+        isLibraryVisible(lib, { isBoardMember: u?.isBoardMember, releasedLibraries: counts?.releasedLibraries }),
+      ),
   },
   {
     href: '/facility-ops',

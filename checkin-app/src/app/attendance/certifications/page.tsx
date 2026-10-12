@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Suspense, useCallback, useMemo } from "react";
+import { useState, Suspense, useCallback, useMemo, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import { Alert, Badge, Box, Card, Center, Group, Loader, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -32,6 +32,14 @@ type Tool = {
 // Cert levels shown in the legend; the dot colors come from the regulated ToolLevelBadge.
 const LEGEND_LEVELS: ToolStatusLevel[] = ["BASIC", "CERTIFIED", "DOF", "INSTRUCTOR", "MAY_CERTIFY_OTHERS"];
 
+const subscribeToClock = (onTick: () => void) => {
+  const timer = setInterval(onTick, 1000);
+  return () => clearInterval(timer);
+};
+const currentMinute = () => Math.floor(Date.now() / 60000);
+// The server render and hydration show no clock, so the time never mismatches.
+const noMinute = () => null;
+
 export default function KioskCertificationsDisplay() {
   return (
     <Suspense fallback={<PageLoader minHeight="100vh" />}>
@@ -48,13 +56,10 @@ function KioskCertificationsInner() {
   const [tools, setTools] = useState<Tool[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentTime, setCurrentTime] = useState<Date | null>(null);
-
-  useEffect(() => {
-    setCurrentTime(new Date());
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+  // Off the kiosk, "present" is stated as fact only while the kiosk is reachable.
+  const [presenceConfirmed, setPresenceConfirmed] = useState(false);
+  const minute = useSyncExternalStore(subscribeToClock, currentMinute, noMinute);
+  const currentTime = minute === null ? null : new Date(minute * 60000);
 
   const fetchData = useCallback(async () => {
     try {
@@ -75,6 +80,7 @@ function KioskCertificationsInner() {
       if (res.ok && data.participants && data.tools) {
         setParticipants(data.participants);
         setTools(data.tools);
+        setPresenceConfirmed(data.building?.reachable === true);
         setError(null);
         if (sigParam) {
           setIsKioskMode(true);
@@ -177,7 +183,11 @@ function KioskCertificationsInner() {
             <Group align="center" wrap="wrap">
               <Title order={1} fz="clamp(1.5rem, 4vw, 2rem)">Live Certifications</Title>
               <Badge color={limitToPresent ? 'teal' : 'gray'} variant="light" size="lg">
-                {limitToPresent ? `${participants.length} People Present` : `${participants.length} Total Members`}
+                {!limitToPresent
+                  ? `${participants.length} Total Members`
+                  : isKioskMode || presenceConfirmed
+                    ? `${participants.length} People Present`
+                    : `${participants.length} Checked In (unconfirmed)`}
               </Badge>
             </Group>
             <Group gap="sm" align="center">

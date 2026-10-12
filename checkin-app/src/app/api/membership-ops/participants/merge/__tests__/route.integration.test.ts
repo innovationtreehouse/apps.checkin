@@ -1140,6 +1140,17 @@ describe("Merge Participants API", () => {
             expect(await movedTallies()).toMatchObject({ attendanceConfirmations: 1 });
         });
 
+        it("moves the facility close's closer (FacilityClose.closedById)", async () => {
+            const close = await prisma.facilityClose.create({ data: { closedAt: new Date(), closedById: pMergeId, via: "KIOSK" } });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            expect((await prisma.facilityClose.findUnique({ where: { id: close.id } }))?.closedById).toBe(pKeepId);
+            expect(await movedTallies()).toMatchObject({ facilityCloses: 1 });
+            await prisma.facilityClose.delete({ where: { id: close.id } });
+        });
+
         it("moves the trusted-adult board decision (TrustedAdultReview.decidedById)", async () => {
             const adult = await prisma.trustedAdult.create({
                 data: { householdId, trustedAdultName: "Grandma", trustedAdultPhone: "555-0199", disclosedById: actorId, familyContext: "context" },

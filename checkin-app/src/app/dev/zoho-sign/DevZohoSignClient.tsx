@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 /**
  * Dev Zoho Sign mock UI. Two modes, both dev-only (the page 404s off a dev instance):
@@ -17,6 +18,7 @@ import { useState } from "react";
  * Inline styles match the sibling dev tool (dev/sent-mail, EMAIL_DEV_MOCK.md).
  */
 export default function DevZohoSignClient({ rid }: { rid: string | null }) {
+    const router = useRouter();
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -34,7 +36,7 @@ export default function DevZohoSignClient({ rid }: { rid: string | null }) {
                 setBusy(false);
                 return;
             }
-            window.location.href = "/membership?signed=1";
+            router.push("/membership?signed=1");
         } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
             setBusy(false);
@@ -91,7 +93,7 @@ export default function DevZohoSignClient({ rid }: { rid: string | null }) {
                         </button>
                         <button
                             onClick={() => {
-                                window.location.href = "/membership?declined=1";
+                                router.push("/membership?declined=1");
                             }}
                             disabled={busy}
                             style={{ ...btn("transparent"), color: "#374151", border: "1px solid #d1d5db" }}

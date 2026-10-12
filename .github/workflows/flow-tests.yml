@@ -15,9 +15,10 @@ permissions:
   contents: read
   id-token: write      # mint the GitHub OIDC token to assume the AWS role (no stored creds)
 
+# Same key as ci.yml: PR pushes supersede each other; nothing else groups.
 concurrency:
-  group: flow-tests-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   AWS_REGION: us-east-2

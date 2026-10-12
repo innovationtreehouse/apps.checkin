@@ -25,6 +25,9 @@ const FINANCE_OR_BOARD = [
     'GET /api/income/reconciliation/count',
     'GET /api/income/items',
     'GET /api/income/qb-exclusions',
+    'GET /api/income/settings',
+    // The library refuses a raise without BOARD; the gate admits both roles.
+    'PATCH /api/income/settings',
 ];
 const FINANCE_ONLY = [
     'GET /api/income/reconciliation/[id]/candidates',
@@ -77,6 +80,11 @@ describe('income registry', () => {
 
     test('QB exclusions have no DELETE', () => {
         expect(incomeEndpoints.filter(e => e.endsWith('/qb-exclusions') && e.startsWith('DELETE'))).toEqual([]);
+    });
+
+    test.each(['GET', 'PATCH'])('%s /api/income/settings returns the IncomeOrgSettings view', (verb) => {
+        const route = income.find(([e]) => e === `${verb} /api/income/settings`)![1];
+        expect(route.returns).toEqual(['IncomeOrgSettings']);
     });
 
     test.each(FINANCE_OR_BOARD)('%s: finance-or-board, FINANCE then BOARD internal view', (endpoint) => {

@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { withAuth, getOptionalSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { getKioskPublicKeys, verifyKioskSignature } from "@/lib/verify-kiosk";
+import { buildingLink } from "@/lib/kioskSeen";
 import { getFullAttendance, invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
-import { lastKeyholderGuard, runFacilityClose } from "@/lib/scan-service";
+import { closeActor, finishCloseGuard, lastKeyholderGuard } from "@/lib/scan-service";
 import { lockFacility } from "@/lib/facilityLock";
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { logBackendError, logger } from "@/lib/logger";
@@ -81,6 +82,9 @@ export async function GET(req: NextRequest) {
         // which it renders. A signed-in keyholder on a non-kiosk browser still
         // gets the full payload (pickup/emergency lookups).
         const { attendance, counts, safety } = await getFullAttendance({ kiosk: isKiosk });
+        // Web surfaces state occupancy/open/supervision as fact only while the
+        // kiosk is reachable (docs/rules/attendance-checkin.md).
+        const building = buildingLink();
 
         // Determine access level
         const isAdmin = isKiosk || user?.isSysadmin || user?.isBoardMember || user?.isKeyholder;
@@ -97,6 +101,7 @@ export async function GET(req: NextRequest) {
                 attendance,
                 counts: { ...counts, needReview },
                 safety,
+                building,
                 signedRequest: isKiosk,
             });
         }
@@ -113,6 +118,7 @@ export async function GET(req: NextRequest) {
             safety,
             self: selfVisit,
             household: householdVisits,
+            building,
             signedRequest: isKiosk,
         });
     } catch (error) {
@@ -127,7 +133,7 @@ export const DELETE = withAuth({}, async (req, auth) => {
 
     try {
         const body = await req.json();
-        const { visitId, forceCloseToken: clientToken } = body;
+        const { visitId, forceCloseToken, closeChoice, handoverToId } = body;
 
         if (!visitId) {
             return apiError("visitId is required", 400);
@@ -161,28 +167,15 @@ export const DELETE = withAuth({}, async (req, auth) => {
             return apiError("Visit already checked out", 400);
         }
 
-        // Last-keyholder close guard (shared with PATCH/DELETE manual/[id]).
-        const guard = await lastKeyholderGuard(visitId, visit.person, clientToken);
-        if (guard.action === 'warn') {
-            return NextResponse.json({
-                error: guard.message,
-                type: "warning",
-                forceCloseToken: guard.token,
-                confirmSeconds: guard.confirmSeconds,
-            }, { status: 400 });
-        }
+        const guard = await lastKeyholderGuard(visitId, visit.person, closeActor(user), { token: forceCloseToken, choice: closeChoice, handoverToId });
+        if (guard.action === 'warn') return NextResponse.json(guard.warning, { status: 400 });
+        if (guard.action === 'refuse') return apiError(guard.error, guard.status);
         const { facilityClosed } = guard;
 
         const finalVisits = await processVisitCheckout(visitId, new Date(), undefined, "TYPED");
         const updatedVisit = finalVisits.length > 0 ? finalVisits[finalVisits.length - 1] : visit;
 
-        if (facilityClosed) {
-            try {
-                await runFacilityClose();
-            } catch (err) {
-                logger.error("Failed to close facility-wide visits after web checkout:", err);
-            }
-        }
+        await finishCloseGuard(guard, { actorId: Number(user.id), subjectId: visit.personId, visitId, via: "WEB_DASHBOARD" });
 
         // Fire-and-forget: send check-out notifications (mirrors /api/scan)
         sendCheckinNotifications(visit.personId, 'checkout').catch(err =>

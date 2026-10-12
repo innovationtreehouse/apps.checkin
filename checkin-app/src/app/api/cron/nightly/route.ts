@@ -4,10 +4,12 @@ import { withCron } from "@/lib/cronAuth";
 import prisma from "@/lib/prisma";
 import { processPostEventEmails } from "@/lib/postEventEmails";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
+import { type DepartureChange, logCloseDepartures } from "@/lib/scan-service";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { LIVE_VISIT } from "@/lib/visit/filters";
 import { runPersonAgreementSweep } from "@/lib/membership/personAgreementTriggers";
 import { systemActor } from "@/lib/auditActor";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 export const GET = withCron(async () => {
         const now = new Date();
@@ -30,13 +32,38 @@ export const GET = withCron(async () => {
         let boardNotified = false;
 
         if (abandonedVisits.length > 0) {
-            // Force everybody out concurrently. One bad checkout must not abort the rest.
+            // The sweep is a facility close with no person behind it.
+            const close = await prisma.facilityClose.create({
+                data: { closedAt: now, closedById: null, via: "NIGHTLY_SWEEP" },
+                select: { id: true },
+            });
+            // Force everybody out concurrently. One bad checkout must not abort the rest,
+            // so each visit's checkout and its departure logs commit together, alone.
             const results = await Promise.allSettled(
                 // AUTO_CLOSE: stamped at cron-run time, so the member's real leave
                 // may be hours earlier. Correcting one of these is expected by
                 // construction and never flags (lib/visit/significance.ts).
-                abandonedVisits.map((visit) => processVisitCheckout(visit.id, now, undefined, "AUTO_CLOSE"))
+                abandonedVisits.map((visit) => prisma.$transaction(async (tx) => {
+                    // Empty: someone else departed the visit first, so this close set nothing.
+                    const segments = await processVisitCheckout(visit.id, now, tx, "AUTO_CLOSE", close.id);
+                    // A visit split across events departs as several rows; each is logged.
+                    const departures: DepartureChange[] = segments.flatMap((seg) => seg.departedAt && seg.departedVia ? [{
+                        id: seg.id,
+                        previousVisitId: visit.id,
+                        personId: visit.personId,
+                        oldDepartedAt: visit.departedAt,
+                        oldDepartedVia: visit.departedVia,
+                        departedAt: seg.departedAt,
+                        departedVia: seg.departedVia,
+                    }] : []);
+                    await logCloseDepartures(tx, close.id, systemActor("cron:nightly"), departures);
+                    return segments;
+                }))
             );
+            // After every per-visit transaction commits: the checkout's own
+            // invalidation runs inside the transaction, so a concurrent read
+            // could refill the cache from the still-open rows.
+            invalidateAttendanceCache();
             results.forEach((result, i) => {
                 if (result.status === "fulfilled") {
                     checkedOutCount += 1;

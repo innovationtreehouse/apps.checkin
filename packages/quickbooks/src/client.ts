@@ -137,6 +137,7 @@ export type WriteRequest = TxnWrite | { entity: "Vendor"; fields: VendorFields }
 
 const KEY_PATTERN = /^[A-Za-z0-9._:/-]{1,50}$/;
 const KEY_MARKER = /\[checkin:([A-Za-z0-9._:/-]{1,50})\]/;
+const KEY_MARKERS = new RegExp(KEY_MARKER.source, "g");
 const MAX_PRIVATE_NOTE = 4000;
 
 const LANE_PATTERN = /^[a-z][a-z0-9-]{0,14}$/;
@@ -161,9 +162,14 @@ export function assertAppKey(key: string): void {
   if (!KEY_PATTERN.test(key)) throw new Error(`QBO app key must be 1-50 of [A-Za-z0-9._:/-], got "${key}"`);
 }
 
-/** The app key a created transaction carries in its PrivateNote; undefined on hand-booked entries. */
+/**
+ * The app key a created transaction carries in its PrivateNote; undefined on hand-booked entries.
+ * A well-formed marker counts anywhere in the note. Two different keys come back space-joined,
+ * which equals no key because the key charset has no space, so findMatch sends the entry to a person.
+ */
 export function appKeyOf(entry: { PrivateNote?: string }): string | undefined {
-  return KEY_MARKER.exec(entry.PrivateNote ?? "")?.[1];
+  const keys = new Set(Array.from((entry.PrivateNote ?? "").matchAll(KEY_MARKERS), (m) => m[1]));
+  return keys.size ? [...keys].join(" ") : undefined;
 }
 
 function privateNote(memo: string | undefined, key: string): string {

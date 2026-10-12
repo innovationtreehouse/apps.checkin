@@ -233,6 +233,20 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     });
     await seedRole(prisma, inventoryManager.id, "isInventoryManager");
 
+    // Finance staff (FINANCE role): the finance libraries' screens and writes.
+    const financeStaff = await prisma.person.upsert({
+        where: { email: "finance@example.com" },
+        update: { name: "Finance Staff", phone: "555-555-0013", isDeclaredAdult: true },
+        create: {
+            email: "finance@example.com",
+            name: "Finance Staff",
+            phone: "555-555-0013",
+            isDeclaredAdult: true,
+            household: { create: { name: "Finance Staff Household" } },
+        },
+    });
+    await seedRole(prisma, financeStaff.id, "isFinance");
+
     // A member household lead used by program-pricing flow tests: an ACTIVE
     // OrgMembership so member pricing/discount-code paths have a claimable persona.
     const memberPricingLead = await prisma.person.upsert({
@@ -310,6 +324,18 @@ export async function seedBaseline(prisma: Db): Promise<void> {
                 maxParticipants: 20,
             },
         });
+    }
+
+    // 6. Budget-owner buckets: one org-level, one for the first program.
+    const firstProgram = await prisma.program.findFirst({ orderBy: { id: "asc" } });
+    const buckets = [
+        { name: "Facility", programId: null },
+        ...(firstProgram ? [{ name: firstProgram.name, programId: firstProgram.id }] : []),
+    ];
+    for (const bucket of buckets) {
+        if (!(await prisma.budgetOwner.findFirst({ where: { name: bucket.name } }))) {
+            await prisma.budgetOwner.create({ data: bucket });
+        }
     }
 
     console.log("🎉 Seed complete — 9 debug personas, tools, and a sample program are ready.");

@@ -3,14 +3,16 @@ import { Pool } from 'pg'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { emailNormalizeExtension } from '@/lib/prismaEmailNormalize'
 import { auroraResumeRetryExtension } from '@/lib/auroraResumeRetry'
+import { registerRootClient } from '@/lib/db-client'
 
 const connectionString = `${process.env.DATABASE_URL}`
+const isTest = process.env.NODE_ENV === 'test'
 // Tests default to a single connection so suites don't exhaust a small CI
 // Postgres. TEST_DB_POOL_MAX lets a suite opt into a larger pool: the scan
 // concurrency suite needs >= 2 so two scan transactions run on separate
 // connections — that's the only way the per-participant advisory lock (not the
 // $transaction wrapping) is what serializes them, matching production (pool 10).
-const poolMax = process.env.NODE_ENV === 'test'
+const poolMax = isTest
     ? Number(process.env.TEST_DB_POOL_MAX ?? 1)
     : 10
 const pool = new Pool({
@@ -19,7 +21,9 @@ const pool = new Pool({
     // Fail fast rather than hang forever if the pool can't get a connection (the
     // pg driver has NO default here — an exhausted/unresponsive server otherwise
     // blocks a new connection attempt indefinitely, with no error, no timeout).
-    connectionTimeoutMillis: 10_000,
+    // Tests use a short timeout so a query that can't get the pool's only
+    // connection (e.g. a root-client query inside a transaction) fails fast.
+    connectionTimeoutMillis: isTest ? 2_000 : 10_000,
     // Off by default in the pg driver. Without it, a connection whose peer died
     // abruptly (SIGKILL'd process, torn-down background job — not a graceful
     // $disconnect()) looks alive to Postgres forever: no FIN was ever sent, and
@@ -53,7 +57,7 @@ const pool = new Pool({
     // a test run touches — CI service container, worktree DBs, local — with
     // one knob. Test-only: prod/Aurora long transactions stay governed by the
     // server's own configuration.
-    ...(process.env.NODE_ENV === 'test'
+    ...(isTest
         ? {
               statement_timeout: 60_000,
               idle_in_transaction_session_timeout: 120_000,
@@ -65,7 +69,7 @@ const pool = new Pool({
 // process dies (parallel runs exhaust max_connections; --runInBand crashes). The
 // pg adapter only ends an *external* pool when told to, so opt in under test. Prod
 // keeps its single long-lived pool untouched.
-const adapter = new PrismaPg(pool, process.env.NODE_ENV === 'test' ? { disposeExternalPool: true } : undefined)
+const adapter = new PrismaPg(pool, isTest ? { disposeExternalPool: true } : undefined)
 
 // The email-normalize extension lowercases Person.email at write time — the one
 // choke point so no route can drift into storing a case-variant on the @unique
@@ -81,17 +85,21 @@ const adapter = new PrismaPg(pool, process.env.NODE_ENV === 'test' ? { disposeEx
 // The aurora-resume-retry extension (outermost, so it wraps everything) rides
 // out the shared cluster's ~30s auto-pause resume instead of surfacing P1001
 // as a generic 500 — see lib/auroraResumeRetry.ts and components/DbWakeNotice.tsx.
+// Tests skip it: test Postgres never pauses, and retrying a pool-acquire timeout
+// would turn an exhausted test pool into a 45s stall instead of an error.
 const prismaClientSingleton = (): PrismaClient => {
-    return new PrismaClient({ adapter })
-        .$extends(emailNormalizeExtension)
-        .$extends(auroraResumeRetryExtension) as unknown as PrismaClient
+    const client = new PrismaClient({ adapter }).$extends(emailNormalizeExtension)
+    if (isTest) return client as unknown as PrismaClient
+    return client.$extends(auroraResumeRetryExtension) as unknown as PrismaClient
 }
 
 declare const globalThis: {
     prismaGlobal: ReturnType<typeof prismaClientSingleton>;
 } & typeof global;
 
-const prisma = globalThis.prismaGlobal ?? prismaClientSingleton()
+// Registered on every module load: a dev reload reuses the global client but
+// re-evaluates db-client's registry.
+const prisma = registerRootClient(globalThis.prismaGlobal ?? prismaClientSingleton())
 
 export default prisma
 

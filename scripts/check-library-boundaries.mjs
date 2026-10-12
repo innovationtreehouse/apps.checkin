@@ -2,8 +2,8 @@
 // Library boundary check (docs: INVENTORY_PARALLEL_PORT_PLAN "Library boundaries").
 // A package is a library iff its package.json has "library": true. A library's
 // src/**/*.{ts,tsx} and its dependencies/devDependencies may not name
-// checkin-app, `@/…`, another library, or (imports only) a relative path that
-// escapes the package. Rule 3 (public surface = `exports`) needs no check here:
+// checkin-app, `@/…`, another library, a shared package that holds a database
+// client, or (imports only) a relative path that escapes the package. Rule 3 (public surface = `exports`) needs no check here:
 // module resolution already refuses any subpath a package does not export.
 // A library also reaches a database only through its own Prisma client: no raw
 // SQL client in src/ (the driver adapter only in its db-client file), and every
@@ -21,6 +21,18 @@ const pkgs = readdirSync(pkgsDir)
   .filter((dir) => existsSync(join(dir, 'package.json')))
   .map((dir) => ({ dir, json: JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) }));
 const libraryNames = new Set(pkgs.filter((p) => p.json.library === true).map((p) => p.json.name));
+// A shared package with a Prisma schema or client would hand a library another
+// database (e.g. s-ingest-core's getPrisma reads the Shopify mirror).
+// ponytail: direct deps and imports only; a DB package pulled in through
+// another shared package slips. Walk the dep graph if that ever happens.
+const dbSharedNames = new Set(
+  pkgs
+    .filter((p) => p.json.library !== true)
+    .filter(({ dir, json }) =>
+      existsSync(join(dir, 'prisma', 'schema.prisma')) ||
+      ['@prisma/client', 'prisma'].some((d) => d in (json.dependencies ?? {})))
+    .map((p) => p.json.name),
+);
 
 const checkinModels = new Set(
   [...readFileSync(join(root, 'checkin-app/prisma/schema.prisma'), 'utf8').matchAll(/^\s*(?:model|enum|view|type)\s+(\w+)/gm)].map((m) => m[1]),
@@ -45,6 +57,9 @@ function forbidden(spec, self) {
   if (isPkg(spec, 'checkin-app')) return 'checkin-app';
   if (spec.startsWith('@/')) return 'checkin-app alias';
   for (const lib of libraryNames) if (lib !== self && isPkg(spec, lib)) return 'another library';
+  for (const db of dbSharedNames) {
+    if (isPkg(spec, db)) return `${db} holds a database client; reach that data through a port that checkin binds in configure.ts`;
+  }
   return null;
 }
 

@@ -105,8 +105,13 @@ Rules:
 
 **Payment vs relief** (keep separate):
 - **Manual payment** — payment landed **outside Shopify** (recorded in QuickBooks), so a membership activates without a Shopify order. `via: "manual"` / `manualPaymentById`. **Not** a comp.
-- **Payment Plan** — installments (`isPaymentPlanRequested`).
-- **Scholarship** — a board comp (fee waived). Unnamed in code today.
+- **Payment Plan** — installments (`isPaymentPlanRequested`, kind `PAYMENT_PLAN`).
+- **Scholarship** — a board comp (fee waived). Named in code as `ScholarshipRequestKind.SCHOLARSHIP`.
+- **`isPaymentPlanRequested` is the umbrella flag**, not the payment-plan half: it means
+  "this household asked for help with a fee" and is set by a scholarship request too.
+  Which ask it was lives in `scholarshipRequestKind` (`SCHOLARSHIP` / `PAYMENT_PLAN` /
+  `UNSURE`, null on requests predating the column). Granted terms stay out of the app —
+  see `docs/rules/finance-payments.md`.
 - **Scholarship Review Team** — the board-designated recipients of scholarship / payment-plan
   request notifications (`BoardSettings.scholarshipNotifyEmail`; falls back to all board members
   when unset). The canonical UI/copy term — **retire "Finance Committee"** for this concept.

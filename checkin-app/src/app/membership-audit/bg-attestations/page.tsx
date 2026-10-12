@@ -99,22 +99,22 @@ export default function BgAttestationsPage() {
   const [results, setResults] = useState<string[]>([]);
   const [statuses, setStatuses] = useState<string[]>([]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/membership-audit/bg-attestations");
+  const load = useCallback(() => fetch("/api/membership-audit/bg-attestations")
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setAttestations(Array.isArray(data) ? data : []);
       } else {
         setError("Failed to load attestation data.");
       }
-    } catch {
+    })
+    .catch(() => {
       setError("Network error loading attestation data.");
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => { load(); }, [load]);
 

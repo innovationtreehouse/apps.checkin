@@ -102,6 +102,7 @@ export function navBadgeFor(href: string, counts: TodoCounts | null): NavBadge[]
       return [...red, ...green(n, `${n} attendance ${n === 1 ? 'item' : 'items'} to confirm`)];
     }
     case '/attendance': {
+      if (!counts.buildingReachable) return [];
       const mine = counts.buildingHousehold;
       const blue = (n: number, label: string): NavBadge[] =>
         n > 0 ? [{ count: n, color: 'blue', label }] : [];

@@ -16,6 +16,7 @@ jest.mock("@/lib/logger", () => ({ logBackendError: jest.fn() }));
 jest.mock("@/lib/postEventEmails", () => ({ processPostEventEmails: jest.fn().mockResolvedValue(undefined) }));
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+const closer = { closedById: 1, via: "KIOSK" as const };
 const tx = prisma.$transaction as jest.Mock;
 
 beforeEach(() => jest.clearAllMocks());
@@ -24,7 +25,7 @@ describe("finalizeFacilityClose", () => {
     it("retries a failed sweep once and does not log when the retry succeeds", async () => {
         tx.mockRejectedValueOnce(new Error("Transaction already closed")).mockResolvedValueOnce(undefined);
 
-        await finalizeFacilityClose(json({ facilityClosed: true }));
+        await finalizeFacilityClose(json({ facilityClosed: true }), closer);
 
         expect(tx).toHaveBeenCalledTimes(2);
         expect(logBackendError).not.toHaveBeenCalled();
@@ -34,7 +35,7 @@ describe("finalizeFacilityClose", () => {
         const err = new Error("connection dropped");
         tx.mockRejectedValueOnce(new Error("first")).mockRejectedValueOnce(err);
 
-        await expect(finalizeFacilityClose(json({ facilityClosed: true }))).resolves.toBeUndefined();
+        await expect(finalizeFacilityClose(json({ facilityClosed: true }), closer)).resolves.toBeUndefined();
 
         expect(tx).toHaveBeenCalledTimes(2);
         expect(logBackendError).toHaveBeenCalledWith(err, "facility-close");
@@ -47,23 +48,25 @@ describe("finalizeFacilityClose", () => {
         tx.mockImplementation(async (cb: (t: unknown) => Promise<unknown>) => {
             attempt++;
             const fakeTx = {
-                $executeRaw: jest.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+                $executeRaw: jest.fn(async () => 0),
+                $queryRaw: jest.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => {
                     if (values.includes(closeTime.toISOString())) sweepTimes.push(values[0]);
-                    return 0;
+                    return [];
                 }),
+                facilityClose: { create: jest.fn(async () => ({ id: 1 })) },
             };
             await cb(fakeTx);
             if (attempt === 1) throw new Error("Transaction already closed");
         });
 
-        await finalizeFacilityClose(json({ facilityClosed: true }), closeTime);
+        await finalizeFacilityClose(json({ facilityClosed: true }), closer, closeTime);
 
         expect(sweepTimes).toEqual([closeTime.toISOString(), closeTime.toISOString()]);
         expect(logBackendError).not.toHaveBeenCalled();
     });
 
     it("does nothing unless the response reports facilityClosed", async () => {
-        await finalizeFacilityClose(json({ type: "checkout", facilityClosed: false }));
+        await finalizeFacilityClose(json({ type: "checkout", facilityClosed: false }), closer);
         expect(tx).not.toHaveBeenCalled();
     });
 });

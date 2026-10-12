@@ -27,7 +27,8 @@ function parseMatchedRows(raw: string): AccountMap[] {
 }
 
 export const disbursementService = {
-  async getHoldsGrouped(orgId: string) {
+  /** Pending holds as DisbursementHold rows with their transaction; matchedRows parsed from JSON. */
+  async listPendingHolds(orgId: string) {
     const holds = await db.disbursementHold.findMany({
       where: { orgId, status: "PENDING" },
       include: {
@@ -37,24 +38,7 @@ export const disbursementService = {
       },
       orderBy: [{ disbursementId: "asc" }, { id: "asc" }],
     });
-
-    type HoldWithTx = (typeof holds)[number] & { matchedRows: AccountMap[] };
-    const grouped: Record<string, HoldWithTx[]> = {};
-    for (const hold of holds) {
-      const { transaction: tx, ...rest } = hold;
-      const row = {
-        ...rest,
-        txCompanyName: tx?.companyName ?? null,
-        txCorporatePeerCampaign: tx?.corporatePeerCampaign ?? null,
-        txDonationMethod: tx?.donationMethod ?? null,
-        txDonationType: tx?.donationType ?? null,
-        matchedRows: parseMatchedRows(hold.matchedRows),
-      } as unknown as HoldWithTx;
-      if (!grouped[hold.disbursementId]) grouped[hold.disbursementId] = [];
-      grouped[hold.disbursementId].push(row);
-    }
-
-    return grouped;
+    return holds.map((hold) => ({ ...hold, matchedRows: parseMatchedRows(hold.matchedRows) }));
   },
 
   async listEvents(orgId: string) {

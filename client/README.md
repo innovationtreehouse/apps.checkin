@@ -15,6 +15,8 @@ A thin Python client for Raspberry Pi that runs at the facility entrance. It act
 # Install dependencies (system-wide)
 sudo apt update
 sudo apt install python3-requests python3-nacl python3-evdev
+# Color emoji font, so emoji in the web UI render in Chromium instead of empty boxes
+sudo apt install fonts-noto-color-emoji
 
 # Generate a keypair (one-time)
 python3 generate_keys.py

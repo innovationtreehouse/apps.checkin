@@ -36,7 +36,7 @@ export interface RequireRoleResult {
  *   if (!ready) return null; // a redirect is in flight
  */
 export function useRequireRole(
-  allowed: BusinessRole[],
+  allowed: (BusinessRole | "isFinance")[],
   options?: { redirectTo?: string },
 ): RequireRoleResult {
   const redirectTo = options?.redirectTo ?? "/";

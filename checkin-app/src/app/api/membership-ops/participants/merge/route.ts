@@ -508,6 +508,7 @@ export const POST = withAuth(
                     presenceEvents: 0,
                     noteAcks: 0,
                     attendanceConfirmations: 0,
+                    facilityCloses: 0,
                     trustedAdultDecisions: 0,
                     archivedMerges: 0,
                     roleGrants: 0,
@@ -616,6 +617,7 @@ export const POST = withAuth(
                 // tombstone they read as nobody the moment the row goes.
                 moved.noteAcks = (await tx.orgMembershipProcess.updateMany({ where: { noteAckById: mergeId }, data: { noteAckById: keepId } })).count;
                 moved.attendanceConfirmations = (await tx.event.updateMany({ where: { attendanceConfirmedById: mergeId }, data: { attendanceConfirmedById: keepId } })).count;
+                moved.facilityCloses = (await tx.facilityClose.updateMany({ where: { closedById: mergeId }, data: { closedById: keepId } })).count;
                 moved.trustedAdultDecisions = (await tx.trustedAdultReview.updateMany({ where: { decidedById: mergeId }, data: { decidedById: keepId } })).count;
 
                 // Earlier merges that named THIS record as their survivor. Repointed

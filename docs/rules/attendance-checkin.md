@@ -70,6 +70,13 @@ Things the app takes as true because they are handled outside it.
   says someone is there, so the app records them and marks the visit rather
   than refusing or hiding the scan.
 
+- A keyholder who leaves the building occupied has handed over in person to the
+  keyholder they name, with that keyholder's consent. The app cannot see the
+  handover; it records the leaver's statement.
+
+- The app does not model a primary keyholder, so the last recorded keyholder
+  stands in for the primary keyholder of §VIII.3.
+
 - Check-in happens at the one facility. Other locations exist and are temporary,
   and checking in at them is out of scope.
 
@@ -131,24 +138,55 @@ Things the app takes as true because they are handled outside it.
   there, that departure is warned about and goes through: two deep is owed
   whenever a youth is present, so an adult-only room locking up has nothing to
   confirm, and an interrupt raised where nothing is at stake teaches people to
-  badge through the one that matters. The keyholder close-guard is a separate
-  interrupt and both can be waiting on one person at once.  [Decision — *Policy: Event, Location and Keyholder Policy, §VIII.4*]
+  badge through the one that matters. The keyholder close offer is separate: at
+  the kiosk it comes with the checkout, so a keyholder this interrupt holds sees
+  it once they confirm.  [Decision — *Policy: Event, Location and Keyholder Policy, §VIII.4*]
 
 - The supervision interrupt is on the badge scanner only. Checking someone out
   from the web does not raise it — the person doing the checking out is not at the
   reader and cannot re-badge to confirm.  [Decision — deliberate limit]
 
-- The keyholder close-guard fires on every close path — badge, dashboard checkout,
-  self-correction edit that closes an open visit, and tombstone of an open visit.
-  On the badge path the confirm is a second badge within the countdown; on web
-  paths it is a server-minted token echoed back through a confirm dialog.  [Decision]
+- The keyholder close-guard fires on every close path — badge, the home-page
+  check-out, dashboard checkout or sign-out, self-correction edit that closes an
+  open visit, and removal of an open visit. On the badge path the confirm is a
+  second badge within the countdown. On the web, when the last recorded keyholder's
+  visit ends with others inside, the caller chooses close, leave or cancel in one
+  confirm dialog, answered by a server-minted token bound to the person shown the
+  choice: the keyholder checking themselves out, or a board member, gets all
+  three; anyone else — another keyholder, a household lead, a sysadmin — gets
+  leave or cancel. Close checks everyone out; leave
+  checks out only the keyholder and leaves the others inside a closed facility;
+  cancel changes nothing. The choices are worked out again on confirm, so a role
+  revoked in between takes effect. Every choice is audited with who made it,
+  whose visit it was, the choice, the keyholder named and the count left inside.  [Decision]
+
+- On the web only the keyholder checking themselves out, or a board member,
+  closes the facility; another keyholder, a household lead or a sysadmin never
+  does, even with the keyholder alone in the record. The board closes whether or not its member holds keys: the owner
+  reads the board's superuser standing as covering the active-keyholder rule.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
+
+- The keyholder checking themselves out, or a board member, who chooses leave
+  names, from the keyholders not checked in, the one the keyholder handed over to. Where none is free to name,
+  the leave stands and records the handover as not named. The named keyholder is
+  not checked in — that needs their agreement — and is emailed who left, when,
+  and how many are still inside, unless they are checked in by then. Anyone else's
+  leave names nobody.  [Decision]
+
+- Removing an open visit never closes the facility, whoever removes it: a
+  removal says the keyholder was never there, and closing on that basis would
+  invent departures for everyone else. The confirm states how many stay inside
+  a closed facility.  [Decision]
+
+- The names of the people inside go with the close choice only to keyholders,
+  board members and sysadmins, who already read the full roster; a household lead
+  sees a count.  [Decision — *Policy: Records Policy, Art. IV*]
 
 - A force-close is triggered only by an explicit confirm — the second badge within
   the visible countdown — never inferred from the spacing between two raw badge
   reads. An ordinary double-tap cannot close the building over the people standing
   in it, and an unattended countdown never becomes a confirm: the confirm is always
   a human's second badge at the door. With a server present that confirm is the
-  echoed server-minted token; with no network the kiosk runs the same warning and
+  echoed server-minted token; with no network the kiosk runs the same offer and
   second-badge confirm itself, so a keyholder can still lock up offline. The queued
   close carries the confirm, and the server honours it on the delayed replay
   whenever the badge is a keyholder's.
@@ -159,16 +197,32 @@ Things the app takes as true because they are handled outside it.
 - Any keyholder can close the building at the kiosk with a double scan, whoever
   else is recorded inside — another keyholder included. We trust the keyholder
   to know they are the last one out; another keyholder still recorded is a
-  forgotten badge-out. When another keyholder is recorded, the first badge checks
-  the keyholder out and offers the close; a second badge within the countdown
-  closes the facility. The last keyholder with others still present gets the
-  warning above instead and stays recorded until they confirm, and a keyholder
-  alone closes on a single badge. Offline the kiosk runs the same offer and
-  confirm itself, and the server honours the queued confirm whoever else it
-  reads as present. The close is bound to the badge that was shown the offer —
+  forgotten badge-out. A keyholder's first badge with others still recorded
+  inside checks them out and offers the close; a second badge within the
+  countdown closes the facility. For the last recorded keyholder that first badge
+  is a leave: the offer says no other keyholder is checked in, the others stay
+  inside a closed facility, and the leave is audited like a web leave with the
+  handover not named — the reader has no pick-list, and a keyholder staying can
+  badge in at the same reader. A keyholder alone closes on a single badge, and a
+  queued badge with no confirm replays as a leave. Who counts as inside is what
+  the kiosk showed when it says so, live or queued: shown nobody, one badge
+  closes over anyone the server still records; shown anyone, the badge is a
+  leave and only the second closes, even when the server records nobody. A kiosk
+  that does not say leaves it to the server's records. Offline the kiosk runs the
+  same offer and confirm itself, and the server honours the queued confirm
+  whoever else it reads as present — against the keyholder's visit still open,
+  one the nightly sweep closed after the confirm, or one their own badge
+  departed at or before it, which takes the offer's token or the offline
+  confirm. The close is bound to the badge that was shown the offer —
   someone else scanning during the countdown scans normally — and a read of that
   badge within a second of the offer is the same touch read twice, never the
   confirm. Nothing on the web can stop a kiosk close.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
+
+- Every facility close is recorded: who closed, when, and through which path
+  (kiosk, offline kiosk, a web checkout or correction, or the nightly sweep,
+  which no person makes). Every departure a close sets is logged against
+  that record with the visit's departure before and after. These logs are an
+  audit trail and are never deleted.  [Decision — *Principle: accountability*]
 
 ### The kiosk
 
@@ -202,6 +256,16 @@ hours at a time — is a normal operating mode here, not an incident.
   direction from its own live state at delivery, which would flip a replayed
   check-in into a check-out.  [Decision]
 
+- Repeat reads of the same badge within three seconds are one scan: the scanner
+  can read one touch twice. The kiosk filters them at the moment the badge is
+  read, before the scan is queued or sent, so the rule is the same online and
+  offline and a double-read never queues an in and an out. A keyholder's second
+  badge to confirm a close therefore comes more than three seconds after the
+  first. For a current kiosk the server drops only exact duplicates — the same
+  scan sent twice, by its event id — and applies everything else it is sent;
+  it keeps its own three-second check only for callers that do not filter
+  (older kiosk builds and the web).  [Decision]
+
 - A replayed scan applies at the time the badge was read, not the time it was
   delivered. Within a short freshness window it toggles normally; older than that
   it is held for a human, because once state has moved on a bare toggle cannot
@@ -232,6 +296,15 @@ hours at a time — is a normal operating mode here, not an incident.
 - The kiosk and attendance safety display reads a missing or incomplete safety
   payload as *unknown*, never as an empty, compliant room: a failed fetch or a
   half-populated object must not render as "no violation".  [Decision — *Principle: fail closed*]
+
+- The web states the building's state — who is inside, whether it is open,
+  whether it is two deep — as fact only while the server has heard from the
+  kiosk within the last five minutes. Otherwise it says it can't confirm the
+  building's state and when the kiosk was last heard from, and what it lists is
+  the visit record, not presence. Overnight the kiosk stops checking in on
+  purpose, so that is the expected reading then. The kiosk's own screen shows
+  what the kiosk holds regardless, and checking in or out decides from the
+  visit record either way.  [Decision — *Principle: fail closed*]
 
 - Youth and two-deep math stay server-side, never computed on the kiosk. Resolving
   a parked scan runs the same fail-closed safety math the live path does.  [Decision — *Principle: fail closed*]

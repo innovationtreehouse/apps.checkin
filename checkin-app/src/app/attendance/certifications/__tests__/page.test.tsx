@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports */
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
@@ -20,7 +20,7 @@ const nicknamed = [
 
 describe("KioskCertificationsDisplay", () => {
     it("loads and renders the live certifications grid", async () => {
-        mockFetchJson({ "/api/kioskdisplay/certifications": { participants, tools } });
+        mockFetchJson({ "/api/kioskdisplay/certifications": { participants, tools, building: { reachable: true, lastSeenAt: null } } });
         renderWithProviders(<KioskCertificationsDisplay />);
 
         // Kiosk display names are privacy-trimmed to first name only when unique (see getKioskDisplayNames).
@@ -32,6 +32,14 @@ describe("KioskCertificationsDisplay", () => {
         expect(screen.getByText("2 People Present")).toBeInTheDocument();
     });
 
+    it("labels the present count unconfirmed when the kiosk is unreachable", async () => {
+        mockFetchJson({ "/api/kioskdisplay/certifications": { participants, tools, building: { reachable: false, lastSeenAt: null } } });
+        renderWithProviders(<KioskCertificationsDisplay />);
+
+        expect(await screen.findByText("2 Checked In (unconfirmed)")).toBeInTheDocument();
+        expect(screen.queryByText("2 People Present")).not.toBeInTheDocument();
+    });
+
     it("labels rows with the nickname the person goes by", async () => {
         mockFetchJson({ "/api/kioskdisplay/certifications": { participants: nicknamed, tools } });
         renderWithProviders(<KioskCertificationsDisplay />);
@@ -40,6 +48,20 @@ describe("KioskCertificationsDisplay", () => {
         expect(await screen.findByText("Sam")).toBeInTheDocument();
         expect(screen.queryByText("Alexander")).not.toBeInTheDocument();
         expect(screen.queryByText("Samantha")).not.toBeInTheDocument();
+    });
+
+    it("shows the Chicago wall-clock time and advances it on the minute", async () => {
+        jest.useFakeTimers({ now: new Date("2026-10-10T15:04:30Z"), doNotFake: ["nextTick", "setImmediate"] });
+        try {
+            mockFetchJson({ "/api/kioskdisplay/certifications": { participants, tools } });
+            renderWithProviders(<KioskCertificationsDisplay />);
+            expect(await screen.findByText("10:04 AM")).toBeInTheDocument();
+
+            await act(async () => { jest.advanceTimersByTime(30_000); });
+            expect(screen.getByText("10:05 AM")).toBeInTheDocument();
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("shows an error message when the fetch fails", async () => {

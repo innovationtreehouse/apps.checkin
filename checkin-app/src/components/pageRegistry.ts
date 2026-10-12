@@ -12,6 +12,7 @@ import { shopRoles } from '@/lib/shopNav';
 import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
 import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
 import { membershipOpsRouteVisible } from '@/lib/membershipOpsNav';
+import { isLibraryVisible, type LibraryKey } from '@/lib/libraryRelease';
 
 export type RegistryUser = {
   isSysadmin?: boolean;
@@ -20,6 +21,7 @@ export type RegistryUser = {
   isBackgroundCheckReviewer?: boolean;
   isOperations?: boolean;
   isInventoryManager?: boolean;
+  isFinance?: boolean;
   householdLead?: boolean;
   programsLed?: number[];
   hasVolunteerDesignation?: boolean;
@@ -70,7 +72,14 @@ const CATALOG_VIEWER: Visible = (u, signedIn) =>
     (u?.programsLed?.length ?? 0) > 0 ||
     !!u?.hasVolunteerDesignation);
 
+// Expense Ops: FINANCE or BOARD, no sysadmin (docs/rules/finance-payments.md).
+const FINANCE_OR_BOARD: Visible = (u) => !!u?.isFinance || !!u?.isBoardMember;
 const INVENTORY_MANAGER: Visible = (u, signedIn) => signedIn && !!u?.isInventoryManager;
+// A library's pages stay listed for board members only until the board releases it.
+const released = (lib: LibraryKey, gate: Visible): Visible => (u, signedIn, counts) =>
+  gate(u, signedIn, counts) && isLibraryVisible(lib, { isBoardMember: u?.isBoardMember, releasedLibraries: counts?.releasedLibraries });
+// Bulk donation (#1280 §5): FINANCE or BOARD, like its routes, until the board releases it.
+const DONATIONS = released('bulk-donation', FINANCE_OR_BOARD);
 
 export type PageEntry = {
   href: string;
@@ -125,20 +134,20 @@ export const PAGES: PageEntry[] = [
 
   // Inventory (global catalog, #1286) — any catalog viewer. The index redirects
   // to Items. Write controls within each screen are INVENTORY_MANAGER-gated.
-  { href: '/catalog', label: 'Inventory', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: CATALOG_VIEWER },
-  { href: '/catalog/items', label: 'Items', section: 'Inventory', keywords: 'catalog parts gtin', visible: CATALOG_VIEWER },
-  { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: CATALOG_VIEWER },
-  { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: CATALOG_VIEWER },
-  { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: CATALOG_VIEWER },
+  { href: '/catalog', label: 'Inventory', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/items', label: 'Items', section: 'Inventory', keywords: 'catalog parts gtin', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: released('catalog', CATALOG_VIEWER) },
   // Org inventory (#1287) — same viewer gate; the work-queue screens are
   // INVENTORY_MANAGER-only, like their routes.
-  { href: '/inventory/org-items', label: 'Org Inventory', section: 'Inventory', keywords: 'stock on hand quantity location', visible: CATALOG_VIEWER },
-  { href: '/inventory/locations', label: 'Locations', section: 'Inventory', keywords: 'shelf bin backstock', visible: CATALOG_VIEWER },
-  { href: '/inventory/receive-queue', label: 'Receive Queue', section: 'Inventory', keywords: 'backorder receiving', visible: CATALOG_VIEWER },
-  { href: '/inventory/received-deltas', label: 'Applied Deltas', section: 'Inventory', keywords: 'receipt delta', visible: CATALOG_VIEWER },
-  { href: '/inventory/merge-conflicts', label: 'Merge Conflicts', section: 'Inventory', keywords: 'uom mismatch', visible: INVENTORY_MANAGER },
-  { href: '/inventory/provisional-items', label: 'Provisional Map', section: 'Inventory', keywords: 'provisional part', visible: INVENTORY_MANAGER },
-  { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: INVENTORY_MANAGER },
+  { href: '/inventory/org-items', label: 'Org Inventory', section: 'Inventory', keywords: 'stock on hand quantity location', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/locations', label: 'Locations', section: 'Inventory', keywords: 'shelf bin backstock', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/receive-queue', label: 'Receive Queue', section: 'Inventory', keywords: 'backorder receiving', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/received-deltas', label: 'Applied Deltas', section: 'Inventory', keywords: 'receipt delta', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/merge-conflicts', label: 'Merge Conflicts', section: 'Inventory', keywords: 'uom mismatch', visible: released('local-inventory', INVENTORY_MANAGER) },
+  { href: '/inventory/provisional-items', label: 'Provisional Map', section: 'Inventory', keywords: 'provisional part', visible: released('local-inventory', INVENTORY_MANAGER) },
+  { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: released('local-inventory', INVENTORY_MANAGER) },
 
   // Facility Ops — board, plus operations on the two aggregate tools (#1633:
   // operations reach attendance in aggregate only). Visits, Badges (the raw
@@ -189,6 +198,20 @@ export const PAGES: PageEntry[] = [
   { href: '/finance-ops/membership-payment-plan', label: 'Membership Payment Plan', section: 'Finance Ops', visible: FINANCE },
   { href: '/finance-ops/shopify-holds', label: 'Shopify Hold Reconciliation', section: 'Finance Ops', keywords: 'seat hold failed inventory scholarship manual reconcile shopify', visible: FINANCE },
   { href: '/finance-ops/payments', label: 'Payment problems', section: 'Finance Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: FINANCE },
+
+  // Expense Ops — FINANCE or BOARD
+  { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: FINANCE_OR_BOARD },
+
+  // Donations — FINANCE or BOARD
+  { href: '/donations', label: 'Donations', section: 'Donations', visible: DONATIONS },
+  { href: '/donations/uploads', label: 'Benevity Uploads', section: 'Donations', keywords: 'benevity csv import corporate giving', visible: DONATIONS },
+  { href: '/donations/unassigned', label: 'Unassigned Gifts', section: 'Donations', keywords: 'owner bucket assign organizational level', visible: DONATIONS },
+  { href: '/donations/transactions', label: 'Gifts', section: 'Donations', keywords: 'donation donor match benevity', visible: DONATIONS },
+  { href: '/donations/holds', label: 'Disbursement Holds', section: 'Donations', keywords: 'account map no match resubmit', visible: DONATIONS },
+  { href: '/donations/events', label: 'Booking Batches', section: 'Donations', keywords: 'disbursement quickbooks deposit', visible: DONATIONS },
+  { href: '/donations/comment-rules', label: 'Comment Rules', section: 'Donations', keywords: 'donor comment owner rule', visible: DONATIONS },
+  { href: '/donations/account-map', label: 'Account Map', section: 'Donations', keywords: 'ledger gl account donation match fees', visible: DONATIONS },
+  { href: '/donations/qb-exclusions', label: 'QuickBooks Exclusions', section: 'Donations', keywords: 'quickbooks match exclude', visible: DONATIONS },
 
   // System Status — board
   { href: '/system-status', label: 'System Status', section: 'System Status', visible: BOARD },

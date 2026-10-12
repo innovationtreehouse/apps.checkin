@@ -5,8 +5,9 @@ import { POST } from '../route';
 import { authenticateRequest } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { logger } from '@/lib/logger';
-import { processCheckin, processCheckout, notifyScanOutcome } from '@/lib/scan-service';
+import { processCheckin, processCheckout, notifyScanOutcome, lastKeyholderGuard, finishCloseGuard, finalizeFacilityClose } from '@/lib/scan-service';
 import { config } from '@/lib/config';
+import { KIOSK_DEBOUNCE_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 
 jest.mock('@/lib/auth', () => ({
     authenticateRequest: jest.fn(),
@@ -56,6 +57,10 @@ jest.mock('@/lib/scan-service', () => ({
     processCheckin: jest.fn(),
     processCheckout: jest.fn(),
     finalizeFacilityClose: jest.fn().mockResolvedValue(undefined),
+    closeVia: jest.fn().mockReturnValue("KIOSK"),
+    closeActor: jest.fn((user: { id: string }) => ({ id: Number(user.id), isKeyholder: false, isBoardMember: false, isSysadmin: false })),
+    lastKeyholderGuard: jest.fn().mockResolvedValue({ action: 'proceed', facilityClosed: false, choice: null }),
+    finishCloseGuard: jest.fn().mockResolvedValue(undefined),
     notifyScanOutcome: jest.fn().mockResolvedValue(undefined),
     SUPERVISION_CONFIRM_MS: 15_000,
     SUPERVISION_CONFIRM_DEADFRONT_MS: 1_000,
@@ -363,6 +368,54 @@ describe('POST /api/scan', () => {
         const json = await res.json();
         expect(json.type).toBe('ignored_debounce');
         expect(json.message).toBe('Scan ignored due to debounce.');
+    });
+
+    // A current kiosk filters repeat reads at the reader; the server keeps the
+    // 3 s debounce only for callers that don't (older kiosks, the web).
+    describe('repeat-read debounce by protocol', () => {
+        function kioskReplay(overrides: Record<string, unknown> = {}) {
+            return new Request('http://localhost/api/scan', {
+                method: 'POST',
+                body: JSON.stringify({
+                    participantId: 1, clientEventId: 'evt-r', scannedAt: new Date(Date.now() - 60_000).toISOString(),
+                    replay: true, protocolVersion: KIOSK_DEBOUNCE_PROTOCOL_VERSION, ...overrides,
+                })
+            }) as unknown as import('next/server').NextRequest;
+        }
+
+        beforeEach(() => {
+            (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null });
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            // A row from a scan under a second ago, by server time.
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue({ timestamp: new Date(Date.now() - 500) });
+            (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
+            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+        });
+
+        it('applies a current kiosk replay within 3 s of a prior row instead of dropping it', async () => {
+            const res = await POST(kioskReplay());
+
+            expect((await res.json()).type).toBe('checkin');
+            expect(processCheckin).toHaveBeenCalled();
+        });
+
+        it('still debounces an older-protocol kiosk', async () => {
+            const res = await POST(kioskReplay({ protocolVersion: KIOSK_DEBOUNCE_PROTOCOL_VERSION - 1 }));
+
+            expect((await res.json()).type).toBe('ignored_debounce');
+            expect(processCheckin).not.toHaveBeenCalled();
+        });
+
+        it('still ignores the same clientEventId sent twice', async () => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue({ id: 5, clientEventId: 'evt-r' });
+
+            const res = await POST(kioskReplay());
+
+            expect((await res.json()).type).toBe('duplicate_ignored');
+            expect(processCheckin).not.toHaveBeenCalled();
+        });
     });
 
     // Replayed-scan idempotency (docs/rules/attendance-checkin.md, kiosk
@@ -693,7 +746,7 @@ describe('POST /api/scan', () => {
             const res = await POST(liveReq());
             expect((await res.json()).type).toBe('checkout');
             // Last arg null => processCheckout takes the live warn/confirm path.
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), null, expect.any(Date), null, false);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), null, expect.any(Date), null, false, false, null);
         });
 
         it('still dedups a clientEventId already recorded server-side', async () => {
@@ -727,7 +780,33 @@ describe('POST /api/scan', () => {
             const res = await POST(scanReq({ participantId: 1, forceCloseToken: 'tok-1' }));
 
             expect((await res.json()).facilityClosed).toBe(true);
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), 'tok-1', expect.any(Date), null, false);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), 'tok-1', expect.any(Date), null, false, false, null);
+        });
+
+        it('returns the shared close choice to a web checkout and runs no checkout', async () => {
+            (prisma.visit.count as jest.Mock).mockResolvedValue(1);
+            const warning = { type: 'close_choice', othersInside: 2, choices: ['leave', 'cancel'], forceCloseToken: 't', confirmSeconds: 15, error: 'No other keyholder is checked in.' };
+            (lastKeyholderGuard as jest.Mock).mockResolvedValueOnce({ action: 'warn', warning });
+
+            const res = await POST(scanReq({ participantId: 1, forceCloseToken: 'tok-1' }));
+
+            expect(res.status).toBe(400);
+            expect(await res.json()).toEqual(warning);
+            expect(processCheckout).not.toHaveBeenCalled();
+        });
+
+        it('passes the caller\'s choice to the guard and finishes a web close through it, not the kiosk finalizer', async () => {
+            (prisma.visit.count as jest.Mock).mockResolvedValue(1);
+            const guard = { action: 'proceed', facilityClosed: true, choice: { choice: 'close', handoverToId: null, othersInside: 1 } };
+            (lastKeyholderGuard as jest.Mock).mockResolvedValueOnce(guard);
+
+            await POST(scanReq({ participantId: 1, forceCloseToken: 'tok-1', closeChoice: 'close' }));
+
+            expect(lastKeyholderGuard).toHaveBeenCalledWith(7, { id: 1, mergedIntoId: null }, expect.objectContaining({ id: 1 }),
+                { token: 'tok-1', choice: 'close', handoverToId: undefined }, {}, expect.anything());
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), 'tok-1', expect.any(Date), null, false, true, null);
+            expect(finishCloseGuard).toHaveBeenCalledWith(guard, { actorId: 1, subjectId: 1, visitId: 7, via: 'WEB_CHECKOUT' });
+            expect(finalizeFacilityClose).not.toHaveBeenCalled();
         });
 
         it('debounces a spent or unknown token, so a stray second read cannot re-toggle', async () => {
@@ -762,7 +841,7 @@ describe('POST /api/scan', () => {
 
             expect((await res.json()).facilityClosed).toBe(true);
             expect(processCheckout).toHaveBeenCalledWith(
-                { id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), 'tok-q', new Date(scannedAt), 'evt-q', false);
+                { id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), 'tok-q', new Date(scannedAt), 'evt-q', false, false, null);
         });
 
         // Precedence, pinned deliberately: §2's freshness window W runs BEFORE
@@ -830,7 +909,7 @@ describe('POST /api/scan', () => {
             const res = await POST(scanReq({ participantId: 1 }));
 
             expect((await res.json()).type).toBe('checkout');
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), null, expect.any(Date), null, false);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), null, expect.any(Date), null, false, false, null);
             expect(prisma.visit.count).toHaveBeenCalledWith(expect.objectContaining({
                 where: expect.objectContaining({
                     personId: 1,

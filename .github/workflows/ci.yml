@@ -32,6 +32,14 @@ on:
         required: false
         default: ''
 
+# pull_request runs share one group per ref, so a new push cancels the run it
+# supersedes. Every other event keys on run_id: a group of one, so main pushes,
+# merge_group entries and workflow_call validates are never queued behind or
+# replaced by each other (a group holds one running + one pending run).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # "Run Tests (unit)", "Run Tests (integration)", "Coverage gate (merged)", and
   # "Deploy build (no deploy)" are REQUIRED status checks on main (the first three
@@ -134,7 +142,7 @@ jobs:
           # testcontainers) can break these suites without touching a workspace.
           # The library boundary check also reads its own script and checkin's
           # schema (a new checkin model can collide with a library's).
-          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|\.github/workflows/ci\.yml$|scripts/check-library-boundaries\.mjs$|checkin-app/prisma/schema\.prisma$)'; then
+          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|\.github/workflows/ci\.yml$|scripts/(test-)?check-library-boundaries\.(mjs|sh)$|checkin-app/prisma/schema\.prisma$)'; then
             echo "A package/function workspace (or this workflow) changed — running the Vitest tier."
             echo "packages=true" >> "$GITHUB_OUTPUT"
           else
@@ -659,7 +667,9 @@ jobs:
 
       - name: Library boundary check
         if: needs.changes.outputs.packages == 'true'
-        run: npm run check:library-boundaries
+        run: |
+          npm run check:library-boundaries
+          bash scripts/test-check-library-boundaries.sh
 
       - name: Test packages
         if: needs.changes.outputs.packages == 'true'
@@ -737,6 +747,13 @@ jobs:
     name: Deploy build (no deploy)
     needs: changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write      # mint the GitHub OIDC token to assume the AWS role (no stored creds)
+    env:
+      AWS_REGION: us-east-2
+      # Same least-privilege OIDC role as flow-tests.yml (ecr-public auth only).
+      PULL_ROLE: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
     steps:
       - name: Skip notice (client-only change)
         if: needs.changes.outputs.app != 'true'
@@ -797,3 +814,32 @@ jobs:
           docker run --rm --entrypoint sh checkin-deploy-build:${{ github.sha }} \
             -c 'cd checkin-app && npx --no-install prisma --version' \
             || { echo "::error::prisma CLI is not resolvable inside the image — the migrate task would fall back to a registry download"; exit 1; }
+
+      # Probe each wired library's error statuses against the production image
+      # with a migrated DB and a signed-in FINANCE+BOARD+INVENTORY_MANAGER person:
+      # malformed JSON must answer 400, a duplicate create 409, never 500.
+      # The `builder` stage is already in the layer cache from the build above.
+      # Authenticate the smoke step's postgres pull. Anonymous ECR Public is
+      # rate-limited per shared-runner IP; authenticated is per-account.
+      - name: Configure AWS credentials (OIDC)
+        if: needs.changes.outputs.app == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.PULL_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR Public
+        if: needs.changes.outputs.app == 'true'
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - name: Smoke test — library error statuses
+        if: needs.changes.outputs.app == 'true'
+        run: |
+          docker build --target builder \
+            -f checkin-app/Dockerfile \
+            -t checkin-deploy-builder:${{ github.sha }} .
+          bash scripts/deploy-build-error-smoke.sh \
+            checkin-deploy-build:${{ github.sha }} \
+            checkin-deploy-builder:${{ github.sha }}

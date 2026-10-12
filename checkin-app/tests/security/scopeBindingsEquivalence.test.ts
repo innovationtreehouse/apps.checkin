@@ -239,7 +239,7 @@ const ROWS: Array<{ label: string; row: unknown }> = [
     },
     {
         label: "lead's own program (Program row id 100)",
-        row: { id: 100, householdId: 4, participantId: 10, personId: 10, programId: 100, eventId: 200, userId: 10, actorId: 10, departedAt: null },
+        row: { id: 100, householdId: 4, participantId: 10, personId: 10, programId: 100, eventId: 200, userId: 10, actorId: 10, uploadedByUserId: 10, departedAt: null },
     },
 ];
 
@@ -296,6 +296,11 @@ function eq(a: Set<string>, b: Set<string>): boolean {
  * household-lead row in an in-scope household the resolver therefore adds
  * their_program_households where the snapshot did not. That is the fourth
  * expected diff.
+ *
+ * Receipt / ReceiptView / ReceiptLineView.their_own (#1265 §6): receipt models
+ * postdate the switch, which has no case for them. Each is bound `their_own` on
+ * uploadedByUserId === selfId, so on such a row the resolver adds their_own
+ * where the snapshot did not. That is the fifth expected diff.
  */
 function expectedFromSnapshot(
     model: string,
@@ -334,6 +339,15 @@ function expectedFromSnapshot(
     ) {
         expected.add('their_program_households');
     }
+    if (
+        (model === 'Receipt' || model === 'ReceiptView' || model === 'ReceiptLineView') &&
+        row &&
+        typeof row === 'object' &&
+        typeof row.uploadedByUserId === 'number' &&
+        row.uploadedByUserId === callerCtx.selfId
+    ) {
+        expected.add('their_own');
+    }
     return expected;
 }
 
@@ -360,6 +374,6 @@ describe('S1 — scopesHeld ≡ frozen switch + intentional deltas (personas × 
     it('covers every bound model', () => {
         // Guard against the row set silently not exercising a model.
         expect(MODELS).toEqual(expect.arrayContaining(Object.keys(SCOPE_BINDINGS)));
-        expect(Object.keys(SCOPE_BINDINGS).length).toBe(17); // +AuditLog (Blocker 2) -HouseholdLead (a1 contract) -FeePayment (FR7 drop)
+        expect(Object.keys(SCOPE_BINDINGS).length).toBe(20); // +AuditLog (Blocker 2) -HouseholdLead (a1 contract) -FeePayment (FR7 drop) +3 receipt (#1265)
     });
 });

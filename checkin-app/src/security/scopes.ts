@@ -167,6 +167,7 @@ const SCOPABLE_FIELDS = new Set([
     'userId',
     'actorId',
     'createdById',
+    'uploadedByUserId',
 ]);
 
 export function isScopable(

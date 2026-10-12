@@ -8,6 +8,7 @@ import { PageContainer } from '@/components/ui/PageContainer';
 import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { notifications } from '@mantine/notifications';
 import { isYouth } from '@/lib/time';
+import { signInEmailHelp } from '@/lib/person/signInEmail';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 export default function ProfilePage() {
@@ -17,6 +18,7 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
+  const [boardReplyTo, setBoardReplyTo] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     name: "",
@@ -26,9 +28,8 @@ export default function ProfilePage() {
     dob: "",
     over25: false
   });
-  const fetchProfile = useCallback(async () => {
-    try {
-      const res = await fetch('/api/profile');
+  const fetchProfile = useCallback(() => fetch('/api/profile')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setForm({
@@ -42,18 +43,24 @@ export default function ProfilePage() {
       } else {
         setMessage({ text: "Failed to load profile.", tone: "error" });
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading profile.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push('/');
     } else if (status === "authenticated") {
       fetchProfile();
+      fetch('/api/household')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => setBoardReplyTo(data?.boardReplyTo ?? null))
+        .catch(() => {});
     }
   }, [status, router, fetchProfile]);
 
@@ -108,7 +115,7 @@ export default function ProfilePage() {
 
           <form onSubmit={handleSubmit}>
             <Stack>
-              <TextInput label="Email Address" value={form.email} disabled title="Email cannot be changed here." />
+              <TextInput label="Email Address" value={form.email} disabled description={signInEmailHelp(boardReplyTo)} />
               <TextInput label="Full Name" description="Printed on name badges exactly as typed — please double-check the spelling." required value={form.name} onChange={(e) => setForm({ ...form, name: e.currentTarget.value })} placeholder="e.g. Jane Doe" disabled={readOnly} />
               <TextInput label="Nickname (optional)" description="Printed on your name badge in place of your first name. Leave blank to use your first name." value={form.nickname} onChange={(e) => setForm({ ...form, nickname: e.currentTarget.value })} placeholder="e.g. Janey" disabled={readOnly} />
               <TextInput type="tel" label="Phone Number" required value={form.phone} onChange={(e) => setForm({ ...form, phone: e.currentTarget.value })} placeholder="(555) 123-4567" disabled={readOnly} />

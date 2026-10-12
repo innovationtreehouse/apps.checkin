@@ -80,11 +80,6 @@ export default function AdminParticipantsIndex() {
     return 0;
   });
 
-  useEffect(() => {
-    const id = setTimeout(() => fetchParticipants(searchQuery), 250);
-    return () => clearTimeout(id);
-  }, [searchQuery]);
-
   const fetchParticipants = async (query = "") => {
     setLoading(true);
     try {
@@ -99,6 +94,11 @@ export default function AdminParticipantsIndex() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const id = setTimeout(() => fetchParticipants(searchQuery), 250);
+    return () => clearTimeout(id);
+  }, [searchQuery]);
 
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [selectedParticipant, setSelectedParticipant] = useState<PersonRow | null>(null);

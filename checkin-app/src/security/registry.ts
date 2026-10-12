@@ -26,6 +26,7 @@ import './registry/income';
 import './registry/donation';
 import './registry/workflow';
 import './registry/receipt';
+import './registry/budgetOwner';
 
 // ─── Routes ────────────────────────────────────────────────────────────────
 
@@ -317,6 +318,21 @@ defineRoute({
     returns: ['OrgMembershipProcess'],
     orderedView: [
         ['isSysadmin',    ['everyones:internal', 'public']],
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+
+// Board records a membership refund already made in Shopify. Board-only: a refund
+// is a money decision the policy gives the board, and sysadmin has no counterpart
+// there. The response echoes the application's id and new status and nothing
+// else, so the grant stops at internal with no pii/personal band.
+defineRoute({
+    endpoint: 'POST /api/membership-ops/applications/refund',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: 'process',
+    // Bag: { OrgMembershipProcess }, no relations.
+    returns: ['OrgMembershipProcess'],
+    orderedView: [
         ['isBoardMember', ['everyones:internal', 'public']],
     ],
 });
@@ -845,4 +861,46 @@ defineOutbound({
     surface: 'email.admin-notify',
     // Email address is 'pii' tier; the address is the entire payload here.
     tiers: ['public', 'pii'],
+});
+
+// packages/* surfaces. Packages call these directly, not through outboundCall();
+// check-route-coverage confines each to the files PACKAGE_EGRESS_FILES maps to it.
+
+defineOutbound({
+    surface: 'quickbooks.query',
+    // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
+    // Query literals: date windows, QBO ids, and account/class/vendor/customer
+    // names ('public'). Never an email, address or phone.
+    tiers: ['public'],
+});
+
+defineOutbound({
+    surface: 'quickbooks.create',
+    // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
+    // Purchase/Bill/Deposit/Vendor only: amounts, dates, account/class/vendor ids,
+    // line descriptions and memos ('internal'; memos may name a program participant,
+    // accepted by the owner), vendor DisplayName ('public').
+    tiers: ['public', 'internal'],
+});
+
+defineOutbound({
+    surface: 'quickbooks.oauth',
+    // packages/quickbooks/src/oauth.ts → oauth.platform.intuit.com. The app's client
+    // credentials, an authorization code or a refresh token; no model data.
+    tiers: [],
+});
+
+defineOutbound({
+    surface: 'shopify.admin-read',
+    // packages/s-ingest-core/src/config.ts builds the Admin GraphQL endpoint that
+    // s-read-function calls. Read-only bulk/order queries and cursors; no model data.
+    tiers: [],
+});
+
+defineOutbound({
+    surface: 'anthropic.receipt-ocr',
+    // packages/receipt/src/lib/ocr.ts → api.anthropic.com via @anthropic-ai/sdk.
+    // The receipt file's bytes (Receipt.fileBlob, 'pii'): a receipt can show a
+    // purchaser's name, address and partial card number. Bytes only, never a URL.
+    tiers: ['pii'],
 });

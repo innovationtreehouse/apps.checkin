@@ -28,3 +28,9 @@ export const HOUSEHOLD_PEER_SELECT = {
     // Lead" badge on the my-household cards; peers legitimately see who leads.
     isHouseholdLead: true,
 } satisfies Prisma.PersonSelect;
+
+/** The peer projection plus a linked-sign-in count, mapped to a `hasSignIn` boolean before it leaves. */
+export const HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT = {
+    ...HOUSEHOLD_PEER_SELECT,
+    _count: { select: { accounts: true } },
+} satisfies Prisma.PersonSelect;

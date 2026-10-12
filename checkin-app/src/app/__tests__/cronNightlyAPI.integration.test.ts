@@ -22,11 +22,11 @@ jest.mock('@/lib/attendanceTransitions', () => {
     return {
         __esModule: true,
         ...actual,
-        processVisitCheckout: jest.fn((visitId: number, checkoutTime: Date, db?: unknown, source?: unknown) => {
+        processVisitCheckout: jest.fn((visitId: number, checkoutTime: Date, db?: unknown, source?: unknown, facilityCloseId?: unknown) => {
             if (mockBadVisitIds.has(visitId)) {
                 return Promise.reject(new Error(`Simulated checkout failure for visit ${visitId}`));
             }
-            return actual.processVisitCheckout(visitId, checkoutTime, db, source);
+            return actual.processVisitCheckout(visitId, checkoutTime, db, source, facilityCloseId);
         }),
     };
 });

@@ -9,17 +9,26 @@ import type { SessionUser } from "@/types/auth";
 import type { NavLink } from "@/lib/nav/types";
 import { CATALOG_NAV_LINKS, CATALOG_TOP_NAV } from "@inventory/global-catalog/nav";
 import { INVENTORY_NAV_LINKS } from "@inventory/local-inventory/nav";
+import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
 
 export { CATALOG_TOP_NAV };
 
 /**
  * The Inventory section's tabs: the catalog's screens, then org inventory's
  * (#1287 §7). Org inventory's manager-only screens show only to an
- * INVENTORY_MANAGER, matching their routes' gate.
+ * INVENTORY_MANAGER, matching their routes' gate. Each library's tabs show only
+ * once it is released (or to a board member).
  */
-export function inventoryAreaLinks(user: SessionUser | undefined): NavLink[] {
-  const inventory = INVENTORY_NAV_LINKS.filter((l) => !l.managerOnly || !!user?.isInventoryManager);
-  return [...CATALOG_NAV_LINKS, ...inventory].map(({ name, href, icon }) => ({ name, href, icon }));
+export function inventoryAreaLinks(
+  user: SessionUser | undefined,
+  releasedLibraries: readonly string[] | null | undefined,
+): NavLink[] {
+  const visible = (lib: LibraryKey) => isLibraryVisible(lib, { isBoardMember: user?.isBoardMember, releasedLibraries });
+  const catalog = visible("catalog") ? CATALOG_NAV_LINKS : [];
+  const inventory = visible("local-inventory")
+    ? INVENTORY_NAV_LINKS.filter((l) => !l.managerOnly || !!user?.isInventoryManager)
+    : [];
+  return [...catalog, ...inventory].map(({ name, href, icon }) => ({ name, href, icon }));
 }
 
 /**

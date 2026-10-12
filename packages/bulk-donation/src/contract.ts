@@ -97,9 +97,28 @@ export interface DonationQbWriter {
 
 export interface BulkDonationConfig {
   auth: BulkDonationAuth;
-  org: () => OrgIdentity;
+  /** Called once per request: the host may resolve it from its own store, so never at boot. */
+  org: () => Promise<OrgIdentity>;
   owners?: OwnerDirectory;
   catalog?: CatalogLookup;
   inventory?: InventoryApply;
   qb?: DonationQbWriter;
 }
+
+/** The slice of a route context a factory consumes: request + path params. */
+export interface DonationRouteCtx {
+  req: Request;
+  params: Record<string, string>;
+}
+
+/** A route factory's body: parse → service → model bag (stripped by the host). */
+export type DonationBag = Record<string, unknown>;
+export type DonationRouteHandler = (ctx: DonationRouteCtx) => Promise<DonationBag>;
+
+/** A stored file a file-route factory serves; the host emits `row.fileBlob`. */
+export interface DonationFile {
+  row: Record<string, unknown>;
+  contentType: "text/plain";
+  filename?: string;
+}
+export type DonationFileRouteHandler = (ctx: DonationRouteCtx) => Promise<DonationFile>;

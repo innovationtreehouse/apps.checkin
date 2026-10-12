@@ -89,6 +89,7 @@ const DISPOSITIONS: Record<string, string> = {
     'BackgroundCheckAttestation.reviewerId': 'repointed (RESTRICT) — loop-or-skip. A shared process is pre-refused above (#1686): the same human attesting under two identities needs investigation, not a silent move.',
     'BackgroundCheckAttestation.subjectPersonId': 'repointed (SET NULL) — loop-or-skip on bgSubjectKey. Two collision classes are pre-refused: one reviewer naming both identities (the unique triple), and the cross-role case where one record reviewed a check naming the other, which would otherwise become a self-review.',
     'Event.attendanceConfirmedById': 'repointed (SET NULL) — who confirmed attendance is a staff-action audit fact; left behind it reads as nobody.',
+    'FacilityClose.closedById': 'repointed (SET NULL) — who closed the facility is an audit fact; left behind it reads as a deleted closer.',
     'OrgMembershipProcess.noteAckById': 'repointed (SET NULL) — who read the family intake note, same audit-fact rationale.',
     'OrgMembershipProcess.subjectPersonId': 'repointed (SET NULL) — step 5 updateMany, then archiveDuplicatePersonBg leaves the survivor exactly one open PERSON_BG.',
     'PresenceEvent.personId': 'repointed (CASCADE) — the append-only presence log projects visits, so events left on a tombstone would flush against a person the projection can no longer treat as live; the log follows the survivor like RawBadgeLog does.',

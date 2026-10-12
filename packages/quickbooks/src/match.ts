@@ -9,7 +9,7 @@ export interface MatchCandidate {
   amountCents: number;
   /** The account (Deposit, Purchase) or vendor (Bill) the entry is booked to. */
   ref?: string;
-  /** The idempotency key the app wrote into the entry; absent on hand-booked entries. */
+  /** The idempotency key the app wrote into the entry; absent on hand-booked entries. Space-joined when the entry carries several. */
   appKey?: string;
 }
 
@@ -21,7 +21,7 @@ export interface MatchRequest {
   ref?: string;
   /** The caller's idempotency key for this record. */
   key: string;
-  /** Inclusive YYYY-MM-DD range a hand entry's date must fall in. */
+  /** Inclusive YYYY-MM-DD range every hit's date must fall in; callers pad it with a grace on both sides. */
   window: { from: string; to: string };
   /** From takeoverLine(); null means no line, and nothing may be created. */
   takeoverLine: string | null;
@@ -41,6 +41,13 @@ export type MatchResult =
 /**
  * The "find" half of match-before-create. Stateless: the caller supplies the
  * candidates (from a windowed reader) and its claimed and excluded ids.
+ *
+ * Every hit, key or hand, must have the exact amount, the request's ref when set, and a
+ * date inside `req.window`. QuickBooks dates often sit a day or two off the record's, so
+ * callers should pad the window with a grace on both sides; this function adds none.
+ * A key hit that fails any check, an entry carrying the key beside another key, or a
+ * matching entry carrying another record's key goes to a person: a copied or edited memo must never be taken as the app's own entry,
+ * and must never fall through to a create.
  */
 export function findMatch(candidates: readonly MatchCandidate[], req: MatchRequest): MatchResult {
   qboDate(req.date);
@@ -49,25 +56,21 @@ export function findMatch(candidates: readonly MatchCandidate[], req: MatchReque
   if (req.window.from > req.window.to) throw new Error(`Match window is reversed: ${req.window.from} > ${req.window.to}`);
   if (req.takeoverLine !== null) qboDate(req.takeoverLine);
 
-  // A key hit is the app's own creation; a hit finance excluded or another record holds goes to a person, never a second booking.
-  const own = candidates.filter((c) => c.appKey === req.key);
-  if (own.length === 1 && !req.excludedIds.has(own[0].id) && !req.claimedIds.has(own[0].id)) {
-    return { kind: "found", id: own[0].id, via: "key" };
-  }
+  const fits = (c: MatchCandidate) =>
+    c.amountCents === req.amountCents &&
+    c.date >= req.window.from &&
+    c.date <= req.window.to &&
+    (req.ref === undefined || c.ref === req.ref);
+  const free = (c: MatchCandidate) => !req.excludedIds.has(c.id) && !req.claimedIds.has(c.id);
+
+  const own = candidates.filter((c) => c.appKey?.split(" ").includes(req.key));
+  if (own.length === 1 && own[0].appKey === req.key && fits(own[0]) && free(own[0])) return { kind: "found", id: own[0].id, via: "key" };
   if (own.length > 0) return { kind: "ambiguous", ids: own.map((c) => c.id) };
 
-  const hand = candidates.filter(
-    (c) =>
-      c.appKey === undefined &&
-      !req.excludedIds.has(c.id) &&
-      !req.claimedIds.has(c.id) &&
-      c.amountCents === req.amountCents &&
-      c.date >= req.window.from &&
-      c.date <= req.window.to &&
-      (req.ref === undefined || c.ref === req.ref),
-  );
-  if (hand.length === 1) return { kind: "found", id: hand[0].id, via: "amount" };
-  if (hand.length > 1) return { kind: "ambiguous", ids: hand.map((c) => c.id) };
+  const hits = candidates.filter((c) => fits(c) && free(c));
+  const hand = hits.filter((c) => c.appKey === undefined);
+  if (hand.length === 1 && hits.length === 1) return { kind: "found", id: hand[0].id, via: "amount" };
+  if (hits.length > 0) return { kind: "ambiguous", ids: hits.map((c) => c.id) };
 
   if (req.takeoverLine === null) return { kind: "not-found-no-line" };
   return req.date > req.takeoverLine ? { kind: "not-found-after-line" } : { kind: "not-found-before-line" };

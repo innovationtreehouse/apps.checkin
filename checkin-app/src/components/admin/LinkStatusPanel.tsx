@@ -27,15 +27,16 @@ export function LinkStatusPanel() {
   const [failed, setFailed] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
 
-  async function load() {
-    try {
-      const res = await fetch("/api/system-status/links");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setErrors(data.errors);
-    } catch {
-      setFailed(true);
-    }
+  function load() {
+    return fetch("/api/system-status/links")
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        setErrors(data.errors);
+      })
+      .catch(() => {
+        setFailed(true);
+      });
   }
 
   useEffect(() => {

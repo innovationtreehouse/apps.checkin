@@ -95,20 +95,17 @@ function ApplicationsBoard() {
   // because a blocked review has no second approval to count.
   const [overrideSubjects, setOverrideSubjects] = useState<Record<number, number>>({});
 
-  const load = useCallback(async (archived: boolean) => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/membership-ops/applications${archived ? "?archived=1" : ""}`);
-      if (res.ok) {
-        const data = await res.json();
-        setRows(data.processes || []);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const fetchRows = useCallback((archived: boolean) =>
+    fetch(`/api/membership-ops/applications${archived ? "?archived=1" : ""}`)
+      .then(async (res) => { if (res.ok) setRows((await res.json()).processes || []); })
+      .finally(() => setLoading(false)), []);
 
-  useEffect(() => { load(showArchived); }, [load, showArchived]);
+  const load = (archived: boolean) => {
+    setLoading(true);
+    return fetchRows(archived);
+  };
+
+  useEffect(() => { fetchRows(showArchived); }, [fetchRows, showArchived]);
 
   const act = async (processId: number, action: string, extra?: Record<string, unknown>) => {
     setBusyId(processId);
@@ -323,7 +320,7 @@ function ApplicationsBoard() {
       <Switch
         label="Show archived"
         checked={showArchived}
-        onChange={(e) => setShowArchived(e.currentTarget.checked)}
+        onChange={(e) => { setLoading(true); setShowArchived(e.currentTarget.checked); }}
       />
 
       {!loading && rows.length > 0 && !showArchived && (

@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import { usePolling, POLL_IDLE_STOP_MS } from "@/hooks/usePolling";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
+import { IconHeartHandshake, IconKey, IconSchool, type Icon } from "@tabler/icons-react";
 import {
   Alert, Anchor, Badge, Box, Button, Card, Center, Group, Loader, Modal, Paper,
   SimpleGrid, Stack, Text, TextInput, Title,
@@ -17,9 +18,12 @@ import { formatPhone } from "@/lib/phone";
 import { getKioskDisplayNames } from "@/lib/kiosk-names";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { AttendanceTabs } from "../AttendanceTabs";
+import { isCloseChoiceWarning, useCloseChoice, type CloseChoiceAnswer } from "@/components/CloseChoiceDialog";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 import { CountBadge } from "@/components/ui/CountBadge";
+import { BuildingUnconfirmedAlert } from "@/components/BuildingUnconfirmedAlert";
+import type { BuildingLink } from "@/lib/kioskSeen";
 import { personQueryMatcher } from "@/lib/searchId";
 
 type Person = {
@@ -49,8 +53,8 @@ type Visit = {
 
 type Counts = { keyholders: number; volunteers: number; youth: number; total: number; needReview?: number };
 type SafetyFlags = { facilityOpen: boolean; isLastKeyholder: boolean; isTwoDeepViolation: boolean };
-type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags };
-type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; self: Visit | null; household: Visit[] };
+type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags; building?: BuildingLink };
+type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; self: Visit | null; household: Visit[] };
 type AttendanceResponse = FullResponse | LimitedResponse;
 
 function KioskDisplayInner() {
@@ -68,10 +72,7 @@ function KioskDisplayInner() {
   const [selectedParticipant, setSelectedParticipant] = useState<Person | null>(null);
   const [confirmCheckoutOpened, { open: openConfirmCheckout, close: closeConfirmCheckout }] = useDisclosure(false);
   const [pendingCheckoutVisitId, setPendingCheckoutVisitId] = useState<number | null>(null);
-  const [forceCloseOpened, { open: openForceClose, close: closeForceClose }] = useDisclosure(false);
-  const [forceCloseVisitId, setForceCloseVisitId] = useState<number | null>(null);
-  const [forceCloseToken, setForceCloseToken] = useState<string | null>(null);
-  const [forceCloseMessage, setForceCloseMessage] = useState("");
+  const { ask: askCloseChoice, dialog: closeChoiceDialog } = useCloseChoice();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Person[]>([]);
@@ -99,6 +100,9 @@ function KioskDisplayInner() {
       && typeof rawSafety?.facilityOpen === "boolean"
       ? rawSafety
       : null;
+  // Off the kiosk, building state is stated as fact only while the server can
+  // reach the kiosk; a missing link reads as unreachable.
+  const unconfirmed = !isKioskMode && data !== null && data.building?.reachable !== true;
 
   // Prefer the server-computed flag (the only youth signal the kiosk payload carries),
   // fall back to the birth date the privileged payload still ships. This feeds the
@@ -241,13 +245,14 @@ function KioskDisplayInner() {
     await doForceCheckout(visitId, true);
   };
 
-  const doForceCheckout = async (visitId: number, isSelf: boolean = false, token?: string) => {
+  const doForceCheckout = async (visitId: number, isSelf: boolean = false, answer?: CloseChoiceAnswer) => {
     setCheckingOut(visitId);
+    let next: CloseChoiceAnswer | null = null;
     try {
       const res = await fetch("/api/attendance", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ visitId, ...(token ? { forceCloseToken: token } : {}) }),
+        body: JSON.stringify({ visitId, ...answer }),
       });
       const resData = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -255,11 +260,8 @@ function KioskDisplayInner() {
           notifications.show({ color: "yellow", message: "Facility closed — all remaining visits ended.", autoClose: 5000 });
         }
         refreshAttendance();
-      } else if (resData.type === "warning" && resData.forceCloseToken) {
-        setForceCloseVisitId(visitId);
-        setForceCloseToken(resData.forceCloseToken);
-        setForceCloseMessage(resData.error);
-        openForceClose();
+      } else if (isCloseChoiceWarning(resData)) {
+        next = await askCloseChoice(resData);
       } else {
         notifications.show({ color: "red", message: isSelf ? "Failed to check out." : "Failed to force checkout.", autoClose: false });
       }
@@ -269,6 +271,7 @@ function KioskDisplayInner() {
     } finally {
       setCheckingOut(null);
     }
+    if (next) await doForceCheckout(visitId, isSelf, next);
   };
 
   const confirmForceCheckout = async () => {
@@ -277,17 +280,6 @@ function KioskDisplayInner() {
     const visitId = pendingCheckoutVisitId;
     setPendingCheckoutVisitId(null);
     await doForceCheckout(visitId);
-  };
-
-  const confirmFacilityClose = async () => {
-    if (forceCloseVisitId === null || forceCloseToken === null) return;
-    closeForceClose();
-    const visitId = forceCloseVisitId;
-    const token = forceCloseToken;
-    setForceCloseVisitId(null);
-    setForceCloseToken(null);
-    setForceCloseMessage("");
-    await doForceCheckout(visitId, false, token);
   };
 
   const handleManualCheckIn = async (participantId: number) => {
@@ -380,10 +372,10 @@ function KioskDisplayInner() {
       visit.participant.householdId === currentUserHouseholdId)
   );
 
-  const renderColumn = (icon: string, count: number, label: string, color: string, list: Visit[]) => (
+  const renderColumn = (ColumnIcon: Icon, count: number, label: string, color: string, list: Visit[]) => (
     <div>
       <Group gap={8} mb="sm" pb="xs" style={{ borderBottom: `2px solid var(--mantine-color-${color}-5)` }}>
-        <Text fz="xl">{icon}</Text>
+        <ColumnIcon size={28} stroke={1.75} color={`var(--mantine-color-${color}-6)`} aria-hidden />
         <div>
           <Text fz="xl" fw={800} c={color} lh={1}>{count}</Text>
           <Text size="xs" tt="uppercase" c="dimmed">{label}</Text>
@@ -428,7 +420,9 @@ function KioskDisplayInner() {
                 Sign out a user
               </Button>
             )}
-            <CountBadge intent="info" size="lg">People Present: {data ? counts.total : "—"}</CountBadge>
+            <CountBadge intent="info" size="lg">
+              {unconfirmed ? "Checked in (unconfirmed)" : "People Present"}: {data ? counts.total : "—"}
+            </CountBadge>
             {/* A number only — no names, no reasons, no link that invites a
                 login on the kiosk. The panel is the copy of record. */}
             {isKioskDisplay && (counts.needReview ?? 0) > 0 && (
@@ -481,26 +475,27 @@ function KioskDisplayInner() {
         )}
 
         {/* Safety warnings — a missing roster reads as unknown, not as all-clear */}
-        {!loading && !safety && (
+        {unconfirmed && <BuildingUnconfirmedAlert lastSeenAt={data?.building?.lastSeenAt} mb="lg" />}
+        {!loading && !unconfirmed && !safety && (
           <Alert color="orange" icon="⚠️" title="Supervision status unknown" mb="lg">
             {data
               ? "Attendance loaded without safety flags, so Two-Deep Compliance and keyholder coverage cannot be checked. Verify supervision in the building."
               : "Attendance could not be loaded, so Two-Deep Compliance and keyholder coverage cannot be checked. Verify supervision in the building."}
           </Alert>
         )}
-        {data && safety?.isTwoDeepViolation && (
+        {data && !unconfirmed && safety?.isTwoDeepViolation && (
           <Alert color="red" icon="🚨" title="Critical Warning" mb="lg">
             Two-Deep Compliance is failing! An unaccompanied youth is present without sufficient
             adult supervision.
           </Alert>
         )}
-        {data && safety && !safety.facilityOpen && counts.total > 0 && (
+        {data && !unconfirmed && safety && !safety.facilityOpen && counts.total > 0 && (
           <Alert color="orange" icon="🔒" title="Facility closed — no keyholder present" mb="lg">
             The people below checked in without a keyholder in the building. The facility is not
             open until a keyholder checks in.
           </Alert>
         )}
-        {data && safety && !safety.isTwoDeepViolation && safety.isLastKeyholder && (
+        {data && !unconfirmed && safety && !safety.isTwoDeepViolation && safety.isLastKeyholder && (
           <Alert color="yellow" icon="⚠️" title="Warning" mb="lg">
             Only one isKeyholder is currently in the building.
           </Alert>
@@ -514,12 +509,12 @@ function KioskDisplayInner() {
         ) : !data ? (
           <Alert color="red">Attendance is unavailable — the roster could not be loaded.</Alert>
         ) : counts.total === 0 ? (
-          <Center py="xl"><Text c="dimmed">The facility is currently empty.</Text></Center>
+          <Center py="xl"><Text c="dimmed">{unconfirmed ? "No open visits recorded." : "The facility is currently empty."}</Text></Center>
         ) : (
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="lg">
-            {renderColumn("🔑", counts.keyholders, "Keyholders", "blue", isFull ? keyholderList : householdKeyholders)}
-            {renderColumn("🤝", counts.volunteers, "Volunteers/Adults", "teal", isFull ? volunteerList : householdVolunteers)}
-            {renderColumn("🎓", counts.youth, "Students", "grape", isFull ? youthList : householdYouth)}
+            {renderColumn(IconKey, counts.keyholders, "Keyholders", "blue", isFull ? keyholderList : householdKeyholders)}
+            {renderColumn(IconHeartHandshake, counts.volunteers, "Volunteers/Adults", "teal", isFull ? volunteerList : householdVolunteers)}
+            {renderColumn(IconSchool, counts.youth, "Students", "grape", isFull ? youthList : householdYouth)}
           </SimpleGrid>
         )}
 
@@ -625,19 +620,7 @@ function KioskDisplayInner() {
         </Group>
       </Modal>
 
-      {/* Last-keyholder facility-close confirmation */}
-      <Modal
-        opened={forceCloseOpened}
-        onClose={() => { closeForceClose(); setForceCloseToken(null); }}
-        title={<Text span fw={700} fz="lg" c="red">Close Facility?</Text>}
-        centered
-      >
-        <Alert color="yellow" mb="md">{forceCloseMessage}</Alert>
-        <Group justify="flex-end">
-          <Button variant="default" onClick={() => { closeForceClose(); setForceCloseToken(null); }}>Cancel</Button>
-          <Button color="red" onClick={confirmFacilityClose}>Confirm &amp; Close Facility</Button>
-        </Group>
-      </Modal>
+      {closeChoiceDialog}
     </>
   );
 
