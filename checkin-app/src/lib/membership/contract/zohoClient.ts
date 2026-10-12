@@ -273,3 +273,14 @@ export async function getRequestStatus(token: string, requestId: string): Promis
     if (status === "completed") return "completed";
     return TERMINAL_REQUEST_STATUSES.has(status) ? "terminal" : "in_progress";
 }
+
+/** Recall (cancel) a sent signing request so it can no longer be signed. */
+export async function recallRequest(token: string, requestId: string): Promise<void> {
+    const resp = await zohoFetch(`${config.zohoSignApi()}/requests/${requestId}/recall`, {
+        method: "POST",
+        headers: authHeader(token),
+    }, "Zoho recallRequest");
+    if (!resp.ok) throw new ZohoError(`Failed to recall request (${resp.status}): ${await resp.text()}`);
+    const result = (await resp.json()) as { status?: string };
+    if (result.status !== "success") throw new ZohoError(`Failed to recall request: ${JSON.stringify(result)}`);
+}

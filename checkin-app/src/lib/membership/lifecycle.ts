@@ -346,7 +346,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     // Advance (§5 #7)
     { from: "PENDING_EXTERNAL_ACTION", to: "PENDING_PAYMENT", event: "advanceExternalIfComplete", actor: "system", guardSite: "external.ts:113 updateMany" },
     // Signature completes a person-scoped agreement outright — no payment, no BG gate
-    { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject", guardSite: "external.ts updateMany where contractSignedAt=null", kind: "PERSON_AGREEMENT" },
+    { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject", guardSite: "external.ts updateMany where contractSignedAt=null + fromWhere", kind: "PERSON_AGREEMENT" },
     // Payment convergence (§5 #8, #12)
     { from: "PENDING_PAYMENT", to: "ACTIVE", event: "activate", actor: "shopify/board", guardSite: "payment.ts:204 FOR UPDATE (bgClearedAt set)" },
     { from: "PENDING_PAYMENT", to: "PENDING_BG_CLEARANCE", event: "activate", actor: "shopify/board", guardSite: "payment.ts:204 FOR UPDATE (not cleared)" },
@@ -423,3 +423,12 @@ export const ALL_STATUSES: readonly ProcessStatus[] = [
 export const RESTORABLE_STATUSES: ReadonlySet<ProcessStatus> = new Set(
     ALL_STATUSES.filter((s) => s !== "ACTIVE" && s !== "ARCHIVED"),
 );
+
+/**
+ * Processes a Zoho completion webhook may land on: anything but the closed states,
+ * so an archived or blocked process is never stamped signed (and an archived
+ * PERSON_AGREEMENT never revived).
+ */
+export const zohoWebhookMatchable = defineStateSet<Where>()({
+    statuses: ALL_STATUSES.filter((s) => s !== "ARCHIVED" && s !== "BLOCKED"),
+});

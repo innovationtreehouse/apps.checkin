@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { markContractSigned, markBgConsent, setZohoEnvelope, ExternalError } from "@/lib/membership/external";
+import { markContractSigned, markBgConsent, setZohoEnvelope, resetSigning, getExternalStatus, ExternalError } from "@/lib/membership/external";
 import { applicantHousehold } from "@/lib/membership/review";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { apiError } from "@/lib/api-response";
@@ -12,26 +12,45 @@ export const dynamic = "force-dynamic";
 /**
  * POST /api/membership-ops/applications/external — board controls for the EXTERNAL phase.
  *
- * Body: { processId, action, envelopeId? }
+ * Body: { processId, action, envelopeId?, reason? }
  *   action 'mark-contract'    — manually record the contract as signed (fallback to the Zoho webhook)
  *   action 'mark-bg-consent'  — human-mark that Averity consent was submitted
  *   action 'set-envelope'     — associate a Zoho signing request id (needs envelopeId)
+ *   action 'reset-signing'    — recall the open Zoho request so another lead can sign (needs reason)
  *
  * Completing the contract + background-check consent advances the application to
  * PENDING_PAYMENT; the background check then reviews in parallel with payment.
  */
+/**
+ * GET /api/membership-ops/applications/external?householdId=N — the signing state
+ * of the household's latest application: who the request is addressed to (or who
+ * signed), so the board can see it and reset a stuck request.
+ */
+export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req) => {
+    const householdId = Number(new URL(req.url).searchParams.get("householdId"));
+    if (!Number.isInteger(householdId) || householdId <= 0) return apiError("householdId is required", 400);
+    const process = await prisma.orgMembershipProcess.findFirst({
+        where: { orgMembership: { householdId } },
+        orderBy: { id: "desc" },
+        select: { id: true, status: true, contractSignedAt: true, bgConsentAt: true, bgClearedAt: true, zohoEnvelopeId: true, zohoSignerPersonId: true },
+    });
+    if (!process) return NextResponse.json({ signing: null });
+    const { contractStarted, signerName, contractSignedAt } = await getExternalStatus(process);
+    return NextResponse.json({ signing: { processId: process.id, status: process.status, contractStarted, signerName, contractSignedAt } });
+});
+
 export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
     const actorId = auth.user.id;
 
-    let body: { processId?: number; action?: string; envelopeId?: string };
+    let body: { processId?: number; action?: string; envelopeId?: string; reason?: string };
     try {
         body = await req.json();
     } catch {
         return apiError("Invalid JSON", 400);
     }
 
-    const { processId, action, envelopeId } = body;
+    const { processId, action, envelopeId, reason } = body;
     if (!processId || !action) {
         return apiError("processId and action are required", 400);
     }
@@ -62,6 +81,9 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
             case "set-envelope":
                 if (!envelopeId) return apiError("envelopeId is required", 400);
                 return NextResponse.json({ process: await setZohoEnvelope(processId, envelopeId, actorId) });
+            case "reset-signing":
+                if (!reason?.trim()) return apiError("reason is required", 400);
+                return NextResponse.json({ process: await resetSigning(processId, actorId, reason.trim()) });
             default:
                 return apiError(`Unknown action: ${action}`, 400);
         }

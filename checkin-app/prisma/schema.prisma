@@ -212,6 +212,7 @@ model Person {
   bgAttestationsAsSubject BackgroundCheckAttestation[] @relation("BgAttestationSubject")
   personBgProcesses   OrgMembershipProcess[]       @relation("PersonBgSubject")
   intakeNoteAcks      OrgMembershipProcess[]       @relation("IntakeNoteReads")
+  zohoSigningRequests OrgMembershipProcess[]       @relation("ZohoSigner")
   corporationLeads    CorporationLead[]
   corporationMembers  CorporationMember[]
   programVolunteers   ProgramVolunteer[]
@@ -522,6 +523,11 @@ model OrgMembershipProcess {
   zohoEnvelopeId        String?
   /// @sensitivity:internal
   zohoActionId          String?
+  /// The lead the open Zoho request is addressed to (name + email on the request and
+  /// the PDF's printed name). Kept after signing as the record of who signed.
+  /// @sensitivity:internal
+  zohoSignerPersonId    Int?
+  zohoSigner            Person?                 @relation("ZohoSigner", fields: [zohoSignerPersonId], references: [id])
   /// @sensitivity:internal
   contractSignedAt      DateTime?
   /// @sensitivity:internal

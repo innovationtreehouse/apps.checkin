@@ -9,7 +9,7 @@ import { signingMockActive } from "@/lib/membership/contract/signingTarget";
 import { loadAgreementPdf, stampWatermark, AGREEMENT_FILENAME, AgreementUnavailableError } from "@/lib/membership/contract/agreementDocument";
 import { latestPendingExternal } from "@/lib/membership/phases";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
-import { fromWhere } from "@/lib/membership/lifecycle";
+import { fromWhere, zohoWebhookMatchable } from "@/lib/membership/lifecycle";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 
 /**
@@ -36,7 +36,8 @@ export type ExternalErrorCode =
     | "not_lead"
     | "no_household"
     | "not_configured"
-    | "agreement_unavailable";
+    | "agreement_unavailable"
+    | "signing_in_progress";
 
 export class ExternalError extends Error {
     constructor(public readonly code: ExternalErrorCode, message: string) {
@@ -53,6 +54,15 @@ export interface ExternalStatus {
     /** True when a still-valid prior check was detected — no new check is needed. */
     bgCleared: boolean;
     deepLinkUrl: string | null;
+    /** The lead the signing request is addressed to — after signing, who signed. */
+    signerName: string | null;
+    contractSignedAt: Date | null;
+}
+
+async function personName(personId: number | null): Promise<string | null> {
+    if (!personId) return null;
+    const person = await prisma.person.findUnique({ where: { id: personId }, select: { name: true, email: true } });
+    return person?.name?.trim() || person?.email || null;
 }
 
 /** Applicant-facing status of the two external actions (+ the consent deep link). */
@@ -61,6 +71,7 @@ export async function getExternalStatus(process: {
     bgConsentAt: Date | null;
     bgClearedAt: Date | null;
     zohoEnvelopeId: string | null;
+    zohoSignerPersonId: number | null;
 }): Promise<ExternalStatus> {
     return {
         contractSigned: !!process.contractSignedAt,
@@ -68,6 +79,8 @@ export async function getExternalStatus(process: {
         bgConsented: !!process.bgConsentAt,
         bgCleared: !!process.bgClearedAt,
         deepLinkUrl: await backgroundCheckProvider.getConsentDeepLink(),
+        signerName: await personName(process.zohoSignerPersonId),
+        contractSignedAt: process.contractSignedAt,
     };
 }
 
@@ -152,11 +165,13 @@ export async function markContractSigned(processId: number, actorId?: number) {
     const isPersonAgreement = process.kind === "PERSON_AGREEMENT";
     // Conditional on contractSignedAt: null — two concurrent Zoho webhook retries
     // both see null, but only the winner's updateMany flips it (count === 1), so the
-    // audit row is written once.
+    // audit row is written once. A PERSON_AGREEMENT also requires its from-state, so
+    // an archived agreement can never flip to ACTIVE. Household processes may be
+    // pre-marked signed before EXTERNAL (intake), so theirs has no status clause.
     await prisma.$transaction(async (tx) => {
         const signedAt = new Date();
         const { count } = await tx.orgMembershipProcess.updateMany({
-            where: { id: processId, contractSignedAt: null },
+            where: { id: processId, contractSignedAt: null, ...(isPersonAgreement ? fromWhere("PENDING_EXTERNAL_ACTION") : {}) },
             data: isPersonAgreement
                 ? { contractSignedAt: signedAt, status: "ACTIVE", stageEnteredAt: signedAt }
                 : { contractSignedAt: signedAt },
@@ -236,16 +251,16 @@ export async function selfRecordBgConsent(userId: number): Promise<ExternalStatu
 export async function setZohoEnvelope(processId: number, requestId: string, actorId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ExternalError("not_found", "Application not found.");
-    const updated = await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { zohoEnvelopeId: requestId, zohoActionId: null } });
+    const updated = await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { zohoEnvelopeId: requestId, zohoActionId: null, zohoSignerPersonId: null } });
     await prisma.auditLog.create({
-        data: { actorId, action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { zohoEnvelopeId: requestId, zohoActionId: null } },
+        data: { actorId, action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { zohoEnvelopeId: requestId, zohoActionId: null, zohoSignerPersonId: null } },
     });
     return updated;
 }
 
-/** Find the in-flight process tied to a Zoho request id (for webhook matching). */
+/** Find the live process tied to a Zoho request id (for webhook matching); closed processes never match. */
 export async function findProcessByEnvelope(requestId: string) {
-    return prisma.orgMembershipProcess.findFirst({ where: { zohoEnvelopeId: requestId } });
+    return prisma.orgMembershipProcess.findFirst({ where: { zohoEnvelopeId: requestId, ...zohoWebhookMatchable.where } });
 }
 
 /**
@@ -259,7 +274,7 @@ async function clearDeadSigningRequest(processId: number, requestId: string, act
     const cleared = await prisma.$transaction(async (tx) => {
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: processId, zohoEnvelopeId: requestId, contractSignedAt: null },
-            data: { zohoEnvelopeId: null, zohoActionId: null },
+            data: { zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null },
         });
         if (count !== 1) return false;
         await tx.auditLog.create({
@@ -269,7 +284,7 @@ async function clearDeadSigningRequest(processId: number, requestId: string, act
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: processId,
                 oldData: { zohoEnvelopeId: requestId },
-                newData: { zohoEnvelopeId: null, zohoActionId: null },
+                newData: { zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null },
             },
         });
         return true;
@@ -345,6 +360,19 @@ export async function syncContractStatus(userId: number): Promise<ExternalStatus
     return fresh ? getExternalStatus(fresh) : null;
 }
 
+/**
+ * Zoho charges per request, so a lead never gets a request of their own while
+ * another lead's is open and unsigned: only the board's resetSigning frees it.
+ */
+async function assertSignerIs(signerId: number | null, userId: number) {
+    if (!signerId || signerId === userId) return;
+    const name = (await personName(signerId)) ?? "Another household lead";
+    throw new ExternalError(
+        "signing_in_progress",
+        `${name} started signing. Ask ${name} to finish, or ask the board to reset the signing so you can sign.`,
+    );
+}
+
 /** Days an applicant has to sign before the Zoho request expires (mirrors the script's default). */
 const CONTRACT_EXPIRATION_DAYS = 15;
 
@@ -415,6 +443,8 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
             logger.warn(`Zoho request-status check failed for membership process ${process.id}: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
+
+    if (requestId && !process.contractSignedAt) await assertSignerIs(process.zohoSignerPersonId, userId);
 
     if (!requestId || !actionId) {
         // Resolved ONCE for this request so the PDF-skip, watermark, and the
@@ -501,10 +531,11 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
         // webhook match) at the embeddable in-app request.
         const claim = await prisma.orgMembershipProcess.updateMany({
             where: { id: process.id, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
-            data: { zohoEnvelopeId: created.requestId, zohoActionId: created.actionId },
+            data: { zohoEnvelopeId: created.requestId, zohoActionId: created.actionId, zohoSignerPersonId: userId },
         });
         if (claim.count === 0) {
             const winner = await prisma.orgMembershipProcess.findUnique({ where: { id: process.id } });
+            await assertSignerIs(winner?.zohoSignerPersonId ?? null, userId);
             requestId = winner?.zohoEnvelopeId ?? null;
             actionId = winner?.zohoActionId ?? null;
             if (!requestId || !actionId) {
@@ -520,7 +551,7 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
                     action: "EDIT",
                     tableName: "OrgMembershipProcess",
                     affectedEntityId: process.id,
-                    newData: { zohoEnvelopeId: requestId, zohoActionId: actionId },
+                    newData: { zohoEnvelopeId: requestId, zohoActionId: actionId, zohoSignerPersonId: userId },
                 },
             });
             logger.info(`Created Zoho signing request ${requestId} for membership process ${process.id}.`);
@@ -528,4 +559,55 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
     }
 
     return zohoSign.getEmbeddedSignUrl({ token, requestId, actionId, host: config.baseUrl() });
+}
+
+/**
+ * Board "reset signing": recall the open Zoho request and forget it, so the next
+ * lead to click gets a fresh request addressed to them. Each reset costs one more
+ * Zoho request, which is why it takes a board member and a stated reason. The
+ * conflict-of-interest check lives on the route, like the other board actions.
+ */
+export async function resetSigning(processId: number, actorId: number, reason: string) {
+    const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+    if (!process) throw new ExternalError("not_found", "Application not found.");
+    const requestId = process.zohoEnvelopeId;
+    if (process.contractSignedAt || !requestId) {
+        throw new ExternalError("wrong_phase", "There is no open, unsigned signing request to reset.");
+    }
+
+    if (config.zohoAvailable()) {
+        const token = await zohoSign.getAccessToken();
+        try {
+            await zohoSign.recallRequest(token, requestId);
+        } catch (e) {
+            // Zoho refuses to recall a request that is already dead or signed.
+            const state = await zohoSign.getRequestStatus(token, requestId);
+            if (state === "completed") {
+                throw new ExternalError("wrong_phase", "This agreement has already been signed. Refresh to see it.");
+            }
+            if (state !== "terminal") throw e;
+        }
+    }
+
+    const cleared = await prisma.$transaction(async (tx) => {
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id: processId, zohoEnvelopeId: requestId, contractSignedAt: null },
+            data: { zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null },
+        });
+        if (count !== 1) return false;
+        await tx.auditLog.create({
+            data: {
+                actorId,
+                action: "EDIT",
+                tableName: "OrgMembershipProcess",
+                affectedEntityId: processId,
+                oldData: { zohoEnvelopeId: requestId, zohoActionId: process.zohoActionId, zohoSignerPersonId: process.zohoSignerPersonId },
+                newData: { zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null, resetSigningReason: reason },
+            },
+        });
+        return true;
+    });
+    if (!cleared) throw new ExternalError("wrong_phase", "The signing request changed while resetting. Refresh and try again.");
+    logger.info(`Board reset Zoho signing request ${requestId} for membership process ${processId}.`);
+    return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
 }

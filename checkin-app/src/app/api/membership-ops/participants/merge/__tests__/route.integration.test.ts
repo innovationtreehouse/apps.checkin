@@ -1124,6 +1124,20 @@ describe("Merge Participants API", () => {
             expect(await movedTallies()).toMatchObject({ noteAcks: 1 });
         });
 
+        // SET NULL: left behind, the agreement would name nobody as its signer.
+        it("moves the agreement signer (OrgMembershipProcess.zohoSignerPersonId)", async () => {
+            const process = await prisma.orgMembershipProcess.create({
+                data: { kind: "PERSON_AGREEMENT", status: "ACTIVE", zohoSignerPersonId: pMergeId, contractSignedAt: new Date() },
+            });
+            createdProcessIds.push(process.id);
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            expect((await prisma.orgMembershipProcess.findUnique({ where: { id: process.id } }))?.zohoSignerPersonId).toBe(pKeepId);
+            expect(await movedTallies()).toMatchObject({ zohoSigners: 1 });
+        });
+
         it("moves the attendance confirmation (Event.attendanceConfirmedById)", async () => {
             const event = await prisma.event.create({
                 data: {

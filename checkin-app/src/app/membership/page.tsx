@@ -24,6 +24,7 @@ import { useIsLocalInstance } from "@/components/EnvProvider";
 import { SCHOLARSHIP_REQUEST_KIND_OPTIONS } from "@/lib/scholarshipRequestKind";
 
 import { PageLoader } from "@/components/ui/PageLoader";
+import { APP_TIMEZONE, formatDate } from "@/lib/time";
 const blankAddress: StructuredAddress = { line1: "", line2: "", city: "", state: "", postalCode: "" };
 
 // Payment holdoff (below): sessionStorage key for the awaiting-payment record
@@ -42,6 +43,8 @@ interface PersonPrefill {
 interface ExternalStatus {
   contractSigned: boolean;
   contractStarted: boolean;
+  signerName?: string | null;
+  contractSignedAt?: string | null;
   bgConsented: boolean;
   bgCleared: boolean;
   deepLinkUrl: string | null;
@@ -865,7 +868,13 @@ export default function MembershipPage() {
                     </Text>
                   </div>
 
-                  <ExternalTask done={!!state.external?.contractSigned} title="Sign your membership agreement" doneText="Agreement signed — thank you!">
+                  <ExternalTask
+                    done={!!state.external?.contractSigned}
+                    title="Sign your membership agreement"
+                    doneText={state.external?.signerName && state.external.contractSignedAt
+                      ? `Signed by ${state.external.signerName}, ${formatDate(state.external.contractSignedAt, { year: "numeric", month: "short", day: "numeric", timeZone: APP_TIMEZONE })}.`
+                      : "Agreement signed — thank you!"}
+                  >
                     <Stack gap="xs" align="flex-start">
                       <Text c="dimmed">
                         Sign your personalized membership agreement online. This page updates

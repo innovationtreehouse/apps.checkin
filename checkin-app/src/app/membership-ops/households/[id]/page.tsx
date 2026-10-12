@@ -8,6 +8,7 @@ import { useRequireRole } from "@/hooks/useRequireRole";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { formatDateOnly } from "@/lib/time";
 import { isMembershipLapsed } from "@/lib/membership/lapsed";
+import { SigningStatusCard } from "@/components/membership/SigningStatusCard";
 
 type Enrollment = {
   status: "PENDING" | "ACTIVE";
@@ -107,6 +108,8 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
         <Text size="sm" c="dimmed">Valid until: {fmtDate(validUntil)}</Text>
         <Text size="sm" c="dimmed">BG valid until: {fmtDate(household.bgValidUntil)}</Text>
       </Group>
+
+      <SigningStatusCard householdId={household.id} />
 
       {members.length === 0 ? (
         <Text c="dimmed" fs="italic">No people in this household.</Text>

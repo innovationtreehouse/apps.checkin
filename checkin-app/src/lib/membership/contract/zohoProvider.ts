@@ -21,6 +21,7 @@ export type ZohoSignProvider = {
     submitRequest: typeof realClient.submitRequest;
     getEmbeddedSignUrl: typeof realClient.getEmbeddedSignUrl;
     getRequestStatus: typeof realClient.getRequestStatus;
+    recallRequest: typeof realClient.recallRequest;
 };
 
 const realProvider: ZohoSignProvider = {
@@ -29,6 +30,7 @@ const realProvider: ZohoSignProvider = {
     submitRequest: realClient.submitRequest,
     getEmbeddedSignUrl: realClient.getEmbeddedSignUrl,
     getRequestStatus: realClient.getRequestStatus,
+    recallRequest: realClient.recallRequest,
 };
 
 const mockProvider: ZohoSignProvider = {
@@ -57,6 +59,9 @@ const mockProvider: ZohoSignProvider = {
     async getRequestStatus() {
         return "completed" as const;
     },
+    async recallRequest() {
+        /* no-op: nothing was sent */
+    },
 };
 
 /**
@@ -73,4 +78,5 @@ export const zohoSign: ZohoSignProvider = {
     submitRequest: async (...a) => (await pick()).submitRequest(...a),
     getEmbeddedSignUrl: async (...a) => (await pick()).getEmbeddedSignUrl(...a),
     getRequestStatus: async (...a) => (await pick()).getRequestStatus(...a),
+    recallRequest: async (...a) => (await pick()).recallRequest(...a),
 };

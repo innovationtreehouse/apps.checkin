@@ -75,3 +75,7 @@ The real Zoho HTTP and OAuth calls, their error and timeout paths and token
 caching; the embedded signing UX and real envelope ids; and the dead-request
 recovery path, since the mock always reports `completed` and its requests never
 expire.
+
+The board's "Reset signing" works in mock mode: the mock's recall is a no-op, so
+the reset clears the stored request and writes its audit row without contacting
+Zoho, and the next lead to click gets a fresh mock request.
