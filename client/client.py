@@ -298,7 +298,9 @@ class AttendanceState:
         # triggered the warning. The confirm scan carries forceCloseConfirmed.
         self.local_close_participant = None
         self.local_close_deadline = 0.0  # monotonic clock, end of that countdown
-        self.last_read = {}          # participant id -> monotonic time of its last accepted read
+        # The armed close's banner and window length, re-shown when the window slides.
+        self.close_banner = None     # (html, seconds)
+        self.last_read = {}          # participant id -> monotonic time of its last read
         self.scan_protocol = 1       # server-advertised scan generation; drain holds below ours
         self.last_browser_seen = time.monotonic()
         self.last_attendance_ok = None
@@ -317,7 +319,7 @@ class AttendanceState:
         # Last real 200 body per keepalive path, replayed during the closed window.
         self.last_keepalive_bodies = {}
 
-    def arm_confirm(self, participant_id, token, seconds):
+    def arm_confirm(self, participant_id, token, seconds, banner_html=None):
         """Hold the confirm token the server minted with a force-close warning or
         close offer, bound to the keyholder who was shown it."""
         try:
@@ -328,6 +330,7 @@ class AttendanceState:
             self.confirm_participant = pid
             self.confirm_token = token
             self.confirm_deadline = time.monotonic() + seconds
+            self.close_banner = (banner_html, seconds)
 
     def take_confirm(self, participant_id):
         """Pop the confirm token for this badge's scan. Single use, and only while
@@ -348,7 +351,7 @@ class AttendanceState:
             self.confirm_deadline = 0.0
             return token
 
-    def arm_local_close(self, participant_id, seconds):
+    def arm_local_close(self, participant_id, seconds, banner_html=None):
         """Arm the offline force-close confirm for this keyholder. The next scan
         of the SAME badge within the window is the confirm (no server token)."""
         try:
@@ -358,6 +361,28 @@ class AttendanceState:
         with self.lock:
             self.local_close_participant = pid
             self.local_close_deadline = time.monotonic() + seconds
+            self.close_banner = (banner_html, seconds)
+
+    def slide_close(self, participant_id):
+        """A held badge's repeat read: restart its live close window from this
+        read. Returns the banner event that restarts the on-screen countdown, or
+        None when no close is armed for this badge."""
+        pid = int(participant_id)
+        now = time.monotonic()
+        with self.lock:
+            if self.close_banner is None:
+                return None
+            banner_html, seconds = self.close_banner
+            slid = False
+            if self.confirm_participant == pid and now < self.confirm_deadline:
+                self.confirm_deadline = now + seconds
+                slid = True
+            if self.local_close_participant == pid and now < self.local_close_deadline:
+                self.local_close_deadline = now + seconds
+                slid = True
+            if not slid or not banner_html:
+                return None
+            return {"html": banner_html, "countdown": seconds}
 
     def take_local_close(self, participant_id):
         """True iff a live offline-close confirm is armed for THIS badge — single
@@ -379,16 +404,14 @@ class AttendanceState:
 
     def is_repeat_read(self, participant_id):
         """True for a read of this badge within REPEAT_READ_SECONDS of its last
-        accepted read: the scanner reading one touch twice. Otherwise this read
-        becomes the last accepted one."""
+        read: the scanner re-reading one touch, or a badge held to the reader.
+        Every read becomes the latest, so the window slides while it is held."""
         pid = int(participant_id)
         now = time.monotonic()
         with self.lock:
             last = self.last_read.get(pid)
-            if last is not None and now - last < REPEAT_READ_SECONDS:
-                return True
             self.last_read[pid] = now
-            return False
+            return last is not None and now - last < REPEAT_READ_SECONDS
 
     def offline_close_offer(self, participant_id):
         """Is this badge a keyholder with anyone else shown inside -- another
@@ -1127,8 +1150,12 @@ def handle_scan(backend, state, outbox, participant_id):
         return
     if state.is_repeat_read(participant_id):
         # One scan, filtered before it is queued or sent, so online and offline
-        # agree: a double-read never toggles back nor confirms a close.
+        # agree: a double-read never toggles back nor confirms a close. A held
+        # badge keeps its own close window open, measured from its last read.
         log.info(f"Ignored repeat read of {participant_id}")
+        slid = state.slide_close(participant_id)
+        if slid:
+            state.push_event(slid)
         return
     client_event_id = new_event_id()
     scanned_at = now_iso()
@@ -1207,10 +1234,9 @@ def handle_scan(backend, state, outbox, participant_id):
             # already queued (on drain it checks out, or parks if this was the
             # last keyholder -- the badge is never lost); the confirm scan queues
             # the actual close.
-            state.arm_local_close(participant_id, FORCE_CLOSE_CONFIRM_SECONDS)
-            supervision = state.offline_supervision_warning()
-            state.push_event({"html": _offline_close_warning_html(supervision),
-                              "countdown": FORCE_CLOSE_CONFIRM_SECONDS})
+            banner_html = _offline_close_warning_html(state.offline_supervision_warning())
+            state.arm_local_close(participant_id, FORCE_CLOSE_CONFIRM_SECONDS, banner_html)
+            state.push_event({"html": banner_html, "countdown": FORCE_CLOSE_CONFIRM_SECONDS})
             log.warning(f"Offline force-close warning: keyholder {participant_id}, others present")
         else:
             state.push_event({"html": _saved_banner_html(queued, intent), "queued": queued})
@@ -1225,7 +1251,7 @@ def handle_scan(backend, state, outbox, participant_id):
     # existing immediate banner, unchanged behavior for the online path.
     banner_html, countdown = _scan_result_banner_html(body, status)
     if countdown:
-        state.arm_confirm(participant_id, body["forceCloseToken"], countdown)
+        state.arm_confirm(participant_id, body["forceCloseToken"], countdown, banner_html)
     state.push_event({"html": banner_html, "countdown": countdown})
 
     if outcome == "ack":
