@@ -14,6 +14,7 @@ jest.mock('@/lib/shopify', () => ({
 jest.mock('@/lib/emailRecipients', () => ({ emailBoardMembers: jest.fn().mockResolvedValue(undefined) }));
 
 const TAG = 'Sale Sweep Test';
+const HH = 'Sale Sweep Test HH';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NOW = new Date('2026-10-12T09:15:00Z');
 const day = (s: string) => new Date(`${s}T00:00:00Z`);
@@ -43,6 +44,7 @@ async function cleanup() {
     await prisma.programParticipant.deleteMany({ where: { programId: { in: programs.map((p) => p.id) } } });
     await prisma.program.deleteMany({ where: { name: { startsWith: TAG } } });
     await prisma.person.deleteMany({ where: { email: { contains: 'sale-sweep-test' } } });
+    await prisma.household.deleteMany({ where: { name: HH } });
 }
 
 describe('program sale sweep', () => {
@@ -81,8 +83,8 @@ describe('program sale sweep', () => {
     it('emails the board unpaid claims a week after the sale ended, once per program', async () => {
         const program = await mkProgram('unpaid', { startAt: day('2026-10-01'), saleEndedAt: new Date(NOW.getTime() - 7 * DAY_MS) });
         const recent = await mkProgram('recent', { startAt: day('2026-10-10'), saleEndedAt: new Date(NOW.getTime() - 2 * DAY_MS) });
-        const kid = await prisma.person.create({ data: { name: 'Unpaid Kid', email: 'kid-sale-sweep-test@example.com' } });
-        const paid = await prisma.person.create({ data: { name: 'Paid Kid', email: 'paid-sale-sweep-test@example.com' } });
+        const kid = await prisma.person.create({ data: { name: 'Unpaid Kid', email: 'kid-sale-sweep-test@example.com', household: { create: { name: HH } } } });
+        const paid = await prisma.person.create({ data: { name: 'Paid Kid', email: 'paid-sale-sweep-test@example.com', household: { create: { name: HH } } } });
         await prisma.programParticipant.createMany({
             data: [
                 { programId: program.id, personId: kid.id, status: 'PENDING' },
@@ -103,7 +105,7 @@ describe('program sale sweep', () => {
     });
 
     it('does not put a withdrawn held seat back on sale after the sale ended', async () => {
-        const kid = await prisma.person.create({ data: { name: 'Held Kid', email: 'held-sale-sweep-test@example.com' } });
+        const kid = await prisma.person.create({ data: { name: 'Held Kid', email: 'held-sale-sweep-test@example.com', household: { create: { name: HH } } } });
         const ended = await mkProgram('ended', { startAt: day('2020-01-01') });
         const open = await mkProgram('open', { startAt: day('2099-01-01') });
         for (const p of [ended, open]) {
