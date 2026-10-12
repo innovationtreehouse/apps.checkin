@@ -23,6 +23,7 @@ import { POST as UNARCHIVE } from '@/app/api/membership-ops/applications/unarchi
 import { GET as ADMIN_LIST } from '@/app/api/membership-ops/applications/route';
 import { getIntakeState, startIntake, submitIntake } from '@/lib/membership/intake';
 import { recordRefund } from '@/lib/membership/refund';
+import { activateByProcessId } from '@/lib/membership/payment';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 
@@ -383,6 +384,17 @@ describe('Membership application archive API', () => {
         // Now unpaid, so the board can close it.
         asBoard(boardId);
         expect((await ARCHIVE(req({ processId }) as never)).status).toBe(200);
+    });
+
+    it('after a recorded refund, a new payment from the family matches normally', async () => {
+        const { processId } = await makeProcess('RefundRepay', 'PENDING_BG_CLEARANCE', { paidAt: new Date() });
+        await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { shopifyOrderId: 'ord-old' } });
+        await recordRefund(processId, boardId, 'Refunded in Shopify');
+
+        await activateByProcessId(processId, 'ord-new', true);
+        const after = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+        expect({ status: after?.status, paid: !!after?.paidAt, order: after?.shopifyOrderId })
+            .toEqual({ status: 'PENDING_BG_CLEARANCE', paid: true, order: 'ord-new' });
     });
 
     it('record refund: a paid BLOCKED application loses paidAt but stays BLOCKED', async () => {
