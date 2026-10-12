@@ -21,8 +21,11 @@ const pkgs = readdirSync(pkgsDir)
   .filter((dir) => existsSync(join(dir, 'package.json')))
   .map((dir) => ({ dir, json: JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) }));
 const libraryNames = new Set(pkgs.filter((p) => p.json.library === true).map((p) => p.json.name));
-// A shared package with a Prisma schema or client would hand a library another
-// database (e.g. s-ingest-core's getPrisma reads the Shopify mirror).
+// Raw clients would let a library read the Shopify mirror or a sibling library's
+// database around its Prisma client.
+const RAW_SQL = /^(pg|pg-.+|postgres|@neondatabase\/.+|@vercel\/postgres|mysql2?|knex|kysely|slonik|sqlite3|better-sqlite3|@prisma\/adapter-.+)$/;
+// A shared package with a Prisma schema, Prisma client or raw SQL client would
+// hand a library another database (e.g. s-ingest-core's getPrisma reads the Shopify mirror).
 // ponytail: direct deps and imports only; a DB package pulled in through
 // another shared package slips. Walk the dep graph if that ever happens.
 const dbSharedNames = new Set(
@@ -30,7 +33,7 @@ const dbSharedNames = new Set(
     .filter((p) => p.json.library !== true)
     .filter(({ dir, json }) =>
       existsSync(join(dir, 'prisma', 'schema.prisma')) ||
-      ['@prisma/client', 'prisma'].some((d) => d in (json.dependencies ?? {})))
+      Object.keys(json.dependencies ?? {}).some((d) => d === '@prisma/client' || d === 'prisma' || RAW_SQL.test(d)))
     .map((p) => p.json.name),
 );
 
@@ -38,9 +41,6 @@ const checkinModels = new Set(
   [...readFileSync(join(root, 'checkin-app/prisma/schema.prisma'), 'utf8').matchAll(/^\s*(?:model|enum|view|type)\s+(\w+)/gm)].map((m) => m[1]),
 );
 
-// Raw clients would let a library read the Shopify mirror or a sibling library's
-// database around its Prisma client.
-const RAW_SQL = /^(pg|pg-.+|postgres|@neondatabase\/.+|@vercel\/postgres|mysql2?|knex|kysely|slonik|sqlite3|better-sqlite3|@prisma\/adapter-.+)$/;
 const DB_CLIENT_FILE = /^src\/(lib\/)?db\/index\.ts$/;
 // global-catalog's deployed DB env var is CATALOG_DATABASE_URL, not GLOBAL_CATALOG_….
 const DB_ENV_NAME = { '@inventory/global-catalog': 'catalog' };
