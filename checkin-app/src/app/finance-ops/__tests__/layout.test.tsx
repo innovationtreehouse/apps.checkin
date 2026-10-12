@@ -59,13 +59,24 @@ beforeEach(() => {
   push.mockClear();
 });
 
-describe("FinanceOpsLayout role gate", () => {
-  it("admits a board member", () => {
+describe("Revenue Ops layout role gate", () => {
+  it("admits a board member, with the Board-only finance tabs", () => {
     renderLayout("/finance-ops/payment-plan", {
       data: { user: { id: 1, isBoardMember: true } },
       status: "authenticated",
     });
     expect(screen.getByText(CHILD)).toBeInTheDocument();
+    expect(screen.getByText("Program Payment Plan")).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("admits a FINANCE-only user without the Board-only finance tabs", () => {
+    renderLayout("/income", {
+      data: { user: { id: 4, isFinance: true } },
+      status: "authenticated",
+    });
+    expect(screen.getByText(CHILD)).toBeInTheDocument();
+    expect(screen.queryByText("Program Payment Plan")).not.toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });
 
