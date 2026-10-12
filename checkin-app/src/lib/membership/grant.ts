@@ -33,15 +33,20 @@ const IN_FLIGHT_WHERE: Prisma.OrgMembershipProcessWhereInput = {
     ],
 };
 
+/** Refuse any board grant, current or coming year, on a DENIED household, and raise it to the board. */
+export async function refuseGrantIfDenied(householdId: number, actorId: number): Promise<void> {
+    const membership = await prisma.orgMembership.findUnique({ where: { householdId }, select: { status: true } });
+    if (membership?.status !== "DENIED") return;
+    await raiseDeniedHouseholdActivity({ householdId, what: `board grant attempted by person ${actorId}` });
+    throw new PaymentError("wrong_phase", "This household is denied. Restore it before granting membership.");
+}
+
 export async function grantCurrentYear(
     householdId: number,
     actor: { actorId: number; reason: string },
 ): Promise<GrantResult> {
+    await refuseGrantIfDenied(householdId, actor.actorId);
     const membership = await ensureHouseholdMembership(prisma, householdId);
-    if (membership.status === "DENIED") {
-        await raiseDeniedHouseholdActivity({ householdId, what: `board grant attempted by person ${actor.actorId}` });
-        throw new PaymentError("wrong_phase", "This household is denied. Restore it before granting membership.");
-    }
 
     const existing = await prisma.orgMembershipProcess.findFirst({
         where: { orgMembershipId: membership.id, ...IN_FLIGHT_WHERE },

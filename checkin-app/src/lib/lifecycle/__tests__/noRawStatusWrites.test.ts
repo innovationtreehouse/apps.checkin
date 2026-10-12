@@ -33,8 +33,6 @@ const EXEMPT = new Set([
 ]);
 
 const ALLOWLIST: Entry[] = [
-    // "Already a member" checkbox creates an ACTIVE household (W10): removed by chip 1.
-    { file: 'app/api/membership-ops/participants/route.ts', table: 'OrgMembership', count: 2, chip: 'chip 1' },
     // CSV import's household upsert: carved out and moved onto the helper by chip 10.
     { file: 'app/api/membership-ops/participants/import/route.ts', table: 'OrgMembership', count: 1, chip: 'chip 10' },
     // activate(): household to ACTIVE, and the paid-while-blocked write: chip 3.

@@ -233,6 +233,20 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         expect(exception).toMatchObject({ status: 'OPEN', severity: 'CRITICAL' });
     });
 
+    it('coming-year grant on a DENIED household with a payable renewal changes nothing and raises a board exception', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const householdId = await makeHousehold('comingyeardenied');
+        const m = await prisma.orgMembership.create({ data: { householdId, status: 'DENIED' } });
+        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() } });
+
+        const res = await post({ householdId, comingYear: true, reason: 'Paid by check' });
+        expect(res.status).toBe(409);
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: m.id } })).status).toBe('DENIED');
+        expect(await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: p.id } })).toMatchObject({ status: 'PENDING_PAYMENT', paidAt: null });
+        const person = await prisma.person.findFirstOrThrow({ where: { householdId } });
+        expect(await prisma.paymentException.findFirst({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: person.id } })).not.toBeNull();
+    });
+
     it('grant on an ACTIVE household with nothing in flight refuses and opens no joining application', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         const res = await post({ householdId: noRenewalHouseholdId, active: true, reason: 'Paid by check' });

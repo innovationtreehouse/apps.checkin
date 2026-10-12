@@ -7,7 +7,7 @@ import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { renewalSeasonWindow, membershipYearCycle, coveredThrough, bgValidUntilBoundary, grantRenewalPayment, MAX_DATE } from "@/lib/membership/renewal";
 import { grantableRenewalWhere, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { PaymentError } from "@/lib/membership/payment";
-import { grantCurrentYear } from "@/lib/membership/grant";
+import { grantCurrentYear, refuseGrantIfDenied } from "@/lib/membership/grant";
 import { ensureHouseholdMembership, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { personActor } from "@/lib/auditActor";
 import { LIVE_PERSON } from "@/lib/person/filters";
@@ -274,6 +274,7 @@ export const POST = withAuth(
                 if (!trimmedReason) return apiError("A reason is required to certify a payment", 400);
                 try {
                     const grantActor = { actorId: auth.user.id, reason: trimmedReason };
+                    await refuseGrantIfDenied(householdId, auth.user.id);
                     if (comingYear) {
                         return NextResponse.json({ success: true, process: await grantRenewalPayment(householdId, grantActor) });
                     }
