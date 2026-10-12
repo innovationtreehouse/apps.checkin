@@ -9,25 +9,25 @@ import { NotWiredError, getCatalogLookup, getOrg } from "./runtime";
 const receiptIdSchema = z.string().min(1);
 
 /** Built at call time: the org is only known once the host has configured the runtime. */
-function thisOrg() {
-  const orgId = getOrg().id;
+async function thisOrg() {
+  const orgId = (await getOrg()).id;
   return z.string().refine((id) => id === orgId, { message: "orgId is not this org" });
 }
 
-function receiptInOrg() {
-  const orgId = getOrg().id;
+async function receiptInOrg() {
+  const orgId = (await getOrg()).id;
   return CompletedReceiptSchema.refine((r) => r.orgId === orgId, { message: "orgId is not this org", path: ["orgId"] });
 }
 
 /** X9 callee: an in-kind receipt's money side. Idempotent on `receiptId`. */
 export async function ingestInKind(receipt: CompletedReceipt): Promise<void> {
-  receiptInOrg().parse(receipt);
+  (await receiptInOrg()).parse(receipt);
   throw new NotWiredError("ingestInKind (X9)");
 }
 
 /** X13 callee: the donor entered at upload. Idempotent on `receiptId`; a later call replaces the donor. */
 export async function recordInKindDonor(orgId: string, receiptId: string, donor: InKindDonor): Promise<void> {
-  thisOrg().parse(orgId);
+  (await thisOrg()).parse(orgId);
   receiptIdSchema.parse(receiptId);
   InKindDonorSchema.parse(donor);
   throw new NotWiredError("recordInKindDonor (X13)");
@@ -35,7 +35,7 @@ export async function recordInKindDonor(orgId: string, receiptId: string, donor:
 
 /** X13 callee: the uploader cleared the in-kind mark. Idempotent; an unknown receipt is a no-op. */
 export async function withdrawInKind(orgId: string, receiptId: string): Promise<void> {
-  thisOrg().parse(orgId);
+  (await thisOrg()).parse(orgId);
   receiptIdSchema.parse(receiptId);
   throw new NotWiredError("withdrawInKind (X13)");
 }

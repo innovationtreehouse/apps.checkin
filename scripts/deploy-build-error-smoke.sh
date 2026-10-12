@@ -16,6 +16,7 @@ set -euo pipefail
 MALFORMED_JSON_PROBES=(
   /api/catalog/categories
   /api/inventory/locations
+  /api/donations/account-map
 )
 
 # Duplicate create: the first POST must succeed, the second must answer 409.
@@ -64,16 +65,18 @@ done
 [ "$pg_up" = 1 ] || { echo "::error::Postgres not ready over TCP after 30s"; docker logs "$DB" 2>&1 | tail -40; exit 1; }
 
 psql() { docker exec -i "$DB" psql -v ON_ERROR_STOP=1 -U prisma -d checkmein -qtA "$@"; }
-psql -c 'CREATE DATABASE catalog' -c 'CREATE DATABASE local_inventory'
+psql -c 'CREATE DATABASE catalog' -c 'CREATE DATABASE local_inventory' -c 'CREATE DATABASE bulk_donation'
 
 docker run --rm --network "$NET" \
   -e DATABASE_URL="$PG/checkmein?sslmode=disable" \
   -e CATALOG_DATABASE_URL="$PG/catalog?sslmode=disable" \
   -e LOCAL_INVENTORY_DATABASE_URL="$PG/local_inventory?sslmode=disable" \
+  -e BULK_DONATION_DATABASE_URL="$PG/bulk_donation?sslmode=disable" \
   "$BUILDER_IMAGE" sh -ec '
     npm -w checkin-app exec -- prisma migrate deploy
     npm -w @inventory/global-catalog exec -- prisma migrate deploy
-    npm -w @inventory/local-inventory exec -- prisma migrate deploy'
+    npm -w @inventory/local-inventory exec -- prisma migrate deploy
+    npm -w @inventory/bulk-donation exec -- prisma migrate deploy'
 
 PERSON_ID=$(psql <<'SQL'
 WITH h AS (INSERT INTO "Household" (name) VALUES ('Smoke') RETURNING id),
@@ -99,6 +102,7 @@ docker run -d --name "$APP" --network "$NET" -p 4000:4000 \
   -e DATABASE_URL="$PG/checkmein?sslmode=disable" \
   -e CATALOG_DATABASE_URL="$PG/catalog?sslmode=disable" \
   -e LOCAL_INVENTORY_DATABASE_URL="$PG/local_inventory?sslmode=disable" \
+  -e BULK_DONATION_DATABASE_URL="$PG/bulk_donation?sslmode=disable" \
   -e NEXTAUTH_URL="$BASE" -e AUTH_TRUST_HOST=true -e NEXTAUTH_SECRET="$SECRET" \
   -e GOOGLE_CLIENT_ID=smoke-placeholder -e GOOGLE_CLIENT_SECRET=smoke-placeholder \
   -e CHECKIN_ENV=dev -e AWS_REGION=us-east-2 \

@@ -174,7 +174,7 @@ export const uploadedFileService = {
         await runOwnerAssignedCycleTx(tx, orgId, disbursementId, audit);
       }
 
-      return { fileId: fileRecord.id, rowCount, newRowCount, duplicateRowCount, allDuplicate };
+      return { id: fileRecord.id, rowCount, newRowCount, duplicateRowCount, allDuplicate };
     });
   },
   /** Drop the stored CSV of an upload that added nothing; the file row stays. */
