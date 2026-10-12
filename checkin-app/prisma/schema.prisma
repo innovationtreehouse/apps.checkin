@@ -1697,7 +1697,7 @@ model PaymentException {
 
   // Idempotent re-detection: one row per (kind, order, person), so every person on
   // a multi-person order gets their own row. Two partial unique indexes in raw SQL
-  // (20261012120000_payment_exception_per_person), since Prisma's DSL can't express
+  // (20261012190000_payment_exception_per_person), since Prisma's DSL can't express
   // them: "PaymentException_kind_order_no_person_key" on (kind, shopifyOrderId)
   // WHERE personId IS NULL, and "PaymentException_kind_order_person_key" on
   // (kind, shopifyOrderId, personId) WHERE personId IS NOT NULL. Not NULLS NOT
