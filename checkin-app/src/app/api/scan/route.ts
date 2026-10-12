@@ -377,7 +377,7 @@ export const POST = withKiosk(
             // it arrives, however late: the keyholder was at the reader and saw the
             // room. It needs the keyholder in the building at the scan time — a
             // visit still open, or one the nightly cron closed after the scan — or
-            // already checked out by their own badge at or before the confirm, the
+            // already checked out themselves at or before the confirm, the
             // close offered with that checkout. Against a departed visit the server
             // never ran the confirm, so it takes the offer's token or the kiosk's
             // offline confirm; anything else parks for review.
@@ -393,11 +393,13 @@ export const POST = withKiosk(
                         arrivedAt: { lte: eventTime },
                         OR: [
                             { departedAt: null },
+                            { departedVia: { in: ["SCANNER", "TYPED"] }, departedAt: { lte: eventTime } },
                             { departedVia: "AUTO_CLOSE", departedAt: { gt: eventTime } },
-                            { departedVia: "SCANNER", departedAt: { lte: eventTime } },
                         ],
                     },
-                    orderBy: { arrivedAt: "desc" },
+                    // By departure, not arrival: a backdated visit can arrive before one that left earlier.
+                    // Postgres sorts NULLs first under DESC, so a still-open visit wins.
+                    orderBy: { departedAt: "desc" },
                     select: { id: true, departedAt: true, forceCloseToken: true },
                 })
                 : null;

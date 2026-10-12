@@ -229,6 +229,25 @@ describe('Late confirmed facility close (real DB)', () => {
             expect(log?.reviewReason).toBe('force_close_review');
         });
 
+        it('closes against the latest departure, not the latest arrival', async () => {
+            const leftAt = leaveAt();
+            await leftByBadge(leftAt);
+            const current = await visitOf(keyholder);
+            // Backdated: the current visit arrived before an older one that left earlier.
+            await prisma.visit.update({ where: { id: current.id }, data: { arrivedAt: new Date(Date.now() - 7 * HOUR) } });
+            const older = await prisma.visit.create({ data: {
+                personId: keyholder.id, arrivedAt: new Date(Date.now() - 6 * HOUR), arrivedVia: 'SCANNER',
+                departedAt: new Date(Date.now() - 4 * HOUR), departedVia: 'SCANNER', forceCloseToken: 'tok-old',
+            } });
+            const scannedAt = new Date(leftAt.getTime() + 5_000);
+            const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-left-backdated', scannedAt: scannedAt.toISOString(), replay: true, intent: 'OUT', forceCloseToken: 'tok-1' }));
+            expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: true });
+
+            expect((await prisma.visit.findUniqueOrThrow({ where: { id: current.id } })).forceCloseToken).toBeNull();
+            expect((await prisma.visit.findUniqueOrThrow({ where: { id: older.id } })).forceCloseToken).toBe('tok-old');
+            expect((await visitOf(member)).departedAt?.getTime()).toBe(scannedAt.getTime());
+        });
+
         it('a badge departure after the confirm\'s scan time is not the one that offered it', async () => {
             const leftAt = leaveAt();
             await leftByBadge(leftAt);
