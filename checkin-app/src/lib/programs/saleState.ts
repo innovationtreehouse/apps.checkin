@@ -28,9 +28,12 @@ export function effectiveOffSaleAt(p: Pick<SaleRow, 'startAt' | 'offSaleAt'>): D
 }
 
 /** True once the sale is over: the sweep has ended it, or its date has arrived in
- *  the org's zone (the sweep runs once a day, so the date alone counts in the meantime). */
+ *  the org's zone (the sweep runs once a day, so the date alone counts in the meantime).
+ *  Only real dates count, so a row loaded without these fields reads as still on sale. */
 export function isSaleEnded(p: Pick<SaleRow, 'startAt' | 'offSaleAt' | 'saleEndedAt'>, now: Date = new Date()): boolean {
-    return p.saleEndedAt !== null || effectiveOffSaleAt(p) <= orgCalendarDay(now);
+    if (p.saleEndedAt instanceof Date) return true;
+    const offSale = effectiveOffSaleAt(p);
+    return offSale instanceof Date && offSale <= orgCalendarDay(now);
 }
 
 export function classify(p: SaleRow, now: Date = new Date()): SaleStateName {

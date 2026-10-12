@@ -50,7 +50,10 @@ export function publicStockDelta(releasedHoldCount: number, claimantSeatCount: n
 
 export async function activateProgramEnrollment(input: ActivateEnrollmentInput): Promise<ActivateEnrollmentResult> {
     const { programId, personIds, shopifyOrderId, lines = [] } = input;
-    const program = await prisma.program.findUnique({ where: { id: programId } });
+    const program = await prisma.program.findUnique({
+        where: { id: programId },
+        select: { shopifyVariantId: true, claimantShopifyVariantId: true, maxParticipants: true, startAt: true, offSaleAt: true, saleEndedAt: true },
+    });
 
     let activatedCount = 0;
     let releasedHoldCount = 0;

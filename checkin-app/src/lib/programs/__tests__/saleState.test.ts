@@ -27,6 +27,13 @@ describe('program sale state', () => {
         expect(classify(row({ startAt: new Date('2026-10-01') }), NOW)).toBe('SALE_ENDED');
     });
 
+    it('treats a row loaded without the sale fields as still on sale', () => {
+        // A Prisma select (or test mock) that omits the fields yields undefined at runtime.
+        const partial: Partial<SaleRow> = { phase: 'UPCOMING', enrollmentStatus: 'OPEN' };
+        expect(isSaleEnded(partial as SaleRow, NOW)).toBe(false);
+        expect(isSaleEnded({ startAt: new Date('2026-11-01') } as SaleRow, NOW)).toBe(false);
+    });
+
     it('stays ended once the sweep stamped it, and FINISHED wins', () => {
         expect(isSaleEnded(row({ saleEndedAt: new Date('2026-10-01') }), NOW)).toBe(true);
         expect(classify(row({ phase: 'FINISHED' }), NOW)).toBe('FINISHED');
