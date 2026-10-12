@@ -6,6 +6,7 @@ import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 
 export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -47,30 +48,45 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             updateData.phone = body.phone === "" || body.phone === null ? null : formatPhone(body.phone);
         }
         if (body.isDeclaredAdult !== undefined) updateData.isDeclaredAdult = Boolean(body.isDeclaredAdult);
+        let lastBackgroundCheck: Date | null | undefined;
         if (body.lastBackgroundCheck !== undefined) {
             // "" or null clears the date; otherwise expect a YYYY-MM-DD string
             const raw = body.lastBackgroundCheck;
             if (raw === "" || raw === null) {
-                updateData.lastBackgroundCheck = null;
+                lastBackgroundCheck = null;
             } else {
-                const d = new Date(raw);
-                if (isNaN(d.getTime())) {
+                lastBackgroundCheck = new Date(raw);
+                if (isNaN(lastBackgroundCheck.getTime())) {
                     return apiError("Invalid background check review date", 400);
                 }
-                updateData.lastBackgroundCheck = d;
             }
+            updateData.lastBackgroundCheck = lastBackgroundCheck;
         }
 
         if (Object.keys(updateData).length === 0) {
             return apiError("No fields to update provided", 400);
         }
 
-        // dateOfBirth is read for the guard below but deliberately kept out of the
-        // audit payload — this route neither ships nor writes it.
-        const { dateOfBirth: priorDob, ...prior } = (await prisma.person.findUnique({
+        // dateOfBirth and householdId are read for the guards below but deliberately
+        // kept out of the audit payload — this route neither ships nor writes them.
+        const existing = await prisma.person.findUnique({
             where: { id },
-            select: { name: true, nickname: true, email: true, phone: true, dateOfBirth: true, isDeclaredAdult: true, lastBackgroundCheck: true },
-        })) ?? {};
+            select: { name: true, nickname: true, email: true, phone: true, dateOfBirth: true, isDeclaredAdult: true, lastBackgroundCheck: true, householdId: true },
+        });
+        if (!existing) {
+            return apiError("Participant not found", 404);
+        }
+        const { dateOfBirth: priorDob, householdId, ...prior } = existing;
+
+        // A background-check date clears a person, so no actor may change it for
+        // themselves or their own household. Compared by value because the edit form
+        // resubmits the unchanged date with every save.
+        if (lastBackgroundCheck !== undefined) {
+            const changed = (prior.lastBackgroundCheck?.getTime() ?? null) !== (lastBackgroundCheck?.getTime() ?? null);
+            if (changed && (id === auth.user.id || await hasHouseholdConflict(prisma, auth.user.id, householdId))) {
+                return apiError("You cannot change the background check date for yourself or your own household — someone outside your household must.", 403);
+            }
+        }
 
         // A date of birth on file supersedes the over-25 declaration (normalizeAdultDob):
         // a person has one or the other, never both. Coerced rather than refused so a row

@@ -5,6 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { upsertPrimaryContact, getPrimaryValidContact, EmergencyContactError } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
 import { apiError } from "@/lib/api-response";
+import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 
 /**
  * Admin edit of a household's own info (name, address, emergency contact).
@@ -81,6 +82,11 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
             if (membership.isVolunteer !== body.isVolunteer) {
                 isVolunteerChange = { orgMembershipId: membership.id, oldValue: membership.isVolunteer, newValue: body.isVolunteer };
             }
+        }
+
+        // The volunteer flag discounts dues, so no actor may set it on their own household.
+        if (isVolunteerChange && await hasHouseholdConflict(prisma, auth.user.id, id)) {
+            return apiError("You cannot change the volunteer status of your own household — someone outside your household must.", 403);
         }
 
         if (!editsHousehold && !memberSinceChange && !isVolunteerChange) {
