@@ -199,6 +199,23 @@ Things the app takes as true because they are handled outside it.
 - The self-approval bar covers deciding a request, not repairing one. Confirming
   a hold somebody's failed store call never made benefits nobody.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- A family that holds a place can always pay for it. Each paid program has a
+  second, hidden "reserved seat" item in the store besides its public one, and
+  every checkout the app sends a family to uses it — in the app a checkout only
+  ever follows a claim. It does not count stock, so it never sells out: the
+  family's place is already counted by the app, and the app's own count is the
+  only gate. A program without one falls back to the public item.  [Decision]
+
+- The reserved-seat item is unlisted: kept out of the store's search,
+  collections and recommendations, but payable by a direct link. Hidden is not
+  locked — anyone holding the link can buy it. Such a purchase, like any store
+  order no enrollment claims, activates nobody and is left for a person to
+  resolve from the finance board.  [Decision — deliberate limit]
+
+- The public item keeps its counted stock for people buying straight from the
+  store. A price change is made on both items by hand; the app does not push
+  prices to the store.  [Decision — deliberate limit]
+
 - A scholarship or payment-plan request takes its seat when requested, not when
   approved.  [Decision]
 

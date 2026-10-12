@@ -5,6 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
+import { checkoutVariantId } from "@/lib/programs/variants";
 
 export const dynamic = "force-dynamic";
 
@@ -125,9 +126,9 @@ async function fireProgram(programId: number, rawParticipantIds: unknown): Promi
     // be unset.
     const program = await prisma.program.findUnique({
         where: { id: programId },
-        select: { shopifyVariantId: true },
+        select: { shopifyVariantId: true, claimantShopifyVariantId: true },
     });
-    const variantId = program?.shopifyVariantId;
+    const variantId = program ? checkoutVariantId(program) : null;
     if (!variantId) {
         return apiError("No Shopify variant configured on this program. Set one on the program in program-ops first, or the webhook leaves the participant PENDING.", 409);
     }

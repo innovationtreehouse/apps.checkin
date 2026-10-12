@@ -454,6 +454,107 @@ export async function createShopifySingleVariantProgram(
 }
 
 /**
+ * Mints a program's hidden "reserved seat" product: same title (plus
+ * " (reserved seat)"), price and single default variant as the public product,
+ * but inventory UNTRACKED and status UNLISTED — off store search, collections and
+ * recommendations, payable by direct cart link. Every app checkout links here, so
+ * a family that already holds a claim can pay when the public variant shows 0;
+ * the app's seat count is the only gate. docs/rules/programs.md.
+ *
+ * REST creates it (published to the Online Store, as the public product is) as a
+ * DRAFT; GraphQL `productUpdate` then sets UNLISTED, a status the REST Product
+ * resource does not have. If that second call fails the draft is reported as an
+ * orphan and nothing is returned, so an untracked product is never left listed.
+ */
+export async function createClaimantProduct(
+    name: string,
+    basePriceCents: number | null,
+): Promise<{ claimantShopifyProductId: string; claimantShopifyVariantId: string } | null> {
+    if (!basePriceCents || basePriceCents <= 0) return null;
+
+    // See createShopifySingleVariantProgram for why this branch exists (CHECKIN_ENV=local mock).
+    if (config.shopifyMockActive()) {
+        const slug = name.replace(/\W+/g, "-").toLowerCase().slice(0, 24);
+        return {
+            claimantShopifyProductId: `dev-mock-claimant-product-${slug}`,
+            claimantShopifyVariantId: `dev-mock-claimant-variant-${slug}`,
+        };
+    }
+
+    const storeDomain = config.shopifyStoreDomain();
+    const accessToken = await getAccessToken();
+    if (!storeDomain || !accessToken) {
+        console.warn("Shopify integration is disabled: Missing credentials or unable to obtain access token");
+        return null;
+    }
+    const headers = { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken };
+
+    let productId: string | null = null;
+    try {
+        const productRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                product: {
+                    title: `${name} Program Enrollment (reserved seat)`,
+                    status: 'draft',
+                    published: true,
+                    product_type: "Educational Services",
+                    variants: [{
+                        price: (basePriceCents / 100).toFixed(2),
+                        requires_shipping: false,
+                        inventory_management: null,
+                        inventory_policy: 'continue',
+                    }],
+                },
+            }),
+        }, "Shopify create claimant product");
+        if (!productRes.ok) {
+            throw new Error(`Shopify API responded with status: ${productRes.status} ${await productRes.text()}`);
+        }
+        const product = (await productRes.json()).product;
+        productId = product?.id?.toString() ?? null;
+        const variantId = product?.variants?.[0]?.id?.toString();
+        if (!productId || !variantId) throw new Error("Shopify claimant product response is missing the product or variant id");
+
+        const mutation = `
+            mutation UnlistClaimantProduct($product: ProductUpdateInput!) {
+                productUpdate(product: $product) {
+                    product { id status }
+                    userErrors { field message }
+                }
+            }`;
+        const res = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                query: mutation,
+                variables: { product: { id: `gid://shopify/Product/${productId}`, status: 'UNLISTED' } },
+            }),
+        }, "Shopify unlist claimant product");
+        if (!res.ok) throw new Error(`Shopify productUpdate failed: ${res.status} ${await res.text()}`);
+        const data = await res.json();
+        if (data.errors) throw new Error(`Shopify productUpdate GraphQL errors: ${JSON.stringify(data.errors)}`);
+        const result = data.data?.productUpdate;
+        if (result?.userErrors?.length) throw new Error(`Shopify productUpdate userErrors: ${JSON.stringify(result.userErrors)}`);
+        if (result?.product?.status !== 'UNLISTED') {
+            throw new Error(`Shopify productUpdate left status ${result?.product?.status ?? "missing"}, expected UNLISTED`);
+        }
+
+        return { claimantShopifyProductId: productId, claimantShopifyVariantId: variantId };
+    } catch (error) {
+        console.error("[Shopify Error] Failed to create claimant product:", error);
+        await reportShopifyFailure(
+            "createClaimantProduct",
+            error,
+            { program: name, orphanedProductId: productId },
+            `An error occurred in the Shopify integration while creating the reserved-seat product for program: <strong>${escapeHtml(name)}</strong>.`,
+        );
+        return null;
+    }
+}
+
+/**
  * Shopify is the source of truth for program capacity (product decision 2026-07-06):
  * cap edits and the scholarship lifecycle (apply/refuse) propagate as relative
  * inventory adjustments. Called from PATCH /api/programs/[id] (maxParticipants

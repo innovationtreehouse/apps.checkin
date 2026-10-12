@@ -224,6 +224,8 @@ export const classifications = {
         nonOrgMemberPriceCents: 'public',
         shopifyProductId: 'public',
         shopifyVariantId: 'public',
+        claimantShopifyProductId: 'public',
+        claimantShopifyVariantId: 'public',
     },
     ProgramInstance: {
         id: 'public',

@@ -147,8 +147,9 @@ Things the app takes as true because they are handled outside it.
   merchandise pass through untouched.  [Decision]
 
 - A program order activates enrollment only when it is paid and not refunded,
-  voided or cancelled, carries that program's own item, and buys a seat for every
-  person it would activate. The payment notification and reconciliation apply the
+  voided or cancelled, carries one of that program's own items — its public item
+  or its hidden reserved-seat item, both counted as seats — and buys a seat for
+  every person it would activate. The payment notification and reconciliation apply the
   one same check. An order that falls short activates nobody — it cannot say which
   of the household it was for — and is raised for the board.  [Decision]
 

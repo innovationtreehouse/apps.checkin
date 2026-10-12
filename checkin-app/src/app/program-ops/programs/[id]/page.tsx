@@ -51,6 +51,7 @@ export type ProgramDetail = {
   nonOrgMemberPriceCents: number | null;
   shopifyProductId: string | null;
   shopifyVariantId: string | null;
+  claimantShopifyVariantId?: string | null;
 };
 
 export type ParticipantOption = { id: number; name: string | null; email: string; dateOfBirth?: string | null };
@@ -220,7 +221,9 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
       const res = await fetch(`/api/programs/${id}/sync-shopify`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Shopify checkout configured." });
+        notifications.show(data.warning
+          ? { color: "yellow", message: data.warning, autoClose: false }
+          : { message: "Shopify checkout configured." });
         notifyNavRefresh();
         fetchProgram();
       } else {
@@ -356,6 +359,20 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                         Save Shopify IDs
                       </Button>
                     </Group>
+                    <Text size="sm" mt="md">
+                      Reserved-seat variant: {program.claimantShopifyVariantId ?? "none — checkout uses the public variant"}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      A hidden (unlisted, untracked) product the app&apos;s checkout links to, so a family holding a seat can pay even when the store shows the program sold out.
+                    </Text>
+                    {!program.claimantShopifyVariantId && !isProgramCheckoutBroken(program)
+                      && ((program.nonOrgMemberPriceCents ?? program.orgMemberPriceCents ?? 0) > 0) && (
+                      <Group mt="xs">
+                        <Button type="button" variant="light" size="xs" loading={syncing} onClick={handleSyncShopify}>
+                          Create reserved-seat product
+                        </Button>
+                      </Group>
+                    )}
                   </Card>
                 )}
               </Stack>

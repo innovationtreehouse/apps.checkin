@@ -3,6 +3,7 @@ import { isPaid, isReversed, membershipVariantIdSet } from "@/lib/finance/reconc
 import * as mirror from "@/lib/shopifyRead/client";
 import { normalizeAuditData } from "@/lib/auditPayload";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { programVariantIds } from "@/lib/programs/variants";
 
 /**
  * Bidirectional Shopify ↔ activation match audit — the completeness check the
@@ -134,7 +135,7 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
             select: { orgMembershipVariantId: true },
         }),
         prisma.program.findMany({
-            select: { id: true, name: true, shopifyVariantId: true },
+            select: { id: true, name: true, shopifyVariantId: true, claimantShopifyVariantId: true },
         }),
         mirror.lineVariantStats(),
     ]);
@@ -144,7 +145,7 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
     const membershipVariants = membershipVariantIdSet(settings ?? null);
     const programByVariant = new Map<string, { id: number; name: string }>();
     for (const p of programs) {
-        if (p.shopifyVariantId) programByVariant.set(p.shopifyVariantId, { id: p.id, name: p.name });
+        for (const v of programVariantIds(p)) programByVariant.set(v, { id: p.id, name: p.name });
     }
     const allVariants = [...membershipVariants, ...programByVariant.keys()];
 

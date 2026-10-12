@@ -1,4 +1,4 @@
-import { createShopifySingleVariantProgram, adjustProgramInventory, mintMemberDiscountCode, resetTokenCache } from '../shopify';
+import { createShopifySingleVariantProgram, createClaimantProduct, adjustProgramInventory, mintMemberDiscountCode, resetTokenCache } from '../shopify';
 import { sendEmail } from '../email';
 import prisma from '../prisma';
 
@@ -522,5 +522,77 @@ describe('mintMemberDiscountCode', () => {
         const result = await mintMemberDiscountCode(42, '999888', 1000);
         expect(result).toBeNull();
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+});
+
+describe('createClaimantProduct', () => {
+    let originalEnv: NodeJS.ProcessEnv;
+    let fetchMock: jest.Mock;
+
+    beforeEach(() => {
+        originalEnv = { ...process.env };
+        process.env.SHOPIFY_STORE_DOMAIN = 'test.myshopify.com';
+        process.env.SHOPIFY_CLIENT_ID = 'test_client_id';
+        process.env.SHOPIFY_CLIENT_SECRET = 'test_client_secret';
+        fetchMock = jest.fn();
+        global.fetch = fetchMock;
+        jest.clearAllMocks();
+        resetTokenCache();
+    });
+
+    afterEach(() => {
+        process.env = originalEnv;
+        jest.restoreAllMocks();
+    });
+
+    function unlistResponse(status: string) {
+        return { ok: true, json: async () => ({ data: { productUpdate: { product: { id: 'gid://shopify/Product/710', status }, userErrors: [] } } }) };
+    }
+
+    it('returns null for a free program without calling fetch', async () => {
+        expect(await createClaimantProduct('Free', null)).toBeNull();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('returns a synthetic claimant variant id on local (mock active)', async () => {
+        process.env.CHECKIN_ENV = 'local';
+        delete process.env.SHOPIFY_STORE_DOMAIN;
+        delete process.env.SHOPIFY_CLIENT_ID;
+        delete process.env.SHOPIFY_CLIENT_SECRET;
+        const result = await createClaimantProduct('Test Program', 3500);
+        expect(result?.claimantShopifyVariantId).toMatch(/^dev-mock-claimant-variant-/);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('creates an untracked draft via REST, then sets UNLISTED via GraphQL', async () => {
+        mockTokenResponse(fetchMock);
+        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ product: { id: 710, variants: [{ id: 810 }] } }) });
+        fetchMock.mockResolvedValueOnce(unlistResponse('UNLISTED'));
+
+        const result = await createClaimantProduct('Robotics', 3500);
+
+        expect(result).toEqual({ claimantShopifyProductId: '710', claimantShopifyVariantId: '810' });
+        const productBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+        expect(productBody).toMatchObject({
+            product: {
+                title: 'Robotics Program Enrollment (reserved seat)',
+                status: 'draft',
+                published: true,
+                variants: [{ price: '35.00', requires_shipping: false, inventory_management: null, inventory_policy: 'continue' }],
+            },
+        });
+        expect(String(fetchMock.mock.calls[2][0])).toContain('/graphql.json');
+        const gql = JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string);
+        expect(gql.variables).toEqual({ product: { id: 'gid://shopify/Product/710', status: 'UNLISTED' } });
+    });
+
+    it('returns null and names the orphan when the status does not come back UNLISTED', async () => {
+        mockTokenResponse(fetchMock);
+        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ product: { id: 711, variants: [{ id: 811 }] } }) });
+        fetchMock.mockResolvedValueOnce(unlistResponse('ACTIVE'));
+        (prisma.person.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+        expect(await createClaimantProduct('Old API', 3500)).toBeNull();
+        expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ operation: 'createClaimantProduct', orphanedProductId: '711' }));
     });
 });

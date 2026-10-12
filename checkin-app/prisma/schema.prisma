@@ -1007,6 +1007,13 @@ model Program {
   shopifyNonOrgMemberVariantId String?  @ignore
   /// @sensitivity:public
   shopifyVariantId          String?
+  /// @sensitivity:public
+  /// Hidden (UNLISTED, inventory-untracked) "reserved seat" product every app
+  /// checkout links to, so a family holding a claim can pay when the public
+  /// variant shows 0. The app's seat count is its only gate. docs/rules/programs.md.
+  claimantShopifyProductId  String?
+  /// @sensitivity:public
+  claimantShopifyVariantId  String?
 
   volunteers   ProgramVolunteer[]
   participants ProgramParticipant[]

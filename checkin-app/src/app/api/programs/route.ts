@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withAuth, getOptionalSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { sendNotification } from "@/lib/notifications";
-import { createShopifySingleVariantProgram } from "@/lib/shopify";
+import { createClaimantProduct, createShopifySingleVariantProgram } from "@/lib/shopify";
 import { logBackendError, logger } from "@/lib/logger";
 import { isDuesSettled } from "@/lib/orgMembership";
 import { config } from "@/lib/config";
@@ -169,6 +169,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
     // Hoisted so the catch can name an orphaned Shopify product (created, but DB write failed) for manual cleanup.
     let shopifyData: { shopifyProductId: string, shopifyVariantId: string } | null = null;
+    let claimantData: { claimantShopifyProductId: string, claimantShopifyVariantId: string } | null = null;
 
     try {
         const body = await req.json();
@@ -223,6 +224,8 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         const basePriceCents = nmPrice ?? mPrice ?? null;
         if (basePriceCents && basePriceCents > 0) {
             shopifyData = await createShopifySingleVariantProgram(name, basePriceCents, maxPart);
+            // Without it checkout falls back to the public variant; the board can mint it later via sync-shopify.
+            if (shopifyData) claimantData = await createClaimantProduct(name, basePriceCents);
         }
 
         const newProgram = await prisma.program.create({
@@ -243,6 +246,8 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 maxParticipants: maxPart,
                 shopifyProductId: shopifyData?.shopifyProductId || null,
                 shopifyVariantId: shopifyData?.shopifyVariantId || null,
+                claimantShopifyProductId: claimantData?.claimantShopifyProductId || null,
+                claimantShopifyVariantId: claimantData?.claimantShopifyVariantId || null,
             }
         });
 
@@ -269,6 +274,9 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
     } catch (error: unknown) {
         if (shopifyData?.shopifyProductId) {
             logger.error("[Shopify] Orphaned product after program DB write failed, manual cleanup needed:", shopifyData.shopifyProductId);
+        }
+        if (claimantData?.claimantShopifyProductId) {
+            logger.error("[Shopify] Orphaned claimant product after program DB write failed, manual cleanup needed:", claimantData.claimantShopifyProductId);
         }
         await logBackendError(error, "POST /api/programs");
         return apiError("Failed to create program", 500);
