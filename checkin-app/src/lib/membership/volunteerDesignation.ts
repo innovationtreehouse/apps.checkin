@@ -1,5 +1,7 @@
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { type DbClient } from "@/lib/db-client";
+import { getEmailSenderIdentity } from "@/lib/emailIdentity";
+import { howToReachBoard } from "@/lib/person/signInEmail";
 
 /**
  * True when `email` canonically matches a stored volunteer designation. A
@@ -13,5 +15,13 @@ export async function isDesignatedEmail(db: DbClient, email: string): Promise<bo
     return designations.some((d) => canonicalizeEmail(d.email) === key);
 }
 
-/** Shown when a member-side write names a designated address; says nothing about why. */
-export const DESIGNATED_EMAIL_REFUSAL = "That email address can't be added here. Contact the board to add this person.";
+/** Shown when a member-side write names a designated address: says how to get it set, not why. */
+export function designatedEmailRefusal(boardReplyTo?: string | null): string {
+    return `That email address can't be added here. To use it, ${howToReachBoard(boardReplyTo)}.`;
+}
+
+/** designatedEmailRefusal with the board's configured reply-to address. */
+export async function designatedEmailRefusalForBoard(): Promise<string> {
+    const { replyTo } = await getEmailSenderIdentity();
+    return designatedEmailRefusal(replyTo?.[0]);
+}

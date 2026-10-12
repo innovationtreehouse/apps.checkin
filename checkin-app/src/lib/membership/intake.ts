@@ -13,7 +13,7 @@ import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
 import { withTx } from "@/lib/db-client";
-import { isDesignatedEmail, DESIGNATED_EMAIL_REFUSAL } from "@/lib/membership/volunteerDesignation";
+import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 
 /**
  * Membership intake service — the write/read model behind the "Join the
@@ -245,7 +245,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
     ];
     for (const { email, field } of newPeople) {
         if (email && await isDesignatedEmail(prisma, email)) {
-            throw new IntakeError("email_designated", DESIGNATED_EMAIL_REFUSAL, [field]);
+            throw new IntakeError("email_designated", await designatedEmailRefusalForBoard(), [field]);
         }
     }
 

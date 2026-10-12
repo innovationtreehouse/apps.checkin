@@ -284,7 +284,11 @@ describe('saveIntake', () => {
         await expect(saveIntake(1, {
             household: { notes: 'n' },
             secondaryParent: { name: 'New Parent', email: 'Volun.teer+x@gmail.com' },
-        })).rejects.toMatchObject({ code: 'email_designated', fields: ['secondaryParent'] });
+        })).rejects.toMatchObject({
+            code: 'email_designated',
+            fields: ['secondaryParent'],
+            message: "That email address can't be added here. To use it, contact the board.",
+        });
         expect(prisma.household.update).not.toHaveBeenCalled();
         expect(prisma.person.create).not.toHaveBeenCalled();
     });

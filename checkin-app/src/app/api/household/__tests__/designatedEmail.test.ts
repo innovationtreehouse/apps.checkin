@@ -11,7 +11,6 @@ import { getServerSession } from "next-auth/next";
 import prisma from "@/lib/prisma";
 import { PATCH as householdPATCH } from "@/app/api/household/route";
 import { PATCH as memberPATCH } from "@/app/api/household/member/route";
-import { DESIGNATED_EMAIL_REFUSAL } from "@/lib/membership/volunteerDesignation";
 
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
@@ -33,6 +32,7 @@ jest.mock("@/lib/prisma", () => ({
     default: {
         person: { findUnique: jest.fn() },
         volunteerDesignation: { findMany: jest.fn() },
+        boardSettings: { findUnique: jest.fn() },
         $transaction: jest.fn((fn: (t: unknown) => unknown) => fn(tx)),
     },
 }));
@@ -41,6 +41,9 @@ const { householdLeadship } = jest.requireMock("@/lib/household/leads") as { hou
 const mockSession = getServerSession as jest.Mock;
 const findPerson = prisma.person.findUnique as jest.Mock;
 const findDesignations = prisma.volunteerDesignation.findMany as jest.Mock;
+const findSettings = prisma.boardSettings.findUnique as jest.Mock;
+
+const REFUSAL = "That email address can't be added here. To use it, email the board at board@example.org.";
 
 const LEAD = 1;
 const KID = 3;
@@ -54,6 +57,7 @@ beforeEach(() => {
     mockSession.mockResolvedValue({ user: { id: LEAD, email: "lead@example.com" } });
     householdLeadship.mockResolvedValue({ householdId: 10, canManage: true });
     findDesignations.mockResolvedValue([{ email: "volunteer@gmail.com" }]);
+    findSettings.mockResolvedValue({ emailFromAddress: null, emailReplyToAddress: "Board <board@example.org>" });
     tx.person.update.mockImplementation(({ where }) => Promise.resolve({ id: where.id }));
     tx.person.create.mockImplementation(({ data }) => Promise.resolve({ id: data.id, email: data.email ?? null, name: data.name }));
 });
@@ -64,7 +68,7 @@ describe("PATCH /api/household/member — designated address", () => {
     it("refuses an address that canonically matches a designation", async () => {
         const res = await call(memberPATCH, "/api/household/member", { participantId: KID, email: "Volun.teer+x@googlemail.com" });
         expect(res.status).toBe(400);
-        expect((await res.json()).error).toBe(DESIGNATED_EMAIL_REFUSAL);
+        expect((await res.json()).error).toBe(REFUSAL);
         expect(tx.person.update).not.toHaveBeenCalled();
     });
 
@@ -86,7 +90,7 @@ describe("PATCH /api/household — adding a member with a designated address", (
     it("refuses an address that canonically matches a designation", async () => {
         const res = await call(householdPATCH, "/api/household", { ...member, memberEmail: "VOLUNTEER@gmail.com" });
         expect(res.status).toBe(400);
-        expect((await res.json()).error).toBe(DESIGNATED_EMAIL_REFUSAL);
+        expect((await res.json()).error).toBe(REFUSAL);
         expect(tx.person.create).not.toHaveBeenCalled();
     });
 
