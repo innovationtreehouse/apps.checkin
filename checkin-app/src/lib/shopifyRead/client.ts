@@ -135,8 +135,14 @@ export function orderAttr(o: MirrorOrder, key: string): string | null {
 
 /**
  * Orders whose mirror row changed after `since` (the reconciler's high-water mark),
- * excluding Shopify test orders. Oldest-first so the caller can advance the cursor
- * to the last row it processed. `since` null → from the beginning.
+ * excluding Shopify test orders and operator injects. Oldest-first so the caller can
+ * advance the cursor to the last row it processed. `since` null → from the beginning.
+ *
+ * ponytail: the cursor is Shopify's `updated_at`, not the source stamp, so a hand-loaded
+ * row the API later restamps with the SAME updated_at stays behind the cursor and is
+ * never reconciled. Inject refuses API-owned GIDs, so this needs a pre-cutover order the
+ * CSV loaded and Shopify then re-serves unchanged; the board's manual paths cover it.
+ * Key the cursor on last_synced_at if that ever matters.
  */
 export async function ordersChangedSince(since: Date | null, limit = 1000): Promise<MirrorOrder[]> {
     const p = getPool();
