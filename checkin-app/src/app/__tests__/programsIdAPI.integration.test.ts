@@ -1198,7 +1198,7 @@ describe('Individual Program API Integration Tests', () => {
 
         // ── Illegal direction 2: nulling both prices while a variant remains ──
         it('rejects nulling the only priced tier while a variant remains stranded (400)', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
 
             const req = new Request(`http://localhost:4000/api/programs/${pricedWithVariantProgramId}`, {
                 method: 'PATCH',
@@ -1219,7 +1219,7 @@ describe('Individual Program API Integration Tests', () => {
             // the variant — proving the guard reads the CURRENT row for the untouched
             // field, not just the body.
             await prisma.program.update({ where: { id: pricedWithVariantProgramId }, data: { nonOrgMemberPriceCents: null } });
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
 
             const req = new Request(`http://localhost:4000/api/programs/${pricedWithVariantProgramId}`, {
                 method: 'PATCH',
@@ -1263,8 +1263,8 @@ describe('Individual Program API Integration Tests', () => {
             expect(data.program.shopifyVariantId).toBeNull();
         });
 
-        it('allows a lead mentor to null one priced tier when the other tier still covers the variant (effective state stays legal)', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+        it('allows nulling one priced tier when the other tier still covers the variant (effective state stays legal)', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
 
             const req = new Request(`http://localhost:4000/api/programs/${pricedWithVariantProgramId}`, {
                 method: 'PATCH',
@@ -1279,6 +1279,48 @@ describe('Individual Program API Integration Tests', () => {
 
             // Restore for isolation from other tests in this block.
             await prisma.program.update({ where: { id: pricedWithVariantProgramId }, data: { nonOrgMemberPriceCents: 3500 } });
+        });
+
+        // ── Price edits are board/sysadmin-only ──
+        it('blocks a lead mentor from changing a price (403, no mutation)', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+
+            const req = new Request(`http://localhost:4000/api/programs/${pricedWithVariantProgramId}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ memberPrice: '0', nonMemberPrice: '0' }),
+            });
+            const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(pricedWithVariantProgramId) as unknown as never);
+            expect(res.status).toBe(403);
+            expect((await res.json()).error).toBe('Forbidden: Only administrators can change program prices');
+
+            const persisted = await prisma.program.findUniqueOrThrow({ where: { id: pricedWithVariantProgramId } });
+            expect(persisted.orgMemberPriceCents).toBe(2500);
+            expect(persisted.nonOrgMemberPriceCents).toBe(3500);
+        });
+
+        it('allows a lead mentor save that echoes the unchanged prices', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+
+            const req = new Request(`http://localhost:4000/api/programs/${pricedWithVariantProgramId}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ memberPrice: '25', nonMemberPrice: '35', name: 'Priced With Variant Prog ID API Test' }),
+            });
+            const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(pricedWithVariantProgramId) as unknown as never);
+            expect(res.status).toBe(200);
+        });
+
+        it('allows a board member to change a price', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId, isBoardMember: true } });
+
+            const req = new Request(`http://localhost:4000/api/programs/${pricedWithVariantProgramId}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ memberPrice: '20' }),
+            });
+            const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(pricedWithVariantProgramId) as unknown as never);
+            expect(res.status).toBe(200);
+            expect((await res.json()).program.orgMemberPriceCents).toBe(2000);
+
+            await prisma.program.update({ where: { id: pricedWithVariantProgramId }, data: { orgMemberPriceCents: 2500 } });
         });
 
         it('allows an unrelated field edit that leaves the effective price/variant state untouched', async () => {
