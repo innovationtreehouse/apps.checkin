@@ -1,6 +1,6 @@
 /**
  * Registry-wide admission invariants for the role-flag gates (catalog-viewer,
- * finance, finance-or-board, expense-approver, anyRole). Pure: no DB, no HTTP.
+ * finance, finance-or-board, expense-approver, expense-signer, anyRole). Pure: no DB, no HTTP.
  *
  * 1. An id-less session — a JWT whose re-sync missed after a person merge or
  *    delete — is denied on every such route, even holding every flag. Prisma
@@ -17,10 +17,11 @@ import '@/security/registry';
 
 const isRoleFlagGate = (a: Authorize) =>
     a === 'catalog-viewer' || a === 'finance' || a === 'finance-or-board' || a === 'expense-approver' ||
+    a === 'expense-signer' ||
     (typeof a === 'object' && 'anyRole' in a);
 
 const isFinanceGate = (a: Authorize) =>
-    a === 'finance' || a === 'finance-or-board' || a === 'expense-approver' ||
+    a === 'finance' || a === 'finance-or-board' || a === 'expense-approver' || a === 'expense-signer' ||
     (typeof a === 'object' && 'anyRole' in a && a.anyRole.includes('isFinance'));
 
 const everyFlagUser: AuthenticatedUser = {
@@ -76,7 +77,7 @@ describe('id-less session on role-flag gates', () => {
     });
 
     test.each<Authorize>([
-        'catalog-viewer', 'finance', 'finance-or-board', 'expense-approver',
+        'catalog-viewer', 'finance', 'finance-or-board', 'expense-approver', 'expense-signer',
         { anyRole: ['isFinance'] }, { anyRole: ['isSysadmin', 'isBoardMember'] },
     ])('%j denies an id-less session holding every flag', async (authorize) => {
         expect((await resolveAccess(authorize, ctx(idless))).allowed).toBe(false);

@@ -36,7 +36,7 @@ const mockSession = require('next-auth/next').getServerSession;
 
 const TAG = 'registry-authz-test';
 
-type Gate = 'public' | 'session' | 'household-member' | 'anyRole' | 'certifier' | 'program-scoped' | 'catalog-viewer' | 'inventory-manager' | 'finance' | 'finance-or-board' | 'expense-approver' | 'unhandled';
+type Gate = 'public' | 'session' | 'household-member' | 'anyRole' | 'certifier' | 'program-scoped' | 'catalog-viewer' | 'inventory-manager' | 'finance' | 'finance-or-board' | 'expense-approver' | 'expense-signer' | 'unhandled';
 
 interface RoutePlan {
     endpoint: string;
@@ -68,6 +68,8 @@ function planAuthorize(authorize: Authorize): { gate: Gate; requiredRoles: Sessi
     if (authorize === 'finance') return { gate: 'finance', requiredRoles: null };
     if (authorize === 'finance-or-board') return { gate: 'finance-or-board', requiredRoles: null };
     if (authorize === 'expense-approver') return { gate: 'expense-approver', requiredRoles: null };
+    // Sign-off (#1272 §6): catalog-viewer OR expense-approver; a plain user is neither.
+    if (authorize === 'expense-signer') return { gate: 'expense-signer', requiredRoles: null };
     // household-lead / kiosk: not in the current registry. Surfaced as
     // 'unhandled' so a future route can't be silently skipped — it'll fail the
     // explicit guard test below.
@@ -242,7 +244,7 @@ describe('Registry route admission gates', () => {
                     expect((await call(plan)).status).toBe(403);
                 });
             }
-            if (plan.gate === 'expense-approver') {
+            if (plan.gate === 'expense-approver' || plan.gate === 'expense-signer') {
                 itServed('rejects an authenticated caller who approves no bucket with 403', async () => {
                     // plainUser holds no flag, leads no program and treasures none.
                     mockSession.mockResolvedValue({ user: plainUser });
@@ -279,7 +281,7 @@ describe('Registry route admission gates', () => {
                     mockSession.mockResolvedValue({ user: { ...plainUser, isKeyholder: true } });
                 } else if (plan.gate === 'inventory-manager') {
                     mockSession.mockResolvedValue({ user: { ...plainUser, isInventoryManager: true } });
-                } else if (plan.gate === 'finance' || plan.gate === 'finance-or-board' || plan.gate === 'expense-approver') {
+                } else if (plan.gate === 'finance' || plan.gate === 'finance-or-board' || plan.gate === 'expense-approver' || plan.gate === 'expense-signer') {
                     mockSession.mockResolvedValue({ user: { ...plainUser, isFinance: true } });
                 } else if (plan.routePath.startsWith('/api/events/')) {
                     // events/[id] is authorize:'authenticated' (so gate 'session'), but the

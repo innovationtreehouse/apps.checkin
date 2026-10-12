@@ -77,7 +77,7 @@ describe('id-less session', () => {
     });
 
     test.each<Authorize>([
-        'authenticated', 'self', 'catalog-viewer', 'inventory-manager', 'finance', 'finance-or-board', 'expense-approver',
+        'authenticated', 'self', 'catalog-viewer', 'inventory-manager', 'finance', 'finance-or-board', 'expense-approver', 'expense-signer',
         'certifier', 'program-lead-mentor', 'program-core-volunteer', 'household-lead', 'household-member',
         { anyRole: ['isSysadmin', 'isBoardMember', 'isInventoryManager', 'isFinance'] },
     ])('%j denies it, and admits the same caller with an id', async (authorize) => {

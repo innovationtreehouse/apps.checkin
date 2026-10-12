@@ -362,6 +362,11 @@ export async function resolveAccess(
                 });
                 return { allowed: treasurer !== null };
             }
+            case 'expense-signer':
+                return {
+                    allowed: (await resolveAccess('catalog-viewer', ctx)).allowed ||
+                        (await resolveAccess('expense-approver', ctx)).allowed,
+                };
             case 'certifier':
                 // Certifiers see the shop member roster; admins always may too.
                 return { allowed: isCertifier(auth) || isAdmin };
