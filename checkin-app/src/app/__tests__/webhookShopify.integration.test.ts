@@ -22,7 +22,7 @@ import { activateByProcessId } from '@/lib/membership/payment';
 import { DEV_MOCK_SHOPIFY_WEBHOOK_SECRET } from '@/lib/config';
 
 jest.mock('@/lib/membership/payment', () => ({
-    activateByProcessId: jest.fn().mockResolvedValue(undefined),
+    activateByProcessId: jest.fn().mockResolvedValue({ outcome: 'active', process: null }),
 }));
 
 // Keep the REAL logIntegrationError (it writes to the DB — the 500-catch test

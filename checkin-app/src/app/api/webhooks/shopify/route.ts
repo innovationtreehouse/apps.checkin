@@ -4,11 +4,11 @@ import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { activateByProcessId } from "@/lib/membership/payment";
 import { withWebhook } from "@/lib/webhookAuth";
-import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
+import { config } from "@/lib/config";
 import { activateProgramEnrollment } from "@/lib/programs/activateEnrollment";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
-import { isPaid, orderEntitlesEnrollment, raisePaymentException, type EntitlementOrder } from "@/lib/finance/reconcile";
-import { recordShopifyWebhookReceipt, tryParseJson } from "@/lib/shopifyWebhookReceipt";
+import { isPaid, membershipVariantIdSet, orderEntitlesEnrollment, raiseMembershipPaymentOutcome, raisePaymentException, type EntitlementOrder } from "@/lib/finance/reconcile";
+import { isShopifyTestNotification, recordShopifyWebhookReceipt, tryParseJson } from "@/lib/shopifyWebhookReceipt";
 
 interface ShopifyOrder {
     id?: number | string;
@@ -73,7 +73,7 @@ function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: 
 // Shopify store; local receives it from the self-fired mock (/api/dev/shopify/orders-paid).
 // The HMAC secret differs per env (config.shopifyWebhookSecret). The only env-branched
 // logic is the synthetic dev-mock variant fallback, gated on config.shopifyMockActive()
-// (⇔ CHECKIN_ENV=local) below.
+// (⇔ CHECKIN_ENV=local) inside membershipVariantIdSet.
 export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac }, async (req, order: ShopifyOrder) => {
         // Only a paid, unreversed orders/paid delivery moves anything. A reversed one is
         // left to the reconciler, which raises it against the pending record.
@@ -109,19 +109,10 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
             }
         }
 
-        // Membership payment → activate the household membership.
-        //
-        // H2 (fixed): activateByProcessId now checks that the order actually
-        // CONTAINS the membership product (its Shopify variant id), not just that
-        // it totals enough — a total-price check drifts if BoardSettings dues fall
-        // out of sync with Shopify's real price, and an attacker could otherwise pay
-        // for unrelated items (e.g. a workshop) that happen to add up to the same
-        // amount. A variant id is stable and is the same id the checkout link is
-        // built from (buildMembershipCheckoutUrl), so it can't silently drift the
-        // way a price copy can. See the H2 note on activate() in payment.ts for how
-        // that's kept safe/idempotent. Issue #625 tracks the systemic fix for
-        // keeping BoardSettings dues/prices aligned with Shopify (which also covers
-        // the volunteer-discount-eligibility gap below).
+        // Membership payment → settle the application. activateByProcessId checks
+        // the order CONTAINS the membership product (by variant id, the id the
+        // checkout link is built from), never by total. Every outcome other than
+        // settling or a redelivery is raised for the board.
         //
         // TODO(#278) still open: we still trust the customer-controlled
         // Membership_Process_ID cart attribute for WHICH process to credit (no
@@ -132,33 +123,20 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
         // token / Shopify-side segment exists.
         if (membershipProcessIdStr) {
             const processId = parseInt(membershipProcessIdStr, 10);
-            // Receipt outcome for the delivery log (settings → Shopify Webhook);
-            // mirrors the logger lines below, recorded just before each return.
+            const orderId = order.id ? String(order.id) : "";
+            // Receipt outcome for the delivery log (settings → Shopify Webhook).
             let outcome = "invalid Membership_Process_ID — ignored";
-            if (!isNaN(processId)) {
+            if (isShopifyTestNotification(order)) {
+                // A test-mode order moves no money; it never settles a membership.
+                outcome = `test order for process ${membershipProcessIdStr} — ignored`;
+                logger.info(`[SHOPIFY WEBHOOK] Test order ${orderId || "?"} for membership process ${membershipProcessIdStr} — ignored`);
+            } else if (!isNaN(processId)) {
                 const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-                const membershipVariantIds = new Set(
-                    [
-                        settings?.orgMembershipVariantId,
-                        // Local mock's self-fired order carries this synthetic id (config).
-                        config.shopifyMockActive() ? DEV_MOCK_MEMBERSHIP_VARIANT_ID : null,
-                    ].filter((v): v is string => !!v),
-                );
-                const hasMembershipItem = (order.line_items ?? []).some((li) => membershipVariantIds.has(String(li.variant_id)));
-                const proc = await activateByProcessId(processId, order.id ? String(order.id) : "", hasMembershipItem);
-                if (proc?.status === "ACTIVE") {
-                    outcome = `settled process ${processId}`;
-                    logger.info(`[SHOPIFY WEBHOOK] Activated membership for process ${processId}`);
-                } else if (proc?.status === "BLOCKED") {
-                    outcome = `payment recorded for BLOCKED process ${processId} — membership not activated`;
-                    logger.warn(`[SHOPIFY WEBHOOK] Payment recorded for BLOCKED process ${processId} — membership NOT activated; board notified for refund`);
-                } else if (proc?.status === "PENDING_BG_CLEARANCE") {
-                    outcome = `payment recorded for process ${processId} — awaiting background check clearance`;
-                    logger.info(`[SHOPIFY WEBHOOK] Payment recorded for process ${processId}; awaiting background-check clearance`);
-                } else {
-                    outcome = `no state change for process ${processId} — already processed`;
-                    logger.info(`[SHOPIFY WEBHOOK] Payment webhook for process ${processId} — no state change (already processed)`);
-                }
+                const hasMembershipItem = (order.line_items ?? []).some((li) => membershipVariantIdSet(settings).has(String(li.variant_id)));
+                const result = await activateByProcessId(processId, orderId, hasMembershipItem);
+                await raiseMembershipPaymentOutcome(result.outcome, { shopifyOrderId: orderId || null, processId });
+                outcome = `process ${processId}: ${result.outcome}`;
+                logger.info(`[SHOPIFY WEBHOOK] Membership payment for process ${processId}: ${result.outcome}`);
             }
             await recordShopifyWebhookReceipt(req, order, { hmacValid: true, outcome });
             return NextResponse.json({ success: true });

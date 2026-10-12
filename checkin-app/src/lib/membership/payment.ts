@@ -1,12 +1,14 @@
 import prisma from "@/lib/prisma";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
-import { logger } from "@/lib/logger";
 import { emailHouseholdLeads } from "@/lib/emailRecipients";
 import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
 import { openPersonBgForNewMember } from "@/lib/membership/personBgTriggers";
 import { openPersonAgreementForNewMember } from "@/lib/membership/personAgreementTriggers";
 import { config } from "@/lib/config";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
+import { fromWhere } from "@/lib/membership/lifecycle";
+import { setHouseholdStatus, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+import type { Prisma } from "@/generated/prisma/client";
 
 /**
  * Payment phase (PENDING_PAYMENT -> ACTIVE).
@@ -95,62 +97,89 @@ export async function ensurePaymentLinkForUser(userId: number) {
 }
 
 /**
+ * What a payment did. `noop` is a redelivery of the order already recorded;
+ * every other non-settling outcome is money that landed on nothing awaiting it,
+ * which the webhook and the reconciler raise for the board.
+ */
+export type ActivateOutcome =
+    | "active"
+    | "held"
+    | "noop"
+    | "paid_while_blocked"
+    | "no_item"
+    | "nothing_due"
+    | "denied";
+
+/**
  * The single payment path. Records the payment (paidAt + how), then gates on the
  * background check: if it has already cleared (bgClearedAt set), flip the
- * membership ACTIVE and send one congrats email; otherwise hold the process at
- * PENDING_BG_CLEARANCE — paid, but membership stays INACTIVE until two reviewers
- * approve (review.ts › clearBackgroundCheck then flips ACTIVE).
+ * household ACTIVE and send one congrats email; otherwise hold the process at
+ * PENDING_BG_CLEARANCE until two reviewers approve (review.ts › clearBackgroundCheck).
  *
  * FOR UPDATE serializes against the review path's attest() transaction, which
- * takes the same row lock — so the payment/clearance race can't lose an update.
- * Idempotent: a no-op only once the payment is already recorded (Shopify retries
- * an orders/paid webhook routinely) or the membership is already active.
+ * takes the same row lock, and every status write is still conditional on the
+ * status it read.
  *
- * BLOCKED is NOT a silent no-op: if the check was rejected before the payment
- * webhook landed, the money is already at Shopify. We record the payment (keeping
- * the application BLOCKED — never activate without a valid check) and alert the
- * board to refund, rather than dropping the payment on the floor.
- *
- * H2: for the Shopify path (opts.via === "payment"), an order that doesn't
- * actually contain the membership product (opts.hasMembershipItem) is also NOT
- * a silent no-op — it stays PENDING_PAYMENT (no paidAt), the board is alerted
- * the same way as a paid-while-blocked mismatch, and a follow-up correct
- * payment activates normally.
+ * - A board certify (via "manual") must find the process awaiting payment under
+ *   the lock; otherwise it throws.
+ * - A DENIED household changes nothing; the board is told.
+ * - BLOCKED records a real membership payment (stays BLOCKED, refund needed).
+ * - A Shopify order without the membership product records nothing (`no_item`),
+ *   so a later clearance can never activate an unpaid application.
+ * - Any other paid order — duplicate, after certify, after close, before payment
+ *   was due — records nothing and returns `nothing_due`.
  */
-export async function activate(
+async function settle(
     processId: number,
     opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string },
-) {
+): Promise<{ outcome: ActivateOutcome; householdId?: number }> {
     const result = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
         const process = await tx.orgMembershipProcess.findUnique({ where: { id: processId } });
         if (!process) throw new PaymentError("not_found", "Application not found.");
-        // Already recorded this payment (webhook retry) or already active → nothing to do.
-        if (process.paidAt || process.status === "ACTIVE") {
-            return { kind: "noop" as const };
-        }
-        // orgMembershipId is non-null for a payable process (PERSON_BG never reaches
-        // activate — it has no checkout — and is filtered out by the status guards above).
-        const membership = await tx.orgMembership.findUnique({ where: { id: process.orgMembershipId! }, select: { householdId: true, isVolunteer: true } });
+        // orgMembershipId is non-null for a payable process (PERSON_BG has no checkout).
+        const membership = await tx.orgMembership.findUnique({ where: { id: process.orgMembershipId! }, select: { householdId: true, status: true } });
         if (!membership) throw new PaymentError("not_found", "Membership not found.");
 
+        if (opts.via === "manual") {
+            if (process.status !== "PENDING_PAYMENT" || process.paidAt) {
+                throw new PaymentError("wrong_phase", "This application is not awaiting payment.");
+            }
+            if (membership.status === "DENIED") {
+                throw new PaymentError("wrong_phase", "This household is denied. Restore it before recording a payment.");
+            }
+        }
+
+        if (opts.shopifyOrderId && process.shopifyOrderId === opts.shopifyOrderId) return { outcome: "noop" as const };
+        if (process.paidAt || process.status === "ACTIVE") return { outcome: "nothing_due" as const };
+        if (membership.status === "DENIED") return { outcome: "denied" as const, householdId: membership.householdId };
+
         const now = new Date();
-        // Recorded atomically with paidAt — the lib stays permissive (a certify with
-        // no reason still goes through); the API boundary is where it's required.
         const certificationNote = opts.via === "manual" && opts.reason && opts.reason.trim() !== "" ? opts.reason : undefined;
         const payMeta = {
             ...(opts.shopifyOrderId ? { shopifyOrderId: opts.shopifyOrderId } : {}),
             ...(opts.via === "manual" && opts.actorId ? { manualPaymentById: opts.actorId } : {}),
             ...(certificationNote ? { certificationNote } : {}),
         };
+        const actor = personOrSystemActor(opts.actorId, "webhook:shopify-order");
+        const missingItem = opts.via === "payment" && opts.hasMembershipItem === false;
 
-        // Reject landed before the payment: record the payment but stay BLOCKED
-        // (don't resurrect / don't bump stageEnteredAt) and flag for refund.
         if (process.status === "BLOCKED") {
-            await tx.orgMembershipProcess.update({ where: { id: processId }, data: { paidAt: now, ...payMeta } });
+            // Checked before stamping paidAt: a board reset of a paid BLOCKED row
+            // goes to PENDING_BG_CLEARANCE, and clearance would then activate it.
+            if (missingItem) {
+                await auditNoItem(tx, processId, "BLOCKED", opts.shopifyOrderId);
+                return { outcome: "no_item" as const };
+            }
+            // Stays BLOCKED (stageEnteredAt untouched); refund needed.
+            const { count } = await tx.orgMembershipProcess.updateMany({
+                where: { id: processId, ...fromWhere("BLOCKED"), paidAt: null },
+                data: { paidAt: now, ...payMeta },
+            });
+            if (count === 0) return { outcome: "nothing_due" as const };
             await tx.auditLog.create({
                 data: {
-                    ...personOrSystemActor(opts.actorId, "webhook:shopify-order"),
+                    ...actor,
                     action: "EDIT",
                     tableName: "OrgMembershipProcess",
                     affectedEntityId: processId,
@@ -158,65 +187,39 @@ export async function activate(
                     newData: { status: "BLOCKED", via: opts.via, paid: true, refundNeeded: true },
                 },
             });
-            return { kind: "paid_while_blocked" as const };
+            return { outcome: "paid_while_blocked" as const };
         }
 
-        // Only a process actually awaiting payment advances. A checkout link is
-        // minted only at PENDING_PAYMENT, so a payment for any other status
-        // (INTAKE/EXTERNAL/renewal-review) is anomalous — a forged/replayed
-        // webhook (TODO #278) or a process that moved unexpectedly. Don't advance
-        // it; surface it instead of corrupting state.
-        if (process.status !== "PENDING_PAYMENT") {
-            logger.warn(`[membership] activate() ignored payment for process ${processId} in status ${process.status} — no payment was due`);
-            return { kind: "noop" as const };
-        }
+        // A checkout link exists only at PENDING_PAYMENT; money for any other step was not due.
+        if (process.status !== "PENDING_PAYMENT") return { outcome: "nothing_due" as const };
 
-        // H2: a real Shopify order (opts.via === "payment") must actually contain
-        // the membership product before we activate anything — checked by variant
-        // id (stable, and the same id the checkout link is built from), not by
-        // order total, which drifts if BoardSettings dues fall out of sync with
-        // Shopify's real price and doesn't stop someone paying for unrelated items
-        // that happen to add up to the right amount (see #625 for the systemic
-        // price/settings-alignment fix, including volunteer-discount eligibility).
-        // A board manual-payment override has no Shopify order at all, so
-        // it's exempt (opts.via !== "payment"). Only runs when hasMembershipItem is
-        // actually supplied: activateByProcessId (the only production caller of the
-        // "payment" path) always passes it, so this only skips for callers that
-        // never had an order to check.
-        if (opts.via === "payment" && opts.hasMembershipItem === false) {
-            // An order tagged with a valid process id but containing no
-            // membership product is anomalous, not a normal underpayment —
-            // still not a silent no-op though: audit it and alert the board.
-            await tx.auditLog.create({
-                data: {
-                    ...systemActor("webhook:shopify-order"),
-                    action: "EDIT",
-                    tableName: "OrgMembershipProcess",
-                    affectedEntityId: processId,
-                    oldData: { status: "PENDING_PAYMENT" },
-                    newData: { status: "PENDING_PAYMENT", via: opts.via, noMembershipItem: true, shopifyOrderId: opts.shopifyOrderId ?? null },
-                },
-            });
-            // Do NOT set paidAt: elsewhere (clearBackgroundCheck, overrideBlocked) a
-            // truthy paidAt means "payment step satisfied, skip straight to/through
-            // background clearance" — setting it here would let a later bg-check
-            // clearance activate the membership without a real membership payment.
-            // Status stays PENDING_PAYMENT so a follow-up correct payment (new
-            // Shopify order, new webhook) activates normally on its own.
-            return { kind: "underpaid" as const };
+        // The order must contain the membership product, checked by variant id
+        // (stable; the id the checkout link is built from), not by total. A board
+        // certify has no order and is exempt.
+        if (missingItem) {
+            await auditNoItem(tx, processId, "PENDING_PAYMENT", opts.shopifyOrderId);
+            return { outcome: "no_item" as const };
         }
 
         const activating = !!process.bgClearedAt;
-        await tx.orgMembershipProcess.update({
-            where: { id: processId },
+        if (activating) {
+            const applied = await setHouseholdStatus(tx, process.orgMembershipId!, {
+                from: ["NONE", "REVOKED", "ACTIVE"],
+                to: "ACTIVE",
+                actor,
+                reason: `application #${processId} paid (${opts.via}) with background check cleared`,
+            });
+            if (!applied) return { outcome: "denied" as const, householdId: membership.householdId };
+        }
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id: processId, ...fromWhere("PENDING_PAYMENT"), paidAt: null },
             data: { paidAt: now, stageEnteredAt: now, ...payMeta, status: activating ? "ACTIVE" : "PENDING_BG_CLEARANCE" },
         });
-        if (activating) {
-            await tx.orgMembership.update({ where: { id: process.orgMembershipId! }, data: { status: "ACTIVE" } });
-        }
+        // Under the row lock the status can't have moved; if it did, roll the household write back.
+        if (count === 0) throw new PaymentError("wrong_phase", "This application is not awaiting payment.");
         await tx.auditLog.create({
             data: {
-                ...personOrSystemActor(opts.actorId, "webhook:shopify-order"),
+                ...actor,
                 action: "EDIT",
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: processId,
@@ -227,47 +230,71 @@ export async function activate(
             },
         });
         return activating
-            ? { kind: "active" as const, householdId: membership.householdId, isInitial: process.kind === "INITIAL" }
-            : { kind: "held" as const };
+            ? { outcome: "active" as const, householdId: membership.householdId, isInitial: process.kind === "INITIAL" }
+            : { outcome: "held" as const };
     });
 
     // Side effects outside the transaction: a slow/failed send must not roll back
     // the write, and only the call that actually recorded the change emits one.
-    if (result.kind === "active") {
+    if (result.outcome === "active" && "isInitial" in result) {
         await sendCongrats(result.householdId, result.isInitial);
-        // Trigger C: a brand-new (INITIAL) member just activated (bg cleared before
-        // payment landed) — open PERSON_BG for the household's check-obligated adults.
+        // A brand-new (INITIAL) member just activated: open PERSON_BG for the
+        // household's check-obligated adults, and the per-adult agreements.
         if (result.isInitial) await openPersonBgForNewMember(result.householdId, new Date());
-        // Same activation, the agreement side — an adult child signs their own.
         if (result.isInitial) await openPersonAgreementForNewMember(result.householdId, new Date());
     }
-    if (result.kind === "paid_while_blocked" || result.kind === "underpaid") await notifyBoardPaidReject(processId);
+    if (result.outcome === "denied") {
+        await raiseDeniedHouseholdActivity({
+            householdId: result.householdId!,
+            processId,
+            what: `Shopify membership payment (order ${opts.shopifyOrderId || "?"}) on application #${processId}`,
+        });
+    }
+    if (result.outcome === "paid_while_blocked") await notifyBoardPaidReject(processId);
+    return result;
+}
+
+async function auditNoItem(tx: Prisma.TransactionClient, processId: number, status: "BLOCKED" | "PENDING_PAYMENT", shopifyOrderId?: string) {
+    await tx.auditLog.create({
+        data: {
+            ...systemActor("webhook:shopify-order"),
+            action: "EDIT",
+            tableName: "OrgMembershipProcess",
+            affectedEntityId: processId,
+            oldData: { status },
+            newData: { status, via: "payment", noMembershipItem: true, shopifyOrderId: shopifyOrderId ?? null },
+        },
+    });
+}
+
+/** Record a payment against a process (see settle). Returns the process row. */
+export async function activate(
+    processId: number,
+    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string },
+) {
+    await settle(processId, opts);
     return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
 }
 
-/** Board override: certify a payment plan and activate without a Shopify payment. */
+/**
+ * Board override: certify a payment plan and activate without a Shopify payment.
+ * Rejects (403) for the actor's own household; activate() rejects (409) under the
+ * row lock unless the process is awaiting payment.
+ */
 export async function certifyPaymentPlan(processId: number, actorId: number, opts?: { reason?: string }) {
-    // Unlike the webhook path, a board certify is a deliberate action — reject
-    // (not silently no-op) when the process isn't actually awaiting payment, so
-    // certifying an already-ACTIVE or still-in-review grant surfaces a 409
-    // instead of a misleading success. activate()'s own conditional flip stays
-    // idempotent for the webhook/self-serve callers.
-    const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, include: { orgMembership: { select: { householdId: true } } } });
+    const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, select: { orgMembership: { select: { householdId: true } } } });
     if (!process) throw new PaymentError("not_found", "Application not found.");
-    if (process.status !== "PENDING_PAYMENT") throw new PaymentError("wrong_phase", "This application is not awaiting payment.");
-
-    // Conflict of interest: no actor may certify (mark paid + activate) their OWN
-    // household's membership — else they could activate their family without paying
-    // dues. No role bypasses this.
+    // No actor may certify (mark paid + activate) their own household's membership. No role bypasses this.
     if (await hasHouseholdConflict(prisma, actorId, process.orgMembership?.householdId)) {
         throw new PaymentError("forbidden", "You cannot certify your own household's membership — someone outside your household must.");
     }
     return activate(processId, { via: "manual", actorId, reason: opts?.reason });
 }
 
-/** Webhook path: activate the process tied to a paid Shopify draft order. */
+/** Shopify path (webhook + reconcile): settle a paid order and say what it did. */
 export async function activateByProcessId(processId: number, shopifyOrderId: string, hasMembershipItem: boolean) {
-    return activate(processId, { via: "payment", shopifyOrderId, hasMembershipItem });
+    const { outcome } = await settle(processId, { via: "payment", shopifyOrderId, hasMembershipItem });
+    return { outcome, process: await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }) };
 }
 
 /**
