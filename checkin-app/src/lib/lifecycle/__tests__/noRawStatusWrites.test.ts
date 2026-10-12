@@ -39,8 +39,6 @@ const ALLOWLIST: Entry[] = [
     // Intake's NONE upsert and the INTAKE to PENDING_EXTERNAL_ACTION submit: chip 5.
     { file: 'lib/membership/intake.ts', table: 'OrgMembership', count: 1, chip: 'chip 5' },
     { file: 'lib/membership/intake.ts', table: 'OrgMembershipProcess', count: 1, chip: 'chip 5' },
-    // Archive to ARCHIVED without a from-state CAS: chip 6.
-    { file: 'lib/membership/archive.ts', table: 'OrgMembershipProcess', count: 1, chip: 'chip 6' },
 ];
 
 const CALL = /\b(orgMembership|orgMembershipProcess)\.(update|updateMany|upsert|create|createMany)\s*\(/g;
