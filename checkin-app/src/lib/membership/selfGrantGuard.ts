@@ -2,6 +2,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
+import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
  * The one own-household check for grants that discount dues or clear a person:
@@ -78,6 +79,6 @@ export async function refuseSelfGrant(
 /** The id of the person in the actor's household whose email is `email` (canonical), or null. */
 async function ownHouseholdEmailMatch(db: DbClient, householdId: number, email: string): Promise<number | null> {
     const canonical = canonicalizeEmail(email);
-    const members = await db.person.findMany({ where: { householdId }, select: { id: true, email: true } });
+    const members = await db.person.findMany({ where: { householdId, ...LIVE_PERSON }, select: { id: true, email: true } });
     return members.find((p) => p.email != null && canonicalizeEmail(p.email) === canonical)?.id ?? null;
 }
