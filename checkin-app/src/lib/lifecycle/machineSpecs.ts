@@ -21,6 +21,7 @@ import {
     STATES as HOUSEHOLD_STATES,
     INITIAL_STATES as HOUSEHOLD_INITIAL_STATES,
 } from '../membership/householdStatus';
+import { TRANSITIONS as SALE_TRANSITIONS } from '../programs/saleState';
 
 /**
  * ProgramParticipant enrollment. `UNENROLLED`
@@ -76,4 +77,15 @@ const HOUSEHOLD: MachineSpec = {
     origins: ['∅'],
 };
 
-export const MACHINES: readonly MachineSpec[] = [ENROLLMENT, MEMBERSHIP, HOUSEHOLD];
+/** A program's time on sale. `∅` is creation; FINISHED is the one terminal. */
+const SALE: MachineSpec = {
+    name: 'program-sale',
+    title: 'Program on sale',
+    transitions: SALE_TRANSITIONS,
+    allStates: ['NOT_ON_SALE', 'ON_SALE', 'SALE_ENDED', 'FINISHED'],
+    initials: ['∅'],
+    accepting: ['FINISHED'],
+    origins: ['∅'],
+};
+
+export const MACHINES: readonly MachineSpec[] = [ENROLLMENT, MEMBERSHIP, HOUSEHOLD, SALE];

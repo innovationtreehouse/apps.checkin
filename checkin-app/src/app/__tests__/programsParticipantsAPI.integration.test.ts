@@ -896,7 +896,7 @@ describe('Program Participants API Integration Tests', () => {
             process.env.CHECKIN_ENV = 'local';
             const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
             const shopifyProgram = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Withdraw Shopify Partic API Test', enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-withdraw-partic' },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Withdraw Shopify Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-withdraw-partic' },
             });
             try {
                 await prisma.programParticipant.create({

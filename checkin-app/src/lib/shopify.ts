@@ -727,6 +727,58 @@ export async function syncProgramPrice(
 }
 
 /**
+ * Takes a program's store product off sale by setting its status to draft, so
+ * neither the store page nor an old cart link can buy it. Idempotent. A program
+ * without a product has nothing to take down and succeeds.
+ *
+ * Never throws: logs + emails the admin via reportShopifyFailure and returns
+ * false, so the caller can retry on its next run.
+ */
+export async function setProgramProductOffSale(
+    program: { shopifyProductId?: string | null },
+): Promise<boolean> {
+    const productId = program.shopifyProductId;
+    if (!productId) return true;
+
+    if (config.shopifyMockActive()) {
+        console.log(`[SHOPIFY] (mock) Would set product ${productId} to draft`);
+        return true;
+    }
+
+    const storeDomain = config.shopifyStoreDomain();
+    const accessToken = await getAccessToken();
+    if (!storeDomain || !accessToken) {
+        console.warn("Shopify integration is disabled: Missing credentials or unable to obtain access token");
+        return false;
+    }
+
+    try {
+        const res = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products/${productId}.json`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Shopify-Access-Token': accessToken,
+            },
+            body: JSON.stringify({ product: { id: Number(productId), status: 'draft' } }),
+        }, "Shopify product off sale");
+        if (!res.ok) {
+            throw new Error(`Shopify product off-sale failed for ${productId}: ${res.status} ${await res.text()}`);
+        }
+        console.log(`[SHOPIFY] Product ${productId} set to draft (off sale)`);
+        return true;
+    } catch (error) {
+        console.error("[Shopify Error] Failed to take program product off sale:", error);
+        await reportShopifyFailure(
+            "setProgramProductOffSale",
+            error,
+            { shopifyProductId: productId },
+            `Failed to take a program's Shopify product off sale after its off-sale date. It will be retried on the next daily run.`,
+        );
+        return false;
+    }
+}
+
+/**
  * Mints a server-side, single-use fixed-amount discount code for one
  * enrollee's checkout. Single-pool programs ({@link Program.shopifyVariantId})
  * sell at the base/non-member price; an ACTIVE org member gets this code

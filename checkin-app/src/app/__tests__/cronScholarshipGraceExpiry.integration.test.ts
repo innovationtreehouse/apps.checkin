@@ -46,7 +46,7 @@ describe('Cron Scholarship-Grace-Expiry API Integration Tests', () => {
         await prisma.program.deleteMany({ where: { name: { contains: 'Grace Cron Test' } } });
 
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Grace Cron Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-grace-cron' },
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Grace Cron Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-grace-cron' },
         });
         programId = program.id;
 

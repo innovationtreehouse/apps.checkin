@@ -19,6 +19,7 @@ export type ProgramDetail = {
   name: string;
   startAt: string | null;
   endAt: string | null;
+  offSaleAt: string | null;
   leadMentorId: number | null;
   phase: string;
   enrollmentStatus: string;
@@ -78,6 +79,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   // Form States
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
+  const [offSaleAt, setOffSaleAt] = useState("");
   const [minAge, setMinAge] = useState("");
   const [maxAge, setMaxAge] = useState("");
   const [maxParticipants, setMaxParticipants] = useState("");
@@ -113,6 +115,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
         setProgram(data);
         setStartAt(data.startAt ? data.startAt.split('T')[0] : "");
         setEndAt(data.endAt ? data.endAt.split('T')[0] : "");
+        setOffSaleAt(data.offSaleAt ? data.offSaleAt.split('T')[0] : "");
         setMinAge(data.minAge !== null ? String(data.minAge) : "");
         setMaxAge(data.maxAge !== null ? String(data.maxAge) : "");
         setMaxParticipants(data.maxParticipants !== null ? String(data.maxParticipants) : "");
@@ -165,6 +168,8 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
         body: JSON.stringify({
           startAt: startAt || null,
           endAt: endAt || null,
+          // Sent only when edited, so an untouched date keeps following the start date.
+          ...(offSaleAt !== (program?.offSaleAt?.split('T')[0] ?? "") && { offSaleAt: offSaleAt || null }),
           minAge: minAge ? parseInt(minAge) : null,
           maxAge: maxAge ? parseInt(maxAge) : null,
           maxParticipants: maxParticipants ? parseInt(maxParticipants) : null,
@@ -416,6 +421,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                 <SimpleGrid cols={{ base: 1, sm: 2 }}>
                   <TextInput type="date" label="Start Date" value={startAt} onChange={e => setStartAt(e.currentTarget.value)} />
                   <TextInput type="date" label="End Date" value={endAt} onChange={e => setEndAt(e.currentTarget.value)} />
+                  <TextInput type="date" label="Off-Sale Date" value={offSaleAt} onChange={e => setOffSaleAt(e.currentTarget.value)} disabled={!isSysAdminOrBoard} description="Enrollment closes and the store product comes off sale on this date. Blank = start date." />
                   <NumberInput label="Minimum Age (Optional)" value={minAge} onChange={v => setMinAge(String(v))} min={0} max={25} placeholder="e.g. 14" />
                   <NumberInput label="Maximum Age (Optional)" value={maxAge} onChange={v => setMaxAge(String(v))} min={0} max={25} placeholder="e.g. 18" />
                 </SimpleGrid>

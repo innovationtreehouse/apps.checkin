@@ -1,0 +1,34 @@
+import { classify, isSaleEnded, effectiveOffSaleAt, type SaleRow } from '@/lib/programs/saleState';
+
+const NOW = new Date('2026-10-12T15:00:00Z');
+const row = (over: Partial<SaleRow> = {}): SaleRow => ({
+    phase: 'UPCOMING',
+    enrollmentStatus: 'OPEN',
+    startAt: new Date('2026-11-01'),
+    offSaleAt: null,
+    saleEndedAt: null,
+    ...over,
+});
+
+describe('program sale state', () => {
+    it('defaults the off-sale date to the start date', () => {
+        expect(effectiveOffSaleAt(row())).toEqual(new Date('2026-11-01'));
+        expect(effectiveOffSaleAt(row({ offSaleAt: new Date('2026-12-01') }))).toEqual(new Date('2026-12-01'));
+    });
+
+    it('is ON_SALE when open and before the off-sale date, NOT_ON_SALE when paused', () => {
+        expect(classify(row(), NOW)).toBe('ON_SALE');
+        expect(classify(row({ enrollmentStatus: 'CLOSED' }), NOW)).toBe('NOT_ON_SALE');
+    });
+
+    it('ends the sale on the off-sale date, before or after the start', () => {
+        expect(classify(row({ offSaleAt: new Date('2026-10-12') }), NOW)).toBe('SALE_ENDED');
+        expect(classify(row({ startAt: new Date('2026-10-01'), offSaleAt: new Date('2026-10-20') }), NOW)).toBe('ON_SALE');
+        expect(classify(row({ startAt: new Date('2026-10-01') }), NOW)).toBe('SALE_ENDED');
+    });
+
+    it('stays ended once the sweep stamped it, and FINISHED wins', () => {
+        expect(isSaleEnded(row({ saleEndedAt: new Date('2026-10-01') }), NOW)).toBe(true);
+        expect(classify(row({ phase: 'FINISHED' }), NOW)).toBe('FINISHED');
+    });
+});

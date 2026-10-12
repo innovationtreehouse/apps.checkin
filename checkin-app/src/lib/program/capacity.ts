@@ -3,6 +3,7 @@ import type { ProgramParticipant, ProgramParticipantStatus } from "@/generated/p
 import prisma from "@/lib/prisma";
 import { adjustProgramInventory } from "@/lib/shopify";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { isSaleEnded } from "@/lib/programs/saleState";
 
 /** Thrown by {@link lockProgramAndCheckCapacity} when a program is full. */
 export class ProgramCapacityError extends Error {
@@ -63,6 +64,9 @@ export async function lockProgramAndCheckCapacity(
  * statement, so a payment that lands between a caller's check and this delete
  * cannot slip through; a mismatch throws P2025 like a missing row.
  *
+ * After the program's sale has ended the hold is released without the +1, so
+ * the seat is not put back on sale.
+ *
  * Never throws on the Shopify leg (adjustProgramInventory already logs +
  * emails on failure); the boolean return lets the caller surface a
  * non-fatal warning the same way every other Shopify-adjusting endpoint does.
@@ -79,6 +83,15 @@ export async function withdrawAndReleaseHold(
 
     if (!enrollment.inventoryHeldAt) {
         return { enrollment, released: false, shopifyOk: true };
+    }
+
+    // Once the sale has ended the seat is not resold: no +1.
+    const sale = await prisma.program.findUnique({
+        where: { id: programId },
+        select: { startAt: true, offSaleAt: true, saleEndedAt: true },
+    });
+    if (sale && isSaleEnded(sale)) {
+        return { enrollment, released: true, shopifyOk: true };
     }
 
     const shopifyOk = await adjustProgramInventory(program, 1);
