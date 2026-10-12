@@ -476,7 +476,7 @@ describe("attendance/current page", () => {
     }) as unknown as typeof fetch;
   }
 
-  it("kiosk keeps the last roster with an offline note when a refresh fails", async () => {
+  it("kiosk keeps the last roster, marked not up to date, when a refresh fails", async () => {
     setSearchParams("mode=kiosk");
     setSession({ id: 999 });
     rosterThenFailure();
@@ -485,19 +485,38 @@ describe("attendance/current page", () => {
 
     fireEvent(window, new MessageEvent("message", { data: "refresh-attendance" }));
 
-    expect(await screen.findByText("Offline — showing last known attendance")).toBeInTheDocument();
+    expect(await screen.findByText(/^Not up to date — as of /)).toBeInTheDocument();
     expect(screen.getByText("Karen")).toBeInTheDocument();
     expect(screen.queryByText("Failed to load attendance")).not.toBeInTheDocument();
   });
 
-  it("kiosk shows the offline note on the proxy's own view", async () => {
+  it("kiosk marks the proxy's own view (offline or overnight) with the roster's time", async () => {
     setSearchParams("mode=kiosk");
     setSession({ id: 999 });
-    mockRoutes({ "/api/attendance": { ...attendanceData, kioskOffline: true } });
+    mockRoutes({ "/api/attendance": { ...attendanceData, kioskAsOf: "2026-07-01T14:30:00.000Z" } });
     renderWithProviders(<KioskDisplay />);
 
-    expect(await screen.findByText("Offline — showing last known attendance")).toBeInTheDocument();
+    expect(await screen.findByText(/^Not up to date — as of \S/)).toBeInTheDocument();
     expect(screen.getByText("Karen")).toBeInTheDocument();
+  });
+
+  it("kiosk marks a view built without any roster as not up to date, with no time", async () => {
+    setSearchParams("mode=kiosk");
+    setSession({ id: 999 });
+    mockRoutes({ "/api/attendance": { ...attendanceData, kioskAsOf: null } });
+    renderWithProviders(<KioskDisplay />);
+
+    expect(await screen.findByText("Not up to date")).toBeInTheDocument();
+  });
+
+  it("kiosk shows no stale marker on a fresh server roster", async () => {
+    setSearchParams("mode=kiosk");
+    setSession({ id: 999 });
+    mockRoutes();
+    renderWithProviders(<KioskDisplay />);
+
+    await screen.findByText("Karen");
+    expect(screen.queryByText(/Not up to date/)).not.toBeInTheDocument();
   });
 
   it("off the kiosk a failed refresh still replaces the roster with the error", async () => {
@@ -510,7 +529,7 @@ describe("attendance/current page", () => {
 
     expect(await screen.findByText("Failed to load attendance")).toBeInTheDocument();
     expect(screen.queryByText("Karen Keyholder")).not.toBeInTheDocument();
-    expect(screen.queryByText("Offline — showing last known attendance")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Not up to date/)).not.toBeInTheDocument();
   });
 
   it("includes kiosk-signature headers on both the initial load and a post-action refresh", async () => {

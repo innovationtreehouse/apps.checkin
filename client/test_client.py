@@ -734,8 +734,10 @@ class TestProxyKeepaliveSkip(unittest.TestCase):
             "counts": {"total": 1, "keyholders": 1, "volunteers": 0, "youth": 0},
             "safety": {"isLastKeyholder": True, "isTwoDeepViolation": False},
         }
-        state.seed_from_attendance(roster)
-        self.assertEqual(json.loads(synthetic_keepalive_body("/api/attendance", state)), roster)
+        with patch("client.now_iso", return_value="2026-10-11T22:00:00Z"):
+            state.seed_from_attendance(roster)
+        self.assertEqual(json.loads(synthetic_keepalive_body("/api/attendance", state)),
+                         {**roster, "kioskAsOf": "2026-10-11T22:00:00Z"})
 
     def test_synthetic_certifications_body_is_empty_before_any_real_one(self):
         body = json.loads(synthetic_keepalive_body("/api/kioskdisplay/certifications", AttendanceState()))
@@ -1103,7 +1105,7 @@ class TestKioskOwnView(unittest.TestCase):
 
         handler.send_response.assert_called_once_with(200)
         view = json.loads(handler.wfile.getvalue())
-        self.assertTrue(view["kioskOffline"])
+        self.assertIsNotNone(view["kioskAsOf"])
         self.assertEqual([v["participant"]["id"] for v in view["attendance"]], [9, 7])
         added = view["attendance"][1]
         self.assertEqual(added["participant"]["name"], UNKNOWN_PERSON_NAME)
@@ -1117,7 +1119,7 @@ class TestKioskOwnView(unittest.TestCase):
         state.seed_from_attendance(self.ROSTER)
         handler = self._proxy_get(state, self._outbox(), status=503, body=b"<html>waking</html>")
         view = json.loads(handler.wfile.getvalue())
-        self.assertTrue(view["kioskOffline"])
+        self.assertIsNotNone(view["kioskAsOf"])
         self.assertEqual(view["safety"], self.ROSTER["safety"], "unchanged roster keeps its flags")
 
     def test_unreachable_server_before_any_roster_shows_queued_scans(self):
@@ -1127,6 +1129,7 @@ class TestKioskOwnView(unittest.TestCase):
         view = json.loads(self._proxy_get(state, ob, error=ConnectionError("down")).wfile.getvalue())
         self.assertEqual([v["participant"]["id"] for v in view["attendance"]], [7])
         self.assertEqual(view["counts"]["total"], 1)
+        self.assertIsNone(view["kioskAsOf"], "no roster yet: stale with no time")
 
     def test_other_paths_still_answer_502(self):
         handler = self._proxy_get(AttendanceState(), None, path="/api/scan", error=ConnectionError("down"))
@@ -1139,13 +1142,14 @@ class TestKioskOwnView(unittest.TestCase):
         self.assertEqual(state.present_ids, {9})
         self.assertEqual(state.known_people[5]["name"], "Ana")
 
-    def test_closed_window_replays_the_kiosk_view(self):
+    def test_closed_window_replays_the_kiosk_view_marked_with_the_roster_time(self):
         state = AttendanceState()
-        state.seed_from_attendance(self.ROSTER)
+        with patch("client.now_iso", return_value="2026-10-11T22:00:00Z"):
+            state.seed_from_attendance(self.ROSTER)
         state.note_presence(5, checking_in=False)
         view = json.loads(synthetic_keepalive_body("/api/attendance", state))
         self.assertEqual([v["participant"]["id"] for v in view["attendance"]], [9])
-        self.assertNotIn("kioskOffline", view)
+        self.assertEqual(view["kioskAsOf"], "2026-10-11T22:00:00Z", "never presented as fresh")
 
 
 class TestCloseBanners(unittest.TestCase):

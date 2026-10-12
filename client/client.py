@@ -77,8 +77,9 @@ UNKNOWN_PERSON_NAME = "Checked in offline"
 def synthetic_keepalive_body(path, state):
     """JSON the iframe already knows how to parse, without a backend round-trip.
 
-    Attendance is the kiosk's own view (last roster plus its scans since); other
-    paths replay the last real body, so what the iframe was shown stays up.
+    Attendance is the kiosk's own view (last roster plus its scans since, marked
+    with the roster's time); other paths replay the last real body, so what the
+    iframe was shown stays up.
     """
     if path.split("?", 1)[0] == "/api/attendance":
         return json.dumps(state.attendance_view() if state is not None else EMPTY_ATTENDANCE)
@@ -328,6 +329,8 @@ class AttendanceState:
         # what it needs to draw someone the last roster does not show yet.
         self.known_people = {}
         self.local_arrivals = {}
+        # When the kiosk last received a server roster (ISO), or None.
+        self.roster_at = None
 
     def arm_confirm(self, participant_id, token, seconds, banner_html=None):
         """Hold the confirm token the server minted with a force-close warning or
@@ -540,21 +543,23 @@ class AttendanceState:
             self.last_two_deep_violation = bool(safety.get("isTwoDeepViolation"))
             self.counts_known = True
             self.last_keepalive_bodies["/api/attendance"] = json.dumps(att_data)
+            self.roster_at = now_iso()
 
     def apply_pending(self, pending):
         """Overlay undelivered outbox rows when there is no roster to seed from."""
         with self.lock:
             _overlay_pending(self.present_ids, pending, self.local_arrivals)
 
-    def attendance_view(self, offline=False):
+    def attendance_view(self):
         """The roster the kiosk shows: the last server roster with this kiosk's
         presence view (its queued and live scans) applied. Unchanged membership
         replays the roster as is; changed membership recounts and drops
         `safety`, which the kiosk cannot recompute (the page reads that as
-        unknown). `kioskOffline` marks a body served because the server could
-        not be reached."""
+        unknown). `kioskAsOf` (when the roster arrived, None if never) marks
+        every such body as not fresh from the server."""
         with self.lock:
             last = self.last_keepalive_bodies.get("/api/attendance")
+            roster_at = self.roster_at
             present = set(self.present_ids)
             people = dict(self.known_people)
             arrivals = dict(self.local_arrivals)
@@ -573,8 +578,7 @@ class AttendanceState:
             view["attendance"] = shown
             view["counts"] = _roster_counts(shown, view.get("counts"))
             view.pop("safety", None)
-        if offline:
-            view["kioskOffline"] = True
+        view["kioskAsOf"] = roster_at
         return view
 
 
@@ -987,7 +991,7 @@ class KioskHandler(BaseHTTPRequestHandler):
             if own_view and resp.status_code >= 500:
                 # Unreachable, warming (503) or a gateway error.
                 resp.close()
-                self._send_json(json.dumps(self.state.attendance_view(offline=True)))
+                self._send_json(json.dumps(self.state.attendance_view()))
                 return
 
             relayed = True
@@ -1026,7 +1030,7 @@ class KioskHandler(BaseHTTPRequestHandler):
             if not isinstance(e, (BrokenPipeError, ConnectionResetError)):
                 log.error(f"Proxy error for {self.path}: {e}")
             if own_view and not relayed:
-                self._send_json(json.dumps(self.state.attendance_view(offline=True)))
+                self._send_json(json.dumps(self.state.attendance_view()))
                 return
             try:
                 # If we haven't sent headers yet, try to send a 502

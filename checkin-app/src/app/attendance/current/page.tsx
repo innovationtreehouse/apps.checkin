@@ -53,8 +53,9 @@ type Visit = {
 
 type Counts = { keyholders: number; volunteers: number; youth: number; total: number; needReview?: number };
 type SafetyFlags = { facilityOpen: boolean; isLastKeyholder: boolean; isTwoDeepViolation: boolean };
-// kioskOffline: the kiosk proxy served its own view because the server could not be reached.
-type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; kioskOffline?: boolean };
+// kioskAsOf: the kiosk proxy served its own view (server unreachable, or overnight)
+// from the roster it received at this time; null when it never had one.
+type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; kioskAsOf?: string | null };
 type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; self: Visit | null; household: Visit[] };
 type AttendanceResponse = FullResponse | LimitedResponse;
 
@@ -64,6 +65,8 @@ function KioskDisplayInner() {
   const [isKioskMode, setIsKioskMode] = useState(searchParams.get("mode") === "kiosk");
   const { data: session } = useSession();
   const [data, setData] = useState<AttendanceResponse | null>(null);
+  // When `data` was current: the kiosk's roster time, else when it was loaded.
+  const [asOf, setAsOf] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [checkingOut, setCheckingOut] = useState<number | null>(null);
@@ -165,6 +168,7 @@ function KioskDisplayInner() {
       const json = await res.json().catch(() => ({}));
       if (res.ok && (json.access === "full" || json.access === "limited")) {
         setData(json);
+        setAsOf(json.kioskAsOf !== undefined ? json.kioskAsOf : new Date().toISOString());
         setError(null);
         if (json.signedRequest === true) setIsKioskMode(true);
       } else if (!res.ok) {
@@ -179,14 +183,15 @@ function KioskDisplayInner() {
     }
   }, [searchParams, isKioskDisplay]);
 
-  // The door screen never blanks: a failed fetch keeps the last roster up.
-  const kioskStale = isKioskDisplay && data !== null && (error !== null || (isFull && (data as FullResponse).kioskOffline === true));
+  // The door screen never blanks, and never passes a kept or kiosk-served roster off as fresh.
+  const kioskStale = isKioskDisplay && data !== null && (error !== null || (isFull && (data as FullResponse).kioskAsOf !== undefined));
   usePolling(fetchAttendance, 60000, { idleStopMs: isKioskDisplay ? undefined : POLL_IDLE_STOP_MS });
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (typeof event.data === "object" && event.data?.type === "refresh-attendance" && event.data.attendance) {
         setData({ access: "full", attendance: event.data.attendance, counts: event.data.counts, safety: event.data.safety });
+        setAsOf(new Date().toISOString());
         setLoading(false);
         if (event.data.signedRequest) setIsKioskMode(true);
       } else if (event.data === "refresh-attendance") {
@@ -233,6 +238,7 @@ function KioskDisplayInner() {
     const json = await attRes.json();
     if (attRes.ok && (json.access === "full" || json.access === "limited")) {
       setData(json);
+      setAsOf(json.kioskAsOf !== undefined ? json.kioskAsOf : new Date().toISOString());
       if (json.signedRequest) setIsKioskMode(true);
     }
     // Refresh nav/sub-tab building counts too — they read a separate cached fetch.
@@ -423,7 +429,7 @@ function KioskDisplayInner() {
                 Sign out a user
               </Button>
             )}
-            {kioskStale && <Text size="sm" c="dimmed">Offline — showing last known attendance</Text>}
+            {kioskStale && <Text size="sm" c="dimmed">Not up to date{asOf ? ` — as of ${formatTime(asOf)}` : ""}</Text>}
             <CountBadge intent="info" size="lg">
               {unconfirmed ? "Checked in (unconfirmed)" : "People Present"}: {data ? counts.total : "—"}
             </CountBadge>
