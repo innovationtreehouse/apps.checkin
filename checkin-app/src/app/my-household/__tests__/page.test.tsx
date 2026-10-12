@@ -341,6 +341,48 @@ describe("HouseholdPage", () => {
     await waitFor(() => expectToast("Household member updated successfully!"));
   });
 
+  // A member with a linked sign-in keeps their sign-in address: the field is locked
+  // with how-to-change help, and the edit leaves email out of the PATCH body.
+  describe("signed-in member email", () => {
+    const signedInHousehold = {
+      ...householdData,
+      householdMembers: [
+        { id: 10, name: "Sam Smith", email: "sam@example.com", phone: "5125551234", dateOfBirth: "1980-01-01", isHouseholdLead: true, hasSignIn: true },
+        { id: 12, name: "Casey Smith", email: "", isDeclaredAdult: true, isHouseholdLead: false, hasSignIn: false },
+      ],
+    };
+
+    it.each([
+      ["Board <board@example.org>", "This is the address you sign in with. To change it, email the board at board@example.org."],
+      [null, "This is the address you sign in with. To change it, contact the board."],
+    ])("locks the email with help text (reply-to %p) and omits it on save", async (boardReplyTo, help) => {
+      setSession({ id: 10, email: "sam@example.com" });
+      const fetchMock = mockRoutes({ "/api/household": { household: signedInHousehold, boardReplyTo } });
+      renderWithProviders(<HouseholdPage />);
+      await screen.findByRole("heading", { name: "Smith Household", level: 1 });
+
+      fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+      expect(screen.getByLabelText("Email")).toBeDisabled();
+      expect(screen.getByText(help)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expectToast("Household member updated successfully!"));
+      const [, patchOpts] = fetchMock.mock.calls.find(([url, init]) => String(url) === "/api/household/member" && init?.method === "PATCH")!;
+      expect(JSON.parse(patchOpts!.body as string)).not.toHaveProperty("email");
+    });
+
+    it("leaves the email editable for a member without a sign-in", async () => {
+      setSession({ id: 10, email: "sam@example.com" });
+      mockRoutes({ "/api/household": { household: signedInHousehold, boardReplyTo: null } });
+      renderWithProviders(<HouseholdPage />);
+      await screen.findByRole("heading", { name: "Smith Household", level: 1 });
+
+      fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[1]);
+      expect(screen.getByLabelText("Email")).not.toBeDisabled();
+      expect(screen.queryByText(/This is the address you sign in with/)).not.toBeInTheDocument();
+    });
+  });
+
   it("promotes a household member to lead, and shows a server error on failure", async () => {
     const leadHousehold = {
       ...householdData,

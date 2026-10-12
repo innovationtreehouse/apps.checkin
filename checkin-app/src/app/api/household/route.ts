@@ -6,13 +6,14 @@ import { reconcileAndWarn } from "@/lib/emergencyContacts/service";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { isOrgAccount } from "@/lib/orgAccount";
-import { HOUSEHOLD_PEER_SELECT } from "@/lib/household/participantProjection";
+import { HOUSEHOLD_PEER_SELECT, HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT } from "@/lib/household/participantProjection";
 import { householdLeadship } from "@/lib/household/leads";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { mintPersonId } from "@/lib/person/mintId";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { getEmailSenderIdentity } from "@/lib/emailIdentity";
 
 export const GET = withAuth(
     {},
@@ -26,7 +27,7 @@ export const GET = withAuth(
                 include: {
                     household: {
                         include: {
-                            householdMembers: { where: LIVE_PERSON, select: HOUSEHOLD_PEER_SELECT },
+                            householdMembers: { where: LIVE_PERSON, select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT },
                             orgMembership: true,
                         }
                     }
@@ -44,11 +45,20 @@ export const GET = withAuth(
             // and the 403 on PATCH /api/household/settings. Address stays: shared
             // household data the family authored.
             const canSeeNotes = user.isHouseholdLead || user.isSysadmin;
-            const household = user.household && !canSeeNotes
-                ? { ...user.household, intakeNotes: null }
-                : user.household;
+            const household = user.household && {
+                ...user.household,
+                ...(canSeeNotes ? {} : { intakeNotes: null }),
+                // A linked sign-in locks the member's email on the household card;
+                // only the boolean leaves, never Account data.
+                householdMembers: user.household.householdMembers.map(({ _count, ...m }) => ({
+                    ...m,
+                    hasSignIn: _count.accounts > 0,
+                })),
+            };
+            // Where the locked-email help text points members to change it.
+            const { replyTo } = await getEmailSenderIdentity();
 
-            return NextResponse.json({ household }, { status: 200 });
+            return NextResponse.json({ household, boardReplyTo: replyTo?.[0] ?? null }, { status: 200 });
         } catch (error: unknown) {
             logger.error("Household GET Error:", error);
             return apiError("Internal Server Error", 500);

@@ -149,6 +149,10 @@ Things the app takes as true because they are handled outside it.
 - Where someone signs in with Google, the address they sign in with is the
   address they are contacted at. There is no second one to diverge from it.  [Decision]
 
+- A signed-in member's email is their sign-in address and is not edited from the
+  household card, by them or by a lead. The board changes it; the locked field
+  says how to ask. A household member who has never signed in stays editable.  [Decision]
+
 - A Google account must have a verified email before it is first linked to a
   person record; an account already linked keeps signing in unchanged.  [Decision]
 
