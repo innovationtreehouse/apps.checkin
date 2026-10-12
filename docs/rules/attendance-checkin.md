@@ -204,7 +204,8 @@ Things the app takes as true because they are handled outside it.
   inside a closed facility, and the leave is audited like a web leave with the
   handover not named — the reader has no pick-list, and a keyholder staying can
   badge in at the same reader. A keyholder alone closes on a single badge, and a
-  queued badge with no confirm replays as a leave. Who counts as inside is what
+  queued badge with no confirm replays as a leave, flagged for a human to check
+  who is still recorded inside. Who counts as inside is what
   the kiosk showed when it says so, live or queued: shown nobody, one badge
   closes over anyone the server still records; shown anyone, the badge is a
   leave and only the second closes, even when the server records nobody. A kiosk
@@ -267,27 +268,48 @@ hours at a time — is a normal operating mode here, not an incident.
   (older kiosk builds and the web).  [Decision]
 
 - A replayed scan applies at the time the badge was read, not the time it was
-  delivered. Within a short freshness window it toggles normally; older than that
-  it is held for a human, because once state has moved on a bare toggle cannot
-  tell entering from leaving.  [Decision]
+  delivered, however late it arrives: a scan is trusted by default. A replay
+  older than ten minutes, one that lands behind later activity on the person's
+  record, or one from a kiosk whose clock stepped is applied all the same and is
+  also flagged for a human to check. A scan time ahead of the server's clock
+  applies at the server's time, flagged; that holds for a close too, so a doubtful
+  clock is never trusted silently. A replay is held unapplied only when
+  applying it would contradict the person's later record, or it carries no
+  displayed direction.  [Decision]
 
-- A facility close a keyholder confirmed at the kiosk — the echoed server token,
-  or the kiosk's own offline confirm — is applied whenever it reaches the server,
-  however late; it is never held for staleness or ordering, and a kiosk clock
-  flagged as having stepped is trusted. The keyholder was at the reader and saw
-  the room, so the close is a fact, not a toggle. Everyone in the building at that
-  moment departs at the keyholder's scan time, not the time the close arrived,
-  and never more than 24 hours after arrival. A scan time ahead of the server's
-  clock is not trusted: that close is held for a human. Someone who arrived more
-  than two minutes after the keyholder's scan is left as they are: they badged in
-  after lock-up, and a late close never ends a visit that began after it, however
-  late it arrives. An arrival within those two minutes is the kiosk's clock
-  disagreeing with the server's, and departs with everyone else. A departure the
-  nightly sweep stamped before the close arrived is pulled back to the
-  keyholder's time; a departure a person has since corrected is not. A keyholder
-  who arrived after the scan does not count as still inside.
-  The close still needs the keyholder in the building at their scan time — an
-  unconfirmed late keyholder scan is held like any other.  [Decision]
+- A replay that lands behind later activity belongs to the visit the person was
+  in at its own time — their latest arrival at or before it — and never touches a
+  visit that began after it. A departure ends that visit: an open one checks out
+  at the scan time, and a machine departure — the nightly sweep's, or a
+  facility close's — stamped after the scan is pulled back to it. A visit never
+  departs before it arrived. An arrival behind
+  later activity, or a departure against one a person recorded, would rewrite
+  the later record, so it is held for the reviewer.  [Decision]
+
+- A close fences what came before it. A queued check-in scanned before a close
+  that reached the server first is recorded as a visit from its scan time,
+  departing at that close, as the close would have departed it, and is flagged.
+  A check-in scanned after the close, beyond the two-minute clock allowance,
+  opens a visit as usual. The same person's queued check-out from before the
+  close then pulls that departure back to their own scan.  [Decision]
+
+- A keyholder's departure the kiosk showed with nobody else inside closes the
+  building with that one scan, however late it reaches the server; anyone the
+  server still records is a forgotten badge-out. With anyone else shown,
+  keyholder or not, only a second scan of the same badge closes — the echoed
+  server token, or the kiosk's own offline confirm — and without it the
+  keyholder alone leaves. A late close is never held, and is flagged only when
+  its clock is in doubt: the facility-close record is its audit trail. Everyone in the
+  building at that moment departs at the keyholder's scan time, not the time
+  the close arrived, and never more than 24 hours after arrival. Someone who
+  arrived more than two minutes after the keyholder's scan is left as they are:
+  they badged in after lock-up, and a late close never ends a visit that began
+  after it. An arrival within those two minutes is the kiosk's clock
+  disagreeing with the server's, and departs with everyone else. A departure
+  the nightly sweep stamped before the close arrived is pulled back to the
+  keyholder's time; a departure a person has since corrected is not. A
+  keyholder who arrived after the scan does not count as still inside. The
+  close still needs the keyholder in the building at their scan time.  [Decision]
 
 - The kiosk is never blank while anyone is checked in: it shows everyone it
   holds as inside, no-keyholder visits included, and its offline presence view

@@ -844,11 +844,9 @@ describe('POST /api/scan', () => {
                 { id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), 'tok-q', new Date(scannedAt), 'evt-q', false, false, null);
         });
 
-        // Precedence, pinned deliberately: §2's freshness window W runs BEFORE
-        // the token is ever looked at, so a confirm queued through an outage
-        // longer than W parks for review rather than closing hours late. The
-        // token exempts a replay from the park in processCheckout, not from W.
-        it('still parks a token-carrying replay that is older than the freshness window', async () => {
+        // A token closes late only for a keyholder; a stale replay with no
+        // displayed direction has nothing to apply, so it is held for review.
+        it('still parks a non-keyholder\'s intent-less token-carrying replay older than the freshness window', async () => {
             (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
             (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
@@ -1051,13 +1049,15 @@ describe('POST /api/scan', () => {
             }) as unknown as import('next/server').NextRequest);
         }
 
-        it('parks a replay stamped beyond the future tolerance as clock_suspect', async () => {
+        it('holds an intent-less replay stamped beyond the future tolerance as clock_suspect, at server now', async () => {
             const scannedAt = new Date(Date.now() + 60 * 60_000);
             const res = await replay(scannedAt);
             expect((await res.json()).type).toBe('parked');
             expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
-                data: { personId: 1, location: 'Main Entrance', clientEventId: 'evt-f', timestamp: scannedAt, reviewReason: 'clock_suspect' },
+                data: { personId: 1, location: 'Main Entrance', clientEventId: 'evt-f', timestamp: expect.any(Date), reviewReason: 'clock_suspect' },
             });
+            const stamped = (prisma.rawBadgeLog.create as jest.Mock).mock.calls[0][0].data.timestamp as Date;
+            expect(stamped.getTime()).toBeLessThanOrEqual(Date.now());
             expect(processCheckin).not.toHaveBeenCalled();
         });
 
