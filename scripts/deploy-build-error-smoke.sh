@@ -5,8 +5,10 @@
 #
 # Usage: deploy-build-error-smoke.sh <runner-image> <builder-image>
 #   runner-image  the production image (checkin-app/Dockerfile, final stage)
-#   builder-image the same Dockerfile's `builder` stage: full workspace +
-#                 Prisma CLI, used for library migrations and cookie minting
+#   builder-image the same Dockerfile's `builder` stage: full workspace, used
+#                 for cookie minting
+# Databases and migrations follow checkin-app/libraries.json, and run the
+# deploy migrate task's command in the runner image.
 set -euo pipefail
 
 # One write route per wired library. A malformed JSON body must answer 400.
@@ -30,6 +32,10 @@ DB=checkin-error-smoke-db
 APP=checkin-error-smoke-app
 BASE=http://127.0.0.1:4000
 PG=postgresql://prisma:prisma@$DB:5432
+LIBRARIES_JSON="$(dirname "$0")/../checkin-app/libraries.json"
+# Same name extraction as deploy/prod-initdb/10-library-dbs.sh.
+LIB_NAMES=$(sed -n 's/.*"name": *"\([^"]*\)".*/\1/p' "$LIBRARIES_JSON")
+[ -n "$LIB_NAMES" ] || { echo "::error::no libraries listed in $LIBRARIES_JSON"; exit 1; }
 
 # Per-run secret, never committed: the app verifies the minted cookie with it.
 SECRET=$(openssl rand -hex 32)
@@ -65,18 +71,15 @@ done
 [ "$pg_up" = 1 ] || { echo "::error::Postgres not ready over TCP after 30s"; docker logs "$DB" 2>&1 | tail -40; exit 1; }
 
 psql() { docker exec -i "$DB" psql -v ON_ERROR_STOP=1 -U prisma -d checkmein -qtA "$@"; }
-psql -c 'CREATE DATABASE catalog' -c 'CREATE DATABASE local_inventory' -c 'CREATE DATABASE bulk_donation'
+DB_ENV=(-e "DATABASE_URL=$PG/checkmein?sslmode=disable")
+for name in $LIB_NAMES; do
+  psql -c "CREATE DATABASE \"$name\""
+  DB_ENV+=(-e "$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')_DATABASE_URL=$PG/$name?sslmode=disable")
+done
 
-docker run --rm --network "$NET" \
-  -e DATABASE_URL="$PG/checkmein?sslmode=disable" \
-  -e CATALOG_DATABASE_URL="$PG/catalog?sslmode=disable" \
-  -e LOCAL_INVENTORY_DATABASE_URL="$PG/local_inventory?sslmode=disable" \
-  -e BULK_DONATION_DATABASE_URL="$PG/bulk_donation?sslmode=disable" \
-  "$BUILDER_IMAGE" sh -ec '
-    npm -w checkin-app exec -- prisma migrate deploy
-    npm -w @inventory/global-catalog exec -- prisma migrate deploy
-    npm -w @inventory/local-inventory exec -- prisma migrate deploy
-    npm -w @inventory/bulk-donation exec -- prisma migrate deploy'
+# The deploy workflows' migrate-task command, in the runner image.
+docker run --rm --network "$NET" "${DB_ENV[@]}" "$RUNNER_IMAGE" sh -ec \
+  'cd checkin-app && ../scripts/each-library.sh exec --no -- prisma migrate deploy && npx --no-install prisma migrate deploy'
 
 PERSON_ID=$(psql <<'SQL'
 WITH h AS (INSERT INTO "Household" (name) VALUES ('Smoke') RETURNING id),
@@ -98,11 +101,7 @@ TOKEN=$(docker run --rm -w /app/checkin-app -e SECRET="$SECRET" -e PERSON_ID="$P
 echo "::add-mask::$TOKEN"
 COOKIE="next-auth.session-token=$TOKEN"
 
-docker run -d --name "$APP" --network "$NET" -p 4000:4000 \
-  -e DATABASE_URL="$PG/checkmein?sslmode=disable" \
-  -e CATALOG_DATABASE_URL="$PG/catalog?sslmode=disable" \
-  -e LOCAL_INVENTORY_DATABASE_URL="$PG/local_inventory?sslmode=disable" \
-  -e BULK_DONATION_DATABASE_URL="$PG/bulk_donation?sslmode=disable" \
+docker run -d --name "$APP" --network "$NET" -p 4000:4000 "${DB_ENV[@]}" \
   -e NEXTAUTH_URL="$BASE" -e AUTH_TRUST_HOST=true -e NEXTAUTH_SECRET="$SECRET" \
   -e GOOGLE_CLIENT_ID=smoke-placeholder -e GOOGLE_CLIENT_SECRET=smoke-placeholder \
   -e CHECKIN_ENV=dev -e AWS_REGION=us-east-2 \
