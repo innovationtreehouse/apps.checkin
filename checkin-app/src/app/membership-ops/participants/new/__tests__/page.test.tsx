@@ -52,7 +52,6 @@ describe("membership-ops/participants/new page", () => {
             parentName: null,
             dob: null,
             householdId: null,
-            alreadyMember: false,
           }),
         }),
       ),
@@ -142,7 +141,7 @@ describe("membership-ops/participants/new page", () => {
     consoleError.mockRestore();
   });
 
-  it("searches, selects, and clears a household, hiding the already-member checkbox while one is set", async () => {
+  it("searches, selects, and clears a household", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/membership-ops/households": { households: [household] } });
     renderWithProviders(<NewParticipantPage />);
@@ -151,11 +150,10 @@ describe("membership-ops/participants/new page", () => {
     fireEvent.change(screen.getByPlaceholderText("Search households..."), { target: { value: "Does" } });
     fireEvent.click(await screen.findByText("The Does", { exact: false }));
     expect(screen.getByDisplayValue("The Does")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Confirm this household is already a paid member")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Clear" }));
     expect(screen.queryByDisplayValue("The Does")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Confirm this household is already a paid member")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/already a paid member/)).not.toBeInTheDocument();
   });
 
   it("requires a name before allowing submit", async () => {
@@ -174,7 +172,7 @@ describe("membership-ops/participants/new page", () => {
     expect(screen.getByRole("button", { name: "Create Participant" })).toBeEnabled();
   });
 
-  it("submits an adult assigned to a household, with alreadyMember forced false", async () => {
+  it("submits an adult assigned to a household", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({
       "/api/membership-ops/households": { households: [household] },
@@ -194,7 +192,7 @@ describe("membership-ops/participants/new page", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
-            name: "Household Member", email: null, parentEmail: null, parentName: null, dob: null, householdId: 9, alreadyMember: false,
+            name: "Household Member", email: null, parentEmail: null, parentName: null, dob: null, householdId: 9,
           }),
         }),
       ),
@@ -215,7 +213,7 @@ describe("membership-ops/participants/new page", () => {
     await screen.findByText("Student Detected");
     fireEvent.change(screen.getByLabelText(/Parent \/ Guardian Google Email/), { target: { value: "parent@example.com" } });
     fireEvent.change(screen.getByPlaceholderText("e.g. John Doe"), { target: { value: "Parent Name" } });
-    fireEvent.click(screen.getByLabelText("Confirm this household is already a paid member"));
+    expect(screen.queryByLabelText(/already a paid member/)).not.toBeInTheDocument();
 
     const submitBtn = screen.getByRole("button", { name: "Create Participant" });
     expect(submitBtn).toBeEnabled();
@@ -227,7 +225,7 @@ describe("membership-ops/participants/new page", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
-            name: "Kid Name", email: null, parentEmail: "parent@example.com", parentName: "Parent Name", dob: "2015-01-01", householdId: null, alreadyMember: true,
+            name: "Kid Name", email: null, parentEmail: "parent@example.com", parentName: "Parent Name", dob: "2015-01-01", householdId: null,
           }),
         }),
       ),
