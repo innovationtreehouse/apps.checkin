@@ -40,16 +40,19 @@ class FakeState:
         return
 
     def take_local_close(self, participant_id):
-        return False
+        return None
 
-    def arm_local_close(self, participant_id, seconds):
+    def arm_local_close(self, participant_id, seconds, leave_at):
         return
 
     def is_repeat_read(self, participant_id):
         return False
 
-    def offline_close_offer(self, participant_id):
-        return False
+    def shows_empty(self, participant_id):
+        return None
+
+    def note_close(self):
+        return
 
     def offline_supervision_warning(self):
         return None

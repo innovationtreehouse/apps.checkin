@@ -221,7 +221,7 @@ class Outbox:
             return self._conn.execute(
                 "SELECT client_event_id, participant_id, scanned_at, attempts, force_close_token, "
                 "intent, clock_suspect, force_close_confirmed, server_errors, shown_empty "
-                "FROM outbox WHERE state='pending'" + clause + " ORDER BY scanned_at ASC",
+                "FROM outbox WHERE state='pending'" + clause + " ORDER BY scanned_at ASC, rowid ASC",
                 args,
             ).fetchall()
 

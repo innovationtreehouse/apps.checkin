@@ -210,14 +210,17 @@ Things the app takes as true because they are handled outside it.
   closes over anyone the server still records; shown anyone, the badge is a
   leave and only the second closes, even when the server records nobody. A kiosk
   that does not say leaves it to the server's records. Offline the kiosk runs the
-  same offer and confirm itself, and the server honours the queued confirm
-  whoever else it reads as present — against the keyholder's visit still open,
+  same rules from what it shows (the roster plus its queued scans): alone, one
+  badge closes; others shown, it queues the leave, lists who it shows inside,
+  and runs the confirm itself, queuing the close behind the leave. The server
+  honours the queued confirm whoever else it reads as present — against the keyholder's visit still open,
   one the nightly sweep closed after the confirm, or one their own badge
   departed at or before it, which takes the offer's token or the offline
-  confirm. The close is bound to the badge that was shown the offer —
-  someone else scanning during the countdown scans normally — and a read of that
-  badge within a second of the offer is the same touch read twice, never the
-  confirm. Nothing on the web can stop a kiosk close.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
+  confirm. The close is bound to the badge that was shown the offer — anyone
+  else scanning during the countdown ends the offer and scans normally, so the
+  keyholder has only left — and a read of that badge within three seconds of
+  its last read is the same touch read twice, never the confirm. Nothing on the
+  web can stop a kiosk close.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
 
 - Every facility close is recorded: who closed, when, and through which path
   (kiosk, offline kiosk, a web checkout or correction, or the nightly sweep,

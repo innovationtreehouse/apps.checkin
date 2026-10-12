@@ -422,15 +422,18 @@ class TestForceCloseConfirm(unittest.TestCase):
         state = AttendanceState()
         self.assertIsNone(state.take_confirm(7))
         state.arm_confirm(7, "tok", 15)
-        self.assertIsNone(state.take_confirm(5), "another badge must not consume it")
         self.assertEqual(state.take_confirm(7), "tok")
         self.assertIsNone(state.take_confirm(7), "a spent token must not confirm twice")
+        state.arm_confirm(7, "tok", 15)
+        self.assertIsNone(state.take_confirm(5), "another badge confirms nothing")
+        self.assertIsNone(state.take_confirm(7), "another badge ended the prompt")
         state.arm_confirm(7, "tok", 0)  # countdown already over
         self.assertIsNone(state.take_confirm(7), "an expired countdown confirms nothing")
 
     def test_another_badge_during_the_countdown_scans_normally(self):
         """A member arriving while a keyholder's close offer counts down is an
-        ordinary IN -- never pinned OUT with the keyholder's token."""
+        ordinary IN -- never pinned OUT with the keyholder's token -- and ends
+        the offer: the keyholder has only left."""
         state = AttendanceState()
         state.push_event = lambda event: None
         state.arm_confirm(7, "tok-1", 15)
@@ -441,7 +444,7 @@ class TestForceCloseConfirm(unittest.TestCase):
 
         self.assertEqual(backend.post_scan.call_args.kwargs["intent"], "IN")
         self.assertIsNone(backend.post_scan.call_args.kwargs["force_close_token"])
-        self.assertEqual(state.take_confirm(7), "tok-1", "the keyholder's confirm survives")
+        self.assertIsNone(state.take_confirm(7), "the other badge ended the offer")
 
     def test_warning_arms_the_countdown_and_the_next_scan_confirms(self):
         state = AttendanceState()
@@ -959,30 +962,32 @@ class TestOfflineForceClose(unittest.TestCase):
         state = self._state(two_deep_violation=True)
         self.assertEqual(state.keyholder_ids, {9})
         self.assertTrue(state.last_two_deep_violation)
-        self.assertTrue(state.offline_close_offer(9))
-        self.assertFalse(state.offline_close_offer(5), "a non-keyholder never closes the building")
+        self.assertIs(state.shows_empty(9), False)
+        self.assertIsNone(state.shows_empty(5), "a non-keyholder never closes the building")
 
     def test_close_offered_when_another_keyholder_is_recorded_inside(self):
         # The other keyholder may be a forgotten badge-out: any keyholder can close.
         state = self._state()
         state.keyholder_ids = {9, 3}
         state.present_ids = {9, 3}
-        self.assertTrue(state.offline_close_offer(9))
+        self.assertIs(state.shows_empty(9), False)
 
     def test_no_close_offer_for_a_keyholder_alone(self):
         state = self._state()
         state.present_ids = {9}
-        self.assertFalse(state.offline_close_offer(9))
+        self.assertIs(state.shows_empty(9), True)
 
     def test_local_close_is_bound_single_use_and_expires(self):
         state = AttendanceState()
-        self.assertFalse(state.take_local_close(9))
-        state.arm_local_close(9, 15)
-        self.assertFalse(state.take_local_close(5), "another badge must not consume it")
-        self.assertTrue(state.take_local_close(9))
-        self.assertFalse(state.take_local_close(9), "single use")
-        state.arm_local_close(9, 0)  # countdown already over
-        self.assertFalse(state.take_local_close(9), "an expired countdown confirms nothing")
+        self.assertIsNone(state.take_local_close(9))
+        state.arm_local_close(9, 15, "t-leave")
+        self.assertEqual(state.take_local_close(9), "t-leave")
+        self.assertIsNone(state.take_local_close(9), "single use")
+        state.arm_local_close(9, 15, "t-leave")
+        self.assertIsNone(state.take_local_close(5), "another badge confirms nothing")
+        self.assertIsNone(state.take_local_close(9), "another badge ended the prompt")
+        state.arm_local_close(9, 0, "t-leave")  # countdown already over
+        self.assertIsNone(state.take_local_close(9), "an expired countdown confirms nothing")
 
     def test_offline_last_keyholder_out_warns_and_arms_without_confirming(self):
         state = self._state()
@@ -1186,6 +1191,108 @@ class TestCloseBanners(unittest.TestCase):
         handle_scan(self._offline(), state, Outbox(":memory:"), 9)
         self.assertIn(f"Still inside: Ana, {UNKNOWN_PERSON_NAME}", events[-1]["html"])
         self.assertNotIn(CLOSING_ALONE_COPY, events[-1]["html"])
+
+
+class TestOfflineCloseByTheKioskView(unittest.TestCase):
+    """With no server answer the kiosk closes exactly as the server would, from
+    its own view: alone, one badge closes; others shown, the badge leaves and a
+    second badge of the same card after 3 s inside 15 s closes; any other badge
+    or the timeout leaves it a leave."""
+
+    ROSTER = {"attendance": [
+        {"participant": {"id": 9, "isKeyholder": True, "name": "Kay"}},
+        {"participant": {"id": 5, "isKeyholder": False, "name": "Ana"}},
+    ]}
+
+    def setUp(self):
+        self.now = 1000.0
+        patcher = patch("client.time.monotonic", lambda: self.now)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.backend = Mock(attendance_path=None)
+        self.backend.post_scan.return_value = ({"error": "Connection refused"}, 0, None)
+        self.state = AttendanceState()
+        self.state.seed_from_attendance(self.ROSTER)
+        self.events = []
+        self.state.push_event = self.events.append
+        self.outbox = Outbox(":memory:")
+
+    def scan(self, pid, after=0.0):
+        self.now += after
+        handle_scan(self.backend, self.state, self.outbox, pid)
+
+    def rows(self):
+        """(participant, intent, forceCloseConfirmed, shownEmpty) in drain order."""
+        return [(int(r[1]), r[5], r[7], r[9]) for r in self.outbox.pending_rows()]
+
+    def test_alone_one_badge_closes_with_shown_empty_true(self):
+        self.state.note_presence(5, checking_in=False)
+        self.scan(9)
+        self.assertEqual(self.rows(), [(9, "OUT", 0, 1)])
+        self.assertIn(CLOSING_ALONE_COPY, self.events[-1]["html"])
+        self.assertNotIn("countdown", self.events[-1])
+
+    def test_others_shown_leaves_and_prompts_with_who_is_inside(self):
+        self.scan(9)
+        self.assertEqual(self.rows(), [(9, "OUT", 0, 0)], "a plain leave")
+        self.assertEqual(self.events[-1]["countdown"], FORCE_CLOSE_CONFIRM_SECONDS)
+        self.assertIn("Still inside: Ana", self.events[-1]["html"])
+        self.assertEqual(self.state.present_ids, {5})
+
+    def test_second_badge_of_the_same_card_queues_the_close_after_the_leave(self):
+        self.scan(9)
+        self.scan(9, after=3.5)
+        self.assertEqual(self.rows(), [(9, "OUT", 0, 0), (9, "OUT", 1, 0)])
+        leave, confirm = self.outbox.pending_rows()
+        self.assertGreaterEqual(confirm[2], leave[2])
+        self.assertIn("BUILDING CLOSED", self.events[-1]["html"])
+        self.assertEqual(self.state.present_ids, set(), "the kiosk shows the building closed")
+        self.assertEqual(self.backend.post_scan.call_count, 1, "the confirm only rides the drain")
+
+    def test_the_confirm_never_sorts_before_its_leave_after_a_clock_step_back(self):
+        with patch("client.now_iso", return_value="2026-10-11T20:00:10+00:00"):
+            self.scan(9)
+        with patch("client.now_iso", return_value="2026-10-11T20:00:05+00:00"):
+            self.scan(9, after=4)
+        leave, confirm = self.outbox.pending_rows()
+        self.assertEqual((leave[7], confirm[7]), (0, 1))
+        self.assertEqual(confirm[2], leave[2], "the confirm takes the leave's scannedAt")
+
+    def test_another_badge_ends_the_prompt_and_is_processed(self):
+        self.scan(9)
+        self.scan(5, after=4)
+        self.assertNotIn("countdown", self.events[-1])
+        self.scan(9, after=4)
+        self.assertEqual(self.rows(), [(9, "OUT", 0, 0), (5, "OUT", 0, None), (9, "IN", 0, None)],
+                         "Ana's badge is her own OUT, and the keyholder's next badge is an IN")
+
+    def test_a_double_read_inside_three_seconds_does_not_confirm(self):
+        self.scan(9)
+        self.scan(9, after=1)
+        self.assertEqual(self.rows(), [(9, "OUT", 0, 0)])
+        self.assertEqual(self.events[-1]["countdown"], FORCE_CLOSE_CONFIRM_SECONDS,
+                         "the double-read restarts the prompt")
+        self.scan(9, after=3.5)
+        self.assertEqual(self.rows()[-1], (9, "OUT", 1, 0), "the prompt survives a double-read")
+
+    def test_timeout_leaves_only_the_leave(self):
+        self.scan(9)
+        self.scan(9, after=FORCE_CLOSE_CONFIRM_SECONDS + 1)
+        self.assertEqual(self.rows(), [(9, "OUT", 0, 0), (9, "IN", 0, None)])
+        self.assertIn(5, self.state.present_ids)
+
+    def test_only_a_keyholder_is_offered_the_close(self):
+        self.state.note_presence(9, checking_in=False)
+        self.scan(5)
+        self.assertEqual(self.rows(), [(5, "OUT", 0, None)])
+        self.assertNotIn("countdown", self.events[-1])
+
+    def test_a_queued_close_empties_the_overlaid_view(self):
+        self.scan(9)
+        self.scan(9, after=4)
+        state = AttendanceState()
+        state.seed_from_attendance(self.ROSTER, self.outbox.pending_rows())
+        self.assertEqual(state.present_ids, set())
 
 
 if __name__ == "__main__":

@@ -300,11 +300,12 @@ class AttendanceState:
         self.confirm_token = None    # force-close confirm token, if a countdown is running
         self.confirm_participant = None  # the keyholder that token was shown to
         self.confirm_deadline = 0.0  # monotonic clock, end of that countdown
-        # Offline force-close: the server mints no token while disconnected, so
-        # the kiosk arms its own two-scan confirm, bound to the keyholder who
-        # triggered the warning. The confirm scan carries forceCloseConfirmed.
+        # Queued close: no server answered the leave, so the kiosk arms its own
+        # two-scan confirm, bound to the keyholder who left. The confirm scan
+        # carries forceCloseConfirmed and never sorts before the leave.
         self.local_close_participant = None
         self.local_close_deadline = 0.0  # monotonic clock, end of that countdown
+        self.local_close_leave_at = None  # the leave's scannedAt
         # The armed close's banner and window length, re-shown when the window slides.
         self.close_banner = None     # (html, seconds)
         self.last_read = {}          # participant id -> monotonic time of its last read
@@ -318,8 +319,8 @@ class AttendanceState:
         # badge so offline scans still carry IN/OUT.
         self.present_ids = set()
         # Keyholders present and the last known two-deep state, from the roster.
-        # Offline these decide whether a keyholder's OUT is a last-out-with-others
-        # close, and whether to show a (yellow-only) supervision caution.
+        # With no server answer these decide whether a keyholder's OUT closes or
+        # offers the close, and whether to show a (yellow-only) supervision caution.
         self.keyholder_ids = set()
         self.last_two_deep_violation = False
         self.clock_watch = ClockWatch()
@@ -348,25 +349,24 @@ class AttendanceState:
     def take_confirm(self, participant_id):
         """Pop the confirm token for this badge's scan. Single use, and only while
         its countdown is still running — an expired countdown confirms nothing.
-        Another badge never consumes it: someone else scanning during the
-        countdown is an ordinary scan, not this keyholder's confirm."""
+        Any other badge ends the prompt: that keyholder has only left, and the
+        other scan is processed as an ordinary scan."""
         try:
             pid = int(participant_id)
         except (TypeError, ValueError):
             return None
         with self.lock:
             live = time.monotonic() < self.confirm_deadline
-            if live and self.confirm_participant != pid:
-                return None
-            token = self.confirm_token if live else None
+            token = self.confirm_token if live and self.confirm_participant == pid else None
             self.confirm_participant = None
             self.confirm_token = None
             self.confirm_deadline = 0.0
             return token
 
-    def arm_local_close(self, participant_id, seconds, banner_html=None):
-        """Arm the offline force-close confirm for this keyholder. The next scan
-        of the SAME badge within the window is the confirm (no server token)."""
+    def arm_local_close(self, participant_id, seconds, leave_at, banner_html=None):
+        """Arm the kiosk's own close confirm for this keyholder, whose leave was
+        scanned at `leave_at`. The next scan of the SAME badge within the window
+        is the confirm (no server token)."""
         try:
             pid = int(participant_id)
         except (TypeError, ValueError):
@@ -374,6 +374,7 @@ class AttendanceState:
         with self.lock:
             self.local_close_participant = pid
             self.local_close_deadline = time.monotonic() + seconds
+            self.local_close_leave_at = leave_at
             self.close_banner = (banner_html, seconds)
 
     def slide_close(self, participant_id):
@@ -398,22 +399,20 @@ class AttendanceState:
             return {"html": banner_html, "countdown": seconds}
 
     def take_local_close(self, participant_id):
-        """True iff a live offline-close confirm is armed for THIS badge — single
-        use. Another badge never consumes it; an expired one is cleared lazily."""
+        """The armed leave's scannedAt if this badge confirms a live local close,
+        else None. Single use; any badge ends the prompt, and another badge's
+        scan is then processed as an ordinary scan."""
         try:
             pid = int(participant_id)
         except (TypeError, ValueError):
-            return False
+            return None
         with self.lock:
             live = time.monotonic() < self.local_close_deadline
-            if self.local_close_participant == pid and live:
-                self.local_close_participant = None
-                self.local_close_deadline = 0.0
-                return True
-            if not live:
-                self.local_close_participant = None
-                self.local_close_deadline = 0.0
-            return False
+            leave_at = self.local_close_leave_at if live and self.local_close_participant == pid else None
+            self.local_close_participant = None
+            self.local_close_deadline = 0.0
+            self.local_close_leave_at = None
+            return leave_at
 
     def is_repeat_read(self, participant_id):
         """True for a read of this badge within REPEAT_READ_SECONDS of its last
@@ -426,23 +425,12 @@ class AttendanceState:
             self.last_read[pid] = now
             return last is not None and now - last < REPEAT_READ_SECONDS
 
-    def offline_close_offer(self, participant_id):
-        """Is this badge a keyholder with anyone else shown inside -- another
-        keyholder included, who may simply have forgotten to badge out. Then a
-        second badge closes the building. The kiosk's own view (roster plus
-        queued scans): stale while offline, but the keyholder can see the room.
-        The complement of shows_empty, so one OUT is never both."""
-        try:
-            pid = int(participant_id)
-        except (TypeError, ValueError):
-            return False
-        with self.lock:
-            return pid in self.keyholder_ids and bool(self.present_ids - {pid})
-
     def shows_empty(self, participant_id):
         """For a keyholder: True when nobody else is shown inside (their OUT
-        closes the building with one badge), False when anyone is (leave and
-        offer the close). None for anyone else, so the field is left out."""
+        closes the building with one badge), False when anyone is -- another
+        keyholder included, who may have forgotten to badge out (leave and
+        offer the close). None for anyone else: only keyholders close. The
+        kiosk's own view (roster plus queued scans), online or offline."""
         try:
             pid = int(participant_id)
         except (TypeError, ValueError):
@@ -513,6 +501,11 @@ class AttendanceState:
                 self.local_arrivals[pid] = now_iso()
             else:
                 self.present_ids.discard(pid)
+
+    def note_close(self):
+        """A close the kiosk recorded: it shows nobody inside."""
+        with self.lock:
+            self.present_ids.clear()
 
     def seed_from_attendance(self, att_data, pending=()):
         """Replace the local presence view with the server roster, plus this
@@ -607,8 +600,9 @@ def _roster_counts(visits, prior):
 
 def _overlay_pending(present, pending, arrivals=None):
     """Apply undelivered scans (outbox.pending_rows(), scanned_at ASC) to a
-    presence set: the last intent per person wins. `arrivals` collects each
-    queued IN's scan time."""
+    presence set: the last intent per person wins, and a queued close (a
+    confirmed close, or a keyholder OUT shown empty) departs everyone.
+    `arrivals` collects each queued IN's scan time."""
     for row in pending:
         try:
             pid = int(row[1])
@@ -620,6 +614,8 @@ def _overlay_pending(present, pending, arrivals=None):
                 arrivals[pid] = row[2]
         elif row[5] == "OUT":
             present.discard(pid)
+            if row[7] or row[9]:
+                present.clear()
 
 # ---------------------------------------------------------------------------
 # Transparent Signing Proxy & Kiosk Handler
@@ -1175,8 +1171,8 @@ def stdin_scanner_listener(backend, state, outbox):
         except EOFError:
             break
 
-# Offline force-close: the kiosk runs the last-keyholder warning + two-scan
-# confirm itself when the server is unreachable. Same window as the server's.
+# Queued close: with no server answer the kiosk offers the close and runs the
+# two-scan confirm itself. Same window as the server's.
 FORCE_CLOSE_CONFIRM_SECONDS = 15
 # Reads of one badge this close together are one scan (a scanner double-read).
 # A close confirm is therefore a second badge after this, inside the countdown.
@@ -1189,9 +1185,9 @@ TWO_DEEP_CLOSE_WARNING = "Two-deep supervision may not be met -- make sure every
 
 
 def _offline_close_warning_html(supervision=None, others=()):
-    """Local last-keyholder warning shown when offline: no server token, so the
-    countdown just paces the confirm the kiosk is arming itself. Lists who the
-    kiosk shows still inside."""
+    """The kiosk's own close offer to a keyholder who left with others shown: no
+    server token, so the countdown paces the confirm the kiosk arms itself.
+    Lists who the kiosk shows still inside."""
     parts = ["Still inside: " + html.escape(", ".join(others)), html.escape(OFFLINE_CLOSE_WARN_COPY)]
     if supervision:
         parts.append("⚠️ " + html.escape(supervision))
@@ -1280,6 +1276,31 @@ def _is_valid_participant_id(participant_id):
     raw = str(participant_id)
     return raw.isascii() and raw.isdigit() and 0 < int(raw) <= MAX_PARTICIPANT_ID
 
+def _show_queued(state, outbox, participant_id, intent, scanned_at, confirmed, shown_empty):
+    """No server answered this scan, so the kiosk applies the close rules to its
+    own view, exactly as the server would: a confirm closes; a keyholder OUT
+    shown empty closes with one badge; a keyholder OUT with anyone else shown
+    leaves and arms the same-badge confirm."""
+    queued = outbox.pending_count()
+    if confirmed:
+        state.note_close()
+        state.push_event({"html": _offline_close_saved_html(queued), "queued": queued})
+        log.warning(f"Close confirmed, queued: keyholder {participant_id}")
+    elif shown_empty:
+        state.note_close()
+        state.push_event({"html": _closing_alone_saved_html(queued), "queued": queued})
+        log.warning(f"One-scan close, queued: keyholder {participant_id}")
+    elif shown_empty is False:
+        # This OUT is queued as a plain leave; the confirm queues the close.
+        banner_html = _offline_close_warning_html(
+            state.offline_supervision_warning(), state.others_shown(participant_id))
+        state.arm_local_close(participant_id, FORCE_CLOSE_CONFIRM_SECONDS, scanned_at, banner_html)
+        state.push_event({"html": banner_html, "countdown": FORCE_CLOSE_CONFIRM_SECONDS})
+        log.warning(f"Close offered locally: keyholder {participant_id}, others shown")
+    else:
+        state.push_event({"html": _saved_banner_html(queued, intent), "queued": queued})
+
+
 def handle_scan(backend, state, outbox, participant_id):
     if not _is_valid_participant_id(participant_id):
         log.warning(f"Rejected malformed scan: {participant_id!r}")
@@ -1295,7 +1316,6 @@ def handle_scan(backend, state, outbox, participant_id):
             state.push_event(slid)
         return
     client_event_id = new_event_id()
-    scanned_at = now_iso()
     clock_suspect = state.clock_watch.check()
     if clock_suspect:
         outbox.mark_clock_suspect()
@@ -1303,14 +1323,19 @@ def handle_scan(backend, state, outbox, participant_id):
     # A force-close confirm repeats the OUT that warned -- it must NOT toggle to
     # IN off the optimistic presence flip the warning scan already applied. The
     # signal is a live armed confirm: the server's minted token (online) or the
-    # kiosk's own armed close (offline, no server token). Take both before
-    # deciding intent. Each is single-use and stored with the event if queued --
-    # a confirm given before the outage must still close when it drains, rather
-    # than parking for review.
-    local_close = state.take_local_close(participant_id)
+    # kiosk's own armed close (queued leave, no server token). Take both before
+    # deciding intent: any badge ends either prompt. Each is single-use and
+    # stored with the event if queued -- a confirm given before the outage must
+    # still close when it drains, rather than parking for review.
+    leave_at = state.take_local_close(participant_id)
     confirm_token = state.take_confirm(participant_id)
-    force_close_confirmed = local_close
-    if confirm_token or local_close:
+    force_close_confirmed = leave_at is not None
+    # The server accepts a kiosk-confirmed close only against a leave scanned at
+    # or before it, and the drain sends in scanned_at order: a wall-clock step
+    # back between the two badges must not put the confirm first. Same-format
+    # UTC ISO strings, so string order is time order.
+    scanned_at = max(now_iso(), leave_at) if force_close_confirmed else now_iso()
+    if confirm_token or force_close_confirmed:
         intent = "OUT"
     else:
         # Displayed direction, from the local presence view, carried with the
@@ -1338,13 +1363,8 @@ def handle_scan(backend, state, outbox, participant_id):
     )
 
     if queue_only:
-        queued = outbox.pending_count()
-        if force_close_confirmed:
-            state.push_event({"html": _offline_close_saved_html(queued), "queued": queued})
-        elif shown_empty and not confirm_token:
-            state.push_event({"html": _closing_alone_saved_html(queued), "queued": queued})
-        else:
-            state.push_event({"html": _saved_banner_html(queued, intent), "queued": queued})
+        _show_queued(state, outbox, participant_id, intent, scanned_at,
+                     confirmed=bool(confirm_token or force_close_confirmed), shown_empty=shown_empty)
         log.info(f"Queued (predecessor pending or offline close): participant {participant_id} {intent}")
         return
 
@@ -1366,24 +1386,9 @@ def handle_scan(backend, state, outbox, participant_id):
     if outcome == "retry":
         # Unconfirmed: the row stays pending for the drain.
         outbox.release(client_event_id)
-        queued = outbox.pending_count()
-        if intent == "OUT" and state.offline_close_offer(participant_id):
-            # Offline keyholder close: no server to warn or mint a token, so the
-            # kiosk runs the warning + two-scan confirm itself. This OUT touch is
-            # already queued (on drain it checks out, or parks if this was the
-            # last keyholder -- the badge is never lost); the confirm scan queues
-            # the actual close.
-            banner_html = _offline_close_warning_html(
-                state.offline_supervision_warning(), state.others_shown(participant_id))
-            state.arm_local_close(participant_id, FORCE_CLOSE_CONFIRM_SECONDS, banner_html)
-            state.push_event({"html": banner_html, "countdown": FORCE_CLOSE_CONFIRM_SECONDS})
-            log.warning(f"Offline force-close warning: keyholder {participant_id}, others present")
-        elif shown_empty and not confirm_token:
-            state.push_event({"html": _closing_alone_saved_html(queued), "queued": queued})
-            log.warning(f"Offline one-scan close, queued: keyholder {participant_id}")
-        else:
-            state.push_event({"html": _saved_banner_html(queued, intent), "queued": queued})
-            log.warning(f"Scan queued (server unreachable/warming): participant {participant_id} {intent}")
+        _show_queued(state, outbox, participant_id, intent, scanned_at,
+                     confirmed=bool(confirm_token), shown_empty=shown_empty)
+        log.warning(f"Scan queued (server unreachable/warming): participant {participant_id} {intent}")
         return
 
     # Answered definitively (ack, or a dead rejection the screen shows now):
