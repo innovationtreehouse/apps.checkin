@@ -225,6 +225,24 @@ describe('finance vocabulary, catalog-viewer FINANCE admission, widened anyRole'
         expect((await resolveAccess('catalog-viewer', rctx(as(claims)))).allowed).toBe(expected);
     });
 
+    test.each<[string, Partial<Extract<AuthResult, { type: 'session' }>['user']>, boolean]>([
+        ['an adult with no role and no membership', { ageBand: 'adult' }, true],
+        ['an adult whose membership is not ACTIVE', { ageBand: 'adult', isProgramVolunteer: true, isActiveOrgMember: false }, true],
+        ['a youth', { ageBand: 'youth' }, false],
+        ['a youth catalog viewer', { ageBand: 'youth', isVolunteerFamily: true, isActiveOrgMember: true }, false],
+        ['a caller of unknown age', { ageBand: 'unknown' }, false],
+        ['FINANCE of unknown age', { isFinance: true }, true],
+        ['a keyholder youth', { ageBand: 'youth', isKeyholder: true }, true],
+        ['a staff-domain account of unknown age with no role', { email: 'staff@innovationtreehouse.org', hd: 'innovationtreehouse.org', emailVerified: true }, true],
+        ['a program leader of unknown age', { programsLed: [3], isActiveOrgMember: true }, false],
+    ])("'receipt-submitter' on %s", async (_who, claims, expected) => {
+        expect((await resolveAccess('receipt-submitter', rctx(as(claims)))).allowed).toBe(expected);
+    });
+
+    test("'receipt-submitter' denies a caller with no session", async () => {
+        expect((await resolveAccess('receipt-submitter', rctx({ type: 'unauthenticated' }))).allowed).toBe(false);
+    });
+
     test("'catalog-viewer' makes no DB read", async () => {
         prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue({ id: 1 });
         expect((await resolveAccess('catalog-viewer', rctx(as({ hasVolunteerDesignation: true })))).allowed).toBe(false);

@@ -1,6 +1,6 @@
 /**
  * Registry-wide admission invariants for the role-flag gates (catalog-viewer,
- * finance, finance-or-board, expense-approver, expense-signer, anyRole). Pure: no DB, no HTTP.
+ * receipt-submitter, finance, finance-or-board, expense-approver, expense-signer, anyRole). Pure: no DB, no HTTP.
  *
  * 1. An id-less session — a JWT whose re-sync missed after a person merge or
  *    delete — is denied on every such route, even holding every flag. Prisma
@@ -16,7 +16,7 @@ import prisma from '@/lib/prisma';
 import '@/security/registry';
 
 const isRoleFlagGate = (a: Authorize) =>
-    a === 'catalog-viewer' || a === 'finance' || a === 'finance-or-board' || a === 'expense-approver' ||
+    a === 'catalog-viewer' || a === 'receipt-submitter' || a === 'finance' || a === 'finance-or-board' || a === 'expense-approver' ||
     a === 'expense-signer' ||
     (typeof a === 'object' && 'anyRole' in a);
 
@@ -35,6 +35,7 @@ const everyFlagUser: AuthenticatedUser = {
     isInventoryManager: true,
     isFinance: true,
     programsLed: [1],
+    ageBand: 'adult',
     householdId: 7,
 };
 
@@ -76,7 +77,7 @@ describe('id-less session on role-flag gates', () => {
     });
 
     test.each<Authorize>([
-        'catalog-viewer', 'finance', 'finance-or-board', 'expense-approver', 'expense-signer',
+        'catalog-viewer', 'receipt-submitter', 'finance', 'finance-or-board', 'expense-approver', 'expense-signer',
         { anyRole: ['isFinance'] }, { anyRole: ['isSysadmin', 'isBoardMember'] },
     ])('%j denies an id-less session holding every flag', async (authorize) => {
         expect((await resolveAccess(authorize, ctx(idless))).allowed).toBe(false);
@@ -97,7 +98,7 @@ describe('id-less session on role-flag gates', () => {
     });
 
     test.each<Authorize>([
-        'catalog-viewer', 'finance', 'finance-or-board', { anyRole: ['isFinance'] },
+        'catalog-viewer', 'receipt-submitter', 'finance', 'finance-or-board', { anyRole: ['isFinance'] },
     ])('%j still admits the same flags with an integer id', async (authorize) => {
         expect((await resolveAccess(authorize, ctx({ type: 'session', user: everyFlagUser }))).allowed).toBe(true);
     });

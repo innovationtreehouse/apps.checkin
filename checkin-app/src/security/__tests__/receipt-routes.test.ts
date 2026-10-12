@@ -19,6 +19,9 @@
  *   4. The submitter view never returns donor or reimbursee names.
  *   5. The receipt file routes serve the uploader's own file and FINANCE's,
  *      and 404 anyone else's; both file columns are file-only.
+ *   6. The submitter and shared routes admit any signed-in adult, with no
+ *      role, membership or background check, and any role holder whatever
+ *      their age; they refuse a youth or unknown age without a role.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
@@ -37,6 +40,10 @@ interface Flags {
     isBoardMember?: boolean;
     isSysadmin?: boolean;
     isOperations?: boolean;
+    ageBand?: 'adult' | 'youth' | 'unknown';
+    isActiveOrgMember?: boolean;
+    isProgramVolunteer?: boolean;
+    isKeyholder?: boolean;
 }
 
 function user(id: unknown, flags: Flags = {}) {
@@ -79,7 +86,7 @@ describe('receipt routes are registered', () => {
     it('never admits public, kiosk or plain authenticated callers', () => {
         for (const e of [...jsonRoutes, ...fileRoutes]) {
             const spec = getRoute(e) ?? getFileRoute(e);
-            expect(['catalog-viewer', 'finance', 'finance-or-board']).toContain(spec?.authorize);
+            expect(['receipt-submitter', 'finance', 'finance-or-board']).toContain(spec?.authorize);
         }
     });
 });
@@ -194,6 +201,77 @@ describe('role admission', () => {
         for (const e of [...jsonRoutes, ...fileRoutes]) {
             const spec = getRoute(e) ?? getFileRoute(e);
             expect(spec?.orderedView.map(([role]) => role)).not.toContain('isSysadmin');
+        }
+    });
+});
+
+describe('receipt submitter admission', () => {
+    const SUBMITTER_ROUTES = [
+        'POST /api/receipts/upload',
+        'GET /api/receipts/mine',
+        'POST /api/receipts/[id]/submitter-confirm',
+        'POST /api/receipts/[id]/submitter-discard',
+        'PUT /api/receipts/[id]/reimbursement',
+        'PUT /api/receipts/[id]/in-kind',
+        'GET /api/receipts/needs-attention',
+        'GET /api/receipts/[id]',
+        'PATCH /api/receipts/[id]',
+        'POST /api/receipts/[id]/line-items',
+        'PATCH /api/receipts/[id]/line-items/[lineItemId]',
+        'DELETE /api/receipts/[id]/line-items/[lineItemId]',
+        'POST /api/receipts/[id]/retry-ocr',
+        'POST /api/receipts/[id]/discard',
+        'POST /api/receipts/[id]/resubmit',
+    ];
+    const RECEIPT_FILE = 'GET /api/receipts/[id]/file';
+    const status = async (endpoint: string, flags: Flags) => {
+        signIn(9, flags);
+        return (await handler(endpoint, async () => ({}))(request(endpoint), params)).status;
+    };
+    const fileStatus = async (flags: Flags, uploadedByUserId: number) => {
+        signIn(9, flags);
+        const result: FileResult = { row: { id: 'r-1', uploadedByUserId, fileBlob: new Uint8Array([1]) }, contentType: 'application/pdf' };
+        return (await fileHandler(RECEIPT_FILE, async () => result)(request(RECEIPT_FILE), params)).status;
+    };
+
+    it('gates the submitter, shared and file routes on receipt-submitter', () => {
+        expect(jsonRoutes.filter(e => getRoute(e)?.authorize === 'receipt-submitter').sort()).toEqual([...SUBMITTER_ROUTES].sort());
+        expect(getFileRoute(RECEIPT_FILE)?.authorize).toBe('receipt-submitter');
+    });
+
+    it("serves a plain adult their own receipt file and 404s someone else's", async () => {
+        expect(await fileStatus({ ageBand: 'adult' }, 9)).toBe(200);
+        expect(await fileStatus({ ageBand: 'adult' }, 8)).toBe(404);
+    });
+
+    it('refuses a youth with no role on the receipt file route', async () => {
+        expect(await fileStatus({ ageBand: 'youth' }, 9)).toBe(403);
+    });
+
+    it('admits a FINANCE holder of unknown age to the shared routes', async () => {
+        for (const endpoint of ['PATCH /api/receipts/[id]', 'GET /api/receipts/[id]', 'GET /api/receipts/needs-attention']) {
+            expect({ endpoint, status: await status(endpoint, { isFinance: true }) }).toEqual({ endpoint, status: 200 });
+        }
+    });
+
+    it.each([
+        ['an adult with no role and no membership', { ageBand: 'adult' }],
+        ['an adult whose background check is pending (membership not ACTIVE)', { ageBand: 'adult', isProgramVolunteer: true, isActiveOrgMember: false }],
+        ['a role holder of unknown age', { isKeyholder: true }],
+    ] as [string, Flags][])('admits %s', async (_who, flags) => {
+        for (const endpoint of SUBMITTER_ROUTES) {
+            expect({ endpoint, status: await status(endpoint, flags) }).toEqual({ endpoint, status: 200 });
+        }
+    });
+
+    it.each([
+        ['a youth', { ageBand: 'youth' }],
+        ['a program-volunteer youth with an ACTIVE membership', { ageBand: 'youth', isProgramVolunteer: true, isActiveOrgMember: true }],
+        ['a caller of unknown age', { ageBand: 'unknown' }],
+        ['a caller with no age band', {}],
+    ] as [string, Flags][])('refuses %s', async (_who, flags) => {
+        for (const endpoint of SUBMITTER_ROUTES) {
+            expect({ endpoint, status: await status(endpoint, flags) }).toEqual({ endpoint, status: 403 });
         }
     });
 });

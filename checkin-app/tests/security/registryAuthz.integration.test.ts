@@ -36,7 +36,7 @@ const mockSession = require('next-auth/next').getServerSession;
 
 const TAG = 'registry-authz-test';
 
-type Gate = 'public' | 'session' | 'household-member' | 'anyRole' | 'certifier' | 'program-scoped' | 'catalog-viewer' | 'inventory-manager' | 'finance' | 'finance-or-board' | 'expense-approver' | 'expense-signer' | 'unhandled';
+type Gate = 'public' | 'session' | 'household-member' | 'anyRole' | 'certifier' | 'program-scoped' | 'catalog-viewer' | 'receipt-submitter' | 'inventory-manager' | 'finance' | 'finance-or-board' | 'expense-approver' | 'expense-signer' | 'unhandled';
 
 interface RoutePlan {
     endpoint: string;
@@ -63,6 +63,8 @@ function planAuthorize(authorize: Authorize): { gate: Gate; requiredRoles: Sessi
     // Catalog (#1286 §6): 'catalog-viewer' admits any staff relationship (a plain
     // authenticated user is rejected); 'inventory-manager' admits the role only.
     if (authorize === 'catalog-viewer') return { gate: 'catalog-viewer', requiredRoles: null };
+    // Receipt submission: any known adult; a youth or unknown age is rejected.
+    if (authorize === 'receipt-submitter') return { gate: 'receipt-submitter', requiredRoles: null };
     if (authorize === 'inventory-manager') return { gate: 'inventory-manager', requiredRoles: null };
     // Finance (#1272 §6): neither admits a plain authenticated user or a sysadmin.
     if (authorize === 'finance') return { gate: 'finance', requiredRoles: null };
@@ -251,6 +253,12 @@ describe('Registry route admission gates', () => {
                     expect((await call(plan)).status).toBe(403);
                 });
             }
+            if (plan.gate === 'receipt-submitter') {
+                itServed('rejects a youth with 403', async () => {
+                    mockSession.mockResolvedValue({ user: { ...plainUser, ageBand: 'youth' } });
+                    expect((await call(plan)).status).toBe(403);
+                });
+            }
             if (plan.gate === 'catalog-viewer' || plan.gate === 'inventory-manager') {
                 itServed('rejects an authenticated caller with no catalog access with 403', async () => {
                     // plainUser holds no role flag, leads no program, and has no
@@ -279,6 +287,8 @@ describe('Registry route admission gates', () => {
                 } else if (plan.gate === 'catalog-viewer') {
                     // Any role flag admits the viewer gate; isKeyholder is the simplest.
                     mockSession.mockResolvedValue({ user: { ...plainUser, isKeyholder: true } });
+                } else if (plan.gate === 'receipt-submitter') {
+                    mockSession.mockResolvedValue({ user: { ...plainUser, ageBand: 'adult' } });
                 } else if (plan.gate === 'inventory-manager') {
                     mockSession.mockResolvedValue({ user: { ...plainUser, isInventoryManager: true } });
                 } else if (plan.gate === 'finance' || plan.gate === 'finance-or-board' || plan.gate === 'expense-approver' || plan.gate === 'expense-signer') {

@@ -227,6 +227,10 @@ export type Authorize =
     // or a volunteer (keyed by email). Broader than the ops roles, deliberately:
     // the catalog is non-pii reference data (writes stay INVENTORY_MANAGER-only).
     | 'catalog-viewer'
+    // Receipt submission (#1265 §6): any signed-in known adult, or a Treehouse
+    // Volunteer (role holder or staff account) whatever their recorded age. No membership, volunteer status or
+    // background check (docs/rules/inventory.md).
+    | 'receipt-submitter'
     // Catalog write admission (#1286 §6): INVENTORY_MANAGER only.
     | 'inventory-manager'
     // FINANCE only (#1272 §6). No sysadmin auto-admit: Finance Ops excludes
@@ -239,9 +243,10 @@ export type Authorize =
     // or a program treasurer. No sysadmin auto-admit. Rows stay handler-filtered
     // to the buckets the caller approves.
     | 'expense-approver'
-    // An expense sign-off seat holder (#1272 §6): `catalog-viewer` (the submitter
-    // seat) or `expense-approver` (program approver, Treasurer, Board seats). The
-    // library decides which seat, if any, the caller may sign.
+    // Expense sign-off admission (#1272 §6): `receipt-submitter` (any known adult or
+    // Treehouse Volunteer, for the submitter seat) or `expense-approver` (program
+    // approver, Treasurer, Board seats). Far wider than the seat holders; the
+    // library refuses a caller who holds no seat on the line.
     | 'expense-signer'
     // Shop certifier (a MAY_CERTIFY_OTHERS toolStatus). Admits certifiers OR
     // admins (isSysadmin/isBoardMember) — see resolveAccess. Backed by a
@@ -385,6 +390,7 @@ function authorizeNeeds(authorize: Authorize): Partial<CtxNeeds> {
         case 'authenticated':
         case 'self':
         case 'catalog-viewer':
+        case 'receipt-submitter':
         case 'inventory-manager':
         case 'finance':
         case 'finance-or-board':

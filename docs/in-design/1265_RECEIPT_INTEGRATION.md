@@ -464,7 +464,7 @@ instead of expense. This lane's part is the mark and nothing else:
 
 | Action | Source guard | checkin |
 |---|---|---|
-| Upload; see own receipts; act on own receipt (submitter review, edit while editable, discard own, retry OCR) | any org role; `canActOnReceipt` = uploader | **anyone who may view the catalog** (owner-decided): the `catalog-viewer` audience of #1286 (any RBAC role holder, program leader, or volunteer). |
+| Upload; see own receipts; act on own receipt (submitter review, edit while editable, discard own, retry OCR) | any org role; `canActOnReceipt` = uploader | **any signed-in adult** (owner ruling 2026-10-12: at a competition any adult present may buy something for the team): the `receipt-submitter` token, `ageBand === 'adult'` on the session or `isTreehouseVolunteer` (role holder or staff account). No membership, volunteer status or background check; any other youth or unknown age is refused. Gates every submitter and shared route and the receipt file route. Rule: `docs/rules/inventory.md`. |
 | Review queue; approve / reject financial; see all receipts and files; clear duplicate; discard any; audit log; restart flow; import | `isFinance`, `isOrgManager` | **`FINANCE`** (org-manager collapses onto it, as #1272 did) |
 | Org receipt settings (tax-exempt, age limit) | `canEditOrg` | **`FINANCE`** |
 | `isAdmin` | blocked from receipts | `SYSADMIN` gets nothing extra (finance-payments excludes sysadmins from Finance Ops) |
@@ -485,8 +485,8 @@ action, time. The audit payload carries no PII and no file bytes.
 
 **Narrow reads at the handler, no scopeBindings**, as #1272 §5 settled: a
 submitter's list and detail calls filter `WHERE uploadedByUserId = principal.id`;
-finance reads the org. Submitter routes reuse the existing `catalog-viewer`
-`authorize` token, so no new token grammar enters the boundary.
+finance reads the org. Submitter routes use the `receipt-submitter`
+`authorize` token, a session-claim check with no DB read.
 
 **A caller with no integer id is unauthenticated** (boundary rule 6). Receipt's
 checkin-side adapter `getPrincipal()` returns `null` unless

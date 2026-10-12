@@ -20,7 +20,7 @@ import type { AuthResult } from '@/types/auth';
 import type { Authorize, CtxNeeds, Role } from './core';
 import { LIVE_PERSON } from '@/lib/person/filters';
 import { LIVE_VISIT } from '@/lib/visit/filters';
-import { canSeeCatalog } from '@/lib/volunteer';
+import { canSeeCatalog, isTreehouseVolunteer } from '@/lib/volunteer';
 
 export interface CallerContext {
     selfId?: number;
@@ -310,9 +310,15 @@ export async function resolveAccess(
             case 'kiosk':
                 return { allowed: auth.type === 'kiosk' };
             case 'catalog-viewer':
-                // #1286 §6 / #1265 §6: the catalog audience (lib/volunteer.ts),
-                // read from session claims. Catalog reads and receipt submission share it.
+                // #1286 §6: the catalog audience (lib/volunteer.ts), read from session claims.
                 return { allowed: auth.type === 'session' && canSeeCatalog(auth.user) };
+            case 'receipt-submitter':
+                // #1265 §6: a known adult (session age band), or a Treehouse Volunteer
+                // (role holder or staff account), so one with no DOB on file is kept.
+                return {
+                    allowed: auth.type === 'session' &&
+                        (auth.user.ageBand === 'adult' || isTreehouseVolunteer(auth.user)),
+                };
             case 'inventory-manager':
                 // #1286 §6: catalog WRITE admission — INVENTORY_MANAGER only (a
                 // sysadmin grants themselves the role; no admin auto-admit here).
@@ -343,7 +349,7 @@ export async function resolveAccess(
             }
             case 'expense-signer':
                 return {
-                    allowed: (await resolveAccess('catalog-viewer', ctx)).allowed ||
+                    allowed: (await resolveAccess('receipt-submitter', ctx)).allowed ||
                         (await resolveAccess('expense-approver', ctx)).allowed,
                 };
             case 'certifier':

@@ -32,6 +32,7 @@ const everything: AuthenticatedUser = {
     householdLead: true,
     householdId: 7,
     programsLed: [1],
+    ageBand: 'adult',
     toolStatuses: [{ toolId: 1, level: 'MAY_CERTIFY_OTHERS' }],
 };
 
@@ -71,7 +72,7 @@ describe('id-less session', () => {
     });
 
     test.each<Authorize>([
-        'authenticated', 'self', 'catalog-viewer', 'inventory-manager', 'finance', 'finance-or-board', 'expense-approver', 'expense-signer',
+        'authenticated', 'self', 'catalog-viewer', 'receipt-submitter', 'inventory-manager', 'finance', 'finance-or-board', 'expense-approver', 'expense-signer',
         'certifier', 'program-lead-mentor', 'program-core-volunteer', 'household-lead', 'household-member',
         { anyRole: ['isSysadmin', 'isBoardMember', 'isInventoryManager', 'isFinance'] },
     ])('%j denies it, and admits the same caller with an id', async (authorize) => {
