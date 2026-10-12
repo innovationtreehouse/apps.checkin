@@ -71,7 +71,7 @@ const payoutMirror: PayoutMirror = {
 const owners: OwnerDirectory = {
   async list() {
     const { default: prisma } = await import("@/lib/prisma");
-    return prisma.budgetOwner.findMany({ select: { id: true, name: true, archivedAt: true }, orderBy: { name: "asc" } });
+    return prisma.budgetOwner.findMany({ select: { id: true, name: true, archivedAt: true, quickBooksClassId: true }, orderBy: { name: "asc" } });
   },
 };
 

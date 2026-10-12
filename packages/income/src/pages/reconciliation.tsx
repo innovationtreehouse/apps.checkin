@@ -35,6 +35,7 @@ const KIND_HELP: Record<string, string> = {
   TXN_SUM_MISMATCH: "The payout's transactions don't add up to its net",
   DRIFT: "The payout or its deposit changed after it was reconciled",
   POST_FAILED: "Creating the deposit failed",
+  OVER_CAP: "Larger than the per-run cap, so it is never created automatically; retry to create it",
 };
 
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -104,7 +105,7 @@ function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
         <Button size="xs" variant="default" disabled={busy} onClick={() => needReason() && resolve({ action: "dismiss", reason }, "Dismissed")}>
           Dismiss
         </Button>
-        {row.kind === "POST_FAILED" && (
+        {(row.kind === "POST_FAILED" || row.kind === "OVER_CAP") && (
           <Button size="xs" variant="default" disabled={busy} onClick={() => resolve({ action: "retry" }, "Retried")}>Retry create</Button>
         )}
       </Group>
