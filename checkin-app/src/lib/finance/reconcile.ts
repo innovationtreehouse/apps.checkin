@@ -63,7 +63,8 @@ export type PaymentExceptionKind =
     | "AMOUNT_MISMATCH"
     | "ACTIVE_WITHOUT_PAYMENT"
     | "DISCOUNT_UNAUTHORIZED"
-    | "PAYMENT_UNVERIFIABLE";
+    | "PAYMENT_UNVERIFIABLE"
+    | "DENIED_HOUSEHOLD_ACTIVITY";
 
 type Severity = "WARN" | "CRITICAL";
 
