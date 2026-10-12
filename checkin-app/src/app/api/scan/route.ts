@@ -33,7 +33,7 @@ const REPLAY_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
 const isPersonId = (v: unknown): v is number =>
     typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 2147483647;
 
-const KIOSK_ONLY_FIELDS = ["replay", "dead", "deadStatus", "scannedAt", "forceCloseConfirmed", "clockSuspect"] as const;
+const KIOSK_ONLY_FIELDS = ["replay", "dead", "deadStatus", "scannedAt", "forceCloseConfirmed", "clockSuspect", "shownEmpty"] as const;
 
 // F7: the out-of-order guard needs the true latest activity across ALL of a
 // participant's visits, not just the most-recently-arrived one -- a
@@ -47,7 +47,7 @@ const maxDate = (a: Date | null, b: Date | null): Date | null =>
 // unauthenticated, and hands us the parsed body + actor. We own authorization.
 export const POST = withKiosk(
     { rateLimit: { name: "scan", limit: 300 } },
-    async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; protocolVersion?: unknown; closeChoice?: unknown; handoverToId?: unknown }, auth) => {
+    async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; shownEmpty?: unknown; protocolVersion?: unknown; closeChoice?: unknown; handoverToId?: unknown }, auth) => {
     const startTime = Date.now();
 
     try {
@@ -144,6 +144,13 @@ export const POST = withKiosk(
             return apiError("clockSuspect must be a boolean.", 400);
         }
         const clockSuspect = body.clockSuspect === true;
+        // Whether the kiosk showed anyone else inside when a keyholder badged
+        // out. The kiosk's view decides a close, live or replayed; absent, the
+        // server's records decide.
+        if (body.shownEmpty !== undefined && typeof body.shownEmpty !== 'boolean') {
+            return apiError("shownEmpty must be a boolean.", 400);
+        }
+        const shownEmpty = typeof body.shownEmpty === 'boolean' ? body.shownEmpty : null;
 
         // Contract bit (§2): a caller may declare the scan-body generation it
         // speaks. A version newer than this server refuses only the bodies
@@ -369,7 +376,11 @@ export const POST = withKiosk(
             // A facility close the keyholder confirmed at the kiosk applies whenever
             // it arrives, however late: the keyholder was at the reader and saw the
             // room. It needs the keyholder in the building at the scan time — a
-            // visit still open, or one the nightly cron closed after the scan.
+            // visit still open, or one the nightly cron closed after the scan — or
+            // already checked out themselves at or before the confirm, the
+            // close offered with that checkout. Against a departed visit the server
+            // never ran the confirm, so it takes the offer's token or the kiosk's
+            // offline confirm; anything else parks for review.
             // A scan time ahead of server now is a fast kiosk clock, not a close
             // time to trust: it parks as clock_suspect below.
             const aheadOfNow = eventTime.getTime() - Date.now() > REPLAY_FUTURE_TOLERANCE_MS;
@@ -382,11 +393,14 @@ export const POST = withKiosk(
                         arrivedAt: { lte: eventTime },
                         OR: [
                             { departedAt: null },
+                            { departedVia: { in: ["SCANNER", "TYPED"] }, departedAt: { lte: eventTime } },
                             { departedVia: "AUTO_CLOSE", departedAt: { gt: eventTime } },
                         ],
                     },
-                    orderBy: { arrivedAt: "desc" },
-                    select: { departedAt: true, forceCloseToken: true },
+                    // By departure, not arrival: a backdated visit can arrive before one that left earlier.
+                    // Postgres sorts NULLs first under DESC, so a still-open visit wins.
+                    orderBy: { departedAt: "desc" },
+                    select: { id: true, departedAt: true, forceCloseToken: true },
                 })
                 : null;
 
@@ -397,8 +411,6 @@ export const POST = withKiosk(
             // live, so there is nothing here for it to safely toggle against.
             // A confirmed close is exempt from all three, a clock-step flag included:
             // the kiosk clock is trusted unless it reads ahead of server now.
-            // Against a cron-closed visit the server never ran the confirm, so a
-            // token that doesn't match parks exactly as processCheckout's would.
             let parkReason: string | null = null;
             if (lateCloseVisit?.departedAt && !forceCloseConfirmed
                 && !forceCloseTokenMatches(lateCloseVisit.forceCloseToken, confirmToken)) {
@@ -456,10 +468,15 @@ export const POST = withKiosk(
                 return apiJson({ type: 'parked', message: 'Recorded for review.' });
             }
 
-            // The cron already departed the keyholder, so there is no checkout left
-            // to run — but the close still applies: the sweep pulls that night's
-            // AUTO_CLOSE departures back to the keyholder's scan time.
+            // The keyholder is already departed — by the cron, or by their own badge
+            // that offered the close — so there is no checkout left to run, but the
+            // close still applies at the keyholder's scan time; the sweep pulls that
+            // night's AUTO_CLOSE departures back to it. The offer's token is spent.
             if (lateCloseVisit?.departedAt) {
+                await tx.visit.update({
+                    where: { id: lateCloseVisit.id },
+                    data: { forceCloseWarnedAt: null, forceCloseToken: null },
+                });
                 await appendPresenceEvent(tx, {
                     personId: participant.id,
                     occurredAt: eventTime,
@@ -511,11 +528,12 @@ export const POST = withKiosk(
                     replayEventId: isReplay ? clientEventId : null,
                     forceCloseConfirmed,
                     webClose: web.guard?.facilityClosed ?? false,
+                    shownEmpty,
                 });
             }
 
             const res = activeVisit
-                ? await processCheckout(participant, activeVisit.id, authType, tx, confirmToken, eventTime, isReplay ? clientEventId : null, forceCloseConfirmed, web.guard?.facilityClosed ?? false)
+                ? await processCheckout(participant, activeVisit.id, authType, tx, confirmToken, eventTime, isReplay ? clientEventId : null, forceCloseConfirmed, web.guard?.facilityClosed ?? false, shownEmpty)
                 : await processCheckin(participant, authType, tx, eventTime);
 
             // Classification comes from the ACTUAL outcome. Only a confirmed
