@@ -518,9 +518,9 @@ export async function logCloseDepartures(
 async function closeAllOpenVisits(db: DbClient, closer: FacilityCloser, closeTime: Date = new Date()) {
     const closedAt = new Date(Math.min(closeTime.getTime(), Date.now()));
     const closeAt = closedAt.toISOString();
-    // The closer's own visit the close ends: the one their checkout departed at
-    // or before it, however long the confirm took, or one the overnight sweep
-    // departed after it — the visit a late kiosk confirm closes against.
+    // The closer's own visit the close ends: their latest departure at or before
+    // it, with no time bound (a late kiosk confirm can come long after the leave),
+    // or one the overnight sweep departed after it.
     const closerVisit = closer.ownCheckout === false ? null : await db.visit.findFirst({
         where: {
             personId: closer.closedById,
