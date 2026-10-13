@@ -7,9 +7,10 @@ import { defineRoute, type OrderedViewEntry, type Token } from '../core';
 // `expense-approver` gate, and the handler filters rows to the buckets the
 // caller approves (§5: the narrow read is a route+query concern). On those rows
 // the approver sees `internal` only: amounts and state, not who submitted,
-// signed or is reimbursed. The sign-off POST admits `expense-signer`, anyone who
-// may hold a seat: the submitter (`catalog-viewer`) or a bucket approver, FINANCE
-// or BOARD (`expense-approver`); the library decides which seat a caller may fill.
+// signed or is reimbursed. The sign-off POST admits `expense-signer`: any known
+// adult or Treehouse Volunteer (`receipt-submitter`, for the submitter seat) or a
+// bucket approver, FINANCE or BOARD (`expense-approver`). That is wider than the
+// seat holders; the library refuses a caller who holds no seat on the line.
 // No view lists isSysadmin: Finance Ops excludes sysadmins
 // (docs/rules/finance-payments.md). Finance-only actions are `finance`.
 //

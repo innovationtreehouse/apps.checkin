@@ -75,6 +75,21 @@ org identity, the own-database packaging — is described in
   widening write, is a decision on the record, not a casual change.
   `[Decision — *Principle: least privilege*]`
 
+- Any signed-in adult may submit a receipt and view, edit, and fetch their own
+  receipts. No role, membership, Treehouse Volunteer status, or background
+  check is needed,
+  because the people who spend money for the organization include one-off
+  helpers: at a competition, any adult present may buy something for the team.
+  Adulthood is the session's known age band; a youth or a person of unknown
+  age is refused unless they are a Treehouse Volunteer by role or staff
+  account, which admits them whatever their recorded age. The submitter sees only their own receipts, without donor or
+  reimbursee names, and approval stays with FINANCE, so the wide audience
+  exposes no other person's data and moves no money on its own. The same
+  audience may reach an expense sign-off for the submitter seat, since that
+  seat is filled from the receipt. Narrowing it back to the
+  catalog audience, or adding a background-check leg, is a decision on the
+  record. `[Decision — owner]`
+
 - `INVENTORY_MANAGER` is a single write role that collapses the two manager
   tiers the catalog was ported from. Splitting it back into distinct
   catalog-manager and org-manager roles is intended strategic work, not done;

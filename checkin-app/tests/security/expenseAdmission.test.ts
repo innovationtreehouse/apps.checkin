@@ -13,7 +13,7 @@
  * 2. `expense-approver` admits FINANCE, BOARD, a program leader or a program
  *    treasurer (one DB read), never a plain member or a sysadmin alone. It gates
  *    the nine approver routes.
- * 3. Sign-off is `expense-signer`: anyone `catalog-viewer` (the submitter seat)
+ * 3. Sign-off is `expense-signer`: anyone `receipt-submitter` (the submitter seat)
  *    or `expense-approver` (every other seat) admits. The library picks the seat.
  * 4. No expense route lists isSysadmin in its orderedView, and pii/personal go to
  *    FINANCE and BOARD alone.
@@ -170,13 +170,19 @@ describe('expense admission', () => {
         expect(await admitted(route, {})).toBe(false);
     });
 
-    test('a Volunteer Family member with an ACTIVE membership is admitted on sign-off only', async () => {
+    test('an adult with no role and no membership is admitted on sign-off only', async () => {
         for (const [endpoint, route] of expense) {
-            expect([endpoint, await admitted(route, { isVolunteerFamily: true, isActiveOrgMember: true })]).toEqual([endpoint, endpoint === SIGN_OFF]);
+            expect([endpoint, await admitted(route, { ageBand: 'adult' })]).toEqual([endpoint, endpoint === SIGN_OFF]);
         }
     });
 
-    // Whatever catalog-viewer requires (e.g. ACTIVE membership), a program leader
+    test('a youth with no role is admitted nowhere, even with an ACTIVE Volunteer Family membership', async () => {
+        for (const [endpoint, route] of expense) {
+            expect([endpoint, await admitted(route, { ageBand: 'youth', isVolunteerFamily: true, isActiveOrgMember: true })]).toEqual([endpoint, false]);
+        }
+    });
+
+    // Whatever receipt-submitter requires (a known adult), a program leader
     // or treasurer still reaches sign-off through the approver leg.
     test.each<[string, Partial<AuthenticatedUser>, { programId: number } | null]>([
         ['program leader', { programsLed: [1] }, null],
@@ -187,7 +193,7 @@ describe('expense admission', () => {
         expect(await admitted(expenseRoute(SIGN_OFF), user)).toBe(true);
     });
 
-    test('sign-off admits exactly the union of catalog-viewer and expense-approver', async () => {
+    test('sign-off admits exactly the union of receipt-submitter and expense-approver', async () => {
         const callers: Array<[string, Partial<AuthenticatedUser>, { programId: number } | null]> = [
             ['plain member', {}, null],
             ['treasurer leading no program', {}, { programId: 1 }],
@@ -195,10 +201,12 @@ describe('expense admission', () => {
             ['FINANCE', { isFinance: true }, null],
             ['BOARD', { isBoardMember: true }, null],
             ['keyholder', { isKeyholder: true }, null],
+            ['adult with no role', { ageBand: 'adult' }, null],
+            ['youth Volunteer Family member', { ageBand: 'youth', isVolunteerFamily: true, isActiveOrgMember: true }, null],
         ];
         for (const [who, user, treasurer] of callers) {
             treasurerRow = treasurer;
-            const union = (await admitted({ authorize: 'catalog-viewer' }, user)) || (await admitted({ authorize: 'expense-approver' }, user));
+            const union = (await admitted({ authorize: 'receipt-submitter' }, user)) || (await admitted({ authorize: 'expense-approver' }, user));
             expect([who, await admitted(expenseRoute(SIGN_OFF), user)]).toEqual([who, union]);
         }
     });
