@@ -15,6 +15,7 @@ jest.mock('@/lib/shopifyRead/client', () => ({ ordersByLegacyIds: jest.fn() }));
 import { PATCH } from '../route';
 import prisma from '@/lib/prisma';
 import { ordersByLegacyIds } from '@/lib/shopifyRead/client';
+import { SELF_GRANT_REFUSAL_TABLE } from '@/lib/membership/selfGrantGuard';
 
 const ACTOR_ID = 7;
 const ACTOR_HOUSEHOLD = 2;
@@ -30,7 +31,7 @@ beforeEach(() => {
     prisma.person.findUnique = jest.fn(async ({ where }: { where: { id: number } }) =>
         where.id in householdById ? { householdId: householdById[where.id] } : null,
     ) as jest.Mock;
-    prisma.person.findFirst = jest.fn().mockResolvedValue(null);
+    prisma.person.findMany = jest.fn().mockResolvedValue([]);
     prisma.paymentException.findUnique = jest.fn(async () => exception) as jest.Mock;
     prisma.paymentException.updateMany = jest.fn().mockResolvedValue({ count: 1 });
     prisma.orgMembershipProcess.findUnique = jest.fn().mockResolvedValue(null);
@@ -57,11 +58,17 @@ describe('PATCH /api/finance-ops/payments/[id] — own-household guard', () => {
         expect(prisma.paymentException.updateMany).toHaveBeenCalled();
     });
 
-    it('refuses an exception about the actor', async () => {
+    it('refuses an exception about the actor and audits the refusal', async () => {
         exception.personId = ACTOR_ID;
         const res = await call();
         expect(res.status).toBe(403);
         expect(prisma.paymentException.updateMany).not.toHaveBeenCalled();
+        expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+        expect((prisma.auditLog.create as jest.Mock).mock.calls[0][0].data).toMatchObject({
+            actorId: ACTOR_ID,
+            tableName: SELF_GRANT_REFUSAL_TABLE,
+            newData: { reason: 'own_household', table: 'PaymentException', attempted: { action: 'resolve' } },
+        });
     });
 
     it("refuses an exception about someone in the actor's household, for acknowledge too", async () => {
@@ -89,14 +96,14 @@ describe('PATCH /api/finance-ops/payments/[id] — own-household guard', () => {
     it('refuses when the actor is the order payer', async () => {
         exception.shopifyOrderId = '1001';
         ordersMock.mockResolvedValue([{ customerEmail: 'Me@Example.com' }]);
-        (prisma.person.findFirst as jest.Mock).mockResolvedValue({ id: ACTOR_ID, householdId: ACTOR_HOUSEHOLD });
+        (prisma.person.findMany as jest.Mock).mockResolvedValue([{ id: ACTOR_ID, email: 'me@example.com' }]);
         expect((await call()).status).toBe(403);
     });
 
     it("allows an order paid by someone outside the actor's household", async () => {
         exception.shopifyOrderId = '1001';
         ordersMock.mockResolvedValue([{ customerEmail: 'other@example.com' }]);
-        (prisma.person.findFirst as jest.Mock).mockResolvedValue({ id: 20, householdId: OTHER_HOUSEHOLD });
+        (prisma.person.findMany as jest.Mock).mockResolvedValue([{ id: ACTOR_ID, email: 'me@example.com' }]);
         expect((await call()).status).toBe(200);
     });
 
