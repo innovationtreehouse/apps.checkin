@@ -212,6 +212,14 @@ Things the app takes as true because they are handled outside it.
   order no enrollment claims, activates nobody and is left for a person to
   resolve from the finance board.  [Decision — deliberate limit]
 
+- Every filled place ends up exactly one unit out of the public item's stock, so
+  the store never offers a place a family already holds. A sale on the public item
+  takes its own unit; a reserved-seat sale takes none, so activation takes it,
+  unless the family's scholarship hold already did.  [Decision]
+
+- A refund on the reserved-seat item is raised for the board and puts nothing
+  back on sale; only a public-item refund restocks.  [Decision — deliberate limit]
+
 - The public item keeps its counted stock for people buying straight from the
   store. A price change is made on both items by hand; the app does not push
   prices to the store.  [Decision — deliberate limit]

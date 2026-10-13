@@ -431,7 +431,8 @@ async function reconcileForwardProgram(order: MirrorOrder): Promise<boolean> {
 
 /** Shared tail for both program-matching paths: judge, then activate through the one choke point. */
 async function activateProgramFromOrder(order: MirrorOrder, programId: number, personIds: number[]): Promise<boolean> {
-    const entitlement = await orderEntitlesEnrollment({ ...order, lines: await mirror.orderLines(order.orderGid) }, programId, personIds);
+    const lines = await mirror.orderLines(order.orderGid);
+    const entitlement = await orderEntitlesEnrollment({ ...order, lines }, programId, personIds);
     if (!entitlement.ok) {
         if (entitlement.kind) {
             logger.warn(`[reconcile] program order ${order.legacyId} not entitled (${entitlement.kind}, program ${programId}) — NOT activated`);
@@ -452,7 +453,7 @@ async function activateProgramFromOrder(order: MirrorOrder, programId: number, p
     }
 
     const { activateProgramEnrollment } = await import("@/lib/programs/activateEnrollment");
-    const res = await activateProgramEnrollment({ programId, personIds, shopifyOrderId: order.legacyId ?? "" });
+    const res = await activateProgramEnrollment({ programId, personIds, shopifyOrderId: order.legacyId ?? "", lines });
     logger.info(`[reconcile] recovered program payment: program ${programId} ← order ${order.legacyId} (${res.activatedCount} activated)`);
     return true;
 }

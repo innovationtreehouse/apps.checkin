@@ -68,7 +68,7 @@ describe('activateProgramEnrollment — atomic collapse + redelivery no-op', () 
         const first = await activateProgramEnrollment({
             programId, personIds: [personId], shopifyOrderId: 'order-redeliv-1',
         });
-        expect(first).toEqual({ activatedCount: 1, releasedHoldCount: 1 });
+        expect(first).toEqual({ activatedCount: 1, releasedHoldCount: 1, claimantSeatCount: 0 });
 
         // Post-condition: ACTIVE with the hold released in the SAME write — never ACTIVE+held.
         const db = await prisma.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId } } });
@@ -88,7 +88,7 @@ describe('activateProgramEnrollment — atomic collapse + redelivery no-op', () 
         const second = await activateProgramEnrollment({
             programId, personIds: [personId], shopifyOrderId: 'order-redeliv-1',
         });
-        expect(second).toEqual({ activatedCount: 0, releasedHoldCount: 0 }); // no double-activate, no double-release
+        expect(second).toEqual({ activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0 }); // no double-activate, no double-release
         expect(mockAdjust).not.toHaveBeenCalled();                            // no double +1
 
         // Row unchanged: still ACTIVE, still clean.

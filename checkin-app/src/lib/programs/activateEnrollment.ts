@@ -11,8 +11,8 @@ import { fromWhere } from "@/lib/programs/enrollmentState";
  *
  * Per participant: a transactionally-guarded PENDING → ACTIVE flip (so a webhook
  * redelivery or a reconciler re-run can't double-activate or double-count),
- * clearing the pending timer, stamping the paying order id, and releasing any
- * scholarship inventory hold (compensating Shopify's sale-time auto-decrement).
+ * clearing the pending timer, stamping the paying order id, and squaring the
+ * public variant's stock with the seats just filled (see {@link publicStockDelta}).
  *
  * Callers must first establish the order pays for these people
  * (orderEntitlesEnrollment in lib/finance/reconcile.ts); this function does not.
@@ -23,15 +23,32 @@ export interface ActivateEnrollmentInput {
     personIds: number[];
     /** Numeric Shopify order id, stored on each activated participant for reversal joins. */
     shopifyOrderId: string;
+    /** The paying order's lines; seats on the claimant variant never touched public stock. Omitted = all public. */
+    lines?: { variantId: string; quantity: number }[];
 }
 
 export interface ActivateEnrollmentResult {
     activatedCount: number;
     releasedHoldCount: number;
+    claimantSeatCount: number;
+}
+
+/**
+ * Each filled seat must end up exactly one unit out of the public variant's stock.
+ * A sale on the public variant takes its unit itself; one on the untracked claimant
+ * variant takes none. A scholarship hold already took one at request time. So:
+ *   held + public   → +1 (the sale took a second unit)
+ *   held + claimant →  0
+ *   unheld + public →  0
+ *   unheld + claimant → -1
+ * which sums to released holds minus claimant-paid seats.
+ */
+export function publicStockDelta(releasedHoldCount: number, claimantSeatCount: number): number {
+    return releasedHoldCount - claimantSeatCount;
 }
 
 export async function activateProgramEnrollment(input: ActivateEnrollmentInput): Promise<ActivateEnrollmentResult> {
-    const { programId, personIds, shopifyOrderId } = input;
+    const { programId, personIds, shopifyOrderId, lines = [] } = input;
     const program = await prisma.program.findUnique({ where: { id: programId } });
 
     let activatedCount = 0;
@@ -63,11 +80,19 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
         if (existing.inventoryHeldAt && activated.count > 0) releasedHoldCount += 1;
     }
 
-    // Compensating +1 for every hold released, in one call. Never fatal.
-    if (releasedHoldCount > 0) {
-        const ok = await adjustProgramInventory({ shopifyVariantId: program?.shopifyVariantId ?? null }, releasedHoldCount);
-        if (!ok) logger.error(`[enroll] Failed to release ${releasedHoldCount} scholarship hold(s) for program ${programId} — capacity may be out of sync.`);
+    const claimantVariantId = program?.claimantShopifyVariantId;
+    const claimantPaid = claimantVariantId
+        ? lines.filter((l) => l.variantId === claimantVariantId).reduce((n, l) => n + l.quantity, 0)
+        : 0;
+    // Uncapped programs don't track public stock, so there is nothing to take a claimant seat from.
+    const claimantSeatCount = program?.maxParticipants != null ? Math.min(claimantPaid, activatedCount) : 0;
+
+    // One stock call for the whole order. Never fatal.
+    const delta = publicStockDelta(releasedHoldCount, claimantSeatCount);
+    if (delta !== 0) {
+        const ok = await adjustProgramInventory({ shopifyVariantId: program?.shopifyVariantId ?? null }, delta);
+        if (!ok) logger.error(`[enroll] Failed to adjust public stock by ${delta} for program ${programId} (${releasedHoldCount} hold(s) released, ${claimantSeatCount} claimant seat(s)) — capacity may be out of sync.`);
     }
 
-    return { activatedCount, releasedHoldCount };
+    return { activatedCount, releasedHoldCount, claimantSeatCount };
 }
