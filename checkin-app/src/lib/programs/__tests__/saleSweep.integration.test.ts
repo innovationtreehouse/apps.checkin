@@ -4,12 +4,13 @@
 import prisma from '@/lib/prisma';
 import { runSaleSweep } from '@/lib/programs/saleSweep';
 import { withdrawAndReleaseHold } from '@/lib/program/capacity';
-import { setProgramProductOffSale, adjustProgramInventory } from '@/lib/shopify';
+import { setProgramProductOffSale, adjustProgramInventory, reportShopifyFailure } from '@/lib/shopify';
 import { emailBoardMembers } from '@/lib/emailRecipients';
 
 jest.mock('@/lib/shopify', () => ({
     setProgramProductOffSale: jest.fn().mockResolvedValue(true),
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
+    reportShopifyFailure: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock('@/lib/emailRecipients', () => ({ emailBoardMembers: jest.fn().mockResolvedValue(undefined) }));
 
@@ -21,9 +22,10 @@ const day = (s: string) => new Date(`${s}T00:00:00Z`);
 
 const offSale = jest.mocked(setProgramProductOffSale);
 const adjust = jest.mocked(adjustProgramInventory);
+const report = jest.mocked(reportShopifyFailure);
 const emailBoard = jest.mocked(emailBoardMembers);
 
-async function mkProgram(name: string, data: Partial<{ startAt: Date; offSaleAt: Date | null; phase: 'UPCOMING' | 'FINISHED'; saleEndedAt: Date }>) {
+async function mkProgram(name: string, data: Partial<{ startAt: Date; offSaleAt: Date | null; phase: 'UPCOMING' | 'FINISHED'; saleEndedAt: Date; claimantShopifyVariantId: string }>) {
     return prisma.program.create({
         data: {
             name: `${TAG} ${name}`,
@@ -35,6 +37,7 @@ async function mkProgram(name: string, data: Partial<{ startAt: Date; offSaleAt:
             shopifyProductId: `prod-${name}`,
             shopifyVariantId: `var-${name}`,
             saleEndedAt: data.saleEndedAt ?? null,
+            claimantShopifyVariantId: data.claimantShopifyVariantId ?? null,
         },
     });
 }
@@ -54,7 +57,7 @@ describe('program sale sweep', () => {
     });
     afterAll(cleanup);
 
-    it('ends due sales once and closes enrollment, leaving the store product on sale; leaves future and finished programs alone', async () => {
+    it('ends due sales once and closes enrollment; leaves future and finished programs alone', async () => {
         const due = await mkProgram('due', { startAt: day('2026-10-12') });
         const early = await mkProgram('early', { startAt: day('2026-11-01'), offSaleAt: day('2026-10-05') });
         const future = await mkProgram('future', { startAt: day('2026-10-01'), offSaleAt: day('2026-10-20') });
@@ -72,12 +75,33 @@ describe('program sale sweep', () => {
             expect(byId.get(p.id)!.saleEndedAt).toBeNull();
             expect(byId.get(p.id)!.enrollmentStatus).toBe('OPEN');
         }
-        // Claimants still pay through the public product, so it is never taken off sale yet.
-        expect(offSale).not.toHaveBeenCalled();
-
         const later = new Date(NOW.getTime() + DAY_MS);
         await runSaleSweep(later);
         expect((await prisma.program.findUniqueOrThrow({ where: { id: due.id } })).saleEndedAt).toEqual(NOW);
+    });
+
+    // The DB may hold other (seeded) programs whose sale is also due; look only at ours.
+    const oursHidden = () => offSale.mock.calls.map(([p]) => p.shopifyProductId).filter((id) => id?.startsWith('prod-'));
+    const oursReported = () => report.mock.calls.map(([, , ctx]) => ctx.shopifyProductId).filter((id) => typeof id === 'string' && id.startsWith('prod-'));
+
+    it('hides the public product of an ended sale that has a reserved-seat product, once', async () => {
+        await mkProgram('hide', { startAt: day('2026-10-12'), claimantShopifyVariantId: 'claimant-hide' });
+        await runSaleSweep(NOW);
+        expect(oursHidden()).toEqual(['prod-hide']);
+        expect(oursReported()).toEqual([]);
+
+        offSale.mockClear();
+        await runSaleSweep(new Date(NOW.getTime() + DAY_MS));
+        expect(oursHidden()).toEqual([]);
+    });
+
+    it('keeps the public product on sale and alerts the admins when there is no reserved-seat product', async () => {
+        await mkProgram('noclaimant', { startAt: day('2026-10-12') });
+        await runSaleSweep(NOW);
+        expect(oursHidden()).toEqual([]);
+        expect(oursReported()).toEqual(['prod-noclaimant']);
+        const html = report.mock.calls.find(([, , ctx]) => ctx.shopifyProductId === 'prod-noclaimant')![3];
+        expect(html).toMatch(/reserved-seat product/);
     });
 
     it('emails the board unpaid claims a week after the sale ended, once per program', async () => {

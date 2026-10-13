@@ -485,6 +485,10 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
 
         const responseObj: Record<string, unknown> = { success: true, program: updatedProgram };
         if (warning) responseObj.warning = warning;
+        // The sweep hid the public product; reopening never re-lists it (automatic changes only reduce visibility).
+        if (rearmSale && currentProgram.saleEndedAt && currentProgram.claimantShopifyVariantId && currentProgram.shopifyProductId) {
+            responseObj.notice = "Sale reopened. The public store product stays hidden: re-list it in Shopify by hand if it should sell again.";
+        }
         return NextResponse.json(responseObj);
     } catch (error) {
         logger.error("Program update error:", error);

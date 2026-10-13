@@ -1187,6 +1187,36 @@ describe('Individual Program API Integration Tests', () => {
             }
         });
 
+        it('does not re-list a hidden public product when the board reopens the sale', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            const ended = await prisma.program.create({
+                data: {
+                    startAt: new Date('2026-01-01'),
+                    endAt: new Date('2099-12-31'),
+                    name: 'Prog ID API Test Sale Ended Hidden',
+                    phase: 'RUNNING',
+                    leadMentorId: leadId,
+                    shopifyProductId: 'dev-mock-product-hidden',
+                    claimantShopifyVariantId: 'dev-mock-claimant-hidden',
+                    saleEndedAt: new Date(),
+                },
+            });
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            try {
+                const res = await PATCH(
+                    new Request(`http://localhost:4000/api/programs/${ended.id}`, { method: 'PATCH', headers: { cookie: 'session=test' }, body: JSON.stringify({ offSaleAt: '2999-01-01' }) }) as unknown as import("next/server").NextRequest,
+                    createParams(ended.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                expect((await res.json()).notice).toMatch(/stays hidden: re-list it in Shopify by hand/);
+                expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('dev-mock-product-hidden'));
+                expect((await prisma.program.findUniqueOrThrow({ where: { id: ended.id } })).saleEndedAt).toBeNull();
+            } finally {
+                logSpy.mockRestore();
+                await prisma.program.delete({ where: { id: ended.id } });
+            }
+        });
+
         it('refuses to reopen enrollment after the sale ended unless the off-sale date moves later', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
             const ended = await prisma.program.create({

@@ -778,12 +778,10 @@ export async function setProgramInventory(
  * neither the store page nor an old cart link can buy it. Idempotent. A program
  * without a product has nothing to take down and succeeds.
  *
- * ponytail: not called yet. Claimants still pay through the public product, so
- * the sale sweep (lib/programs/saleSweep.ts) leaves it on sale. Call it from
- * there once claimants have their own hidden product (claimantShopifyVariantId).
+ * Called by the sale sweep (lib/programs/saleSweep.ts) on the off-sale date for
+ * programs that have a reserved-seat product. Nothing re-lists it automatically.
  *
- * Never throws: logs + emails the admin via reportShopifyFailure and returns
- * false, so the caller can retry on its next run.
+ * Never throws: logs + emails the admin via reportShopifyFailure and returns false.
  */
 export async function setProgramProductOffSale(
     program: { shopifyProductId?: string | null },
@@ -823,7 +821,7 @@ export async function setProgramProductOffSale(
             "setProgramProductOffSale",
             error,
             { shopifyProductId: productId },
-            `Failed to take a program's Shopify product off sale after its off-sale date. It will be retried on the next daily run.`,
+            `Failed to take a program's Shopify product off sale after its off-sale date. Take it off sale in Shopify by hand.`,
         );
         return false;
     }
