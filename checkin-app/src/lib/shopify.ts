@@ -6,6 +6,7 @@ import prisma from "@/lib/prisma";
 import { sendEmail } from "@/lib/email";
 import { escapeHtml } from "@/lib/email-templates/base";
 import { logIntegrationError } from "@/lib/logger";
+import { redactSecrets } from "@/lib/redact";
 import { config } from "@/lib/config";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { programMemberCodePrefix } from "@/lib/programs/memberDiscountCode";
@@ -201,7 +202,8 @@ export async function fetchStorefrontProductVariants(productUrl: string): Promis
 
 /**
  * Shared failure path for Shopify write operations: log to IntegrationErrorLog
- * (System Status > Link Status) and best-effort email admins/board. Never
+ * (System Status > Link Status) and best-effort email admins/board, with the
+ * error text redacted (lib/redact) since it leaves the app. Never
  * throws — callers return false/null regardless of whether this succeeds.
  */
 export async function reportShopifyFailure(
@@ -229,7 +231,7 @@ export async function reportShopifyFailure(
                 sendEmail(
                     email,
                     "Shopify Integration Error",
-                    `<p>${emailIntroHtml}</p><p>Error details:</p><pre>${escapeHtml(error instanceof Error ? error.message : String(error))}</pre>`
+                    `<p>${emailIntroHtml}</p><p>Error details:</p><pre>${escapeHtml(redactSecrets(error instanceof Error ? error.message : String(error)))}</pre>`
                 )
             );
 
