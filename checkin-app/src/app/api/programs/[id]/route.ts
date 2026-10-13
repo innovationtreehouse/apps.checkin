@@ -333,7 +333,7 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             return apiError("Invalid off-sale date", 400);
         }
         const saleEndedNow = isSaleEnded(currentProgram);
-        const followsStart = currentProgram.offSaleAt === null
+        const followsStart = currentProgram.offSaleAt == null
             || currentProgram.offSaleAt.getTime() === currentProgram.startAt.getTime();
         const newOffSaleAt = offSaleAt !== undefined
             ? parseDateOnly(offSaleAt)
