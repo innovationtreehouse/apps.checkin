@@ -125,10 +125,9 @@ describe('Inventory directory agrees with the catalog-viewer gate', () => {
     releasedLibraries: [...LIBRARY_KEYS],
   };
 
-  it('lists no Inventory entries to a user whose only claim is a volunteer designation', () => {
-    const designationOnly = { ageBand: 'adult' as const, hasVolunteerDesignation: true };
+  it('lists no Inventory entries to an adult with no role or volunteer input', () => {
     expect(inventoryEntries.length).toBeGreaterThan(0);
-    for (const entry of inventoryEntries) expect(entry.visible(designationOnly, true, counts)).toBe(false);
+    for (const entry of inventoryEntries) expect(entry.visible({ ageBand: 'adult' }, true, counts)).toBe(false);
   });
 
   it('lists the Inventory entries to an active youth program volunteer', () => {

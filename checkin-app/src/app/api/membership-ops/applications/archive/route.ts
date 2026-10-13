@@ -8,9 +8,9 @@ import { apiError } from "@/lib/api-response";
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/membership-ops/applications/archive — board disposal of an abandoned
- * (non-ACTIVE) application. Body: { processId }. Idempotent; refuses to archive an
- * ACTIVE membership (409 wrong_phase).
+ * POST /api/membership-ops/applications/archive — board "Close application" for a
+ * long-idle, unpaid application. Body: { processId }. Idempotent. 409 when it is
+ * paid, BLOCKED, PENDING_BG_CLEARANCE or ACTIVE; 403 on the actor's own household.
  */
 export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
@@ -26,9 +26,9 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
         return NextResponse.json({ outcome });
     } catch (error) {
         if (error instanceof ReviewError) {
-            return NextResponse.json({ error: error.message, code: error.code }, { status: error.code === "not_found" ? 404 : 409 });
+            return NextResponse.json({ error: error.message, code: error.code }, { status: error.code === "not_found" ? 404 : error.code === "same_household_applicant" ? 403 : 409 });
         }
-        logger.error("Archive application error:", error);
+        logger.error("Close application error:", error);
         return apiError("Internal Server Error", 500);
     }
 });

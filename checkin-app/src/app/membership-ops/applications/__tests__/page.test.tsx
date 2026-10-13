@@ -32,7 +32,7 @@ const renderPage = () => renderWithProviders(<ModalsProvider><AdminMembershipPag
 // reconciling, losing the page's already-fetched rows state.
 const rewrapped = () => (
     <MantineProvider>
-        <EnvProvider value={{ checkinEnv: "prod", shopifyStoreDomain: null, isStaging: false }}>
+        <EnvProvider value={{ checkinEnv: "prod", shopifyStoreDomain: null, isStaging: false, csvImportEnabled: false }}>
             <ModalsProvider>
                 <AdminMembershipPage />
             </ModalsProvider>
@@ -224,11 +224,11 @@ describe("AdminMembershipPage", () => {
         await waitFor(() => expect(replace).toHaveBeenCalledWith("/membership-ops/applications", { scroll: false }));
     });
 
-    it("shows archived applications behind the Show-archived toggle, with Unarchive as the only action", async () => {
+    it("shows closed applications behind the toggle, with Reopen as the only action", async () => {
         mockFetchJson({
             // More specific keys first: mockFetchJson matches by substring, and
-            // "/applications" is a substring of both the archived query and the
-            // unarchive action URL.
+            // "/applications" is a substring of both the closed-list query and the
+            // reopen action URL.
             "/api/membership-ops/applications/unarchive": { outcome: { status: "PENDING_PAYMENT" } },
             "/api/membership-ops/applications?archived=1": { processes: archivedRows },
             "/api/membership-ops/applications": { processes: rows },
@@ -236,16 +236,48 @@ describe("AdminMembershipPage", () => {
         renderPage();
         await screen.findByText("Awaiting Family");
 
-        fireEvent.click(screen.getByLabelText("Show archived"));
+        fireEvent.click(screen.getByLabelText("Show closed applications"));
         expect(await screen.findByText("Archived Family")).toBeInTheDocument();
         expect(screen.queryByText("Awaiting Family")).not.toBeInTheDocument();
 
-        // Status-filter badges don't apply to the archived view, and Unarchive
-        // is the only action offered — no Archive/certify/override controls.
+        // Status-filter badges don't apply to the closed view, and Reopen is the
+        // only action offered — no close/certify/override/refund controls.
         expect(screen.queryByRole("button", { name: /PENDING PAYMENT:/ })).not.toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: "Archive" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Close application" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Record refund" })).not.toBeInTheDocument();
 
-        fireEvent.click(screen.getByRole("button", { name: "Unarchive" }));
-        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Application unarchived." })));
+        fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Application reopened." })));
+    });
+
+    it("never shows the word archive for an application", async () => {
+        mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
+        renderPage();
+        await screen.findByText("Awaiting Family");
+        expect(document.body.textContent ?? "").not.toMatch(/archiv/i);
+    });
+
+    it("offers Close only on unpaid applications and Record refund only on paid ones", async () => {
+        mockFetchJson({
+            "/api/membership-ops/applications/refund": { process: { id: 3, status: "BLOCKED" } },
+            "/api/membership-ops/applications": { processes: rows },
+        });
+        renderPage();
+        await screen.findByText("Awaiting Family");
+
+        // Awaiting + Payment are unpaid; the paid BLOCKED row can't be closed.
+        expect(screen.getAllByRole("button", { name: "Close application" })).toHaveLength(2);
+        expect(screen.getAllByRole("button", { name: "Record refund" })).toHaveLength(1);
+
+        fireEvent.click(screen.getByRole("button", { name: "Record refund" }));
+        fireEvent.change(await screen.findByLabelText(/Reason/), { target: { value: "Refunded in Shopify" } });
+        const confirm = screen.getAllByRole("button", { name: "Record refund" }).at(-1)!;
+        fireEvent.click(confirm);
+
+        await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
+            "/api/membership-ops/applications/refund",
+            expect.objectContaining({ method: "POST", body: JSON.stringify({ processId: 3, reason: "Refunded in Shopify" }) }),
+        ));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Refund recorded." })));
     });
 });

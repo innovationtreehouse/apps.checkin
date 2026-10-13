@@ -139,6 +139,11 @@ Things the app takes as true because they are handled outside it.
   reach membership and enrollment state. The app raises it for the board to work;
   it does not undo anything by itself.  [Decision — *Principle: people decide about people*]
 
+- A program refund that restocks the seat puts that seat back on sale. The store
+  has already added it back, so the app removes the child's enrollment, still
+  raises the refund for the board to settle the money, and sends no inventory
+  change of its own. A refund without a restock is only raised.  [Decision]
+
 - The store owns what a discount comes to; the app owns who may use one and until
   when. An order carrying the right item is correct whatever it totals — checking
   the total against a configured price drifts the moment the two disagree.  [Decision — deliberate limit]
@@ -147,10 +152,20 @@ Things the app takes as true because they are handled outside it.
   merchandise pass through untouched.  [Decision]
 
 - A program order activates enrollment only when it is paid and not refunded,
-  voided or cancelled, carries that program's own item, and buys a seat for every
-  person it would activate. The payment notification and reconciliation apply the
+  voided or cancelled, carries one of that program's own items — its public item
+  or its hidden reserved-seat item, both counted as seats — and buys a seat for
+  every person it would activate. The payment notification and reconciliation apply the
   one same check. An order that falls short activates nobody — it cannot say which
   of the household it was for — and is raised for the board.  [Decision]
+
+- A paid program order with seats no pending enrollment uses — the child was
+  comped, approved, withdrawn, expired or already paid, or the order bought extra
+  — is raised for the board to review. The app does not adjust store inventory
+  for it; the board settles the money and the seat.  [Decision — *Principle: people decide about people*]
+
+- A second payment for a child already enrolled is flagged for review, never
+  blocked. It is matched per child, so siblings paying on separate orders are
+  never flagged.  [Decision]
 
 - An order that names someone outside the buyer's household is not checked
   against household ownership; the seat and item checks are the control.  [Decision — deliberate limit]

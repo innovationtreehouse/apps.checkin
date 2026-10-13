@@ -5,7 +5,8 @@ import prisma from "@/lib/prisma";
 import { sendNotification } from "@/lib/notifications";
 import { lockProgramAndCheckCapacity, ProgramCapacityError, withdrawAndReleaseHold } from "@/lib/program/capacity";
 import { checkProgramAge, isKnownAdult } from "@/lib/programAge";
-import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
+import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest";
+import { householdLeadship } from "@/lib/household/leads";
 import { isDuesSettled } from "@/lib/orgMembership";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
 import { adjustProgramInventory } from "@/lib/shopify";
@@ -259,6 +260,13 @@ function isPrismaError(error: unknown, code: string): boolean {
         && (error as { code: unknown }).code === code;
 }
 
+async function isLeadOfParticipant(actorId: number, participantId: number): Promise<boolean> {
+    const hh = await householdLeadship(actorId);
+    if (!hh?.canManage) return false;
+    const participant = await prisma.person.findUnique({ where: { id: participantId }, select: { householdId: true } });
+    return sharesHousehold(hh.householdId, participant?.householdId);
+}
+
 export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
     const { id } = await params;
@@ -289,7 +297,12 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         const isLeadMentor = currentProgram.leadMentorId === currentUserId;
         const isSysAdminOrBoard = auth.user.isSysadmin || auth.user.isBoardMember;
 
-        if (!isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard) {
+        // A household lead may withdraw only an unpaid enrollment: a paid
+        // withdrawal (refund, restock) is the board's call. Enforced by the
+        // conditional delete below, not a separate read, so a payment landing
+        // mid-request cannot slip through.
+        const isHouseholdLeadPath = !isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard;
+        if (isHouseholdLeadPath && !(await isLeadOfParticipant(currentUserId, participantId))) {
             return apiError("Forbidden: Not authorized to remove this participant", 403);
         }
 
@@ -311,7 +324,22 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         // scholarship seat (inventoryHeldAt set), releasing it back to
         // Shopify (+1) happens with the removal, exactly once (see
         // withdrawAndReleaseHold).
-        const { enrollment, released, shopifyOk } = await withdrawAndReleaseHold(programId, participantId, currentProgram);
+        let withdrawal: Awaited<ReturnType<typeof withdrawAndReleaseHold>>;
+        try {
+            withdrawal = await withdrawAndReleaseHold(programId, participantId, currentProgram, isHouseholdLeadPath ? 'PENDING' : undefined);
+        } catch (error) {
+            if (isHouseholdLeadPath && isPrismaError(error, 'P2025')) {
+                const row = await prisma.programParticipant.findUnique({
+                    where: { programId_personId: { programId, personId: participantId } },
+                    select: { status: true },
+                });
+                if (row?.status === 'ACTIVE') {
+                    return apiError("This child has paid; ask the board to withdraw them.", 403);
+                }
+            }
+            throw error;
+        }
+        const { enrollment, released, shopifyOk } = withdrawal;
 
         await prisma.auditLog.create({
             data: {
@@ -324,12 +352,13 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
             }
         });
 
-        // No raw enrollment echo: this route is reachable by the program's lead
-        // mentor, and the deleted row carries board/finance-confidential hardship
-        // fields (paymentPlanDeniedAt, inventoryHeldAt). The audit log above keeps
-        // the full row server-side.
-        const responseObj: Record<string, unknown> = { success: true, released };
-        if (released && !shopifyOk) {
+        // Nothing here may reveal whether a scholarship hold existed: this route
+        // is reachable by the program's lead mentor, who must never see
+        // scholarship / payment-plan status. So no enrollment echo, no
+        // `released` flag, and the hold-release warning is staff-only. The audit
+        // log above keeps the full row server-side.
+        const responseObj: Record<string, unknown> = { success: true };
+        if (isSysAdminOrBoard && released && !shopifyOk) {
             responseObj.warning = "Participant removed, but the Shopify inventory release failed. Capacity may be out of sync — check System Status > Link Status.";
         }
 

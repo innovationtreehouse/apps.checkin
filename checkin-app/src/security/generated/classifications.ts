@@ -88,6 +88,7 @@ export const classifications = {
         createdAt: 'public',
         zohoEnvelopeId: 'internal',
         zohoActionId: 'internal',
+        zohoSignerPersonId: 'internal',
         contractSignedAt: 'internal',
         bgConsentAt: 'internal',
         bgClearedAt: 'internal',
@@ -224,6 +225,8 @@ export const classifications = {
         nonOrgMemberPriceCents: 'public',
         shopifyProductId: 'public',
         shopifyVariantId: 'public',
+        claimantShopifyProductId: 'public',
+        claimantShopifyVariantId: 'public',
     },
     ProgramInstance: {
         id: 'public',
@@ -476,6 +479,7 @@ export const relations = {
         bgAttestationsAsSubject: { model: 'BackgroundCheckAttestation', isList: true },
         personBgProcesses: { model: 'OrgMembershipProcess', isList: true },
         intakeNoteAcks: { model: 'OrgMembershipProcess', isList: true },
+        zohoSigningRequests: { model: 'OrgMembershipProcess', isList: true },
         corporationLeads: { model: 'CorporationLead', isList: true },
         corporationMembers: { model: 'CorporationMember', isList: true },
         programVolunteers: { model: 'ProgramVolunteer', isList: true },
@@ -521,6 +525,7 @@ export const relations = {
     OrgMembershipProcess: {
         orgMembership: { model: 'OrgMembership', isList: false },
         subjectPerson: { model: 'Person', isList: false },
+        zohoSigner: { model: 'Person', isList: false },
         noteAckBy: { model: 'Person', isList: false },
         attestations: { model: 'BackgroundCheckAttestation', isList: true },
     },

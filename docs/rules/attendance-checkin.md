@@ -2,6 +2,9 @@
 
 Opening and closing a facility, supervision, the kiosk, and the visit record.
 
+The check-in state machine signed off by the owner (scans, IN/OUT, closing the
+building) is in [`docs/ops/checkin-state-machine.md`](../ops/checkin-state-machine.md).
+
 ---
 
 ## Policy
@@ -346,8 +349,9 @@ hours at a time — is a normal operating mode here, not an incident.
   it rests, its screen shows the real empty roster. This rests on the front
   door being the only scanner: every arrival badges there first. While anyone
   is inside, or occupancy is unknown, it keeps fetching whatever its clock
-  says. The kiosk never answers its own screen with a roster the server did
-  not send.  [Decision — *Principle: fail closed*]
+  says. When the server cannot answer, its screen shows the kiosk's own view —
+  the last server roster with its badges since, marked not up to date — and it
+  never invents a roster or states supervision it cannot know.  [Decision — *Principle: fail closed*]
 
 - Youth and two-deep math stay server-side, never computed on the kiosk. Resolving
   a parked scan runs the same fail-closed safety math the live path does.  [Decision — *Principle: fail closed*]

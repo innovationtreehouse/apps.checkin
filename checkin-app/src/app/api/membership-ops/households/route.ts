@@ -110,7 +110,26 @@ export const GET = withAuth(
                     .reduce<Date | null>((acc, m) => (!acc || m.lastBackgroundCheck! > acc ? m.lastBackgroundCheck! : acc), null);
                 const householdBgValidUntil = bgValidUntilBoundary(latestLeadBg, bgSettings);
 
+                // The latest application's agreement signing, for the board's signer card.
+                const signingProcess = household.orgMembership
+                    ? await prisma.orgMembershipProcess.findFirst({
+                          where: { orgMembershipId: household.orgMembership.id },
+                          orderBy: { id: "desc" },
+                          select: { id: true, zohoEnvelopeId: true, contractSignedAt: true, zohoSignerPersonId: true },
+                      })
+                    : null;
+                const signer = signingProcess?.zohoSignerPersonId
+                    ? await prisma.person.findUnique({ where: { id: signingProcess.zohoSignerPersonId }, select: { name: true, email: true } })
+                    : null;
+                const signing = signingProcess && {
+                    processId: signingProcess.id,
+                    contractStarted: !!signingProcess.zohoEnvelopeId,
+                    contractSignedAt: signingProcess.contractSignedAt,
+                    signerName: signer?.name?.trim() || signer?.email || null,
+                };
+
                 return NextResponse.json({
+                    signing,
                     household: { ...withFlatContact(household), householdMembers: membersWithBg, householdLeads, bgValidUntil: householdBgValidUntil },
                     validUntil: household.orgMembership?.status === "ACTIVE" && detailCycle ? coveredThrough(detailCycle, detailSettled) : null,
                 });

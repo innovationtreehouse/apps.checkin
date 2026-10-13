@@ -11,6 +11,7 @@ Generated from the machine’s `TRANSITIONS`. Do not hand-edit.
 
 ```mermaid
 stateDiagram-v2
+    ACTIVE --> [*]: T10 refund restocked
     PENDING_HELD --> ACTIVE: T5 approve
     PENDING_HELD --> PENDING_HELD_DENIED: T6 deny
     PENDING_HELD --> [*]: T9 withdraw
@@ -30,20 +31,20 @@ stateDiagram-v2
 
 A blank (`—`) cell is a **deliberate** absent edge — a decision to ratify, not an oversight.
 
-| state ╲ event | T1 enroll(paid) | T2 enroll(comp) | T3 apply(−1 ok) | T3 re-apply | T3f apply(−1 FAILS) | T3m manual-hold | T4 activate(payment) | T5 approve | T6 deny | T7 non-payment kick | T8 grace expiry | T9 withdraw |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| UNENROLLED | PENDING_UNPAID | ACTIVE | — | — | — | — | — | — | — | — | — | — |
-| PENDING_UNPAID | — | — | PENDING_HELD | — | PENDING_HOLD_FAILED | — | ACTIVE | — | — | UNENROLLED | — | — |
-| PENDING_HOLD_FAILED | — | — | — | — | — | PENDING_HELD | — | — | — | — | — | — |
-| PENDING_HELD | — | — | — | — | — | — | — | ACTIVE | PENDING_HELD_DENIED | — | — | UNENROLLED |
-| PENDING_HELD_DENIED | — | — | — | PENDING_HELD | — | — | — | — | — | — | UNENROLLED | — |
-| ACTIVE | — | — | — | — | — | — | — | — | — | — | — | — |
+| state ╲ event | T1 enroll(paid) | T10 refund restocked | T2 enroll(comp) | T3 apply(−1 ok) | T3 re-apply | T3f apply(−1 FAILS) | T3m manual-hold | T4 activate(payment) | T5 approve | T6 deny | T7 non-payment kick | T8 grace expiry | T9 withdraw |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| UNENROLLED | PENDING_UNPAID | — | ACTIVE | — | — | — | — | — | — | — | — | — | — |
+| PENDING_UNPAID | — | — | — | PENDING_HELD | — | PENDING_HOLD_FAILED | — | ACTIVE | — | — | UNENROLLED | — | — |
+| PENDING_HOLD_FAILED | — | — | — | — | — | — | PENDING_HELD | — | — | — | — | — | — |
+| PENDING_HELD | — | — | — | — | — | — | — | — | ACTIVE | PENDING_HELD_DENIED | — | — | UNENROLLED |
+| PENDING_HELD_DENIED | — | — | — | — | PENDING_HELD | — | — | — | — | — | — | UNENROLLED | — |
+| ACTIVE | — | UNENROLLED | — | — | — | — | — | — | — | — | — | — | — |
 
 ## Reachability
 
 - **Initial:** UNENROLLED
 - **Reachable (6):** ACTIVE, PENDING_HELD, PENDING_HELD_DENIED, PENDING_HOLD_FAILED, PENDING_UNPAID, UNENROLLED
-- **Terminal (no outbound edge):** ACTIVE
+- **Terminal (no outbound edge):** (none)
 - **Accepting (designated resting states):** ACTIVE
 - **Dead-ends (reachable terminal, not accepting):** (none)
 - **Unreachable (declared but no legal path from ∅):** (none)

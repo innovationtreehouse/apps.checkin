@@ -355,6 +355,34 @@ describe('background check is non-blocking', () => {
         expect(await statusOf(processId)).toBe('BLOCKED');
     });
 
+    it('a check that clears on a DENIED household converges nothing and raises a board item', async () => {
+        const { processId, leadId, orgMembershipId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
+        await markContractSigned(processId);
+        await markBgConsent(processId, revA);
+        await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+        await prisma.orgMembership.update({ where: { id: orgMembershipId }, data: { status: 'DENIED' } });
+
+        await attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+        const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+        expect(proc?.status).toBe('PENDING_PAYMENT');
+        expect(proc?.bgClearedAt).toBeNull();
+        expect(await membershipStatusOf(orgMembershipId)).toBe('DENIED');
+        expect(await prisma.paymentException.count({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', processId } })).toBe(1);
+    });
+
+    it('override approve re-checks BLOCKED under the lock: a second approve is refused', async () => {
+        const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
+        await markContractSigned(processId);
+        await markBgConsent(processId, revA);
+        await attest(revA, processId, { result: 'REJECT' });
+        const [first, second] = await Promise.allSettled([
+            overrideBlocked(processId, revB, 'approve', [leadId]),
+            overrideBlocked(processId, revB, 'approve', [leadId]),
+        ]);
+        expect([first.status, second.status].sort()).toEqual(['fulfilled', 'rejected']);
+        expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
+    });
+
     it('reset returns a still-open review to neutral (the misclicked approval), but not a cleared one', async () => {
         const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);

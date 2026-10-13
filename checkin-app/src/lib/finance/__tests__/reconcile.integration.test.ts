@@ -166,6 +166,7 @@ afterAll(async () => {
     const programIds = programs.map((p) => p.id);
     if (programIds.length) {
         await prisma.paymentException.deleteMany({ where: { programId: { in: programIds } } });
+        await prisma.auditLog.deleteMany({ where: { actorSystem: "webhook:shopify-refund", secondaryAffectedEntity: { in: programIds } } });
         await prisma.programParticipant.deleteMany({ where: { programId: { in: programIds } } });
         await prisma.program.deleteMany({ where: { id: { in: programIds } } });
     }
@@ -599,6 +600,64 @@ describe("program order entitlement (same check as the webhook)", () => {
         expect(await kinds(oid)).toEqual(["REVERSED_BEFORE_ACTIVATION"]);
     });
 
+    const attributed = (oid: string, programId: number, ids: string) =>
+        order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: ids }) });
+
+    it.each([
+        ["already paid on another order", `${TAG}-old-order`],
+        ["comped or approved (no order)", undefined],
+    ])("raises DUPLICATE_PAYMENT, changing nothing, when the child is %s", async (_label, priorOrder) => {
+        const oid = `${TAG}-607-${priorOrder ? "paid" : "comp"}`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-dup-${priorOrder ? "paid" : "comp"}-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: priorOrder });
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+
+        await runReconcile();
+        const row = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId } } });
+        expect(row?.shopifyOrderId).toBe(priorOrder ?? null);
+        const raised = await prisma.paymentException.findMany({ where: { shopifyOrderId: oid } });
+        expect(raised.map((e) => [e.kind, e.personId])).toEqual([["DUPLICATE_PAYMENT", personId]]);
+        await runReconcile();
+        expect(await kinds(oid)).toEqual(["DUPLICATE_PAYMENT"]);
+    });
+
+    it("raises UNCLAIMED_SEATS when the child named has no enrollment (withdrawn or expired)", async () => {
+        const oid = `${TAG}-608`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-gone-${TAG}@ex.com`, status: "PENDING" });
+        await prisma.programParticipant.delete({ where: { programId_personId: { programId, personId } } });
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBeUndefined();
+        expect(await kinds(oid)).toEqual(["UNCLAIMED_SEATS"]);
+    });
+
+    it("activates and raises UNCLAIMED_SEATS when the order buys more seats than people awaiting", async () => {
+        const oid = `${TAG}-609`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-extra-${TAG}@ex.com`, status: "PENDING" });
+        orderLines.mockResolvedValue([{ variantId, quantity: 3 }]);
+        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("ACTIVE");
+        expect(await kinds(oid)).toEqual(["UNCLAIMED_SEATS"]);
+    });
+
+    it("raises nothing for siblings paying on separate orders", async () => {
+        const email = `ent-sibs-${TAG}@ex.com`;
+        const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
+        const sibId = await addSibling(householdId, programId, email);
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([attributed(`${TAG}-610a`, programId, String(personId)), attributed(`${TAG}-610b`, programId, String(sibId))]);
+
+        await runReconcile();
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("ACTIVE");
+        expect(await statusOf(programId, sibId)).toBe("ACTIVE");
+        expect(await prisma.paymentException.count({ where: { programId } })).toBe(0);
+    });
+
     it("waits on an order not yet paid: no activation, no exception", async () => {
         const oid = `${TAG}-604`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-unpaid-${TAG}@ex.com`, status: "PENDING" });
@@ -622,6 +681,25 @@ describe("program order entitlement (same check as the webhook)", () => {
         expect(await kinds(oid)).toEqual([]);
     });
 
+    it("a mixed membership + program order recovers BOTH the membership and the program seat", async () => {
+        const oid = `${TAG}-607`;
+        const { processId } = await makeApplicant({ email: `mixed-mem-${TAG}@ex.com`, status: "PENDING_PAYMENT", bgCleared: true });
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `mixed-prg-${TAG}@ex.com`, status: "PENDING" });
+        orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT, variantId]);
+        orderLines.mockResolvedValue([{ variantId: MEMBERSHIP_VARIANT, quantity: 1 }, { variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([
+            order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId), Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }) }),
+        ]);
+
+        await runReconcile();
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe("ACTIVE");
+        expect(await statusOf(programId, personId)).toBe("ACTIVE");
+        expect(await kinds(oid)).toEqual([]);
+
+        await runReconcile();
+        expect(await kinds(oid)).toEqual([]);
+    });
+
     it("email fallback activates when the order carries the pending program's variant", async () => {
         const oid = `${TAG}-606`;
         const email = `ent-fallback-${TAG}@ex.com`;
@@ -642,5 +720,96 @@ describe("fast-path reversal webhook helper", () => {
         expect(await raiseReversalByOrderId(oid, "REFUND")).toBe(true);
         await raiseReversalByOrderId(oid, "REFUND");
         expect(await prisma.paymentException.count({ where: { kind: "REFUND", processId } })).toBe(1);
+    });
+
+    /** A second child in the first enrollee's household, on the same program and order. */
+    async function addSibling(e: { householdId: number; programId: number }, shopifyOrderId: string): Promise<number> {
+        const kid = await prisma.person.create({ data: { name: `Kid ${TAG} ${shopifyOrderId}`, householdId: e.householdId } });
+        await prisma.programParticipant.create({ data: { programId: e.programId, personId: kid.id, status: "ACTIVE", shopifyOrderId } });
+        return kid.id;
+    }
+    const enrolled = (programId: number) => prisma.programParticipant.count({ where: { programId } });
+
+    it("a restocked refund removes the enrollment, flags it, and is idempotent", async () => {
+        const oid = `${TAG}-310`;
+        const e = await makeProgramEnrollment({ email: `rs1-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        const lines = [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }];
+        expect(await raiseReversalByOrderId(oid, "REFUND", lines)).toBe(true);
+        await raiseReversalByOrderId(oid, "REFUND", lines);
+        expect(await enrolled(e.programId)).toBe(0);
+        expect(await prisma.paymentException.count({ where: { kind: "REFUND", programId: e.programId, personId: e.personId } })).toBe(1);
+        expect(await prisma.auditLog.count({ where: { actorSystem: "webhook:shopify-refund", secondaryAffectedEntity: e.programId } })).toBe(1);
+    });
+
+    it("a refund without restock only flags; the enrollment stays", async () => {
+        const oid = `${TAG}-311`;
+        const e = await makeProgramEnrollment({ email: `rs2-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        await raiseReversalByOrderId(oid, "REFUND", []);
+        expect(await enrolled(e.programId)).toBe(1);
+        expect(await prisma.paymentException.count({ where: { kind: "REFUND", programId: e.programId } })).toBe(1);
+    });
+
+    it("a restock of another variant leaves the enrollment", async () => {
+        const oid = `${TAG}-312`;
+        const e = await makeProgramEnrollment({ email: `rs3-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: "some-other-variant", quantity: 1, lineQuantity: 1 }]);
+        expect(await enrolled(e.programId)).toBe(1);
+    });
+
+    it("flags every person on a multi-person order, and a full restock removes them all", async () => {
+        const oid = `${TAG}-313`;
+        const e = await makeProgramEnrollment({ email: `rs4-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        const kidId = await addSibling(e, oid);
+        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 2, lineQuantity: 2 }]);
+        const flagged = await prisma.paymentException.findMany({ where: { kind: "REFUND", shopifyOrderId: oid }, select: { personId: true } });
+        expect(flagged.map((f) => f.personId).sort()).toEqual([e.personId, kidId].sort());
+        expect(await enrolled(e.programId)).toBe(0);
+    });
+
+    it("a partial restock on a multi-person order removes nobody (can't tell which child)", async () => {
+        const oid = `${TAG}-314`;
+        const e = await makeProgramEnrollment({ email: `rs5-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        await addSibling(e, oid);
+        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
+        expect(await enrolled(e.programId)).toBe(2);
+        expect(await prisma.paymentException.count({ where: { kind: "REFUND", shopifyOrderId: oid } })).toBe(2);
+    });
+
+    it("one child on an order that bought 2 seats: restocking 1 keeps the child who paid", async () => {
+        const oid = `${TAG}-316`;
+        const e = await makeProgramEnrollment({ email: `rs7-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
+        expect(await enrolled(e.programId)).toBe(1);
+        expect(await prisma.paymentException.count({ where: { kind: "REFUND", shopifyOrderId: oid } })).toBe(1);
+    });
+
+    it("siblings on one order, one withdrew: restocking the withdrawn seat keeps the other", async () => {
+        const oid = `${TAG}-317`;
+        const e = await makeProgramEnrollment({ email: `rs8-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        const kidId = await addSibling(e, oid);
+        await prisma.programParticipant.delete({ where: { programId_personId: { programId: e.programId, personId: kidId } } });
+        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
+        expect(await prisma.programParticipant.count({ where: { programId: e.programId, personId: e.personId } })).toBe(1);
+    });
+
+    it("a restocked cancellation is not a refund: flags only", async () => {
+        const oid = `${TAG}-315`;
+        const e = await makeProgramEnrollment({ email: `rs6-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        await raiseReversalByOrderId(oid, "CANCELLED", [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }]);
+        expect(await enrolled(e.programId)).toBe(1);
+    });
+});
+
+describe("daily reversal pass, multi-person order", () => {
+    it("raises REFUND for every person on the order", async () => {
+        const oid = `${TAG}-320`;
+        const e = await makeProgramEnrollment({ email: `dp1-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        const kid = await prisma.person.create({ data: { name: `Kid ${TAG} ${oid}`, householdId: e.householdId } });
+        await prisma.programParticipant.create({ data: { programId: e.programId, personId: kid.id, status: "ACTIVE", shopifyOrderId: oid } });
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, financialStatus: "REFUNDED", totalRefundedCents: 5000 })]);
+        await runReconcile();
+        await runReconcile();
+        expect(await prisma.paymentException.count({ where: { kind: "REFUND", shopifyOrderId: oid } })).toBe(2);
+        expect(await prisma.programParticipant.count({ where: { programId: e.programId } })).toBe(2);
     });
 });

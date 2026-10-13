@@ -25,10 +25,27 @@ services:
       - ../.env
     environment:
       DATABASE_URL: postgresql://prisma:${DB_PASSWORD}@db:5432/checkmein?schema=public
-      # One per checkin-app/libraries.json entry: <NAME>_DATABASE_URL -> its database.
-      CATALOG_DATABASE_URL: postgresql://prisma:${DB_PASSWORD}@db:5432/catalog?schema=public
-      LOCAL_INVENTORY_DATABASE_URL: postgresql://prisma:${DB_PASSWORD}@db:5432/local_inventory?schema=public
-      BULK_DONATION_DATABASE_URL: postgresql://prisma:${DB_PASSWORD}@db:5432/bulk_donation?schema=public
+      # One per checkin-app/libraries.json entry: <NAME>_DATABASE_URL -> its database, as its DML role.
+      CATALOG_DATABASE_URL: postgresql://catalog_dml:${CATALOG_DML_DB_PASSWORD}@db:5432/catalog?schema=public
+      LOCAL_INVENTORY_DATABASE_URL: postgresql://local_inventory_dml:${LOCAL_INVENTORY_DML_DB_PASSWORD}@db:5432/local_inventory?schema=public
+      BULK_DONATION_DATABASE_URL: postgresql://bulk_donation_dml:${BULK_DONATION_DML_DB_PASSWORD}@db:5432/bulk_donation?schema=public
+      EXPENSE_DATABASE_URL: postgresql://expense_dml:${EXPENSE_DML_DB_PASSWORD}@db:5432/expense?schema=public
+    depends_on:
+      - db
+
+  # Library migrations, as each library's owner role (the app connects as DML):
+  #   docker compose --profile migrate run --rm migrate
+  migrate:
+    profiles: [migrate]
+    build:
+      context: ..
+      dockerfile: checkin-app/Dockerfile
+    environment:
+      CATALOG_DATABASE_URL: postgresql://catalog_owner:${CATALOG_OWNER_DB_PASSWORD}@db:5432/catalog?schema=public
+      LOCAL_INVENTORY_DATABASE_URL: postgresql://local_inventory_owner:${LOCAL_INVENTORY_OWNER_DB_PASSWORD}@db:5432/local_inventory?schema=public
+      BULK_DONATION_DATABASE_URL: postgresql://bulk_donation_owner:${BULK_DONATION_OWNER_DB_PASSWORD}@db:5432/bulk_donation?schema=public
+      EXPENSE_DATABASE_URL: postgresql://expense_owner:${EXPENSE_OWNER_DB_PASSWORD}@db:5432/expense?schema=public
+    command: ["scripts/each-library.sh", "exec", "--no", "--", "prisma", "migrate", "deploy"]
     depends_on:
       - db
 
@@ -39,9 +56,18 @@ services:
       POSTGRES_USER: prisma
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: checkmein
+      # Per-library role passwords, read by prod-initdb.
+      CATALOG_OWNER_DB_PASSWORD: ${CATALOG_OWNER_DB_PASSWORD}
+      CATALOG_DML_DB_PASSWORD: ${CATALOG_DML_DB_PASSWORD}
+      LOCAL_INVENTORY_OWNER_DB_PASSWORD: ${LOCAL_INVENTORY_OWNER_DB_PASSWORD}
+      LOCAL_INVENTORY_DML_DB_PASSWORD: ${LOCAL_INVENTORY_DML_DB_PASSWORD}
+      BULK_DONATION_OWNER_DB_PASSWORD: ${BULK_DONATION_OWNER_DB_PASSWORD}
+      BULK_DONATION_DML_DB_PASSWORD: ${BULK_DONATION_DML_DB_PASSWORD}
+      EXPENSE_OWNER_DB_PASSWORD: ${EXPENSE_OWNER_DB_PASSWORD}
+      EXPENSE_DML_DB_PASSWORD: ${EXPENSE_DML_DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Creates each library's database on first init.
+      # Creates each library's database and roles on first init.
       - ./prod-initdb:/docker-entrypoint-initdb.d:ro
       - ../checkin-app/libraries.json:/libraries.json:ro
 

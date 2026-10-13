@@ -507,6 +507,7 @@ export const POST = withAuth(
                     rawBadgeLogs: 0,
                     presenceEvents: 0,
                     noteAcks: 0,
+                    zohoSigners: 0,
                     attendanceConfirmations: 0,
                     facilityCloses: 0,
                     trustedAdultDecisions: 0,
@@ -616,6 +617,7 @@ export const POST = withAuth(
                 // "Which staff member did this" facts, all SET NULL — left on the
                 // tombstone they read as nobody the moment the row goes.
                 moved.noteAcks = (await tx.orgMembershipProcess.updateMany({ where: { noteAckById: mergeId }, data: { noteAckById: keepId } })).count;
+                moved.zohoSigners = (await tx.orgMembershipProcess.updateMany({ where: { zohoSignerPersonId: mergeId }, data: { zohoSignerPersonId: keepId } })).count;
                 moved.attendanceConfirmations = (await tx.event.updateMany({ where: { attendanceConfirmedById: mergeId }, data: { attendanceConfirmedById: keepId } })).count;
                 moved.facilityCloses = (await tx.facilityClose.updateMany({ where: { closedById: mergeId }, data: { closedById: keepId } })).count;
                 moved.trustedAdultDecisions = (await tx.trustedAdultReview.updateMany({ where: { decidedById: mergeId }, data: { decidedById: keepId } })).count;

@@ -53,7 +53,9 @@ type Visit = {
 
 type Counts = { keyholders: number; volunteers: number; youth: number; total: number; needReview?: number };
 type SafetyFlags = { facilityOpen: boolean; isLastKeyholder: boolean; isTwoDeepViolation: boolean };
-type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags; building?: BuildingLink };
+// kioskAsOf: the kiosk proxy served its own view (server unreachable)
+// from the roster it received at this time; null when it never had one.
+type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; kioskAsOf?: string | null };
 type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; self: Visit | null; household: Visit[] };
 type AttendanceResponse = FullResponse | LimitedResponse;
 
@@ -63,6 +65,8 @@ function KioskDisplayInner() {
   const [isKioskMode, setIsKioskMode] = useState(searchParams.get("mode") === "kiosk");
   const { data: session } = useSession();
   const [data, setData] = useState<AttendanceResponse | null>(null);
+  // When `data` was current: the kiosk's roster time, else when it was loaded.
+  const [asOf, setAsOf] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // The kiosk proxy answers 204 while the building is known empty.
@@ -148,6 +152,7 @@ function KioskDisplayInner() {
   // door screen after 10 quiet minutes. Gate on mode=kiosk (the URL the
   // proxy actually loads) or the signedRequest response flag.
   const isSignedKiosk = !!(searchParams.get("sig") && searchParams.get("ts") && searchParams.get("nonce"));
+  const isKioskDisplay = searchParams.get("mode") === "kiosk" || isSignedKiosk;
 
   const fetchAttendance = useCallback(async () => {
     try {
@@ -170,6 +175,7 @@ function KioskDisplayInner() {
       const json = await res.json().catch(() => ({}));
       if (res.ok && (json.access === "full" || json.access === "limited")) {
         setData(json);
+        setAsOf(json.kioskAsOf !== undefined ? json.kioskAsOf : new Date().toISOString());
         setError(null);
         if (json.signedRequest === true) setIsKioskMode(true);
       } else if (!res.ok) {
@@ -178,19 +184,21 @@ function KioskDisplayInner() {
     } catch (error) {
       console.error("Failed to fetch attendance:", error);
       setError("Network error occurred.");
-      notifications.show({ color: "red", message: "Network error", autoClose: false });
+      if (!isKioskDisplay) notifications.show({ color: "red", message: "Network error", autoClose: false });
     } finally {
       setLoading(false);
     }
-  }, [searchParams]);
+  }, [searchParams, isKioskDisplay]);
 
-  const isKioskDisplay = searchParams.get("mode") === "kiosk" || isSignedKiosk;
+  // The door screen never blanks, and never passes a kept or kiosk-served roster off as fresh.
+  const kioskStale = isKioskDisplay && data !== null && (error !== null || (isFull && (data as FullResponse).kioskAsOf !== undefined));
   usePolling(fetchAttendance, 60000, { idleStopMs: isKioskDisplay ? undefined : POLL_IDLE_STOP_MS });
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (typeof event.data === "object" && event.data?.type === "refresh-attendance" && event.data.attendance) {
         setData({ access: "full", attendance: event.data.attendance, counts: event.data.counts, safety: event.data.safety });
+        setAsOf(new Date().toISOString());
         setLoading(false);
         if (event.data.signedRequest) setIsKioskMode(true);
       } else if (event.data === "refresh-attendance") {
@@ -237,6 +245,7 @@ function KioskDisplayInner() {
     const json = await attRes.json().catch(() => ({}));
     if (attRes.ok && (json.access === "full" || json.access === "limited")) {
       setData(json);
+      setAsOf(json.kioskAsOf !== undefined ? json.kioskAsOf : new Date().toISOString());
       if (json.signedRequest) setIsKioskMode(true);
     }
     // Refresh nav/sub-tab building counts too — they read a separate cached fetch.
@@ -427,6 +436,7 @@ function KioskDisplayInner() {
                 Sign out a user
               </Button>
             )}
+            {kioskStale && <Text size="sm" c="dimmed">Not up to date{asOf ? ` — as of ${formatTime(asOf)}` : ""}</Text>}
             <CountBadge intent="info" size="lg">
               {unconfirmed ? "Checked in (unconfirmed)" : "People Present"}: {data ? counts.total : "—"}
             </CountBadge>
@@ -511,7 +521,7 @@ function KioskDisplayInner() {
         {/* Main content */}
         {loading ? (
           <Center py="xl"><Loader /></Center>
-        ) : error ? (
+        ) : error && !kioskStale ? (
           <Alert color="red">{error === "Unauthorized" ? "Access Denied: Please sign in to view attendance." : error}</Alert>
         ) : !data && kioskResting ? (
           <Center py="xl"><Text c="dimmed">Kiosk resting — zzz. Badge in to wake it.</Text></Center>

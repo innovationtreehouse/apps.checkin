@@ -11,8 +11,13 @@ import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { mintPersonId } from "@/lib/person/mintId";
 import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
+import { config } from "@/lib/config";
+import { ensureHouseholdMembership, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 
 export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (req: NextRequest, auth) => {
+    if (!config.csvImportEnabled()) {
+        return apiError("Not found", 404);
+    }
     try {
         if (auth.type !== 'session') {
             return apiError("Unauthorized", 401);
@@ -120,16 +125,18 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             });
         };
 
-        // Helper: ensure an active household membership exists for a household
-        const ensureHouseholdMembership = async (
-            householdId: number,
-            db: DbClient = prisma,
-        ) => {
-            await db.orgMembership.upsert({
-                where: { householdId },
-                create: { householdId, status: 'ACTIVE' },
-                update: { status: 'ACTIVE' },
-            });
+        // Helper: give an imported household its membership row at NONE. Import
+        // never sets a status; a REVOKED or DENIED household is left as it is and
+        // reported to the operator (a DENIED one also goes to the board).
+        const recordImportedHousehold = async (householdId: number): Promise<string | null> => {
+            const { status } = await ensureHouseholdMembership(prisma, householdId);
+            if (status === 'DENIED') {
+                await raiseDeniedHouseholdActivity({ householdId, what: 'CSV import touched this household' });
+            }
+            if (status === 'REVOKED' || status === 'DENIED') {
+                return `household ${householdId} is ${status}; import does not change that status — a board member must handle it.`;
+            }
+            return null;
         };
 
         // Parse all rows first
@@ -254,9 +261,6 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                         }
                         participantId = participant.id;
                         await applyAddressToHousehold(parentHouseholdId, pr.address, tx);
-
-                        // Ensure membership
-                        await ensureHouseholdMembership(parentHouseholdId, tx);
                     } else {
                         // No email, no parent email — find by name/DOB
                         const matchQuery: { name: string; dateOfBirth?: Date } = { name: pr.fullName };
@@ -327,6 +331,9 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
             return null;
         };
+
+        // Rows whose household linking succeeded; pass 3 records their households.
+        const linked: (ParsedRow & { participantId: number })[] = [];
 
         for (const pr of parsedRows) {
             try {
@@ -411,8 +418,15 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                             const sourceHousehold = await tx.household.findUnique({ where: { id: sourceHouseholdId } });
                             const sourceMemberships = await tx.orgMembership.findMany({ where: { householdId: sourceHouseholdId } });
 
-                            // Delete memberships from the old source household
-                            await tx.orgMembership.deleteMany({ where: { householdId: sourceHouseholdId } });
+                            // A merge deletes the source's membership row, so it may only
+                            // run when that row says nothing (NONE); any other status is
+                            // left for a person to reconcile. Deleting only NONE rows and
+                            // re-reading keeps a concurrent status change from being lost.
+                            await tx.orgMembership.deleteMany({ where: { householdId: sourceHouseholdId, status: 'NONE' } });
+                            const kept = await tx.orgMembership.findFirst({ where: { householdId: sourceHouseholdId } });
+                            if (kept) {
+                                throw new Error(`merge refused: household ${sourceHouseholdId} has membership status ${kept.status}; merge it by hand so that status is not lost.`);
+                            }
 
                             // Finally delete the source household (empty now, so the
                             // RESTRICT FK allows it)
@@ -434,25 +448,38 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                             if (pr.email) {
                                 await addHouseholdLead(tx, targetHouseholdId, participantId);
                             }
-
-                            await ensureHouseholdMembership(targetHouseholdId, tx);
                         });
+                        linked.push({ ...pr, participantId });
                     } else {
                         errors.push(`Row ${pr.index + 2} (${pr.fullName}): Could not find participant "${pr.sameHouseholdAs}" for household association`);
                     }
                 }
-                // Every participant got a household in pass 1 (or already had
-                // one) — just make sure the membership exists.
+                // Every participant got a household in pass 1 (or already had one).
                 else {
-                    const participant = await prisma.person.findUnique({ where: { id: participantId } });
-                    if (participant) {
-                        await ensureHouseholdMembership(participant.householdId);
-                    }
+                    linked.push({ ...pr, participantId });
                 }
             } catch (err: unknown) {
                 logger.error(`Error in pass 2 for row ${pr.index + 2}:`, err);
                 const errorMessage = err instanceof Error ? err.message : 'Unknown error';
                 errors.push(`Row ${pr.index + 2} (${pr.fullName}): Household linking error: ${errorMessage}`);
+            }
+        }
+
+        // ===== PASS 3: Record each linked row's final household once =====
+        // Runs after every merge, so each surviving household is checked (and
+        // reported) once.
+        const recorded = new Set<number>();
+        for (const pr of linked) {
+            try {
+                const participant = await prisma.person.findUnique({ where: { id: pr.participantId }, select: { householdId: true } });
+                if (!participant || recorded.has(participant.householdId)) continue;
+                recorded.add(participant.householdId);
+                const refusal = await recordImportedHousehold(participant.householdId);
+                if (refusal) errors.push(`Row ${pr.index + 2} (${pr.fullName}): ${refusal}`);
+            } catch (err: unknown) {
+                logger.error(`Error in pass 3 for row ${pr.index + 2}:`, err);
+                const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+                errors.push(`Row ${pr.index + 2} (${pr.fullName}): membership error: ${errorMessage}`);
             }
         }
 

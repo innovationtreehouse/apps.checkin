@@ -79,6 +79,7 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
         // left to the reconciler, which raises it against the pending record.
         // A refund moves financial_status off "paid", so no refund total is needed here.
         const facts: EntitlementOrder = {
+            legacyId: order.id ? String(order.id) : null,
             financialStatus: order.financial_status ?? null,
             cancelledAt: order.cancelled_at ? new Date(order.cancelled_at) : null,
             totalRefundedCents: 0,
@@ -130,6 +131,7 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
         // customer segment. Neither enables over-activation on its own now that the
         // membership item is checked, but both remain honor-system until a real
         // token / Shopify-side segment exists.
+        let membershipOutcome: string | null = null;
         if (membershipProcessIdStr) {
             const processId = parseInt(membershipProcessIdStr, 10);
             // Receipt outcome for the delivery log (settings → Shopify Webhook);
@@ -160,8 +162,12 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
                     logger.info(`[SHOPIFY WEBHOOK] Payment webhook for process ${processId} — no state change (already processed)`);
                 }
             }
-            await recordShopifyWebhookReceipt(req, order, { hmacValid: true, outcome });
-            return NextResponse.json({ success: true });
+            membershipOutcome = outcome;
+            // A mixed cart also carries program seats; fall through to settle them too.
+            if (!(accountIdStr && programIdStr)) {
+                await recordShopifyWebhookReceipt(req, order, { hmacValid: true, outcome });
+                return NextResponse.json({ success: true });
+            }
         }
 
         // Receipt outcome for the delivery log — the default also covers Shopify's
@@ -184,9 +190,14 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
                 // the order check proves the order pays for these seats, this proves the
                 // family was allowed the price it paid. Never re-asked later.
                 const codes = (order.discount_codes ?? []).map((d) => String(d.code ?? ""));
+                // Seats this order paid for beyond the pending enrollments go to the board,
+                // whatever happens to the rest of the order.
+                if (entitlement.ok && entitlement.surplus) {
+                    await raisePaymentException(entitlement.surplus.kind, { shopifyOrderId: orderId, programId, personId: entitlement.surplus.personId ?? participantIds[0] ?? null });
+                }
                 if (!entitlement.ok) {
                     logger.warn(`[SHOPIFY WEBHOOK] order ${orderId ?? "?"} does not entitle program ${programId} (${entitlement.kind}) — NOT activated`);
-                    if (entitlement.kind) await raisePaymentException(entitlement.kind, { shopifyOrderId: orderId, programId, personId: participantIds[0] ?? null });
+                    if (entitlement.kind) await raisePaymentException(entitlement.kind, { shopifyOrderId: orderId, programId, personId: entitlement.personId ?? participantIds[0] ?? null });
                     outcome = entitlement.kind
                         ? `program ${programId}: ${entitlement.kind} — flagged, not activated`
                         : `program ${programId}: ${"nothingAwaiting" in entitlement ? "nothing awaiting payment" : "not paid"} — not activated`;
@@ -202,14 +213,17 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
                         programId,
                         personIds: participantIds,
                         shopifyOrderId: orderId ?? "",
+                        lines: facts.lines,
                     });
 
-                    outcome = `program ${programId}: activated ${activatedCount} of ${participantIds.length} participant(s)`;
+                    outcome = `program ${programId}: activated ${activatedCount} of ${participantIds.length} participant(s)${entitlement.surplus ? `; ${entitlement.surplus.kind} flagged` : ""}`;
                 }
             }
         } else {
              logger.info(`[SHOPIFY WEBHOOK] Payload received but missing CheckMeIn_Account_ID or Program_ID attributes. Ignoring.`);
         }
+
+        if (membershipOutcome) outcome = `${membershipOutcome}; ${outcome}`;
 
         // Always return 200 OK to Shopify to acknowledge receipt, even if missing attributes.
         await recordShopifyWebhookReceipt(req, order, { hmacValid: true, outcome });

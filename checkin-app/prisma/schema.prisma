@@ -212,6 +212,7 @@ model Person {
   bgAttestationsAsSubject BackgroundCheckAttestation[] @relation("BgAttestationSubject")
   personBgProcesses   OrgMembershipProcess[]       @relation("PersonBgSubject")
   intakeNoteAcks      OrgMembershipProcess[]       @relation("IntakeNoteReads")
+  zohoSigningRequests OrgMembershipProcess[]       @relation("ZohoSigner")
   corporationLeads    CorporationLead[]
   corporationMembers  CorporationMember[]
   programVolunteers   ProgramVolunteer[]
@@ -522,6 +523,11 @@ model OrgMembershipProcess {
   zohoEnvelopeId        String?
   /// @sensitivity:internal
   zohoActionId          String?
+  /// The lead the open Zoho request is addressed to (name + email on the request and
+  /// the PDF's printed name). Kept after signing as the record of who signed.
+  /// @sensitivity:internal
+  zohoSignerPersonId    Int?
+  zohoSigner            Person?                 @relation("ZohoSigner", fields: [zohoSignerPersonId], references: [id])
   /// @sensitivity:internal
   contractSignedAt      DateTime?
   /// @sensitivity:internal
@@ -1007,6 +1013,13 @@ model Program {
   shopifyNonOrgMemberVariantId String?  @ignore
   /// @sensitivity:public
   shopifyVariantId          String?
+  /// @sensitivity:public
+  /// Hidden (UNLISTED, inventory-untracked) "reserved seat" product every app
+  /// checkout links to, so a family holding a claim can pay when the public
+  /// variant shows 0. The app's seat count is its only gate. docs/rules/programs.md.
+  claimantShopifyProductId  String?
+  /// @sensitivity:public
+  claimantShopifyVariantId  String?
 
   volunteers   ProgramVolunteer[]
   participants ProgramParticipant[]
@@ -1652,6 +1665,12 @@ enum PaymentExceptionKind {
   // Something reached a DENIED household after the deny (a payment, an approval,
   // an application start). Nothing changed; the board decides.
   DENIED_HOUSEHOLD_ACTIVITY
+  // A paid program order buys a seat for a person already enrolled — paid on
+  // another order, comped, or approved. Raised for review, never blocked.
+  DUPLICATE_PAYMENT
+  // A paid program order buys seats no pending enrollment uses (withdrawn,
+  // expired, or extra quantity). Inventory is left for the board to settle.
+  UNCLAIMED_SEATS
 }
 
 enum PaymentExceptionSeverity {
@@ -1695,9 +1714,13 @@ model PaymentException {
   /// @sensitivity:internal
   detectedAt           DateTime                 @default(now())
 
-  // Idempotent re-detection: one open row per (kind, order) across daily runs —
-  // the reconciler upserts on this key instead of duplicating each run.
-  @@unique([kind, shopifyOrderId])
+  // Idempotent re-detection: one row per (kind, order, person), so every person on
+  // a multi-person order gets their own row. Two partial unique indexes in raw SQL
+  // (20261012190000_payment_exception_per_person), since Prisma's DSL can't express
+  // them: "PaymentException_kind_order_no_person_key" on (kind, shopifyOrderId)
+  // WHERE personId IS NULL, and "PaymentException_kind_order_person_key" on
+  // (kind, shopifyOrderId, personId) WHERE personId IS NOT NULL. Not NULLS NOT
+  // DISTINCT: rows with no order must stay distinct per process/enrollment.
   @@index([status, severity])
 }
 

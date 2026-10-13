@@ -1,10 +1,12 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
+import { systemActor } from "@/lib/auditActor";
 import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { activateByProcessId } from "@/lib/membership/payment";
 import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
 import { fromWhere } from "@/lib/programs/enrollmentState";
+import { programVariantIds } from "@/lib/programs/variants";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
 
@@ -17,13 +19,14 @@ import type { MirrorOrder } from "@/lib/shopifyRead/client";
  *              family past the paid checkpoint. Application AND renewal.
  *   reversal — an order we already activated on that is later refunded, charged
  *              back, or cancelled: raise a PaymentException for the board. We never
- *              auto-revert access (a chargeback can be a bank error).
+ *              auto-revert access (a chargeback can be a bank error) — except a
+ *              program refund that restocked the seat, see raiseReversalByOrderId.
  *
  * Runs once daily from api/cron/reconcile-shopify (09:15 UTC, just behind s-read's
  * 09:00 sync — the cadence is a scale-to-zero constraint, see that route).
  * Idempotent: forward recovery is a no-op once activate() has recorded the order
  * (activate stores shopifyOrderId and short-circuits on paidAt), and every
- * exception upserts on (kind, order).
+ * exception upserts on (kind, order, person).
  *
  * Matching uses the SAME cart attribute the webhook credits — Membership_Process_ID
  * (or CheckMeIn_Account_ID + Program_ID), mirrored since #1029 — so attribution is
@@ -64,7 +67,9 @@ export type PaymentExceptionKind =
     | "ACTIVE_WITHOUT_PAYMENT"
     | "DISCOUNT_UNAUTHORIZED"
     | "PAYMENT_UNVERIFIABLE"
-    | "DENIED_HOUSEHOLD_ACTIVITY";
+    | "DENIED_HOUSEHOLD_ACTIVITY"
+    | "DUPLICATE_PAYMENT"
+    | "UNCLAIMED_SEATS";
 
 type Severity = "WARN" | "CRITICAL";
 
@@ -84,7 +89,7 @@ interface ExceptionRef {
 
 /**
  * Upsert a PaymentException, idempotent across daily runs. One open row per
- * (kind, order); a resolved row that re-detects reopens (the problem came back). A
+ * (kind, order, person); a resolved row that re-detects reopens (the problem came back). A
  * newly-opened or reopened row escalates to the board (CRITICAL emails immediately;
  * WARN is surfaced on the dashboard + red-dot only — see notifyBoardPaymentException).
  */
@@ -92,10 +97,10 @@ export async function raisePaymentException(kind: PaymentExceptionKind, ref: Exc
     const severity: Severity = ref.severity ?? (CRITICAL_KINDS.has(kind) ? "CRITICAL" : "WARN");
     const orderId = ref.shopifyOrderId ?? null;
 
-    // Find an existing row for this (kind, order). When orderId is null the unique
-    // index treats rows as distinct, so fall back to the linked entity.
+    // Find an existing row for this (kind, order, person). When orderId is null the
+    // unique index treats rows as distinct, so fall back to the linked entity.
     const existing = orderId
-        ? await prisma.paymentException.findFirst({ where: { kind, shopifyOrderId: orderId } })
+        ? await prisma.paymentException.findFirst({ where: { kind, shopifyOrderId: orderId, personId: ref.personId ?? null } })
         : await prisma.paymentException.findFirst({
               where: { kind, shopifyOrderId: null, processId: ref.processId ?? null, programId: ref.programId ?? null, personId: ref.personId ?? null },
           });
@@ -191,33 +196,61 @@ export function usesVolunteerCodeUnentitled(order: MirrorOrder, volunteerCode: s
 
 /** The order facts a program entitlement is judged on — built from the webhook
  *  payload or the mirror, so both paths judge the same thing. */
-export interface EntitlementOrder extends Pick<MirrorOrder, "financialStatus" | "cancelledAt" | "totalRefundedCents"> {
+export interface EntitlementOrder extends Pick<MirrorOrder, "financialStatus" | "cancelledAt" | "totalRefundedCents" | "legacyId"> {
     lines: { variantId: string; quantity: number }[];
 }
 
+/** A paid seat no pending enrollment consumes, raised for the board alongside (or instead of) activation. */
+export interface Surplus {
+    kind: "DUPLICATE_PAYMENT" | "UNCLAIMED_SEATS";
+    personId?: number;
+}
+
 /** ok, or the exception to raise; `kind: null` = nothing to do yet, raise nothing. */
-export type Entitlement = { ok: true } | { ok: false; kind: PaymentExceptionKind | null; nothingAwaiting?: true };
+export type Entitlement =
+    | { ok: true; surplus?: Surplus }
+    | { ok: false; kind: PaymentExceptionKind | null; personId?: number; nothingAwaiting?: true };
 
 /**
  * Does this order pay for activating these people in this program? Paid and not
- * reversed, carries the program's own variant, and buys at least one seat per
- * person still awaiting payment. Nobody awaiting payment is a no-op (a redelivery,
- * or ids no longer pending), judged before the order so it raises nothing. A seat
- * shortfall activates nobody: the order cannot say which of the household it was
- * meant for, so the board decides.
+ * reversed, carries one of the program's variants (public or claimant), and
+ * buys at least one seat per person still awaiting payment. A seat shortfall
+ * activates nobody: the order cannot say which of the household it was meant
+ * for, so the board decides.
+ *
+ * Seats beyond those awaiting payment, and not already activated by this same
+ * order (a redelivery), are a surplus for the board: DUPLICATE_PAYMENT when a
+ * person named is already enrolled (paid, comped or approved), else
+ * UNCLAIMED_SEATS (withdrawn, expired, or extra quantity). Matched per person, so
+ * siblings paying on separate orders never trip it. Inventory is never adjusted.
  */
 export async function orderEntitlesEnrollment(order: EntitlementOrder, programId: number, personIds: number[]): Promise<Entitlement> {
     const awaiting = await prisma.programParticipant.count({ where: { programId, personId: { in: personIds }, ...fromWhere("PENDING_UNPAID") } });
-    if (awaiting === 0) return { ok: false, kind: null, nothingAwaiting: true };
+    if (awaiting === 0 && !isPaid(order)) return { ok: false, kind: null, nothingAwaiting: true };
     if (isReversed(order)) return { ok: false, kind: "REVERSED_BEFORE_ACTIVATION" };
     if (!isPaid(order)) return { ok: false, kind: null };
 
-    const program = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyVariantId: true } });
-    const variantId = program?.shopifyVariantId;
-    const seats = variantId ? order.lines.filter((l) => l.variantId === variantId).reduce((n, l) => n + l.quantity, 0) : 0;
+    const program = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyVariantId: true, claimantShopifyVariantId: true } });
+    const variantIds = new Set(program ? programVariantIds(program) : []);
+    const seats = order.lines.filter((l) => variantIds.has(l.variantId)).reduce((n, l) => n + l.quantity, 0);
+    if (awaiting === 0) {
+        const surplus = await surplusSeats(order, programId, personIds, seats);
+        return { ok: false, kind: surplus?.kind ?? null, personId: surplus?.personId, nothingAwaiting: true };
+    }
     if (seats === 0) return { ok: false, kind: "NO_ITEM" };
     if (seats < awaiting) return { ok: false, kind: "AMOUNT_MISMATCH" };
-    return { ok: true };
+    return { ok: true, surplus: await surplusSeats(order, programId, personIds, seats - awaiting) };
+}
+
+async function surplusSeats(order: EntitlementOrder, programId: number, personIds: number[], unspent: number): Promise<Surplus | undefined> {
+    if (unspent <= 0) return undefined;
+    const active = await prisma.programParticipant.findMany({
+        where: { programId, personId: { in: personIds }, status: "ACTIVE" },
+        select: { personId: true, shopifyOrderId: true },
+    });
+    const otherwisePaid = active.filter((r) => !order.legacyId || r.shopifyOrderId !== order.legacyId);
+    if (unspent - (active.length - otherwisePaid.length) <= 0) return undefined;
+    return otherwisePaid.length > 0 ? { kind: "DUPLICATE_PAYMENT", personId: otherwisePaid[0].personId } : { kind: "UNCLAIMED_SEATS" };
 }
 
 // ── forward pass (recover missed payments) ───────────────────────────────────
@@ -390,18 +423,13 @@ async function reconcileForwardProgram(order: MirrorOrder): Promise<boolean> {
             if (isPaid(order)) await raisePaymentException("UNMATCHED_ORDER", { shopifyOrderId: order.legacyId });
             return true;
         }
-        // Only those actually awaiting payment; a redelivery/re-run finds none and no-ops.
-        const pending = await prisma.programParticipant.findMany({
-            where: { programId, personId: { in: ids }, status: "PENDING" },
-            select: { personId: true },
-        });
-        if (pending.length === 0) return true; // it IS this program's order, nothing to recover.
-        return activateProgramFromOrder(order, programId, pending.map((p) => p.personId));
+        return activateProgramFromOrder(order, programId, ids);
     }
 
     // Fallback for orders without attributes: the purchaser (household lead) and
     // everyone in their household. Claims the order only when it carries a pending
-    // program's own variant — anything else (merch, a donation) passes untouched.
+    // program's variant (public or claimant) — anything else (merch, a donation)
+    // passes untouched.
     if (!isPaid(order)) return false;
     const email = order.customerEmail?.toLowerCase().trim();
     if (!email) return false;
@@ -411,12 +439,12 @@ async function reconcileForwardProgram(order: MirrorOrder): Promise<boolean> {
 
     const pending = await prisma.programParticipant.findMany({
         where: { person: { householdId: { in: householdIds } }, status: "PENDING" },
-        select: { programId: true, personId: true, program: { select: { shopifyVariantId: true } } },
+        select: { programId: true, personId: true, program: { select: { shopifyVariantId: true, claimantShopifyVariantId: true } } },
     });
     if (pending.length === 0) return false;
 
     const orderVariants = new Set((await mirror.orderLines(order.orderGid)).map((l) => l.variantId));
-    const matched = pending.filter((p) => p.program.shopifyVariantId && orderVariants.has(p.program.shopifyVariantId));
+    const matched = pending.filter((p) => programVariantIds(p.program).some((v) => orderVariants.has(v)));
     const programs = [...new Set(matched.map((p) => p.programId))];
     if (programs.length === 0) return false;
     if (programs.length > 1) {
@@ -429,13 +457,17 @@ async function reconcileForwardProgram(order: MirrorOrder): Promise<boolean> {
 
 /** Shared tail for both program-matching paths: judge, then activate through the one choke point. */
 async function activateProgramFromOrder(order: MirrorOrder, programId: number, personIds: number[]): Promise<boolean> {
-    const entitlement = await orderEntitlesEnrollment({ ...order, lines: await mirror.orderLines(order.orderGid) }, programId, personIds);
+    const lines = await mirror.orderLines(order.orderGid);
+    const entitlement = await orderEntitlesEnrollment({ ...order, lines }, programId, personIds);
     if (!entitlement.ok) {
         if (entitlement.kind) {
             logger.warn(`[reconcile] program order ${order.legacyId} not entitled (${entitlement.kind}, program ${programId}) — NOT activated`);
-            await raisePaymentException(entitlement.kind, { shopifyOrderId: order.legacyId, programId, personId: personIds[0] ?? null });
+            await raisePaymentException(entitlement.kind, { shopifyOrderId: order.legacyId, programId, personId: entitlement.personId ?? personIds[0] ?? null });
         }
         return true;
+    }
+    if (entitlement.surplus) {
+        await raisePaymentException(entitlement.surplus.kind, { shopifyOrderId: order.legacyId, programId, personId: entitlement.surplus.personId ?? personIds[0] ?? null });
     }
 
     // Coupon entitlement, parity with the membership forward branch above: the order
@@ -450,7 +482,7 @@ async function activateProgramFromOrder(order: MirrorOrder, programId: number, p
     }
 
     const { activateProgramEnrollment } = await import("@/lib/programs/activateEnrollment");
-    const res = await activateProgramEnrollment({ programId, personIds, shopifyOrderId: order.legacyId ?? "" });
+    const res = await activateProgramEnrollment({ programId, personIds, shopifyOrderId: order.legacyId ?? "", lines });
     logger.info(`[reconcile] recovered program payment: program ${programId} ← order ${order.legacyId} (${res.activatedCount} activated)`);
     return true;
 }
@@ -464,25 +496,83 @@ function classifyReversal(o: MirrorOrder, disputed: boolean): PaymentExceptionKi
     return null;
 }
 
+/** A refunded order line Shopify put back in stock (refund_line_items with a restock_type other than no_restock). */
+export interface RestockedLine {
+    variantId: string;
+    /** Seats this refund restocked. */
+    quantity: number;
+    /** Seats the order line bought. */
+    lineQuantity: number;
+}
+
 /**
  * Fast-path entry for the reversal webhooks (refunds/create, orders/cancelled,
  * disputes/*): map a Shopify order id to the membership process and/or program
  * enrollment it activated and raise the given problem. Returns true if anything
  * matched. Shares the same idempotent raise as the daily reconciler.
+ *
+ * A REFUND that restocked every seat the order bought for a program has already put
+ * them back on sale in Shopify, so the enrollments on that order are removed here
+ * (still flagged for the money side). The app sends no +1 of its own: that would
+ * count the seat twice. Only the refunds/create payload says whether a refund
+ * restocked; the daily pass can't see it and only flags.
  */
-export async function raiseReversalByOrderId(orderLegacyId: string, kind: PaymentExceptionKind): Promise<boolean> {
+export async function raiseReversalByOrderId(orderLegacyId: string, kind: PaymentExceptionKind, restocked: RestockedLine[] = []): Promise<boolean> {
     let matched = false;
     const proc = await prisma.orgMembershipProcess.findFirst({ where: { shopifyOrderId: orderLegacyId }, select: { id: true } });
     if (proc) {
         await raisePaymentException(kind, { shopifyOrderId: orderLegacyId, processId: proc.id });
         matched = true;
     }
-    const enrolls = await prisma.programParticipant.findMany({ where: { shopifyOrderId: orderLegacyId }, select: { programId: true, personId: true } });
+    const enrolls = await prisma.programParticipant.findMany({
+        where: { shopifyOrderId: orderLegacyId },
+        select: { programId: true, personId: true, program: { select: { shopifyVariantId: true } } },
+    });
     for (const e of enrolls) {
         await raisePaymentException(kind, { shopifyOrderId: orderLegacyId, programId: e.programId, personId: e.personId });
         matched = true;
     }
+    if (kind === "REFUND") {
+        for (const programId of new Set(enrolls.map((e) => e.programId))) {
+            const onProgram = enrolls.filter((e) => e.programId === programId);
+            const variantId = onProgram[0].program.shopifyVariantId;
+            const lines = restocked.filter((l) => variantId && l.variantId === variantId);
+            // ponytail: only a refund that restocks the whole line removes anyone. A partial
+            // restock can't say which child's seat went back, and the payload doesn't carry
+            // earlier refunds, so successive partial restocks stay with the board's flags.
+            if (lines.length === 0 || lines.some((l) => l.quantity < l.lineQuantity)) continue;
+            for (const e of onProgram) await removeRefundedEnrollment(e.programId, e.personId, orderLegacyId);
+        }
+    }
     return matched;
+}
+
+/**
+ * Remove an enrollment whose seat a restocking refund already put back on sale.
+ * No hold release and no Shopify call: Shopify restocked the unit itself. Scoped to
+ * the refunded order, so a row since re-paid on another order is left alone.
+ */
+async function removeRefundedEnrollment(programId: number, personId: number, orderLegacyId: string): Promise<void> {
+    const where = { programId, personId, shopifyOrderId: orderLegacyId };
+    const removed = await prisma.$transaction(async (tx) => {
+        const row = await tx.programParticipant.findFirst({ where });
+        if (!row) return false;
+        const { count } = await tx.programParticipant.deleteMany({ where });
+        if (count === 0) return false;
+        await tx.auditLog.create({
+            data: {
+                ...systemActor("webhook:shopify-refund"),
+                action: "DELETE",
+                tableName: "ProgramParticipant",
+                affectedEntityId: personId,
+                secondaryAffectedEntity: programId,
+                oldData: { ...row, reason: `refund restocked the seat on order ${orderLegacyId}` },
+            },
+        });
+        return true;
+    });
+    if (!removed) return;
+    logger.info(`[reconcile] removed enrollment program ${programId} / person ${personId}: refund on order ${orderLegacyId} restocked the seat`);
 }
 
 async function reconcileReversals(): Promise<number> {
@@ -595,8 +685,9 @@ export async function runReconcile(): Promise<ReconcileResult> {
     let failed = 0;
     for (const order of orders) {
         try {
-            const claimed = await reconcileForwardMembership(order);
-            if (!claimed) await reconcileForwardProgram(order);
+            // Both passes run: a mixed cart pays for a membership AND program seats.
+            await reconcileForwardMembership(order);
+            await reconcileForwardProgram(order);
         } catch (e) {
             logger.error(`[reconcile] forward pass failed for order ${order.legacyId ?? order.orderGid}:`, e);
             failed++;

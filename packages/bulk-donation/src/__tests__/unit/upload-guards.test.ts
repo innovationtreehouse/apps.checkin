@@ -109,10 +109,10 @@ describe("processUpload unique collisions", () => {
     expect(transaction).not.toHaveBeenCalled();
   });
 
-  it("answers a concurrent upload's P2002 with a 400", async () => {
+  it("answers a concurrent upload's P2002 with a 409", async () => {
     transaction.mockRejectedValue(Object.assign(new Error("Unique constraint failed"), { code: "P2002" }));
     const p = uploadedFileService.processUpload("org-1", 1, "u", "f.csv", Buffer.from("x"), [row("T1")], null);
-    await expect(p).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/already being uploaded/) });
+    await expect(p).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/already being uploaded/) });
   });
 
   it("passes any other database error through", async () => {

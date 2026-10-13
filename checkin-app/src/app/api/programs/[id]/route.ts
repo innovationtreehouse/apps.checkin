@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { isActiveOrgMember, isDuesSettled, isDuesSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { maybeAnnounceOnOpen } from "@/lib/programAnnounce";
-import { adjustProgramInventory } from "@/lib/shopify";
+import { adjustProgramInventory, syncProgramPrice } from "@/lib/shopify";
 import { dollarsToCentsOrNull } from "@inventory/money";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
@@ -78,6 +78,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
             nonOrgMemberPriceCents: true,
             shopifyProductId: true,
             shopifyVariantId: true,
+            claimantShopifyVariantId: true,
             volunteers: {
                 where: { person: LIVE_PERSON },
                 select: {
@@ -430,6 +431,19 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
                 // flip on the variant, which this PR intentionally doesn't attempt.
                 logger.warn(`[SHOPIFY] Program ${updatedProgram.id} maxParticipants transitioned ${oldMax} -> ${newMax} (capped/uncapped); inventory not adjusted automatically.`);
                 warning = "Capacity changed between capped and uncapped. Shopify inventory was not updated automatically — run Sync to Shopify or edit inventory directly in Shopify.";
+            }
+        }
+
+        // Both Shopify variants carry the base price (members pay via a discount code),
+        // so only a base-price change is pushed. Only admin/board can change prices.
+        const basePriceCents = (p: { nonOrgMemberPriceCents: number | null; orgMemberPriceCents: number | null }) =>
+            p.nonOrgMemberPriceCents ?? p.orgMemberPriceCents ?? null;
+        const newBase = basePriceCents(updatedProgram);
+        if (newBase !== basePriceCents(currentProgram)) {
+            const ok = await syncProgramPrice(updatedProgram, newBase);
+            if (!ok) {
+                const priceWarning = "Program saved, but the Shopify price is out of date — admins have been emailed. Set the price by hand in Shopify on both the public and reserved-seat products.";
+                warning = warning ? `${warning} ${priceWarning}` : priceWarning;
             }
         }
 

@@ -40,6 +40,9 @@ interface RowPreview {
     warnings: string[];
 }
 
+// The CSV import module is optional and off by default.
+process.env.CSV_IMPORT_ENABLED = 'true';
+
 describe('Bulk import: preview vs commit consistency', () => {
     let testAdminId: number;
 

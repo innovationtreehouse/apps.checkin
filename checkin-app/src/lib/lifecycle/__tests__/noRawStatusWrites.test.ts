@@ -33,21 +33,12 @@ const EXEMPT = new Set([
 ]);
 
 const ALLOWLIST: Entry[] = [
-    // CSV import's household upsert: carved out and moved onto the helper by chip 10.
-    { file: 'app/api/membership-ops/participants/import/route.ts', table: 'OrgMembership', count: 1, chip: 'chip 10' },
     // activate(): household to ACTIVE, and the paid-while-blocked write: chip 3.
     { file: 'lib/membership/payment.ts', table: 'OrgMembership', count: 1, chip: 'chip 3' },
     { file: 'lib/membership/payment.ts', table: 'OrgMembershipProcess', count: 1, chip: 'chip 3' },
-    // clearBackgroundCheck household to ACTIVE; reject, clear and override writes: chip 4.
-    { file: 'lib/membership/review.ts', table: 'OrgMembership', count: 1, chip: 'chip 4' },
-    { file: 'lib/membership/review.ts', table: 'OrgMembershipProcess', count: 4, chip: 'chip 4' },
     // Intake's NONE upsert and the INTAKE to PENDING_EXTERNAL_ACTION submit: chip 5.
     { file: 'lib/membership/intake.ts', table: 'OrgMembership', count: 1, chip: 'chip 5' },
     { file: 'lib/membership/intake.ts', table: 'OrgMembershipProcess', count: 1, chip: 'chip 5' },
-    // Archive to ARCHIVED without a from-state CAS: chip 6.
-    { file: 'lib/membership/archive.ts', table: 'OrgMembershipProcess', count: 1, chip: 'chip 6' },
-    // PERSON_AGREEMENT sign to ACTIVE without a from-state CAS: chip 7.
-    { file: 'lib/membership/external.ts', table: 'OrgMembershipProcess', count: 1, chip: 'chip 7' },
 ];
 
 const CALL = /\b(orgMembership|orgMembershipProcess)\.(update|updateMany|upsert|create|createMany)\s*\(/g;

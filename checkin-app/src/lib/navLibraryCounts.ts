@@ -18,7 +18,15 @@ export type LibraryCountProvider = {
 };
 
 /** Registered providers. Library wiring PRs append theirs here. */
-export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [];
+export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
+  {
+    library: "expense",
+    visible: (u) => !!u.isFinance || !!u.isBoardMember || (u.programsLed?.length ?? 0) > 0,
+    // An unconfigured library contributes no counts; lazy so the expense library loads only when used.
+    count: async (u) =>
+      process.env.EXPENSE_DATABASE_URL ? (await import("@/lib/expense/navCounts")).expenseLibraryCounts(u) : {},
+  },
+];
 
 /**
  * Runs every provider the viewer may see, in parallel. A provider that throws

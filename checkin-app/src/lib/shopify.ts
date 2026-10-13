@@ -9,6 +9,7 @@ import { logIntegrationError } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { programMemberCodePrefix } from "@/lib/programs/memberDiscountCode";
+import { programVariantIds } from "@/lib/programs/variants";
 
 let cachedToken: string | null = null;
 let tokenExpiresAt: number = 0;
@@ -241,13 +242,12 @@ export async function reportShopifyFailure(
 }
 
 /**
- * Picks the inventory location from a `/locations.json` body. Prefers an active
- * location: `locations[0]` may be a deactivated or fulfillment-service location
- * that inventory writes 422 against.
+ * Picks the inventory location from a `/locations.json` body: the first location
+ * explicitly marked `active: true`, else null. Fails closed — an inactive or
+ * unknown-state location 422s inventory writes, which hides the real cause.
  */
-function pickActiveLocationId(locData: { locations?: Array<{ id?: number; active?: boolean }> }): number | undefined {
-    const locations = locData.locations ?? [];
-    return (locations.find((l) => l.active !== false) ?? locations[0])?.id;
+function pickActiveLocationId(locData: { locations?: Array<{ id?: number; active?: boolean }> }): number | null {
+    return locData.locations?.find((l) => l.active === true)?.id ?? null;
 }
 
 /**
@@ -295,7 +295,7 @@ async function setInitialShopifyInventory(
 
         const locationId = pickActiveLocationId(await locRes.json());
         if (!locationId) {
-            await logIntegrationError("shopify", new Error("no Shopify location available to set inventory"), { operation: "setInitialShopifyInventory", label, quantity });
+            await logIntegrationError("shopify", new Error("no active Shopify location; cannot set inventory"), { operation: "setInitialShopifyInventory", label, quantity });
             return false;
         }
 
@@ -454,6 +454,107 @@ export async function createShopifySingleVariantProgram(
 }
 
 /**
+ * Mints a program's hidden "reserved seat" product: same title (plus
+ * " (reserved seat)"), price and single default variant as the public product,
+ * but inventory UNTRACKED and status UNLISTED — off store search, collections and
+ * recommendations, payable by direct cart link. Every app checkout links here, so
+ * a family that already holds a claim can pay when the public variant shows 0;
+ * the app's seat count is the only gate. docs/rules/programs.md.
+ *
+ * REST creates it (published to the Online Store, as the public product is) as a
+ * DRAFT; GraphQL `productUpdate` then sets UNLISTED, a status the REST Product
+ * resource does not have. If that second call fails the draft is reported as an
+ * orphan and nothing is returned, so an untracked product is never left listed.
+ */
+export async function createClaimantProduct(
+    name: string,
+    basePriceCents: number | null,
+): Promise<{ claimantShopifyProductId: string; claimantShopifyVariantId: string } | null> {
+    if (!basePriceCents || basePriceCents <= 0) return null;
+
+    // See createShopifySingleVariantProgram for why this branch exists (CHECKIN_ENV=local mock).
+    if (config.shopifyMockActive()) {
+        const slug = name.replace(/\W+/g, "-").toLowerCase().slice(0, 24);
+        return {
+            claimantShopifyProductId: `dev-mock-claimant-product-${slug}`,
+            claimantShopifyVariantId: `dev-mock-claimant-variant-${slug}`,
+        };
+    }
+
+    const storeDomain = config.shopifyStoreDomain();
+    const accessToken = await getAccessToken();
+    if (!storeDomain || !accessToken) {
+        console.warn("Shopify integration is disabled: Missing credentials or unable to obtain access token");
+        return null;
+    }
+    const headers = { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken };
+
+    let productId: string | null = null;
+    try {
+        const productRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                product: {
+                    title: `${name} Program Enrollment (reserved seat)`,
+                    status: 'draft',
+                    published: true,
+                    product_type: "Educational Services",
+                    variants: [{
+                        price: (basePriceCents / 100).toFixed(2),
+                        requires_shipping: false,
+                        inventory_management: null,
+                        inventory_policy: 'continue',
+                    }],
+                },
+            }),
+        }, "Shopify create claimant product");
+        if (!productRes.ok) {
+            throw new Error(`Shopify API responded with status: ${productRes.status} ${await productRes.text()}`);
+        }
+        const product = (await productRes.json()).product;
+        productId = product?.id?.toString() ?? null;
+        const variantId = product?.variants?.[0]?.id?.toString();
+        if (!productId || !variantId) throw new Error("Shopify claimant product response is missing the product or variant id");
+
+        const mutation = `
+            mutation UnlistClaimantProduct($product: ProductUpdateInput!) {
+                productUpdate(product: $product) {
+                    product { id status }
+                    userErrors { field message }
+                }
+            }`;
+        const res = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                query: mutation,
+                variables: { product: { id: `gid://shopify/Product/${productId}`, status: 'UNLISTED' } },
+            }),
+        }, "Shopify unlist claimant product");
+        if (!res.ok) throw new Error(`Shopify productUpdate failed: ${res.status} ${await res.text()}`);
+        const data = await res.json();
+        if (data.errors) throw new Error(`Shopify productUpdate GraphQL errors: ${JSON.stringify(data.errors)}`);
+        const result = data.data?.productUpdate;
+        if (result?.userErrors?.length) throw new Error(`Shopify productUpdate userErrors: ${JSON.stringify(result.userErrors)}`);
+        if (result?.product?.status !== 'UNLISTED') {
+            throw new Error(`Shopify productUpdate left status ${result?.product?.status ?? "missing"}, expected UNLISTED`);
+        }
+
+        return { claimantShopifyProductId: productId, claimantShopifyVariantId: variantId };
+    } catch (error) {
+        console.error("[Shopify Error] Failed to create claimant product:", error);
+        await reportShopifyFailure(
+            "createClaimantProduct",
+            error,
+            { program: name, orphanedProductId: productId },
+            `An error occurred in the Shopify integration while creating the reserved-seat product for program: <strong>${escapeHtml(name)}</strong>.`,
+        );
+        return null;
+    }
+}
+
+/**
  * Shopify is the source of truth for program capacity (product decision 2026-07-06):
  * cap edits and the scholarship lifecycle (apply/refuse) propagate as relative
  * inventory adjustments. Called from PATCH /api/programs/[id] (maxParticipants
@@ -509,7 +610,7 @@ export async function adjustProgramInventory(
         }, "Shopify get locations");
         if (!locRes.ok) throw new Error(`Shopify locations lookup failed: ${locRes.status}`);
         const locationId = pickActiveLocationId(await locRes.json());
-        if (!locationId) throw new Error("Shopify store has no locations configured");
+        if (!locationId) throw new Error("no active Shopify location");
 
         const variantRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/variants/${variantId}.json`, {
             headers: { 'X-Shopify-Access-Token': accessToken },
@@ -548,6 +649,79 @@ export async function adjustProgramInventory(
             `Failed to adjust Shopify inventory (delta ${delta}) after a program capacity change.`,
         );
 
+        return false;
+    }
+}
+
+/**
+ * Sets the program's base price on every Shopify variant it sells — the public
+ * one and the hidden claimant one. Both carry the base (non-member) price; members
+ * get their discount through {@link mintMemberDiscountCode}, so the member price
+ * alone never reaches Shopify. Called from PATCH /api/programs/[id] when the
+ * base price changes.
+ *
+ * A zero or null base is never pushed: a $0 public variant gives seats away in
+ * the store. That case is reported to admins like any other failure.
+ *
+ * Never throws: on failure logs + emails admins via reportShopifyFailure and
+ * returns false, so the caller can warn that Shopify's price is out of date.
+ */
+export async function syncProgramPrice(
+    program: { id: number; name: string; shopifyVariantId?: string | null; claimantShopifyVariantId?: string | null },
+    basePriceCents: number | null,
+): Promise<boolean> {
+    const variantIds = programVariantIds(program);
+    if (variantIds.length === 0) return true;
+
+    const context = { programId: program.id, variantIds, basePriceCents };
+    const emailIntro = `The Shopify price for program <strong>${escapeHtml(program.name)}</strong> is out of date. Set it by hand in Shopify on every variant listed below.`;
+
+    if (!basePriceCents || basePriceCents <= 0) {
+        await reportShopifyFailure(
+            "syncProgramPrice",
+            new Error(`Base price is ${basePriceCents == null ? "unset" : "$0"}; Shopify variants ${variantIds.join(", ")} keep their old price`),
+            context,
+            emailIntro,
+        );
+        return false;
+    }
+    const price = (basePriceCents / 100).toFixed(2);
+
+    // See createShopifySingleVariantProgram for why this branch exists (CHECKIN_ENV=local mock).
+    if (config.shopifyMockActive()) {
+        console.log(`[SHOPIFY] (mock) Would set price ${price} on variants: ${variantIds.join(", ")}`);
+        return true;
+    }
+
+    const storeDomain = config.shopifyStoreDomain();
+    const accessToken = await getAccessToken();
+    if (!storeDomain || !accessToken) {
+        await reportShopifyFailure(
+            "syncProgramPrice",
+            new Error("Shopify credentials missing or access token unavailable"),
+            context,
+            emailIntro,
+        );
+        return false;
+    }
+
+    try {
+        // ponytail: REST product endpoints are legacy; switch to GraphQL productVariantsBulkUpdate with the capacity redesign's GraphQL move (≥2026-04).
+        for (const variantId of variantIds) {
+            const res = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/variants/${variantId}.json`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+                body: JSON.stringify({ variant: { id: Number(variantId), price } }),
+            }, "Shopify update variant price");
+            if (!res.ok) {
+                throw new Error(`Shopify price update failed for variant ${variantId}: ${res.status} ${await res.text()}`);
+            }
+        }
+        console.log(`[SHOPIFY] Set price ${price} on variants ${variantIds.join(", ")}`);
+        return true;
+    } catch (error) {
+        console.error("[Shopify Error] Failed to update program price:", error);
+        await reportShopifyFailure("syncProgramPrice", error, context, emailIntro);
         return false;
     }
 }

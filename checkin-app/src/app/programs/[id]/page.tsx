@@ -12,6 +12,7 @@ import { checkProgramAge } from '@/lib/programAge';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { formatCents } from '@inventory/money';
 import { aggregateEnrollOutcomes, buildShopifyCheckoutUrl, findRepeatPayments, type EnrollOutcome, type RepeatPayment } from './enroll';
+import { checkoutVariantId } from '@/lib/programs/variants';
 import FirstTimeIntakePanel from './FirstTimeIntakePanel';
 import { useIsLocalInstance, useShopifyStoreDomain } from '@/components/EnvProvider';
 
@@ -37,6 +38,7 @@ type ProgramDetail = {
   // Single-pool model: the ONE variant for both tiers — member pricing comes
   // from a checkout-time discount code (see handleEnroll), not a separate variant.
   shopifyVariantId: string | null;
+  claimantShopifyVariantId?: string | null;
   minAge: number | null;
   maxAge: number | null;
   orgMemberOnly: boolean;
@@ -302,9 +304,9 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
           isMember = householdData.household?.orgMembership?.status === "ACTIVE" || false;
         }
         pricingEligible = program.viewerMemberPricingEligible ?? isMember;
-        // Every program sells the SAME variant to everyone — the discount code
-        // (below, at redirect time) does the member pricing, not a variant pick.
-        variantId = program.shopifyVariantId;
+        // Every app checkout follows a claim, so it sells the claimant variant when
+        // the program has one; the discount code (below) does the member pricing.
+        variantId = checkoutVariantId(program);
         storeDomain = shopifyStoreDomain ?? undefined;
         mockPay = isLocalInstance;
         if (!variantId || (!mockPay && !storeDomain)) {
@@ -318,8 +320,13 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
       // Re-read the roster first: a child may have been paid since this page
       // loaded, and the participants POST answers that with a 409 like any re-run.
       if (isPayingOnShopify && !confirmedRepeat) {
-        const freshRes = await fetch(`/api/programs/${id}`);
-        const fresh: ProgramDetail | null = freshRes.ok ? await freshRes.json() : null;
+        // The warning is advisory: a failed re-read checks the page's roster instead.
+        const fresh: ProgramDetail | null = await fetch(`/api/programs/${id}`)
+          .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+          .catch((err: unknown) => {
+            console.warn("[programs] roster re-read failed; checking repeat payments against the loaded roster", err);
+            return null;
+          });
         if (fresh) setProgram(fresh);
         const repeats = findRepeatPayments(
           selectedParticipantIds,
@@ -375,7 +382,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
           // safe fallback (never blocks checkout), per lib/shopify.ts's
           // mintMemberDiscountCode contract.
           let discountCode: string | null = null;
-          if (program.shopifyVariantId && pricingEligible) {
+          if (pricingEligible) {
             try {
               const discRes = await fetch(`/api/programs/${id}/discount-code`, { method: 'POST' });
               if (discRes.ok) discountCode = (await discRes.json()).code ?? null;
