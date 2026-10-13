@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { isRecordNotFoundError, isUniqueConstraintError, type Db } from "../db/index";
 import type { InventoryProvisionalItem, OrgItem } from "../db/schema";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
@@ -36,6 +37,29 @@ export type ApplyResult = {
 function assertProvisionalGtin(gtin13: string): void {
   if (!isProvisionalGtin13(gtin13)) throw new ServiceError(400, `Not a provisional GTIN: ${gtin13}`);
 }
+
+const positiveInt = z.number().int().positive();
+const nonEmpty = z.string().trim().min(1);
+
+const applyInputSchema = z.object({
+  orgId: nonEmpty,
+  source: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("receipt"), receiptId: nonEmpty, retailer: z.string().optional() }),
+    z.object({ kind: z.literal("donation"), donationId: nonEmpty }),
+  ]),
+  lineItems: z.array(
+    z.object({
+      gtin13: z.string(),
+      quantityDelta: positiveInt,
+      isDelayed: z.boolean().optional(),
+      lineItemId: z.number().int().optional(),
+      isProvisional: z.boolean().optional(),
+      provisionalName: z.string().optional(),
+      conversionFactor: positiveInt.optional(),
+      conversionVersion: positiveInt.optional(),
+    }),
+  ),
+});
 
 function sourceKey(source: ApplySource): string {
   return source.kind === "receipt" ? `receipt:${source.receiptId}` : `donation:${source.donationId}`;
@@ -116,7 +140,10 @@ export function createReceiptService({
    * key (or the stock row it races on) and is answered as a replay. Replaying an applied source
    * with a different delta is a 409.
    */
-  async function apply(orgId: string, source: ApplySource, lineItems: ApplyLineItem[]): Promise<ApplyResult> {
+  async function apply(rawOrgId: string, rawSource: ApplySource, rawLineItems: ApplyLineItem[]): Promise<ApplyResult> {
+    const parsed = applyInputSchema.safeParse({ orgId: rawOrgId, source: rawSource, lineItems: rawLineItems });
+    if (!parsed.success) throw new ServiceError(400, `Invalid inventory apply: ${z.prettifyError(parsed.error)}`);
+    const { orgId, source, lineItems } = parsed.data;
     const key = sourceKey(source);
     const receiptId = source.kind === "receipt" ? source.receiptId : null;
     const deltaJson = normalisedDeltaJson(source, lineItems);

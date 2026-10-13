@@ -17,6 +17,8 @@ const optionalTrimmed = z
   .optional()
   .transform((v) => v?.trim() || null);
 
+const httpUrl = optionalTrimmed.pipe(z.url({ protocol: /^https?$/, error: "url must be an http(s) link" }).nullable());
+
 const createSchema = z
   .object({
     gtin13: z.string().min(1, "gtin13 is required"),
@@ -24,7 +26,7 @@ const createSchema = z
     description: optionalTrimmed,
     manufacturer: optionalTrimmed,
     retailer: optionalTrimmed,
-    url: optionalTrimmed,
+    url: httpUrl,
   })
   .refine((b) => Boolean(b.partNumber || b.description || b.manufacturer || b.retailer || b.url), {
     message: "At least one of partNumber, description, manufacturer, retailer, or url is required",
@@ -38,7 +40,7 @@ const updateSchema = z
     description: optionalTrimmed,
     manufacturer: optionalTrimmed,
     retailer: optionalTrimmed,
-    url: optionalTrimmed,
+    url: httpUrl,
   })
   .refine((b) => Boolean(b.partNumber || b.description || b.manufacturer || b.retailer || b.url), {
     message: "At least one of partNumber, description, manufacturer, retailer, or url is required",

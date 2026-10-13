@@ -27,7 +27,8 @@ export const list: CatalogRouteHandler = async ({ req }) => {
 export const create: CatalogRouteHandler = async ({ req }) => {
   const { name, letter } = parseBody(bodySchema, await readJson(req));
   const r = repo();
-  if (await r.findActiveCategoryByLetter(letter)) {
+  // Archived categories still own their letter: their items' GTINs carry it.
+  if (await r.findCategoryByLetter(letter)) {
     throw catalogError(409, "A category with that letter already exists");
   }
   const trimmedName = name.trim();
@@ -48,7 +49,7 @@ export const update: CatalogRouteHandler = async ({ req, params }) => {
     if (await r.findItemInCategory(id)) {
       throw catalogError(409, "Cannot change letter: items exist in this category");
     }
-    if (await r.findActiveCategoryByLetterExcluding(letter, id)) {
+    if (await r.findCategoryByLetterExcluding(letter, id)) {
       throw catalogError(409, "A category with that letter already exists");
     }
   }

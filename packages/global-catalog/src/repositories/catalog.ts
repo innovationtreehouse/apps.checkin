@@ -18,8 +18,8 @@ export function createCatalogRepository(db: PrismaClient) {
     findCategoryByLetter: (letter: string) =>
       db.category.findFirst({ where: { letter } }),
 
-    findActiveCategoryByLetter: (letter: string) =>
-      db.category.findFirst({ where: { letter, archivedAt: null } }),
+    findCategoryByLetterExcluding: (letter: string, excludeId: number) =>
+      db.category.findFirst({ where: { letter, id: { not: excludeId } } }),
 
     findActiveCategoryByName: (name: string) =>
       db.category.findFirst({ where: { name, archivedAt: null } }),
