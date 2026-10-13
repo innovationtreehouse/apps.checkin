@@ -230,6 +230,7 @@ enum PersonRoleKind {
   BG_REVIEWER
   OPERATIONS
   INVENTORY_MANAGER
+  FINANCE
 }
 
 /// Source of truth for role grants (expand phase of the boolean-column -> table
@@ -1652,4 +1653,15 @@ model BulkSendItem {
   error      String?
 
   @@index([bulkSendId, status])
+}
+
+/// Organization registry: one row per org (today only the Treehouse row, which
+/// the migration inserts). checkin-app injects org identity into each Inventory
+/// library; no library reads this table directly.
+model Org {
+  /// Stable well-known id, stamped as org_id on catalog rows.
+  /// @sensitivity:public
+  id   String @id
+  /// @sensitivity:public
+  name String
 }

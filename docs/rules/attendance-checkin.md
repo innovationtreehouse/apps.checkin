@@ -131,11 +131,25 @@ Things the app takes as true because they are handled outside it.
   a human's second badge at the door. With a server present that confirm is the
   echoed server-minted token; with no network the kiosk runs the same warning and
   second-badge confirm itself, so a keyholder can still lock up offline. The queued
-  close carries the confirm, and the server honours it on the delayed replay only
-  where it independently reads a last keyholder leaving with others still present.
+  close carries the confirm, and the server honours it on the delayed replay
+  whenever the badge is a keyholder's.
   Offline the supervision close-guard can only warn, never hold a departure — the
   kiosk cannot re-check two-deep without the server, so it leaves the call to the
   keyholder at the reader.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII, §VIII.4*]
+
+- Any keyholder can close the building at the kiosk with a double scan, whoever
+  else is recorded inside — another keyholder included. We trust the keyholder
+  to know they are the last one out; another keyholder still recorded is a
+  forgotten badge-out. When another keyholder is recorded, the first badge checks
+  the keyholder out and offers the close; a second badge within the countdown
+  closes the facility. The last keyholder with others still present gets the
+  warning above instead and stays recorded until they confirm, and a keyholder
+  alone closes on a single badge. Offline the kiosk runs the same offer and
+  confirm itself, and the server honours the queued confirm whoever else it
+  reads as present. The close is bound to the badge that was shown the offer —
+  someone else scanning during the countdown scans normally — and a read of that
+  badge within a second of the offer is the same touch read twice, never the
+  confirm. Nothing on the web can stop a kiosk close.  [Decision — *Policy: Event, Location and Keyholder Policy, Arts. VI–VII*]
 
 ### The kiosk
 
@@ -143,6 +157,12 @@ Things the app takes as true because they are handled outside it.
   phone numbers, emergency contacts or email addresses. Where a person has no
   name recorded, what shows is the part of their address before the @, never the
   address itself.  [Decision — *Policy: Records Policy, Art. IV*]
+
+- The kiosk never shows a last name. It names people as the roster does — the
+  nickname, else the first name, with a last initial (or two letters) only to tell
+  two people apart — and that applies to everything sent to the kiosk, not only
+  what it renders: the roster, held scans, the certification grid and every
+  warning.  [Decision]
 
 ### Kiosk resilience
 
@@ -167,6 +187,22 @@ hours at a time — is a normal operating mode here, not an incident.
   delivered. Within a short freshness window it toggles normally; older than that
   it is held for a human, because once state has moved on a bare toggle cannot
   tell entering from leaving.  [Decision]
+
+- A facility close a keyholder confirmed at the kiosk — the echoed server token,
+  or the kiosk's own offline confirm — is applied whenever it reaches the server,
+  however late; it is never held for staleness or ordering, and a kiosk clock
+  flagged as having stepped is trusted. The keyholder was at the reader and saw
+  the room, so the close is a fact, not a toggle. Everyone in the building at that
+  moment departs at the keyholder's scan time, not the time the close arrived,
+  and never more than 24 hours after arrival. A scan time ahead of the server's
+  clock is not trusted: that close is held for a human. Someone who arrived after
+  the keyholder's scan is left as they are only when a keyholder who also arrived
+  later is still in — the building reopened; otherwise they depart when the close
+  arrives. A departure the nightly sweep stamped before the close arrived is
+  pulled back to the keyholder's time; a departure a person has since corrected
+  is not. A keyholder who arrived after the scan does not count as still inside.
+  The close still needs the keyholder in the building at their scan time — an
+  unconfirmed late keyholder scan is held like any other.  [Decision]
 
 - A non-keyholder scan accepted while the facility is closed is held, not toggled,
   until a keyholder visit exists; the held scans then project automatically in the

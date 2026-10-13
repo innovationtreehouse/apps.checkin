@@ -1,0 +1,74 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  runtime      = "nodejs"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// The S5 drain cursor (id = 1): the id of the last catalog OrgEvent this library applied.
+model WorkflowSystemData {
+  id             Int @id
+  orgEventCursor Int @default(0) @map("org_event_cursor")
+
+  @@map("system_data")
+}
+
+model ReceivedReceipt {
+  id              Int      @id @default(autoincrement())
+  orgId           String   @map("org_id")
+  receiptId       String   @unique @map("receipt_id")
+  state           String   @default("pending_review")
+  receiptJson     String   @map("receipt_json")
+  validationNotes String?  @map("validation_notes")
+  // When each downstream leg accepted the push; once any is set the lines are frozen.
+  inventoryAppliedAt DateTime? @map("inventory_applied_at")
+  expenseAppliedAt   DateTime? @map("expense_applied_at")
+  donationAppliedAt  DateTime? @map("donation_applied_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+
+  lineStatuses ReceivedReceiptLineStatus[]
+
+  @@map("received_receipts")
+}
+
+model ReceivedReceiptLineStatus {
+  id                Int      @id @default(autoincrement())
+  receivedReceiptId Int      @map("received_receipt_id")
+  receiptLineItemId Int      @map("receipt_line_item_id")
+  recognitionStatus String   @default("unrecognized") @map("recognition_status")
+  assignedGtin13         String?  @map("assigned_gtin13")
+  provisionalItemGtin13  String?  @map("provisional_item_gtin13")
+  // Conversion factor (inventory units per receipt-line unit) for this line:
+  // the matched reference's factor for auto-recognized lines, or the human-
+  // entered factor for manual associate / provisional. Carried onto the S3
+  // delta so local-inventory multiplies raw qty by it. Integer, forward-only.
+  conversionFactor  Int      @default(1) @map("conversion_factor")
+  conversionVersion Int      @default(1) @map("conversion_version")
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at")
+
+  receivedReceipt ReceivedReceipt @relation(fields: [receivedReceiptId], references: [id], onDelete: Cascade)
+
+  @@unique([receivedReceiptId, receiptLineItemId], name: "rrl_receipt_line_unique")
+  @@map("received_receipt_line_statuses")
+}
+
+model WorkflowAuditLog {
+  id                Int      @id @default(autoincrement())
+  orgId             String   @map("org_id")
+  actorUserId       Int?     @map("actor_user_id")
+  actorUsername     String?  @map("actor_username")
+  eventType         String   @map("event_type")
+  receivedReceiptId Int?     @map("received_receipt_id")
+  lineStatusId      Int?     @map("line_status_id")
+  fromState         String?  @map("from_state")
+  toState           String?  @map("to_state")
+  details           String?
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@map("workflow_audit_log")
+}

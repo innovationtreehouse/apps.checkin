@@ -18,6 +18,7 @@ export const FLAG_TO_KIND = {
     isBackgroundCheckReviewer: "BG_REVIEWER",
     isOperations: "OPERATIONS",
     isInventoryManager: "INVENTORY_MANAGER",
+    isFinance: "FINANCE",
 } as const satisfies Record<string, PersonRoleKind>;
 
 export type RoleFlag = keyof typeof FLAG_TO_KIND;

@@ -15,7 +15,15 @@ export * from "./db/schema";
 // off the main entry, NOT via subpath exports: Turbopack's Docker build resolves
 // the package's `.` export (as @inventory/money proves) but not `./routes` etc.
 export * as routes from "./routes";
-export { configureCatalog, getPrincipal, getOrg, getDb, catalogError, mapServiceErrors } from "./runtime";
+export {
+  configureCatalog,
+  getPrincipal,
+  getOrg,
+  getDb,
+  catalogError,
+  mapServiceErrors,
+  CatalogHttpError,
+} from "./runtime";
 export type {
   CatalogPrincipal,
   OrgIdentity,

@@ -33,6 +33,7 @@ type PersonRow = {
   isBackgroundCheckReviewer?: boolean;
   isOperations?: boolean;
   isInventoryManager?: boolean;
+  isFinance?: boolean;
   emailSuppressed?: boolean;
 };
 

@@ -87,6 +87,16 @@ describe('Profile Visits API Integration Tests', () => {
              expect(res.status).toBe(401);
         });
 
+        // An id-less session (emptied jwt token) would read `personId: undefined` as
+        // every person's visits on this 'authenticated' handler route.
+        it('should return 401 for a session whose user has no id', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { name: undefined, email: undefined } });
+
+             const req = new Request('http://localhost:4000/api/profile/visits', { method: 'GET' });
+             const res = await GET(req as unknown as import("next/server").NextRequest);
+             expect(res.status).toBe(401);
+        });
+
         it('should return visits for the user within default 7 day window', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId } });
 

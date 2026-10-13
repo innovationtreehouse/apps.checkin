@@ -48,13 +48,13 @@ export const POST = withAuth({}, async (req, auth) => {
 
 // Sign the mock payload with the fixed dev secret and POST it at the REAL inbound
 // webhook, same as Shopify would. Returns the webhook's HTTP status.
-async function fireWebhook(payload: unknown): Promise<number> {
+async function fireWebhook(payload: object): Promise<number> {
     const secret = config.shopifyWebhookSecret()!;
-    const rawBody = JSON.stringify(payload);
+    const rawBody = JSON.stringify({ financial_status: "paid", ...payload });
     const signature = crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("base64");
     const res = await fetch(`${config.baseUrl()}/api/webhooks/shopify`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-shopify-hmac-sha256": signature },
+        headers: { "Content-Type": "application/json", "x-shopify-topic": "orders/paid", "x-shopify-hmac-sha256": signature },
         body: rawBody,
     });
     return res.status;
@@ -141,7 +141,7 @@ async function fireProgram(programId: number, rawParticipantIds: unknown): Promi
             { name: "CheckMeIn_Account_ID", value: pendingIds.join(",") },
             { name: "Program_ID", value: String(programId) },
         ],
-        line_items: [{ variant_id: variantId }],
+        line_items: [{ variant_id: variantId, quantity: pendingIds.length }],
     });
     if (status >= 400) {
         logger.error(`Dev shopify orders-paid: webhook returned ${status} for program ${programId}`);

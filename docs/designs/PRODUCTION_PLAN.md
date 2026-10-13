@@ -20,7 +20,7 @@ here, and infra `modules/checkin/overview.tf` for the design decisions.
   `prevent_self_review`, no admin bypass, `v*` tags only; H2 ✅) → migrate task
   → ECS rollout → smoke against https://ops.innovationtreehouse.org.
 - **OIDC pinning** (C1, config level ✅): `checkin-deploy-prod` trust =
-  `repo:innovationtreehouse/checkin:environment:production`; dev role pinned to
+  `repo:innovationtreehouse/apps.checkin:environment:production`; dev role pinned to
   `refs/heads/main`. Verify the APPLIED trust policy once during step 6.
 - **DNS**: `ops.innovationtreehouse.org` resolves (rides the wiki ALB cert).
 - **Per-env store domains** (M1 ✅): infra bakes

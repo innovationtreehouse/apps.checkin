@@ -35,14 +35,14 @@ beforeEach(() => {
 });
 
 describe("getKioskCertifications", () => {
-    it("strips the raw email and caches the present-limited payload", async () => {
+    it("ships the kiosk label — no last name, no email — and caches the present-limited payload", async () => {
         const first = await getKioskCertifications({ limitToPresent: true });
         await getKioskCertifications({ limitToPresent: true });
 
         expect(first.participants).toEqual([
-            { id: 1, name: "Alex Smith", nickname: "Al", toolStatuses: [{ toolId: 9, level: "CERTIFIED" }] },
+            { id: 1, name: "Al", toolStatuses: [{ toolId: 9, level: "CERTIFIED" }] },
         ]);
-        expect(JSON.stringify(first)).not.toContain("@example.com");
+        expect(JSON.stringify(first)).not.toMatch(/Smith|@example\.com/);
         expect(visitFindMany).toHaveBeenCalledTimes(1);
         expect(toolFindMany).toHaveBeenCalledTimes(1);
         expect(personFindMany).not.toHaveBeenCalled();

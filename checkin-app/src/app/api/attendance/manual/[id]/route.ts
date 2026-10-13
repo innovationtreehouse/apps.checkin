@@ -5,6 +5,7 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTime } from "@/lib/visitTimes";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { lastKeyholderGuard, runFacilityClose } from "@/lib/scan-service";
 import type { CloseGuardResult } from "@/lib/scan-service";
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
@@ -151,6 +152,7 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
             });
         });
         if (!updated) throw notFound("Visit not found.");
+        invalidateAttendanceCache();
 
         // The checkout chunks a program-enrolled stay into per-event rows,
         // replacing the original: the audit row and the response must name a row
@@ -232,6 +234,7 @@ const _DELETE = handler<{ id: string }>('DELETE /api/attendance/manual/[id]', as
             });
         });
         if (tombstoned.count === 0) throw notFound("Visit not found.");
+        invalidateAttendanceCache();
 
         await prisma.auditLog.create({
             data: {

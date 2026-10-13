@@ -26,7 +26,7 @@ class FakeState:
     def push_event(self, data):
         self.events.append(data)
 
-    def take_confirm(self):
+    def take_confirm(self, participant_id):
         token, self.confirm_token = self.confirm_token, None
         return token
 
@@ -45,7 +45,10 @@ class FakeState:
     def arm_local_close(self, participant_id, seconds):
         return
 
-    def offline_last_keyholder(self, participant_id):
+    def in_confirm_deadfront(self, participant_id):
+        return False
+
+    def offline_close_offer(self, participant_id):
         return False
 
     def offline_supervision_warning(self):
