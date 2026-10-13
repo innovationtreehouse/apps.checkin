@@ -183,7 +183,7 @@ export const uploadedFileService = {
 
       return { id: fileRecord.id, rowCount, newRowCount, duplicateRowCount, allDuplicate };
     }).catch((err: unknown) => {
-      if (isUniqueConstraintError(err)) throw new ServiceError(400, "This file is already being uploaded; retry once that upload finishes");
+      if (isUniqueConstraintError(err)) throw new ServiceError(409, "This file is already being uploaded; retry once that upload finishes");
       throw err;
     });
   },
