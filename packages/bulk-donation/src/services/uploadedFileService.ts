@@ -1,5 +1,5 @@
 import * as crypto from "crypto";
-import { db } from "../db";
+import { db, isUniqueConstraintError } from "../db";
 import { recordEvent } from "../repositories/audit";
 import { isAutoOrganizationalLevel } from "../lib/domain-rules";
 import type { BenevityRow } from "../lib/csv-parser";
@@ -39,6 +39,11 @@ export const uploadedFileService = {
     rows: BenevityRow[],
     correlationId: string | null,
   ) {
+    const seen = new Set<string>();
+    for (const { transactionId } of rows) {
+      if (seen.has(transactionId)) throw new ServiceError(400, `Transaction ${transactionId} appears more than once in this file`);
+      seen.add(transactionId);
+    }
     const fileHash = crypto.createHash("sha256").update(buffer).digest("hex");
     const rowCount = rows.length;
     const now = new Date();
@@ -46,6 +51,8 @@ export const uploadedFileService = {
       (await getOwnerDirectory().list()).filter((o) => o.archivedAt === null).map((o) => o.id),
     );
 
+    // Rows are deduplicated against committed transactions, so the unique key fires only when a
+    // concurrent upload of the same gifts commits first.
     return db.$transaction(async (tx) => {
       const fileRecord = await tx.uploadedFile.create({
         data: {
@@ -175,6 +182,9 @@ export const uploadedFileService = {
       }
 
       return { id: fileRecord.id, rowCount, newRowCount, duplicateRowCount, allDuplicate };
+    }).catch((err: unknown) => {
+      if (isUniqueConstraintError(err)) throw new ServiceError(400, "This file is already being uploaded; retry once that upload finishes");
+      throw err;
     });
   },
   /** Drop the stored CSV of an upload that added nothing; the file row stays. */
