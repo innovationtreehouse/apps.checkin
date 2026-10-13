@@ -26,8 +26,8 @@ beforeEach(() => {
 const renderLayout = () => renderWithProviders(<CatalogLayout><div>PAGE</div></CatalogLayout>);
 
 describe("catalog layout gate", () => {
-  it("turns away a user whose only claim is a volunteer designation", () => {
-    setSession({ id: 1, hasVolunteerDesignation: true });
+  it("turns away an adult with no role or volunteer input", () => {
+    setSession({ id: 1, ageBand: "adult" });
     renderLayout();
     expect(screen.queryByText("PAGE")).not.toBeInTheDocument();
     expect(router.push).toHaveBeenCalledWith("/");

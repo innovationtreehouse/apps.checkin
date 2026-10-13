@@ -11,8 +11,6 @@ import { config, ORG_DOMAIN } from "@/lib/config";
 import { evaluateMint, type MintMode } from "@/lib/impersonation";
 import { recordLedger } from "@/lib/dev/ledger";
 import { assignParticipantClaims } from "@/lib/authClaims";
-import { isCatalogViewerClient } from "@/lib/catalogNav";
-import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { ROLE_FLAGS, setRoleFlag } from "@/lib/roles";
 import { addHouseholdLead } from "@/lib/household/leads";
 import { withAuroraResumeRetry } from "@/lib/auroraResumeRetry";
@@ -167,25 +165,6 @@ const BOOTSTRAP_SYSADMINS = (process.env.BOOTSTRAP_SYSADMINS || "")
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-
-/**
- * Stamp `hasVolunteerDesignation` onto an already-claimed token. No catalog or
- * nav gate reads it. Designations are keyed by email (no Person FK), so this
- * can't ride the person load. Matching canonicalizes both sides (Gmail
- * dot/plus-insensitive), the same rule as the dues path. A DENIED token or one
- * the catalog-viewer predicate already admits skips the lookup.
- */
-async function stampVolunteerDesignation(token: JWT, email: string | null | undefined): Promise<void> {
-    token.hasVolunteerDesignation = false;
-    if (!email || token.denied || isCatalogViewerClient(token)) return;
-    const key = canonicalizeEmail(email);
-    // ponytail: full scan of a small board-maintained table so legacy non-canonical
-    // rows still match; switch to findUnique on the key once every row is canonical.
-    const designations = await withAuroraResumeRetry(() =>
-        prisma.volunteerDesignation.findMany({ select: { email: true } }),
-    );
-    token.hasVolunteerDesignation = designations.some((d) => canonicalizeEmail(d.email) === key);
-}
 
 export const authOptions: NextAuthOptions = {
     debug: config.isDevInstance(),
@@ -420,7 +399,6 @@ export const authOptions: NextAuthOptions = {
                     // Stamp authority claims, applying the household login gate (a board
                     // "Deny Membership" forces denied=true and strips every role flag).
                     assignParticipantClaims(token, dbParticipant);
-                    await stampVolunteerDesignation(token, dbParticipant.email);
                 }
             } else if (token.id) {
                 // On every subsequent request (no `user` present), re-sync authority
@@ -463,7 +441,6 @@ export const authOptions: NextAuthOptions = {
                 // within the token's refresh window (updateAge), not only at next sign-in.
                 // assignParticipantClaims forces denied=true and clears all roles when DENIED.
                 assignParticipantClaims(token, dbParticipant);
-                await stampVolunteerDesignation(token, dbParticipant.email);
             }
             return token;
         },
@@ -486,8 +463,6 @@ export const authOptions: NextAuthOptions = {
                 session.user.emailVerified = token.emailVerified ?? false;
                 // ops-stg access gate escape hatch — see lib/config.ts isStagingAccessAllowed.
                 session.user.canAccessStaging = token.canAccessStaging ?? false;
-                // Catalog-viewer volunteer leg (#1286) — completes the client gate.
-                session.user.hasVolunteerDesignation = token.hasVolunteerDesignation ?? false;
                 // Treehouse Volunteer inputs (lib/volunteer.ts).
                 session.user.isProgramVolunteer = token.isProgramVolunteer ?? false;
                 session.user.isVolunteerFamily = token.isVolunteerFamily ?? false;

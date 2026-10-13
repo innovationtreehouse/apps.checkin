@@ -38,8 +38,6 @@ declare module "next-auth" {
       // ops-stg access gate escape hatch — sysadmin-settable, NOT one of the
       // five PersonRole flags above. See lib/config.ts isStagingAccessAllowed.
       canAccessStaging?: boolean;
-      // A VolunteerDesignation exists for this email. No catalog or nav gate reads it.
-      hasVolunteerDesignation?: boolean;
       // Treehouse Volunteer inputs (lib/volunteer.ts): on a program's volunteer
       // list, in a Volunteer Family household, and whether that household's
       // membership is ACTIVE. All forced false on DENIED.
@@ -63,7 +61,6 @@ declare module "next-auth" {
     toolStatuses?: { toolId: number; level: string }[];
     // Set by the persona-mint provider; carried into the JWT by the jwt callback.
     impersonatedBy?: string | null;
-    hasVolunteerDesignation?: boolean;
   }
 }
 
@@ -92,8 +89,6 @@ declare module "next-auth/jwt" {
     toolStatuses?: { toolId: number; level: string }[];
     // ops-stg access gate escape hatch — see Session.user.canAccessStaging above.
     canAccessStaging?: boolean;
-    // See Session.user.hasVolunteerDesignation above.
-    hasVolunteerDesignation?: boolean;
     // See Session.user.isProgramVolunteer above (Treehouse Volunteer inputs).
     isProgramVolunteer?: boolean;
     isVolunteerFamily?: boolean;
