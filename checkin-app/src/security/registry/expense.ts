@@ -73,6 +73,8 @@ defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[ap
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/capital-review/submit', authorize: 'finance', envelope: null, returns: ['Expense', 'ExpenseLineItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/set-depreciation-cycle/submit', authorize: 'finance', envelope: null, returns: ['Expense', 'ExpenseLineItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
+// Dev-only expense test-data toggle; the route 404s when CHECKIN_ENV=prod.
+defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/test-data', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/expense-holds/[expenseId]/line-items/[lineItemId]/account', authorize: 'finance', envelope: null, returns: ['ExpenseLineItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expense-holds/[expenseId]/resubmit', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/account-mapping', authorize: 'finance', envelope: null, returns: ['AccountMapping'], orderedView: FINANCE_VIEW });

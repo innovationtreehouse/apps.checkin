@@ -843,6 +843,28 @@ defineRoute({
     ],
 });
 
+// QuickBooks connection settings (the production company id) — BoardSettings
+// singleton. Board-only: the QuickBooks books are a Finance/Board surface, and
+// the view stops at internal so a future pii/personal field fails closed.
+defineRoute({
+    endpoint: 'GET /api/settings/quickbooks',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: 'settings',
+    returns: ['BoardSettings'],
+    orderedView: [
+        ['isBoardMember', ['everyones:internal', 'member', 'public']],
+    ],
+});
+defineRoute({
+    endpoint: 'PUT /api/settings/quickbooks',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: 'settings',
+    returns: ['BoardSettings'],
+    orderedView: [
+        ['isBoardMember', ['everyones:internal', 'member', 'public']],
+    ],
+});
+
 // ─── Outbound surfaces ─────────────────────────────────────────────────────
 
 defineOutbound({
