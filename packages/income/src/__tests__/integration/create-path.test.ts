@@ -504,7 +504,6 @@ describeDb("drainIncomeOutbox — mirror reverts and binding", () => {
 
   it("creates nothing while the finance alert is unbound", async () => {
     bind({ alerts: undefined });
-    handBooked(1, "2026-06-01", 970);
     const p = payout(2, "2026-06-28", 500);
     expect(await drain()).toMatchObject({ reconcile: { status: "ran", matched: 1 }, post: "unbound" });
     expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
