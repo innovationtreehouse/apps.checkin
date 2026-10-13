@@ -1,14 +1,18 @@
 /**
  * Wire the expense library into checkin (#1272 §3/§6), called once at server boot from
  * instrumentation.ts. Binding touches no database: every port below reads lazily, inside a
- * request. Bound crossings: X3 (catalog reads). The QuickBooks reader/writer and the catalog
- * event source stay unbound (inert); they are later crossings.
+ * request. Bound crossings: X3 (catalog reads). The QuickBooks reader goes through checkin's one
+ * guarded client (off = no rows). The QuickBooks writer and the catalog event source stay unbound
+ * (inert); they are later crossings.
  */
 import { configureExpense } from "@inventory/expense";
-import type { ExpensePrincipal, OwnerDirectory, SignoffDirectory } from "@inventory/expense";
+import type { ExpensePrincipal, OwnerDirectory, QbReader, QbTxn, SignoffDirectory } from "@inventory/expense";
+import { dollarsToCents } from "@inventory/money";
+import type { QboBill, QboPurchase } from "@inventory/quickbooks";
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { getOrg, sessionUser } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
+import { getQuickBooks } from "@/lib/quickbooks/client";
 
 async function db() {
   return (await import("@/lib/prisma")).default;
@@ -104,6 +108,36 @@ const signoff: SignoffDirectory = {
   },
 };
 
+function qbTxn(t: QboPurchase | QboBill): QbTxn {
+  return {
+    id: t.Id,
+    txnDate: t.TxnDate,
+    totalCents: dollarsToCents(t.TotalAmt),
+    accountRef: t.AccountRef?.value ?? null,
+    vendorRef: (t.EntityRef ?? t.VendorRef)?.value ?? null,
+  };
+}
+
+const qbReader: QbReader = {
+  async purchasesBetween(from, to) {
+    const qb = await getQuickBooks();
+    return qb ? (await qb.purchasesBetween(from, to)).map(qbTxn) : [];
+  },
+  async billsBetween(from, to) {
+    const qb = await getQuickBooks();
+    return qb ? (await qb.billsBetween(from, to)).map(qbTxn) : [];
+  },
+  async billPaymentsBetween(from, to) {
+    const qb = await getQuickBooks();
+    if (!qb) return [];
+    return (await qb.billPaymentsBetween(from, to)).map((p) => ({
+      id: p.Id,
+      txnDate: p.TxnDate,
+      billIds: [...new Set((p.Line ?? []).flatMap((l) => l.LinkedTxn ?? []).filter((t) => t.TxnType === "Bill").map((t) => t.TxnId))],
+    }));
+  },
+};
+
 export function configureRuntime(): void {
-  configureExpense({ org: getOrg, auth: { getPrincipal }, budgetOwners, signoff, catalog: catalogReader });
+  configureExpense({ org: getOrg, auth: { getPrincipal }, budgetOwners, signoff, catalog: catalogReader, quickbooks: { reader: qbReader } });
 }

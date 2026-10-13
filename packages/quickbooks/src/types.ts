@@ -24,6 +24,18 @@ export interface AccessTokenSource {
   current(): Promise<string>;
 }
 
+/**
+ * What the token refresher answers to `{ "action": "current" }`: the access token it last
+ * published, refreshed first when near expiry. `clientId` is the Intuit app's (public) id.
+ */
+export interface RefresherToken {
+  accessToken: string;
+  /** Epoch ms. */
+  expiresAt: number;
+  realmId: string;
+  clientId: string;
+}
+
 export interface QboRef {
   value: string;
   name?: string;

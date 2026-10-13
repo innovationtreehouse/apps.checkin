@@ -1,0 +1,126 @@
+import prisma from "@/lib/prisma";
+import { buildQuickBooks, lambdaAccessTokenSource } from "../client";
+
+jest.mock("@/lib/prisma", () => ({
+    __esModule: true,
+    default: { boardSettings: { findUnique: jest.fn() } },
+}));
+
+const SANDBOX = "1111";
+const PROD = "9999";
+const MIN = 60_000;
+
+const answer = (over: Record<string, unknown> = {}) => ({
+    accessToken: "tok-1",
+    expiresAt: 60 * MIN,
+    realmId: SANDBOX,
+    clientId: "dev-id",
+    ...over,
+});
+
+const source = (invoke: jest.Mock, now: () => number = () => 0, checkinEnv = "dev") =>
+    lambdaAccessTokenSource({ functionName: "qbo-refresher", realmId: SANDBOX, checkinEnv, devClientId: "dev-id", invoke, now });
+
+describe("lambdaAccessTokenSource", () => {
+    it("caches the token until five minutes before expiry", async () => {
+        let t = 0;
+        const invoke = jest.fn().mockResolvedValueOnce(answer()).mockResolvedValueOnce(answer({ accessToken: "tok-2", expiresAt: 120 * MIN }));
+        const tokens = source(invoke, () => t);
+        expect(await tokens.current()).toBe("tok-1");
+        t = 54 * MIN;
+        expect(await tokens.current()).toBe("tok-1");
+        t = 55 * MIN;
+        expect(await tokens.current()).toBe("tok-2");
+        expect(invoke).toHaveBeenCalledTimes(2);
+    });
+
+    it("shares one refresher call between concurrent callers", async () => {
+        const invoke = jest.fn().mockResolvedValue(answer());
+        const tokens = source(invoke);
+        await Promise.all([tokens.current(), tokens.current(), tokens.current()]);
+        expect(invoke).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses an answer for another realm", async () => {
+        await expect(source(jest.fn().mockResolvedValue(answer({ realmId: PROD }))).current()).rejects.toThrow(/different realm/);
+    });
+
+    it("refuses production keys off prod and development keys on prod", async () => {
+        await expect(source(jest.fn().mockResolvedValue(answer({ clientId: "prod-id" }))).current()).rejects.toThrow(/development keys/);
+        await expect(source(jest.fn().mockResolvedValue(answer()), () => 0, "prod").current()).rejects.toThrow(/refuses the development/);
+    });
+
+    it("refuses a malformed answer and retries on the next call", async () => {
+        const invoke = jest.fn().mockResolvedValueOnce({ accessToken: "" }).mockResolvedValueOnce(answer());
+        const tokens = source(invoke);
+        await expect(tokens.current()).rejects.toThrow(/malformed/);
+        expect(await tokens.current()).toBe("tok-1");
+    });
+});
+
+describe("buildQuickBooks", () => {
+    const findUnique = prisma.boardSettings.findUnique as jest.Mock;
+    const env = (vars: Record<string, string | undefined>) => {
+        for (const [k, v] of Object.entries(vars)) {
+            if (v === undefined) delete process.env[k];
+            else process.env[k] = v;
+        }
+    };
+    const saved = { ...process.env };
+    let errorSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+        errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+        findUnique.mockResolvedValue({ qboProductionRealmId: null });
+        env({
+            CHECKIN_ENV: "dev",
+            QBO_ENVIRONMENT: "sandbox",
+            QBO_REALM_ID: SANDBOX,
+            QBO_SANDBOX_REALM_ALLOWED: SANDBOX,
+            QBO_REFRESHER_FN: "qbo-refresher",
+            QBO_DEV_CLIENT_ID: "dev-id",
+            QBO_TOKEN_FILE: undefined,
+        });
+    });
+    afterEach(() => {
+        process.env = { ...saved };
+        errorSpy.mockRestore();
+        jest.clearAllMocks();
+    });
+
+    it("builds a sandbox client off prod", async () => {
+        expect(await buildQuickBooks()).not.toBeNull();
+    });
+
+    it("is off with no realm configured, without touching the database", async () => {
+        env({ QBO_REALM_ID: undefined });
+        expect(await buildQuickBooks()).toBeNull();
+        expect(findUnique).not.toHaveBeenCalled();
+    });
+
+    it("is off when the guard refuses, and says why", async () => {
+        env({ QBO_SANDBOX_REALM_ALLOWED: "2222" });
+        expect(await buildQuickBooks()).toBeNull();
+        expect(errorSpy).toHaveBeenCalledWith("QuickBooks is off:", expect.stringMatching(/allowlisted/));
+    });
+
+    it("keeps a prod-data copy off the Board-set production realm", async () => {
+        env({ CHECKIN_ENV: "stg", QBO_REALM_ID: PROD, QBO_SANDBOX_REALM_ALLOWED: PROD });
+        findUnique.mockResolvedValue({ qboProductionRealmId: PROD });
+        expect(await buildQuickBooks()).toBeNull();
+    });
+
+    it("on prod, reaches only the Board-set realm and is off while it is unset", async () => {
+        env({ CHECKIN_ENV: "prod", QBO_ENVIRONMENT: "production", QBO_REALM_ID: PROD, QBO_SANDBOX_REALM_ALLOWED: undefined });
+        expect(await buildQuickBooks()).toBeNull();
+        findUnique.mockResolvedValue({ qboProductionRealmId: PROD });
+        expect(await buildQuickBooks()).not.toBeNull();
+        findUnique.mockResolvedValue({ qboProductionRealmId: "8888" });
+        expect(await buildQuickBooks()).toBeNull();
+    });
+
+    it("is off with no token source", async () => {
+        env({ QBO_REFRESHER_FN: undefined });
+        expect(await buildQuickBooks()).toBeNull();
+    });
+});

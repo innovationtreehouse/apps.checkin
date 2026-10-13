@@ -58,6 +58,35 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   `fileAccessTokenSource(path)` (refreshes and re-saves the consent token file),
   `saveTokens` / `loadTokens` / `tokenFileFromEnv()` (`QBO_TOKEN_FILE`, required).
 
+## Which company a deployment reaches (`guard.ts`)
+
+The guard decides from our config and database only, never from anything QuickBooks returns.
+
+- `assertQboTarget`: `CHECKIN_ENV=prod` (exactly) uses the production API and only the realm the
+  Board set (`BoardSettings.qboProductionRealmId`); unset, QuickBooks is off. Everywhere else uses
+  the sandbox API and only `QBO_SANDBOX_REALM_ALLOWED`, and refuses the realm its own database
+  names as production, which keeps a prod-data copy (stg) off the real company.
+- `assertQboClientId`: off prod the token must come from Intuit's development keys
+  (`QBO_DEV_CLIENT_ID`), which cannot open a production company; prod refuses them.
+- No realm id is ever committed: prod's lives in the Board setting, the sandbox's in deploy config.
+
+checkin builds its one client in `checkin-app/src/lib/quickbooks/client.ts` (`getQuickBooks()`,
+null while off). Its token comes from the refresher Lambda (`QBO_REFRESHER_FN`): invoked with
+`{ "action": "current" }`, it answers a `RefresherToken` and is the only holder of the refresh token.
+
+### Per-environment deploy checklist (infra)
+
+- [ ] `CHECKIN_ENV=prod` set on prod (the guard reads it raw; unset is not prod).
+- [ ] `QBO_ENVIRONMENT` (`production` on prod, `sandbox` elsewhere) and `QBO_REALM_ID`.
+- [ ] Off prod: `QBO_SANDBOX_REALM_ALLOWED`, provisioned apart from `QBO_REALM_ID`.
+- [ ] `QBO_DEV_CLIENT_ID` (public) on every environment; dev/stg get only the development keys.
+- [ ] `QBO_REFRESHER_FN` + task-role `lambda:InvokeFunction` on that function only. The app gets
+      no client secret and no Secrets Manager grant.
+- [ ] Refresher: reserved concurrency 1; the refresh-token secret readable and writable by it
+      alone; a weekly keepalive invoke; alarms on `invalid_grant` and on `GetSecretValue` by any
+      other principal.
+- [ ] Prod: the Board sets the realm on Settings → QuickBooks after consent.
+
 ## One-time setup (you do this — OAuth consent can't be automated)
 
 1. **Create a sandbox app** at <https://developer.intuit.com> → *Dashboard → Create an app → QuickBooks Online Accounting*.
