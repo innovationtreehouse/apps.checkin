@@ -1,4 +1,4 @@
-import type { OrgMembershipStatus } from "@/generated/prisma/client";
+import type { OrgMembershipStatus, PersonRoleKind } from "@/generated/prisma/client";
 
 /**
  * The part of `BackgroundCheckAttestation`'s
@@ -60,5 +60,30 @@ export function membershipMergeBlock(
         return `Cannot merge: the merged-away record is the last live member of a household holding an ACTIVE Treehouse membership, and the kept record is in a different household (${keep.status}). The merge would leave that membership with nobody in it. Swap which record is kept, or assign the kept record to that household from the Participants page, then merge.`;
     }
 
+    return null;
+}
+
+/**
+ * Why moving the merged-away record's roles onto the keeper must be refused, or
+ * null. The merge moves each role with `setRoleFlag` (revoke from the tombstone,
+ * grant to the keeper), so it must pass that function's refusals; checking them
+ * here refuses the merge before anything is written. The own-household rule is
+ * the route's household conflict check.
+ */
+export function roleMergeBlock(
+    actor: { isBoardMember?: boolean } | null,
+    mergeRoles: PersonRoleKind[],
+    keepRoles: PersonRoleKind[],
+    keepStatus: OrgMembershipStatus,
+): { status: 403 | 409; error: string } | null {
+    if (mergeRoles.length === 0) return null;
+    if (!actor) return { status: 403, error: "Forbidden" };
+    if (!mergeRoles.includes("BOARD")) return null;
+    if (!actor.isBoardMember) {
+        return { status: 403, error: "Cannot merge: the merged-away record holds the board role, and only board members can remove board membership." };
+    }
+    if (!keepRoles.includes("BOARD") && keepStatus === "DENIED") {
+        return { status: 409, error: "Cannot merge: the merged-away record holds the board role, and the kept record's household has been denied membership. Restore the household's membership first." };
+    }
     return null;
 }

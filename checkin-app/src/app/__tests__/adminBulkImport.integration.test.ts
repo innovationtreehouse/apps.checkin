@@ -357,5 +357,45 @@ describe('Admin Bulk Import API Integration Tests', () => {
             expect((await prisma.orgMembership.findUnique({ where: { householdId: source.householdId } }))?.status).toBe('DENIED');
             expect((await prisma.person.findUniqueOrThrow({ where: { id: target.id } })).householdId).toBe(target.householdId);
         });
+
+        it("refuses to rewrite a record in the actor's own household", async () => {
+            const admin = await prisma.person.findUniqueOrThrow({ where: { id: testAdminId }, select: { householdId: true } });
+            const kin = await prisma.person.create({
+                data: { email: 'kin-batch-import-test@example.com', name: 'Kin Batch Import Test', dateOfBirth: new Date('2015-03-04'), householdId: admin.householdId }
+            });
+
+            const res = await importAs([
+                ['First Name', 'Last Name', 'Email', 'DOB'],
+                ['Renamed', 'Batch Import Test', 'kin-batch-import-test@example.com', '2016-01-01'],
+                ['Admin', 'Batch Import Test', 'admin-import-test@example.com', ''],
+            ]);
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.errors).toEqual([
+                expect.stringContaining('your own household'),
+                expect.stringContaining('your own household'),
+            ]);
+
+            const after = await prisma.person.findUniqueOrThrow({ where: { id: kin.id } });
+            expect(after.name).toBe('Kin Batch Import Test');
+            expect(after.dateOfBirth?.toISOString().slice(0, 10)).toBe('2015-03-04');
+            expect((await prisma.person.findUniqueOrThrow({ where: { id: testAdminId } })).name).toBe('Admin Import Test');
+        });
+
+        it('stores no date of birth for an adult on the update path, only the adult flag', async () => {
+            const existing = await prisma.person.create({
+                data: { email: 'adult-batch-import-test@example.com', name: 'Adult Batch Import Test', household: { create: { name: 'Adult Batch Household' } } }
+            });
+
+            const res = await importAs([
+                ['First Name', 'Last Name', 'Email', 'DOB'],
+                ['Adult', 'Batch Import Test', 'adult-batch-import-test@example.com', '1980-05-06'],
+            ]);
+            expect(res.status).toBe(200);
+
+            const after = await prisma.person.findUniqueOrThrow({ where: { id: existing.id } });
+            expect(after.dateOfBirth).toBeNull();
+            expect(after.isDeclaredAdult).toBe(true);
+        });
     });
 });

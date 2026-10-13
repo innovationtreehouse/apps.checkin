@@ -13,6 +13,8 @@ import { mintPersonId } from "@/lib/person/mintId";
 import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 import { config } from "@/lib/config";
 import { ensureHouseholdMembership, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+import { assertNotOwnHousehold, OwnHouseholdRoleError } from "@/lib/roles";
+import { normalizeAdultDob } from "@/lib/person/adultDob";
 
 export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (req: NextRequest, auth) => {
     if (!config.csvImportEnabled()) {
@@ -207,11 +209,12 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                     if (pr.email) {
                         let participant = await tx.person.findUnique({ where: { email: pr.email } });
                         if (participant) {
+                            await assertNotOwnHousehold(tx, auth.user.id, participant.id);
                             participant = await tx.person.update({
                                 where: { id: participant.id },
                                 data: {
                                     name: pr.fullName,
-                                    dateOfBirth: pr.parsedDob ?? participant.dateOfBirth,
+                                    ...(pr.parsedDob && normalizeAdultDob(pr.parsedDob)),
                                 }
                             });
                             await applyAddressToHousehold(participant.householdId, pr.address, tx);
@@ -228,6 +231,8 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                     } else if (pr.parentEmail) {
                         // Ensure parent exists (new parents get their own household)
                         let parent = await tx.person.findUnique({ where: { email: pr.parentEmail } });
+                        // The child row lands in, or rewrites someone in, the parent's household.
+                        if (parent) await assertNotOwnHousehold(tx, auth.user.id, parent.id);
                         if (!parent) {
                             parent = await createParticipantWithHousehold({
                                 email: pr.parentEmail,
@@ -245,9 +250,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                         if (participant) {
                             participant = await tx.person.update({
                                 where: { id: participant.id },
-                                data: {
-                                    dateOfBirth: pr.parsedDob ?? participant.dateOfBirth,
-                                }
+                                data: { ...(pr.parsedDob && normalizeAdultDob(pr.parsedDob)) },
                             });
                         } else {
                             participant = await tx.person.create({
@@ -268,6 +271,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
                         let participant = await tx.person.findFirst({ where: { ...matchQuery, ...LIVE_PERSON } });
                         if (participant) {
+                            await assertNotOwnHousehold(tx, auth.user.id, participant.id);
                             await applyAddressToHousehold(participant.householdId, pr.address, tx);
                         } else {
                             participant = await createParticipantWithHousehold({
@@ -287,7 +291,9 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
             } catch (err: unknown) {
                 logger.error(`Error processing row ${pr.index + 2}:`, err);
-                const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+                const errorMessage = err instanceof OwnHouseholdRoleError
+                    ? "You cannot change a record in your own household through import — someone outside your household must."
+                    : err instanceof Error ? err.message : 'Unknown error';
                 errors.push(`Row ${pr.index + 2} (${pr.fullName || 'Unknown'}): ${errorMessage}`);
             }
         }
