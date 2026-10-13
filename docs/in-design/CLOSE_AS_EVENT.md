@@ -69,11 +69,12 @@ A repeat read of the same badge within 3 s (the kiosk's repeat-read filter) neve
 
 1. Dedup. If `RawBadgeLog(clientEventId)` already exists, return `duplicate_ignored`. Then go to **ReDrive**.
 2. If `scan.close ≠ none` (a **close request**):
+   - **Live, from a non-keyholder: refused.** The scan goes on as an ordinary scan (below); the reply adds `closeRefused` and "Only a keyholder can close the building.", and the kiosk drops the badge from its keyholders.
    - Skip the debounce, the freshness window, the out-of-order check and every park. A close is never held.
    - Let `t := min(eventTime, now)`. `eventTime` is server now on a live scan and `scannedAt` on a replay.
    - Write `RawBadgeLog`. It gets a `reviewReason` (applied *and* flagged) only when one of these holds:
      the row was dead-lettered (`client_dead:<status>`), the clock is suspect
-     (`clock_suspect`), or K is not a keyholder now (`close_not_keyholder`, see §5).
+     (`clock_suspect`), or, on a late delivery, K is not a keyholder now (`close_not_keyholder`, see §5).
    - If K has a live open visit with `arrivedAt ≤ t + skew`, check it out at `max(t, arrivedAt)` as `SCANNER`, event chunking included.
    - **Unseen check-ins (D9).** Let `U` be the open visits of anyone else with `rosterAsOf < arrivedAt ≤ t + skew`. These are check-ins the kiosk's roster could not have shown; `U = ∅` when the scan carries no `rosterAsOf`.
      - **Live `close: alone` with `U ≠ ∅`: hold.** Record no close. K's checkout stands as a leave (the `last_keyholder_choice` audit row). The reply is `facilityClosed: false` with a `closePrompt` naming `U` and their check-in times. The kiosk shows it and arms its prompt, and a second badge (`close: confirmed`) closes. Then commit.
@@ -207,13 +208,16 @@ for each live visit v (deletedAt IS NULL)
 
 ## 5. Decisions taken (owner may overturn)
 
-- **D1 — role at time t.** The kiosk decides who may close, from its roster: `known_keyholders`. The server records every kiosk close request as given. If the closer is not a keyholder when the request arrives, the close still applies, and its scan is flagged `close_not_keyholder` for review. This is the "apply, then review" principle. A role revoked between t and delivery cannot stop the close, which the "changing roles" clause of intended Closing.6 requires. The app keeps no role history, so "keyholder at t" cannot be checked any better than this. The web close checks the role when the request is made, which is the same moment as t.
+- **D1 — role at time t.** The kiosk offers the close to `known_keyholders`. Its list grows from every roster and drops a badge a roster shows without keys, or one the server refused.
+  - **Live** (owner rule: only keyholders close): t is now, so the server checks the role. A non-keyholder's close is refused, and that badge is checked out as itself.
+  - **Late delivery:** the app keeps no role history, so "keyholder at t" can't be checked. A role revoked between t and delivery cannot stop the close; that is what the "changing roles" clause of intended Closing.6 requires. The close applies and is flagged `close_not_keyholder`.
+  - **Web:** the close checks the role when the request is made, which is the same moment as t.
 - **D2 — the first OUT of a two-scan close is a plain checkout,** sent at once. The second scan is a separate close request. The keyholder may already be checked out (by the first scan, the web, the cron) or have their visit tombstoned. In every case the close is recorded and executed. A close request never needs a visit.
 - **D3 — the close time on a two-scan close is the second scan's time,** not the first's. The two are at most 15 s apart. The owner's ruling is that departures are stamped "when the keyholder left", and both scans happen before the keyholder walks out.
 - **D4 — closes apply in close-time order,** whatever their arrival order (§4).
 - **D5 — kiosks below protocol 6 keep #1992's checkout rule** (§3 table): `shownEmpty`, else the server's records. Without it, an old kiosk's lone keyholder would leave without closing the building during the rollout. Only protocol-6 kiosks get "the server never decides from its own records". The table is removed once the kiosk reports protocol 6 (migration doc).
 - **D9 — a stale kiosk roster (owner-approved 2026-10-12).** The keyholder and the kiosk are trusted, but the server warns when the kiosk's view was stale. Example: a web check-in at 20:58, the kiosk roster failing to refresh, and the keyholder badging at 21:00 to close. Live, the one-badge close is held, and the server names who checked in after the kiosk's roster; the second badge closes. A late or offline close is applied as the keyholder meant, and flagged for review naming who it may have swept out. There is no sync wait at the kiosk: the live server check covers it. A confirmed (second-badge) close is never held, only flagged when it sweeps an unseen check-in. After a hold, the kiosk refetches the roster, so the confirm carries a fresh `rosterAsOf` and is not flagged.
-- **D8 — a web close is recorded after the web checkout**, in `finishCloseGuard`, so `closerVisitId` can link the departed visit. The web paths outside `/api/scan` have no single transaction to share. A crash between the checkout and the record loses that web close. The keyholder is already checked out, so the dialog does not come back; a keyholder closes again from the kiosk, or the nightly sweep departs everyone. Kiosk closes are not affected: their record commits with the checkout.
+- **D8 — a web close is recorded in the transaction that checks the visit out** (`recordWebClose`). This covers the scan route's web checkout, the dashboard checkout and the closing correction. It runs after the checkout inside that transaction, so `closerVisitId` can link the departed visit, and a crash loses neither the checkout nor the close. `finishCloseGuard` then only carries the close out, and records it itself only for a caller that did not.
 - **D6 — the web close shows the server's view, not the kiosk's.** It applies at `now`, and the edit screen corrects times afterwards (owner, 2026-10-11).
 - **D7 — re-drive points** are the scan route, web closes and the nightly cron. There is no boot hook, because `instrumentation.ts` touches no database by design. An executor that crashes after the response is sent stays stranded until the next scan or midnight, whichever comes first. The cron re-drives before it sweeps, so a stranded close always departs people at t, never at midnight.
 

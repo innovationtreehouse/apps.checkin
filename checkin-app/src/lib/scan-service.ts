@@ -738,17 +738,19 @@ async function handoverCandidates(db: DbClient, subjectId: number) {
  * correction and removal. When the visit is the last keyholder's and others
  * are inside, the caller chooses close, leave or cancel:
  *
- * - a keyholder checking themselves out, or a board member, gets all three; a
- *   leave names the keyholder handed over to, unless no keyholder is free to name;
- * - anyone else — another keyholder, a household lead, a sysadmin — gets leave
- *   or cancel and names nobody;
+ * - a keyholder checking themselves out, or a board member who is a keyholder,
+ *   gets all three; a leave names the keyholder handed over to, unless no
+ *   keyholder is free to name;
+ * - anyone else — another keyholder, a board member who is not a keyholder, a
+ *   household lead, a sysadmin — gets leave or cancel and names nobody;
  * - a removal never closes, whoever makes it.
  *
  * The token is bound to the actor shown the choice, and the allowed choices are
  * worked out again on confirm, so a role revoked in between takes effect. The
  * token columns belong to this dialog alone; no kiosk path reads them.
  * A keyholder alone in the record closes with no warning when the caller may
- * close. Callers depart or remove the visit, then call {@link finishCloseGuard}.
+ * close. Callers depart or remove the visit, recording the close in the same
+ * transaction ({@link recordWebClose}), then call {@link finishCloseGuard}.
  */
 export async function lastKeyholderGuard(
     visitId: number,
@@ -857,20 +859,38 @@ export async function lastKeyholderGuard(
 }
 
 /**
- * After the guarded visit is departed or removed: record and carry out the close
- * the caller chose, audit the choice, and email a named keyholder who is not
- * checked in. The close is recorded after the checkout so it can link the
- * closer's departed visit. Never throws; the checkout has already committed.
+ * Record the close a web caller chose, on `db` — the transaction that checks the
+ * visit out, so the checkout and the close commit together. It runs after the
+ * checkout, so it can link the closer's departed visit. False when the caller
+ * did not choose a close.
+ */
+export async function recordWebClose(
+    db: DbClient,
+    guard: Extract<CloseGuardResult, { action: "proceed" }>,
+    ctx: { actorId: number; subjectId: number; via: FacilityCloseVia; closeTime?: Date },
+): Promise<boolean> {
+    if (!guard.facilityClosed) return false;
+    await recordClose(db, { closedById: ctx.actorId, via: ctx.via, ownCheckout: ctx.actorId === ctx.subjectId }, ctx.closeTime ?? new Date());
+    return true;
+}
+
+/**
+ * After the guarded visit is departed or removed: carry out the close the caller
+ * chose (recording it first unless the caller already did, `recorded`), audit
+ * the choice, and email a named keyholder who is not checked in. Never throws;
+ * the checkout has already committed.
  */
 export async function finishCloseGuard(
     guard: Extract<CloseGuardResult, { action: "proceed" }>,
-    ctx: { actorId: number; subjectId: number; visitId: number; via: FacilityCloseVia; closeTime?: Date },
+    ctx: { actorId: number; subjectId: number; visitId: number; via: FacilityCloseVia; closeTime?: Date; recorded?: boolean },
 ): Promise<void> {
     if (guard.facilityClosed) {
-        try {
-            await recordClose(prisma, { closedById: ctx.actorId, via: ctx.via, ownCheckout: ctx.actorId === ctx.subjectId }, ctx.closeTime ?? new Date());
-        } catch (err) {
-            await logBackendError(err, "facility-close");
+        if (!ctx.recorded) {
+            try {
+                await recordWebClose(prisma, guard, ctx);
+            } catch (err) {
+                await logBackendError(err, "facility-close");
+            }
         }
         await executePendingCloses();
     }

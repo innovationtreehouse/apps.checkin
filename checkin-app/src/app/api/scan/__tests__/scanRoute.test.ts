@@ -5,7 +5,7 @@ import { POST } from '../route';
 import { authenticateRequest } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { logger } from '@/lib/logger';
-import { processCheckin, processCheckout, processCloseRequest, executePendingCloses, notifyScanOutcome, lastKeyholderGuard, finishCloseGuard } from '@/lib/scan-service';
+import { processCheckin, processCheckout, processCloseRequest, executePendingCloses, notifyScanOutcome, lastKeyholderGuard, finishCloseGuard, recordWebClose } from '@/lib/scan-service';
 import { config } from '@/lib/config';
 import { KIOSK_DEBOUNCE_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 
@@ -61,6 +61,7 @@ jest.mock('@/lib/scan-service', () => ({
     closeActor: jest.fn((user: { id: string }) => ({ id: Number(user.id), isKeyholder: false, isBoardMember: false, isSysadmin: false })),
     lastKeyholderGuard: jest.fn().mockResolvedValue({ action: 'proceed', facilityClosed: false, choice: null }),
     finishCloseGuard: jest.fn().mockResolvedValue(undefined),
+    recordWebClose: jest.fn().mockResolvedValue(true),
     notifyScanOutcome: jest.fn().mockResolvedValue(undefined),
     SUPERVISION_CONFIRM_MS: 15_000,
     SUPERVISION_CONFIRM_DEADFRONT_MS: 1_000,
@@ -805,7 +806,9 @@ describe('POST /api/scan', () => {
             expect(lastKeyholderGuard).toHaveBeenCalledWith(7, { id: 1, mergedIntoId: null }, expect.objectContaining({ id: 1 }),
                 { token: 'tok-1', choice: 'close', handoverToId: undefined }, {}, expect.anything());
             expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), expect.any(Date), false, true, null);
-            expect(finishCloseGuard).toHaveBeenCalledWith(guard, { actorId: 1, subjectId: 1, visitId: 7, via: 'WEB_CHECKOUT' });
+            // Recorded in the scan transaction, with the checkout; the finisher only carries it out.
+            expect(recordWebClose).toHaveBeenCalledWith(expect.anything(), guard, { actorId: 1, subjectId: 1, via: 'WEB_CHECKOUT' });
+            expect(finishCloseGuard).toHaveBeenCalledWith(guard, { actorId: 1, subjectId: 1, visitId: 7, via: 'WEB_CHECKOUT', recorded: true });
         });
 
         it('debounces a spent or unknown token, so a stray second read cannot re-toggle', async () => {
@@ -874,13 +877,27 @@ describe('POST /api/scan', () => {
             expect(processCloseRequest).toHaveBeenCalled();
         });
 
-        it('applies a close from someone no longer a keyholder, flagged for review', async () => {
+        it('applies a late close from someone no longer a keyholder, flagged for review', async () => {
             (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null, isKeyholder: false });
 
-            await POST(kioskReq({ intent: 'OUT', close: 'confirmed', clientEventId: 'evt-r' }));
+            await POST(kioskReq({ intent: 'OUT', close: 'confirmed', clientEventId: 'evt-r', scannedAt: new Date().toISOString(), replay: true }));
 
             expect(processCloseRequest).toHaveBeenCalled();
             expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ reviewReason: 'close_not_keyholder' }) });
+        });
+
+        it('refuses a live close from someone who is not a keyholder: an ordinary checkout, with a message', async () => {
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null, isKeyholder: false });
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue({ id: 7 });
+            (processCheckout as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkout', facilityClosed: false }), { status: 200 }));
+
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'alone', clientEventId: 'evt-nk', protocolVersion: 6 }));
+            const body = await res.json();
+
+            expect(processCloseRequest).not.toHaveBeenCalled();
+            expect(processCheckout).toHaveBeenCalled();
+            expect(body).toMatchObject({ type: 'checkout', facilityClosed: false, closeRefused: true, message: 'Only a keyholder can close the building.' });
         });
 
         it('re-drives recorded closes when a resend is deduped', async () => {

@@ -415,7 +415,7 @@ class TestKioskClose(unittest.TestCase):
         state = self._state(roster=roster)
         events = []
         state.push_event = events.append
-        backend = self._backend()
+        backend = self._backend({"type": "checkout", "facilityClosed": True, "participant": {"id": 9, "name": "Kim"}})
 
         handle_scan(backend, state, Outbox(":memory:"), 9)
 
@@ -445,6 +445,7 @@ class TestKioskClose(unittest.TestCase):
         backend = self._backend()
 
         handle_scan(backend, state, Outbox(":memory:"), 9)
+        backend.post_scan.return_value = ({"type": "checkout", "facilityClosed": True, "participant": {"id": 9}}, 200, None)
         handle_scan(backend, state, Outbox(":memory:"), 9)
 
         self.assertEqual(backend.post_scan.call_args.kwargs["close"], "confirmed")
@@ -506,6 +507,29 @@ class TestKioskClose(unittest.TestCase):
         handle_scan(backend, state, ob, 5)
         backend.post_scan.assert_not_called()
         self.assertEqual(len(ob.pending_rows()), 1)
+
+    def test_a_refused_close_shows_why_and_stops_offering_the_close(self):
+        roster = dict(self.ROSTER, attendance=[{"participant": {"id": 9, "name": "Kim", "isKeyholder": True}}])
+        state = self._state(roster=roster)
+        events = []
+        state.push_event = events.append
+        backend = self._backend({"type": "checkout", "facilityClosed": False, "closeRefused": True,
+                                 "message": "Only a keyholder can close the building.",
+                                 "participant": {"id": 9, "name": "Kim"}})
+
+        handle_scan(backend, state, Outbox(":memory:"), 9)
+
+        self.assertEqual(backend.post_scan.call_args.kwargs["close"], "alone")
+        self.assertIn("Only a keyholder can close the building.", events[-1]["html"])
+        self.assertNotIn("BUILDING CLOSED", events[-1]["html"])
+        self.assertNotIn(9, state.known_keyholders)
+
+    def test_a_roster_showing_someone_without_keys_takes_them_off_the_list(self):
+        state = self._state()
+        self.assertIn(9, state.known_keyholders)
+        state.seed_from_attendance({"attendance": [{"participant": {"id": 9, "name": "Kim", "isKeyholder": False}}]})
+        self.assertNotIn(9, state.known_keyholders)
+        self.assertEqual(state.close_decision(9), (None, []))
 
     def test_a_keyholder_known_from_an_earlier_roster_can_still_close(self):
         state = self._state()

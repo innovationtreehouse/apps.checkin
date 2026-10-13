@@ -220,6 +220,19 @@ describe('close as one recorded event (real DB)', () => {
         expect(log.reviewReason).toBe('close_not_keyholder');
     });
 
+    it('a live close from someone whose keys were revoked is refused: they check out, nobody else does', async () => {
+        const kv = await open(k, at(HOUR));
+        const mv = await open(m, at(HOUR));
+        await prisma.person.update({ where: { id: k.id }, data: { isKeyholder: false } });
+
+        const res = await scan({ participantId: k.id, intent: 'OUT', close: 'alone', clientEventId: `${TAG}-revoked-live`, protocolVersion: 6 });
+        expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: false, closeRefused: true });
+
+        expect((await reload(kv)).departedVia).toBe('SCANNER');
+        expect((await reload(mv)).departedAt).toBeNull();
+        expect(await closesSince()).toHaveLength(0);
+    });
+
     it('closes apply in close-time order: an earlier close arriving late pulls a later close\'s departures back', async () => {
         const t1 = at(4 * HOUR);
         const t3 = at(2 * HOUR);

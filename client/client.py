@@ -434,6 +434,16 @@ class AttendanceState:
             others = sorted(self.present_ids - {pid})
             return ("prompt", others) if others else ("alone", [])
 
+    def forget_keyholder(self, participant_id):
+        """This badge is not a keyholder (any more): it is offered no close."""
+        try:
+            pid = int(participant_id)
+        except (TypeError, ValueError):
+            return
+        with self.lock:
+            self.known_keyholders.discard(pid)
+            self.keyholder_ids.discard(pid)
+
     def clear_present(self):
         """A close empties the kiosk's view of the building."""
         with self.lock:
@@ -514,6 +524,7 @@ class AttendanceState:
         visits = att_data.get("attendance") or []
         present = set()
         keyholders = set()
+        present_non_keyholders = set()
         for visit in visits:
             person = visit.get("participant") or visit.get("person") or {}
             pid = person.get("id")
@@ -522,6 +533,8 @@ class AttendanceState:
             present.add(int(pid))
             if person.get("isKeyholder"):
                 keyholders.add(int(pid))
+            elif "isKeyholder" in person:
+                present_non_keyholders.add(int(pid))
         arrivals = {}
         _overlay_pending(present, pending, arrivals)
         safety = att_data.get("safety") or {}
@@ -535,6 +548,7 @@ class AttendanceState:
             self.present_ids = present
             self.keyholder_ids = keyholders
             self.known_keyholders |= keyholders
+            self.known_keyholders -= present_non_keyholders
             if att_data.get("rosterAsOf"):
                 self.roster_as_of = att_data["rosterAsOf"]
             self.last_two_deep_violation = bool(safety.get("isTwoDeepViolation"))
@@ -1420,8 +1434,14 @@ def handle_scan(backend, state, outbox, participant_id):
                                        str(body["closePrompt"]))
         state.arm_local_close(participant_id, FORCE_CLOSE_CONFIRM_SECONDS, banner_html)
         state.push_event({"html": banner_html, "countdown": FORCE_CLOSE_CONFIRM_SECONDS})
-    elif outcome == "ack" and close:
+    elif outcome == "ack" and close and body.get("facilityClosed"):
         state.push_event({"html": _closed_html(close)})
+    elif outcome == "ack" and close and body.get("closeRefused"):
+        # Only a keyholder closes: the server refused this badge's close and
+        # checked it out as itself. The kiosk stops offering it the close.
+        state.forget_keyholder(participant_id)
+        banner_html, countdown = _scan_result_banner_html(body, status)
+        state.push_event({"html": banner_html, "countdown": countdown})
     elif outcome == "ack" and others and body.get("type") == "checkout":
         prompt(str(body.get("participant", {}).get("name") or "Keyholder"))
     else:

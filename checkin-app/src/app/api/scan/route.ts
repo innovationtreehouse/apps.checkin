@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { apiError, apiJson } from "@/lib/api-response";
-import { processCheckin, processCheckout, processCloseRequest, executePendingCloses, type CloseKind, type LegacyKiosk, closeActor, lastKeyholderGuard, finishCloseGuard, type CloseGuardResult, notifyScanOutcome, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS, LATE_CLOSE_SKEW_MS } from "@/lib/scan-service";
+import { processCheckin, processCheckout, processCloseRequest, executePendingCloses, type CloseKind, type LegacyKiosk, closeActor, lastKeyholderGuard, finishCloseGuard, recordWebClose, type CloseGuardResult, notifyScanOutcome, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS, LATE_CLOSE_SKEW_MS } from "@/lib/scan-service";
 import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
 import { MAX_VISIT_MS } from "@/lib/visitTimes";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
@@ -11,6 +11,18 @@ import { withKiosk } from "@/lib/kioskAuth";
 import { CLOSE_REQUEST_PROTOCOL_VERSION, KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_PROTOCOL_VERSION, TRUSTED_REPLAY_PROTOCOL_VERSION } from "@/lib/scanProtocol";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
+import type { Prisma } from "@/generated/prisma/client";
+
+const isCheckout = async (res: Response) =>
+    ((await res.clone().json().catch(() => null)) as { type?: string } | null)?.type === "checkout";
+
+// A live close from a badge that is not a keyholder: the scan went through as
+// itself, and the kiosk says why the building did not close.
+async function noteCloseRefused(res: Response): Promise<Response> {
+    const body = (await res.clone().json().catch(() => null)) as Record<string, unknown> | null;
+    if (!body) return res;
+    return apiJson({ ...body, facilityClosed: false, closeRefused: true, message: "Only a keyholder can close the building." }, res.status);
+}
 
 // A merged-away badge should still get its owner through the door — an admin
 // tidying up dupes must not be the reason a member gets rejected at the
@@ -328,6 +340,14 @@ export const POST = withKiosk(
         // A session checkout's last-keyholder decision, set inside the transaction
         // and acted on after it commits.
         const web: { guard: Extract<CloseGuardResult, { action: "proceed" }> | null; visitId: number } = { guard: null, visitId: 0 };
+        // A web checkout's chosen close commits in the scan transaction, with the checkout.
+        const recordSessionClose = async (tx: Prisma.TransactionClient, res: Response): Promise<Response> => {
+            if (auth.type === 'session' && web.guard?.facilityClosed && await isCheckout(res)) {
+                await recordWebClose(tx, web.guard, { actorId: Number(auth.user.id), subjectId: participant.id, via: "WEB_CHECKOUT" });
+            }
+            return res;
+        };
+        let closeRefused = false;
 
         let res: Response;
         try {
@@ -348,11 +368,16 @@ export const POST = withKiosk(
                 }
             }
 
+            // Only a keyholder closes. Live, the server knows the badge's role now,
+            // so a non-keyholder's close is refused and the scan is an ordinary
+            // checkout; a late delivery can't know the role at its scan time, so
+            // it still closes and is flagged (D1).
+            closeRefused = closeKind !== null && !participant.isKeyholder && !isReplay && !isDead;
             // A close request is never debounced, parked or held: it is the
             // keyholder's decision, applied at its own time however late. A
-            // closer who is no longer a keyholder, or a suspect clock, still
-            // closes and is flagged for review.
-            if (closeKind) {
+            // closer who is no longer a keyholder (on a late delivery), or a
+            // suspect clock, still closes and is flagged for review.
+            if (closeKind && !closeRefused) {
                 const flag = isDead ? `client_dead:${deadStatus}`
                     : !participant.isKeyholder ? "close_not_keyholder"
                     : (clockSuspect || clockAhead) ? "clock_suspect"
@@ -610,7 +635,7 @@ export const POST = withKiosk(
             // (conflicts park). Legacy callers without intent still toggle from
             // live state.
             if (intent) {
-                return await applyPresenceIntent(tx, {
+                return recordSessionClose(tx, await applyPresenceIntent(tx, {
                     participant,
                     direction: intent,
                     occurredAt: eventTime,
@@ -621,7 +646,7 @@ export const POST = withKiosk(
                     clockSuspect,
                     webClose: web.guard?.facilityClosed ?? false,
                     legacyKiosk,
-                });
+                }));
             }
 
             const res = activeVisit
@@ -655,7 +680,7 @@ export const POST = withKiosk(
                 clientEventId,
                 classification,
             });
-            return res;
+            return recordSessionClose(tx, res);
         }, {
             // maxWait: time a racing scan waits to acquire a connection / start.
             // timeout: ceiling on the whole locked section, including time spent
@@ -685,9 +710,10 @@ export const POST = withKiosk(
         if (auth.type === 'session' && web.guard) {
             const outcome = (await res.clone().json().catch(() => null)) as { type?: string } | null;
             if (outcome?.type === 'checkout') {
-                await finishCloseGuard(web.guard, { actorId: Number(auth.user.id), subjectId: participant.id, visitId: web.visitId, via: "WEB_CHECKOUT" });
+                await finishCloseGuard(web.guard, { actorId: Number(auth.user.id), subjectId: participant.id, visitId: web.visitId, via: "WEB_CHECKOUT", recorded: true });
             }
         }
+        if (closeRefused) res = await noteCloseRefused(res);
         await notifyScanOutcome(res, eventTime);
         // After the tx (+ optional facility sweep) commits, so a concurrent
         // GET cannot refill the cache from uncommitted rows.

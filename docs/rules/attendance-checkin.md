@@ -126,8 +126,11 @@ Things the app takes as true because they are handled outside it.
 - Nothing on the web stops or undoes a close made at the kiosk, live or queued:
   not checking the keyholder out, removing their visit, checking in another
   keyholder, nor changing their roles. A kiosk close needs no visit of the
-  keyholder's to act on. A closer who is no longer a keyholder by the time the
-  close reaches the server still closes, and the close is raised for review.  [Decision]
+  keyholder's to act on. A live close from a badge that is not a keyholder is
+  refused: that badge is checked out as itself, and the kiosk says only a
+  keyholder can close. A queued close from someone who is no longer a keyholder
+  by the time it reaches the server still closes, and is raised for review: the
+  role at the scan's time can't be known.  [Decision]
 
 - A close never ends a visit that began after it. Someone who arrives after a
   close starts a new visit. A close's time, once corrected, is when the

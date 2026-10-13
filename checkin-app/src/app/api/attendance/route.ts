@@ -5,7 +5,7 @@ import { getKioskPublicKeys, verifyKioskSignature } from "@/lib/verify-kiosk";
 import { buildingLink } from "@/lib/kioskSeen";
 import { getFullAttendance, invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
-import { closeActor, finishCloseGuard, lastKeyholderGuard } from "@/lib/scan-service";
+import { closeActor, finishCloseGuard, lastKeyholderGuard, recordWebClose } from "@/lib/scan-service";
 import { lockFacility } from "@/lib/facilityLock";
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { logBackendError, logger } from "@/lib/logger";
@@ -172,10 +172,16 @@ export const DELETE = withAuth({}, async (req, auth) => {
         if (guard.action === 'refuse') return apiError(guard.error, guard.status);
         const { facilityClosed } = guard;
 
-        const finalVisits = await processVisitCheckout(visitId, new Date(), undefined, "TYPED");
+        const closeCtx = { actorId: Number(user.id), subjectId: visit.personId, visitId, via: "WEB_DASHBOARD" as const };
+        // The close commits with the checkout, so a crash between them loses neither.
+        const finalVisits = await prisma.$transaction(async (tx) => {
+            const departed = await processVisitCheckout(visitId, new Date(), tx, "TYPED");
+            if (departed.length > 0) await recordWebClose(tx, guard, closeCtx);
+            return departed;
+        });
         const updatedVisit = finalVisits.length > 0 ? finalVisits[finalVisits.length - 1] : visit;
 
-        await finishCloseGuard(guard, { actorId: Number(user.id), subjectId: visit.personId, visitId, via: "WEB_DASHBOARD" });
+        await finishCloseGuard(guard, { ...closeCtx, recorded: true });
 
         // Fire-and-forget: send check-out notifications (mirrors /api/scan)
         sendCheckinNotifications(visit.personId, 'checkout').catch(err =>
