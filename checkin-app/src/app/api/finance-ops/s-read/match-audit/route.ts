@@ -15,11 +15,11 @@ import { runMatchAudit } from "@/lib/finance/matchAudit";
  * surface, so it must never run on a poll or cron (scale-to-zero Aurora; the same
  * cost rule as the diagnose route).
  *
- * Same board/sysadmin gate + mirror-503 shape as the sibling s-read routes, so the
+ * Same board gate + mirror-503 shape as the sibling s-read routes, so the
  * page can treat "not wired here" uniformly.
  */
 export const GET = withAuth(
-    { roles: ['isSysadmin', 'isBoardMember'] },
+    { roles: ['isBoardMember'] },
     async (_req, auth) => {
         if (auth.type !== 'session') {
             return apiError("Unauthorized", 401);
