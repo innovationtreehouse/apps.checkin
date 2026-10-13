@@ -7,11 +7,8 @@ import { renderWithProviders, setSession, setPathname, resetRtl } from "@/test-h
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
-import { libraryCount } from "@/components/navBadges";
 import {
-  EXPENSE_OPS_TABS,
   INVENTORY_LIBRARY_TABS,
-  MY_PROGRAMS_LIBRARY_TABS,
   MY_RECEIPTS_TABS,
   REVENUE_OPS_LIBRARY_TABS,
   type LibraryTab,
@@ -23,27 +20,10 @@ const mockedUseTodoCounts = useTodoCounts as jest.Mock;
 const financeOrBoard = (u: { isFinance?: boolean; isBoardMember?: boolean } | undefined) =>
   !!u?.isFinance || !!u?.isBoardMember;
 
-// Fake registrations standing in for the library wiring PRs.
+// Fake registrations for the libraries not wired yet; expense registers its own tabs.
 const REGISTRATIONS: Array<[LibraryTab[], LibraryTab]> = [
   [REVENUE_OPS_LIBRARY_TABS, { name: "Income", href: "/income", library: "income", visible: financeOrBoard }],
-  [
-    EXPENSE_OPS_TABS,
-    {
-      name: "Expenses",
-      href: "/expense",
-      library: "expense",
-      visible: financeOrBoard,
-      badge: (c) => {
-        const n = libraryCount(c, "expense", "holds");
-        return n > 0 ? { count: n, color: "treehouseGreen", label: `${n} expense holds` } : null;
-      },
-    },
-  ],
   [MY_RECEIPTS_TABS, { name: "My receipts", href: "/receipts/mine", library: "receipt", visible: (u) => !!u?.isKeyholder }],
-  [
-    MY_PROGRAMS_LIBRARY_TABS,
-    { name: "Expense approvals", href: "/my-programs/expense-approvals", library: "expense", visible: (u) => (u?.programsLed?.length ?? 0) > 0 },
-  ],
   [
     INVENTORY_LIBRARY_TABS,
     { name: "Receiving", href: "/inventory/receiving", library: "workflow-mapping", visible: (u) => !!u?.isInventoryManager || financeOrBoard(u) },
@@ -51,7 +31,7 @@ const REGISTRATIONS: Array<[LibraryTab[], LibraryTab]> = [
 ];
 
 beforeAll(() => REGISTRATIONS.forEach(([slot, tab]) => slot.push(tab)));
-afterAll(() => REGISTRATIONS.forEach(([slot]) => slot.splice(0)));
+afterAll(() => REGISTRATIONS.forEach(([slot, tab]) => slot.splice(slot.indexOf(tab), 1)));
 beforeEach(() => {
   resetRtl();
   mockedUseTodoCounts.mockReturnValue(counts());
@@ -144,9 +124,9 @@ describe("AppFrame library nav slots", () => {
   it("folds a library tab's pill into its section entry and highlights the entry on its routes", () => {
     setSession({ id: 2, isFinance: true });
     setPathname("/expense/42");
-    mockedUseTodoCounts.mockReturnValue(counts({ libraries: { expense: { holds: 3 } } }));
+    mockedUseTodoCounts.mockReturnValue(counts({ libraries: { expense: { holds: 2, openFlags: 1 } } }));
     renderFrame();
-    expect(screen.getByLabelText("3 expense holds")).toHaveTextContent("3");
+    expect(screen.getByLabelText("3 expense holds and flags")).toHaveTextContent("3");
     expect(screen.getByText("Expense Ops").closest("a")).toHaveAttribute("data-active", "true");
     expect(screen.getByText("Revenue Ops").closest("a")).not.toHaveAttribute("data-active");
   });

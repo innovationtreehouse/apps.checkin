@@ -10,6 +10,8 @@ import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
 import type { NavBadge } from "@/components/navBadges";
 import type { NavRole, SessionUser } from "@/types/auth";
 import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
+import { EXPENSE_TABS } from "@inventory/expense/nav";
+import { libraryCount } from "@/components/navBadges";
 
 export type { LibraryKey };
 
@@ -55,13 +57,35 @@ export const INVENTORY_LIBRARY_TABS: LibraryTab[] = [];
 export const REVENUE_OPS_LIBRARY_TABS: LibraryTab[] = [];
 
 /** Expense Ops section (/expense, /budgets, …): Expenses, Receipts review, Budgets, Settings. */
-export const EXPENSE_OPS_TABS: LibraryTab[] = [];
+export const EXPENSE_OPS_TABS: LibraryTab[] = [
+  {
+    ...EXPENSE_TABS.expenses,
+    library: "expense",
+    visible: (u) => !!u?.isFinance || !!u?.isBoardMember,
+    badge: (c) => {
+      const n = libraryCount(c, "expense", "holds") + libraryCount(c, "expense", "openFlags");
+      return n > 0 ? { count: n, color: "red", label: `${n} expense holds and flags` } : null;
+    },
+  },
+  { ...EXPENSE_TABS.settings, library: "expense", visible: (u) => !!u?.isFinance || !!u?.isBoardMember },
+];
 
 /** My Receipts top-level entry: the receipt library's own-receipt screens. */
 export const MY_RECEIPTS_TABS: LibraryTab[] = [];
 
 /** My Programs section (/my-programs): Expense approvals. */
-export const MY_PROGRAMS_LIBRARY_TABS: LibraryTab[] = [];
+export const MY_PROGRAMS_LIBRARY_TABS: LibraryTab[] = [
+  {
+    ...EXPENSE_TABS.approvals,
+    library: "expense",
+    // Program leads. A treasurer who leads no program has no session flag yet.
+    visible: (u) => (u?.programsLed?.length ?? 0) > 0,
+    badge: (c) => {
+      const n = libraryCount(c, "expense", "awaitingMySignoff");
+      return n > 0 ? { count: n, color: "treehouseGreen", label: `${n} expense lines awaiting your sign-off` } : null;
+    },
+  },
+];
 
 // Expense Ops admits FINANCE or BOARD; sysadmin has no access (finance-payments.md).
 export const EXPENSE_OPS_SECTION_ROLES: NavRole[] = ["isFinance", "isBoardMember"];
