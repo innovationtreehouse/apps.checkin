@@ -1,4 +1,6 @@
 import type { CatalogRuntimeConfig } from "@inventory/global-catalog";
+import { getServerSession } from "next-auth";
+import { config } from "@/lib/config";
 
 const findUnique = jest.fn();
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { org: { findUnique } } }));
@@ -7,6 +9,14 @@ jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { org: { findUniqu
 // jest env does not build; only configureCatalog is needed, to capture the config.
 const configureCatalog = jest.fn<void, [CatalogRuntimeConfig]>();
 jest.mock("@inventory/global-catalog", () => ({ configureCatalog }));
+jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
+jest.mock("@/lib/config", () => ({
+  config: { isStaging: jest.fn(() => false) },
+  isStagingAccessAllowed: jest.requireActual("@/lib/config").isStagingAccessAllowed,
+}));
+
+const mockSession = getServerSession as jest.Mock;
+const mockIsStaging = config.isStaging as jest.Mock;
 
 async function boot(): Promise<CatalogRuntimeConfig> {
   await jest.isolateModulesAsync(async () => {
@@ -50,5 +60,43 @@ describe("configureCatalogRuntime", () => {
     findUnique.mockResolvedValue(null);
     const runtime = await boot();
     await expect(runtime.org()).rejects.toThrow(/Org row "treehouse" not found/);
+  });
+});
+
+describe("getPrincipal", () => {
+  beforeEach(() => {
+    mockSession.mockReset();
+    mockIsStaging.mockReturnValue(false);
+  });
+
+  const signedIn = (user: Record<string, unknown>) => mockSession.mockResolvedValue({ user });
+  const getPrincipal = async () => (await import("../configure")).getPrincipal();
+
+  it("returns the principal for a live session", async () => {
+    signedIn({ id: 7, name: "Ada" });
+    await expect(getPrincipal()).resolves.toEqual({ id: 7, name: "Ada" });
+  });
+
+  it("returns null without a session", async () => {
+    mockSession.mockResolvedValue(null);
+    await expect(getPrincipal()).resolves.toBeNull();
+  });
+
+  it.each([0, -3, 1.5, Number.NaN, "7", undefined])("returns null for session id %p", async (id) => {
+    signedIn({ id, name: "Ada" });
+    await expect(getPrincipal()).resolves.toBeNull();
+  });
+
+  it("returns null for a denied household", async () => {
+    signedIn({ id: 7, name: "Ada", denied: true });
+    await expect(getPrincipal()).resolves.toBeNull();
+  });
+
+  it("applies the staging gate on staging", async () => {
+    mockIsStaging.mockReturnValue(true);
+    signedIn({ id: 7, name: "Ada" });
+    await expect(getPrincipal()).resolves.toBeNull();
+    signedIn({ id: 7, name: "Ada", canAccessStaging: true });
+    await expect(getPrincipal()).resolves.toEqual({ id: 7, name: "Ada" });
   });
 });

@@ -90,8 +90,15 @@ it('401 when unauthenticated, without raising anything', async () => {
     expect(prismaMock.orgMembershipProcess.findFirst).not.toHaveBeenCalled();
 });
 
-it('403 for a signed-in member without board or sysadmin role, without raising anything', async () => {
+it('403 for a signed-in member without the board role, without raising anything', async () => {
     mockSession.mockResolvedValue({ user: { id: 5, isSysadmin: false, isBoardMember: false } });
+    const res = await POST(req({ kind: 'order', shopifyOrderId: '900' }));
+    expect(res.status).toBe(403);
+    expect(raisePaymentExceptionMock).not.toHaveBeenCalled();
+});
+
+it('403 for a sysadmin who is not on the board, without raising anything', async () => {
+    mockSession.mockResolvedValue({ user: { id: 5, isSysadmin: true, isBoardMember: false } });
     const res = await POST(req({ kind: 'order', shopifyOrderId: '900' }));
     expect(res.status).toBe(403);
     expect(raisePaymentExceptionMock).not.toHaveBeenCalled();

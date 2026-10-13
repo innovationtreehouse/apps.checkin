@@ -187,6 +187,10 @@ describe("closed-enum writer", () => {
     const pkgJson = JSON.parse(readFileSync(join(__dirname, "../../package.json"), "utf-8")) as { exports: Record<string, unknown> };
     expect(Object.keys(pkgJson.exports)).toEqual(["."]);
   });
+
+  it("keys the writer with a registered symbol, so a second loaded copy of the module matches", () => {
+    expect(CREATE).toBe(Symbol.for("@inventory/quickbooks.create"));
+  });
 });
 
 describe("request limits", () => {

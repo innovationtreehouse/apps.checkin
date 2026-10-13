@@ -1,4 +1,4 @@
-// Not re-exported from index.ts, and package.json exports only ".", so code outside this
-// package cannot reach the raw create: it writes through findOrCreate / createVendor, which
-// look the key up before every create.
-export const CREATE = Symbol("quickbooks.create");
+// Not re-exported from index.ts, and package.json exports only ".", so callers write through
+// findOrCreate / createVendor, which look the key up before every create. A registered symbol,
+// so a second loaded copy of this module keys the same method.
+export const CREATE = Symbol.for("@inventory/quickbooks.create");

@@ -41,8 +41,14 @@ it('401 when unauthenticated, without running the audit', async () => {
     expect(runMatchAuditMock).not.toHaveBeenCalled();
 });
 
-it('403 for a signed-in member without board or sysadmin role, without running the audit', async () => {
+it('403 for a signed-in member without the board role, without running the audit', async () => {
     mockSession.mockResolvedValue({ user: { id: 5, isSysadmin: false, isBoardMember: false } });
+    expect((await GET(req())).status).toBe(403);
+    expect(runMatchAuditMock).not.toHaveBeenCalled();
+});
+
+it('403 for a sysadmin who is not on the board, without running the audit', async () => {
+    mockSession.mockResolvedValue({ user: { id: 5, isSysadmin: true, isBoardMember: false } });
     expect((await GET(req())).status).toBe(403);
     expect(runMatchAuditMock).not.toHaveBeenCalled();
 });
