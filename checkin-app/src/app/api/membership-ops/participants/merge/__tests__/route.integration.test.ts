@@ -673,6 +673,7 @@ describe("Merge Participants API", () => {
             // Refused before the transaction — nothing moved.
             expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
             expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.email).toBe("merge@example.com");
+            expect(await prisma.auditLog.count({ where: { actorId, tableName: "SelfGrantRefusal" } })).toBe(1);
         });
 
         it("403s when the actor shares a household with the merged-away record only", async () => {
@@ -689,6 +690,16 @@ describe("Merge Participants API", () => {
             await prisma.person.update({ where: { id: actorId }, data: { householdId } });
             mockGetServerSession.mockResolvedValue({
                 user: { id: actorId, email: "actor@example.com", isSysadmin: true, isBoardMember: true }
+            });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(403);
+            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+        });
+
+        it("403s an actor who resolves to nobody before anything moves (fail closed)", async () => {
+            mockGetServerSession.mockResolvedValue({
+                user: { id: actorId + 1_000_000, email: "ghost@example.com", isBoardMember: true }
             });
 
             const res = await POST(mergeReq(pKeepId, pMergeId));

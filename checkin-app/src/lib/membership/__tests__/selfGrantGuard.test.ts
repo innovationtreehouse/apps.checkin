@@ -64,34 +64,35 @@ describe("refuseSelfGrant", () => {
 });
 
 /**
- * Every API route that writes a dues-discount or background-check grant must call
+ * Every source file that writes a dues-discount or background-check grant must call
  * refuseSelfGrant, so a new writer cannot skip the own-household rule unnoticed.
  */
 describe("self-grant writers", () => {
-    const apiRoot = path.join(__dirname, "../../../app/api");
+    const srcRoot = path.join(__dirname, "../../..");
     const WRITES_GRANT = [
         /volunteerDesignation\.(create|createMany|upsert|update|updateMany)\(/,
         /data:\s*\{[^}]*\bisVolunteer\s*:/,
         /\bupdateData\.lastBackgroundCheck\s*=|data:\s*\{[^}]*\blastBackgroundCheck\s*:/,
     ];
 
-    function routeFiles(dir: string): string[] {
+    function sourceFiles(dir: string): string[] {
         return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
             const full = path.join(dir, e.name);
-            if (e.isDirectory()) return e.name === "__tests__" ? [] : routeFiles(full);
-            return e.name === "route.ts" ? [full] : [];
+            if (e.isDirectory()) return e.name === "__tests__" || e.name === "generated" ? [] : sourceFiles(full);
+            return /\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) ? [full] : [];
         });
     }
 
-    const writers = routeFiles(apiRoot)
-        .map((f) => ({ rel: path.relative(apiRoot, f), src: fs.readFileSync(f, "utf8") }))
+    const writers = sourceFiles(srcRoot)
+        .map((f) => ({ rel: path.relative(srcRoot, f), src: fs.readFileSync(f, "utf8") }))
         .filter(({ src }) => WRITES_GRANT.some((re) => re.test(src)));
 
     it("finds the known writers", () => {
         expect(writers.map((w) => w.rel).sort()).toEqual([
-            "membership-ops/households/[id]/route.ts",
-            "membership-ops/participants/[id]/route.ts",
-            "settings/membership/volunteer-designations/route.ts",
+            "app/api/membership-ops/households/[id]/route.ts",
+            "app/api/membership-ops/participants/[id]/route.ts",
+            "app/api/settings/membership/volunteer-designations/route.ts",
+            "lib/membership/review.ts",
         ]);
     });
 
