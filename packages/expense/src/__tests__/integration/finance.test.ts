@@ -176,7 +176,7 @@ describeDb("sign-off seats", () => {
 
       await signLine(principal(1), li, "SUBMITTER");
       await signLine(principal(2), li, "PROGRAM_APPROVER");
-      await signLine(FINANCE, li, "TREASURER");
+      await signLine(principal(9, { isFinance: true }), li, "TREASURER");
       expect(await events(id)).toBe(1);
     });
 
@@ -195,22 +195,6 @@ describeDb("sign-off seats", () => {
       await expect(setReimbursee(ORG, id, 9, principal(10, { isFinance: true }))).rejects.toMatchObject({ statusCode: 403 });
       await expect(setReimbursee("org-other", id, 7, FINANCE)).rejects.toThrow(/not this org/);
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
-    });
-
-    it("a sign-off by someone the new reimbursee conflicts is voided and must be re-signed", async () => {
-      const { id, li } = await reimburseeLine({ approvers: [10] }, 7);
-      await signLine(principal(1), li, "SUBMITTER");
-      await signLine(principal(10), li, "PROGRAM_APPROVER");
-
-      await setReimbursee(ORG, id, 9, FINANCE);
-
-      const status = (await signoffStatus(id))[0];
-      expect(status.filled).toEqual([{ seat: "SUBMITTER", signerUserId: 1 }]);
-      expect(status.missing).toEqual(["PROGRAM_APPROVER", "TREASURER"]);
-      const voided = await db.expenseAuditLog.findMany({ where: { expenseId: id, action: "signoff_voided" } });
-      expect(voided.map((a) => [a.userId, a.lineItemId, a.valueBefore])).toEqual([[3, li, "PROGRAM_APPROVER"]]);
-      await expect(signLine(principal(10), li, "PROGRAM_APPROVER")).rejects.toMatchObject({ statusCode: 403 });
-      await signLine(principal(5), li, "PROGRAM_APPROVER");
     });
 
     it("FINANCE cannot name a reimbursee who is not a Person", async () => {

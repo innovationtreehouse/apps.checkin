@@ -23,6 +23,8 @@ export interface SignoffFacts {
   board: number[];
   /** The submitter, the reimbursee, and their households. */
   conflicted: number[];
+  /** Who named the reimbursee; null when it came with the receipt. They never sign the Treasurer seat. */
+  reimburseeSetter: number | null;
 }
 
 export const CLOSED_STATES = new Set(["qb_complete", "qb_skipped", "rejected"]);
@@ -63,6 +65,7 @@ function eligible(facts: SignoffFacts, seat: Exclude<Seat, "SUBMITTER">): number
 /** Eligible people who can still sign the seat: not conflicted and not in another seat on the line. */
 export function availableSigners(facts: SignoffFacts, filled: FilledSeat[], seat: Exclude<Seat, "SUBMITTER">): number[] {
   const blocked = new Set([...facts.conflicted, ...filled.filter((f) => f.seat !== seat).map((f) => f.signerUserId)]);
+  if (seat === "TREASURER" && facts.reimburseeSetter !== null) blocked.add(facts.reimburseeSetter);
   return eligible(facts, seat).filter((id) => !blocked.has(id));
 }
 
@@ -106,6 +109,7 @@ export function signoffRefusal(
     return signerUserId === facts.submitterId ? null : "only the submitter fills the submitter seat";
   }
   if (facts.conflicted.includes(signerUserId)) return "signer is the submitter, the reimbursee, or in their household";
+  if (seat === "TREASURER" && signerUserId === facts.reimburseeSetter) return "whoever set the reimbursee cannot fill the Treasurer seat";
 
   const available = availableSigners(facts, filled, seat);
   if (available.length > 0) {
