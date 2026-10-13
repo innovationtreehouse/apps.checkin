@@ -61,6 +61,7 @@ const released = (lib: LibraryKey, gate: Visible): Visible => (u, signedIn, coun
   gate(u, signedIn, counts) && isLibraryVisible(lib, { isBoardMember: u?.isBoardMember, releasedLibraries: counts?.releasedLibraries });
 // Bulk donation (#1280 §5): FINANCE or BOARD, like its routes, until the board releases it.
 const DONATIONS = released('bulk-donation', FINANCE_OR_BOARD);
+const RECEIVING: Visible = (u, signedIn) => signedIn && (!!u?.isInventoryManager || !!u?.isFinance || !!u?.isBoardMember);
 
 export type PageEntry = {
   href: string;
@@ -130,6 +131,10 @@ export const PAGES: PageEntry[] = [
   { href: '/inventory/merge-conflicts', label: 'Merge Conflicts', section: 'Inventory', keywords: 'uom mismatch', visible: released('local-inventory', INVENTORY_MANAGER) },
   { href: '/inventory/provisional-items', label: 'Provisional Map', section: 'Inventory', keywords: 'provisional part', visible: released('local-inventory', INVENTORY_MANAGER) },
   { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: released('local-inventory', INVENTORY_MANAGER) },
+  // Receiving (#1289) — receipt mapping. Mirrors the routes' read gate:
+  // INVENTORY_MANAGER, FINANCE or BOARD; writes inside are manager-only.
+  { href: '/inventory/receiving', label: 'Receiving', section: 'Inventory', keywords: 'receipt mapping proceed apply failed', visible: released('workflow-mapping', RECEIVING) },
+  { href: '/inventory/receiving/audit-log', label: 'Receiving Audit Log', section: 'Inventory', keywords: 'receipt mapping history', visible: released('workflow-mapping', RECEIVING) },
 
   // Facility Ops — board, plus operations on the two aggregate tools (#1633:
   // operations reach attendance in aggregate only). Visits, Badges (the raw

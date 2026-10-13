@@ -10,13 +10,18 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./pages/*": {
+      "types": "./src/pages/*.tsx",
+      "import": "./src/pages/*.tsx"
     }
   },
   "scripts": {
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
     "db:deploy": "node --env-file=.env node_modules/.bin/prisma migrate deploy",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@inventory/receipt-types": "*",

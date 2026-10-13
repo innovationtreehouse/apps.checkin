@@ -20,11 +20,17 @@ MALFORMED_JSON_PROBES=(
   /api/inventory/locations
   /api/donations/account-map
   /api/expense/qb-accounts
+  /api/workflow-mapping/receipts/1/lines/1/associate
 )
 
 # Duplicate create: the first POST must succeed, the second must answer 409.
 DUPLICATE_PROBE_PATH=/api/catalog/categories
 DUPLICATE_PROBE_BODY='{"name":"Smoke probe","letter":"Z"}'
+
+# Replayed transition: a second proceed on the same receipt must answer 409.
+# workflow-mapping's error is built in the instrumentation bundle and translated
+# in the route bundle, so this proves that translation under the production build.
+REPLAY_PROBE_RECEIPT=smoke-replay
 
 RUNNER_IMAGE=${1:?runner image}
 BUILDER_IMAGE=${2:?builder image}
@@ -75,6 +81,16 @@ done
 # The deploy workflows' migrate-task command, in the runner image.
 docker run --rm --network "$NET" "${DB_ENV[@]}" "$RUNNER_IMAGE" sh -ec \
   'cd checkin-app && ../scripts/each-library.sh exec --no -- prisma migrate deploy && npx --no-install prisma migrate deploy'
+
+# One pending_review receipt whose only line is resolved, so proceed is legal once.
+REPLAY_RECEIPT_ID=$(docker exec -i "$DB" psql -v ON_ERROR_STOP=1 -U prisma -d workflow_mapping -qtA <<SQL
+WITH r AS (INSERT INTO received_receipts (org_id, receipt_id, receipt_json)
+           VALUES ('treehouse', '$REPLAY_PROBE_RECEIPT', '{}') RETURNING id),
+     l AS (INSERT INTO received_receipt_line_statuses (received_receipt_id, receipt_line_item_id, recognition_status)
+           SELECT id, 1, 'non_inventory' FROM r)
+SELECT id FROM r;
+SQL
+)
 
 PERSON_ID=$(psql <<'SQL'
 WITH h AS (INSERT INTO "Household" (name) VALUES ('Smoke') RETURNING id),
@@ -127,5 +143,9 @@ first=$(post "$DUPLICATE_PROBE_PATH" "$DUPLICATE_PROBE_BODY")
 case "$first" in 2??) echo "ok   POST $DUPLICATE_PROBE_PATH (create) -> $first" ;;
   *) echo "::error::POST $DUPLICATE_PROBE_PATH (create) -> $first (want 2xx)"; failed=1 ;; esac
 expect "POST $DUPLICATE_PROBE_PATH (duplicate)" 409 "$(post "$DUPLICATE_PROBE_PATH" "$DUPLICATE_PROBE_BODY")"
+
+proceed=/api/workflow-mapping/receipts/$REPLAY_RECEIPT_ID/proceed
+expect "POST $proceed (first)" 200 "$(post "$proceed" '{}')"
+expect "POST $proceed (replay)" 409 "$(post "$proceed" '{}')"
 
 exit "$failed"

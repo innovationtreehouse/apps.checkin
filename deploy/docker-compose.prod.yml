@@ -30,6 +30,7 @@ services:
       LOCAL_INVENTORY_DATABASE_URL: postgresql://local_inventory_dml:${LOCAL_INVENTORY_DML_DB_PASSWORD}@db:5432/local_inventory?schema=public
       BULK_DONATION_DATABASE_URL: postgresql://bulk_donation_dml:${BULK_DONATION_DML_DB_PASSWORD}@db:5432/bulk_donation?schema=public
       EXPENSE_DATABASE_URL: postgresql://expense_dml:${EXPENSE_DML_DB_PASSWORD}@db:5432/expense?schema=public
+      WORKFLOW_MAPPING_DATABASE_URL: postgresql://workflow_mapping_dml:${WORKFLOW_MAPPING_DML_DB_PASSWORD}@db:5432/workflow_mapping?schema=public
     depends_on:
       - db
 
@@ -45,6 +46,7 @@ services:
       LOCAL_INVENTORY_DATABASE_URL: postgresql://local_inventory_owner:${LOCAL_INVENTORY_OWNER_DB_PASSWORD}@db:5432/local_inventory?schema=public
       BULK_DONATION_DATABASE_URL: postgresql://bulk_donation_owner:${BULK_DONATION_OWNER_DB_PASSWORD}@db:5432/bulk_donation?schema=public
       EXPENSE_DATABASE_URL: postgresql://expense_owner:${EXPENSE_OWNER_DB_PASSWORD}@db:5432/expense?schema=public
+      WORKFLOW_MAPPING_DATABASE_URL: postgresql://workflow_mapping_owner:${WORKFLOW_MAPPING_OWNER_DB_PASSWORD}@db:5432/workflow_mapping?schema=public
     command: ["scripts/each-library.sh", "exec", "--no", "--", "prisma", "migrate", "deploy"]
     depends_on:
       - db
@@ -65,6 +67,8 @@ services:
       BULK_DONATION_DML_DB_PASSWORD: ${BULK_DONATION_DML_DB_PASSWORD}
       EXPENSE_OWNER_DB_PASSWORD: ${EXPENSE_OWNER_DB_PASSWORD}
       EXPENSE_DML_DB_PASSWORD: ${EXPENSE_DML_DB_PASSWORD}
+      WORKFLOW_MAPPING_OWNER_DB_PASSWORD: ${WORKFLOW_MAPPING_OWNER_DB_PASSWORD}
+      WORKFLOW_MAPPING_DML_DB_PASSWORD: ${WORKFLOW_MAPPING_DML_DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # Creates each library's database and roles on first init.
