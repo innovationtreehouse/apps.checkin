@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import type { TxClient } from "@/lib/db-client";
-import { clearBackgroundCheck, ReviewError } from "@/lib/membership/review";
+import { attest, clearBackgroundCheck, ReviewError } from "@/lib/membership/review";
 import { SELF_GRANT_REFUSAL_TABLE } from "@/lib/membership/selfGrantGuard";
 
 jest.mock("@/lib/prisma", () => ({
@@ -8,15 +8,17 @@ jest.mock("@/lib/prisma", () => ({
     default: {
         person: { findUnique: jest.fn(), findMany: jest.fn() },
         auditLog: { create: jest.fn() },
+        $transaction: jest.fn(),
     },
 }));
 
 const db = prisma as unknown as {
     person: { findUnique: jest.Mock; findMany: jest.Mock };
     auditLog: { create: jest.Mock };
+    $transaction: jest.Mock;
 };
 
-const people: Record<number, number | null> = { 1: 10, 2: 10, 3: 20 }; // person id -> household id
+const people: Record<number, number | null> = { 1: 10, 2: 10, 3: 20, 4: null }; // person id -> household id
 
 /** A tx double for one process: a PERSON_BG when `subjectPersonId` is set, else a household membership. */
 function fakeTx(process: { subjectPersonId: number | null; householdId: number }) {
@@ -67,5 +69,42 @@ describe("clearBackgroundCheck self-grant guard", () => {
         await clearBackgroundCheck(tx as unknown as TxClient, 7, 1);
         expect(tx.person.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 3 } }));
         expect(db.auditLog.create).not.toHaveBeenCalled();
+    });
+});
+
+describe("attest on a PERSON_BG", () => {
+    /** Runs attest with reviewer `reviewerId` against a PERSON_BG whose subject is `subjectPersonId`. */
+    function attestAs(reviewerId: number, subjectPersonId: number) {
+        db.person.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
+            where.id in people ? { id: where.id, householdId: people[where.id], isBackgroundCheckReviewer: true, isBoardMember: false } : null);
+        const attestation = jest.fn();
+        const tx = {
+            $queryRaw: jest.fn(),
+            orgMembershipProcess: {
+                findUnique: async () => ({ id: 7, status: "PENDING_BG_REVIEW", bgConsentAt: null, bgClearedAt: null, orgMembershipId: null, subjectPersonId, attestations: [] }),
+                update: jest.fn(),
+            },
+            person: { findUnique: async ({ where }: { where: { id: number } }) => ({ householdId: people[where.id] ?? null }) },
+            backgroundCheckAttestation: { create: attestation },
+            auditLog: { create: jest.fn() },
+        };
+        db.$transaction.mockImplementation((fn: (t: typeof tx) => unknown) => fn(tx));
+        return { result: attest(reviewerId, 7, { result: "APPROVE" }), attestation };
+    }
+
+    it.each([
+        ["their own check, with no household", 4, 4],
+        ["their own check", 1, 1],
+        ["a household member's check", 1, 2],
+    ])("refuses a reviewer attesting %s", async (_label, reviewerId, subjectPersonId) => {
+        const { result, attestation } = attestAs(reviewerId, subjectPersonId);
+        await expect(result).rejects.toMatchObject({ code: "same_household_applicant" });
+        expect(attestation).not.toHaveBeenCalled();
+    });
+
+    it("records an attestation on another household's check", async () => {
+        const { result, attestation } = attestAs(4, 3);
+        await expect(result).resolves.toMatchObject({ approvals: 1 });
+        expect(attestation).toHaveBeenCalled();
     });
 });
