@@ -104,7 +104,11 @@ Things the app takes as true because they are handled outside it.
   mark. The mark is read from the visit record, so correcting a keyholder's
   visit re-decides it. Every other way of checking someone in — the web, a
   household lead, the review panel leaving a visit open — still needs a
-  keyholder already present.  [Decision]
+  keyholder already present, and on the web that holds for a keyholder's own
+  check-in too: only a badge at the door opens the building, and a keyholder
+  inside can check in someone who has lost their badge. The review panel may
+  still leave open a keyholder's own parked door badge, which was a badge at
+  the door.  [Decision]
 
 ### Supervision
 

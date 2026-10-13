@@ -49,6 +49,8 @@ async function openVisitCount(participantId: number) {
 describe('POST /api/attendance/manual concurrency (advisory lock)', () => {
     let subjectId: number;
     let householdId: number;
+    let anchorId: number;
+    let anchorHouseholdId: number;
 
     beforeAll(async () => {
         // Clean any leaked state from a prior run.
@@ -68,13 +70,22 @@ describe('POST /api/attendance/manual concurrency (advisory lock)', () => {
         });
         subjectId = subject.id;
         householdId = subject.householdId;
+
+        // A keyholder inside, so the facility-open guard passes: this suite
+        // exercises the advisory lock, not the keyholder-first rule.
+        const anchor = await prisma.person.create({
+            data: { email: `anchor-${EMAIL_TAG}@example.com`, name: 'Manual Concurrency Keyholder', isKeyholder: true, household: { create: { name: "Test HH" } } },
+        });
+        anchorId = anchor.id;
+        anchorHouseholdId = anchor.householdId;
+        await prisma.visit.create({ data: { personId: anchorId, arrivedAt: new Date(), arrivedVia: 'WEB' } });
     });
 
     afterAll(async () => {
-        await prisma.visit.deleteMany({ where: { personId: subjectId } });
+        await prisma.visit.deleteMany({ where: { personId: { in: [subjectId, anchorId] } } });
         await prisma.auditLog.deleteMany({ where: { actorId: subjectId } });
-        await prisma.person.deleteMany({ where: { id: subjectId } });
-        await prisma.household.deleteMany({ where: { id: householdId } });
+        await prisma.person.deleteMany({ where: { id: { in: [subjectId, anchorId] } } });
+        await prisma.household.deleteMany({ where: { id: { in: [householdId, anchorHouseholdId] } } });
     });
 
     it('two concurrent manual check-ins → exactly one open visit, both responses share it', async () => {
@@ -82,9 +93,7 @@ describe('POST /api/attendance/manual concurrency (advisory lock)', () => {
         await prisma.visit.deleteMany({ where: { personId: subjectId } });
         expect(await openVisitCount(subjectId)).toBe(0);
 
-        // Keyholder: an open backfill must clear the facility-open guard; this
-        // suite exercises the advisory lock, not the keyholder-first rule.
-        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: subjectId, isKeyholder: true } });
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: subjectId } });
 
         const arrivedAt = new Date(Date.now() - 1800000).toISOString(); // 30 min ago
 

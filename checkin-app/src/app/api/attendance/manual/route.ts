@@ -107,23 +107,17 @@ export const POST = withAuth({}, async (req, auth) => {
                 if (openVisit) return { visit: openVisit, freshCheckin: false };
 
                 // An open backfill claims the SUBJECT is in the building NOW, so
-                // the same facility-open guard as /api/scan applies: a
-                // non-keyholder cannot be the first (only) person present.
-                // Whose standing counts is the subject's — a lead cannot open
-                // the building by backfilling a visit for their child. A closed
-                // backfill is historical and never gates. Checked under the lock
-                // so a racing keyholder check-in is either committed-and-seen or
-                // not yet.
-                const subjectIsKeyholder = subjectId === userId ? auth.user.isKeyholder : subject.isKeyholder;
-                if (!subjectIsKeyholder) {
-                    const activeKeyholders = await tx.visit.count({
-                        where: { departedAt: null, person: { isKeyholder: true }, ...LIVE_VISIT }
-                    });
-                    // Keyholder-first stands for staff backfills (#254 ruling):
-                    // a refused request writes nothing — projection C's hold is
-                    // for kiosk scans, which must never be lost.
-                    if (activeKeyholders === 0) return { facilityClosed: true as const };
-                }
+                // the same facility-open guard as /api/scan applies: nobody,
+                // keyholder included, opens the building this way — only a badge
+                // at the door does. A closed backfill is historical and never
+                // gates. Checked under the lock so a racing keyholder check-in is
+                // either committed-and-seen or not yet. A refused request writes
+                // nothing: projection C's hold is for kiosk scans, which must
+                // never be lost.
+                const activeKeyholders = await tx.visit.count({
+                    where: { departedAt: null, person: { isKeyholder: true }, ...LIVE_VISIT }
+                });
+                if (activeKeyholders === 0) return { facilityClosed: true as const };
             }
 
             const created = await tx.visit.create({
@@ -163,7 +157,7 @@ export const POST = withAuth({}, async (req, auth) => {
         });
 
         if ('facilityClosed' in result) {
-            return apiError("Facility is closed. A Keyholder must check in first.", 403);
+            return apiError("Facility is closed. A keyholder must badge in at the door first.", 403);
         }
         const { visit, freshCheckin } = result;
 
