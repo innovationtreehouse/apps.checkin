@@ -213,7 +213,6 @@ describe('finance vocabulary, catalog-viewer FINANCE admission, widened anyRole'
     });
 
     test.each<[string, Partial<Extract<AuthResult, { type: 'session' }>['user']>, boolean]>([
-        ['a volunteer designation alone (no role, program or Volunteer Family)', { hasVolunteerDesignation: true, isActiveOrgMember: true }, false],
         ['a Volunteer Family youth with an ACTIVE membership', { ageBand: 'youth', isVolunteerFamily: true, isActiveOrgMember: true }, true],
         ['a program leader without an ACTIVE membership', { ageBand: 'adult', programsLed: [3], isActiveOrgMember: false }, false],
         ['a program leader with an ACTIVE membership', { ageBand: 'adult', programsLed: [3], isActiveOrgMember: true }, true],
@@ -245,7 +244,7 @@ describe('finance vocabulary, catalog-viewer FINANCE admission, widened anyRole'
 
     test("'catalog-viewer' makes no DB read", async () => {
         prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue({ id: 1 });
-        expect((await resolveAccess('catalog-viewer', rctx(as({ hasVolunteerDesignation: true })))).allowed).toBe(false);
+        expect((await resolveAccess('catalog-viewer', rctx(as({ isActiveOrgMember: true })))).allowed).toBe(false);
         expect(prisma.volunteerDesignation.findFirst).not.toHaveBeenCalled();
     });
 

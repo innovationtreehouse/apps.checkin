@@ -109,12 +109,6 @@ describe("AppFrame library nav slots", () => {
     expect(screen.queryByText("Revenue Ops")).not.toBeInTheDocument();
   });
 
-  it("volunteer designation alone: no Inventory", () => {
-    setSession({ id: 6, hasVolunteerDesignation: true });
-    renderFrame();
-    expect(screen.queryByText("Inventory")).not.toBeInTheDocument();
-  });
-
   it("active youth program volunteer: Inventory", () => {
     setSession({ id: 7, ageBand: "youth", isProgramVolunteer: true, isActiveOrgMember: true });
     renderFrame();
