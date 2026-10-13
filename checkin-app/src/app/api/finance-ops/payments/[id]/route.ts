@@ -3,6 +3,8 @@ import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
+import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
+import { ordersByLegacyIds, type MirrorOrder } from "@/lib/shopifyRead/client";
 
 /**
  * PATCH /api/finance-ops/payments/[id] — the board acknowledges or resolves one
@@ -30,6 +32,14 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
             const action = body.action;
             if (action !== 'acknowledge' && action !== 'resolve') {
                 return apiError("action must be 'acknowledge' or 'resolve'", 400);
+            }
+
+            const conflict = await exceptionConflict(id, auth.user.id);
+            if (conflict === 'mirror-unavailable') {
+                return apiError("Payment details are unavailable right now; try again shortly", 503);
+            }
+            if (conflict) {
+                return apiError("You cannot act on a payment problem for yourself or your own household — someone outside your household must.", 403);
             }
 
             const data =
@@ -70,3 +80,54 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
         }
     }
 );
+
+/**
+ * Whether the actor is, or shares a household with, anyone the exception is
+ * about: its person, its membership process's household or background-check
+ * subject, or the order's payer (matched by customer email). Fails closed when
+ * the actor has no household or the order's payer can't be read.
+ */
+async function exceptionConflict(id: number, actorId: number): Promise<boolean | 'mirror-unavailable'> {
+    const actorHouseholdId = await resolveActorHouseholdId(prisma, actorId);
+    if (actorHouseholdId === null) return true;
+
+    const exception = await prisma.paymentException.findUnique({
+        where: { id },
+        select: { personId: true, processId: true, shopifyOrderId: true },
+    });
+    if (!exception) return false; // the update below 409s
+
+    const subjectHouseholds: (number | null | undefined)[] = [];
+    if (exception.personId !== null) {
+        if (exception.personId === actorId) return true;
+        const person = await prisma.person.findUnique({ where: { id: exception.personId }, select: { householdId: true } });
+        subjectHouseholds.push(person?.householdId);
+    }
+    if (exception.processId !== null) {
+        const process = await prisma.orgMembershipProcess.findUnique({
+            where: { id: exception.processId },
+            select: { orgMembership: { select: { householdId: true } }, subjectPerson: { select: { id: true, householdId: true } } },
+        });
+        if (process?.subjectPerson?.id === actorId) return true;
+        subjectHouseholds.push(process?.orgMembership?.householdId, process?.subjectPerson?.householdId);
+    }
+    if (exception.shopifyOrderId !== null) {
+        let orders: MirrorOrder[];
+        try {
+            orders = await ordersByLegacyIds([exception.shopifyOrderId]);
+        } catch (error) {
+            logger.error("Failed to read payer for payment exception conflict check:", error);
+            return 'mirror-unavailable';
+        }
+        const payerEmail = orders[0]?.customerEmail;
+        if (payerEmail) {
+            const payer = await prisma.person.findFirst({
+                where: { email: { equals: payerEmail, mode: 'insensitive' } },
+                select: { id: true, householdId: true },
+            });
+            if (payer?.id === actorId) return true;
+            subjectHouseholds.push(payer?.householdId);
+        }
+    }
+    return subjectHouseholds.some((h) => sharesHousehold(actorHouseholdId, h));
+}
