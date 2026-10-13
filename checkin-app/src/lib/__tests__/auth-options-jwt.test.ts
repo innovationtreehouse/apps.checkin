@@ -64,7 +64,7 @@ jest.mock('@/lib/roles', () => ({
 // jest.setup.js globally mocks @/lib/auth-options to `{}`; unmock to get the real callbacks.
 jest.unmock('@/lib/auth-options');
 
-import { authOptions, PERSONA_MINT_PROVIDER_ID } from '@/lib/auth-options';
+import { authOptions, ORG_CLAIM_MAX_AGE_SECONDS, PERSONA_MINT_PROVIDER_ID } from '@/lib/auth-options';
 import { FLAG_TO_KIND, type RoleFlag } from '@/lib/roles';
 
 const mockFindUnique = (prisma as unknown as { person: { findUnique: jest.Mock } })
@@ -197,10 +197,11 @@ describe('jwt() callback — revocation enforcement on refresh', () => {
     });
 
     it('no token.id and no user ⇒ no DB lookup, token passed through untouched', async () => {
-        const result = await callRefresh({ hd: 'x', emailVerified: true });
+        const issuedAt = Math.floor(Date.now() / 1000);
+        const result = await callRefresh({ hd: 'x', emailVerified: true, orgClaimsIssuedAt: issuedAt });
 
         expect(mockFindUnique).not.toHaveBeenCalled();
-        expect(result).toEqual({ hd: 'x', emailVerified: true });
+        expect(result).toEqual({ hd: 'x', emailVerified: true, orgClaimsIssuedAt: issuedAt });
     });
 });
 
@@ -350,6 +351,94 @@ describe('jwt() callback — persona-mint sign-in branch', () => {
         expect(result.impersonatedBy).toBeNull();
         expect(result.hd).toBeUndefined();
         expect(result.emailVerified).toBeUndefined();
+    });
+});
+
+describe('jwt() callback — organization-account claim age limit', () => {
+    const nowSeconds = () => Math.floor(Date.now() / 1000);
+
+    it('starts the clock at Google sign-in', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant());
+        const before = nowSeconds();
+
+        const result = (await jwt({
+            token: {},
+            user: { email: 'p@example.com' },
+            account: { provider: 'google' },
+            profile: { hd: ORG_DOMAIN, email_verified: true },
+        } as unknown as Parameters<JwtCallback>[0])) as Record<string, unknown>;
+
+        expect(result.hd).toBe(ORG_DOMAIN);
+        expect(result.orgClaimsIssuedAt).toBeGreaterThanOrEqual(before);
+    });
+
+    it('keeps the claims while younger than the limit', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant());
+        const issuedAt = nowSeconds() - ORG_CLAIM_MAX_AGE_SECONDS + 60;
+
+        const result = (await callRefresh({
+            id: 7, hd: ORG_DOMAIN, emailVerified: true, orgClaimsIssuedAt: issuedAt,
+        })) as Record<string, unknown>;
+
+        expect(result.hd).toBe(ORG_DOMAIN);
+        expect(result.emailVerified).toBe(true);
+        expect(result.orgClaimsIssuedAt).toBe(issuedAt);
+    });
+
+    it('drops the claims past the limit while the rest of the session keeps refreshing', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant({ isSysadmin: true }));
+
+        const result = (await callRefresh({
+            id: 7, hd: ORG_DOMAIN, emailVerified: true,
+            orgClaimsIssuedAt: nowSeconds() - ORG_CLAIM_MAX_AGE_SECONDS,
+        })) as Record<string, unknown>;
+
+        expect(result.hd).toBeNull();
+        expect(result.emailVerified).toBe(false);
+        expect(result.orgClaimsIssuedAt).toBeUndefined();
+        expect(result.id).toBe(7);
+        expect(result.isSysadmin).toBe(true);
+    });
+
+    it('surfaces the dropped claims on the session', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant());
+        const token = await callRefresh({
+            id: 7, hd: ORG_DOMAIN, emailVerified: true,
+            orgClaimsIssuedAt: nowSeconds() - ORG_CLAIM_MAX_AGE_SECONDS - 1,
+        });
+
+        const result = await session({
+            session: { user: {}, expires: '' },
+            token,
+        } as unknown as Parameters<SessionCallback>[0]);
+
+        expect(result.user?.hd).toBeNull();
+        expect(result.user?.emailVerified).toBe(false);
+    });
+
+    it('starts the clock on a token that carries the claims without one', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant());
+        const before = nowSeconds();
+
+        const result = (await callRefresh({ id: 7, hd: ORG_DOMAIN, emailVerified: true })) as Record<string, unknown>;
+
+        expect(result.hd).toBe(ORG_DOMAIN);
+        expect(result.orgClaimsIssuedAt).toBeGreaterThanOrEqual(before);
+    });
+
+    it('a persona mint inherits the caller clock instead of restarting it', async () => {
+        const result = (await jwt({
+            token: {},
+            user: {
+                impersonatedBy: 'real@innovationtreehouse.org',
+                orgClaimsIssuedAt: nowSeconds() - ORG_CLAIM_MAX_AGE_SECONDS,
+            },
+            account: { provider: PERSONA_MINT_PROVIDER_ID },
+            profile: undefined,
+        } as unknown as Parameters<JwtCallback>[0])) as Record<string, unknown>;
+
+        expect(result.hd).toBeNull();
+        expect(result.emailVerified).toBe(false);
     });
 });
 

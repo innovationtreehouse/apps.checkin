@@ -53,6 +53,9 @@ On `CHECKIN_ENV=dev`, middleware requires of every page route a session whose
 Google hosted-domain (`hd`) claim is the org domain and whose email is verified.
 Anonymous visitors are bounced to `/signin` and can read nothing else. One rule
 delivers both "reachable by any org member" and "not world-readable".
+Those claims last `ORG_CLAIM_MAX_AGE_SECONDS` (12 h) from the Google sign-in, so a
+long-running session is sent back to `/signin` to confirm the org account again; a
+persona mint inherits the caller's clock rather than restarting it.
 
 The gate is inert on `prod`, and inert on `local` — offline work needs no Google.
 

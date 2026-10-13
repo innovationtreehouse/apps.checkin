@@ -61,6 +61,8 @@ declare module "next-auth" {
     toolStatuses?: { toolId: number; level: string }[];
     // Set by the persona-mint provider; carried into the JWT by the jwt callback.
     impersonatedBy?: string | null;
+    // Set by the persona-mint provider: the caller's org-claim clock, carried onto the minted token.
+    orgClaimsIssuedAt?: number | null;
   }
 }
 
@@ -72,6 +74,8 @@ declare module "next-auth/jwt" {
     // Google hosted-domain + email_verified claims, used by the dev-instance org-login gate.
     hd?: string | null;
     emailVerified?: boolean;
+    // Epoch seconds when hd/emailVerified were stamped; they expire after ORG_CLAIM_MAX_AGE_SECONDS.
+    orgClaimsIssuedAt?: number;
     // Inert impersonation provenance — display/audit only, never read by authz.
     impersonatedBy?: string | null;
     isSysadmin?: boolean;

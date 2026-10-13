@@ -195,6 +195,7 @@ describe('persona-mint authorize() glue', () => {
             email: 'jane@example.com',
             name: 'Jane Persona',
             impersonatedBy: 'daniel@innovationtreehouse.org',
+            orgClaimsIssuedAt: null,
         });
 
         // ESCALATION GUARD #1: the claims fed to the policy are the CALLER's token, never the
@@ -228,6 +229,7 @@ describe('persona-mint authorize() glue', () => {
             email: 'jane@example.com',
             name: 'Jane Persona',
             impersonatedBy: 'daniel@innovationtreehouse.org',
+            orgClaimsIssuedAt: null,
         });
         expect(mockFindFirst).toHaveBeenCalledWith({
             where: { id: 42, email: { endsWith: '@example.com' } },
@@ -247,6 +249,7 @@ describe('persona-mint authorize() glue', () => {
             hd: ORG_DOMAIN,
             emailVerified: true,
             impersonatedBy: 'daniel@innovationtreehouse.org',
+            orgClaimsIssuedAt: 1_700_000_000,
         });
         // 'return' resolves the real human by email (decision.targetEmail).
         mockFindUnique.mockResolvedValue({ id: 7, email: 'daniel@innovationtreehouse.org', name: 'Daniel' });
@@ -259,6 +262,7 @@ describe('persona-mint authorize() glue', () => {
             email: 'daniel@innovationtreehouse.org',
             name: 'Daniel',
             impersonatedBy: null,
+            orgClaimsIssuedAt: 1_700_000_000,
         });
         // Looked up the real human by the email the policy chose, not a caller-supplied personaId.
         expect(mockFindUnique).toHaveBeenCalledWith({
@@ -299,6 +303,7 @@ describe('persona-mint authorize() glue', () => {
             email: null,
             name: 'Logged out',
             impersonatedBy: 'daniel@innovationtreehouse.org',
+            orgClaimsIssuedAt: null,
         });
         expect(mockFindUnique).not.toHaveBeenCalled();
         expect(mockFindFirst).not.toHaveBeenCalled();
