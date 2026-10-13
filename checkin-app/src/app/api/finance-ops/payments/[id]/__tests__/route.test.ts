@@ -97,7 +97,10 @@ describe('PATCH /api/finance-ops/payments/[id] — own-household guard', () => {
     it("refuses with 503 when the order's payer can't be read", async () => {
         exception.shopifyOrderId = '1001';
         ordersMock.mockRejectedValue(new Error('mirror down'));
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         expect((await call()).status).toBe(503);
+        expect(errorSpy).toHaveBeenCalled();
+        errorSpy.mockRestore();
         expect(prisma.paymentException.updateMany).not.toHaveBeenCalled();
     });
 
