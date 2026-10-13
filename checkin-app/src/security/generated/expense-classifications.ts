@@ -74,6 +74,7 @@ export const classifications = {
         allocatedDiscountCents: 'internal',
         qbMatchState: 'internal',
         qbTxnId: 'internal',
+        qbTxnEntity: 'internal',
     },
     LineItemOwnerApproval: {
         id: 'internal',
