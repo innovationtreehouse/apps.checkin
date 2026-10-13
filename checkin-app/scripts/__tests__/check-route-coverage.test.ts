@@ -1,3 +1,6 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
     countDirectJsonEntries,
     extractExportedVerbs,
@@ -8,6 +11,7 @@ import {
     findPackageEgressLines,
     findUnregisteredPackageSurfaces,
     findUnregisteredBareIncludeLegs,
+    listEgressScanFiles,
     REGISTRY_ENTRY_RE,
 } from "../check-route-coverage";
 
@@ -226,9 +230,49 @@ describe("findPackageEgressLines", () => {
         expect(findPackageEgressLines(`a("https://localhost.evil.com");`)).toEqual([1]);
     });
 
+    it("flags an import of the resend SDK", () => {
+        expect(findPackageEgressLines(`import { Resend } from "resend";`)).toEqual([1]);
+    });
+
     it("ignores comments and look-alike identifiers", () => {
         expect(findPackageEgressLines(`// see quickbooks.api.intuit.com\n/* @anthropic-ai/sdk */\nres.headers.get("intuit_tid");`))
             .toEqual([]);
+    });
+});
+
+describe("listEgressScanFiles", () => {
+    let root: string;
+    const put = (rel: string, body = "") => {
+        fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+        fs.writeFileSync(path.join(root, rel), body);
+    };
+    beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "egress-scan-")); });
+    afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    it("covers .js/.mjs/.cjs source and every root-level *-function dir", () => {
+        put("packages/a/src/client.mjs", `fetch("https://api.example.com");`);
+        put("packages/a/src/b.cjs");
+        put("packages/a/src/c.js");
+        put("packages/a/src/d.tsx");
+        put("x-function/src/token.ts", `fetch("https://shop.example.com/admin");`);
+        put("checkin-app/src/e.ts");
+        const files = listEgressScanFiles(root).sort();
+        expect(files).toEqual([
+            "packages/a/src/b.cjs", "packages/a/src/c.js", "packages/a/src/client.mjs",
+            "packages/a/src/d.tsx", "x-function/src/token.ts",
+        ]);
+        const hits = files.filter(f => findPackageEgressLines(fs.readFileSync(path.join(root, f), "utf-8")).length);
+        expect(hits).toEqual(["packages/a/src/client.mjs", "x-function/src/token.ts"]);
+    });
+
+    it("skips tests, fixtures and generated code in any extension", () => {
+        put("packages/a/src/x.test.mjs");
+        put("packages/a/src/y.spec.js");
+        put("y-function/test/setup.ts");
+        put("y-function/src/__fixtures__/f.js");
+        put("packages/a/src/generated/g.cjs");
+        put("packages/a/node_modules/m/index.js");
+        expect(listEgressScanFiles(root)).toEqual([]);
     });
 });
 
@@ -237,6 +281,6 @@ describe("findUnregisteredPackageSurfaces", () => {
         const files = new Map([["q/src/client.ts", ["quickbooks.query", "quickbooks.ghost"]]]);
         const found = findUnregisteredPackageSurfaces(files, new Set(["quickbooks.query"]));
         expect(found.map(f => [f.severity, f.file, f.message.includes("quickbooks.ghost")]))
-            .toEqual([["error", "packages/q/src/client.ts", true]]);
+            .toEqual([["error", "q/src/client.ts", true]]);
     });
 });
