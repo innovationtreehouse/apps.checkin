@@ -374,7 +374,12 @@ export async function createShopifySingleVariantProgram(
     const accessToken = await getAccessToken();
 
     if (!storeDomain || !accessToken) {
-        console.warn("Shopify integration is disabled: Missing credentials or unable to obtain access token");
+        await reportShopifyFailure(
+            "createShopifySingleVariantProgram",
+            new Error("Shopify credentials are missing or no access token could be obtained"),
+            { program: name },
+            `Program <strong>${escapeHtml(name)}</strong> is priced, but its Shopify product was not created because Shopify is not configured. Its payment link will not work until a board member runs Sync to Shopify.`,
+        );
         return null;
     }
 

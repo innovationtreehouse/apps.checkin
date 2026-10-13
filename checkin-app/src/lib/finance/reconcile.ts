@@ -219,8 +219,9 @@ export type Entitlement =
  * for, so the board decides.
  *
  * Seats beyond those awaiting payment, and not already activated by this same
- * order (a redelivery), are a surplus for the board: DUPLICATE_PAYMENT when a
- * person named is already enrolled (paid, comped or approved), else
+ * order (a redelivery, or a child it activated whom the board later withdrew),
+ * are a surplus for the board: DUPLICATE_PAYMENT when a person named is already
+ * enrolled (paid, comped or approved), else
  * UNCLAIMED_SEATS (withdrawn, expired, or extra quantity). Matched per person, so
  * siblings paying on separate orders never trip it. Inventory is never adjusted.
  */
@@ -249,8 +250,25 @@ async function surplusSeats(order: EntitlementOrder, programId: number, personId
         select: { personId: true, shopifyOrderId: true },
     });
     const otherwisePaid = active.filter((r) => !order.legacyId || r.shopifyOrderId !== order.legacyId);
-    if (unspent - (active.length - otherwisePaid.length) <= 0) return undefined;
+    const spentHere = active.length - otherwisePaid.length + await withdrawnAfterActivation(order, programId, personIds);
+    if (unspent - spentHere <= 0) return undefined;
     return otherwisePaid.length > 0 ? { kind: "DUPLICATE_PAYMENT", personId: otherwisePaid[0].personId } : { kind: "UNCLAIMED_SEATS" };
+}
+
+/** People this order activated who have since been withdrawn: their seat was claimed, so it is not unclaimed. */
+async function withdrawnAfterActivation(order: EntitlementOrder, programId: number, personIds: number[]): Promise<number> {
+    if (!order.legacyId) return 0;
+    const deleted = await prisma.auditLog.findMany({
+        where: {
+            tableName: "ProgramParticipant",
+            action: "DELETE",
+            secondaryAffectedEntity: programId,
+            affectedEntityId: { in: personIds },
+            oldData: { path: ["shopifyOrderId"], equals: order.legacyId },
+        },
+        select: { affectedEntityId: true },
+    });
+    return new Set(deleted.map((d) => d.affectedEntityId)).size;
 }
 
 // ── forward pass (recover missed payments) ───────────────────────────────────

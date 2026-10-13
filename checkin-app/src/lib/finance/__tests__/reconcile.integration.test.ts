@@ -633,6 +633,24 @@ describe("program order entitlement (same check as the webhook)", () => {
         expect(await kinds(oid)).toEqual(["UNCLAIMED_SEATS"]);
     });
 
+    it("raises nothing for an order whose child it activated was later withdrawn by the board", async () => {
+        const oid = `${TAG}-608w`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-withdrawn-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        const enrollment = await prisma.programParticipant.delete({ where: { programId_personId: { programId, personId } } });
+        const audit = await prisma.auditLog.create({
+            data: { actorId: personId, action: "DELETE", tableName: "ProgramParticipant", affectedEntityId: personId, secondaryAffectedEntity: programId, oldData: enrollment },
+        });
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+
+        try {
+            await runReconcile();
+            expect(await kinds(oid)).toEqual([]);
+        } finally {
+            await prisma.auditLog.delete({ where: { id: audit.id } });
+        }
+    });
+
     it("activates and raises UNCLAIMED_SEATS when the order buys more seats than people awaiting", async () => {
         const oid = `${TAG}-609`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-extra-${TAG}@ex.com`, status: "PENDING" });

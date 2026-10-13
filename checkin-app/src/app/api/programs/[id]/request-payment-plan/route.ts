@@ -113,7 +113,13 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // time, and without this a concurrent approval (ACTIVE, hold consumed
         // to null) would match branch 1, re-stamp the hold, fire a second -1,
         // and reopen a resolved scholarship.
-        const wasRequested = participant.isPaymentPlanRequested; // pre-image (findUnique above)
+        // The request flag's false→true flip is the transition, claimed by one CAS so a
+        // double-submit notifies once: the loser sees the flag already set and matches 0.
+        const flipped = await prisma.programParticipant.updateMany({
+            // From PENDING_UNPAID or PENDING_HELD_DENIED; their status clause is shared.
+            where: { programId, personId: participantId, ...fromWhere('PENDING_UNPAID'), isPaymentPlanRequested: false },
+            data: { isPaymentPlanRequested: true },
+        });
         const holdResult = await prisma.programParticipant.updateMany({
             // T3 apply CAS from-state (PENDING_UNPAID); flag narrowing stays literal (#1080).
             where: { programId, personId: participantId, ...fromWhere('PENDING_UNPAID'), inventoryHeldAt: null },
@@ -130,10 +136,10 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         }
         // fromWhere only narrows on `status` (PENDING) — both branches' where also match an
         // already-PENDING_HELD no-op re-POST, so a bare count>0 check would over-notify. Key
-        // on the pre-image flag instead: true for exactly the two real transitions (fresh hold,
-        // re-request after denial), false for both non-transitions (no-op re-POST, hold-failed
-        // retry whose request was already recorded).
-        const transitioned = !wasRequested && (holdResult.count > 0 || reCount > 0);
+        // on the flip instead: true for exactly the two real transitions (fresh hold, re-request
+        // after denial), false for both non-transitions (no-op re-POST, hold-failed retry whose
+        // request was already recorded) and for the losing half of a double-submit.
+        const transitioned = flipped.count > 0 && (holdResult.count > 0 || reCount > 0);
 
         let warning: string | undefined;
         if (holdResult.count > 0 && participant.program) {
