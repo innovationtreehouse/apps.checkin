@@ -2,7 +2,7 @@ import { it, expect, beforeEach, afterEach } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureIncome } from "../../runtime";
-import { runReconcile, lockReconciliation, collectPayouts } from "../../lib/reconcile";
+import { runReconcile, lockReconciliation, collectPayouts, incomeKey, incomeClaimedDepositIds } from "../../lib/reconcile";
 import { reconciliationService } from "../../services/reconciliationService";
 import { seedIncomeDev } from "../../seed";
 import type { MirrorBalanceTxn, MirrorPayout, MirrorSource, PayoutMirror, QbDeposit } from "../../contract";
@@ -333,8 +333,10 @@ describeDb("reconciliationService — finance actions", () => {
     const row = await openRow();
     deposits = [dep("D7", "2026-06-02", 95)];
     const user = newUserId();
-    const saved = await reconciliationService.matchToDeposit(ORG_A, row.id, "D7", { userId: user, username: "fin" });
-    expect(saved).toMatchObject({ status: "RESOLVED", resolution: "MANUAL", depositId: "D7", resolvedByUserId: user });
+    const saved = await reconciliationService.matchToDeposit(ORG_A, row.id, "D7", { userId: user, username: "fin" }, "bank fee taken");
+    expect(saved).toMatchObject({
+      status: "RESOLVED", resolution: "MANUAL", depositId: "D7", resolvedByUserId: user, reason: "bank fee taken",
+    });
     const log = await db.incomeAuditLog.findFirstOrThrow({ where: { action: "reconciliation.matched_manually" } });
     expect(log.actorUserId).toBe(user);
   });
@@ -346,6 +348,42 @@ describeDb("reconciliationService — finance actions", () => {
     expect((await rowFor("P0")).depositId).toBe("D1");
     await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D1", { userId: 1 })).rejects.toMatchObject({
       statusCode: 422,
+    });
+  });
+
+  it("manual match needs a reason when the amounts differ, and none when they agree", async () => {
+    const row = await openRow();
+    deposits = [dep("D7", "2026-06-02", 95), dep("D8", "2026-06-02", 97)];
+    await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D7", { userId: 1 }, "  ")).rejects.toMatchObject({
+      statusCode: 400,
+    });
+    expect((await rowFor("P1")).status).toBe("OPEN");
+    expect(await reconciliationService.matchToDeposit(ORG_A, row.id, "D8", { userId: 1 })).toMatchObject({
+      status: "RESOLVED", depositId: "D8", reason: null,
+    });
+  });
+
+  it("manual match neither offers nor accepts a deposit into another account", async () => {
+    const row = await openRow();
+    deposits = [{ ...dep("D7", "2026-06-02", 97), depositToAccount: "99" }];
+    expect(await reconciliationService.candidates(ORG_A, row.id)).toEqual([]);
+    await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D7", { userId: 1 })).rejects.toMatchObject({
+      statusCode: 422,
+    });
+  });
+
+  it("manual match records a deposit as income's own only when it carries this payout's key", async () => {
+    const row = await openRow();
+    deposits = [{ ...dep("Dother", "2026-06-02", 97), appKey: incomeKey("P9") }];
+    expect(await reconciliationService.matchToDeposit(ORG_A, row.id, "Dother", { userId: 1 })).toMatchObject({
+      origin: "matched",
+    });
+    payout("P2", "2026-06-01", 97);
+    await runReconcile(ORG_A, NOW);
+    const own = await rowFor("P2");
+    deposits = [{ ...dep("Downp2", "2026-06-02", 97), appKey: incomeKey("P2") }];
+    expect(await reconciliationService.matchToDeposit(ORG_A, own.id, "Downp2", { userId: 1 })).toMatchObject({
+      origin: "created",
     });
   });
 
@@ -412,7 +450,7 @@ describeDb("reconciliationService.resolve — retry and the pre-seated create st
     const row = await rowFor("P1");
     deposits = [dep("D7", "2026-06-02", 95)];
     expect(
-      await reconciliationService.resolve(ORG_A, row.id, { action: "match", depositId: "D7" }, { userId: 1 }),
+      await reconciliationService.resolve(ORG_A, row.id, { action: "match", depositId: "D7", reason: "bank fee taken" }, { userId: 1 }),
     ).toMatchObject({ status: "RESOLVED", resolution: "MANUAL", origin: "matched" });
   });
 
@@ -501,6 +539,66 @@ describeDb("IncomeQbMatchExclusion — finance excludes a deposit from matching"
     deposits = [dep("D1", "2026-06-02", 97)];
     await runReconcile(ORG_A, NOW);
     await expect(exclude("D1")).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("refuses a deposit that fits a payout still waiting for its deposit", async () => {
+    payout("P1", "2026-06-28", 97);
+    await runReconcile(ORG_A, NOW);
+    expect((await rowFor("P1")).status).toBe("WAITING");
+    deposits = [dep("D1", "2026-06-29", 97), dep("D2", "2026-06-29", 50)];
+    await expect(exclude("D1")).rejects.toMatchObject({ statusCode: 409 });
+    expect(await reconciliationService.listExclusions(ORG_A)).toEqual([]);
+    await expect(exclude("D2")).resolves.toMatchObject({ qbTxnId: "D2" });
+  });
+
+  it("refuses the payout's own created deposit while its create may be retried", async () => {
+    payout("P1", "2026-06-28", 97);
+    await runReconcile(ORG_A, NOW);
+    await db.payoutReconciliation.update({
+      where: { id: (await rowFor("P1")).id },
+      data: { status: "OPEN", kind: "POST_FAILED" },
+    });
+    deposits = [{ ...dep("D1", "2026-06-29", 120), appKey: incomeKey("P1"), depositToAccount: "99" }];
+    await expect(exclude("D1")).rejects.toMatchObject({ statusCode: 409 });
+  });
+});
+
+describeDb("claims across lanes", () => {
+  function bindOtherLane(held: string[]) {
+    configureIncome({
+      mirror,
+      bankAccountId: BANK,
+      deposits: { depositsBetween: async (from, to) => deposits.filter((d) => d.txnDate >= from && d.txnDate <= to) },
+      otherLaneClaims: { claimedDepositIds: async (orgId) => (orgId === ORG_A ? held : []) },
+    });
+  }
+
+  it("a deposit another lane holds is never auto-matched", async () => {
+    bindOtherLane(["D1"]);
+    payout("P1", "2026-06-01", 97);
+    deposits = [dep("D1", "2026-06-02", 97)];
+    await runReconcile(ORG_A, NOW);
+    expect(await rowFor("P1")).toMatchObject({ status: "OPEN", kind: "NO_DEPOSIT", depositId: null });
+  });
+
+  it("a deposit another lane holds is not offered or accepted as a manual candidate", async () => {
+    bindOtherLane(["D1"]);
+    payout("P1", "2026-06-01", 97);
+    await runReconcile(ORG_A, NOW);
+    const row = await rowFor("P1");
+    deposits = [dep("D1", "2026-06-02", 97)];
+    expect(await reconciliationService.candidates(ORG_A, row.id)).toEqual([]);
+    await expect(reconciliationService.matchToDeposit(ORG_A, row.id, "D1", { userId: 1 })).rejects.toMatchObject({
+      statusCode: 422,
+    });
+  });
+
+  it("lists the deposits income holds, per org, for the other lane", async () => {
+    payout("P1", "2026-06-01", 97);
+    deposits = [dep("D1", "2026-06-02", 97)];
+    await runReconcile(ORG_A, NOW);
+    expect(await incomeClaimedDepositIds(ORG_A)).toEqual(["D1"]);
+    expect(await incomeClaimedDepositIds(ORG_B)).toEqual([]);
   });
 });
 

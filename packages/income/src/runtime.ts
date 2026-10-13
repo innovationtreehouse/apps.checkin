@@ -1,5 +1,5 @@
 import type { QuickBooksClient } from "@inventory/quickbooks";
-import type { OwnerDirectory, PayoutMirror, QbDepositSource } from "./contract";
+import type { OtherLaneClaims, OwnerDirectory, PayoutMirror, QbDepositSource } from "./contract";
 import type { DepositAccount } from "./lib/deposit-lines";
 
 /** QuickBooks account ids a created deposit's lines book to. */
@@ -25,7 +25,7 @@ export interface PostCapEvent {
   remaining: number;
 }
 
-/** Finance alerts the host binds. Unbound, a hit cap is still reported in the drain counts. */
+/** Finance alerts the host binds. The drain creates nothing while they are unbound. */
 export interface IncomeAlerts {
   postCapReached(event: PostCapEvent): Promise<void>;
 }
@@ -38,6 +38,7 @@ export interface IncomeConfig {
   bankAccountId?: string;
   posting?: IncomePosting;
   alerts?: IncomeAlerts;
+  otherLaneClaims?: OtherLaneClaims;
   /** Days after a payout within which its deposit must be booked. */
   windowDays?: number;
   /** Days before a payout a deposit may still be dated, for QuickBooks dates that run early. */
