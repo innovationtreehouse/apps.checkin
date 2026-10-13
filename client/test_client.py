@@ -804,12 +804,14 @@ class TestRepeatReadFilter(unittest.TestCase):
         self.assertEqual([r[5] for r in rows], ["IN"], "never queued IN then OUT")
         self.assertIn(7, self.state.present_ids)
 
-    def test_the_window_runs_from_the_accepted_read(self):
+    def test_the_window_slides_while_the_badge_is_held(self):
         backend = self._offline()
         handle_scan(backend, self.state, self.outbox, 7)
-        self.now += 2.0
-        handle_scan(backend, self.state, self.outbox, 7)   # filtered
-        self.now += 1.5                                    # 3.5 s after the first
+        for _ in range(4):                                 # held 8 s, read every 2 s
+            self.now += 2.0
+            handle_scan(backend, self.state, self.outbox, 7)
+        self.assertEqual([r[5] for r in self.outbox.pending_rows()], ["IN"], "a held badge never toggles")
+        self.now += 3.0                                    # lifted, then badged again
         handle_scan(backend, self.state, self.outbox, 7)
         self.assertEqual([r[5] for r in self.outbox.pending_rows()], ["IN", "OUT"])
 
@@ -844,7 +846,7 @@ class TestRepeatReadFilter(unittest.TestCase):
         self.now += 1
         handle_scan(backend, self.state, self.outbox, 9)    # double-read: no confirm
         self.assertEqual(backend.post_scan.call_count, 1)
-        self.now += 2.5
+        self.now += 3.5
         handle_scan(backend, self.state, self.outbox, 9)    # the human's second badge
         confirm = backend.post_scan.call_args.kwargs
         self.assertEqual((confirm["force_close_token"], confirm["intent"]), ("tok-1", "OUT"))
@@ -862,6 +864,59 @@ class TestRepeatReadFilter(unittest.TestCase):
         handle_scan(backend, self.state, self.outbox, 9)
         rows = self.outbox.pending_rows()
         self.assertEqual([(r[5], r[7]) for r in rows], [("OUT", 0), ("OUT", 1)])
+
+
+    def test_held_badge_slides_the_online_close_window(self):
+        events = []
+        self.state.push_event = events.append
+        backend = Mock(attendance_path=None)
+        backend.post_scan.return_value = (
+            {"type": "checkout", "participant": {"id": 9}, "forceCloseToken": "tok-1", "confirmSeconds": 15},
+            200, None)
+        self.state.present_ids = {9, 5}
+        handle_scan(backend, self.state, self.outbox, 9)    # OUT, close offered
+        offer = events[-1]
+        for _ in range(7):                                  # held 14 s
+            self.now += 2
+            handle_scan(backend, self.state, self.outbox, 9)
+        self.assertEqual(events[-1], offer, "each held read restarts the on-screen countdown")
+        self.assertEqual(self.state.confirm_deadline, self.now + 15)
+        self.now += 14                                      # 28 s after the offer, 14 after the last read
+        handle_scan(backend, self.state, self.outbox, 9)
+        self.assertEqual(backend.post_scan.call_args.kwargs["force_close_token"], "tok-1")
+
+    def test_held_badge_slides_the_offline_close_window(self):
+        events = []
+        self.state.push_event = events.append
+        backend = self._offline()
+        self.state.keyholder_ids = {9}
+        self.state.present_ids = {9, 5}
+        self.state.current_counts = {"keyholders": 1, "total": 2}
+        handle_scan(backend, self.state, self.outbox, 9)    # OUT, local close armed
+        warning = events[-1]
+        self.now += 2
+        handle_scan(backend, self.state, self.outbox, 9)
+        self.assertEqual(events[-1], warning)
+        self.assertEqual(self.state.local_close_deadline, self.now + 15)
+        self.now += 14                                      # 16 s after the warning
+        handle_scan(backend, self.state, self.outbox, 9)
+        self.assertEqual([(r[5], r[7]) for r in self.outbox.pending_rows()], [("OUT", 0), ("OUT", 1)])
+
+    def test_repeat_read_without_a_close_shows_nothing(self):
+        events = []
+        self.state.push_event = events.append
+        backend = self._online()
+        handle_scan(backend, self.state, self.outbox, 7)
+        self.now += 1
+        handle_scan(backend, self.state, self.outbox, 7)
+        self.assertEqual(len(events), 1)
+
+    def test_another_badges_repeat_read_leaves_the_close_window(self):
+        self.state.arm_confirm(9, "tok-1", 15, "<div>offer</div>")
+        self.state.is_repeat_read(5)
+        self.now += 1
+        self.assertIsNone(self.state.slide_close(5))
+        self.assertEqual(self.state.confirm_deadline, 1015.0)
 
 
 class TestOfflineForceClose(unittest.TestCase):
