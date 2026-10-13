@@ -12,7 +12,7 @@ import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { getEmailSenderIdentity } from "@/lib/emailIdentity";
-import { signInEmailHelp } from "@/lib/person/signInEmail";
+import { signInEmailHelp, grantedAuthorityEmailHelp } from "@/lib/person/signInEmail";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 
@@ -58,7 +58,18 @@ export const PATCH = withAuth(
 
             const targetHouseholdMember = await prisma.person.findUnique({
                 where: { id: participantId },
-                include: { _count: { select: { accounts: true } } },
+                include: {
+                    _count: {
+                        select: {
+                            accounts: true,
+                            roles: true,
+                            programsLed: true,
+                            programVolunteers: true,
+                            bgAttestationsAsSubject: true,
+                            personBgProcesses: true,
+                        },
+                    },
+                },
             });
             if (!targetHouseholdMember || targetHouseholdMember.householdId !== householdId) {
                 return apiError("That household member was not found", 404);
@@ -68,6 +79,17 @@ export const PATCH = withAuth(
             if (email !== undefined && targetHouseholdMember._count.accounts > 0) {
                 const { replyTo } = await getEmailSenderIdentity();
                 return apiError(signInEmailHelp(replyTo?.[0]), 400);
+            }
+
+            // The email is the sign-in key, so a member holding board-granted authority keeps
+            // the address the board granted it to. The form resends it unchanged on every save.
+            const { _count: held } = targetHouseholdMember;
+            const holdsGrant = held.roles + held.programsLed + held.programVolunteers
+                + held.bgAttestationsAsSubject + held.personBgProcesses > 0
+                || Boolean(targetHouseholdMember.lastBackgroundCheck);
+            if (holdsGrant && email !== undefined && (email || "").toLowerCase() !== (targetHouseholdMember.email ?? "")) {
+                const { replyTo } = await getEmailSenderIdentity();
+                return apiError(grantedAuthorityEmailHelp(replyTo?.[0]), 400);
             }
 
             // The form resends an unchanged email on every save; only a change is refused.
