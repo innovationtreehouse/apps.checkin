@@ -13,11 +13,6 @@ export interface SignoffFacts {
   /** The line's bucket approvers (program leader + treasurers); empty for an org-level bucket. */
   approvers: number[];
   orgLevel: boolean;
-  /** The expense's receipt total. */
-  totalCents: number;
-  noteInLieuOfReceipt: boolean;
-  /** The org's note-in-lieu limit (ExpenseOrgSettings). */
-  noteInLieuLimitCents: number;
   purchaserIsMember: boolean;
   finance: number[];
   board: number[];
@@ -50,12 +45,10 @@ export function lineKind(expense: { needsReimbursement: boolean }): LineKind {
 
 /**
  * F2 exceptions: a Board member, not a program approver, fills the program-approver seat for an
- * org-level bucket, a note in lieu of a receipt at or over the org's limit, or a non-member purchaser.
- * The Treasurer seat stays.
+ * org-level bucket or a non-member purchaser. The Treasurer seat stays.
  */
 export function boardFillsProgramSeat(facts: SignoffFacts): boolean {
-  if (facts.orgLevel || !facts.purchaserIsMember) return true;
-  return facts.noteInLieuOfReceipt && facts.totalCents >= facts.noteInLieuLimitCents;
+  return facts.orgLevel || !facts.purchaserIsMember;
 }
 
 /** Who the seat belongs to before any Board substitution. */

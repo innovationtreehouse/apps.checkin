@@ -14,15 +14,23 @@ export async function isOrgLevelBucket(bucketId: number): Promise<boolean> {
   return (await getExpenseRuntime().signoff.bucketApprovers(bucketId)).orgLevel;
 }
 
+/** Buckets a line may be assigned to: listed by the host, not archived. */
+export async function liveBucketIds(): Promise<Set<number>> {
+  return new Set((await getExpenseRuntime().budgetOwners.list()).filter((b) => !b.archivedAt).map((b) => b.id));
+}
+
 /** Creates the line approvals and leaves `pending`. A no-op when another call already started the flow. */
 export async function initFinancialFlow(expenseId: string, orgId: string, backfill = false): Promise<void> {
   const lineItems = await db.expenseLineItem.findMany({ where: { expenseId } });
 
-  // Resolve owners and their bucket kind before opening a transaction.
+  // Resolve owners and their bucket kind before opening a transaction. Outside backfill, a mapped
+  // bucket that is no longer live leaves the line unresolved, for FINANCE to assign.
   const resolvedOwners = new Map<number, number | null>();
   const orgLevel = new Map<number, boolean>();
+  const live = await liveBucketIds();
   for (const li of lineItems) {
-    const ownerId = li.gtin13 ? await partOwners.resolveItemOwner(orgId, li.gtin13) : null;
+    const mapped = li.gtin13 ? await partOwners.resolveItemOwner(orgId, li.gtin13) : null;
+    const ownerId = mapped !== null && (backfill || live.has(mapped)) ? mapped : null;
     resolvedOwners.set(li.id, ownerId);
     if (ownerId !== null && !orgLevel.has(ownerId)) orgLevel.set(ownerId, await isOrgLevelBucket(ownerId));
   }

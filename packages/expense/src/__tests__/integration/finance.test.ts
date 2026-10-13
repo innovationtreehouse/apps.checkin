@@ -292,6 +292,16 @@ describeDb("capital register", () => {
     expect((await db.expense.findFirst({ where: { id } }))!.state).toBe("qb_pending");
   });
 
+  it("capital review and depreciation refuse an archived or unlisted bucket", async () => {
+    const id = await seedExpense({ state: "capital_review" });
+    const li = await seedLineItem(id);
+
+    await expect(submitCapitalReview(FINANCE, id, { lineItems: [{ lineItemId: li, isCapital: true, capitalOwnerId: 999 }] })).rejects.toMatchObject({ statusCode: 400 });
+    await submitCapitalReview(FINANCE, id, { lineItems: [{ lineItemId: li, isCapital: true, capitalOwnerId: 100 }] });
+    await expect(setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 12345 }] })).rejects.toMatchObject({ statusCode: 400 });
+    expect(await db.capitalAsset.count({ where: { sourceLineItemId: li } })).toBe(0);
+  });
+
   it("seeding is idempotent per asset number and canonicalizes it", async () => {
     const rows = [{ assetNumber: "itfa3", description: "Saw" }, { assetNumber: "BAD", description: "x" }];
     expect(await seedCapitalAssets(FINANCE, rows)).toMatchObject({ created: 1, skipped: 0, errors: 1 });

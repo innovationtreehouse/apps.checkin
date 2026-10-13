@@ -4,7 +4,7 @@ import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { callerId } from "../lib/caller";
-import { CLOSED_STATES, availableSigners, missingSeats, reimburseeUnknown } from "../lib/signoff";
+import { CLOSED_STATES, availableSigners, missingSeats } from "../lib/signoff";
 import { filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
 import { listOpenFlags } from "./flagService";
 
@@ -18,17 +18,31 @@ export async function expenseOpsCounts(principal: ExpensePrincipal): Promise<{ h
   return { holds, openFlags: flags.length };
 }
 
-/** Lines in the caller's buckets with an open program-approver seat the caller may sign. */
+/** The most open expenses one badge poll examines, so a poll costs a fixed amount of work. */
+export const SIGNOFF_BADGE_EXPENSE_CAP = 25;
+
+/**
+ * Lines in the caller's buckets with an open program-approver seat the caller may sign, across at
+ * most SIGNOFF_BADGE_EXPENSE_CAP open expenses (oldest first); past the cap it is a lower bound.
+ */
 export async function signoffsAwaitingCount(principal: ExpensePrincipal): Promise<number> {
   const me = callerId(principal);
   const buckets = await getExpenseRuntime().signoff.bucketsApprovedBy(me);
   if (buckets.length === 0) return 0;
   const expenses = await db.expense.findMany({
-    where: { orgId: await getOrgId(), backfill: false, approvals: { some: { ownerId: { in: buckets } } } },
+    where: {
+      orgId: await getOrgId(),
+      backfill: false,
+      state: { notIn: [...CLOSED_STATES] },
+      // A reimbursement with no reimbursee takes no sign-off (reimburseeUnknown).
+      NOT: { needsReimbursement: true, reimburseePersonId: null },
+      approvals: { some: { ownerId: { in: buckets } } },
+    },
+    orderBy: { submittedAt: "asc" },
+    take: SIGNOFF_BADGE_EXPENSE_CAP,
   });
   let count = 0;
   for (const expense of expenses) {
-    if (CLOSED_STATES.has(expense.state) || reimburseeUnknown(expense)) continue;
     const [facts, filled] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expense.id)]);
     for (const [lineId, f] of facts) {
       const seats = filled.get(lineId) ?? [];

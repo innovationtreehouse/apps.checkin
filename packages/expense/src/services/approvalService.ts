@@ -5,7 +5,7 @@ import type { ExpensePrincipal } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf, callerId } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
-import { checkApprovalAutoTransition, checkOwnershipAutoTransition, isOrgLevelBucket } from "../lib/financial-flow";
+import { checkApprovalAutoTransition, checkOwnershipAutoTransition, isOrgLevelBucket, liveBucketIds } from "../lib/financial-flow";
 import { lockExpense, voidSignoffs } from "../lib/signoff-facts";
 import { createExpenseRepository } from "../repositories/expense";
 import { createPartOwnerRepository } from "../repositories/partOwner";
@@ -25,10 +25,11 @@ export async function isBucketApprover(principal: ExpensePrincipal, bucketId: nu
   return approvers.includes(callerId(principal));
 }
 
-/** A bucket a line may be assigned to: one the host lists, not archived. */
-async function requireLiveBucket(ownerId: number): Promise<void> {
-  const bucket = (await getExpenseRuntime().budgetOwners.list()).find((b) => b.id === ownerId);
-  if (!bucket || bucket.archivedAt) throw new ServiceError(400, "Unknown or archived budget bucket");
+/** Every id is a bucket a line may be assigned to: one the host lists, not archived. */
+export async function requireLiveBuckets(ownerIds: number[]): Promise<void> {
+  if (ownerIds.length === 0) return;
+  const live = await liveBucketIds();
+  if (ownerIds.some((id) => !live.has(id))) throw new ServiceError(400, "Unknown or archived budget bucket");
 }
 
 const BUCKET_CHANGED = "the line's budget bucket changed";
@@ -140,7 +141,7 @@ export async function financeAssign(
 ): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
-  await requireLiveBucket(ownerId);
+  await requireLiveBuckets([ownerId]);
   const { approval } = await loadApproval(expenseId, approvalId, "owner_approval");
   requireStatus(approval, "exception_raised");
 
@@ -176,7 +177,7 @@ export async function assignOwner(
 ): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
-  await requireLiveBucket(ownerId);
+  await requireLiveBuckets([ownerId]);
   const { expense, approval } = await loadApproval(expenseId, approvalId, "assign_ownership");
   if (approval.ownerId !== null && approval.status !== "pending") {
     throw new ServiceError(400, "This item already has an owner assigned");
@@ -236,7 +237,7 @@ export async function resolveUnknown(
 ): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
-  await requireLiveBucket(ownerId);
+  await requireLiveBuckets([ownerId]);
   const { approval } = await loadApproval(expenseId, approvalId);
   requireStatus(approval, "unknown");
 

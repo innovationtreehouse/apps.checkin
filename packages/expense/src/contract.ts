@@ -193,7 +193,6 @@ export interface ExpenseSettings {
   capitalLineItemThresholdCents: number;
   capitalEquipmentUnitCents: number;
   boardReviewTotalCents: number;
-  noteInLieuLimitCents: number;
 }
 
 // ── Route factories (mounted by the host under its handler()) ──────────────────

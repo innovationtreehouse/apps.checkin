@@ -2,23 +2,22 @@
 import { describe, it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
+import { principal, ORG } from "../helpers/seed";
 import { DEFAULT_EXPENSE_SETTINGS, getExpenseSettings, updateExpenseSettings } from "../../services/settingsService";
 import { receiveCompletedReceipt } from "../../services/intakeService";
-import { signLine } from "../../services/signoffService";
 
 const FINANCE = principal(3, { isFinance: true });
 
 describe("updateExpenseSettings — guards", () => {
   it("asserts the org", async () => {
-    await expect(updateExpenseSettings("org-other", { noteInLieuLimitCents: 1 }, FINANCE)).rejects.toThrow(/not this org/);
+    await expect(updateExpenseSettings("org-other", { boardReviewTotalCents: 1 }, FINANCE)).rejects.toThrow(/not this org/);
   });
 
   it("only FINANCE or the board edits", async () => {
-    await expect(updateExpenseSettings(ORG, { noteInLieuLimitCents: 1 }, principal(9))).rejects.toMatchObject({ statusCode: 403 });
+    await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 1 }, principal(9))).rejects.toMatchObject({ statusCode: 403 });
   });
 
-  it.each([{ noteInLieuLimitCents: 0 }, { boardReviewTotalCents: -1 }, { capitalEquipmentUnitCents: 1.5 }, { bogus: 1 }])(
+  it.each([{ boardReviewTotalCents: 0 }, { boardReviewTotalCents: -1 }, { capitalEquipmentUnitCents: 1.5 }, { bogus: 1 }])(
     "rejects %j",
     async (patch) => {
       await expect(updateExpenseSettings(ORG, patch, FINANCE)).rejects.toThrow();
@@ -32,7 +31,6 @@ describeDb("expense settings", () => {
     expect(DEFAULT_EXPENSE_SETTINGS).toMatchObject({
       capitalEquipmentUnitCents: 50_000,
       boardReviewTotalCents: 200_000,
-      noteInLieuLimitCents: 5_000,
     });
   });
 
@@ -70,17 +68,5 @@ describeDb("expense settings", () => {
 
     const kinds = (await db.expenseFlag.findMany({ where: { expenseId: "r-thresholds" } })).map((f) => f.kind).sort();
     expect(kinds).toEqual(["CAPITAL_EQUIPMENT", "THRESHOLD_CROSSED"]);
-  });
-
-  it("the note-in-lieu limit decides whether a Board member takes the program seat", async () => {
-    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5] }) });
-    const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 3_000, noteInLieuOfReceipt: true });
-    const li = await seedLineItem(id);
-    await seedApproval(id, li, { ownerId: 100, status: "approved" });
-
-    await updateExpenseSettings(ORG, { noteInLieuLimitCents: 2_000 }, FINANCE);
-
-    await expect(signLine(principal(2), li, "PROGRAM_APPROVER")).rejects.toMatchObject({ statusCode: 403 });
-    await signLine(principal(5), li, "PROGRAM_APPROVER");
   });
 });

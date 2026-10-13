@@ -11,7 +11,7 @@ import { formatItfa, fullyDepreciatedDate, nextItfaSeq, parseItfa } from "../lib
 import { assertExpectedState, isLegalTransition } from "../workflows/expense.invariants";
 import { NEUTRAL_CONTEXT } from "../workflows/expense.guards";
 import { createExpenseRepository } from "../repositories/expense";
-import { requireFinance } from "./approvalService";
+import { requireFinance, requireLiveBuckets } from "./approvalService";
 import { ServiceError } from "./serviceError";
 
 const expenseRepo = createExpenseRepository(db);
@@ -73,6 +73,7 @@ export async function submitCapitalReview(
   for (const { id } of await expenseRepo.listLineItemIds(expenseId)) {
     if (!submittedIds.has(id)) throw new ServiceError(400, `Missing designation for line item ${id}`);
   }
+  await requireLiveBuckets(lineItems.flatMap((li) => (li.isCapital && li.capitalOwnerId != null ? [li.capitalOwnerId] : [])));
 
   const hasAnyCapital = lineItems.some((li) => li.isCapital);
   const event = { type: "CAPITAL_REVIEW_SUBMITTED" as const, hasCapitalItems: hasAnyCapital };
@@ -129,6 +130,7 @@ export async function setDepreciationCycle(
   for (const item of items) {
     if (!capLineById.has(item.lineItemId)) throw new ServiceError(400, `Line item ${item.lineItemId} is not a capital item`);
   }
+  await requireLiveBuckets(items.map((i) => i.ownerId));
 
   assertExpectedState("set_depreciation_cycle", { type: "DEPRECIATION_SET" }, NEUTRAL_CONTEXT, "qb_pending");
 
