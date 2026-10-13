@@ -600,6 +600,64 @@ describe("program order entitlement (same check as the webhook)", () => {
         expect(await kinds(oid)).toEqual(["REVERSED_BEFORE_ACTIVATION"]);
     });
 
+    const attributed = (oid: string, programId: number, ids: string) =>
+        order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: ids }) });
+
+    it.each([
+        ["already paid on another order", `${TAG}-old-order`],
+        ["comped or approved (no order)", undefined],
+    ])("raises DUPLICATE_PAYMENT, changing nothing, when the child is %s", async (_label, priorOrder) => {
+        const oid = `${TAG}-607-${priorOrder ? "paid" : "comp"}`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-dup-${priorOrder ? "paid" : "comp"}-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: priorOrder });
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+
+        await runReconcile();
+        const row = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId } } });
+        expect(row?.shopifyOrderId).toBe(priorOrder ?? null);
+        const raised = await prisma.paymentException.findMany({ where: { shopifyOrderId: oid } });
+        expect(raised.map((e) => [e.kind, e.personId])).toEqual([["DUPLICATE_PAYMENT", personId]]);
+        await runReconcile();
+        expect(await kinds(oid)).toEqual(["DUPLICATE_PAYMENT"]);
+    });
+
+    it("raises UNCLAIMED_SEATS when the child named has no enrollment (withdrawn or expired)", async () => {
+        const oid = `${TAG}-608`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-gone-${TAG}@ex.com`, status: "PENDING" });
+        await prisma.programParticipant.delete({ where: { programId_personId: { programId, personId } } });
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBeUndefined();
+        expect(await kinds(oid)).toEqual(["UNCLAIMED_SEATS"]);
+    });
+
+    it("activates and raises UNCLAIMED_SEATS when the order buys more seats than people awaiting", async () => {
+        const oid = `${TAG}-609`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-extra-${TAG}@ex.com`, status: "PENDING" });
+        orderLines.mockResolvedValue([{ variantId, quantity: 3 }]);
+        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("ACTIVE");
+        expect(await kinds(oid)).toEqual(["UNCLAIMED_SEATS"]);
+    });
+
+    it("raises nothing for siblings paying on separate orders", async () => {
+        const email = `ent-sibs-${TAG}@ex.com`;
+        const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
+        const sibId = await addSibling(householdId, programId, email);
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([attributed(`${TAG}-610a`, programId, String(personId)), attributed(`${TAG}-610b`, programId, String(sibId))]);
+
+        await runReconcile();
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("ACTIVE");
+        expect(await statusOf(programId, sibId)).toBe("ACTIVE");
+        expect(await prisma.paymentException.count({ where: { programId } })).toBe(0);
+    });
+
     it("waits on an order not yet paid: no activation, no exception", async () => {
         const oid = `${TAG}-604`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-unpaid-${TAG}@ex.com`, status: "PENDING" });
