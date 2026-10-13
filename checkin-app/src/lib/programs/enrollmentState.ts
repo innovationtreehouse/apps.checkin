@@ -211,11 +211,11 @@ export const TRANSITIONS: readonly Transition<LifecycleState>[] = [
     { event: 'T3f apply(−1 FAILS)', from: 'PENDING_UNPAID', to: 'PENDING_HOLD_FAILED', actor: 'user', guardSite: 'request-payment-plan/route.ts — roll held back to null; req stays true' },
     { event: 'T3m manual-hold', from: 'PENDING_HOLD_FAILED', to: 'PENDING_HELD', actor: 'admin', guardSite: 'finance-ops/payment-plans/manual-hold/route.ts — CAS held:null, req:true → stamp held' },
     { event: 'T4 activate(payment)', from: 'PENDING_UNPAID', to: 'ACTIVE', actor: 'shopify-webhook', guardSite: 'activateEnrollment.ts — CAS status:PENDING; release CAS held:{not:null}→null (fires on any PENDING)' },
-    { event: 'T5 approve', from: 'PENDING_HELD', to: 'ACTIVE', actor: 'admin', guardSite: 'finance-ops/payment-plans/route.ts — CAS req:true,status:PENDING; held→null WITHOUT +1 (the seat returns on withdrawal, T11); COI guard' },
+    { event: 'T5 approve', from: 'PENDING_HELD', to: 'ACTIVE', actor: 'admin', guardSite: 'finance-ops/payment-plans/route.ts — CAS req:true,status:PENDING; held→null WITHOUT +1, stamping seatTakenWithoutSaleAt only when a hold was held (T11); COI guard' },
     { event: 'T6 deny', from: 'PENDING_HELD', to: 'PENDING_HELD_DENIED', actor: 'admin', guardSite: 'finance-ops/payment-plans/refuse/route.ts — CAS req:true,status:PENDING; stamp den; COI guard' },
     { event: 'T7 non-payment kick', from: 'PENDING_UNPAID', to: 'UNENROLLED', actor: 'cron', guardSite: 'cron/pending-participants/route.ts — delete(); query filters req:false,den:null' },
     { event: 'T8 grace expiry', from: 'PENDING_HELD_DENIED', to: 'UNENROLLED', actor: 'cron', guardSite: 'cron/scholarship-grace-expiry/route.ts — delete(); NULL graceDays = off' },
     { event: 'T9 withdraw', from: 'PENDING_HELD', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'capacity.ts withdrawAndReleaseHold — delete() = atomicity boundary; +1 iff held' },
     { event: 'T10 refund restocked', from: 'ACTIVE', to: 'UNENROLLED', actor: 'shopify-webhook', guardSite: 'reconcile.ts settleRestockedSeats → removeRefundedEnrollment — only children the order identifies, deleteMany scoped to the refunded order + audit row in one tx; no +1 (Shopify restocked); unidentified public seats taken back with -k' },
-    { event: 'T11 withdraw(comp/approved)', from: 'ACTIVE', to: 'UNENROLLED', actor: 'admin', guardSite: 'capacity.ts withdrawAndReleaseHold — delete(); +1 iff no order, capped and priced (a paid place returns nothing)' },
+    { event: 'T11 withdraw(comp/approved)', from: 'ACTIVE', to: 'UNENROLLED', actor: 'admin', guardSite: 'capacity.ts withdrawAndReleaseHold — delete(); +1 iff seatTakenWithoutSaleAt is set (a paid place returns nothing)' },
 ] as const;

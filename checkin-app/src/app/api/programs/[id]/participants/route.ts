@@ -223,7 +223,8 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // hold-ledger: invariants I1/I2/I3 (enrollmentState.ts) make a held seat
         // PENDING-and-scholarship only, and the lifecycle reconciler auto-heals
         // an ACTIVE+held row by releasing +1 — which would silently undo this
-        // decrement. Withdrawing a comp puts the seat back on sale (+1, see
+        // decrement. A successful -1 is recorded (seatTakenWithoutSaleAt), and
+        // withdrawing the comp puts that seat back on sale (+1, see
         // withdrawAndReleaseHold), unlike a paid seat. Uncapped programs track no
         // inventory (inventory_management=null), so only capped programs adjust;
         // adjustProgramInventory additionally no-ops when no variant is wired.
@@ -235,7 +236,12 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             // roll back — deleting the just-created comp would be the worse
             // half-commit.
             const ok = await adjustProgramInventory(currentProgram, -1);
-            if (!ok) {
+            if (ok) {
+                await prisma.programParticipant.update({
+                    where: { programId_personId: { programId, personId: participantId } },
+                    data: { seatTakenWithoutSaleAt: new Date() },
+                });
+            } else {
                 warning = "Participant added, but the Shopify inventory decrement failed. Capacity may be out of sync — check System Status > Link Status.";
             }
         }

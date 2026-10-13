@@ -95,19 +95,24 @@ export const POST = withAuth(
                 isPaymentPlanRequested: false, // cleared since it's approved
                 pendingSince: null, // reset
                 wasOrgMemberAtApproval,
-                // Approval consumes the hold: the place becomes a comped enrollment
-                // with no order, whose seat returns on withdrawal through
-                // withdrawAndReleaseHold, not through the hold ledger.
+                // Approval consumes the hold.
                 inventoryHeldAt: null,
             };
 
             // Scope to the pending request so approving a non-pending/nonexistent
             // request is a no-op error, mirroring the GET queue's filter.
-            const { count } = await prisma.programParticipant.updateMany({
-                // T5 approve CAS: from-state status from the definition (#1080); isPaymentPlanRequested stays literal.
-                where: { programId, personId: participantId, isPaymentPlanRequested: true, ...fromWhere('PENDING_HELD') },
-                data
+            // T5 approve CAS: from-state status from the definition (#1080); isPaymentPlanRequested stays literal.
+            const pending = { programId, personId: participantId, isPaymentPlanRequested: true, ...fromWhere('PENDING_HELD') };
+            // A held seat carries over as seatTakenWithoutSaleAt, so withdrawal can
+            // return it. A request whose hold failed took no seat and records none.
+            const held = await prisma.programParticipant.updateMany({
+                where: { ...pending, inventoryHeldAt: { not: null } },
+                data: { ...data, seatTakenWithoutSaleAt: new Date() },
             });
+            const count = held.count || (await prisma.programParticipant.updateMany({
+                where: { ...pending, inventoryHeldAt: null },
+                data,
+            })).count;
 
             if (count === 0) {
                 return apiError("No pending payment-plan request", 409);

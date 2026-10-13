@@ -47,14 +47,13 @@ export async function lockProgramAndCheckCapacity(
 /**
  * Delete a participant and put its seat back on sale (+1) when the seat was
  * taken out of Shopify without a payment, exactly once: a scholarship hold
- * (inventoryHeldAt set), or a comped/approved place (see isUnpaidPlace). A paid
- * place returns nothing; a person decides that at the store. This is the ONE
- * implementation of "exit a participant" shared by every code path that does it — manual self/admin withdrawal
- * (DELETE /api/programs/[id]/participants), the non-payment kick
- * (cron/pending-participants), and grace-period auto-withdrawal
- * (cron/scholarship-grace-expiry) — so the hold-ledger invariant (every
- * scholarship -1 comes back +1 exactly once) has one implementation, not
- * three.
+ * (inventoryHeldAt set), or a comped/approved place whose -1 is on record
+ * (seatTakenWithoutSaleAt). A paid place returns nothing; a person decides that
+ * at the store. This is the ONE implementation of "exit a participant" shared
+ * by every code path that does it — manual self/admin withdrawal
+ * (DELETE /api/programs/[id]/participants) and grace-period auto-withdrawal
+ * (cron/scholarship-grace-expiry) — so every -1 taken without a sale comes back
+ * +1 at most once.
  *
  * `delete()` IS the atomicity boundary: a given row can be deleted at most
  * once, so "was inventoryHeldAt set on the row we just deleted" can never be
@@ -66,7 +65,7 @@ export async function lockProgramAndCheckCapacity(
  * statement, so a payment that lands between a caller's check and this delete
  * cannot slip through; a mismatch throws P2025 like a missing row.
  *
- * After the program's sale has ended the hold is released without the +1, so
+ * After the program's sale has ended the seat is released without the +1, so
  * the seat is not put back on sale.
  *
  * Never throws on the Shopify leg (adjustProgramInventory already logs +
@@ -76,14 +75,15 @@ export async function lockProgramAndCheckCapacity(
 export async function withdrawAndReleaseHold(
     programId: number,
     personId: number,
-    program: ReleaseProgram,
+    program: { shopifyVariantId?: string | null },
     onlyStatus?: ProgramParticipantStatus,
 ): Promise<{ enrollment: ProgramParticipant; released: boolean; shopifyOk: boolean }> {
     const enrollment = await prisma.programParticipant.delete({
         where: { programId_personId: { programId, personId }, ...(onlyStatus && { status: onlyStatus }) },
     });
 
-    if (!enrollment.inventoryHeldAt && !isUnpaidPlace(enrollment, program)) {
+    const unsoldPlace = enrollment.status === "ACTIVE" && enrollment.seatTakenWithoutSaleAt !== null;
+    if (!enrollment.inventoryHeldAt && !unsoldPlace) {
         return { enrollment, released: false, shopifyOk: true };
     }
 
@@ -98,21 +98,4 @@ export async function withdrawAndReleaseHold(
 
     const shopifyOk = await adjustProgramInventory(program, 1);
     return { enrollment, released: true, shopifyOk };
-}
-
-type ReleaseProgram = {
-    shopifyVariantId?: string | null;
-    maxParticipants: number | null;
-    orgMemberPriceCents: number | null;
-    nonOrgMemberPriceCents: number | null;
-};
-
-/**
- * A comped or approved place: ACTIVE with no order behind it, on a priced, capped
- * program. Its seat came out of Shopify at comp/apply time, so withdrawal returns
- * it. A free program's place never took one out; an uncapped program counts none.
- */
-function isUnpaidPlace(row: ProgramParticipant, program: ReleaseProgram): boolean {
-    const priced = (program.orgMemberPriceCents ?? 0) > 0 || (program.nonOrgMemberPriceCents ?? 0) > 0;
-    return row.status === "ACTIVE" && row.shopifyOrderId === null && program.maxParticipants !== null && priced;
 }

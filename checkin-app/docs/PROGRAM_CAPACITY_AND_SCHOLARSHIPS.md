@@ -113,9 +113,11 @@ callers isn't possible; a second delete attempt hits Prisma P2025 and is treated
 idempotent no-op by every caller.
 
 **Withdrawing a comped place.** The same function returns the seat (`+1`) when the deleted
-row is `ACTIVE` with no `shopifyOrderId` (an admin comp or an approved scholarship) on a
-priced, capped program: its seat left Shopify at comp or apply time without a sale. A paid
-place returns nothing; the board restocks it by hand if it wants to.
+row is `ACTIVE` with `seatTakenWithoutSaleAt` set. That stamp records a `-1` actually taken
+without a sale: a confirmed admin comp whose decrement succeeded, or approval of a request
+whose hold was held (a request whose hold failed is approved without one). A paid place, a
+place enrolled while the program was free, and a comp or approval from before the stamp
+existed return nothing; the board restocks those by hand if it wants to.
 
 **Failure semantics (best-effort, not transactional).** The DB write and the Shopify
 call cannot share a transaction, so "every −1 comes back +1 exactly once" is guaranteed

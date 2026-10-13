@@ -757,7 +757,7 @@ describe("ProgramEnrollmentPage", () => {
     // viewerMemberPricingEligible flag over the household-status-derived isMember,
     // so a current member not covered through the program's end doesn't get the
     // discount even though /api/household still reports an ACTIVE membership.
-    it("does NOT fetch a member discount code when the server flag says pricing-ineligible, despite an ACTIVE household membership", async () => {
+    it("still checks the checkout's household when the server flag says pricing-ineligible", async () => {
         setSession({ id: 101 });
         setShopifyStoreDomain("shop.example.com");
         const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
@@ -782,7 +782,8 @@ describe("ProgramEnrollmentPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
 
         await screen.findByText("Redirecting to Shopify for secure payment...");
-        expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/discount-code"))).toBe(false);
+        const discountCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/discount-code"));
+        expect(JSON.parse(String(discountCall?.[1]?.body)).participantIds).toHaveLength(1);
     });
 
     it("shows the renew notice when the viewer is a member but not eligible for member pricing on this program", async () => {

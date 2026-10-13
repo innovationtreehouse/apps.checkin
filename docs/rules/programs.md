@@ -148,7 +148,10 @@ Things the app takes as true because they are handled outside it.
 
 - Removing a comped or approved enrollment puts its seat back on sale, the same
   as returning any seat taken off sale without a payment. Every removal does it:
-  a family's withdrawal, the board's removal, and the expiry sweeps.  [Decision]
+  a family's withdrawal, the board's removal, and the expiry sweeps. A seat goes
+  back only when the app recorded taking it; a place that never took one (its
+  hold failed, or it joined while the program was free) returns nothing, so a
+  return can never sell a seat beyond capacity.  [Decision — *Principle: fail closed*]
 
 - One order pays for one household. A checkout naming someone from another
   household is refused before it reaches the store, and a paid order that names

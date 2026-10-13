@@ -80,6 +80,7 @@ describe('enrollment state — validator oracle over real transitions', () => {
                 paymentPlanDeniedAt: fields.den ? now : null,
                 pendingSince: fields.pendingSince ?? now,
                 shopifyOrderId: null,
+                seatTakenWithoutSaleAt: null,
             },
             create: {
                 programId, personId: selfId,
@@ -215,26 +216,34 @@ describe('enrollment state — validator oracle over real transitions', () => {
         await assertGone();
     });
 
-    it('T11 withdraw(comp/approved): ACTIVE with no order → ∅ (+1 on a priced, capped program)', async () => {
-        await seed({ req: false, held: false, den: false, status: 'ACTIVE' });
+    const stampOf = async () =>
+        (await prisma.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId: selfId } } })).seatTakenWithoutSaleAt;
+
+    it('T5 then T11: an approved held seat is recorded, and withdrawal returns it (+1)', async () => {
+        await seed({ req: true, held: true, den: false }); // PENDING_HELD
+        mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        expect((await PlansPost(financeReq('http://localhost/api/finance-ops/payment-plans'))).status).toBe(200);
+        expect(await stampOf()).not.toBeNull();
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
-        const capped = { ...program, maxParticipants: 5, orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000 };
-        const { released } = await withdrawAndReleaseHold(programId, selfId, capped);
-        expect(released).toBe(true);
+        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(true);
         await assertGone();
     });
 
-    it('T11 on an uncapped program, and any paid place, returns nothing', async () => {
+    it('T11 after approving a request whose hold failed: nothing recorded, nothing returned', async () => {
+        await seed({ req: true, held: false, den: false }); // PENDING_HOLD_FAILED
+        mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        expect((await PlansPost(financeReq('http://localhost/api/finance-ops/payment-plans'))).status).toBe(200);
+        await assertState('ACTIVE');
+        expect(await stampOf()).toBeNull();
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
-        const priced = { ...program, orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000 };
+        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(false);
+        await assertGone();
+    });
+
+    it('T11 on an ACTIVE place with no record (paid, or enrolled while free) returns nothing', async () => {
         await seed({ req: false, held: false, den: false, status: 'ACTIVE' });
-        expect((await withdrawAndReleaseHold(programId, selfId, { ...priced, maxParticipants: null })).released).toBe(false);
-        await seed({ req: false, held: false, den: false, status: 'ACTIVE' });
-        await prisma.programParticipant.update({
-            where: { programId_personId: { programId, personId: selfId } },
-            data: { shopifyOrderId: 'order-paid-t11' },
-        });
-        expect((await withdrawAndReleaseHold(programId, selfId, { ...priced, maxParticipants: 5 })).released).toBe(false);
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(false);
         await assertGone();
     });
 

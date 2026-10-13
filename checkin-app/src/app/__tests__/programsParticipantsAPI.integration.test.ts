@@ -520,6 +520,7 @@ describe('Program Participants API Integration Tests', () => {
                     where: { programId_personId: { programId: shopifyProgram.id, personId: otherId } },
                 });
                 expect(row?.inventoryHeldAt).toBeNull();
+                expect(row?.seatTakenWithoutSaleAt).not.toBeNull(); // the -1 is on record
             } finally {
                 logSpy.mockRestore();
                 process.env.CHECKIN_ENV = prevCheckinEnv;
@@ -561,6 +562,7 @@ describe('Program Participants API Integration Tests', () => {
                     where: { programId_personId: { programId: shopifyProgram.id, personId: otherId } },
                 });
                 expect(row?.status).toBe('ACTIVE');
+                expect(row?.seatTakenWithoutSaleAt).toBeNull(); // no -1 taken, nothing to return
             } finally {
                 process.env.CHECKIN_ENV = prevCheckinEnv;
                 if (prevDomain === undefined) delete process.env.SHOPIFY_STORE_DOMAIN;
@@ -1037,13 +1039,14 @@ describe('Program Participants API Integration Tests', () => {
             }
         });
 
-        // A comped or approved place (ACTIVE, no order) took its seat out of Shopify
-        // without a sale, so removing it puts the seat back (+1); a paid place on the
-        // same program does not (B8: paid withdrawals unchanged).
+        // Removing a place returns its seat (+1) only when the app recorded taking it
+        // without a sale. A comp or approval with no record (its -1 failed, or it
+        // joined while the program was free) and a paid place (B8) return nothing.
         it.each([
-            ['comped/approved (no order)', null, true],
-            ['paid', 'order-paid-1', false],
-        ])('board removal of a %s place on a priced, capped program', async (_label, shopifyOrderId, returnsSeat) => {
+            ['comped/approved with its -1 recorded', null, new Date(), true],
+            ['comped/approved with no -1 recorded', null, null, false],
+            ['paid', 'order-paid-1', null, false],
+        ])('board removal of a %s place', async (_label, shopifyOrderId, seatTakenWithoutSaleAt, returnsSeat) => {
             const prevCheckinEnv = process.env.CHECKIN_ENV;
             process.env.CHECKIN_ENV = 'local';
             const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -1056,7 +1059,7 @@ describe('Program Participants API Integration Tests', () => {
             });
             try {
                 await prisma.programParticipant.create({
-                    data: { programId: shopifyProgram.id, personId: commonId, status: 'ACTIVE', shopifyOrderId },
+                    data: { programId: shopifyProgram.id, personId: commonId, status: 'ACTIVE', shopifyOrderId, seatTakenWithoutSaleAt },
                 });
                 (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
 
@@ -1270,7 +1273,7 @@ describe('Program Participants API Integration Tests', () => {
                 update: { status: 'ACTIVE' },
             });
             try {
-                await expect(withdrawAndReleaseHold(freeProgramId, youthDepId, { maxParticipants: null, orgMemberPriceCents: null, nonOrgMemberPriceCents: null }, 'PENDING'))
+                await expect(withdrawAndReleaseHold(freeProgramId, youthDepId, {}, 'PENDING'))
                     .rejects.toMatchObject({ code: 'P2025' });
                 const row = await prisma.programParticipant.findUnique({
                     where: { programId_personId: { programId: freeProgramId, personId: youthDepId } },

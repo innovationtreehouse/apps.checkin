@@ -397,6 +397,12 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                 expect(await statusOf(p1)).toBe('PENDING');
                 expect(await statusOf(other.id)).toBe('PENDING');
                 expect(await exceptionKinds()).toEqual(['MIXED_HOUSEHOLDS']);
+
+                // Shopify redelivers: still nobody activated, still one exception.
+                await POST(webhookReq(body, sign(body)));
+                expect(await statusOf(p1)).toBe('PENDING');
+                expect(await statusOf(other.id)).toBe('PENDING');
+                expect(await exceptionKinds()).toEqual(['MIXED_HOUSEHOLDS']);
             } finally {
                 await prisma.programParticipant.deleteMany({ where: { personId: other.id } });
                 await prisma.person.delete({ where: { id: other.id } });
