@@ -696,6 +696,14 @@ describe("Merge Participants API", () => {
             expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
         });
 
+        it("403s an actor with no household before anything moves (fail closed)", async () => {
+            await prisma.person.update({ where: { id: actorId }, data: { householdId: null } });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(403);
+            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+        });
+
         it("allows the merge when the actor is outside both households", async () => {
             const tombstoneHh = await makeHousehold("Unrelated Household");
             await prisma.person.update({ where: { id: pMergeId }, data: { householdId: tombstoneHh } });

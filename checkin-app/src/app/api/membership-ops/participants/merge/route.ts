@@ -4,7 +4,7 @@ import type { Person, PersonRoleKind } from "@/generated/prisma/client";
 import { withAuth } from "@/lib/auth";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
-import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
+import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 import { personBgOpen } from "@/lib/membership/lifecycle";
 import { advanceHouseholdBgAfterMerge, householdBgFresh } from "@/lib/membership/mergeBgAdvance";
 import { LIVE_PERSON } from "@/lib/person/filters";
@@ -300,12 +300,17 @@ export const POST = withAuth(
             // date on their own family with no second actor — the thing attest() and
             // overrideBlocked refuse. Both subjects count: the tombstone's household is
             // where the carried date comes from, the keeper's is where it lands, and the
-            // two need not be the same household. No role bypasses this.
-            if (auth.type === 'session' && (
-                await hasHouseholdConflict(prisma, auth.user.id, keepParticipant.householdId)
-                || await hasHouseholdConflict(prisma, auth.user.id, mergeParticipant.householdId)
-            )) {
-                return apiError("You cannot merge a record in your own household — someone outside your household must.", 403);
+            // two need not be the same household. No role bypasses this, and an actor
+            // whose household can't be resolved is refused (fail closed).
+            if (auth.type === 'session') {
+                const actorHouseholdId = await resolveActorHouseholdId(prisma, auth.user.id);
+                if (
+                    actorHouseholdId === null
+                    || sharesHousehold(actorHouseholdId, keepParticipant.householdId)
+                    || sharesHousehold(actorHouseholdId, mergeParticipant.householdId)
+                ) {
+                    return apiError("You cannot merge a record in your own household — someone outside your household must.", 403);
+                }
             }
 
             const isLead = mergeParticipant.isHouseholdLead;
