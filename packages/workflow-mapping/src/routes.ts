@@ -69,14 +69,14 @@ export const proceed: WorkflowRouteHandler = async ({ params }) => {
   return { ReceivedReceipt: { id, state } };
 };
 
-/** A failed push answers 200 with `state: "apply_failed"` and the reason in `validationNotes`. */
+/** A failed push answers 200 with its state (`apply_failed`, or `applying` when only the inventory stamp failed) and the reason in `validationNotes`. */
 export const apply: WorkflowRouteHandler = async ({ params }) => {
   const id = receiptId(params);
   const result = await receiptService.apply(id);
   return {
-    ReceivedReceipt: result.state === "apply_failed"
-      ? { id, state: result.state, validationNotes: result.error }
-      : { id, state: result.state },
+    ReceivedReceipt: result.state === "resolved"
+      ? { id, state: result.state }
+      : { id, state: result.state, validationNotes: result.error },
   };
 };
 

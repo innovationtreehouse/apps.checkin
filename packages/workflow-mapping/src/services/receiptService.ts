@@ -164,7 +164,7 @@ export const receiptService = {
     }
     const nextState = assertWorkflowMappingTransition(received.state as ReceivedReceiptState, "RETRY");
 
-    // Compare-and-set on the row version, as proceed and apply do.
+    // Compare-and-set from apply_failed or a stuck applying; a retry racing an in-flight apply gets 409 from its lock, and any re-send is a replay.
     const { count } = await db.receivedReceipt.updateMany({
       where: { id: receiptId, state: received.state, updatedAt: received.updatedAt },
       data: { state: nextState },

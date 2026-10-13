@@ -12,7 +12,12 @@ import { insertAuditEvent } from "./audit";
 
 export type ApplyResult =
   | { state: "resolved" }
-  | { state: "apply_failed"; error: string };
+  | { state: "apply_failed"; error: string }
+  // Inventory committed but its stamp failed: the receipt stays applying (lines locked) until a retry stamps it.
+  | { state: "applying"; error: string };
+
+/** Advisory-lock class for a receipt's push; the receipt id is the second key. */
+const WORKFLOW_APPLY_LOCK_CLASS = 1289;
 
 interface ResolvedGtin13 {
   gtin13: string;
@@ -59,7 +64,7 @@ export async function executePushAndSettle(
   return db.$transaction(
     async (tx) => {
       const [{ locked }] = await tx.$queryRaw<Array<{ locked: boolean }>>`
-        SELECT pg_try_advisory_xact_lock(${receiptId}::bigint) AS locked`;
+        SELECT pg_try_advisory_xact_lock(${WORKFLOW_APPLY_LOCK_CLASS}::int, ${receiptId}::int) AS locked`;
       if (!locked) return null;
       const current = await tx.receivedReceipt.findUnique({ where: { id: receiptId }, select: { state: true } });
       if (current?.state !== "applying") return null;
@@ -137,6 +142,7 @@ async function pushAndSettle(
     db.receivedReceipt.update({ where: { id: receiptId }, data });
 
   const pushes: Array<() => Promise<void>> = [];
+  let inventoryUnstamped = false;
   // An in-kind receipt's money side goes to donations, never to expense.
   if (receipt.isInKind ? !legs.donationAppliedAt : !legs.expenseAppliedAt) {
     pushes.push(async () => {
@@ -160,7 +166,12 @@ async function pushAndSettle(
           lineItems: applyItems,
         }),
       );
-      await stamp({ inventoryAppliedAt: new Date() });
+      try {
+        await stamp({ inventoryAppliedAt: new Date() });
+      } catch (err) {
+        inventoryUnstamped = true;
+        throw err;
+      }
     });
   }
 
@@ -170,7 +181,10 @@ async function pushAndSettle(
   );
   if (failed) {
     const err: unknown = failed.reason;
-    return settleFailed(receiptId, received.orgId, actor, err instanceof Error ? err.message : String(err));
+    const error = err instanceof Error ? err.message : String(err);
+    // Inventory took the delta but the stamp was lost: stay applying so lines stay locked and a retry re-sends the same delta.
+    if (inventoryUnstamped) return settleUnstamped(receiptId, received.orgId, actor, error);
+    return settleFailed(receiptId, received.orgId, actor, error);
   }
 
   await db.receivedReceipt.update({
@@ -186,6 +200,25 @@ async function pushAndSettle(
     toState: "resolved",
   });
   return { state: "resolved" };
+}
+
+async function settleUnstamped(
+  receiptId: number,
+  orgId: string,
+  actor: { actorUserId: number | null; actorUsername: string | null },
+  error: string,
+): Promise<ApplyResult> {
+  await db.receivedReceipt.update({ where: { id: receiptId }, data: { validationNotes: error } });
+  await insertAuditEvent(db, {
+    orgId,
+    ...actor,
+    eventType: "receipt_apply_failed",
+    receivedReceiptId: receiptId,
+    fromState: "applying",
+    toState: "applying",
+    details: JSON.stringify({ error, inventoryUnstamped: true }),
+  });
+  return { state: "applying", error };
 }
 
 async function settleFailed(
