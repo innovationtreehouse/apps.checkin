@@ -549,6 +549,27 @@ describe('markContractSigned', () => {
         }));
         expect(prisma.auditLog.create).not.toHaveBeenCalled();
     });
+
+    // The request's addressee may never have signed; the record must not name them.
+    it('a board-recorded signature clears the signer; a Zoho one keeps it', async () => {
+        prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
+        prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: 20, kind: 'INITIAL', status: 'PENDING_EXTERNAL_ACTION', zohoSignerPersonId: 2 });
+
+        await markContractSigned(20, 9, true);
+        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            data: { contractSignedAt: expect.any(Date), zohoSignerPersonId: null },
+        }));
+        expect(prisma.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+            newData: { contractSignedAt: true, zohoSignerPersonId: null },
+        }) });
+
+        prisma.orgMembershipProcess.updateMany.mockClear();
+        await markContractSigned(20);
+        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            data: { contractSignedAt: expect.any(Date) },
+        }));
+    });
 });
 
 describe('resetSigning', () => {

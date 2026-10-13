@@ -57,7 +57,7 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
     try {
         switch (action) {
             case "mark-contract":
-                return NextResponse.json({ process: await markContractSigned(processId, actorId) });
+                return NextResponse.json({ process: await markContractSigned(processId, actorId, true) });
             case "mark-bg-consent":
                 return NextResponse.json({ process: await markBgConsent(processId, actorId) });
             case "set-envelope":

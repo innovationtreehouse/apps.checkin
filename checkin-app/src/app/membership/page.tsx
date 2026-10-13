@@ -871,8 +871,8 @@ export default function MembershipPage() {
                   <ExternalTask
                     done={!!state.external?.contractSigned}
                     title="Sign your membership agreement"
-                    doneText={state.external?.signerName && state.external.contractSignedAt
-                      ? `Signed by ${state.external.signerName}, ${formatDate(state.external.contractSignedAt, { year: "numeric", month: "short", day: "numeric", timeZone: APP_TIMEZONE })}.`
+                    doneText={state.external?.contractSignedAt
+                      ? `${state.external.signerName ? `Signed by ${state.external.signerName}` : "Signed"}, ${formatDate(state.external.contractSignedAt, { year: "numeric", month: "short", day: "numeric", timeZone: APP_TIMEZONE })}.`
                       : "Agreement signed — thank you!"}
                   >
                     <Stack gap="xs" align="flex-start">

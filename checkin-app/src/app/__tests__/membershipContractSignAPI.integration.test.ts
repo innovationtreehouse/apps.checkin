@@ -313,6 +313,30 @@ describe('POST /api/membership/contract/sign', () => {
         await prisma.auditLog.deleteMany({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: proc.id } });
     });
 
+    // A lead opened the request but the board records the contract by hand: the
+    // record must not say that lead signed.
+    it('a board mark-contract clears the signer, so the household shows "Signed" with no name', async () => {
+        const hh = await prisma.household.create({ data: { name: `HH board-mark ${TAG}` } });
+        const lead = await prisma.person.create({ data: { email: `lead-mark-${TAG}@example.com`, name: 'Never Signed', householdId: hh.id, isHouseholdLead: true } });
+        const boardHh = await prisma.household.create({ data: { name: `HH board-mark board ${TAG}` } });
+        const board = await prisma.person.create({ data: { email: `board-mark-${TAG}@example.com`, name: 'Board Marker', isBoardMember: true, householdId: boardHh.id } });
+        const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
+        const proc = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_EXTERNAL_ACTION', zohoEnvelopeId: 'REQ-M', zohoActionId: 'ACT-M', zohoSignerPersonId: lead.id } });
+
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: board.id, isSysadmin: false, isBoardMember: true } });
+        const res = await BOARD_EXTERNAL(new Request('http://localhost:4000/api/membership-ops/applications/external', {
+            method: 'POST', body: JSON.stringify({ processId: proc.id, action: 'mark-contract' }),
+        }) as unknown as Parameters<typeof BOARD_EXTERNAL>[0]);
+        expect(res.status).toBe(200);
+
+        const after = await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } });
+        expect(after?.contractSignedAt).not.toBeNull();
+        expect(after?.zohoSignerPersonId).toBeNull();
+        const householdReq = new Request(`http://localhost:4000/api/membership-ops/households?id=${hh.id}`) as unknown as Parameters<typeof HOUSEHOLD_GET>[0];
+        expect((await (await HOUSEHOLD_GET(householdReq)).json()).signing).toMatchObject({ processId: proc.id, signerName: null });
+        await prisma.auditLog.deleteMany({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: proc.id } });
+    });
+
     it('the board cannot reset signing on its own household', async () => {
         const hh = await prisma.household.create({ data: { name: `HH own ${TAG}` } });
         const lead = await prisma.person.create({ data: { email: `lead-own-${TAG}@example.com`, name: 'Own Lead', householdId: hh.id, isHouseholdLead: true, isBoardMember: true } });

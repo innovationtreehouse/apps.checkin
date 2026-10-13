@@ -158,8 +158,11 @@ export async function advanceExternalIfComplete(processId: number) {
  * no payment and no BG gate — so it flips straight to the terminal ACTIVE in the same
  * conditional write and skips advanceExternalIfComplete entirely (which would deref a
  * null orgMembershipId).
+ *
+ * A board-recorded signature clears the signer: the request's addressee may never
+ * have signed, and the record must not name someone who didn't.
  */
-export async function markContractSigned(processId: number, actorId?: number) {
+export async function markContractSigned(processId: number, actorId?: number, recordedByBoard = false) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ExternalError("not_found", "Application not found.");
     const isPersonAgreement = process.kind === "PERSON_AGREEMENT";
@@ -170,11 +173,10 @@ export async function markContractSigned(processId: number, actorId?: number) {
     // pre-marked signed before EXTERNAL (intake), so theirs has no status clause.
     await prisma.$transaction(async (tx) => {
         const signedAt = new Date();
+        const signed = { contractSignedAt: signedAt, ...(recordedByBoard ? { zohoSignerPersonId: null } : {}) };
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: processId, contractSignedAt: null, ...(isPersonAgreement ? fromWhere("PENDING_EXTERNAL_ACTION") : {}) },
-            data: isPersonAgreement
-                ? { contractSignedAt: signedAt, status: "ACTIVE", stageEnteredAt: signedAt }
-                : { contractSignedAt: signedAt },
+            data: isPersonAgreement ? { ...signed, status: "ACTIVE", stageEnteredAt: signedAt } : signed,
         });
         if (count !== 1) return;
         await tx.auditLog.create({
@@ -183,7 +185,11 @@ export async function markContractSigned(processId: number, actorId?: number) {
                 action: "EDIT",
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: processId,
-                newData: isPersonAgreement ? { contractSignedAt: true, status: "ACTIVE" } : { contractSignedAt: true },
+                newData: {
+                    contractSignedAt: true,
+                    ...(isPersonAgreement ? { status: "ACTIVE" } : {}),
+                    ...(recordedByBoard ? { zohoSignerPersonId: null } : {}),
+                },
             },
         });
     });
