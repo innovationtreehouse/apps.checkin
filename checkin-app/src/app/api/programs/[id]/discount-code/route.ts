@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
 import { isDuesSettled, isDuesSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { mintMemberDiscountCode } from "@/lib/shopify";
+import { checkoutVariantId } from "@/lib/programs/variants";
 
 // Server-minted, single-use member discount code for a single-pool program's
 // checkout link (see mintMemberDiscountCode in lib/shopify.ts). Recomputes
@@ -24,7 +25,8 @@ export const POST = withAuth({}, async (_req, auth, { params }: { params: Promis
     // Legacy (two-variant) programs already charge the right tier via variant
     // choice — no discount code needed. Both prices must be known to compute
     // the discount amount.
-    if (!program.shopifyVariantId || program.orgMemberPriceCents == null || program.nonOrgMemberPriceCents == null) {
+    const variantId = checkoutVariantId(program);
+    if (!variantId || program.orgMemberPriceCents == null || program.nonOrgMemberPriceCents == null) {
         return NextResponse.json({ code: null });
     }
 
@@ -42,6 +44,6 @@ export const POST = withAuth({}, async (_req, auth, { params }: { params: Promis
     const amountOffCents = program.nonOrgMemberPriceCents - program.orgMemberPriceCents;
     if (amountOffCents <= 0) return NextResponse.json({ code: null });
 
-    const code = await mintMemberDiscountCode(programId, program.shopifyVariantId, amountOffCents);
+    const code = await mintMemberDiscountCode(programId, variantId, amountOffCents);
     return NextResponse.json({ code });
 });

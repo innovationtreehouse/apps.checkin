@@ -202,6 +202,7 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
                         programId,
                         personIds: participantIds,
                         shopifyOrderId: orderId ?? "",
+                        lines: facts.lines,
                     });
 
                     outcome = `program ${programId}: activated ${activatedCount} of ${participantIds.length} participant(s)`;

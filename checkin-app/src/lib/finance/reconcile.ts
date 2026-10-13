@@ -6,6 +6,7 @@ import { activateByProcessId } from "@/lib/membership/payment";
 import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
 import { fromWhere } from "@/lib/programs/enrollmentState";
+import { programVariantIds } from "@/lib/programs/variants";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
 
@@ -202,8 +203,8 @@ export type Entitlement = { ok: true } | { ok: false; kind: PaymentExceptionKind
 
 /**
  * Does this order pay for activating these people in this program? Paid and not
- * reversed, carries the program's own variant, and buys at least one seat per
- * person still awaiting payment. Nobody awaiting payment is a no-op (a redelivery,
+ * reversed, carries one of the program's variants (public or claimant), and
+ * buys at least one seat per person still awaiting payment. Nobody awaiting payment is a no-op (a redelivery,
  * or ids no longer pending), judged before the order so it raises nothing. A seat
  * shortfall activates nobody: the order cannot say which of the household it was
  * meant for, so the board decides.
@@ -214,9 +215,9 @@ export async function orderEntitlesEnrollment(order: EntitlementOrder, programId
     if (isReversed(order)) return { ok: false, kind: "REVERSED_BEFORE_ACTIVATION" };
     if (!isPaid(order)) return { ok: false, kind: null };
 
-    const program = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyVariantId: true } });
-    const variantId = program?.shopifyVariantId;
-    const seats = variantId ? order.lines.filter((l) => l.variantId === variantId).reduce((n, l) => n + l.quantity, 0) : 0;
+    const program = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyVariantId: true, claimantShopifyVariantId: true } });
+    const variantIds = new Set(program ? programVariantIds(program) : []);
+    const seats = order.lines.filter((l) => variantIds.has(l.variantId)).reduce((n, l) => n + l.quantity, 0);
     if (seats === 0) return { ok: false, kind: "NO_ITEM" };
     if (seats < awaiting) return { ok: false, kind: "AMOUNT_MISMATCH" };
     return { ok: true };
@@ -403,7 +404,8 @@ async function reconcileForwardProgram(order: MirrorOrder): Promise<boolean> {
 
     // Fallback for orders without attributes: the purchaser (household lead) and
     // everyone in their household. Claims the order only when it carries a pending
-    // program's own variant — anything else (merch, a donation) passes untouched.
+    // program's variant (public or claimant) — anything else (merch, a donation)
+    // passes untouched.
     if (!isPaid(order)) return false;
     const email = order.customerEmail?.toLowerCase().trim();
     if (!email) return false;
@@ -413,12 +415,12 @@ async function reconcileForwardProgram(order: MirrorOrder): Promise<boolean> {
 
     const pending = await prisma.programParticipant.findMany({
         where: { person: { householdId: { in: householdIds } }, status: "PENDING" },
-        select: { programId: true, personId: true, program: { select: { shopifyVariantId: true } } },
+        select: { programId: true, personId: true, program: { select: { shopifyVariantId: true, claimantShopifyVariantId: true } } },
     });
     if (pending.length === 0) return false;
 
     const orderVariants = new Set((await mirror.orderLines(order.orderGid)).map((l) => l.variantId));
-    const matched = pending.filter((p) => p.program.shopifyVariantId && orderVariants.has(p.program.shopifyVariantId));
+    const matched = pending.filter((p) => programVariantIds(p.program).some((v) => orderVariants.has(v)));
     const programs = [...new Set(matched.map((p) => p.programId))];
     if (programs.length === 0) return false;
     if (programs.length > 1) {
@@ -431,7 +433,8 @@ async function reconcileForwardProgram(order: MirrorOrder): Promise<boolean> {
 
 /** Shared tail for both program-matching paths: judge, then activate through the one choke point. */
 async function activateProgramFromOrder(order: MirrorOrder, programId: number, personIds: number[]): Promise<boolean> {
-    const entitlement = await orderEntitlesEnrollment({ ...order, lines: await mirror.orderLines(order.orderGid) }, programId, personIds);
+    const lines = await mirror.orderLines(order.orderGid);
+    const entitlement = await orderEntitlesEnrollment({ ...order, lines }, programId, personIds);
     if (!entitlement.ok) {
         if (entitlement.kind) {
             logger.warn(`[reconcile] program order ${order.legacyId} not entitled (${entitlement.kind}, program ${programId}) — NOT activated`);
@@ -452,7 +455,7 @@ async function activateProgramFromOrder(order: MirrorOrder, programId: number, p
     }
 
     const { activateProgramEnrollment } = await import("@/lib/programs/activateEnrollment");
-    const res = await activateProgramEnrollment({ programId, personIds, shopifyOrderId: order.legacyId ?? "" });
+    const res = await activateProgramEnrollment({ programId, personIds, shopifyOrderId: order.legacyId ?? "", lines });
     logger.info(`[reconcile] recovered program payment: program ${programId} ← order ${order.legacyId} (${res.activatedCount} activated)`);
     return true;
 }
