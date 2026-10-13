@@ -8,6 +8,7 @@ import type {
   ReimbursementStatus,
 } from "./contract";
 import { ServiceError } from "./services/serviceError";
+import { DEFAULT_LIMITS, type ReceiptLimits } from "./lib/limits";
 
 /** Thrown by an inert port: the crossing is declared but not bound yet. Callers retry later. */
 export class NotWiredError extends Error {
@@ -59,7 +60,11 @@ export function getOrg(): Promise<OrgIdentity> {
   return requireRuntime().org();
 }
 
-export function ports(): Required<Omit<ReceiptConfig, "auth" | "org">> {
+export function limits(): ReceiptLimits {
+  return { ...DEFAULT_LIMITS, ...requireRuntime().limits };
+}
+
+export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits">> {
   const r = requireRuntime();
   return {
     receiptSink: r.receiptSink ?? inertReceiptSink,

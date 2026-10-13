@@ -6,7 +6,6 @@
 import type { Access } from "@inventory/receipt";
 import type { Role } from "@/security/core";
 import { ApiResponseError, badRequest, unauthorized, type HandlerContext, type HandlerFn } from "@/security/handler";
-import { checkRateLimit } from "@/lib/rate-limit";
 
 /**
  * Brand check, not `instanceof`: the instrumentation chunk that configures the library and
@@ -129,19 +128,5 @@ export async function readJsonCapped(
     return JSON.parse(await new Blob(chunks).text());
   } catch {
     throw badRequest("Invalid JSON body");
-  }
-}
-
-/** Model calls (auto upload and retry) one person may make per day. */
-export const OCR_DAILY_LIMIT = 50;
-
-/**
- * Spends one of the caller's daily OCR reads, or answers 429. ponytail: per process, like
- * every limit in lib/rate-limit.ts; the workspace spend cap stays the hard bound.
- */
-export function spendOcrQuota(personId: number): void {
-  const { ok, retryAfterSec } = checkRateLimit(`receipt-ocr:person:${personId}`, OCR_DAILY_LIMIT, 24 * 60 * 60 * 1000, Date.now());
-  if (!ok) {
-    throw new ApiResponseError(429, `Daily automatic-reading limit reached; type the details or retry in ${Math.ceil(retryAfterSec / 3600)} h`);
   }
 }

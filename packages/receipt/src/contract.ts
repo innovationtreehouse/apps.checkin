@@ -6,6 +6,7 @@
  */
 import { z } from "zod";
 import type { CompletedReceipt } from "@inventory/receipt-types";
+import type { ReceiptLimits } from "./lib/limits";
 
 /** The acting host user, projected from the checkin Person. `id` is the Person.id. */
 export interface ReceiptPrincipal {
@@ -113,4 +114,6 @@ export interface ReceiptConfig {
   donorSink?: DonorSink;
   reimbursementStatus?: ReimbursementStatus;
   ocr?: OcrProvider;
+  /** Overrides for the daily intake limits; unset ones keep DEFAULT_LIMITS. */
+  limits?: Partial<ReceiptLimits>;
 }

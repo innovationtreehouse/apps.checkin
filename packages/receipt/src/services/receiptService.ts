@@ -15,7 +15,8 @@ import {
   type DonorInput,
 } from "../lib/schemas";
 import { audit, receiptRepo, type ReceiptRow, type ReceiptUpdate } from "../repositories/receipt";
-import { getOrg, ports, requireActor } from "../runtime";
+import { getOrg, limits, ports, requireActor } from "../runtime";
+import { DAY_MS } from "../lib/limits";
 import { assertExpectedState, assertLegalTransition, NEUTRAL_CONTEXT, WorkflowTransitionError } from "../workflows/receipt.invariants";
 import type { ReceiptEvent } from "../workflows/receipt.events";
 import { ReceiptStateConflictError, ServiceError } from "./serviceError";
@@ -113,6 +114,25 @@ const toLine = (li: { description: string; partNumber?: string | null; manufactu
   isDelayed: li.isDelayed,
 });
 
+/**
+ * Spends one of the caller's daily model calls, or refuses with 429. Each call is an audit row,
+ * so the count survives restarts and is shared by every app process; a per-person lock keeps
+ * concurrent requests from all passing the same check.
+ */
+async function reserveOcrCall(actor: ReceiptPrincipal): Promise<void> {
+  const { ocrCallsPerPersonPerDay } = limits();
+  await db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`receipt-ocr:${actor.id}`}, 0))`;
+    const used = await tx.receiptAuditLog.count({
+      where: { userId: actor.id, action: "ocr_call", changedAt: { gt: new Date(Date.now() - DAY_MS) } },
+    });
+    if (used >= ocrCallsPerPersonPerDay) {
+      throw new ServiceError(429, "You have reached today's limit for automatic reading. Type the details, or try again tomorrow.");
+    }
+    await tx.receiptAuditLog.create({ data: { receiptId: null, userId: actor.id, username: actor.name, action: "ocr_call" } });
+  });
+}
+
 /** Read the file from `auto_upload` and land in `uploaded` (then the pipeline) or `ocr_failed`. */
 async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
   const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, mimeType: true } });
@@ -171,6 +191,7 @@ export const receiptService = {
       : {};
     const inKind = input.isInKind && input.donor ? { isInKind: true, donorSync: "pending", ...donorNames(input.donor, actor) } : {};
     const d = input.details;
+    if (!d) await reserveOcrCall(actor);
 
     const id = await insertReceipt({
       orgId: (await getOrg()).id,
@@ -192,6 +213,7 @@ export const receiptService = {
         : { state: "auto_upload", ocrStartedAt: new Date() },
       lines: d ? d.lineItems.map(toLine) : [],
       auditAction: "uploaded",
+      limits: limits(),
     });
 
     if (input.isInKind) await sendDonorSync(id, actor);
@@ -324,6 +346,12 @@ export const receiptService = {
   async retryOcr(id: string, access: Access) {
     const actor = await requireActor();
     const row = await load(id, access, actor);
+    try {
+      assertLegalTransition(row.state, { type: "OCR_RETRY" });
+    } catch (e) {
+      transitionError(e);
+    }
+    await reserveOcrCall(actor);
     await step(row, { type: "OCR_RETRY" }, "auto_upload", { detail: { validationNotes: null, ocrStartedAt: new Date() } }, actor, "ocr_retry_started");
     await applyOcr(id, actor);
     return load(id, access, actor);

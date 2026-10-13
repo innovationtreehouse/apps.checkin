@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 import { ApiResponseError } from "@/security/handler";
-import { accessOf, mapServiceErrors, OCR_DAILY_LIMIT, readCapped, readJsonCapped, spendOcrQuota } from "@/lib/receipt/route";
+import { accessOf, mapServiceErrors, readCapped, readJsonCapped } from "@/lib/receipt/route";
 
 /** A ServiceError from another loaded copy of the library: same name and shape, different class. */
 class ForeignServiceError extends Error {
@@ -92,14 +92,5 @@ describe("readJsonCapped", () => {
 
   it("answers 400 for a body that is not JSON", async () => {
     await expect(readJsonCapped(body("not json"), null, 100, "split it")).rejects.toMatchObject({ status: 400 });
-  });
-});
-
-describe("spendOcrQuota", () => {
-  it("allows a person OCR_DAILY_LIMIT reads a day, then answers 429; others are unaffected", () => {
-    const person = 424242;
-    for (let i = 0; i < OCR_DAILY_LIMIT; i++) expect(() => spendOcrQuota(person)).not.toThrow();
-    expect(() => spendOcrQuota(person)).toThrow(expect.objectContaining({ status: 429 }));
-    expect(() => spendOcrQuota(person + 1)).not.toThrow();
   });
 });

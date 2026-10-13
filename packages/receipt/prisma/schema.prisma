@@ -82,6 +82,7 @@ model Receipt {
   // duplicate pathway can flag it for human review (Inventory BYDESIGN.md).
   @@index([orgId, fileHash], name: "receipts_org_id_file_hash_idx")
   @@index([orgId, uploadedByUserId])
+  @@index([orgId, uploadedAt])
   @@map("receipts")
 }
 
@@ -199,6 +200,7 @@ model ReceiptAuditLog {
   lineItem ReceiptLineItem? @relation(fields: [lineItemId], references: [id])
 
   @@index([receiptId])
+  @@index([userId, action, changedAt])
   @@map("receipt_audit_log")
 }
 

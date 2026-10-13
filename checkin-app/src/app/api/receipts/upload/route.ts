@@ -2,7 +2,7 @@
 // its src/security/registry/receipt.ts entry.
 import { MAX_FILE_BYTES, receiptService } from "@inventory/receipt";
 import { badRequest, handler } from "@/security/handler";
-import { readUploadForm, receiptRoute, sessionId, spendOcrQuota } from "@/lib/receipt/route";
+import { readUploadForm, receiptRoute } from "@/lib/receipt/route";
 
 /**
  * Multipart: `file` is the receipt, `data` an optional JSON string of the upload input. With
@@ -23,8 +23,6 @@ export const POST = handler(
         throw badRequest("data must be JSON");
       }
     }
-    const manual = typeof input === "object" && input !== null && "details" in input;
-    if (!manual) spendOcrQuota(sessionId(ctx));
     return { ReceiptView: await receiptService.upload(Buffer.from(await file.arrayBuffer()), file.type, input) };
   }),
 );
