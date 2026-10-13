@@ -81,6 +81,9 @@ const GUARDS: GuardSite[] = [
     { file: 'lib/membership/refund.ts', machine: 'membership', from: 'PENDING_BG_CLEARANCE', edge: ['PENDING_BG_CLEARANCE', 'PENDING_PAYMENT'], mode: 'spread' },
     { file: 'lib/membership/refund.ts', machine: 'membership', from: 'BLOCKED', mode: 'spread' }, // refund on a paid BLOCKED row: flag-only, stays BLOCKED
     { file: 'app/api/finance-ops/membership-payment-plans/route.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'ACTIVE'], mode: 'spread' },
+    { file: 'lib/membership/payment.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'ACTIVE'], mode: 'spread' }, // activate, check cleared
+    { file: 'lib/membership/payment.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'PENDING_BG_CLEARANCE'], mode: 'spread' }, // activate, check pending
+    { file: 'lib/membership/payment.ts', machine: 'membership', from: 'BLOCKED', mode: 'spread' }, // paid while blocked: stamps paidAt, stays BLOCKED
     { file: 'app/api/finance-ops/membership-payment-plans/refuse/route.ts', machine: 'membership', from: 'PENDING_PAYMENT', mode: 'spread' }, // deny: flag-only, no status edge
     // merge BG carryover — two flag-only stamps (advanceExternalIfComplete / activate own the
     // edges those rows later take) and two real clearances on already-declared edges.
