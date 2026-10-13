@@ -46,6 +46,8 @@ export default function VolunteerMembershipsPage() {
   const [search, setSearch] = useState("");
   const [statuses, setStatuses] = useState<string[]>([]);
   const [showInactive, setShowInactive] = useState(false);
+  // An existing person the typed email matched; the Board confirms before their household changes.
+  const [match, setMatch] = useState<{ email: string; personName: string; householdId: number; householdName: string; isVolunteer: boolean } | null>(null);
 
   const flash = (text: string, tone: "warning" | "error" = "error") =>
     setMessage(text ? { text, tone } : undefined);
@@ -92,7 +94,7 @@ export default function VolunteerMembershipsPage() {
     return null;
   }
 
-  const addDesignation = async () => {
+  const addDesignation = async (confirmHouseholdId?: number) => {
     setEmailError(undefined);
     if (!newEmail.trim()) return;
     if (!isValidEmail(newEmail)) { setEmailError("A valid email is required."); return; }
@@ -102,14 +104,18 @@ export default function VolunteerMembershipsPage() {
       const res = await fetch("/api/settings/membership/volunteer-designations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: newEmail }),
+        body: JSON.stringify(confirmHouseholdId === undefined ? { email: newEmail } : { email: newEmail, confirmHouseholdId }),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.ok) {
+      if (res.ok && data.requiresConfirmation) {
+        setMatch({ email: newEmail, ...data.match });
+      } else if (res.ok) {
         setNewEmail("");
-        if (data.warning) { flash(data.warning, "warning"); } else { notifications.show({ message: "Designation added." }); }
+        setMatch(null);
+        if (data.warning) { flash(data.warning, "warning"); }
+        else { notifications.show({ message: confirmHouseholdId === undefined ? "Designation added." : "Household set as a volunteer household." }); }
         await load();
-      } else flash(data.error || "Could not add.");
+      } else { setMatch(null); flash(data.error || "Could not add."); }
     } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
     finally { setSaving(false); }
   };
@@ -258,13 +264,27 @@ export default function VolunteerMembershipsPage() {
           <TextInput
             w={320}
             value={newEmail}
-            onChange={(e) => { setNewEmail(e.currentTarget.value); setEmailError(undefined); }}
+            onChange={(e) => { setNewEmail(e.currentTarget.value); setEmailError(undefined); setMatch(null); }}
             error={emailError}
             placeholder="volunteer@example.com"
             aria-label="Volunteer email"
           />
-          <Button disabled={saving} onClick={addDesignation}>Add</Button>
+          <Button disabled={saving || !!match} onClick={() => addDesignation()}>Add</Button>
         </Group>
+        {match && (
+          <Stack gap="xs" mt="md">
+            <Text>
+              {match.email} belongs to <b>{match.personName}</b> in the <b>{match.householdName}</b> household.
+              {match.isVolunteer
+                ? " That household is already a volunteer household."
+                : " Confirm to set that household as a volunteer household."}
+            </Text>
+            <Group gap="sm">
+              <Button disabled={saving || match.isVolunteer} onClick={() => addDesignation(match.householdId)}>Confirm household</Button>
+              <Button variant="subtle" disabled={saving} onClick={() => setMatch(null)}>Cancel</Button>
+            </Group>
+          </Stack>
+        )}
       </Card>
     </Stack>
   );

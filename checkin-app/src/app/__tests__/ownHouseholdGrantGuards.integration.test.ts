@@ -102,12 +102,18 @@ describe('own-household grant guards', () => {
             expect(await lastRefusal()).toEqual(expect.objectContaining({ reason: 'own_household', table: 'VolunteerDesignation' }));
         });
 
-        it('allows designating someone outside the actor’s household', async () => {
-            const res = await DESIG_POST(jsonReq('POST', { email: `outsider-${TAG}@example.com` }));
+        it('allows designating an address outside the actor’s household', async () => {
+            const res = await DESIG_POST(jsonReq('POST', { email: `newcomer-${TAG}@example.com` }));
             expect(res.status).toBe(201);
             const { designation } = await res.json();
             const log = await prisma.auditLog.findFirst({ where: { actorId, action: 'CREATE', tableName: 'VolunteerDesignation', affectedEntityId: designation.id } });
-            expect(log?.newData).toEqual({ email: `outsider-${TAG}@example.com` });
+            expect(log?.newData).toEqual({ email: `newcomer-${TAG}@example.com` });
+        });
+
+        it('shows, rather than stores, a person outside the actor’s household', async () => {
+            const res = await DESIG_POST(jsonReq('POST', { email: `outsider-${TAG}@example.com` }));
+            expect(res.status).toBe(200);
+            expect(await res.json()).toMatchObject({ requiresConfirmation: true, match: { householdId: otherHouseholdId } });
         });
 
         it('refuses an actor whose household cannot be resolved (fail closed)', async () => {
