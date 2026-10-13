@@ -201,7 +201,12 @@ Procedure below is built on them.
   has open, or else starts a new joining application.  [Decision]
 
 - A household with a blocked application cannot start another one. Only the
-  board moves it on, by a reset back to two-person review or by denial.  [Decision — *Principle: people decide about people*]
+  board moves the application on: "Reset for re-review" sends it back for two
+  new approvals, or a board override clears it. Denying the household is a
+  household action and leaves the application blocked.  [Decision — *Principle: people decide about people*]
+
+- Applications already blocked when this rule took effect are not backfilled.
+  Each one blocks a new start until the board resets or overrides it.  [Decision]
 
 - The background-check result is never stored. The record is that reviewers saw
   it and what they judged — stricter than the policy, which permits the board to

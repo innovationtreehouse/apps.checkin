@@ -34,7 +34,7 @@ const RENEWAL_LEAD_MONTHS = 2;
 /**
  * A household application that stops another from starting: one in flight (one
  * open household application at a time), or a BLOCKED one, which only the board
- * moves on (reset or deny).
+ * moves on (reset or override).
  */
 export const householdApplicationOpenOrBlockedWhere: Prisma.OrgMembershipProcessWhereInput = {
     OR: [
