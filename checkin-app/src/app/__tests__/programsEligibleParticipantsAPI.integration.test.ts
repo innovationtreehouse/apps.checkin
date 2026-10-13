@@ -292,7 +292,7 @@ describe('Eligible Participants API Integration Tests', () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
 
              const byName = await (await GET(createReq(publicProgramId, 'Candidate'), createParams(publicProgramId))).json();
-             for (const m of byName.members) expect(Object.keys(m).sort()).toEqual(['id', 'name']);
+             for (const m of byName.members) expect(Object.keys(m).sort()).toEqual(['ageWarning', 'id', 'name']);
 
              const byEmail = await (await GET(createReq(publicProgramId, 'non-member-elig'), createParams(publicProgramId))).json();
              expect(byEmail.members).toEqual([]);

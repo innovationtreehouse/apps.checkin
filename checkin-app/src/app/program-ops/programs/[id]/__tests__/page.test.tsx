@@ -120,7 +120,7 @@ describe("ProgramDetailsPage", () => {
   it("searches and adds a volunteer", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({
-      "/api/programs/1/eligible-participants": { members: [{ id: 555, name: "Wendy West" }] },
+      "/api/programs/1/eligible-participants": { members: [{ id: 555, name: "Wendy West", ageWarning: null }] },
       "/api/programs/1/volunteers": {},
       "/api/programs/1": programData,
     });
@@ -352,7 +352,7 @@ describe("ProgramDetailsPage", () => {
   it("keeps the volunteer selection when the add request fails", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = routedFetch([
-      { url: "/api/programs/1/eligible-participants", method: "GET", result: { ok: true, body: { members: [{ id: 555, name: "Wendy West" }] } } },
+      { url: "/api/programs/1/eligible-participants", method: "GET", result: { ok: true, body: { members: [{ id: 555, name: "Wendy West", ageWarning: null }] } } },
       { url: "/api/programs/1/volunteers", method: "POST", result: { ok: false, status: 400, body: {} } },
       { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
     ]);
@@ -387,12 +387,12 @@ describe("ProgramDetailsPage", () => {
     expect(await screen.findByText("No events scheduled.")).toBeInTheDocument();
   });
 
-  it("enrolls a participant after the sysadmin confirms, and shows a server error otherwise", async () => {
+  it("enrolls a participant after the sysadmin confirms, shows the server's age warning, and shows a server error otherwise", async () => {
     setSession({ id: 1, isSysadmin: true });
     const eligible = {
       members: [
-        { id: 777, name: "Gerry Grownup" },
-        { id: 778, name: "Kiki Kid" },
+        { id: 777, name: "Gerry Grownup", ageWarning: null },
+        { id: 778, name: "Kiki Kid", ageWarning: "Too young" },
       ],
     };
     let attempt = 0;
@@ -411,6 +411,7 @@ describe("ProgramDetailsPage", () => {
     const participantSearch = (await screen.findAllByPlaceholderText("Start typing to search..."))[1];
     fireEvent.change(participantSearch, { target: { value: "e" } });
     await screen.findByText("Kiki Kid");
+    expect(screen.getAllByText(/Too young/)).toHaveLength(1);
     fireEvent.click(screen.getByText("Gerry Grownup"));
 
     fireEvent.click(screen.getByRole("button", { name: "Enroll" }));

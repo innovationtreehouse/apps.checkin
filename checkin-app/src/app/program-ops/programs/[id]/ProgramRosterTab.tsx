@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from 'react';
-import { Alert, Box, Button, Card, Checkbox, Group, Modal, SimpleGrid, Stack, Text, Title } from '@mantine/core';
+import { Alert, Badge, Box, Button, Card, Checkbox, Group, Modal, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { EntityPicker } from '@/components/admin/EntityPicker';
@@ -230,6 +230,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
                 selectedLabel={partLabel}
                 search={searchEligible}
                 getOptionLabel={(p) => p.name || 'Unnamed'}
+                getOptionDescription={(p) => p.ageWarning && <Badge color="yellow" variant="light">⚠️ {p.ageWarning}</Badge>}
                 onSelect={(p) => { setNewPartId(p.id.toString()); setPartLabel(p.name || 'Unnamed'); }}
                 onClear={() => { setNewPartId(""); setPartLabel(""); }}
               />

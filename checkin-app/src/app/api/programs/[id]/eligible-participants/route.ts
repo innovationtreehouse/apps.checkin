@@ -4,11 +4,13 @@ import { DUES_SETTLED_PERSON_WHERE } from "@/lib/orgMembership";
 import { handler, notFound, badRequest } from "@/security/handler";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
+import { checkProgramAge } from "@/lib/programAge";
 
 // Admission + field stripping declared in src/security/registry.ts under
 // 'GET /api/programs/[id]/eligible-participants'. A staff directory SEARCH for
 // people NOT yet in the program; it returns names only (no contact or age data,
-// youth included), and matches on name or id, never email.
+// youth included), and matches on name or id, never email. The age check runs
+// here so the picker can warn without a date of birth leaving the server.
 export const GET = handler<{ id: string }>('GET /api/programs/[id]/eligible-participants', async ({ req, params }) => {
     const programId = parseInt(params.id, 10);
     if (isNaN(programId)) throw badRequest('Invalid program ID');
@@ -51,10 +53,16 @@ export const GET = handler<{ id: string }>('GET /api/programs/[id]/eligible-part
 
     const members = await prisma.person.findMany({
         where: { AND: andClauses, ...LIVE_PERSON },
-        select: { id: true, name: true },
+        select: { id: true, name: true, dateOfBirth: true, isDeclaredAdult: true },
         orderBy: { name: 'asc' },
         take: 50
     });
 
-    return { Person: members };
+    const bounds = { minAge: currentProgram.minAge, maxAge: currentProgram.maxAge, asOf: currentProgram.startAt ?? undefined };
+    return {
+        EligibleCandidate: members.map(({ id, name, dateOfBirth, isDeclaredAdult }) => {
+            const fit = checkProgramAge({ dateOfBirth, isDeclaredAdult }, bounds);
+            return { id, name, ageWarning: fit.ok ? null : fit.label };
+        }),
+    };
 });

@@ -296,7 +296,9 @@ Things the app takes as true because they are handled outside it.
 
 - The search a program leader uses to add volunteers and participants returns
   names only, and matches a name or an id, never an email. Contact details and
-  dates of birth of people outside the program, youth above all, are not theirs.  [Decision — *Principle: least privilege*]
+  dates of birth of people outside the program, youth above all, are not theirs.
+  The server checks each name against the program's age limits and sends only
+  the verdict ("Too young", "Too old", "DOB missing"), so the picker still warns.  [Decision — *Principle: least privilege*]
 
 - A program's detail page shows which of the household is already enrolled and
   what the program limits, and hides the non-member price where the program is
