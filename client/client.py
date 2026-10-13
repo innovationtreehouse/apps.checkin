@@ -57,19 +57,14 @@ def building_known_empty(state):
                 and not state.present_ids)
 
 
-def overnight_and_empty(state, in_closed_window_fn=in_closed_window):
-    """Overnight in a building known to be empty: the one case the kiosk stops
-    asking the server, until a badge or the morning."""
-    return bool(in_closed_window_fn()) and building_known_empty(state)
-
-
-def skip_roster_get(state, method, path, in_closed_window_fn=in_closed_window):
+def skip_roster_get(state, method, path):
     """True when the proxy answers the board's roster GET itself, with a 204
-    and no body: the board keeps the last real roster it rendered. The kiosk
-    never serves a roster the server did not send."""
+    and no body: the building is known empty, and with one door every arrival
+    badges here first. The board keeps the last real roster it rendered; the
+    kiosk never serves a roster the server did not send."""
     if state is None or method != "GET" or not is_roster_get_path(path):
         return False
-    return overnight_and_empty(state, in_closed_window_fn)
+    return building_known_empty(state)
 
 
 # ---------------------------------------------------------------------------
@@ -1253,19 +1248,16 @@ def handle_scan(backend, state, outbox, participant_id):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def attendance_poller(backend, state, outbox, interval=30, sleep_fn=time.sleep,
-                       in_closed_window_fn=in_closed_window):
-    """Background thread that polls attendance counts periodically. Pushes SSE
-    status events when counts change so the blackout logic works on
-    display-only kiosks without a scanner, and occupancy created off this Pi
-    (a web check-in, another entrance) wakes the screen. It pauses only
-    overnight in a building known to be empty, so the database can sleep;
-    a badge here or the morning resumes it. Accepted trade-off: overnight in
-    that state, a web check-in or another entrance does not reach the screen
-    until then."""
+def attendance_poller(backend, state, outbox, interval=30, sleep_fn=time.sleep):
+    """Background thread that polls attendance counts periodically while
+    anyone is inside or occupancy is unknown, pushing SSE status events when
+    counts change. It pauses while the building is known empty, at any hour,
+    so the database can sleep: with one door, every arrival badges here and
+    resumes it. Accepted trade-off: a web check-in into an empty building
+    does not reach the screen until the next badge."""
     while True:
         sleep_fn(interval)
-        if overnight_and_empty(state, in_closed_window_fn):
+        if building_known_empty(state):
             continue
         pending = outbox.pending_rows()
         att_data, att_status = backend.get_attendance()

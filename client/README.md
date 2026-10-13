@@ -105,7 +105,7 @@ When `usb_device` is empty in `config.json`, the client reads participant IDs fr
 | `usb_device` | Device name or path (e.g. `Newtologic` or `/dev/input/event0`), empty for stdin |
 | `listen_port` | Local HTTP server port (default `8083`) |
 | `kiosk_path` | Backend path for the kiosk display and initial data fetch (default `/attendance/current?mode=kiosk`) |
-| `attendance_path` | Signed `GET` for the live roster (default `/api/attendance`). Empty disables the poller. The poller runs every 30 s, and the board's own roster `GET`s go through to the server, except overnight (`in_closed_window`) in a building the last real roster showed empty with no badge since. Then the poller pauses and the proxy answers the board's roster `GET`s with `204` and no body, so the board keeps the last real data it showed; a badge here or the morning resumes both. In that state, a web check-in or a scan at another entrance does not reach the screen until then. |
+| `attendance_path` | Signed `GET` for the live roster (default `/api/attendance`). Empty disables the poller. The poller runs every 30 s and the board's own roster `GET`s go through to the server, except while the building is known empty (the last real roster showed nobody and no badge here since), at any hour. Then the poller pauses and the proxy answers the board's roster `GET`s with `204` and no body, so the board keeps the last real data it showed; the next badge resumes both. Assumes this is the only door scanner. A web check-in into an empty building does not reach the screen until the next badge. |
 
 ## Architecture
 
