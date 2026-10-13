@@ -153,6 +153,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
             where: { email: { contains: TAG } }, select: { id: true, householdId: true },
         });
         await prisma.auditLog.deleteMany({ where: { actorId: { in: ids.map(u => u.id) } } });
+        await prisma.paymentException.deleteMany({ where: { personId: { in: ids.map(u => u.id) } } });
         const memberships = await prisma.orgMembership.findMany({
             where: { householdId: { in: ids.map(u => u.householdId) } }, select: { id: true },
         });
@@ -164,22 +165,103 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         await restoreBoardSettings();
     });
 
-    it('grants an inactive household, sets ACTIVE, and writes an audit row', async () => {
+    it('grant needs a reason', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const res = await post({ householdId: inactiveHouseholdId, active: true });
+        expect(res.status).toBe(400);
+    });
+
+    it('grant with no application opens an INITIAL one and leaves the household NONE (money only)', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
 
-        const res = await post({ householdId: inactiveHouseholdId, active: true });
+        const res = await post({ householdId: inactiveHouseholdId, active: true, reason: 'Paid by check' });
         expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.paid).toBe(false);
+        expect(data.opened).toBe(true);
 
         const membership = await prisma.orgMembership.findUnique({ where: { householdId: inactiveHouseholdId } });
-        expect(membership?.status).toBe('ACTIVE');
+        expect(membership?.status).toBe('NONE');
+        const process = await prisma.orgMembershipProcess.findFirst({ where: { orgMembershipId: membership!.id } });
+        expect(process).toMatchObject({ kind: 'INITIAL', status: 'INTAKE', paidAt: null });
 
-        const audit = await prisma.auditLog.findFirst({
-            where: { actorId: boardId, tableName: 'OrgMembership', affectedEntityId: membership!.id },
-            orderBy: { id: 'desc' },
-        });
-        expect(audit).not.toBeNull();
-        expect(audit!.actorId).toBe(boardId);
-        expect((audit!.newData as { status: string }).status).toBe('ACTIVE');
+        // Granting again before the family reaches payment refuses and opens nothing new.
+        const again = await post({ householdId: inactiveHouseholdId, active: true, reason: 'Paid by check' });
+        expect(again.status).toBe(409);
+        expect(await prisma.orgMembershipProcess.count({ where: { orgMembershipId: membership!.id } })).toBe(1);
+    });
+
+    it('grant pays an in-flight application at PENDING_PAYMENT: check pending → PENDING_BG_CLEARANCE, household stays NONE', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const householdId = await makeHousehold('grantpending');
+        const m = await prisma.orgMembership.create({ data: { householdId } });
+        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgConsentAt: new Date() } });
+
+        const res = await post({ householdId, active: true, reason: 'Paid by check' });
+        expect(res.status).toBe(200);
+        expect((await res.json()).paid).toBe(true);
+
+        const after = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: p.id } });
+        expect(after.status).toBe('PENDING_BG_CLEARANCE');
+        expect(after.paidAt).not.toBeNull();
+        expect(after.certificationNote).toBe('Paid by check');
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: m.id } })).status).toBe('NONE');
+    });
+
+    it('grant on a REVOKED household with a cleared check converges it to ACTIVE', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const householdId = await makeHousehold('grantrevoked');
+        const m = await prisma.orgMembership.create({ data: { householdId, status: 'REVOKED' } });
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() } });
+
+        const res = await post({ householdId, active: true, reason: 'Paid by check' });
+        expect(res.status).toBe(200);
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: m.id } })).status).toBe('ACTIVE');
+    });
+
+    it('grant on a DENIED household changes nothing and raises a board exception', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const householdId = await makeHousehold('grantdenied');
+        const m = await prisma.orgMembership.create({ data: { householdId, status: 'DENIED' } });
+
+        const res = await post({ householdId, active: true, reason: 'Paid by check' });
+        expect(res.status).toBe(409);
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: m.id } })).status).toBe('DENIED');
+        expect(await prisma.orgMembershipProcess.count({ where: { orgMembershipId: m.id } })).toBe(0);
+        const person = await prisma.person.findFirstOrThrow({ where: { householdId } });
+        const exception = await prisma.paymentException.findFirst({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: person.id } });
+        expect(exception).toMatchObject({ status: 'OPEN', severity: 'CRITICAL' });
+    });
+
+    it('coming-year grant on a DENIED household with a payable renewal changes nothing and raises a board exception', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const householdId = await makeHousehold('comingyeardenied');
+        const m = await prisma.orgMembership.create({ data: { householdId, status: 'DENIED' } });
+        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() } });
+
+        const res = await post({ householdId, comingYear: true, reason: 'Paid by check' });
+        expect(res.status).toBe(409);
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: m.id } })).status).toBe('DENIED');
+        expect(await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: p.id } })).toMatchObject({ status: 'PENDING_PAYMENT', paidAt: null });
+        const person = await prisma.person.findFirstOrThrow({ where: { householdId } });
+        expect(await prisma.paymentException.findFirst({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: person.id } })).not.toBeNull();
+    });
+
+    it('grant on an ACTIVE household with nothing in flight refuses and opens no joining application', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const res = await post({ householdId: noRenewalHouseholdId, active: true, reason: 'Paid by check' });
+        expect(res.status).toBe(409);
+        const m = await prisma.orgMembership.findUniqueOrThrow({ where: { householdId: noRenewalHouseholdId } });
+        expect(m.status).toBe('ACTIVE');
+        expect(await prisma.orgMembershipProcess.count({ where: { orgMembershipId: m.id } })).toBe(0);
+    });
+
+    it("refuses revoke, deny and restore on the actor's OWN household", async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        for (const body of [{ active: false }, { deny: true }, { deny: false }]) {
+            const res = await post({ householdId: boardHouseholdId, ...body });
+            expect(res.status).toBe(403);
+        }
     });
 
     it("refuses to grant the actor's OWN household (conflict of interest), sysadmin included", async () => {
@@ -341,5 +423,14 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         expect(audit!.actorId).toBe(boardId);
         expect((audit!.oldData as { status: string }).status).toBe('ACTIVE');
         expect((audit!.newData as { status: string }).status).toBe('REVOKED');
+    });
+
+    it('revoke never overwrites a deny that landed first', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const householdId = await makeHousehold('revokeafterdeny');
+        const m = await prisma.orgMembership.create({ data: { householdId, status: 'DENIED' } });
+        const res = await post({ householdId, active: false });
+        expect(res.status).toBe(200);
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: m.id } })).status).toBe('DENIED');
     });
 });

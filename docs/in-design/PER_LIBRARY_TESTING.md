@@ -4,7 +4,7 @@
 
 A developer or agent who changes one Inventory library has no light way to test
 that change on their own machine. The only commands run a whole suite: every
-unit test in the app, all 153 database-backed integration files, or every flow
+unit test in the app, all 154 database-backed integration files, or every flow
 journey on a full Docker stack. Several sessions running those suites at once
 have overloaded the shared machine and frozen its Docker runtime. So people
 either wait a long time for results that are mostly about code they did not
@@ -175,7 +175,7 @@ All of this section is **UNPROVEN**: none of it has been run.
   worker, which is a file copy. The migrate step has not been timed here; an
   unmerged analysis of CI logs puts it at a few seconds. No integration file
   reseeds per test, and only `seed-helpers` truncates the schema. Every other
-  file cleans up by its own tag. The suite's known slowdown comes from all 153
+  file cleans up by its own tag. The suite's known slowdown comes from all 154
   files sharing one process. A run of 2–15 files does not have that problem.
 - **Known gap.** The setup recreates and migrates the template on every run.
   For a handful of files that is the largest fixed cost. Reusing the template

@@ -12,20 +12,20 @@ export function LibraryReleaseCard({ initial }: { initial: readonly string[] }) 
   const [saving, setSaving] = useState<LibraryKey | null>(null);
 
   const toggle = async (lib: LibraryKey, on: boolean) => {
-    const next = on ? [...released, lib] : released.filter((k) => k !== lib);
     setSaving(lib);
     try {
       const res = await fetch("/api/settings/membership", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ releasedLibraries: next }),
+        body: JSON.stringify({ releaseLibrary: { library: lib, released: on } }),
       });
       if (!res.ok) {
         const err = (await res.json().catch(() => null)) as { error?: string } | null;
         notifications.show({ color: "red", message: err?.error ?? "Failed to save" });
         return;
       }
-      setReleased(next);
+      const { settings } = (await res.json()) as { settings: { releasedLibraries: string[] } };
+      setReleased(settings.releasedLibraries);
       notifyNavRefresh();
     } finally {
       setSaving(null);

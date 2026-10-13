@@ -10,6 +10,7 @@ import { POST } from "@/app/api/scan/route";
 import prisma from "@/lib/prisma";
 import { authenticateRequest } from "@/lib/auth";
 import { PresenceClass } from "@/lib/presence/events";
+import { SCAN_PROTOCOL_VERSION } from "@/lib/scanProtocol";
 import type { Person } from "@/generated/prisma/client";
 
 jest.mock("@/lib/auth", () => ({ authenticateRequest: jest.fn() }));
@@ -97,16 +98,16 @@ describe("Scan intent — Stage-2 projection (real DB)", () => {
         expect(log?.reviewReason).toBe("conflict_out_no_in");
     });
 
-    it("clockSuspect parks for review and does not toggle", async () => {
+    it("clockSuspect applies the scan and flags it for review", async () => {
         await prisma.visit.create({ data: { personId: keyholder.id, arrivedAt: new Date(0), arrivedVia: "SCANNER" } });
-        const res = await POST(scanReq({ participantId: member.id, clientEventId: "evt-clock", intent: "IN", clockSuspect: true }));
-        expect((await res.json()).type).toBe("parked");
-        expect(await prisma.visit.findFirst({ where: { personId: member.id } })).toBeNull();
+        const res = await POST(scanReq({ participantId: member.id, clientEventId: "evt-clock", intent: "IN", clockSuspect: true, protocolVersion: SCAN_PROTOCOL_VERSION }));
+        expect((await res.json()).type).toBe("checkin");
+        expect(await prisma.visit.findFirst({ where: { personId: member.id } })).not.toBeNull();
         const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId: "evt-clock" } });
         expect(log?.reviewReason).toBe("clock_suspect");
         const ev = await prisma.presenceEvent.findUnique({ where: { clientEventId: "evt-clock" } });
         expect(ev?.clockSuspect).toBe(true);
-        expect(ev?.classification).toBe(PresenceClass.PARKED_CLOCK);
+        expect(ev?.classification).toBe(PresenceClass.PROJECTED);
     });
 
     it("a non-keyholder IN with no keyholder present checks in, and its OUT is an ordinary checkout", async () => {

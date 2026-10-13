@@ -619,9 +619,68 @@ describe("ProgramEnrollmentPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
 
         expect(await screen.findByText("Redirecting to Shopify for secure payment...")).toBeInTheDocument();
+        expect(screen.queryByText("Pay again anyway?")).not.toBeInTheDocument();
         await waitFor(() =>
             expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/api/programs/10/discount-code"))).toBe(true),
         );
+    });
+
+    // Repeat payments are matched per child: a sibling paid earlier is no reason to
+    // warn about a new sibling's checkout.
+    it("does not warn when only a sibling is already paid", async () => {
+        setSession({ id: 100, ageBand: 'adult' });
+        setShopifyStoreDomain("shop.example.com");
+        mockFetchJson({
+            "/api/household": household,
+            "/api/programs/10": baseProgram({
+                participants: [{ personId: 102, status: "ACTIVE", person: { name: "Too Young", householdId: 7 } }],
+                nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null, shopifyVariantId: "gid://variant",
+            }),
+            "/api/programs/10/participants": { ok: true },
+        });
+        renderPage();
+        await screen.findByText("Robotics Club");
+        fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+        await selectMember("Kid One");
+        fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
+
+        expect(await screen.findByText("Redirecting to Shopify for secure payment...")).toBeInTheDocument();
+        expect(screen.queryByText("Pay again anyway?")).not.toBeInTheDocument();
+    });
+
+    // The roster is re-read at checkout: a child paid since the page loaded (another
+    // tab, the other parent) is flagged before a second payment, and the family may
+    // still continue.
+    it("warns when the same child is already paid, and lets the family pay again", async () => {
+        setSession({ id: 100, ageBand: 'adult' });
+        setShopifyStoreDomain("shop.example.com");
+        const priced = { nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null, shopifyVariantId: "gid://variant" };
+        let programReads = 0;
+        global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body }) as Response;
+            if (url.includes("/api/programs/10/participants") && init?.method === "POST") return json({ error: "Participant is already enrolled in this program." }, 409);
+            if (url.includes("/api/household")) return json(household);
+            if (url.endsWith("/api/programs/10")) {
+                programReads += 1;
+                return json(baseProgram({
+                    ...priced,
+                    participants: programReads === 1 ? [] : [{ personId: 101, status: "ACTIVE", person: { name: "Kid One", householdId: 7 } }],
+                }));
+            }
+            return json({}, 404);
+        });
+        renderPage();
+        await screen.findByText("Robotics Club");
+        fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+        await selectMember("Kid One");
+        fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
+
+        expect(await screen.findByText("Kid One is already paid.")).toBeInTheDocument();
+        expect(screen.queryByText("Redirecting to Shopify for secure payment...")).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Pay again anyway" }));
+
+        expect(await screen.findByText("Redirecting to Shopify for secure payment...")).toBeInTheDocument();
     });
 
     // Membership-duration guard: pricing decisions use the server-computed

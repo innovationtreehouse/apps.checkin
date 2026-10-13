@@ -3,7 +3,7 @@ import { LIVE_PERSON } from "@/lib/person/filters";
 import { membershipYearCycle, MAX_DATE } from "@/lib/membership/renewal";
 import { IN_FLIGHT_RENEWAL, IN_FLIGHT_INITIAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { personRecordIsActiveOrgMember } from "@/lib/orgMembership";
-import type { OrgMembershipProcessStatus } from "@/generated/prisma/client";
+import type { OrgMembershipProcessStatus, Prisma } from "@/generated/prisma/client";
 
 export type Audience = "a" | "b" | "c";
 export type OutreachVariant = "join" | "renew";
@@ -23,6 +23,9 @@ export interface RecipientSnapshot {
     leadsWithoutEmail: number;
 }
 
+// A DENIED household gets no outreach of any kind.
+const NOT_DENIED: Prisma.PersonWhereInput = { NOT: { household: { orgMembership: { status: "DENIED" } } } };
+
 const IN_FLIGHT_STATUSES = new Set<OrgMembershipProcessStatus>([...IN_FLIGHT_RENEWAL, ...IN_FLIGHT_INITIAL]);
 
 /** Compute the recipient snapshot for one audience preset (see spec §2.2). One query for the
@@ -37,9 +40,9 @@ export async function computeRecipientSnapshot(audience: Audience, now = new Dat
     const settledSince = cycle?.settledSince ?? MAX_DATE;
 
     const [leadsWithoutEmail, leads] = await Promise.all([
-        prisma.person.count({ where: { isHouseholdLead: true, email: null, ...LIVE_PERSON } }),
+        prisma.person.count({ where: { isHouseholdLead: true, email: null, ...LIVE_PERSON, ...NOT_DENIED } }),
         prisma.person.findMany({
-            where: { isHouseholdLead: true, email: { not: null }, ...LIVE_PERSON },
+            where: { isHouseholdLead: true, email: { not: null }, ...LIVE_PERSON, ...NOT_DENIED },
             select: {
                 id: true,
                 email: true,

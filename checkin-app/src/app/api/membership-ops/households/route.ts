@@ -7,6 +7,9 @@ import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { renewalSeasonWindow, membershipYearCycle, coveredThrough, bgValidUntilBoundary, grantRenewalPayment, MAX_DATE } from "@/lib/membership/renewal";
 import { grantableRenewalWhere, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { PaymentError } from "@/lib/membership/payment";
+import { grantCurrentYear, refuseGrantIfDenied } from "@/lib/membership/grant";
+import { ensureHouseholdMembership, setHouseholdStatus } from "@/lib/membership/householdStatus";
+import { personActor } from "@/lib/auditActor";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 
@@ -224,6 +227,7 @@ export const POST = withAuth(
     { roles: ['isSysadmin', 'isBoardMember'] },
     async (req, auth) => {
         try {
+            if (auth.type !== "session") return apiError("Unauthorized", 401);
             const body = await req.json();
             const { householdId, active, deny, comingYear, reason } = body;
 
@@ -231,12 +235,17 @@ export const POST = withAuth(
                 return apiError("Household ID is required", 400);
             }
 
-            const existingMembership = await prisma.orgMembership.findUnique({
-                where: { householdId }
-            });
+            // Every household-status action here — deny, restore, grant, revoke — is refused
+            // for the actor's own household. No role bypasses it.
+            if (await hasHouseholdConflict(prisma, auth.user.id, householdId)) {
+                return apiError("You cannot change your own household's membership — someone outside your household must.", 403);
+            }
+            const actor = personActor(auth.user.id);
+            const trimmedReason = typeof reason === "string" ? reason.trim() : "";
 
             // Deny / restore — a separate legal act from grant/revoke. Denying blocks login for
-            // every member of the household (enforced in the auth layer).
+            // every member of the household (enforced in the auth layer). Restore is "undeny":
+            // DENIED → NONE only.
             if (typeof deny === "boolean") {
                 if (deny) {
                     // Two separate legal actions → two separate software actions: a household
@@ -250,46 +259,33 @@ export const POST = withAuth(
                         return apiError("This household includes a board member. Remove the board role before denying membership.", 409);
                     }
                 }
-
-                const newStatus = deny ? "DENIED" : "NONE";
-                const membership = await prisma.orgMembership.upsert({
-                    where: { householdId },
-                    create: { householdId, status: newStatus },
-                    update: { status: newStatus }
-                });
-
-                if (auth.type === 'session') {
-                    await prisma.auditLog.create({
-                        data: {
-                            actorId: auth.user.id,
-                            action: "EDIT",
-                            tableName: "OrgMembership",
-                            affectedEntityId: membership.id,
-                            secondaryAffectedEntity: householdId,
-                            oldData: { status: existingMembership?.status ?? "NONE" },
-                            newData: { status: newStatus }
-                        }
-                    });
+                const membership = await ensureHouseholdMembership(prisma, householdId);
+                const applied = await setHouseholdStatus(prisma, membership.id, deny
+                    ? { from: ["NONE", "ACTIVE", "REVOKED"], to: "DENIED", actor, reason: trimmedReason || "board deny" }
+                    : { from: ["DENIED"], to: "NONE", actor, reason: trimmedReason || "board restore" });
+                if (!applied) {
+                    return apiError(deny ? "This household is already denied." : "Only a denied household can be restored.", 409);
                 }
-
-                return NextResponse.json({ success: true, membership });
+                return NextResponse.json({ success: true, membership: await prisma.orgMembership.findUnique({ where: { id: membership.id } }) });
             }
 
-            // Renewal-season admin override: complete the payment gate on a household's
-            // in-flight RENEWAL that's already at PENDING_PAYMENT (contract signed) with
-            // a valid, cleared background check — by delegating to the same settlement
-            // path a real payment takes. No archive, no second process, no stamped gates.
-            if (comingYear) {
-                // Certify requires a real actor; mirror the settings PUT convention.
-                if (auth.type !== "session") return apiError("Unauthorized", 401);
-                const trimmedReason = typeof reason === "string" ? reason.trim() : "";
+            // Grants pay an application (money only); neither sets the household's status.
+            if (comingYear || active) {
                 if (!trimmedReason) return apiError("A reason is required to certify a payment", 400);
                 try {
-                    const process = await grantRenewalPayment(householdId, {
-                        actorId: auth.user.id,
-                        reason: trimmedReason,
+                    const grantActor = { actorId: auth.user.id, reason: trimmedReason };
+                    await refuseGrantIfDenied(householdId, auth.user.id);
+                    if (comingYear) {
+                        return NextResponse.json({ success: true, process: await grantRenewalPayment(householdId, grantActor) });
+                    }
+                    const result = await grantCurrentYear(householdId, grantActor);
+                    return NextResponse.json({
+                        success: true,
+                        ...result,
+                        message: result.paid
+                            ? (result.process.status === "ACTIVE" ? "Granted: the membership is active." : "Granted: the membership activates once the background check clears.")
+                            : "Application opened: the family completes it, then grant again once it reaches payment.",
                     });
-                    return NextResponse.json({ success: true, process });
                 } catch (e) {
                     if (e instanceof PaymentError) {
                         const status = e.code === "forbidden" ? 403 : e.code === "not_found" ? 404 : 409;
@@ -299,51 +295,9 @@ export const POST = withAuth(
                 }
             }
 
-            if (active) {
-                // Conflict of interest: no actor may grant their OWN household ACTIVE
-                // membership — that bypasses payment AND the background check for their
-                // own family. No role bypasses this. (Mirrors the deny branch's
-                // board-member protection, and certifyPaymentPlan's guard.)
-                if (auth.type === 'session' && await hasHouseholdConflict(prisma, auth.user.id, householdId)) {
-                    return apiError("You cannot activate your own household's membership — someone outside your household must.", 403);
-                }
-                const membership = await prisma.orgMembership.upsert({
-                    where: { householdId },
-                    create: { householdId, status: "ACTIVE" },
-                    update: { status: "ACTIVE" }
-                });
-                if (auth.type === 'session') {
-                    await prisma.auditLog.create({
-                        data: {
-                            actorId: auth.user.id,
-                            action: "EDIT",
-                            tableName: "OrgMembership",
-                            affectedEntityId: membership.id,
-                            secondaryAffectedEntity: householdId,
-                            oldData: { status: existingMembership?.status ?? "NONE" },
-                            newData: { status: "ACTIVE" }
-                        }
-                    });
-                }
-                return NextResponse.json({ success: true, membership });
-            } else if (existingMembership && existingMembership.status === "ACTIVE") {
-                const membership = await prisma.orgMembership.update({
-                    where: { householdId },
-                    data: { status: "REVOKED" }
-                });
-                if (auth.type === 'session') {
-                    await prisma.auditLog.create({
-                        data: {
-                            actorId: auth.user.id,
-                            action: "EDIT",
-                            tableName: "OrgMembership",
-                            affectedEntityId: membership.id,
-                            secondaryAffectedEntity: householdId,
-                            oldData: { status: "ACTIVE" },
-                            newData: { status: "REVOKED" }
-                        }
-                    });
-                }
+            // Revoke: only a household that is still ACTIVE at write time.
+            const existingMembership = await prisma.orgMembership.findUnique({ where: { householdId } });
+            if (existingMembership && await setHouseholdStatus(prisma, existingMembership.id, { from: ["ACTIVE"], to: "REVOKED", actor, reason: trimmedReason || "board revoke" })) {
                 return NextResponse.json({ success: true, message: "Membership deactivated" });
             }
 

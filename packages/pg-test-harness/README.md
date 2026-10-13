@@ -75,4 +75,5 @@ pointing at their own Postgres) always wins.
 ## Knobs
 
 - `pgGlobalSetup({ image })` — override the pinned Postgres image (default
-  `postgres:17-alpine`; pin to your deployed RDS major).
+  `public.ecr.aws/docker/library/postgres:17-alpine`, the ECR Public mirror of the
+  official image; pin to your deployed RDS major).

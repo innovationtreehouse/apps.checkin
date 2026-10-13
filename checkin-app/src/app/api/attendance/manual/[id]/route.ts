@@ -6,7 +6,7 @@ import type { FacilityCloseVia, Prisma } from "@/generated/prisma/client";
 import { parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTime } from "@/lib/visitTimes";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
-import { closeActor, finishCloseGuard, lastKeyholderGuard } from "@/lib/scan-service";
+import { closeActor, correctCloseTime, finishCloseGuard, lastKeyholderGuard } from "@/lib/scan-service";
 import type { CloseGuardResult } from "@/lib/scan-service";
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 import { visitSubject } from "@/lib/visit/scope";
@@ -20,7 +20,7 @@ import { resolveDisplayTimezone } from "@/lib/appSettings";
 // Side channel: handler() returns through stripBag, so the guard result
 // can't ride the bag. A WeakMap keyed on the request lets the wrapper
 // intercept a warning or run the facility close after the handler commits.
-const guardResults = new WeakMap<Request, { guard: CloseGuardResult; actorId: number; subjectId: number; visitId: number }>();
+const guardResults = new WeakMap<Request, { guard: CloseGuardResult; actorId: number; subjectId: number; visitId: number; closeTime?: Date }>();
 
 // Self-correction of a member's own visits, and a household lead's correction
 // of their household members' (trust-first, see
@@ -116,7 +116,8 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
             if (person) {
                 const guard = await lastKeyholderGuard(visitId, person, closeActor(auth.user),
                     { token: body.forceCloseToken, choice: body.closeChoice, handoverToId: body.handoverToId });
-                guardResults.set(req, { guard, actorId: userId, subjectId: person.id, visitId });
+                // A close departs everyone at the typed departure, as a late kiosk close does.
+                guardResults.set(req, { guard, actorId: userId, subjectId: person.id, visitId, closeTime: nextDeparted! });
                 if (guard.action !== 'proceed') return {};
             }
         }
@@ -145,13 +146,22 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
             // here only sets what the NEXT correction overwrites — a second
             // correction of the same time weighs it as a self-report, not a
             // measurement (docs/rules/attendance-checkin.md, visit-record).
-            return tx.visit.update({
+            const edited = await tx.visit.update({
                 where: { id: visitId },
                 data: {
                     ...(arrivalEdited ? { arrivedAt: nextArrived, arrivedVia: "TYPED" } : {}),
                     ...(departureEdited && !closingOpenVisit ? { departedAt: nextDeparted, departedVia: "TYPED" } : {}),
                 },
             });
+            // The closer correcting their own departure corrects the close they made.
+            if (departureEdited && !closingOpenVisit) {
+                const close = await tx.facilityClose.findFirst({
+                    where: { closerVisitId: visitId, closedById: userId },
+                    select: { id: true, closedAt: true, closedById: true },
+                });
+                if (close) await correctCloseTime(tx, close, userId, nextDeparted!);
+            }
+            return edited;
         });
         if (!updated) throw notFound("Visit not found.");
         invalidateAttendanceCache();

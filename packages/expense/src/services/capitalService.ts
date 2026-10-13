@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
-import { getOrg } from "../runtime";
+import { getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
@@ -53,7 +53,7 @@ export const CapitalSeedSchema = z.array(z.object({
 })).min(1).max(2000);
 
 async function loadExpense(expenseId: string, eventType: string, stateName: string) {
-  const expense = await expenseRepo.findExpenseById(expenseId, getOrg().id);
+  const expense = await expenseRepo.findExpenseById(expenseId, await getOrgId());
   if (!expense) throw new ServiceError(404, "Expense not found");
   if (!isLegalTransition(expense.state, eventType)) throw new ServiceError(400, `Expense is not in ${stateName} state`);
   return expense;
@@ -196,7 +196,7 @@ export async function seedCapitalAssets(
   rows: z.infer<typeof CapitalSeedSchema>,
 ): Promise<CapitalSeedResult> {
   requireFinance(principal);
-  const orgId = getOrg().id;
+  const orgId = await getOrgId();
   const results: CapitalSeedResult["results"] = [];
   for (const r of rows) {
     const seq = parseItfa(r.assetNumber);

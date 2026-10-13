@@ -216,4 +216,5 @@ export const TRANSITIONS: readonly Transition<LifecycleState>[] = [
     { event: 'T7 non-payment kick', from: 'PENDING_UNPAID', to: 'UNENROLLED', actor: 'cron', guardSite: 'cron/pending-participants/route.ts — delete(); query filters req:false,den:null' },
     { event: 'T8 grace expiry', from: 'PENDING_HELD_DENIED', to: 'UNENROLLED', actor: 'cron', guardSite: 'cron/scholarship-grace-expiry/route.ts — delete(); NULL graceDays = off' },
     { event: 'T9 withdraw', from: 'PENDING_HELD', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'capacity.ts withdrawAndReleaseHold — delete() = atomicity boundary; +1 iff held' },
+    { event: 'T10 refund restocked', from: 'ACTIVE', to: 'UNENROLLED', actor: 'shopify-webhook', guardSite: 'reconcile.ts removeRefundedEnrollment — deleteMany scoped to the refunded order + audit row in one tx; no +1 (Shopify restocked)' },
 ] as const;

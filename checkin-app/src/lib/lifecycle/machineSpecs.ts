@@ -16,11 +16,16 @@ import {
     ALL_STATUSES as MEMBERSHIP_ALL_STATUSES,
     INITIAL_STATES as MEMBERSHIP_INITIAL_STATES,
 } from '../membership/lifecycle';
+import {
+    TRANSITIONS as HOUSEHOLD_TRANSITIONS,
+    STATES as HOUSEHOLD_STATES,
+    INITIAL_STATES as HOUSEHOLD_INITIAL_STATES,
+} from '../membership/householdStatus';
 
 /**
  * ProgramParticipant enrollment. `UNENROLLED`
  * is the ∅/no-row state — both an entry and the withdrawal target — so it renders
- * as mermaid `[*]`. `ACTIVE` is the one non-∅ terminal.
+ * as mermaid `[*]`. `ACTIVE` is the one non-∅ resting state.
  */
 const ENROLLMENT: MachineSpec = {
     name: 'enrollment',
@@ -57,4 +62,18 @@ const MEMBERSHIP: MachineSpec = {
     origins: ['∅'],
 };
 
-export const MACHINES: readonly MachineSpec[] = [ENROLLMENT, MEMBERSHIP];
+/**
+ * OrgMembership.status — the household's status. `∅` is the origin (no row yet).
+ * Every state rests; DENIED's one exit is the board's restore to NONE.
+ */
+const HOUSEHOLD: MachineSpec = {
+    name: 'household',
+    title: 'OrgMembership (household status)',
+    transitions: HOUSEHOLD_TRANSITIONS,
+    allStates: HOUSEHOLD_STATES,
+    initials: HOUSEHOLD_INITIAL_STATES,
+    accepting: HOUSEHOLD_STATES,
+    origins: ['∅'],
+};
+
+export const MACHINES: readonly MachineSpec[] = [ENROLLMENT, MEMBERSHIP, HOUSEHOLD];

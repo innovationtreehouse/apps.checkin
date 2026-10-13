@@ -49,3 +49,8 @@ reset
 pkg lib '{"name":"@x/lib","library":true}'
 echo "import { getPrisma } from '@x/db-dep/client';" > "$T/packages/lib/src/index.ts"
 expect 1 "library importing a DB-client shared package (undeclared) fails"
+
+reset
+pkg pg-dep '{"name":"@x/pg-dep","dependencies":{"pg":"*"}}'
+pkg lib '{"name":"@x/lib","library":true,"dependencies":{"@x/pg-dep":"*"}}'
+expect 1 "library depending on a shared package with plain pg fails"

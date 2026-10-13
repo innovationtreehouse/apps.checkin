@@ -22,6 +22,7 @@ import prisma from "@/lib/prisma";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { visitSubject } from "@/lib/visit/scope";
+import { correctCloseTime } from "@/lib/scan-service";
 import { PATCH, DELETE } from "@/app/api/attendance/manual/[id]/route";
 
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
@@ -35,10 +36,15 @@ jest.mock("@/lib/emailRecipients", () => ({ emailBoardMembers: jest.fn().mockRes
 // Scope resolution is exercised in lib/visit/__tests__/scope.test.ts; here the
 // default stands in for "self only", and the household-lead cases override it.
 jest.mock("@/lib/visit/scope", () => ({ visitSubject: jest.fn() }));
+jest.mock("@/lib/scan-service", () => ({
+    ...jest.requireActual("@/lib/scan-service"),
+    correctCloseTime: jest.fn().mockResolvedValue(undefined),
+}));
 
 const tx = {
     $executeRaw: jest.fn(),
     visit: { findFirst: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+    facilityClose: { findFirst: jest.fn() },
 };
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,
@@ -86,6 +92,7 @@ beforeEach(() => {
     tx.visit.findFirst.mockResolvedValue({ id: 42 });
     tx.visit.update.mockImplementation(async (args: { data: Record<string, unknown> }) => ({ ...baseVisit, ...args.data }));
     tx.visit.updateMany.mockResolvedValue({ count: 1 });
+    tx.facilityClose.findFirst.mockResolvedValue(null);
     (processVisitCheckout as jest.Mock).mockResolvedValue([{ ...baseVisit }]);
     auditCreate.mockResolvedValue({});
     personFindUnique.mockResolvedValue({ isKeyholder: false });
@@ -257,6 +264,28 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         const audit = auditCreate.mock.calls[0][0].data;
         expect(audit.affectedEntityId).toBe(102);
         expect(audit.oldData.id).toBe(42); // the replaced row stays traceable
+    });
+
+    it("a closer correcting their own departure corrects the close they made, under the lock", async () => {
+        visitFindUnique.mockResolvedValue(baseVisit);
+        const close = { id: 5, closedAt: baseVisit.departedAt };
+        tx.facilityClose.findFirst.mockResolvedValue(close);
+
+        const res = await PATCH(req("PATCH", { departedAt: "2026-07-20T15:00:00Z" }), ctx as never);
+
+        expect(res.status).toBe(200);
+        // Only the closer's own visit, corrected by the closer, finds the close.
+        expect(tx.facilityClose.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+            where: { closerVisitId: 42, closedById: OWN_ID },
+        }));
+        expect(correctCloseTime).toHaveBeenCalledWith(tx, close, OWN_ID, new Date("2026-07-20T15:00:00Z"));
+    });
+
+    it("an arrival-only edit never corrects a close", async () => {
+        visitFindUnique.mockResolvedValue(baseVisit);
+        await PATCH(req("PATCH", { arrivedAt: "2026-07-20T14:30:00Z" }), ctx as never);
+        expect(tx.facilityClose.findFirst).not.toHaveBeenCalled();
+        expect(correctCloseTime).not.toHaveBeenCalled();
     });
 
     it("404s a close that lost the race (checkout applied nothing)", async () => {

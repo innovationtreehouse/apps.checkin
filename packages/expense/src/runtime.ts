@@ -7,6 +7,8 @@ import {
   inertSignoffDirectory,
   type CatalogEventSource,
   type CatalogReader,
+  type ExpenseAuth,
+  type ExpensePrincipal,
   type OrgIdentity,
   type OwnerDirectory,
   type QbReader,
@@ -20,8 +22,10 @@ export interface QuickBooksPorts {
 }
 
 export interface ExpenseConfig {
-  /** Accessor, so a multi-org host can resolve the org per request without a library change. */
-  org: () => OrgIdentity;
+  /** Async accessor, called per request: the host may resolve the org from its own store. */
+  org: () => Promise<OrgIdentity>;
+  /** The session principal; routes only. In-process callers pass a principal explicitly. */
+  auth?: ExpenseAuth;
   budgetOwners?: OwnerDirectory;
   /** Who may fill a sign-off seat: bucket approvers, role holders, households, membership. */
   signoff?: SignoffDirectory;
@@ -31,7 +35,8 @@ export interface ExpenseConfig {
 }
 
 export interface ExpenseRuntime {
-  org: () => OrgIdentity;
+  org: () => Promise<OrgIdentity>;
+  auth: ExpenseAuth;
   budgetOwners: OwnerDirectory;
   signoff: SignoffDirectory;
   catalog: CatalogReader;
@@ -39,13 +44,15 @@ export interface ExpenseRuntime {
   quickbooks: QuickBooksPorts;
 }
 
-// ponytail: one runtime per process, set once at app boot.
-let runtime: ExpenseRuntime | null = null;
+// On globalThis so the instrumentation chunk that configures it and the route chunks that
+// read it share one runtime (and it survives dev HMR).
+const globalForRuntime = globalThis as typeof globalThis & { __expenseRuntime?: ExpenseRuntime };
 
 /** Binds the host's ports. Touches no database. Unbound ports fall back to the inert adapters. */
 export function configureExpense(config: ExpenseConfig): void {
-  runtime = {
+  globalForRuntime.__expenseRuntime = {
     org: config.org,
+    auth: config.auth ?? { getPrincipal: async () => null },
     budgetOwners: config.budgetOwners ?? inertOwnerDirectory,
     signoff: config.signoff ?? inertSignoffDirectory,
     catalog: config.catalog ?? inertCatalogReader,
@@ -58,15 +65,30 @@ export function configureExpense(config: ExpenseConfig): void {
 }
 
 export function getExpenseRuntime(): ExpenseRuntime {
+  const runtime = globalForRuntime.__expenseRuntime;
   if (!runtime) throw new Error("configureExpense() has not been called");
   return runtime;
 }
 
-export function getOrg(): OrgIdentity {
+export function getOrg(): Promise<OrgIdentity> {
   return getExpenseRuntime().org();
 }
 
+/** The current request's org id, the scope of every expense row. */
+export async function getOrgId(): Promise<string> {
+  return (await getOrg()).id;
+}
+
 /** Callee guard: a crossing payload must carry the injected org. */
-export function assertOrg(orgId: string): void {
-  if (orgId !== getOrg().id) throw new Error(`orgId ${orgId} is not this org`);
+export async function assertOrg(orgId: string): Promise<void> {
+  if (orgId !== (await getOrgId())) throw new Error(`orgId ${orgId} is not this org`);
+}
+
+/** The session principal. Throws if absent: host admission has already run. */
+export async function getPrincipal(): Promise<ExpensePrincipal> {
+  const principal = await getExpenseRuntime().auth.getPrincipal();
+  if (!principal || !Number.isInteger(principal.id)) {
+    throw new Error("no expense principal — host admission should have rejected this request");
+  }
+  return principal;
 }

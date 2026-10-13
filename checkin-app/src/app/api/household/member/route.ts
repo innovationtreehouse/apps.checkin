@@ -13,6 +13,8 @@ import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { getEmailSenderIdentity } from "@/lib/emailIdentity";
 import { signInEmailHelp } from "@/lib/person/signInEmail";
+import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
+import { canonicalizeEmail } from "@/lib/emailNormalize";
 
 export const PATCH = withAuth(
     {},
@@ -66,6 +68,12 @@ export const PATCH = withAuth(
             if (email !== undefined && targetHouseholdMember._count.accounts > 0) {
                 const { replyTo } = await getEmailSenderIdentity();
                 return apiError(signInEmailHelp(replyTo?.[0]), 400);
+            }
+
+            // The form resends an unchanged email on every save; only a change is refused.
+            const emailChanged = email && canonicalizeEmail(email) !== canonicalizeEmail(targetHouseholdMember.email ?? "");
+            if (emailChanged && await isDesignatedEmail(prisma, email)) {
+                return apiError(await designatedEmailRefusalForBoard(), 400);
             }
 
             const { updatedHouseholdMember, leadRejection, warning } = await prisma.$transaction(async (tx) => {

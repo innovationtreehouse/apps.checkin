@@ -56,7 +56,7 @@ export const GET = withCron(async () => {
                         departedAt: seg.departedAt,
                         departedVia: seg.departedVia,
                     }] : []);
-                    await logCloseDepartures(tx, close.id, systemActor("cron:nightly"), departures);
+                    await logCloseDepartures(tx, close.id, systemActor("cron:nightly"), departures, "NIGHTLY_SWEEP");
                     return segments;
                 }))
             );

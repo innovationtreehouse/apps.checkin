@@ -1,12 +1,14 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { apiError, apiJson } from "@/lib/api-response";
-import { processCheckin, processCheckout, finalizeFacilityClose, closeVia, closeActor, lastKeyholderGuard, finishCloseGuard, type CloseGuardResult, forceCloseTokenMatches, notifyScanOutcome, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/scan-service";
+import { processCheckin, processCheckout, finalizeFacilityClose, closeVia, closeActor, lastKeyholderGuard, finishCloseGuard, type CloseGuardResult, forceCloseTokenMatches, notifyScanOutcome, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS, LATE_CLOSE_SKEW_MS } from "@/lib/scan-service";
+import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
+import { MAX_VISIT_MS } from "@/lib/visitTimes";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
 import { applyPresenceIntent, flagForReview } from "@/lib/presence/project";
 import { config } from "@/lib/config";
 import { withKiosk } from "@/lib/kioskAuth";
-import { KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_PROTOCOL_VERSION } from "@/lib/scanProtocol";
+import { KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_PROTOCOL_VERSION, TRUSTED_REPLAY_PROTOCOL_VERSION } from "@/lib/scanProtocol";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 
@@ -17,13 +19,12 @@ import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 const MAX_MERGE_HOPS = 5;
 
 // docs/rules/attendance-checkin.md (kiosk resilience): a replayed scan older
-// than this parks for human review instead of toggling — state may have moved
-// on while the kiosk was offline, and a bare toggle can't tell entering from
-// leaving.
+// than this still applies, and is also flagged for human review — state may
+// have moved on while the kiosk was offline.
 const REPLAY_FRESHNESS_WINDOW_MS = 10 * 60 * 1000;
 
 // A replay stamped further ahead of server now than this came from a kiosk
-// whose clock is wrong; it parks as clock_suspect instead of toggling.
+// whose clock is wrong; it applies at server now, flagged clock_suspect.
 const REPLAY_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
 
 // Outbox-only fields: they rewrite a scan's event time, skip its interrupts, or
@@ -110,6 +111,10 @@ export const POST = withKiosk(
             }
             eventTime = scannedAt;
         }
+        // A visit can't start or end in the future: a scan time ahead of server
+        // now applies at now instead.
+        const clockAhead = isReplay && eventTime.getTime() - Date.now() > REPLAY_FUTURE_TOLERANCE_MS;
+        if (clockAhead) eventTime = new Date();
         if (isDead) {
             if (!clientEventId) {
                 return apiError("A dead-lettered scan requires clientEventId.", 400);
@@ -359,6 +364,9 @@ export const POST = withKiosk(
             // duplicates (clientEventId, above) are dropped for it.
             const kioskDebounces = typeof body.protocolVersion === 'number'
                 && body.protocolVersion >= KIOSK_DEBOUNCE_PROTOCOL_VERSION;
+            // An older kiosk's late, out-of-order or clock-suspect scan still parks.
+            const trustsReplays = typeof body.protocolVersion === 'number'
+                && body.protocolVersion >= TRUSTED_REPLAY_PROTOCOL_VERSION;
             const threeSecondsAgo = new Date(Date.now() - 3000);
             const recentScan = (kioskDebounces || isDead || await isConfirm()) ? null : await tx.rawBadgeLog.findFirst({
                 where: {
@@ -377,19 +385,20 @@ export const POST = withKiosk(
                 });
             }
 
-            // A facility close the keyholder confirmed at the kiosk applies whenever
-            // it arrives, however late: the keyholder was at the reader and saw the
-            // room. It needs the keyholder in the building at the scan time — a
-            // visit still open, or one the nightly cron closed after the scan — or
-            // already checked out themselves at or before the confirm, the
+            // A keyholder's late close applies whenever it arrives, however late:
+            // the keyholder was at the reader and saw the room, and the
+            // FacilityClose record is its audit trail. It is a close when the
+            // keyholder confirmed it at the kiosk (the echoed server token, or the
+            // kiosk's own offline confirm) or when the kiosk showed nobody else
+            // inside (shownEmpty) — anyone the server still records is a forgotten
+            // badge-out. It needs the keyholder in the building at the scan time —
+            // a visit still open, or one the nightly cron closed after the scan —
+            // or already checked out themselves at or before the confirm, the
             // close offered with that checkout. Against a departed visit the server
             // never ran the confirm, so it takes the offer's token or the kiosk's
             // offline confirm; anything else parks for review.
-            // A scan time ahead of server now is a fast kiosk clock, not a close
-            // time to trust: it parks as clock_suspect below.
-            const aheadOfNow = eventTime.getTime() - Date.now() > REPLAY_FUTURE_TOLERANCE_MS;
-            const lateCloseVisit = isReplay && !aheadOfNow && participant.isKeyholder && intent !== "IN"
-                && (forceCloseConfirmed || confirmToken !== null)
+            const lateCloseVisit = isReplay && participant.isKeyholder && intent !== "IN"
+                && (forceCloseConfirmed || confirmToken !== null || shownEmpty === true)
                 ? await tx.visit.findFirst({
                     where: {
                         personId: participant.id,
@@ -408,37 +417,63 @@ export const POST = withKiosk(
                 })
                 : null;
 
-            // A replay older than the freshness window, or one that lands behind
-            // visit activity newer than its own scan time, can't be trusted to
-            // toggle — state has moved past it. Park it for a human instead.
-            // A dead-lettered event always parks: it never reaches the server
-            // live, so there is nothing here for it to safely toggle against.
-            // A confirmed close is exempt from all three, a clock-step flag included:
-            // the kiosk clock is trusted unless it reads ahead of server now.
-            let parkReason: string | null = null;
-            if (lateCloseVisit?.departedAt && !forceCloseConfirmed
+            // Every other replay is trusted by default and applied at its scan
+            // time; a stale, out-of-order or clock-suspect one is ALSO flagged for
+            // review (reviewReason). It is held unapplied only when applying it
+            // would contradict the person's later record, or it carries no
+            // displayed direction to apply. A dead-lettered event always parks: it
+            // never reached the server live, so there is nothing to apply it against.
+            // Against a cron-closed visit the server never ran the confirm, so a
+            // token that doesn't match parks exactly as processCheckout's would.
+            let reviewReason: string | null = null;
+            let hold = false;
+            let pullBackVisitId: number | null = null;
+            if (isDead) {
+                reviewReason = `client_dead:${deadStatus}`;
+                hold = true;
+            } else if (lateCloseVisit?.departedAt && !forceCloseConfirmed && shownEmpty !== true
                 && !forceCloseTokenMatches(lateCloseVisit.forceCloseToken, confirmToken)) {
-                parkReason = "force_close_review";
-            } else if (lateCloseVisit) {
-                // applied below
-            } else if (clockSuspect) {
-                parkReason = "clock_suspect";
-            } else if (isDead) {
-                parkReason = `client_dead:${deadStatus}`;
-            } else if (isReplay) {
+                reviewReason = "force_close_review";
+                hold = true;
+            } else if (clockSuspect || clockAhead) {
+                // Applied, and flagged: a close or scan time from a doubtful
+                // clock is a human's to check, never a silent clamp.
+                reviewReason = "clock_suspect";
+                hold = lateCloseVisit ? clockAhead && !trustsReplays : !intent || !trustsReplays;
+            }
+            if (isReplay && !hold && !lateCloseVisit) {
+                const activity = await tx.visit.aggregate({
+                    where: { personId: participant.id, deletedAt: null },
+                    _max: { arrivedAt: true, departedAt: true },
+                });
+                const latestActivityAt = maxDate(activity._max.arrivedAt, activity._max.departedAt);
+                const behind = latestActivityAt !== null && latestActivityAt > eventTime;
                 const stale = Date.now() - eventTime.getTime() > REPLAY_FRESHNESS_WINDOW_MS;
-                if (eventTime.getTime() - Date.now() > REPLAY_FUTURE_TOLERANCE_MS) {
-                    parkReason = "clock_suspect";
-                } else if (stale) {
-                    parkReason = "stale_replay";
-                } else {
-                    const activity = await tx.visit.aggregate({
-                        where: { personId: participant.id, deletedAt: null },
-                        _max: { arrivedAt: true, departedAt: true },
+                reviewReason ??= behind ? "out_of_order" : stale ? "stale_replay" : null;
+
+                if (!intent || !trustsReplays) {
+                    hold = reviewReason !== null;
+                } else if (behind) {
+                    // Out of order: the scan belongs to the visit the person was in
+                    // at its own time — their latest arrival at or before it — and
+                    // never touches a visit that began after it. An OUT departs that
+                    // visit: an open one checks out normally, and a machine
+                    // departure (the nightly sweep, or a facility close) stamped
+                    // after the scan is pulled back to it. An IN,
+                    // or an OUT against a departure someone recorded, would
+                    // contradict the later record, so it is held for the reviewer.
+                    const at = await tx.visit.findFirst({
+                        where: { personId: participant.id, deletedAt: null, arrivedAt: { lte: eventTime } },
+                        orderBy: { arrivedAt: "desc" },
+                        select: { id: true, departedAt: true, departedVia: true },
                     });
-                    const latestActivityAt = maxDate(activity._max.arrivedAt, activity._max.departedAt);
-                    if (latestActivityAt && latestActivityAt > eventTime) {
-                        parkReason = "out_of_order";
+                    if (intent === "OUT" && (at?.departedVia === "AUTO_CLOSE" || at?.departedVia === "FACILITY_CLOSE")
+                        && at.departedAt && at.departedAt > eventTime) {
+                        // ponytail: pulls back only the segment holding the scan; later
+                        // event-chunk segments of the same stay keep the cron stamp (flagged).
+                        pullBackVisitId = at.id;
+                    } else if (!(intent === "OUT" && at?.departedAt === null)) {
+                        hold = true;
                     }
                 }
             }
@@ -452,24 +487,42 @@ export const POST = withKiosk(
                     location: "Main Entrance",
                     ...(clientEventId ? { clientEventId } : {}),
                     ...((isReplay || isDead) ? { timestamp: eventTime } : {}),
-                    ...(parkReason ? { reviewReason: parkReason } : {}),
+                    ...(reviewReason ? { reviewReason } : {}),
                 },
             });
 
-            // Dual-write the Stage-2 log. A parked scan must not consult Visit
+            // Dual-write the Stage-2 log. A held scan must not consult Visit
             // state at all (the pinned park contract): its direction is advisory
             // review context for a human, never projected.
-            if (parkReason) {
+            if (hold && reviewReason) {
                 await appendPresenceEvent(tx, {
                     personId: participant.id,
                     occurredAt: eventTime,
                     direction: intent ?? "IN",
                     source: "SCANNER",
                     clientEventId,
-                    classification: parkReasonToClass(parkReason),
+                    classification: parkReasonToClass(reviewReason),
                     clockSuspect,
                 });
                 return apiJson({ type: 'parked', message: 'Recorded for review.' });
+            }
+
+            if (pullBackVisitId !== null) {
+                await tx.visit.update({
+                    where: { id: pullBackVisitId },
+                    data: { departedAt: eventTime, departedVia: "SCANNER", facilityCloseId: null },
+                });
+                await appendPresenceEvent(tx, {
+                    personId: participant.id,
+                    occurredAt: eventTime,
+                    direction: "OUT",
+                    source: "SCANNER",
+                    clientEventId,
+                    classification: PresenceClass.PROJECTED,
+                    clockSuspect,
+                    visitId: pullBackVisitId,
+                });
+                return apiJson({ type: 'checkout', message: 'Checked out successfully', facilityClosed: false });
             }
 
             // The keyholder is already departed — by the cron, or by their own badge
@@ -490,6 +543,51 @@ export const POST = withKiosk(
                     classification: PresenceClass.PROJECTED,
                 });
                 return apiJson({ type: 'checkout', message: 'Checked out and Facility closed', facilityClosed: true });
+            }
+
+            // A close fences what came before it: an arrival scanned before a close
+            // that reached the server first departs at that close, as the close's
+            // sweep would have departed it, and is flagged. One scanned after the
+            // close (beyond the clock-skew allowance) opens a visit as usual.
+            if (isReplay && trustsReplays && intent === "IN" && clientEventId) {
+                const fence = await tx.facilityClose.findFirst({
+                    where: { closedAt: { gte: new Date(eventTime.getTime() - LATE_CLOSE_SKEW_MS) } },
+                    orderBy: { closedAt: "asc" },
+                    select: { id: true, closedAt: true },
+                });
+                const open = fence && await tx.visit.count({ where: { personId: participant.id, departedAt: null, deletedAt: null } });
+                if (fence && !open) {
+                    const departedAt = new Date(Math.min(
+                        Math.max(fence.closedAt.getTime(), eventTime.getTime()),
+                        eventTime.getTime() + MAX_VISIT_MS,
+                    ));
+                    const visit = await tx.visit.create({
+                        data: {
+                            personId: participant.id,
+                            arrivedAt: eventTime,
+                            arrivedVia: "SCANNER",
+                            departedAt,
+                            departedVia: "FACILITY_CLOSE",
+                            facilityCloseId: fence.id,
+                            associatedEventId: await findAssociatedEventAt(participant.id, eventTime, tx),
+                        },
+                    });
+                    await tx.rawBadgeLog.update({
+                        where: { clientEventId },
+                        data: { reviewReason: "closed_before_delivery" },
+                    });
+                    await appendPresenceEvent(tx, {
+                        personId: participant.id,
+                        occurredAt: eventTime,
+                        direction: "IN",
+                        source: "SCANNER",
+                        clientEventId,
+                        classification: PresenceClass.PROJECTED,
+                        clockSuspect,
+                        visitId: visit.id,
+                    });
+                    return apiJson({ type: 'checkin', message: 'Checked in; departed at the close that followed', visit });
+                }
             }
 
             // Live path. Direction: the displayed intent if the kiosk sent one,
@@ -531,6 +629,7 @@ export const POST = withKiosk(
                     confirmToken,
                     replayEventId: isReplay ? clientEventId : null,
                     forceCloseConfirmed,
+                    clockSuspect,
                     webClose: web.guard?.facilityClosed ?? false,
                     shownEmpty,
                 });

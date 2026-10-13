@@ -15,11 +15,11 @@ export type VolunteerClaims = Partial<Record<RoleFlag, boolean>> & {
 };
 
 /**
- * A staff account: Google-verified on the org's hosted domain. The address must
+ * A Treehouse Account: Google-verified on the org's hosted domain. The address must
  * be on the domain too, because a dev persona mint carries the org gate claims
  * while keeping the persona's own address.
  */
-function isStaffAccount(c: VolunteerClaims): boolean {
+function isTreehouseAccount(c: VolunteerClaims): boolean {
     return c.hd === ORG_DOMAIN && c.emailVerified === true && !!c.email?.toLowerCase().endsWith(`@${ORG_DOMAIN}`);
 }
 
@@ -31,14 +31,14 @@ function volunteersAsMember(c: VolunteerClaims): boolean {
 
 /**
  * The one definition of a Treehouse Volunteer, an adult (docs/VOCABULARY.md).
- * Role holders and staff accounts qualify outright; a program leader, program
+ * Role holders and Treehouse Accounts qualify outright; a program leader, program
  * volunteer, or Volunteer Family member qualifies as a known adult whose
  * household membership is ACTIVE. Never keyed on an email address.
  */
 export function isTreehouseVolunteer(c: VolunteerClaims | undefined): boolean {
     if (!c) return false;
     if (ROLE_FLAGS.some((flag) => c[flag] === true)) return true;
-    if (isStaffAccount(c)) return true;
+    if (isTreehouseAccount(c)) return true;
     return c.ageBand === "adult" && volunteersAsMember(c);
 }
 

@@ -318,6 +318,38 @@ describe('outreach ledger (send / process-batch / status)', () => {
         expect((sendEmail as jest.Mock).mock.calls.some(([to]) => to === `lateunsub-${TAG}@example.com`)).toBe(false);
     });
 
+    it('a DENIED household lead is left out of the snapshot entirely', async () => {
+        const hh = await makeNonMemberLead('Denied', `denied-${TAG}@example.com`);
+        await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'DENIED' } });
+        const person = await prisma.person.findFirstOrThrow({ where: { householdId: hh.id } });
+        asBoard(boardId);
+
+        const created = await (await SEND(req('POST', { emailType: 'opening', audience: 'c' }))).json();
+        expect(await prisma.bulkSendItem.count({ where: { bulkSendId: created.bulkSend.id, personId: person.id } })).toBe(0);
+    });
+
+    it('drain skips a household DENIED after the snapshot: no email, item marked skipped_denied', async () => {
+        const hh = await makeNonMemberLead('LateDeny', `latedeny-${TAG}@example.com`);
+        const person = await prisma.person.findFirstOrThrow({ where: { householdId: hh.id } });
+        asBoard(boardId);
+
+        const created = await (await SEND(req('POST', { emailType: 'opening', audience: 'c' }))).json();
+        const bulkSendId = created.bulkSend.id;
+        const item = await prisma.bulkSendItem.findFirstOrThrow({ where: { bulkSendId, personId: person.id } });
+        expect(item.status).toBe('queued');
+
+        await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'DENIED' } });
+
+        let remaining = created.counts.queued;
+        let guard = 0;
+        while (remaining > 0 && guard++ < 5) {
+            remaining = (await (await PROCESS_BATCH(req('POST', { bulkSendId }))).json()).remaining;
+        }
+
+        expect((await prisma.bulkSendItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe('skipped_denied');
+        expect((sendEmail as jest.Mock).mock.calls.some(([to]) => to === `latedeny-${TAG}@example.com`)).toBe(false);
+    });
+
     it('test-send renders both variants and sends them to the caller', async () => {
         asBoard(boardId, `tester-${TAG}@example.com`);
         const res = await TEST_SEND(req('POST', {

@@ -1,9 +1,11 @@
-import type { Expense } from "../generated/prisma/client";
+import type { Expense, Prisma } from "../generated/prisma/client";
 import type { Db } from "../db";
 import { getExpenseRuntime } from "../runtime";
 import type { BucketApprovers } from "../contract";
 import { readExpenseSettings } from "../services/settingsService";
 import { lineKind, missingSeats, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
+import { writeAudit } from "./audit";
+import type { Actor } from "./workflow-engine";
 
 type SignoffExpense = Pick<
   Expense,
@@ -72,4 +74,39 @@ export async function unsignedLines(db: Db, expense: SignoffExpense): Promise<Ma
     if (missing.length > 0) out.set(lineId, missing);
   }
   return out;
+}
+
+/**
+ * Locks the expense row for the rest of the transaction. Every path that reads sign-off facts
+ * and then writes a seat, a reimbursee or a bucket takes it first, so those writes serialize.
+ */
+export async function lockExpense(tx: Prisma.TransactionClient, expenseId: string): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM expenses WHERE id = ${expenseId} FOR UPDATE`;
+}
+
+/**
+ * Deletes the non-submitter sign-offs on the given lines (every line when `lineItemIds` is
+ * null) and audits each as `signoff_voided`, so those seats are signed again.
+ */
+export async function voidSignoffs(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  expenseId: string,
+  lineItemIds: number[] | null,
+  reason: string,
+): Promise<void> {
+  const where = { expenseId, seat: { not: "SUBMITTER" }, ...(lineItemIds ? { lineItemId: { in: lineItemIds } } : {}) };
+  const voided = await tx.expenseLineSignoff.findMany({ where });
+  if (voided.length === 0) return;
+  await tx.expenseLineSignoff.deleteMany({ where: { id: { in: voided.map((v) => v.id) } } });
+  for (const v of voided) {
+    await writeAudit(tx, actor, {
+      expenseId,
+      action: "signoff_voided",
+      lineItemId: v.lineItemId,
+      fieldChanged: "seat",
+      valueBefore: v.seat,
+      notes: `signer ${v.signerUserId}: ${reason}`,
+    });
+  }
 }

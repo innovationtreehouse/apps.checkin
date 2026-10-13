@@ -15,7 +15,6 @@ import { handler } from '@/security/handler';
 import { allFileRoutes, allRoutes, VALID_ROLES, type Authorize, type Role } from '@/security/core';
 import { callerHoldsRole, resolveAccess, type CallerContext } from '@/security/access-resolvers';
 import type { AuthResult, AuthenticatedUser } from '@/types/auth';
-import prisma from '@/lib/prisma';
 import '@/security/registry';
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
@@ -60,11 +59,6 @@ const PARAMS: Record<string, string>[] = [{ id: '1' }, {}];
 const OPEN: Authorize[] = ['public', 'kiosk'];
 const gated = [...allRoutes(), ...allFileRoutes()].filter(([, r]) => !OPEN.includes(r.authorize));
 
-beforeEach(() => {
-    // The catalog-viewer designation leg would admit by email; make it match.
-    prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue({ id: 1 });
-});
-
 describe('id-less session', () => {
     test('the registry has gated routes to check', () => {
         expect(gated.length).toBeGreaterThan(0);
@@ -77,7 +71,7 @@ describe('id-less session', () => {
     });
 
     test.each<Authorize>([
-        'authenticated', 'self', 'catalog-viewer', 'inventory-manager', 'finance', 'finance-or-board', 'expense-approver',
+        'authenticated', 'self', 'catalog-viewer', 'inventory-manager', 'finance', 'finance-or-board', 'expense-approver', 'expense-signer',
         'certifier', 'program-lead-mentor', 'program-core-volunteer', 'household-lead', 'household-member',
         { anyRole: ['isSysadmin', 'isBoardMember', 'isInventoryManager', 'isFinance'] },
     ])('%j denies it, and admits the same caller with an id', async (authorize) => {

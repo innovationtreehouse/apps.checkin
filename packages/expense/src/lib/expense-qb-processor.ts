@@ -223,6 +223,7 @@ function buildQbPayload(
     orgId: expense.orgId,
     needsReimbursement: expense.needsReimbursement,
     reimbursementFor: expense.reimbursementFor,
+    reimburseePersonId: expense.reimburseePersonId,
     items: resolved.map((li) => {
       const full = lineItems.find((x) => x.id === li.id)!;
       return {

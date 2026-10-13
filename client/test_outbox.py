@@ -823,10 +823,6 @@ class TestSavedBanner(unittest.TestCase):
         self.assertIn("banner-saved", _saved_banner_html(0))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class _Killed(BaseException):
     """Stands in for os._exit landing mid-POST: nothing after it runs."""
 
@@ -919,9 +915,37 @@ class TestEnqueueBeforeSend(unittest.TestCase):
         self.assertEqual(seen["count"], 0, "the queued badge does not count the in-flight scan")
         self.assertEqual(ob.pending_rows(), [])
 
+    def test_the_claim_holds_until_the_ack_deletes_the_row(self):
+        # A drain tick landing after the 2xx but before the delete must not resend.
+        ob = Outbox(":memory:")
+        drained = []
+
+        def drain_send(pid, **kw):
+            drained.append(kw["client_event_id"])
+            return self.CHECKIN
+
+        real_ack = ob.ack
+
+        def ack_after_a_drain_tick(event_id):
+            ob.ack = real_ack
+            self._drain_once(ob, drain_send)
+            real_ack(event_id)
+
+        ob.ack = ack_after_a_drain_tick
+        backend = MagicMock(attendance_path=None)
+        backend.post_scan.return_value = self.CHECKIN
+        handle_scan(backend, FakeState(), ob, "9")
+
+        self.assertEqual(drained, [])
+        self.assertEqual(ob.pending_rows(), [])
+
     def test_own_row_is_not_its_predecessor(self):
         ob = Outbox(":memory:")
         backend = MagicMock(attendance_path=None)
         backend.post_scan.return_value = self.CHECKIN
         handle_scan(backend, FakeState(), ob, "9")
         backend.post_scan.assert_called_once()
+
+
+if __name__ == "__main__":
+    unittest.main()

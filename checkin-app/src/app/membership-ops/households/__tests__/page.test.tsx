@@ -95,6 +95,29 @@ describe("membership-ops/households page", () => {
     );
   });
 
+  it("grants the current year with a required reason", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/membership-ops/households": households });
+    renderWithProviders(<AdminHouseholdsPage />);
+    await screen.findByText("The Joneses");
+
+    fireEvent.click(screen.getByRole("button", { name: "Grant Membership" }));
+    const reasonInput = await screen.findByLabelText(/^Reason/);
+    expect(screen.getByRole("button", { name: "Grant" })).toBeDisabled();
+    fireEvent.change(reasonInput, { target: { value: "Paid by check" } });
+    fireEvent.click(screen.getByRole("button", { name: "Grant" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/membership-ops/households",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ householdId: 2, active: true, reason: "Paid by check" }),
+        }),
+      ),
+    );
+  });
+
   it("disables Grant for a board member's OWN household (conflict of interest)", async () => {
     setSession({ id: 99, isBoardMember: true, householdId: 2 }); // same household as The Joneses (id 2)
     mockFetchJson({ "/api/membership-ops/households": households });

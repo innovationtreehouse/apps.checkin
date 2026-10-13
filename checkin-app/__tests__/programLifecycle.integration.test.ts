@@ -137,6 +137,9 @@ describe('Program Lifecycle Integration Tests', () => {
     it('Should require a Board Member to supply override=true when bypassing payment flows', async () => {
         mockGetSession.mockResolvedValue({ user: { id: boardAdminId, isBoardMember: true } });
 
+        // An existing PENDING claim short-circuits to 409 before the override prompt.
+        await prisma.programParticipant.deleteMany({ where: { programId: testProgramId, personId: testParticipantId } });
+
         const req = new Request(`http://localhost/api/programs/${testProgramId}/participants`, {
             method: 'POST',
             body: JSON.stringify({ participantId: testParticipantId }) // No override flag

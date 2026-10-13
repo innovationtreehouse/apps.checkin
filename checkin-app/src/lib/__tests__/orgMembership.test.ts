@@ -184,7 +184,7 @@ describe('program access for a paid, not-yet-cleared household', () => {
                 orgMembership: {
                     OR: [
                         { status: 'ACTIVE' },
-                        { processes: { some: { status: { in: ['PENDING_BG_CLEARANCE'] }, paidAt: { not: null } } } },
+                        { status: { in: ['NONE', 'REVOKED'] }, processes: { some: { status: { in: ['PENDING_BG_CLEARANCE'] }, paidAt: { not: null } } } },
                     ],
                 },
             },
@@ -220,6 +220,13 @@ describe('program access for a paid, not-yet-cleared household', () => {
         const dayAfter = new Date(Date.UTC(validThrough.getUTCFullYear(), validThrough.getUTCMonth(), validThrough.getUTCDate() + 1));
         expect(await isDuesSettledThrough(1, validThrough)).toBe(true);
         expect(await isDuesSettledThrough(1, dayAfter)).toBe(false);
+    });
+
+    it.each([['NONE', true], ['REVOKED', true], ['DENIED', false]])('a %s household with a paid-pending process gets a horizon: %s', async (status, expected) => {
+        prisma.household.findUnique.mockResolvedValue({ orgMembership: { ...PAID_PENDING.orgMembership, status } });
+        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: BOUNDARY });
+        prisma.orgMembershipProcess.findFirst.mockResolvedValue(null);
+        expect((await membershipValidThrough(1, new Date())) !== null).toBe(expected);
     });
 
     it('a household with neither ACTIVE nor a paid-pending process still gets no horizon', async () => {

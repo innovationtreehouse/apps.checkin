@@ -7,7 +7,8 @@ import { Alert, Badge, Button, Card, Checkbox, Group, Paper, SimpleGrid, Stack, 
 import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { PageContainer } from '@/components/ui/PageContainer';
 import EmergencyContactNotice from '@/components/ui/EmergencyContactNotice';
-import { calculateAge } from '@/lib/time';
+import { calculateAge, formatDateOnly } from '@/lib/time';
+import { isMembershipLapsed } from '@/lib/membership/lapsed';
 import TrustedAdultPanel from '@/components/TrustedAdultPanel';
 import { notifications } from '@mantine/notifications';
 import TodoCard from '@/components/TodoCard';
@@ -68,6 +69,7 @@ export default function HouseholdPage() {
   // Open renewal for this household (lead-only, from /api/membership/renewal-status).
   // Drives the "Renew now" copy for a still-ACTIVE member whose renewal has opened.
   const [renewalDue, setRenewalDue] = useState(false);
+  const [validUntil, setValidUntil] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
   // Explicit tone per outcome so a real error can never render green (was
   // decided by `message.includes('success')`).
@@ -124,6 +126,7 @@ export default function HouseholdPage() {
         const data = await res.json();
         setHousehold(data.household);
         setBoardReplyTo(data.boardReplyTo ?? null);
+        setValidUntil(data.validUntil ?? null);
         const a = pickAddress(data.household);
         const loaded = { line1: a.line1 ?? "", line2: a.line2 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "" };
         setAddress(loaded);
@@ -383,6 +386,11 @@ export default function HouseholdPage() {
                 <Group gap="xs" wrap="wrap">
                   {/* memberSince is a calendar date at UTC midnight — getUTCFullYear, or a Jan 1 start reads as the prior year. */}
                   <Text fw={600}>✓ Member{household.orgMembership.memberSince ? ` since ${new Date(household.orgMembership.memberSince).getUTCFullYear()}` : ''}</Text>
+                  {validUntil && (
+                    <Text c={isMembershipLapsed(validUntil) ? 'red' : 'dimmed'} fw={isMembershipLapsed(validUntil) ? 700 : undefined}>
+                      Valid through {formatDateOnly(validUntil, { year: 'numeric', month: 'short', day: 'numeric' })}{isMembershipLapsed(validUntil) ? ' (lapsed)' : ''}
+                    </Text>
+                  )}
                   {household.orgMembership.isVolunteer && <Badge variant="light">Volunteer-only family</Badge>}
                 </Group>
               </Alert>

@@ -1,5 +1,7 @@
 import type { PersonRoleKind } from "@/generated/prisma/client";
 import { type DbClient, withTx } from "@/lib/db-client";
+import { personActor, systemActor, type SystemActorName } from "@/lib/auditActor";
+import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 
 /**
  * The ONE hand-written map: session/JWT authority flag -> PersonRole table kind.
@@ -86,16 +88,35 @@ export class RoleMatrixError extends Error {}
 export class LastBoardMemberError extends Error {}
 /** Thrown by `setRoleFlag` when granting BOARD to a member of a DENIED household. */
 export class DeniedHouseholdBoardError extends Error {}
+/** Thrown when an actor changes a role or flag on themself or someone in their own household. */
+export class OwnHouseholdRoleError extends Error {}
 
 /**
- * A logged-in actor's authority, for the matrix check below — or the literal
- * `"system"` to bypass the matrix entirely. `"system"` is for callers that
- * have no requesting user to check authority against because the caller IS
- * the trusted source of the grant (bootstrap first-sysadmin promotion off an
- * env allowlist; dev seed fixtures) — not a shortcut for "skip the checks",
- * which is why it does NOT also skip the last-board-member guard below.
+ * Refuses a role/flag change whose target is the actor or shares the actor's
+ * household (`Person.householdId` — a person is in exactly one). Applies to every
+ * role kind and every person actor, sysadmin and board alike. Fails closed when
+ * the actor id is not a positive integer or does not resolve to a person.
  */
-export type RoleActor = { id: number; isBoardMember: boolean; isSysadmin: boolean } | "system";
+export async function assertNotOwnHousehold(db: DbClient, actorId: number, targetId: number): Promise<void> {
+    const actorHouseholdId = await resolveActorHouseholdId(db, actorId);
+    if (actorHouseholdId === null) throw new RoleMatrixError("Forbidden");
+    if (actorId === targetId) throw new OwnHouseholdRoleError();
+    const target = await db.person.findUnique({ where: { id: targetId }, select: { householdId: true } });
+    if (sharesHousehold(actorHouseholdId, target?.householdId)) throw new OwnHouseholdRoleError();
+}
+
+/**
+ * A logged-in actor's authority, for the matrix check below — or a named system
+ * actor that bypasses the matrix and the own-household rule. The system form is
+ * for callers that have no requesting user to check authority against because
+ * the caller IS the trusted source of the grant (bootstrap first-sysadmin
+ * promotion off an env allowlist; dev seed fixtures) — not a shortcut for "skip
+ * the checks", which is why it does NOT also skip the last-board-member guard
+ * below, and its grants are still audited under its own name.
+ */
+export type RoleActor =
+    | { id: number; isBoardMember: boolean; isSysadmin: boolean }
+    | { system: SystemActorName };
 
 /**
  * THE write choke point for role changes. Grants/revokes one `flag` on
@@ -105,13 +126,18 @@ export type RoleActor = { id: number; isBoardMember: boolean; isSysadmin: boolea
  *    of the five flags, including adding/removing isSysadmin and removing
  *    isBoardMember; a sysadmin-only actor (not board) may grant any flag,
  *    including adding board, but may never remove board membership.
- *    `actor: "system"` skips this check entirely.
+ *    A system actor skips this check entirely.
+ *  - the own-household rule (`assertNotOwnHousehold`): no person actor changes
+ *    a role on themself or anyone in their household. A no-op writes nothing,
+ *    so it returns before this check.
  *  - the last-board-member guard: board membership can never be revoked down
- *    to zero, regardless of actor (including "system" — this protects data
+ *    to zero, regardless of actor (including a system actor — this protects data
  *    integrity, not authority, so the bypass above does not extend to it).
  *  - the denied-household guard: BOARD can't be granted to a member of a DENIED
  *    household, the mirror of the deny-side refusal in
  *    POST /api/membership-ops/households. Also actor-independent.
+ *  - the audit row: every change writes one AuditLog row (actor, target, flag,
+ *    before/after) in the same transaction as the write.
  *
  * Every writer that mutates a role — the PATCH /api/roles route, bootstrap
  * self-promotion, dev seeds — routes through here, so a new caller can't
@@ -146,7 +172,9 @@ export async function setRoleFlag(
         const before = rolesToFlags(rows)[flag];
         if (before === on) return { changed: false, before, after: before };
 
-        if (actor !== "system") {
+        if (!("system" in actor)) await assertNotOwnHousehold(tx, actor.id, personId);
+
+        if (!("system" in actor)) {
             if (!actor.isBoardMember) {
                 if (!actor.isSysadmin) {
                     // Unreachable via the API: the route's withAuth gate already 403'd
@@ -168,7 +196,7 @@ export async function setRoleFlag(
         // The other half of the deny guard in POST /api/membership-ops/households: a
         // denied household holds no authority and every member of it is locked out of
         // sign-in, so BOARD can't be granted into one from this side either. Like the
-        // last-board guard this protects the data, not authority — "system" doesn't
+        // last-board guard this protects the data, not authority — a system actor doesn't
         // bypass it.
         if (flag === "isBoardMember" && on === true) {
             const target = await tx.person.findUnique({
@@ -178,7 +206,18 @@ export async function setRoleFlag(
             if (target?.household.orgMembership?.status === "DENIED") throw new DeniedHouseholdBoardError();
         }
 
-        await applyRoleFlag(tx, personId, flag, on, actor === "system" ? undefined : actor.id);
+        const auditActor = "system" in actor ? systemActor(actor.system) : personActor(actor.id);
+        await applyRoleFlag(tx, personId, flag, on, "system" in actor ? undefined : actor.id);
+        await tx.auditLog.create({
+            data: {
+                ...auditActor,
+                action: "EDIT",
+                tableName: "PersonRole",
+                affectedEntityId: personId,
+                oldData: { [flag]: before },
+                newData: { [flag]: on },
+            },
+        });
         return { changed: true, before, after: on };
     });
 }

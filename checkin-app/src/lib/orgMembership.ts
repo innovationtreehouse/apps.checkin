@@ -41,6 +41,13 @@ export function personRecordIsActiveOrgMember(p: {
 }
 
 /**
+ * Non-ACTIVE household statuses whose paid, uncleared application reads as
+ * dues-settled. A returning REVOKED family that has paid is in the same position as
+ * a new one. DENIED is never dues-settled; a status not listed here is excluded.
+ */
+const PAID_PENDING_HOUSEHOLD_STATUSES: OrgMembershipStatus[] = ["NONE", "REVOKED"];
+
+/**
  * PROGRAM ACCESS — "has this household settled its dues?", deliberately WIDER
  * than {@link ACTIVE_ORG_MEMBER_PERSON_WHERE}: it also matches a household whose
  * application is paid and waiting on background clearance
@@ -54,13 +61,15 @@ export function personRecordIsActiveOrgMember(p: {
  * benefit stay ACTIVE-only, because ACTIVE is what encodes "background check
  * cleared". Facility access is likewise unaffected — nothing here admits an
  * uncleared adult to the building.
+ *
+ * Only NONE and REVOKED households' paid applications count ({@link PAID_PENDING_HOUSEHOLD_STATUSES}).
  */
 export const DUES_SETTLED_PERSON_WHERE: Prisma.PersonWhereInput = {
     household: {
         orgMembership: {
             OR: [
                 { status: "ACTIVE" },
-                { processes: { some: duesSettledAwaitingBg.where } },
+                { status: { in: PAID_PENDING_HOUSEHOLD_STATUSES }, processes: { some: duesSettledAwaitingBg.where } },
             ],
         },
     },
@@ -125,7 +134,8 @@ export async function membershipValidThrough(householdId: number, now = new Date
         },
     });
     const membership = household?.orgMembership;
-    if (!membership || (membership.status !== "ACTIVE" && !membership.processes?.length)) return null;
+    const paidPending = !!membership && PAID_PENDING_HOUSEHOLD_STATUSES.includes(membership.status) && !!membership.processes?.length;
+    if (!membership || (membership.status !== "ACTIVE" && !paidPending)) return null;
 
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },

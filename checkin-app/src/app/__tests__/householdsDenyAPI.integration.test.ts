@@ -133,4 +133,22 @@ describe('POST /api/membership-ops/households — Deny Membership', () => {
         const membership = await prisma.orgMembership.findUnique({ where: { householdId: plainHouseholdId } });
         expect(membership?.status).toBe('NONE');
     });
+
+    it('restore is undeny only: it never moves an ACTIVE household to NONE', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        await prisma.orgMembership.update({ where: { householdId: plainHouseholdId }, data: { status: 'ACTIVE' } });
+
+        const res = await post({ householdId: plainHouseholdId, deny: false });
+        expect(res.status).toBe(409);
+        const membership = await prisma.orgMembership.findUnique({ where: { householdId: plainHouseholdId } });
+        expect(membership?.status).toBe('ACTIVE');
+    });
+
+    it('denies an ACTIVE household', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const res = await post({ householdId: plainHouseholdId, deny: true });
+        expect(res.status).toBe(200);
+        const membership = await prisma.orgMembership.findUnique({ where: { householdId: plainHouseholdId } });
+        expect(membership?.status).toBe('DENIED');
+    });
 });

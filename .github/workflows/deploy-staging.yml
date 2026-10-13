@@ -112,6 +112,7 @@ env:
   MIGRATE_TASK_FAMILY: checkin-migrate-stg
   COPY_TASK_FAMILY: checkin-stg-copy
   DEPLOY_ROLE: arn:aws:iam::639595353568:role/checkin-deploy-stg
+  PULL_ROLE: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
   APP_URL: https://ops-stg.innovationtreehouse.org
 
 jobs:
@@ -214,6 +215,22 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ needs.vars.outputs.sha }}
+
+      # The deploy role has no ECR Public access; the pull-only role authenticates
+      # the base-image pull, then the deploy role is assumed below.
+      - name: Configure AWS credentials for image pulls (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.PULL_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR Public
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - name: Pull base image
+        run: bash scripts/ci-pull-image.sh public.ecr.aws/docker/library/node:24-alpine
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
@@ -425,6 +442,9 @@ jobs:
             run_migrate_step "npx prisma migrate resolve --rolled-back '$RESOLVE_ROLLED_BACK'" "migrate-resolve"
           fi
 
+          # Checkin-hosted libraries first, each against its own database
+          # (checkin-app/libraries.json), then checkin's.
+          run_migrate_step "../scripts/each-library.sh exec --no -- prisma migrate deploy" "libraries-migrate-deploy"
           run_migrate_step "npx prisma migrate deploy" "migrate-deploy"
 
       # Deliberately LAST, after migrate has already succeeded against the DDL

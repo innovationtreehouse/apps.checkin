@@ -85,7 +85,8 @@ class Outbox:
         intent           TEXT,
         clock_suspect    INTEGER NOT NULL DEFAULT 0,
         force_close_confirmed INTEGER NOT NULL DEFAULT 0,
-        server_errors    INTEGER NOT NULL DEFAULT 0
+        server_errors    INTEGER NOT NULL DEFAULT 0,
+        shown_empty      INTEGER
     )"""
 
     def _open(self, path):
@@ -126,6 +127,12 @@ class Outbox:
                     )
                 except sqlite3.OperationalError:
                     pass
+                try:
+                    conn.execute(
+                        "ALTER TABLE outbox ADD COLUMN shown_empty INTEGER"
+                    )
+                except sqlite3.OperationalError:
+                    pass
                 conn.commit()
             except sqlite3.DatabaseError:
                 conn.close()
@@ -146,7 +153,8 @@ class Outbox:
             return connect_and_init()
 
     def enqueue(self, client_event_id, participant_id, scanned_at, force_close_token=None,
-                intent=None, clock_suspect=False, force_close_confirmed=False, inflight=False):
+                intent=None, clock_suspect=False, force_close_confirmed=False,
+                shown_empty=None, inflight=False):
         """Idempotent: a retried enqueue of the same event is a no-op.
         inflight=True claims the row for the live POST in the same locked step,
         so the drain can never pick it up between the write and the claim."""
@@ -156,8 +164,8 @@ class Outbox:
             self._conn.execute(
                 "INSERT OR IGNORE INTO outbox "
                 "(client_event_id, participant_id, scanned_at, created_at, force_close_token, "
-                " intent, clock_suspect, force_close_confirmed) "
-                "VALUES (?,?,?,?,?,?,?,?)",
+                " intent, clock_suspect, force_close_confirmed, shown_empty) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
                 (
                     client_event_id,
                     str(participant_id),
@@ -167,6 +175,7 @@ class Outbox:
                     intent,
                     1 if clock_suspect else 0,
                     1 if force_close_confirmed else 0,
+                    None if shown_empty is None else int(bool(shown_empty)),
                 ),
             )
             self._conn.commit()
@@ -211,7 +220,7 @@ class Outbox:
             clause, args = self._not_inflight() if skip_inflight else ("", ())
             return self._conn.execute(
                 "SELECT client_event_id, participant_id, scanned_at, attempts, force_close_token, "
-                "intent, clock_suspect, force_close_confirmed, server_errors "
+                "intent, clock_suspect, force_close_confirmed, server_errors, shown_empty "
                 "FROM outbox WHERE state='pending'" + clause + " ORDER BY scanned_at ASC",
                 args,
             ).fetchall()
@@ -399,14 +408,16 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, in_closed_w
             continue
 
         (client_event_id, participant_id, scanned_at, _attempts, force_close_token, intent,
-         clock_suspect, force_close_confirmed, server_errors) = rows[0]
+         clock_suspect, force_close_confirmed, server_errors, shown_empty) = rows[0]
         # replay=True is what tells the server this is a redelivery: the live
         # attempt may already have sent this clientEventId (the row is written
         # before it), so only the drain may trip the replay-only guards. The
         # token rides along so a confirm given before the outage still closes
         # (§5.23a); a replay without one parks for review. force_close_confirmed
         # rides along too: a close confirmed on the kiosk while offline had no
-        # server token to mint, so the flag is what closes on drain. Intent is
+        # server token to mint, so the flag is what closes on drain. shown_empty
+        # (NULL when the badge was not a keyholder's OUT) says whether the kiosk
+        # showed nobody else inside; true closes too. Intent is
         # the direction the kiosk displayed; the server must not re-toggle from
         # live state.
         body, status, retry_after = send_fn(
@@ -418,6 +429,7 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, in_closed_w
             intent=intent,
             clock_suspect=bool(clock_suspect),
             force_close_confirmed=bool(force_close_confirmed),
+            shown_empty=None if shown_empty is None else bool(shown_empty),
         )
         outcome = classify_response(status, body)
 

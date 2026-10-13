@@ -53,6 +53,7 @@ describe("finalizeFacilityClose", () => {
                     if (values.includes(closeTime.toISOString())) sweepTimes.push(values[0]);
                     return [];
                 }),
+                visit: { findFirst: jest.fn(async () => null) },
                 facilityClose: { create: jest.fn(async () => ({ id: 1 })) },
             };
             await cb(fakeTx);

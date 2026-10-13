@@ -303,6 +303,20 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         if (endAt !== undefined && !endAt) {
             return apiError("End date is required", 400);
         }
+        const newStartAt = startAt !== undefined ? parseDateOnly(startAt) : undefined;
+        const newEndAt = endAt !== undefined ? parseDateOnly(endAt) : undefined;
+        if ((startAt !== undefined && typeof startAt !== "string") || (newStartAt && isNaN(newStartAt.getTime()))) {
+            return apiError("Invalid start date", 400);
+        }
+        if ((endAt !== undefined && typeof endAt !== "string") || (newEndAt && isNaN(newEndAt.getTime()))) {
+            return apiError("Invalid end date", 400);
+        }
+        // Effective values (body overrides current) so a one-sided edit can't invert the range.
+        const effStartAt = newStartAt ?? currentProgram.startAt;
+        const effEndAt = newEndAt ?? currentProgram.endAt;
+        if (effStartAt > effEndAt) {
+            return apiError("Start date must be on or before the end date", 400);
+        }
 
         // Variant⟺price invariant: a program has a Shopify variant iff it
         // has a price on some tier — the capacity/oversell math assumes this
@@ -318,6 +332,14 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         const newNonOrgMemberPriceCents = nonMemberPrice !== undefined
             ? dollarsToCentsOrNull(nonMemberPrice != null ? String(nonMemberPrice) : undefined)
             : undefined;
+        // Prices are sysadmin/board-only. The edit page echoes the current prices on
+        // every save, so only a value that differs from the stored one is rejected.
+        if (!isSysAdminOrBoard && (
+            (newOrgMemberPriceCents !== undefined && newOrgMemberPriceCents !== currentProgram.orgMemberPriceCents) ||
+            (newNonOrgMemberPriceCents !== undefined && newNonOrgMemberPriceCents !== currentProgram.nonOrgMemberPriceCents)
+        )) {
+            return apiError("Forbidden: Only administrators can change program prices", 403);
+        }
         // Shopify identifiers are sysadmin/board-only, so a non-privileged caller's
         // effective variant is always the current one regardless of what's in body.
         const newShopifyVariantId = (isSysAdminOrBoard && shopifyVariantId !== undefined)
@@ -333,8 +355,8 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         const updateData: Record<string, unknown> = {
             ...(name !== undefined && { name }),
             ...(leadMentorId !== undefined && { leadMentorId }),
-            ...(startAt !== undefined && { startAt: parseDateOnly(startAt) }),
-            ...(endAt !== undefined && { endAt: parseDateOnly(endAt) }),
+            ...(newStartAt !== undefined && { startAt: newStartAt }),
+            ...(newEndAt !== undefined && { endAt: newEndAt }),
             ...(orgMemberOnly !== undefined && { orgMemberOnly }),
             // publiclyVisible only has meaning for a members-only program. Recompute
             // it on the POST-PATCH effective state so neither flipping orgMemberOnly

@@ -10,11 +10,19 @@ import { withTx, type DbClient } from "@/lib/db-client";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { mintPersonId } from "@/lib/person/mintId";
+import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 
 export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (req: NextRequest, auth) => {
     try {
         if (auth.type !== 'session') {
             return apiError("Unauthorized", 401);
+        }
+
+        // Household merges below may not touch the actor's own household (see the
+        // own-household rule in lib/roles.ts); resolved once, fail closed.
+        const actorHouseholdId = await resolveActorHouseholdId(prisma, auth.user.id);
+        if (actorHouseholdId === null) {
+            return apiError("Forbidden", 403);
         }
 
         const formData = await req.formData();
@@ -345,6 +353,11 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
                         // If they are already in the target household, do nothing
                         if (sourceHouseholdId === targetHouseholdId || !sourceHouseholdId) {
+                            continue;
+                        }
+
+                        if (sharesHousehold(actorHouseholdId, sourceHouseholdId) || sharesHousehold(actorHouseholdId, targetHouseholdId)) {
+                            errors.push(`Row ${pr.index + 2} (${pr.fullName}): You cannot merge your own household — someone outside your household must.`);
                             continue;
                         }
 

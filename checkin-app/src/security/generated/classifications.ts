@@ -322,6 +322,7 @@ export const classifications = {
         closedAt: 'internal',
         closedById: 'internal',
         via: 'internal',
+        closerVisitId: 'internal',
         createdAt: 'internal',
     },
     AuditLog: {

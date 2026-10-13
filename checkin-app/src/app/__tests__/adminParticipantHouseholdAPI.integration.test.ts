@@ -15,6 +15,7 @@ describe('Admin Participant Household API Integration Tests', () => {
     let testUserId: number;
     let testParticipantId: number;
     let testHouseholdId: number;
+    let testAdminHouseholdId: number;
 
     beforeAll(async () => {
         // Clean up any leaked state
@@ -30,6 +31,7 @@ describe('Admin Participant Household API Integration Tests', () => {
             data: { email: 'admin-household-api-test@example.com', name: 'Admin Test', isSysadmin: true, household: { create: { name: "Test HH" } } }
         });
         testAdminId = admin.id;
+        testAdminHouseholdId = admin.householdId;
 
         const user = await prisma.person.create({
             data: { email: 'user-household-api-test@example.com', name: 'User Test', household: { create: { name: "Test HH" } } }
@@ -67,6 +69,44 @@ describe('Admin Participant Household API Integration Tests', () => {
         // createNew names the household after the subject.
         await prisma.household.deleteMany({
             where: { name: "Subject Test's Household" }
+        });
+    });
+
+    describe("POST /api/membership-ops/participants/[id]/household — actor's own household", () => {
+        function moveReq(personId: number, body: Record<string, unknown>) {
+            return new Request(`http://localhost:4000/api/membership-ops/participants/${personId}/household`, {
+                method: 'POST',
+                body: JSON.stringify(body),
+            }) as unknown as import('next/server').NextRequest;
+        }
+
+        beforeEach(() => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+        });
+
+        it("refuses moving a member of the actor's household out -> 403, unchanged", async () => {
+            const spouse = await prisma.person.update({ where: { id: testParticipantId }, data: { householdId: testAdminHouseholdId } });
+            const res = await POST(moveReq(spouse.id, { createNew: true }), { params: Promise.resolve({ id: String(spouse.id) }) });
+            expect(res.status).toBe(403);
+            const after = await prisma.person.findUnique({ where: { id: spouse.id }, select: { householdId: true } });
+            expect(after?.householdId).toBe(testAdminHouseholdId);
+        });
+
+        it("refuses moving someone into the actor's household -> 403, unchanged", async () => {
+            const before = await prisma.person.findUniqueOrThrow({ where: { id: testParticipantId }, select: { householdId: true } });
+            const res = await POST(moveReq(testParticipantId, { householdId: testAdminHouseholdId }), { params: Promise.resolve({ id: String(testParticipantId) }) });
+            expect(res.status).toBe(403);
+            const after = await prisma.person.findUnique({ where: { id: testParticipantId }, select: { householdId: true } });
+            expect(after?.householdId).toBe(before.householdId);
+        });
+
+        it('refuses moving yourself -> 403', async () => {
+            const res = await POST(moveReq(testAdminId, { householdId: testHouseholdId }), { params: Promise.resolve({ id: String(testAdminId) }) });
+            expect(res.status).toBe(403);
+            const after = await prisma.person.findUnique({ where: { id: testAdminId }, select: { householdId: true } });
+            expect(after?.householdId).toBe(testAdminHouseholdId);
         });
     });
 

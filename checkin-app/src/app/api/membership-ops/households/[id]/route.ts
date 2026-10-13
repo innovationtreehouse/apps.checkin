@@ -5,6 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { upsertPrimaryContact, getPrimaryValidContact, EmergencyContactError } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
 import { apiError } from "@/lib/api-response";
+import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 
 /**
  * Admin edit of a household's own info (name, address, emergency contact).
@@ -83,6 +84,14 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
             }
         }
 
+        // The volunteer flag discounts dues, so no actor may set it on their own household.
+        if (isVolunteerChange && await refuseSelfGrant(prisma, auth.user.id, { householdId: id }, {
+            table: "OrgMembership",
+            attempted: { isVolunteer: isVolunteerChange.newValue },
+        })) {
+            return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);
+        }
+
         if (!editsHousehold && !memberSinceChange && !isVolunteerChange) {
             return apiError("No fields to update provided", 400);
         }
@@ -139,21 +148,23 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
         }
 
         if (isVolunteerChange) {
-            await prisma.orgMembership.update({
-                where: { id: isVolunteerChange.orgMembershipId },
-                data: { isVolunteer: isVolunteerChange.newValue },
-            });
-            await prisma.auditLog.create({
-                data: {
-                    actorId: auth.user.id,
-                    action: "EDIT",
-                    tableName: "OrgMembership",
-                    affectedEntityId: isVolunteerChange.orgMembershipId,
-                    secondaryAffectedEntity: id,
-                    oldData: { isVolunteer: isVolunteerChange.oldValue },
-                    newData: { isVolunteer: isVolunteerChange.newValue },
-                }
-            });
+            await prisma.$transaction([
+                prisma.orgMembership.update({
+                    where: { id: isVolunteerChange.orgMembershipId },
+                    data: { isVolunteer: isVolunteerChange.newValue },
+                }),
+                prisma.auditLog.create({
+                    data: {
+                        actorId: auth.user.id,
+                        action: "EDIT",
+                        tableName: "OrgMembership",
+                        affectedEntityId: isVolunteerChange.orgMembershipId,
+                        secondaryAffectedEntity: id,
+                        oldData: { isVolunteer: isVolunteerChange.oldValue },
+                        newData: { isVolunteer: isVolunteerChange.newValue },
+                    }
+                }),
+            ]);
         }
 
         return NextResponse.json({ household: updated });

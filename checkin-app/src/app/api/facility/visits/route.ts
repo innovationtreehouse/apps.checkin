@@ -8,6 +8,7 @@ import { parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTi
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 import { handler } from "@/security/handler";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { correctCloseTime } from "@/lib/scan-service";
 
 // Registry-governed (GET /api/facility/visits): admission anyRole
 // sysadmin/board; envelope 'visits'. Nested person carries email (pii) —
@@ -87,22 +88,28 @@ export const PATCH = withAuth(
                     return { error: "Nothing to change.", status: 400 as const };
                 }
 
-                return {
-                    previous: current,
-                    visit: await tx.visit.update({
-                        where: { id: visitId },
-                        data: {
-                            // A corrected time becomes a typed clock: an edited
-                            // arrival stamps arrivedVia TYPED, a departure staff typed
-                            // stamps departedVia TYPED. Significance already read the
-                            // pre-edit source (editSignificance below), so restamping
-                            // only sets what the NEXT correction overwrites — a second
-                            // correction weighs the value as a self-report.
-                            ...(editedArrived ? { arrivedAt: nextArrived, arrivedVia: "TYPED" } : {}),
-                            ...(editedDeparted ? { departedAt: nextDeparted, departedVia: "TYPED" } : {}),
-                        },
-                    })
-                };
+                const visit = await tx.visit.update({
+                    where: { id: visitId },
+                    data: {
+                        // A corrected time becomes a typed clock: an edited
+                        // arrival stamps arrivedVia TYPED, a departure staff typed
+                        // stamps departedVia TYPED. Significance already read the
+                        // pre-edit source (editSignificance below), so restamping
+                        // only sets what the NEXT correction overwrites — a second
+                        // correction weighs the value as a self-report.
+                        ...(editedArrived ? { arrivedAt: nextArrived, arrivedVia: "TYPED" } : {}),
+                        ...(editedDeparted ? { departedAt: nextDeparted, departedVia: "TYPED" } : {}),
+                    },
+                });
+                // The board correcting a closer's departure corrects the close they made.
+                if (editedDeparted && current.departedAt && auth.type === 'session' && auth.user.isBoardMember) {
+                    const close = await tx.facilityClose.findFirst({
+                        where: { closerVisitId: visitId },
+                        select: { id: true, closedAt: true, closedById: true },
+                    });
+                    if (close) await correctCloseTime(tx, close, auth.user.id, nextDeparted);
+                }
+                return { previous: current, visit };
             }, { maxWait: 5000, timeout: 15000 });
 
             if ('error' in result) return apiError(result.error, result.status);

@@ -48,7 +48,7 @@ describe('Membership settings + volunteer designations API', () => {
         boardId = (await prisma.person.create({ data: { email: `board-${TAG}@example.com`, name: 'Board', isBoardMember: true, household: { create: { name: `Board HH ${TAG}` } } } })).id;
         plainId = (await prisma.person.create({ data: { email: `plain-${TAG}@example.com`, name: 'Plain', household: { create: { name: `Plain HH ${TAG}` } } } })).id;
 
-        // A full-price active member, for the designation warning.
+        // A full-price active member, for the designation confirm flow.
         await prisma.person.create({
             data: { email: `fullmember-${TAG}@example.com`, name: 'Full', household: { create: { name: `Full HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE', isVolunteer: false } } } } },
         });
@@ -126,24 +126,31 @@ describe('Membership settings + volunteer designations API', () => {
         }
     });
 
-    it('board releases a library, audit-logs it, and clears it again', async () => {
+    it('board releases a library, audit-logs the delta, and clears it again', async () => {
         asBoard(boardId);
-        const res = await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: ['catalog', 'catalog', 'expense'] }));
-        expect(res.status).toBe(200);
+        const release = (library: string, released: boolean) =>
+            SETTINGS_PUT(jsonReq('PUT', { releaseLibrary: { library, released } }));
+        await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, releasedLibraries: [] }, update: { releasedLibraries: [] } });
+
+        expect((await release('catalog', true)).status).toBe(200);
+        expect((await release('catalog', true)).status).toBe(200);
+        const res = await release('expense', true);
         expect((await res.json()).settings.releasedLibraries).toEqual(['catalog', 'expense']);
         const log = await prisma.auditLog.findFirst({ where: { actorId: boardId, tableName: 'BoardSettings' }, orderBy: { id: 'desc' } });
-        expect(log?.newData).toEqual({ releasedLibraries: ['catalog', 'expense'] });
+        expect(log?.newData).toEqual({ releaseLibrary: { library: 'expense', released: true } });
 
-        const cleared = await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: [] }));
+        await release('catalog', false);
+        const cleared = await release('expense', false);
         expect((await cleared.json()).settings.releasedLibraries).toEqual([]);
     });
 
-    it('rejects unknown library keys and non-board release attempts', async () => {
+    it('rejects a full-list write, unknown library keys, and non-board release attempts', async () => {
         asBoard(boardId);
-        expect((await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: ['nope'] }))).status).toBe(400);
-        expect((await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: 'catalog' }))).status).toBe(400);
+        expect((await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: ['catalog'] }))).status).toBe(400);
+        expect((await SETTINGS_PUT(jsonReq('PUT', { releaseLibrary: { library: 'nope', released: true } }))).status).toBe(400);
+        expect((await SETTINGS_PUT(jsonReq('PUT', { releaseLibrary: { library: 'catalog', released: 'yes' } }))).status).toBe(400);
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isSysadmin: true, isBoardMember: false } });
-        expect((await SETTINGS_PUT(jsonReq('PUT', { releasedLibraries: ['catalog'] }))).status).toBe(403);
+        expect((await SETTINGS_PUT(jsonReq('PUT', { releaseLibrary: { library: 'catalog', released: true } }))).status).toBe(403);
     });
 
     it('adds, lists, and removes a volunteer designation', async () => {
@@ -163,12 +170,22 @@ describe('Membership settings + volunteer designations API', () => {
         expect(after).toBeNull();
     });
 
-    it('warns when designating an already-active full-price member', async () => {
+    it("shows an existing member's household and sets isVolunteer only on confirm", async () => {
         asBoard(boardId);
-        const res = await DESIG_POST(jsonReq('POST', { email: `fullmember-${TAG}@example.com` }));
-        expect(res.status).toBe(201);
-        const data = await res.json();
-        expect(data.warning).toBeTruthy();
+        const email = `fullmember-${TAG}@example.com`;
+        const household = await prisma.household.findFirstOrThrow({ where: { name: `Full HH ${TAG}` }, include: { orgMembership: true } });
+
+        const preview = await DESIG_POST(jsonReq('POST', { email }));
+        expect(preview.status).toBe(200);
+        expect(await preview.json()).toMatchObject({ requiresConfirmation: true, match: { householdId: household.id, householdName: `Full HH ${TAG}` } });
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: household.orgMembership!.id } })).isVolunteer).toBe(false);
+
+        const confirm = await DESIG_POST(jsonReq('POST', { email, confirmHouseholdId: household.id }));
+        expect(confirm.status).toBe(200);
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: household.orgMembership!.id } })).isVolunteer).toBe(true);
+        const audit = await prisma.auditLog.findFirst({ where: { tableName: 'OrgMembership', affectedEntityId: household.orgMembership!.id, actorId: boardId } });
+        expect(audit?.newData).toEqual({ isVolunteer: true });
+        expect(await prisma.volunteerDesignation.count({ where: { email } })).toBe(0);
     });
 
     it('treats inbox variants of a designated email as already designated', async () => {

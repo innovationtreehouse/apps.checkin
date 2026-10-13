@@ -17,7 +17,7 @@
 # (CMD, not ENTRYPOINT, on purpose: ECS containerOverrides replace the command wholesale,
 # and the migrate task-def's command — plus the shell that expands SYNC_MODE — would be
 # mangled by an ENTRYPOINT prefix.)
-FROM node:22-slim
+FROM public.ecr.aws/docker/library/node:22-slim
 WORKDIR /app
 
 # Prisma's migrate engine links libssl, which node:22-slim doesn't ship — without it

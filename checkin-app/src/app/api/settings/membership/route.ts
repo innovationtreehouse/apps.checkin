@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
 import { config } from "@/lib/config";
 import { handler } from "@/security/handler";
-import { isLibraryKey } from "@/lib/libraryRelease";
+import { isLibraryKey, type LibraryKey } from "@/lib/libraryRelease";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +24,8 @@ export const GET = handler('GET /api/settings/membership', async () => {
  * orgMembershipVariantId (string|null),
  * orgMembershipProductUrl (string|null), volunteerDiscountCode (string|null),
  * scholarshipDenialGraceDays (positive int|null — null disables the grace-period expiry cron),
- * releasedLibraries (LibraryKey[] — board members only; the nav's UI-only release gate).
+ * releaseLibrary ({ library: LibraryKey, released: boolean } — board members only; the nav's UI-only
+ * release gate, merged into the stored list in one statement so concurrent toggles don't clobber).
  * Membership fees must be finite and >= 0; an invalid value rejects the whole update (400) so the
  * previous value survives rather than silently collapsing to zero. (The Averity consent
  * link is an env var, not a board setting. Email sender identity lives in /api/settings/email.)
@@ -45,6 +46,7 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         devSigningTarget?: string | null;
         scholarshipDenialGraceDays?: number | null;
         releasedLibraries?: unknown;
+        releaseLibrary?: { library?: unknown; released?: unknown } | null;
     };
     try {
         body = await req.json();
@@ -100,28 +102,41 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     }
 
     if (body.releasedLibraries !== undefined) {
+        return apiError("releasedLibraries is not writable; send releaseLibrary { library, released }", 400);
+    }
+    let release: { library: LibraryKey; released: boolean } | null = null;
+    if (body.releaseLibrary !== undefined) {
         if (!auth.user.isBoardMember) return apiError("Only board members can release libraries", 403);
-        if (!Array.isArray(body.releasedLibraries) || !body.releasedLibraries.every(isLibraryKey)) {
-            return apiError("releasedLibraries must be an array of library keys", 400);
+        const { library, released } = body.releaseLibrary ?? {};
+        if (!isLibraryKey(library) || typeof released !== "boolean") {
+            return apiError("releaseLibrary must be { library: <library key>, released: boolean }", 400);
         }
-        data.releasedLibraries = [...new Set(body.releasedLibraries)];
+        release = { library, released };
     }
 
-    const settings = await prisma.boardSettings.upsert({
-        where: { id: 1 },
-        create: { ...DEFAULTS, ...data },
-        update: data,
-    });
-
-    await prisma.auditLog.create({
-        data: {
-            actorId: auth.user.id,
-            action: "EDIT",
-            tableName: "BoardSettings",
-            affectedEntityId: 1,
-            // data holds a Date (orgMembershipYearBoundary); clone to a JSON-safe object.
-            newData: JSON.parse(JSON.stringify(data)),
-        },
+    const settings = await prisma.$transaction(async (tx) => {
+        await tx.boardSettings.upsert({
+            where: { id: 1 },
+            create: { ...DEFAULTS, ...data },
+            update: data,
+        });
+        if (release) {
+            await tx.$executeRaw`UPDATE "BoardSettings" SET "releasedLibraries" =
+                CASE WHEN ${release.released} THEN array_append(array_remove("releasedLibraries", ${release.library}), ${release.library})
+                ELSE array_remove("releasedLibraries", ${release.library}) END
+                WHERE id = 1`;
+        }
+        await tx.auditLog.create({
+            data: {
+                actorId: auth.user.id,
+                action: "EDIT",
+                tableName: "BoardSettings",
+                affectedEntityId: 1,
+                // data holds a Date (orgMembershipYearBoundary); clone to a JSON-safe object.
+                newData: JSON.parse(JSON.stringify(release ? { ...data, releaseLibrary: release } : data)),
+            },
+        });
+        return tx.boardSettings.findUniqueOrThrow({ where: { id: 1 } });
     });
 
     return NextResponse.json({ settings });

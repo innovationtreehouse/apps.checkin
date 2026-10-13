@@ -20,6 +20,7 @@ const actor = (flags: Partial<CloseActor> = {}): CloseActor =>
     ({ id: 7, isKeyholder: false, isBoardMember: false, isSysadmin: false, ...flags });
 const self = actor({ isKeyholder: true });
 const board = actor({ id: 2, isBoardMember: true });
+const keyholderBoard = actor({ id: 5, isBoardMember: true, isKeyholder: true });
 const sysadmin = actor({ id: 3, isSysadmin: true });
 const lead = actor({ id: 4 });
 
@@ -61,12 +62,26 @@ describe("lastKeyholderGuard", () => {
 
     it("closes with no warning when the keyholder is alone and the caller may close", async () => {
         expect(await lastKeyholderGuard(42, KEYHOLDER, self, {}, {}, fakeDb({}))).toEqual(proceed(true));
-        expect(await lastKeyholderGuard(42, KEYHOLDER, board, {}, {}, fakeDb({}))).toEqual(proceed(true));
+        expect(await lastKeyholderGuard(42, KEYHOLDER, keyholderBoard, {}, {}, fakeDb({}))).toEqual(proceed(true));
     });
 
-    it("never closes for a household lead or sysadmin, even with the keyholder alone", async () => {
+    it("never closes for a household lead, sysadmin, or board member who is not a keyholder, even with the keyholder alone", async () => {
         expect(await lastKeyholderGuard(42, KEYHOLDER, lead, {}, {}, fakeDb({}))).toEqual(proceed(false));
         expect(await lastKeyholderGuard(42, KEYHOLDER, sysadmin, {}, {}, fakeDb({}))).toEqual(proceed(false));
+        expect(await lastKeyholderGuard(42, KEYHOLDER, board, {}, {}, fakeDb({}))).toEqual(proceed(false));
+    });
+
+    it("offers a board member who is not a keyholder leave or cancel, with names; a keyholder on the board all three", async () => {
+        const others = [{ name: "Alice", email: null }];
+        const nonKeyholder = await lastKeyholderGuard(42, KEYHOLDER, board, {}, {}, fakeDb({ others }));
+        if (nonKeyholder.action !== "warn") throw new Error("expected warn");
+        expect(nonKeyholder.warning.choices).toEqual(["leave", "cancel"]);
+        expect(nonKeyholder.warning.names).toEqual(["Alice"]);
+        expect(nonKeyholder.warning).not.toHaveProperty("keyholders");
+
+        const onBoard = await lastKeyholderGuard(42, KEYHOLDER, keyholderBoard, {}, {}, fakeDb({ others }));
+        if (onBoard.action !== "warn") throw new Error("expected warn");
+        expect(onBoard.warning.choices).toEqual(["close", "leave", "cancel"]);
     });
 
     it("offers a keyholder close, leave or cancel with names, the pick-list, and says no other keyholder is in", async () => {
