@@ -9,6 +9,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./client": {
+      "types": "./src/generated/prisma/client.ts",
+      "import": "./src/generated/prisma/client.ts"
     }
   },
   "scripts": {

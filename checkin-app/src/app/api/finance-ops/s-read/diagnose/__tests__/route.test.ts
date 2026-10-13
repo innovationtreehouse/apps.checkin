@@ -3,12 +3,13 @@
  */
 /**
  * Unit tests for /api/finance-ops/s-read/diagnose — the deny paths (401 anon /
- * 403 plain member, through the REAL withAuth with a mocked session, which must
+ * 403 plain member, through the REAL handler() with a mocked session, which must
  * never probe the mirror or the Lambda), and the code→verdict table: each pg
  * error code the mirror probe can throw must map to the layer it proves broken.
  * That table IS the feature — a regression here turns the diagnostic back into
  * the opaque 500 it exists to replace.
  */
+import type { NextRequest } from 'next/server';
 import { GET } from '../route';
 import type { DiagStep } from '../route';
 
@@ -32,7 +33,7 @@ jest.mock('@/lib/shopifyRead/client', () => ({
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const mockSession = require('next-auth/next').getServerSession;
 
-const req = () => new Request('http://localhost/api/finance-ops/s-read/diagnose');
+const req = () => new Request('http://localhost/api/finance-ops/s-read/diagnose') as unknown as NextRequest;
 const asBoard = () => mockSession.mockResolvedValue({ user: { id: 5, isBoardMember: true } });
 
 async function stepsOf(res: Response): Promise<Map<string, DiagStep>> {

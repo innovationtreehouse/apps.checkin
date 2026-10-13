@@ -187,3 +187,11 @@ POST /api/receipts/[id]/restart-flow
 POST /api/receipts/[id]/push-to-inventory
 POST /api/receipts/import
 GET /api/receipts/[id]/file
+
+# Shopify mirror (s-read) — board payment queue and s-read routes via handler().
+GET /api/finance-ops/payments
+GET /api/finance-ops/s-read/sync
+POST /api/finance-ops/s-read/sync
+GET /api/finance-ops/s-read/diagnose
+GET /api/finance-ops/s-read/match-audit
+POST /api/finance-ops/s-read/match-audit/track

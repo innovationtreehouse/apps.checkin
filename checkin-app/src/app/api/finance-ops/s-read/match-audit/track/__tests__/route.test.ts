@@ -3,13 +3,14 @@
  */
 /**
  * Unit tests for POST /api/finance-ops/s-read/match-audit/track — the deny paths
- * (401 anon / 403 non-board through the REAL withAuth, asserting no exception is
+ * (401 anon / 403 non-board through the REAL handler(), asserting no exception is
  * ever raised) and the per-kind re-validation: each kind re-derives its gap
  * condition from raw Prisma columns / mirror presence, so a stale panel (a row
  * already resolved since the audit ran) is rejected with 409, not tracked. The
  * dedup behavior of raisePaymentException itself is reconcile.ts's tested
  * concern — here we only assert the route forwards to it (or doesn't).
  */
+import type { NextRequest } from 'next/server';
 import { POST } from '../route';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -59,7 +60,7 @@ const req = (body: unknown) =>
     new Request('http://localhost/api/finance-ops/s-read/match-audit/track', {
         method: 'POST',
         body: JSON.stringify(body),
-    });
+    }) as unknown as NextRequest;
 
 const asBoard = () => mockSession.mockResolvedValue({ user: { id: 5, isBoardMember: true } });
 

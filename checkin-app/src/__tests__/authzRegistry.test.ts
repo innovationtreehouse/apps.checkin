@@ -73,20 +73,10 @@ const AUTHZ_TESTED = new Set<string>([
     'facility/visits',
     // facility/visits/insert dropped: handler()-governed now (POST), so the
     // file carries no `roles:` gate and would fail the stale-entry test.
-    'finance-ops/payments',
+    // finance-ops/payments (GET) and finance-ops/s-read/{sync,diagnose,match-audit,
+    // match-audit/track} dropped: handler()-governed now, so the files carry no
+    // `roles:` gate. Deny paths stay in their route tests and security/__tests__/shopify-read-strip.test.ts.
     'finance-ops/payments/[id]',
-    // POST + GET deny-paths (401 anon / 403 non-board) in s-read/sync/__tests__/route.test.ts,
-    // which also assert a denied request never invokes the Lambda or reads the mirror.
-    'finance-ops/s-read/sync',
-    // GET deny-path (401 anon / 403 non-board) in s-read/diagnose/__tests__/route.test.ts,
-    // which also asserts a denied request never probes the mirror or the Lambda.
-    'finance-ops/s-read/diagnose',
-    // GET deny-path (401 anon / 403 non-board) in s-read/match-audit/__tests__/route.test.ts,
-    // which also asserts a denied request never runs the audit.
-    'finance-ops/s-read/match-audit',
-    // POST deny-path (401 anon / 403 non-board) in s-read/match-audit/track/__tests__/route.test.ts,
-    // which also asserts a denied request never raises a PaymentException.
-    'finance-ops/s-read/match-audit/track',
     'kioskdisplay/certifications',
     'membership-audit/compliance',
     // POST deny-path (403 non-board) in personBgManualSubmit.integration.test.ts.
