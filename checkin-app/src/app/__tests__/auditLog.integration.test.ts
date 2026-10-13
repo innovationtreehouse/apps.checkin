@@ -35,6 +35,7 @@ jest.mock('@/lib/notifications', () => ({
 describe('AuditLog Integration Tests', () => {
     let testAdminId: number;
     let testParticipantId: number;
+    let testLeadId: number;
     let testProgramId: number;
     let testEventId: number;
     let testVisitId: number;
@@ -81,6 +82,11 @@ describe('AuditLog Integration Tests', () => {
             data: { email: 'participant-audit-test@example.com', name: 'Participant Test', household: { create: { name: "Test HH" } } }
         });
         testParticipantId = participant.id;
+
+        const lead = await prisma.person.create({
+            data: { email: 'lead-audit-test@example.com', name: 'Lead Test', isDeclaredAdult: true, household: { create: { name: "Test HH" } } }
+        });
+        testLeadId = lead.id;
     });
 
     afterAll(async () => {
@@ -112,7 +118,7 @@ describe('AuditLog Integration Tests', () => {
             await prisma.program.deleteMany({ where: { id: testProgramId } });
         }
 
-        const actorIds = [testAdminId, testParticipantId].filter(id => id !== undefined);
+        const actorIds = [testAdminId, testParticipantId, testLeadId].filter(id => id !== undefined);
         if (actorIds.length > 0) {
             await prisma.auditLog.deleteMany({
                 where: { actorId: { in: actorIds } }
@@ -148,7 +154,7 @@ describe('AuditLog Integration Tests', () => {
                 enrollmentStatus: 'OPEN',
                 startAt: '2026-01-01',
                 endAt: '2026-12-31',
-                leadMentorId: testAdminId,
+                leadMentorId: testLeadId,
                 maxParticipants: 50
             })
         });

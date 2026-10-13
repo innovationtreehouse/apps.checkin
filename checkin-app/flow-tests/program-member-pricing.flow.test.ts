@@ -25,8 +25,8 @@ describe("flow: program purchase with member pricing", () => {
         const board = await loginAs("boardmember@example.com");
         const member = await loginAs("member.pricing@example.com");
         const nonMember = await loginAs("certified.adult@example.com");
+        const lead = await loginAs("inventory.manager@example.com");
 
-        const boardId = board.personaId;
         const memberId = member.personaId;
 
         const tag = Date.now().toString(36);
@@ -34,7 +34,7 @@ describe("flow: program purchase with member pricing", () => {
             method: "POST",
             body: JSON.stringify({
                 name: `Member Pricing Program ${tag}`,
-                leadMentorId: boardId,
+                leadMentorId: lead.personaId,
                 startAt: "2026-01-01",
                 endAt: "2026-12-31",
                 memberPrice: "40",
