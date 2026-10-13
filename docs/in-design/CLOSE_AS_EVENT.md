@@ -87,6 +87,8 @@ A repeat read of the same badge within 3 s (the kiosk's repeat-read filter) neve
 
 **Execute(c)**: one transaction under the facility lock, after the commit.
 
+- Lock order is the one every visit path uses, the nightly sweep included: the person lock of everyone the sweep may depart, in ascending id, then the facility lock. A lock holder never waits for a lock that comes earlier in that order, so Execute cannot deadlock with a scan or the nightly sweep.
+
 - `SELECT … FROM "FacilityClose" WHERE id = c AND "executedAt" IS NULL FOR UPDATE`. If no row comes back, return. It is already executed, so Execute is idempotent.
 - Sweep (§4). Then set `executedAt := now()`.
 - Commit. Then invalidate the attendance cache and kick the post-event emails.

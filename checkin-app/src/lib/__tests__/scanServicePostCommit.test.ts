@@ -50,8 +50,28 @@ describe("executePendingCloses", () => {
 
         await executePendingCloses();
 
-        expect(sweepTimes).toEqual([closedAt.toISOString()]);
+        // The people to lock, then the sweep: both at the recorded close time.
+        expect(sweepTimes).toEqual([closedAt.toISOString(), closedAt.toISOString()]);
         expect(update).toHaveBeenCalledWith({ where: { id: 7 }, data: { executedAt: expect.any(Date) } });
+    });
+
+    it("takes the person locks of everyone it may depart, then the facility lock", async () => {
+        const closedAt = new Date("2026-10-01T21:30:00Z");
+        findMany.mockResolvedValue([{ id: 7 }]);
+        const locks: unknown[][] = [];
+        const queryRaw = jest.fn().mockResolvedValueOnce([{ personId: 3 }, { personId: 9 }]).mockResolvedValue([]);
+        tx.mockImplementation(async (cb: (t: unknown) => Promise<unknown>) => cb({
+            $executeRaw: jest.fn(async (_s: TemplateStringsArray, ...values: unknown[]) => { locks.push(values); return 0; }),
+            $queryRaw: queryRaw,
+            facilityClose: {
+                findFirst: jest.fn(async () => ({ id: 7, closedAt, closedById: 1 })),
+                update: jest.fn(async () => ({})),
+            },
+        }));
+
+        await executePendingCloses();
+
+        expect(locks).toEqual([[3], [9], [1, 0]]);
     });
 
     it("skips a close another executor already ran", async () => {
