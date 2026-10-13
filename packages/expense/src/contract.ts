@@ -187,6 +187,8 @@ export interface ExpensePosting {
    * created. Null posts nothing. A newer hand-booked match moves the line later, never earlier.
    */
   takeoverDate: string | null;
+  /** CHECKIN_ENV is prod. Outside prod only an isTestData expense from a "TEST-" vendor posts; prod never posts one. */
+  prod: boolean;
 }
 
 // ── Surfaces expense exports to other libraries (bound by the host into theirs) ─

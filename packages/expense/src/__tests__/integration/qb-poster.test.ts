@@ -58,15 +58,16 @@ class FakeQbo {
 
 let qbo: FakeQbo;
 
-const posting = (takeoverDate: string | null = "2026-01-01") => ({
+const posting = (takeoverDate: string | null = "2026-01-01", prod = false) => ({
   client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }),
   paymentAccountId: PAYMENT_ACCOUNT,
   paymentType: "CreditCard" as const,
   takeoverDate,
+  prod,
 });
 
-function bindQbo(takeoverDate?: string | null) {
-  bindPorts({ quickbooks: { posting: posting(takeoverDate) } });
+function bindQbo(takeoverDate?: string | null, prod?: boolean) {
+  bindPorts({ quickbooks: { posting: posting(takeoverDate, prod) } });
 }
 
 /** A hand-booked match dated `day`: sets the takeover line there. */
@@ -75,8 +76,12 @@ async function handMatched(day: string) {
   await db.expense.update({ where: { id }, data: { receiptDate: day, qbMatchState: "MATCHED", qbTxnId: `hand-${day}` } });
 }
 
-/** An expense already in the outbox: lines on accounts 60 and 61, receipt dated `day`. */
-async function outboxed(day: string, opts: { reimburseePersonId?: number; amounts?: [number, number] } = {}) {
+/** An expense already in the outbox: lines on accounts 60 and 61, receipt dated `day`; test data from a TEST- vendor unless told otherwise. */
+async function outboxed(
+  day: string,
+  opts: { reimburseePersonId?: number; amounts?: [number, number]; isTestData?: boolean; vendorName?: string } = {},
+) {
+  const vendorName = opts.vendorName ?? "TEST-Acme";
   const [a, b] = opts.amounts ?? [700, 300];
   const id = await seedExpense({
     state: "qb_complete",
@@ -84,7 +89,7 @@ async function outboxed(day: string, opts: { reimburseePersonId?: number; amount
     needsReimbursement: opts.reimburseePersonId !== undefined,
     reimburseePersonId: opts.reimburseePersonId,
   });
-  await db.expense.update({ where: { id }, data: { receiptDate: day } });
+  await db.expense.update({ where: { id }, data: { receiptDate: day, isTestData: opts.isTestData ?? true, vendorName } });
   const l1 = await seedLineItem(id, { totalPriceCents: a });
   const l2 = await seedLineItem(id, { totalPriceCents: b });
   const item = (lineItemId: number, cents: number, account: string) => ({
@@ -93,7 +98,7 @@ async function outboxed(day: string, opts: { reimburseePersonId?: number; amount
     isDelayed: false, isCapital: false, capitalOwnerId: null, depreciationYears: null, account,
   });
   const payload = {
-    schemaVersion: 1, id, vendorName: "Acme", receiptDate: day, receiptTotalCents: a + b, orgId: ORG,
+    schemaVersion: 1, id, vendorName, receiptDate: day, receiptTotalCents: a + b, orgId: ORG,
     needsReimbursement: opts.reimburseePersonId !== undefined, reimbursementFor: null,
     reimburseePersonId: opts.reimburseePersonId ?? null,
     items: [item(l1, a, "60"), item(l2, b, "61")],
@@ -159,7 +164,7 @@ describeDb("QB-2 posting — create", () => {
       quickbooks: { posting: posting() },
     });
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 500 });
-    await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10" } });
+    await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", isTestData: true, vendorName: "TEST-Acme" } });
     await seedLineItem(id, { manualQbAccount: "60", totalPriceCents: 500 });
     await signAllLines(id);
 
@@ -263,5 +268,52 @@ describeDb("QB-2 posting — retries and recovery", () => {
     expect(await postExpenseToQb(ORG, id)).toBe("unbound");
     expect(await drainExpenseOutbox()).toBe("unbound");
     expect((await expenseRow(id)).qbMatchState).toBe("UNMATCHED");
+  });
+});
+
+describeDb("QB-2 posting — test-data gate", () => {
+  it("outside prod, an expense not flagged as test data is not sent, with a visible reason", async () => {
+    const { id } = await outboxed("2026-09-10", { isTestData: false });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("not_sent");
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, not_sent: 1 });
+    expect(qbo.posts).toHaveLength(0);
+    expect((await expenseRow(id)).qbMatchState).toBe("NOT_TEST_DATA");
+    const audit = await db.expenseAuditLog.findMany({ where: { expenseId: id } });
+    expect(audit.map((a) => a.notes)).toEqual(["not sent to QuickBooks: not test data"]);
+  });
+
+  it("outside prod, flagged test data with a real-looking vendor name is not sent", async () => {
+    const { id } = await outboxed("2026-09-10", { vendorName: "Home Depot" });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("not_sent");
+    expect(qbo.posts).toHaveLength(0);
+    expect((await expenseRow(id)).qbMatchState).toBe("NOT_TEST_DATA");
+  });
+
+  it("the gate is re-checked each run: flagging the expense later lets the drain post it", async () => {
+    const { id } = await outboxed("2026-09-10", { isTestData: false });
+    await postExpenseToQb(ORG, id);
+    await db.expense.update({ where: { id }, data: { isTestData: true } });
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1 });
+    expect((await expenseRow(id)).qbMatchState).toBe("CREATED");
+  });
+
+  it("in prod, test data is refused and never posted", async () => {
+    bindQbo("2026-01-01", true);
+    const { id } = await outboxed("2026-09-10");
+
+    expect(await postExpenseToQb(ORG, id)).toBe("not_sent");
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, not_sent: 1 });
+    expect(qbo.posts).toHaveLength(0);
+    expect((await expenseRow(id)).qbMatchState).toBe("TEST_DATA_REFUSED");
+  });
+
+  it("in prod, a real expense posts", async () => {
+    bindQbo("2026-01-01", true);
+    const { id } = await outboxed("2026-09-10", { isTestData: false, vendorName: "Home Depot" });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
   });
 });

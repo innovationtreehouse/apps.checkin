@@ -45,6 +45,8 @@ interface Expense {
   reimbursementFor?: string | null;
   reimburseePersonId?: number | null;
   backfill: boolean;
+  isTestData?: boolean;
+  qbMatchState?: string;
   lineItems: Line[];
   approvals: Approval[];
   flags?: Flag[];
@@ -59,6 +61,12 @@ interface Bucket {
   id: number;
   name: string;
 }
+
+/** Why the QuickBooks drain is holding an expense back. */
+const NOT_SENT: Record<string, string> = {
+  NOT_TEST_DATA: "Not sent to QuickBooks: not test data",
+  TEST_DATA_REFUSED: "Not sent to QuickBooks: test data is never posted in prod",
+};
 
 type Action = "approve" | "raise-exception" | "reject" | "finance-assign" | "assign-owner" | "resolve-unknown";
 const ACTION_LABEL: Record<Action, string> = {
@@ -136,7 +144,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses" }
         <Title order={3}>{e.vendorName ?? e.id}</Title>
         <Badge color={STATE_COLORS[e.state] ?? "gray"} variant="light">{STATE_LABELS[e.state] ?? e.state}</Badge>
         {e.backfill && <Badge color="gray">Backfill</Badge>}
+        {e.isTestData && <Badge color="grape">Test data</Badge>}
       </Group>
+      {e.qbMatchState && NOT_SENT[e.qbMatchState] && <Text size="sm" c="orange">{NOT_SENT[e.qbMatchState]}</Text>}
       <Text size="sm">
         {e.receiptDate ?? "No receipt date"} · {formatCents(e.receiptTotalCents, e.currency)}
         {e.needsReimbursement && ` · Reimbursement${e.reimbursementFor ? ` for ${e.reimbursementFor}` : ""}`}

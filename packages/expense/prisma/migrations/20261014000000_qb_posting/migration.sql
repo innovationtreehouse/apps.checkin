@@ -1,7 +1,8 @@
 -- AlterTable
 ALTER TABLE "expenses" ADD COLUMN "qb_match_state" TEXT NOT NULL DEFAULT 'UNMATCHED',
 ADD COLUMN "qb_txn_id" TEXT,
-ADD COLUMN "qb_vendor_id" TEXT;
+ADD COLUMN "qb_vendor_id" TEXT,
+ADD COLUMN "is_test_data" BOOLEAN NOT NULL DEFAULT false;
 
 -- AlterTable
 ALTER TABLE "expense_line_items" ADD COLUMN "qb_account_id" TEXT;

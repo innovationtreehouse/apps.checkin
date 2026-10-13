@@ -10,14 +10,29 @@ import { writeAudit } from "./audit";
 import { logError, logWarn } from "./logger";
 import { SYSTEM_ACTOR } from "./system-actor";
 
-/** Expense match states the drain still posts. AMBIGUOUS and BEFORE_LINE wait for finance. */
-export const POSTABLE_QB_STATES = ["UNMATCHED", "POST_FAILED"];
+/**
+ * Expense match states the drain still tries; the test-data states are re-checked each run.
+ * AMBIGUOUS and BEFORE_LINE wait for finance.
+ */
+export const POSTABLE_QB_STATES = ["UNMATCHED", "POST_FAILED", "NOT_TEST_DATA", "TEST_DATA_REFUSED"];
+
+export const TEST_VENDOR_PREFIX = "TEST-";
+
+/** Why an expense must not reach this QuickBooks company, or null when it may. */
+function notSendable(posting: ExpensePosting, e: { isTestData: boolean; vendorName: string | null }) {
+  if (posting.prod) {
+    return e.isTestData ? { qbMatchState: "TEST_DATA_REFUSED", note: "not sent to QuickBooks: test data is never posted in prod" } : null;
+  }
+  return e.isTestData && (e.vendorName ?? "").startsWith(TEST_VENDOR_PREFIX)
+    ? null
+    : { qbMatchState: "NOT_TEST_DATA", note: "not sent to QuickBooks: not test data" };
+}
 
 // ponytail: fixed per-run caps; move to ExpenseOrgSettings when finance needs to tune them.
 export const MAX_CREATES_PER_RUN = 25;
 export const MAX_CREATE_CENTS_PER_RUN = 2_500_000;
 
-export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting";
+export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "not_sent";
 
 function shiftDate(isoDate: string, days: number): string {
   const d = new Date(`${isoDate}T00:00:00Z`);
@@ -86,7 +101,8 @@ async function buildWrite(orgId: string, payloadJson: string, posting: ExpensePo
 /**
  * One expense's turn through the outbox. found by key or created → CREATED; found by amount →
  * MATCHED; ambiguous or an unmapped reimbursee → AMBIGUOUS; before the takeover line →
- * BEFORE_LINE; a failure (QuickBooks down, rejected) → POST_FAILED, retried by the drain. With no
+ * BEFORE_LINE; a failure (QuickBooks down, rejected) → POST_FAILED, retried by the drain; an
+ * expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. With no
  * takeover date configured nothing is posted. A row lock serializes the request path and the cron drain.
  */
 export async function postExpenseToQb(orgId: string, expenseId: string): Promise<PostOutcome | "unbound" | "no_takeover_date"> {
@@ -128,6 +144,11 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
         return outcome;
       };
 
+      const refused = notSendable(posting, current);
+      if (refused) {
+        if (posting.prod) logWarn("qb_post_test_data_refused", { expenseId, orgId });
+        return settle("not_sent", { qbMatchState: refused.qbMatchState }, refused.note);
+      }
       if ("error" in built) return settle("failed", { qbMatchState: "POST_FAILED" }, built.error);
       if ("queue" in built) return settle("queued", { qbMatchState: "AMBIGUOUS" }, built.queue);
 
@@ -192,7 +213,7 @@ export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound" | "n
     })
   ).filter((e) => outboxed.has(e.id));
 
-  const counts: DrainCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, overCap: 0, capped: null };
+  const counts: DrainCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, overCap: 0, capped: null };
   let postedCents = 0;
   for (const [i, e] of due.entries()) {
     if (e.receiptTotalCents > MAX_CREATE_CENTS_PER_RUN) {

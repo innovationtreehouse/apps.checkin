@@ -4,7 +4,8 @@
  *
  * Person and bucket ids are checkin's, from a fresh baseline seed: bucket 1 is "Facility"
  * (org-level), bucket 2 is the first program's; person 10 is tool.certifier@example.com, an
- * active member, as the submitter.
+ * active member, as the submitter. Every row is test data from a "TEST-" vendor, the only kind
+ * a non-prod QuickBooks post accepts.
  */
 import * as dotenv from "dotenv";
 import { getPrisma } from "../src/db";
@@ -29,14 +30,14 @@ interface SeedExpense {
 
 const EXPENSES: SeedExpense[] = [
   // A program-bucket card charge waiting on its bucket approvers.
-  { id: "seed-expense-program", state: "owner_approval", vendorName: "Seed Lumber", totalCents: 4200, approval: { ownerId: PROGRAM_BUCKET, status: "pending" } },
+  { id: "seed-expense-program", state: "owner_approval", vendorName: "TEST-Lumber Co", totalCents: 4200, approval: { ownerId: PROGRAM_BUCKET, status: "pending" } },
   // A line no part map placed: FINANCE assigns its bucket.
-  { id: "seed-expense-unassigned", state: "assign_ownership", vendorName: "Seed Hardware", totalCents: 1500, approval: { ownerId: null, status: "pending" } },
+  { id: "seed-expense-unassigned", state: "assign_ownership", vendorName: "TEST-Hardware Co", totalCents: 1500, approval: { ownerId: null, status: "pending" } },
   // An org-level line held because no account rule matched; a tax flag for FINANCE.
   {
     id: "seed-expense-held",
     state: "qb_on_hold",
-    vendorName: "Seed Electric",
+    vendorName: "TEST-Electric Co",
     totalCents: 9900,
     approval: { ownerId: FACILITY_BUCKET, status: "approved" },
     hold: "NO_MATCH",
@@ -46,7 +47,7 @@ const EXPENSES: SeedExpense[] = [
   {
     id: "seed-expense-reimbursement",
     state: "assign_ownership",
-    vendorName: "Seed Supplies",
+    vendorName: "TEST-Supplies Co",
     totalCents: 2500,
     needsReimbursement: true,
     approval: { ownerId: null, status: "pending" },
@@ -76,6 +77,7 @@ async function main(): Promise<void> {
           needsReimbursement: e.needsReimbursement ?? false,
           submittedAt: new Date("2026-10-02T12:00:00Z"),
           state: e.state,
+          isTestData: true,
         },
       });
       const line = await tx.expenseLineItem.create({
