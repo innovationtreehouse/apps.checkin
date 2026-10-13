@@ -13,18 +13,10 @@ import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
 import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
 import { membershipOpsRouteVisible } from '@/lib/membershipOpsNav';
 import { isLibraryVisible, type LibraryKey } from '@/lib/libraryRelease';
+import { canSeeCatalog, type VolunteerClaims } from '@/lib/volunteer';
 
-export type RegistryUser = {
-  isSysadmin?: boolean;
-  isBoardMember?: boolean;
-  isKeyholder?: boolean;
-  isBackgroundCheckReviewer?: boolean;
-  isOperations?: boolean;
-  isInventoryManager?: boolean;
-  isFinance?: boolean;
+export type RegistryUser = VolunteerClaims & {
   householdLead?: boolean;
-  programsLed?: number[];
-  hasVolunteerDesignation?: boolean;
   toolStatuses?: Array<{ level: string }>;
 };
 
@@ -58,19 +50,8 @@ const SHOP_ADMIN: Visible = (u) => shopRoles(u).isAdmin;
 // Membership Ops gates per tab (Review admits reviewers, Participants admits
 // operations, the rest are admin-only). One definition in membershipOpsNav.
 const MOPS = (href: string): Visible => (u) => membershipOpsRouteVisible(href, u);
-// Global catalog (#1286 §7). Mirrors isCatalogViewerClient / the server
-// 'catalog-viewer' gate: any RBAC role, a program leader, or a volunteer
-// (hasVolunteerDesignation, set on the session by the JWT callback).
-const CATALOG_VIEWER: Visible = (u, signedIn) =>
-  signedIn &&
-  (!!u?.isSysadmin ||
-    !!u?.isBoardMember ||
-    !!u?.isKeyholder ||
-    !!u?.isBackgroundCheckReviewer ||
-    !!u?.isOperations ||
-    !!u?.isInventoryManager ||
-    (u?.programsLed?.length ?? 0) > 0 ||
-    !!u?.hasVolunteerDesignation);
+// Global catalog (#1286 §7): the server 'catalog-viewer' predicate.
+const CATALOG_VIEWER: Visible = (u, signedIn) => signedIn && canSeeCatalog(u);
 
 // Expense Ops: FINANCE or BOARD, no sysadmin (docs/rules/finance-payments.md).
 const FINANCE_OR_BOARD: Visible = (u) => !!u?.isFinance || !!u?.isBoardMember;
@@ -100,6 +81,7 @@ export const PAGES: PageEntry[] = [
   // payload (leadsAnyProgram), matching the nav gate. Distinct from the attendee
   // "My Programs" tab above.
   { href: '/my-programs/attendance', label: 'My Programs (as Volunteer)', section: 'Personal', keywords: 'lead mentor program volunteer attendance', visible: LEADS_PROGRAM },
+  { href: '/my-programs/expense-approvals', label: 'Expense approvals', section: 'Personal', keywords: 'budget bucket sign-off approve expense reimbursement', visible: released('expense', LEADS_PROGRAM) },
   { href: '/my-programs/conflicts', label: 'Attendance Conflicts', section: 'Personal', keywords: 'lead mentor duplicate overlapping visit attendance', visible: LEADS_PROGRAM },
   // Stays visible to all members: also the Join/renewal entry for new applicants
   // who aren't a household lead yet (gating it on lead would break joining).
@@ -201,6 +183,14 @@ export const PAGES: PageEntry[] = [
 
   // Expense Ops — FINANCE or BOARD
   { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: FINANCE_OR_BOARD },
+  { href: '/expense/expenses', label: 'Expenses', section: 'Expense Ops', keywords: 'receipt reimbursement approval sign-off queue', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/holds', label: 'Account Holds', section: 'Expense Ops', keywords: 'no match quickbooks account resubmit', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/flags', label: 'Expense Flags', section: 'Expense Ops', keywords: 'checkoff threshold tax conflict', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/account-mapping', label: 'Account Mapping', section: 'Expense Ops', keywords: 'quickbooks rule category', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/qb-accounts', label: 'QuickBooks Accounts', section: 'Expense Ops', keywords: 'qb account list', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/ownership-map', label: 'Ownership Map', section: 'Expense Ops', keywords: 'budget owner bucket part', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/capital-seed', label: 'Capital Seed', section: 'Expense Ops', keywords: 'itfa capital register asset', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/settings', label: 'Expense Settings', section: 'Expense Ops', keywords: 'threshold capital board review note in lieu', visible: released('expense', FINANCE_OR_BOARD) },
 
   // Donations — FINANCE or BOARD
   { href: '/donations', label: 'Donations', section: 'Donations', visible: DONATIONS },
@@ -240,6 +230,7 @@ export const REGISTRY_EXCLUDED: string[] = [
   '/settings',               // redirects to /settings/membership
   '/attendance',             // redirects to /attendance/current
   '/my-programs',            // redirects to /my-programs/attendance
+  '/expense',                // redirects to /expense/expenses
   '/dev',                    // dev-tools hub, redirects to /dev/sent-mail
   '/dev/sent-mail',          // dev-only captured-email inbox (EMAIL_DEV_MOCK.md); 404s off dev
   '/dev/zoho-sign',          // dev-only Zoho Sign mock interstitial (404 in prod)

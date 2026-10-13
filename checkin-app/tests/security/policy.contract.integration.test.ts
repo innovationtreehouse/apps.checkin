@@ -29,7 +29,7 @@ interface RouteImports {
     DELETE?: (req: Request, ctx?: unknown) => Promise<Response>;
 }
 
-const LIBRARY_ROUTE_PREFIXES = ['/api/catalog/', '/api/inventory/', '/api/income/', '/api/donations/'];
+const LIBRARY_ROUTE_PREFIXES = ['/api/catalog/', '/api/inventory/', '/api/income/', '/api/donations/', '/api/expense/'];
 
 function endpointToRoutePath(endpoint: string): string {
     return endpoint.split(' ')[1];

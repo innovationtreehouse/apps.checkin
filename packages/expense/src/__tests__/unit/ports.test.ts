@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { callerId } from "../../lib/caller";
 import { assertOrg, getExpenseRuntime } from "../../runtime";
+import { inertOwnerDirectory } from "../../contract";
 import { reimbursementStatus } from "../../services/reimbursementStatus";
 import { approveLine } from "../../services/approvalService";
 import { detectIntakeFlags, FLAG_AUDIENCE } from "../../lib/flags";
@@ -26,15 +27,15 @@ describe("runtime", () => {
     const rt = getExpenseRuntime();
     expect(await rt.catalog.listCategories()).toEqual([]);
     expect(await rt.catalogEvents.eventsAfter(0)).toEqual([]);
-    expect(await rt.budgetOwners.list()).toEqual([]);
+    expect(await inertOwnerDirectory.list()).toEqual([]);
     expect(await rt.signoff.bucketApprovers(1)).toEqual({ orgLevel: false, approvers: [] });
     expect(await rt.quickbooks.reader.purchasesBetween("2026-01-01", "2026-01-31")).toEqual([]);
     await expect(rt.quickbooks.writer.create("Purchase", {})).rejects.toThrow(/not bound/);
   });
 
-  it("assertOrg accepts only the injected org", () => {
-    expect(() => assertOrg(ORG)).not.toThrow();
-    expect(() => assertOrg("org-other")).toThrow(/not this org/);
+  it("assertOrg accepts only the injected org", async () => {
+    await expect(assertOrg(ORG)).resolves.toBeUndefined();
+    await expect(assertOrg("org-other")).rejects.toThrow(/not this org/);
   });
 });
 

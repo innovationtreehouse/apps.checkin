@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, expect } from "vitest";
 import { db } from "../db";
 import { configureExpense } from "../runtime";
-import { ORG } from "./helpers/seed";
+import { ORG, TEST_BUCKETS } from "./helpers/seed";
 
-// Every test starts from the inert ports; a test rebinds what it needs.
-beforeEach(() => configureExpense({ org: () => ({ id: ORG, name: "Org One" }) }));
+// Every test starts from the inert ports plus the test buckets; a test rebinds what it needs.
+beforeEach(() => configureExpense({ org: async () => ({ id: ORG, name: "Org One" }), budgetOwners: TEST_BUCKETS }));
 
 afterEach(async () => {
   // Only the integration tier touches the database; a Docker-less run never connects to clean up.

@@ -133,10 +133,10 @@ const NAV_ITEMS: NavItem[] = [
       !!u?.toolStatuses?.some((ts) => ts.level === 'MAY_CERTIFY_OTHERS'),
   },
   {
-    // Inventory (#1286 §7). Broader gate than the *-Ops items around it — any
-    // RBAC role, program leader, or volunteer sees it (isCatalogViewerClient,
-    // which mirrors the server catalog-viewer gate exactly via the session), plus
-    // anyone a registered Inventory library tab admits (FINANCE on Receiving).
+    // Inventory (#1286 §7). Broader gate than the *-Ops items around it — every
+    // catalog viewer sees it (isCatalogViewerClient, the server catalog-viewer
+    // predicate), plus anyone a registered Inventory library tab admits (FINANCE
+    // on Receiving).
     href: CATALOG_TOP_NAV.href,
     label: 'Inventory',
     icon: <IconPackage size={18} />,

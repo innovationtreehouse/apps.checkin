@@ -19,6 +19,7 @@ MALFORMED_JSON_PROBES=(
   /api/catalog/categories
   /api/inventory/locations
   /api/donations/account-map
+  /api/expense/qb-accounts
 )
 
 # Duplicate create: the first POST must succeed, the second must answer 409.
