@@ -27,6 +27,10 @@ export type RoleFlag = keyof typeof FLAG_TO_KIND;
 
 export const ROLE_FLAGS: RoleFlag[] = Object.keys(FLAG_TO_KIND) as RoleFlag[];
 
+export const KIND_TO_FLAG = Object.fromEntries(
+    Object.entries(FLAG_TO_KIND).map(([flag, kind]) => [kind, flag]),
+) as Record<PersonRoleKind, RoleFlag>;
+
 /**
  * Legacy mirror columns on Person, kept in sync by write-through so the ~15
  * existing `where:{isBoardMember:true}`-style readers stay correct without
