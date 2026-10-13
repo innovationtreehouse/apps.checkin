@@ -293,13 +293,13 @@ class AttendanceState:
         self.confirm_token = None    # force-close confirm token, if a countdown is running
         self.confirm_participant = None  # the keyholder that token was shown to
         self.confirm_deadline = 0.0  # monotonic clock, end of that countdown
+        self.confirm_banner = None   # (html, seconds) re-shown when that window slides
         # Offline force-close: the server mints no token while disconnected, so
         # the kiosk arms its own two-scan confirm, bound to the keyholder who
         # triggered the warning. The confirm scan carries forceCloseConfirmed.
         self.local_close_participant = None
         self.local_close_deadline = 0.0  # monotonic clock, end of that countdown
-        # The armed close's banner and window length, re-shown when the window slides.
-        self.close_banner = None     # (html, seconds)
+        self.local_close_banner = None   # (html, seconds) re-shown when that window slides
         self.last_read = {}          # participant id -> monotonic time of its last read
         self.scan_protocol = 1       # server-advertised scan generation; drain holds below ours
         self.last_browser_seen = time.monotonic()
@@ -330,7 +330,7 @@ class AttendanceState:
             self.confirm_participant = pid
             self.confirm_token = token
             self.confirm_deadline = time.monotonic() + seconds
-            self.close_banner = (banner_html, seconds)
+            self.confirm_banner = (banner_html, seconds)
 
     def take_confirm(self, participant_id):
         """Pop the confirm token for this badge's scan. Single use, and only while
@@ -349,6 +349,7 @@ class AttendanceState:
             self.confirm_participant = None
             self.confirm_token = None
             self.confirm_deadline = 0.0
+            self.confirm_banner = None
             return token
 
     def arm_local_close(self, participant_id, seconds, banner_html=None):
@@ -361,7 +362,7 @@ class AttendanceState:
         with self.lock:
             self.local_close_participant = pid
             self.local_close_deadline = time.monotonic() + seconds
-            self.close_banner = (banner_html, seconds)
+            self.local_close_banner = (banner_html, seconds)
 
     def slide_close(self, participant_id):
         """A held badge's repeat read: restart its live close window from this
@@ -370,19 +371,20 @@ class AttendanceState:
         pid = int(participant_id)
         now = time.monotonic()
         with self.lock:
-            if self.close_banner is None:
+            if now >= self.confirm_deadline:
+                self.confirm_banner = None
+            if now >= self.local_close_deadline:
+                self.local_close_banner = None
+            banner = None
+            if self.confirm_participant == pid and self.confirm_banner:
+                banner = self.confirm_banner
+                self.confirm_deadline = now + banner[1]
+            if self.local_close_participant == pid and self.local_close_banner:
+                banner = self.local_close_banner
+                self.local_close_deadline = now + banner[1]
+            if banner is None or not banner[0]:
                 return None
-            banner_html, seconds = self.close_banner
-            slid = False
-            if self.confirm_participant == pid and now < self.confirm_deadline:
-                self.confirm_deadline = now + seconds
-                slid = True
-            if self.local_close_participant == pid and now < self.local_close_deadline:
-                self.local_close_deadline = now + seconds
-                slid = True
-            if not slid or not banner_html:
-                return None
-            return {"html": banner_html, "countdown": seconds}
+            return {"html": banner[0], "countdown": banner[1]}
 
     def take_local_close(self, participant_id):
         """True iff a live offline-close confirm is armed for THIS badge — single
@@ -396,10 +398,12 @@ class AttendanceState:
             if self.local_close_participant == pid and live:
                 self.local_close_participant = None
                 self.local_close_deadline = 0.0
+                self.local_close_banner = None
                 return True
             if not live:
                 self.local_close_participant = None
                 self.local_close_deadline = 0.0
+                self.local_close_banner = None
             return False
 
     def is_repeat_read(self, participant_id):
