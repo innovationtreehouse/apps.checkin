@@ -1,5 +1,6 @@
 "use client";
 import { Badge, Button, Anchor, Table, Text, Title } from "@mantine/core";
+import { HOLD_FLAGS } from "../lib/flags";
 import { send, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
 import ExpenseSubNav from "../components/ExpenseSubNav";
@@ -31,9 +32,10 @@ export default function FlagsPage() {
               <Table.Td>{f.detail ?? ""}</Table.Td>
               <Table.Td>{new Date(f.raisedAt).toLocaleDateString()}</Table.Td>
               <Table.Td>
-                <Button size="xs" variant="light" onClick={async () => { if (await send(`/flags/${f.id}/check-off`, "POST", {}, "Checked off")) flags.reload(); }}>
+                <Button size="xs" variant="light" disabled={HOLD_FLAGS.has(f.kind)} onClick={async () => { if (await send(`/flags/${f.id}/check-off`, "POST", {}, "Checked off")) flags.reload(); }}>
                   Check off
                 </Button>
+                {HOLD_FLAGS.has(f.kind) && <Text size="xs" c="dimmed">{HOLD_FLAGS.get(f.kind)}</Text>}
               </Table.Td>
             </Table.Tr>
           ))}

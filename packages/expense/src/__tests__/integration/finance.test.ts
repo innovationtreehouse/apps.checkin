@@ -11,6 +11,7 @@ import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
 import { checkApprovalAutoTransition } from "../../lib/financial-flow";
 import { setDepreciationCycle, seedCapitalAssets, submitCapitalReview } from "../../services/capitalService";
 import { checkOffFlag, listOpenFlags, raiseFlag } from "../../services/flagService";
+import { expenseOpsCounts } from "../../services/badgeCounts";
 import { excludeQbTxn, qbMatchInputs } from "../../services/qbMatchService";
 
 const FINANCE = principal(3, { isFinance: true });
@@ -204,15 +205,23 @@ describeDb("sign-off seats", () => {
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
     });
 
-    it("REIMBURSEE_UNKNOWN cannot be checked off while the hold applies; it can once the expense is closed", async () => {
+    it("REIMBURSEE_UNKNOWN cannot be checked off while the hold applies; it leaves the queue once the expense is closed", async () => {
       const { id } = await unknownReimbursee();
       const [flag] = await listOpenFlags(FINANCE);
       await expect(checkOffFlag(FINANCE, flag.id)).rejects.toMatchObject({ statusCode: 409 });
       expect((await listOpenFlags(FINANCE)).map((f) => f.kind)).toEqual(["REIMBURSEE_UNKNOWN"]);
 
       await db.expense.update({ where: { id }, data: { state: "rejected" } });
-      await checkOffFlag(FINANCE, flag.id);
       expect(await listOpenFlags(FINANCE)).toEqual([]);
+      expect(await expenseOpsCounts(FINANCE)).toMatchObject({ openFlags: 0 });
+      await checkOffFlag(FINANCE, flag.id);
+    });
+
+    it("a control flag on a closed expense stays in the queue", async () => {
+      const { id } = await unknownReimbursee();
+      await raiseFlag(id, "TAX_ATTACHED");
+      await db.expense.update({ where: { id }, data: { state: "rejected" } });
+      expect((await listOpenFlags(FINANCE)).map((f) => f.kind)).toEqual(["TAX_ATTACHED"]);
     });
 
     it("a card charge or a backfilled expense takes no reimbursee", async () => {

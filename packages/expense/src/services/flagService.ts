@@ -4,7 +4,7 @@ import type { ExpensePrincipal } from "../contract";
 import { getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
-import { FLAG_AUDIENCE, type FlagAudience, type FlagKind } from "../lib/flags";
+import { FLAG_AUDIENCE, HOLD_FLAGS, type FlagAudience, type FlagKind } from "../lib/flags";
 import { CLOSED_STATES, reimburseeUnknown } from "../lib/signoff";
 import { conflictedParties } from "../lib/signoff-facts";
 import { ServiceError } from "./serviceError";
@@ -21,10 +21,16 @@ function audiencesOf(principal: ExpensePrincipal): FlagAudience[] {
   return [...(principal.isFinance ? ["FINANCE" as const] : []), ...(principal.isBoard ? ["BOARD" as const] : [])];
 }
 
+/** Open flags for the caller's audience; a hold flag drops out once its expense is closed and the hold is moot. */
 export async function listOpenFlags(principal: ExpensePrincipal) {
   actorOf(principal);
   return db.expenseFlag.findMany({
-    where: { orgId: await getOrgId(), checkedOffAt: null, audience: { in: audiencesOf(principal) } },
+    where: {
+      orgId: await getOrgId(),
+      checkedOffAt: null,
+      audience: { in: audiencesOf(principal) },
+      NOT: { kind: { in: [...HOLD_FLAGS.keys()] }, expense: { state: { in: [...CLOSED_STATES] } } },
+    },
     orderBy: { raisedAt: "asc" },
   });
 }
@@ -44,8 +50,9 @@ export async function checkOffFlag(principal: ExpensePrincipal, flagId: number, 
     throw new ServiceError(403, "You are a party to this expense and cannot check off its flags");
   }
   // REIMBURSEE_UNKNOWN is the queue's only sign of the hold, so it stays open while the hold applies.
-  if (flag.kind === "REIMBURSEE_UNKNOWN" && reimburseeUnknown(expense) && !CLOSED_STATES.has(expense.state)) {
-    throw new ServiceError(409, "Set the reimbursee to clear this flag");
+  const holdReason = HOLD_FLAGS.get(flag.kind);
+  if (holdReason && reimburseeUnknown(expense) && !CLOSED_STATES.has(expense.state)) {
+    throw new ServiceError(409, holdReason);
   }
 
   await db.$transaction(async (tx) => {
