@@ -63,17 +63,22 @@ describe('canSeeCatalog', () => {
 });
 
 describe('canSubmitReceipts', () => {
-    it('admits any adult, with no volunteer status or membership', () => {
-        expect(canSubmitReceipts({ ageBand: 'adult' })).toBe(true);
+    it('admits an adult whose household membership is ACTIVE, with no volunteer status', () => {
+        expect(canSubmitReceipts(activeAdult)).toBe(true);
     });
 
-    it('admits a Treehouse Volunteer by role', () => {
+    it('refuses an adult without an ACTIVE membership', () => {
+        expect(canSubmitReceipts({ ageBand: 'adult' })).toBe(false);
+        expect(canSubmitReceipts({ ...activeAdult, isActiveOrgMember: false })).toBe(false);
+    });
+
+    it('admits a Treehouse Volunteer by role, without a membership', () => {
         expect(canSubmitReceipts({ isFinance: true })).toBe(true);
     });
 
-    it('refuses a youth or unknown age without volunteer status, and no session', () => {
-        expect(canSubmitReceipts({ ageBand: 'youth', isVolunteerFamily: true, isActiveOrgMember: true })).toBe(false);
-        expect(canSubmitReceipts({ ageBand: 'unknown' })).toBe(false);
+    it('refuses a youth or unknown age in an ACTIVE membership, and no session', () => {
+        expect(canSubmitReceipts({ isActiveOrgMember: true, ageBand: 'youth' })).toBe(false);
+        expect(canSubmitReceipts({ isActiveOrgMember: true, ageBand: 'unknown' })).toBe(false);
         expect(canSubmitReceipts(undefined)).toBe(false);
     });
 });

@@ -59,8 +59,8 @@ const CATALOG_VIEWER: Visible = (u, signedIn) => signedIn && canSeeCatalog(u);
 // Expense Ops: FINANCE or BOARD, no sysadmin (docs/rules/finance-payments.md).
 const FINANCE_OR_BOARD: Visible = (u) => !!u?.isFinance || !!u?.isBoardMember;
 
-// Receipts (owner ruling 2026-10-12): any signed-in adult or Treehouse Volunteer
-// submits; the review side is FINANCE or BOARD (the routes' finance-or-board gate).
+// Receipts: an adult member or a Treehouse Volunteer submits (canSubmitReceipts);
+// the review side is FINANCE or BOARD (the routes' finance-or-board gate).
 const RECEIPT_SUBMITTER: Visible = (u, signedIn) => signedIn && canSubmitReceipts(u);
 
 const INVENTORY_MANAGER: Visible = (u, signedIn) => signedIn && !!u?.isInventoryManager;
