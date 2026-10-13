@@ -1,5 +1,5 @@
-// Public surface of the @inventory/expense library (S: domain only — routes, pages and nav
-// land in W).
+// Public surface of the @inventory/expense library. Pages and nav are the ./pages/* and ./nav
+// subpath exports.
 export * from "./contract";
 export * from "./runtime";
 export * from "./db";
@@ -21,6 +21,7 @@ export * from "./repositories/partOwner";
 export * from "./repositories/provisionalItemMap";
 
 export * from "./services/approvalService";
+export * from "./services/badgeCounts";
 export * from "./services/capitalService";
 export * from "./services/catalogEventConsumer";
 export * from "./services/flagService";
@@ -33,3 +34,6 @@ export * from "./services/serviceError";
 export * from "./services/settingsService";
 export * from "./services/signoffService";
 export * from "./services/sweeps";
+
+export * as routes from "./routes";
+export { ExpenseHttpError } from "./routes/_shared";
