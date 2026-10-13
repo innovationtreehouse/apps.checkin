@@ -159,25 +159,6 @@ const patchedAdapter = {
     },
 };
 
-/**
- * Absolute lifetime of the organization-account claims (`hd`, `emailVerified`), counted from
- * the sign-in that stamped them. The session itself keeps rolling; once this passes, the
- * session drops those claims (and the access that hangs off them) until the person signs in
- * with Google again, which re-confirms the account is still active.
- */
-export const ORG_CLAIM_MAX_AGE_SECONDS = 60 * 60 * 12;
-
-/** Clears the organization-account claims once they are older than ORG_CLAIM_MAX_AGE_SECONDS. */
-function expireOrgClaims(token: JWT, now: number): void {
-    if (token.hd == null && !token.emailVerified) return;
-    // A token from before this clock existed starts it now.
-    token.orgClaimsIssuedAt ??= now;
-    if (now - token.orgClaimsIssuedAt < ORG_CLAIM_MAX_AGE_SECONDS) return;
-    token.hd = null;
-    token.emailVerified = false;
-    delete token.orgClaimsIssuedAt;
-}
-
 // Bootstrap isSysadmin emails — comma-separated list from env.
 // Any account matching these emails will be auto-promoted to isSysadmin on login.
 const BOOTSTRAP_SYSADMINS = (process.env.BOOTSTRAP_SYSADMINS || "")
@@ -263,8 +244,6 @@ export const authOptions: NextAuthOptions = {
                             : null,
                     });
                     if (!decision.allowed) return null;
-                    // The minted session inherits the caller's org-claim clock, so minting never extends it.
-                    const orgClaimsIssuedAt = callerToken?.orgClaimsIssuedAt ?? null;
 
                     // Logged-out preview: mint a synthetic guest session with NO participant. authz
                     // sees a logged-out visitor (no id/roles via the jwt callback's email guard); the
@@ -280,7 +259,6 @@ export const authOptions: NextAuthOptions = {
                             email: null,
                             name: "Logged out",
                             impersonatedBy: decision.impersonatedBy,
-                            orgClaimsIssuedAt,
                         };
                     }
 
@@ -317,7 +295,6 @@ export const authOptions: NextAuthOptions = {
                         email: dbParticipant.email,
                         name: dbParticipant.name,
                         impersonatedBy: decision.impersonatedBy,
-                        orgClaimsIssuedAt,
                     };
                 }
             })
@@ -360,12 +337,10 @@ export const authOptions: NextAuthOptions = {
             // middleware can gate on verified org membership (docs/ops/dev-instance.md,
             // "Running the cloud dev instance").
             // Prefer the `hd` claim over string-matching the email suffix.
-            const now = Math.floor(Date.now() / 1000);
             if (account?.provider === "google" && profile) {
                 const googleProfile = profile as { hd?: string; email_verified?: boolean };
                 token.hd = googleProfile.hd ?? null;
                 token.emailVerified = googleProfile.email_verified ?? false;
-                token.orgClaimsIssuedAt = now;
             }
             // Persona-mint: stamp the inert provenance claim (null clears it on "return to me").
             // On the cloud dev instance, carry the org gate claims onto the minted session so the
@@ -376,10 +351,8 @@ export const authOptions: NextAuthOptions = {
                 if (config.checkinEnv() === "dev") {
                     token.hd = ORG_DOMAIN;
                     token.emailVerified = true;
-                    token.orgClaimsIssuedAt = user.orgClaimsIssuedAt ?? now;
                 }
             }
-            expireOrgClaims(token, now);
             // Guard on `user.email`: a synthetic guest mint (logged-out preview) returns a user with
             // no email, so it resolves no participant and the token carries no id/roles — authz sees
             // a logged-out visitor, while the persona-mint block above still stamped the gate claims
