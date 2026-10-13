@@ -157,8 +157,8 @@ describe('expense admission', () => {
         expect(await admitted(route, { programsLed: [1], isActiveOrgMember: true })).toBe(APPROVER_ROUTES.includes(endpoint) || endpoint === SIGN_OFF);
     });
 
-    test.each(expense)('%s: a program leader without an ACTIVE membership is admitted on approver routes only', async (endpoint, route) => {
-        expect(await admitted(route, { programsLed: [1] })).toBe(APPROVER_ROUTES.includes(endpoint));
+    test.each(expense)('%s: a program leader without an ACTIVE membership is admitted on approver routes and sign-off', async (endpoint, route) => {
+        expect(await admitted(route, { programsLed: [1] })).toBe(APPROVER_ROUTES.includes(endpoint) || endpoint === SIGN_OFF);
     });
 
     test.each(expense)('%s: a treasurer who leads no program is admitted on approver routes and sign-off', async (endpoint, route) => {
