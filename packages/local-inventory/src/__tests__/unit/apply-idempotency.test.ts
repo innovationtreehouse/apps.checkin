@@ -12,10 +12,10 @@ import { createProvisionalResolutionRepository } from "../../lib/repositories/pr
 import { createReceiveQueueRepository } from "../../lib/repositories/receiveQueueRepository";
 import { createProvisionalItemService } from "../../lib/services/provisionalItemService";
 import { createReceiptService } from "../../lib/services/receiptService";
-import { useIntegrationSetup } from "../helpers/setup";
+import { setupIntegrationDb } from "../helpers/setup";
 import { TEST_ORG_ID, TEST_ORG_ID_2 } from "../helpers/seed";
 
-useIntegrationSetup();
+setupIntegrationDb();
 
 function makeReceiptService() {
   const inventoryRepo = createInventoryRepository(db);

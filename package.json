@@ -12,6 +12,7 @@
     "build:functions": "npm run build -w s-read-function -w s-replay-function -w monitoring-relay-function -w monitoring-watchdog-function",
     "build:prisma-layer": "node scripts/build-prisma-layer.mjs",
     "lint": "npm -w checkin-app run lint",
+    "lint:packages": "eslint --max-warnings 0 packages",
     "test": "npm -w checkin-app run test",
     "db:generate:test": "npm run db:generate -ws --if-present",
     "pretest:packages": "npm run db:generate:test",

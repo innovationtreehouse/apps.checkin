@@ -43,7 +43,7 @@ export function createLocationRepository(db: Db) {
     },
 
     async delete(id: number, orgId: string): Promise<void> {
-      await db.location.delete({ where: { id } });
+      await db.location.delete({ where: { id, orgId } });
     },
 
     async checkInUse(id: number, orgId: string): Promise<boolean> {

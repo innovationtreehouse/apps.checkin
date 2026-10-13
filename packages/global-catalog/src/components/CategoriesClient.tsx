@@ -51,11 +51,11 @@ export default function CategoriesClient() {
   const [catError, setCatError] = useState<string | null>(null);
   const [subError, setSubError] = useState<string | null>(null);
 
-  async function loadCategories(includeArchived: boolean) {
-    try {
-      setCategories(await api<CategoryRow[]>(`/categories${includeArchived ? "?includeArchived=true" : ""}`));
-      setCatError(null);
-    } catch (e) { setCatError(errorMessage(e)); }
+  function loadCategories(includeArchived: boolean) {
+    return api<CategoryRow[]>(`/categories${includeArchived ? "?includeArchived=true" : ""}`).then(
+      (rows) => { setCategories(rows); setCatError(null); },
+      (e) => setCatError(errorMessage(e)),
+    );
   }
 
   useEffect(() => { loadCategories(false); }, []);

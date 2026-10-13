@@ -2,7 +2,7 @@ import { it, expect, beforeEach } from 'vitest';
 import { describeDb } from "../helpers/db";
 import { db } from '../../db';
 import { sendDisbursementEvent } from '../../workflows/disbursement.actor';
-import { makeFile, makeTransaction, makeAccountMapRule, makeHold, makeEvent, TEST_ORG_ID } from '../helpers/factories';
+import { makeFile, makeTransaction, makeAccountMapRule, makeEvent, TEST_ORG_ID } from '../helpers/factories';
 
 const orgId = TEST_ORG_ID;
 let fileId: number;

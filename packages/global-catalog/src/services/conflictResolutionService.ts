@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { createItemReferenceRepository } from "../repositories/itemReference";
 import { createCatalogRepository } from "../repositories/catalog";
-import type { ConflictResolution, ReferenceConflict } from "../db/schema";
+import type { ConflictResolution } from "../db/schema";
 
 const itemRefRepo = createItemReferenceRepository(db);
 const catalogRepo = createCatalogRepository(db);

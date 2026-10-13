@@ -14,8 +14,8 @@ import type { ItemRow, ItemReferenceRow } from "./viewTypes";
 // create/update routes ignore it — so it is shown read-only here.
 const EMPTY_REF = { partNumber: "", description: "", manufacturer: "", retailer: "", url: "" };
 
-function RefRow({ ref: r, canEdit, onArchive, onEditingChange, onUpdated }: {
-  ref: ItemReferenceRow;
+function RefRow({ row: r, canEdit, onArchive, onEditingChange, onUpdated }: {
+  row: ItemReferenceRow;
   canEdit: boolean;
   onArchive: () => void;
   onEditingChange: (editing: boolean) => void;
@@ -191,7 +191,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
           </Table.Thead>
           <Table.Tbody>
             {refs.map((r) => (
-              <RefRow key={r.id} ref={r} canEdit={canEdit} onArchive={() => handleArchive(r.id)} onEditingChange={(e) => handleEditingChange(r.id, e)} onUpdated={loadRefs} />
+              <RefRow key={r.id} row={r} canEdit={canEdit} onArchive={() => handleArchive(r.id)} onEditingChange={(e) => handleEditingChange(r.id, e)} onUpdated={loadRefs} />
             ))}
             {showAdd && (
               <Table.Tr>

@@ -698,6 +698,11 @@ jobs:
           npm run typecheck -w monitoring-relay-function
           npm run typecheck -w monitoring-watchdog-function
 
+      # Packages share checkin-app's root eslint.config.mjs (one rule set).
+      - name: Lint packages
+        if: needs.changes.outputs.packages == 'true'
+        run: npm run lint:packages
+
       - name: Library boundary check
         if: needs.changes.outputs.packages == 'true'
         run: |

@@ -12,11 +12,10 @@ import { createInventoryRepository } from "../../lib/repositories/inventoryRepos
 import { createLocationService } from "../../lib/services/locationService";
 import { createReceiveQueueService } from "../../lib/services/receiveQueueService";
 import { createInventoryService } from "../../lib/services/inventoryService";
-import { ServiceError } from "../../lib/services/serviceError";
-import { useIntegrationSetup } from "../helpers/setup";
+import { setupIntegrationDb } from "../helpers/setup";
 import { TEST_ORG_ID, TEST_ORG_ID_2 } from "../helpers/seed";
 
-useIntegrationSetup();
+setupIntegrationDb();
 
 // ── Shared factory helpers ────────────────────────────────────────────────────
 

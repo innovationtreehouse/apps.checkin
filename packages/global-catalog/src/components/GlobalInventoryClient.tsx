@@ -28,6 +28,11 @@ const PAGE_LIMIT = 200;
 const EMPTY_FORM = { name: "", categoryId: "", subcategoryId: "", usageBehavior: "" as UsageBehavior | "" };
 const THEAD_STYLE = { position: "sticky" as const, top: 0, background: "var(--mantine-color-body)", zIndex: 1 };
 
+function SortIcon({ active, dir }: { active: boolean; dir: "asc" | "desc" }) {
+  if (!active) return <IconSelector size={14} />;
+  return dir === "asc" ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />;
+}
+
 // ── Associations Tab ──────────────────────────────────────────────────────────
 function ReferencesTab() {
   const [search, setSearch] = useState("");
@@ -36,21 +41,20 @@ function ReferencesTab() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [showArchived, setShowArchived] = useState(false);
   const [refs, setRefs] = useState<ItemReferenceRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Only the first load shows "Loading…"; a refetch keeps the current rows until it lands.
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [begin] = useState(latestGate);
 
-  const load = useCallback(async (q: string, sb: string, sd: string, sa: boolean) => {
+  const load = useCallback((q: string, sb: string, sd: string, sa: boolean) => {
     const isLatest = begin();
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({ page: "1", limit: String(PAGE_LIMIT), sortBy: sb, sortDir: sd });
-      if (q) params.set("q", q);
-      if (sa) params.set("showArchived", "true");
-      const rows = await api<ItemReferenceRow[]>(`/item-references?${params}`);
-      if (isLatest()) { setRefs(rows); setError(null); }
-    } catch (e) { if (isLatest()) setError(errorMessage(e)); }
-    finally { if (isLatest()) setLoading(false); }
+    const params = new URLSearchParams({ page: "1", limit: String(PAGE_LIMIT), sortBy: sb, sortDir: sd });
+    if (q) params.set("q", q);
+    if (sa) params.set("showArchived", "true");
+    return api<ItemReferenceRow[]>(`/item-references?${params}`)
+      .then((rows) => { if (isLatest()) { setRefs(rows); setError(null); } },
+        (e) => { if (isLatest()) setError(errorMessage(e)); })
+      .finally(() => { if (isLatest()) setLoading(false); });
   }, [begin]);
 
   useEffect(() => { load(debouncedSearch, sortBy, sortDir, showArchived); }, [load, debouncedSearch, sortBy, sortDir, showArchived]);
@@ -58,11 +62,6 @@ function ReferencesTab() {
   function toggleSort(col: "manufacturer" | "retailer" | "item") {
     if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortBy(col); setSortDir("asc"); }
-  }
-
-  function SortIcon({ col }: { col: string }) {
-    if (sortBy !== col) return <IconSelector size={14} />;
-    return sortDir === "asc" ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />;
   }
 
   async function handleArchive(id: number) {
@@ -98,9 +97,9 @@ function ReferencesTab() {
         <Table striped highlightOnHover withTableBorder verticalSpacing="xs">
           <Table.Thead style={THEAD_STYLE}>
             <Table.Tr>
-              <Table.Th onClick={() => toggleSort("item")} style={thStyle}><Group gap={4} wrap="nowrap">Item <SortIcon col="item" /></Group></Table.Th>
-              <Table.Th onClick={() => toggleSort("manufacturer")} style={thStyle}><Group gap={4} wrap="nowrap">Manufacturer <SortIcon col="manufacturer" /></Group></Table.Th>
-              <Table.Th onClick={() => toggleSort("retailer")} style={thStyle}><Group gap={4} wrap="nowrap">Retailer <SortIcon col="retailer" /></Group></Table.Th>
+              <Table.Th onClick={() => toggleSort("item")} style={thStyle}><Group gap={4} wrap="nowrap">Item <SortIcon active={sortBy === "item"} dir={sortDir} /></Group></Table.Th>
+              <Table.Th onClick={() => toggleSort("manufacturer")} style={thStyle}><Group gap={4} wrap="nowrap">Manufacturer <SortIcon active={sortBy === "manufacturer"} dir={sortDir} /></Group></Table.Th>
+              <Table.Th onClick={() => toggleSort("retailer")} style={thStyle}><Group gap={4} wrap="nowrap">Retailer <SortIcon active={sortBy === "retailer"} dir={sortDir} /></Group></Table.Th>
               <Table.Th>Key Value</Table.Th>
               <Table.Th>Conversion</Table.Th>
               <Table.Th w={100} />
@@ -223,7 +222,7 @@ export default function GlobalInventoryClient() {
   const [conflicts, setConflicts] = useState<ReferenceConflictRow[]>([]);
   const [conflictsLoaded, setConflictsLoaded] = useState(false);
 
-  const loadItems = useCallback(async (q: string, sb: string, sd: string, sa: boolean, p: number) => {
+  const loadItems = useCallback((q: string, sb: string, sd: string, sa: boolean, p: number) => {
     const isLatest = beginItems();
     const countParams = new URLSearchParams();
     if (q) countParams.set("q", q);
@@ -235,35 +234,32 @@ export default function GlobalInventoryClient() {
         api<{ total: number }>(`/items/count?${countParams}`),
       ]);
     };
-    try {
-      let [rows, count] = await fetchPage(p);
-      // Archiving the only row on the last page shrinks the list under us.
-      const last = lastPage(count.total, PAGE_SIZE);
-      if (p > last) {
-        p = last;
-        [rows, count] = await fetchPage(p);
-      }
-      if (!isLatest()) return;
-      setPage(p);
-      setItems(rows);
-      setTotal(count.total);
-      setItemsError(null);
-    } catch (e) { if (isLatest()) setItemsError(errorMessage(e)); }
+    return fetchPage(p)
+      .then(([rows, count]) => {
+        // Archiving the only row on the last page shrinks the list under us.
+        const last = lastPage(count.total, PAGE_SIZE);
+        return p > last ? fetchPage(last).then((r) => [last, ...r] as const) : ([p, rows, count] as const);
+      })
+      .then(([shown, rows, count]) => {
+        if (!isLatest()) return;
+        setPage(shown);
+        setItems(rows);
+        setTotal(count.total);
+        setItemsError(null);
+      }, (e) => { if (isLatest()) setItemsError(errorMessage(e)); });
   }, [beginItems]);
 
-  // Filter/sort change → back to page 1. Prev/Next call loadItems directly.
-  useEffect(() => { setPage(1); loadItems(debouncedSearch, sortBy, sortDir, showArchived, 1); }, [loadItems, debouncedSearch, sortBy, sortDir, showArchived]);
+  // Filter/sort change → page 1 (the handlers reset `page`). Prev/Next call loadItems directly.
+  useEffect(() => { loadItems(debouncedSearch, sortBy, sortDir, showArchived, 1); }, [loadItems, debouncedSearch, sortBy, sortDir, showArchived]);
 
   function goToPage(p: number) {
     setPage(p);
     loadItems(debouncedSearch, sortBy, sortDir, showArchived, p);
   }
-  const loadCategories = useCallback(async () => {
-    try {
-      setCategories(await api<CategoryRow[]>("/categories"));
-      setOptionsError(null);
-    } catch (e) { setOptionsError(errorMessage(e)); }
-  }, []);
+  const loadCategories = useCallback(() => api<CategoryRow[]>("/categories").then(
+    (rows) => { setCategories(rows); setOptionsError(null); },
+    (e) => setOptionsError(errorMessage(e)),
+  ), []);
   useEffect(() => { loadCategories(); }, [loadCategories]);
 
   async function loadSubcategories(categoryId: string) {
@@ -289,11 +285,7 @@ export default function GlobalInventoryClient() {
   function toggleSort(col: "id" | "name" | "category") {
     if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortBy(col); setSortDir("asc"); }
-  }
-
-  function SortIcon({ col }: { col: string }) {
-    if (sortBy !== col) return <IconSelector size={14} />;
-    return sortDir === "asc" ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />;
+    setPage(1);
   }
 
   function openCreate() {
@@ -377,17 +369,17 @@ export default function GlobalInventoryClient() {
 
         <Tabs.Panel value="catalog">
           <Group mb="md" justify="space-between" align="flex-end">
-            <TextInput aria-label="Search items" placeholder="Search by name, ID, category, or subcategory…" value={search} onChange={(e) => setSearch(e.currentTarget.value)} maw={400} />
-            <Checkbox label="Show archived parts" checked={showArchived} onChange={(e) => setShowArchived(e.currentTarget.checked)} />
+            <TextInput aria-label="Search items" placeholder="Search by name, ID, category, or subcategory…" value={search} onChange={(e) => { setSearch(e.currentTarget.value); setPage(1); }} maw={400} />
+            <Checkbox label="Show archived parts" checked={showArchived} onChange={(e) => { setShowArchived(e.currentTarget.checked); setPage(1); }} />
           </Group>
 
           {itemsError && <LoadError what="items" message={itemsError} onRetry={() => loadItems(debouncedSearch, sortBy, sortDir, showArchived, page)} />}
           {!itemsError && <Table striped highlightOnHover withTableBorder verticalSpacing="xs">
             <Table.Thead style={THEAD_STYLE}>
               <Table.Tr>
-                <Table.Th onClick={() => toggleSort("name")} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}><Group gap={4} wrap="nowrap">Name <SortIcon col="name" /></Group></Table.Th>
-                <Table.Th onClick={() => toggleSort("id")} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}><Group gap={4} wrap="nowrap">Part Number <SortIcon col="id" /></Group></Table.Th>
-                <Table.Th onClick={() => toggleSort("category")} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}><Group gap={4} wrap="nowrap">Category <SortIcon col="category" /></Group></Table.Th>
+                <Table.Th onClick={() => toggleSort("name")} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}><Group gap={4} wrap="nowrap">Name <SortIcon active={sortBy === "name"} dir={sortDir} /></Group></Table.Th>
+                <Table.Th onClick={() => toggleSort("id")} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}><Group gap={4} wrap="nowrap">Part Number <SortIcon active={sortBy === "id"} dir={sortDir} /></Group></Table.Th>
+                <Table.Th onClick={() => toggleSort("category")} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}><Group gap={4} wrap="nowrap">Category <SortIcon active={sortBy === "category"} dir={sortDir} /></Group></Table.Th>
                 <Table.Th>Subcategory</Table.Th>
                 <Table.Th>Usage</Table.Th>
                 {showArchived && <Table.Th>Archived</Table.Th>}
