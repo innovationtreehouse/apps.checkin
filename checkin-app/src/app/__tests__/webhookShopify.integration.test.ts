@@ -58,7 +58,6 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
     let p1: number;
     let p2: number;
     let h1: number;
-    let h2: number;
     let restoreBoardSettings: () => Promise<void> = async () => {};
 
     beforeAll(async () => {
@@ -80,10 +79,9 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         p1 = a.id;
         h1 = a.householdId;
         const b = await prisma.person.create({
-            data: { name: 'Hook P2', email: `p2-${TAG}@example.com`, household: { create: { name: "Test HH" } } },
+            data: { name: 'Hook P2', email: `p2-${TAG}@example.com`, household: { connect: { id: h1 } } },
         });
         p2 = b.id;
-        h2 = b.householdId;
 
         // Route now checks the order's line items against BoardSettings'
         // configured membership variant id(s) — seed one so the routing test
@@ -109,7 +107,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         await prisma.programParticipant.deleteMany({ where: { programId } });
         await prisma.program.delete({ where: { id: programId } });
         await prisma.person.deleteMany({ where: { id: { in: [p1, p2] } } });
-        await prisma.household.deleteMany({ where: { id: { in: [h1, h2] } } });
+        await prisma.household.deleteMany({ where: { id: h1 } });
     });
 
     async function setPending(participantId: number) {
@@ -387,6 +385,25 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
             expect(await exceptionKinds()).toEqual(['AMOUNT_MISMATCH']);
         });
 
+        it('activates nobody and raises MIXED_HOUSEHOLDS when the order names children of two households', async () => {
+            const other = await prisma.person.create({
+                data: { name: 'Other HH Child', email: `other-hh-${TAG}@example.com`, household: { create: { name: 'Other HH' } } },
+            });
+            try {
+                await setPending(p1);
+                await setPending(other.id);
+                const body = orderBody(555, `${p1},${other.id}`, 2);
+                await POST(webhookReq(body, sign(body)));
+                expect(await statusOf(p1)).toBe('PENDING');
+                expect(await statusOf(other.id)).toBe('PENDING');
+                expect(await exceptionKinds()).toEqual(['MIXED_HOUSEHOLDS']);
+            } finally {
+                await prisma.programParticipant.deleteMany({ where: { personId: other.id } });
+                await prisma.person.delete({ where: { id: other.id } });
+                await prisma.household.delete({ where: { id: other.householdId } });
+            }
+        });
+
         it.each([
             ['lacks the program variant', OTHER_VARIANT_ID, {}],
             ['was refunded', PROGRAM_VARIANT_ID, { financial_status: 'refunded' }],
@@ -447,12 +464,11 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         }
     });
 
-    it('still flags when a dues-settled person id is STUFFED into CheckMeIn_Account_ID by an unentitled enrollee', async () => {
+    it('activates nobody and raises MIXED_HOUSEHOLDS when a person from another household is STUFFED into CheckMeIn_Account_ID', async () => {
         // The permalink attack: CheckMeIn_Account_ID is customer-controlled, so the
         // attacker appends any settled person's id (autoincrement — easy to guess) to
-        // their own. That person is not enrolled in this program, so they cannot lend
-        // their entitlement; activateProgramEnrollment would ignore them and activate
-        // the attacker. Entitlement is judged over the DB's enrollees, not the payload.
+        // their own. One order pays for one household, so an order naming two goes
+        // to the board before any discount is judged.
         await setPending(p1);
         const outsider = await prisma.person.create({
             data: { name: 'Settled Outsider', email: `outsider-${TAG}@example.com`, household: { create: { name: 'Settled HH' } } },
@@ -467,9 +483,9 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                 where: { programId_personId: { programId, personId: p1 } },
             });
             expect(row?.status).toBe('PENDING');
-            expect(await prisma.paymentException.count({ where: { kind: 'DISCOUNT_UNAUTHORIZED', shopifyOrderId: '555' } })).toBe(1);
+            expect((await prisma.paymentException.findMany({ where: { shopifyOrderId: '555' } })).map((e) => e.kind)).toEqual(['MIXED_HOUSEHOLDS']);
         } finally {
-            await prisma.paymentException.deleteMany({ where: { kind: 'DISCOUNT_UNAUTHORIZED', shopifyOrderId: '555' } });
+            await prisma.paymentException.deleteMany({ where: { shopifyOrderId: '555' } });
             await prisma.orgMembership.deleteMany({ where: { householdId: outsider.householdId } });
             await prisma.person.delete({ where: { id: outsider.id } });
             await prisma.household.delete({ where: { id: outsider.householdId } });
@@ -492,6 +508,35 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
             expect(row?.status).toBe('ACTIVE');
             expect(await prisma.paymentException.count({ where: { kind: 'DISCOUNT_UNAUTHORIZED', shopifyOrderId: '555' } })).toBe(0);
         } finally {
+            await prisma.orgMembership.delete({ where: { id: membership.id } });
+        }
+    });
+
+    it('activates with a member code minted for this household when it is dues-settled', async () => {
+        await setPending(p1);
+        const membership = await prisma.orgMembership.create({ data: { householdId: h1, status: 'ACTIVE' } });
+        const body = programPayload(String(p1), PROGRAM_VARIANT_ID, [`PRG${programId}-H${h1}-ABCD1234`]);
+        try {
+            await POST(webhookReq(body, sign(body)));
+            const row = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId: p1 } } });
+            expect(row?.status).toBe('ACTIVE');
+            expect(await prisma.paymentException.count({ where: { shopifyOrderId: '555' } })).toBe(0);
+        } finally {
+            await prisma.orgMembership.delete({ where: { id: membership.id } });
+        }
+    });
+
+    it('flags DISCOUNT_UNAUTHORIZED when a settled household pays with a member code minted for another household', async () => {
+        await setPending(p1);
+        const membership = await prisma.orgMembership.create({ data: { householdId: h1, status: 'ACTIVE' } });
+        const body = programPayload(String(p1), PROGRAM_VARIANT_ID, [`PRG${programId}-H${h1 + 100000}-ABCD1234`]);
+        try {
+            await POST(webhookReq(body, sign(body)));
+            const row = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId: p1 } } });
+            expect(row?.status).toBe('PENDING');
+            expect((await prisma.paymentException.findMany({ where: { shopifyOrderId: '555' } })).map((e) => e.kind)).toEqual(['DISCOUNT_UNAUTHORIZED']);
+        } finally {
+            await prisma.paymentException.deleteMany({ where: { shopifyOrderId: '555' } });
             await prisma.orgMembership.delete({ where: { id: membership.id } });
         }
     });

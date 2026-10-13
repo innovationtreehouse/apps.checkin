@@ -1037,6 +1037,51 @@ describe('Program Participants API Integration Tests', () => {
             }
         });
 
+        // A comped or approved place (ACTIVE, no order) took its seat out of Shopify
+        // without a sale, so removing it puts the seat back (+1); a paid place on the
+        // same program does not (B8: paid withdrawals unchanged).
+        it.each([
+            ['comped/approved (no order)', null, true],
+            ['paid', 'order-paid-1', false],
+        ])('board removal of a %s place on a priced, capped program', async (_label, shopifyOrderId, returnsSeat) => {
+            const prevCheckinEnv = process.env.CHECKIN_ENV;
+            process.env.CHECKIN_ENV = 'local';
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            const shopifyProgram = await prisma.program.create({
+                data: {
+                    startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Comp Return Partic API Test',
+                    enrollmentStatus: 'OPEN', maxParticipants: 5, shopifyVariantId: 'dev-mock-variant-comp-return',
+                    orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000,
+                },
+            });
+            try {
+                await prisma.programParticipant.create({
+                    data: { programId: shopifyProgram.id, personId: commonId, status: 'ACTIVE', shopifyOrderId },
+                });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
+                        method: 'DELETE',
+                        headers: { cookie: 'session=test' },
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(shopifyProgram.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                const data = await res.json();
+                const plusOnes = logSpy.mock.calls.filter(([m]) => String(m).includes('Would adjust inventory by 1 ')).length;
+                expect(plusOnes).toBe(returnsSeat ? 1 : 0);
+                if (returnsSeat) expect(data.notice).toBeUndefined();
+                else expect(data.notice).toMatch(/NOT put back on sale automatically/i);
+            } finally {
+                logSpy.mockRestore();
+                process.env.CHECKIN_ENV = prevCheckinEnv;
+                await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
+                await prisma.program.delete({ where: { id: shopifyProgram.id } });
+            }
+        });
+
         // #1519: the lead mentor is authorized to remove the participant (same
         // seat-freeing outcome as staff above), but can't act on Shopify
         // inventory, so the advisory must not reach them.
@@ -1225,7 +1270,7 @@ describe('Program Participants API Integration Tests', () => {
                 update: { status: 'ACTIVE' },
             });
             try {
-                await expect(withdrawAndReleaseHold(freeProgramId, youthDepId, {}, 'PENDING'))
+                await expect(withdrawAndReleaseHold(freeProgramId, youthDepId, { maxParticipants: null, orgMemberPriceCents: null, nonOrgMemberPriceCents: null }, 'PENDING'))
                     .rejects.toMatchObject({ code: 'P2025' });
                 const row = await prisma.programParticipant.findUnique({
                     where: { programId_personId: { programId: freeProgramId, personId: youthDepId } },

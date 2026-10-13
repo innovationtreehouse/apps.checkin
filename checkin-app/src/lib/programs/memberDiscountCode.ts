@@ -3,14 +3,18 @@ import { isDuesSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
- * Canonical prefix of a program's minted member-discount code
- * (`PRG{programId}-XXXXXXXX`, always uppercase). Single home for the format:
- * the minter (mintMemberDiscountCode in lib/shopify.ts) builds codes with it
- * and the entitlement check below matches on it, so the encoder and decoder
- * cannot drift.
+ * Canonical prefix of a program's minted member-discount code. Single home for the
+ * format: the minter (mintMemberDiscountCode in lib/shopify.ts) builds codes with it
+ * and the entitlement check below matches on it, so the encoder and decoder cannot
+ * drift. A minted code is `PRG{programId}-H{householdId}-XXXXXXXX`, always uppercase:
+ * the household it was minted for is part of the code.
  */
 export function programMemberCodePrefix(programId: number): string {
     return `PRG${programId}-`;
+}
+
+export function householdMemberCodePrefix(programId: number, householdId: number): string {
+    return `${programMemberCodePrefix(programId)}H${householdId}-`;
 }
 
 /**
@@ -25,9 +29,24 @@ export function usesProgramMemberCode(discountCodes: string[], programId: number
 }
 
 /**
+ * The household a program member code on this order was minted for: a number, or
+ * null for a code that names none (minted before codes were household-bound).
+ */
+export function memberCodeHousehold(discountCodes: string[], programId: number): number | null {
+    const bound = new RegExp(`^${programMemberCodePrefix(programId)}H(\\d+)-`);
+    for (const c of discountCodes) {
+        const m = c.trim().toUpperCase().match(bound);
+        if (m) return parseInt(m[1], 10);
+    }
+    return null;
+}
+
+/**
  * Member-code entitlement, judged AT THE MONEY EVENT: true iff the paid order carries
- * this program's minted member code and NO enrollee's household is dues-settled through
- * the program's coverage date. Callers (the orders/paid webhook, and the reconciler's
+ * this program's minted member code and the household the code was minted for does
+ * not cover every enrollee, or is not dues-settled through the program's coverage
+ * date. A code minted before codes named a household falls back to "some enrollee's
+ * household is settled". Callers (the orders/paid webhook, and the reconciler's
  * forward pass recovering a missed one) flag DISCOUNT_UNAUTHORIZED and do not activate.
  *
  * `personIds` may come straight off the customer-controlled CheckMeIn_Account_ID cart
@@ -44,8 +63,8 @@ export function usesProgramMemberCode(discountCodes: string[], programId: number
  * PaymentException row is the durable judgement. Inherits isDuesSettledThrough's
  * fail-open when no membership-year boundary is configured.
  *
- * ACCEPTED WINDOW (named, not engineered away): a minted code lives 48h and is not
- * identity-bound, so entitlement can move between mint and checkout. We judge at
+ * ACCEPTED WINDOW (named, not engineered away): a minted code lives 48h, so
+ * entitlement can move between mint and checkout. We judge at
  * checkout, so a code minted while entitled but redeemed after the household lapses
  * is flagged at redemption — the intended answer, not a gap to close.
  */
@@ -68,11 +87,17 @@ export async function unentitledMemberCodeUse(
             person: LIVE_PERSON,
             OR: [{ status: "PENDING" }, ...(shopifyOrderId ? [{ shopifyOrderId }] : [])],
         },
-        select: { personId: true },
+        select: { personId: true, person: { select: { householdId: true } } },
     });
     const program = await prisma.program.findUnique({ where: { id: programId }, select: { startAt: true, endAt: true } });
     if (!program) return true;
     const through = programCoverageDate(program);
+    const boundHousehold = memberCodeHousehold(discountCodes, programId);
+    if (boundHousehold !== null) {
+        const [first] = enrolled;
+        if (!first || enrolled.some((e) => e.person.householdId !== boundHousehold)) return true;
+        return !(await isDuesSettledThrough(first.personId, through));
+    }
     // ponytail: per-person loop, not a batched query — one order enrols one household.
     for (const { personId } of enrolled) {
         if (await isDuesSettledThrough(personId, through)) return false;

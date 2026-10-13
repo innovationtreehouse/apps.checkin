@@ -26,7 +26,7 @@ export const CITEST_PREFIX = "citest-";
 
 /**
  * Reserved programId range for live-test discount codes: mintMemberDiscountCode
- * titles rules `PRG<programId>-XXXX`, so this range makes them janitor-recognizable.
+ * titles rules `PRG<programId>-H<householdId>-XXXX`, so this range makes them janitor-recognizable.
  */
 export const CITEST_PROGRAM_ID_BASE = 999_999_900;
 

@@ -374,19 +374,32 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
         } else if (isPayingOnShopify && program && variantId && storeDomain) {
           setSuccessMessage("Redirecting to Shopify for secure payment...");
           navigating = true;
-          // Single-pool model only: a member checking out gets a per-enrollee,
-          // single-use discount code minted server-side (the browser never has
-          // Shopify credentials to do this itself). Legacy two-variant programs
+          // Single-pool model only: a member checking out gets a single-use
+          // discount code minted server-side for their household (the browser never
+          // has Shopify credentials to do this itself). Legacy two-variant programs
           // already charged the right tier via the variant pick above — no code
-          // needed. Failure here is non-fatal: an undiscounted link is always a
-          // safe fallback (never blocks checkout), per lib/shopify.ts's
-          // mintMemberDiscountCode contract.
+          // needed. A mint failure is non-fatal: an undiscounted link is always a
+          // safe fallback, per lib/shopify.ts's mintMemberDiscountCode contract.
+          // A 400 is a refusal (children from another household) and stops checkout.
           let discountCode: string | null = null;
           if (pricingEligible) {
+            let refusal: string | null = null;
             try {
-              const discRes = await fetch(`/api/programs/${id}/discount-code`, { method: 'POST' });
+              const discRes = await fetch(`/api/programs/${id}/discount-code`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ participantIds: enrolledIds }),
+              });
               if (discRes.ok) discountCode = (await discRes.json()).code ?? null;
+              else if (discRes.status === 400) refusal = (await discRes.json()).error ?? "This checkout can't go ahead.";
             } catch { /* undiscounted link is an acceptable fallback */ }
+            if (refusal) {
+              navigating = false;
+              setSuccessMessage("");
+              setMessage(refusal);
+              fetchProgram();
+              return;
+            }
           }
           // qty=N single variant + comma-joined account ids — see buildShopifyCheckoutUrl.
           window.location.href = buildShopifyCheckoutUrl(storeDomain, variantId, enrolledIds, id, discountCode);

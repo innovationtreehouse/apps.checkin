@@ -223,9 +223,8 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // hold-ledger: invariants I1/I2/I3 (enrollmentState.ts) make a held seat
         // PENDING-and-scholarship only, and the lifecycle reconciler auto-heals
         // an ACTIVE+held row by releasing +1 — which would silently undo this
-        // decrement. A comp is a permanent consumption like a paid seat, and
-        // like a paid seat it is not auto-restocked on withdrawal (that stays a
-        // manual Shopify action, same as a refund). Uncapped programs track no
+        // decrement. Withdrawing a comp puts the seat back on sale (+1, see
+        // withdrawAndReleaseHold), unlike a paid seat. Uncapped programs track no
         // inventory (inventory_management=null), so only capped programs adjust;
         // adjustProgramInventory additionally no-ops when no variant is wired.
         let warning: string | undefined;
@@ -325,11 +324,9 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
             }
         }
 
-        // Hold-ledger: withdrawal is one of the three release paths — if this
-        // PENDING participant was holding a
-        // scholarship seat (inventoryHeldAt set), releasing it back to
-        // Shopify (+1) happens with the removal, exactly once (see
-        // withdrawAndReleaseHold).
+        // A seat taken out of Shopify without a payment — a scholarship hold, or
+        // a comped/approved place — goes back on sale (+1) with the removal,
+        // exactly once (see withdrawAndReleaseHold).
         let withdrawal: Awaited<ReturnType<typeof withdrawAndReleaseHold>>;
         try {
             withdrawal = await withdrawAndReleaseHold(programId, participantId, currentProgram, isHouseholdLeadPath ? 'PENDING' : undefined);
@@ -368,8 +365,8 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
             responseObj.warning = "Participant removed, but the Shopify inventory release failed. Capacity may be out of sync — check System Status > Link Status.";
         }
 
-        // Advise a manual Shopify restock only when an ACTIVE removal freed a
-        // tracked seat; `released` already handles the PENDING hold path (+1).
+        // Advise a manual Shopify restock only when a paid removal freed a
+        // tracked seat; `released` covers the holds and comps put back (+1).
         // Staff-only: a lead mentor or self-removing parent can't act on Shopify
         // inventory, so the advisory is noise (and a foot-gun) for them.
         const hasShopifyVariant = !!currentProgram.shopifyVariantId;

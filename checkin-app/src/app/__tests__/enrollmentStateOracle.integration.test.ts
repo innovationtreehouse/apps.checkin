@@ -79,6 +79,7 @@ describe('enrollment state — validator oracle over real transitions', () => {
                 inventoryHeldAt: fields.held ? now : null,
                 paymentPlanDeniedAt: fields.den ? now : null,
                 pendingSince: fields.pendingSince ?? now,
+                shopifyOrderId: null,
             },
             create: {
                 programId, personId: selfId,
@@ -211,6 +212,29 @@ describe('enrollment state — validator oracle over real transitions', () => {
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
         const { released } = await withdrawAndReleaseHold(programId, selfId, program);
         expect(released).toBe(true);
+        await assertGone();
+    });
+
+    it('T11 withdraw(comp/approved): ACTIVE with no order → ∅ (+1 on a priced, capped program)', async () => {
+        await seed({ req: false, held: false, den: false, status: 'ACTIVE' });
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        const capped = { ...program, maxParticipants: 5, orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000 };
+        const { released } = await withdrawAndReleaseHold(programId, selfId, capped);
+        expect(released).toBe(true);
+        await assertGone();
+    });
+
+    it('T11 on an uncapped program, and any paid place, returns nothing', async () => {
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        const priced = { ...program, orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000 };
+        await seed({ req: false, held: false, den: false, status: 'ACTIVE' });
+        expect((await withdrawAndReleaseHold(programId, selfId, { ...priced, maxParticipants: null })).released).toBe(false);
+        await seed({ req: false, held: false, den: false, status: 'ACTIVE' });
+        await prisma.programParticipant.update({
+            where: { programId_personId: { programId, personId: selfId } },
+            data: { shopifyOrderId: 'order-paid-t11' },
+        });
+        expect((await withdrawAndReleaseHold(programId, selfId, { ...priced, maxParticipants: 5 })).released).toBe(false);
         await assertGone();
     });
 

@@ -573,6 +573,40 @@ describe("ProgramEnrollmentPage", () => {
         );
     });
 
+    // One order pays for one household: the server refuses a mixed checkout and the
+    // page shows its message instead of redirecting.
+    it("sends the checkout's children for the discount code and stops on a refusal", async () => {
+        setSession({ id: 101 });
+        setShopifyStoreDomain("shop.example.com");
+        const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
+        const routes = mockFetchJson({
+            "/api/household": memberHousehold,
+            "/api/programs/10": baseProgram({
+                orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null,
+                shopifyVariantId: "gid://single-pool",
+            }),
+            "/api/programs/10/participants": { ok: true },
+        });
+        const refusal = "Everyone in one checkout must be from your household. Pay for each household separately.";
+        const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+            String(input).includes("/discount-code")
+                ? ({ ok: false, status: 400, json: async () => ({ error: refusal }) } as Response)
+                : routes(input, init),
+        );
+        global.fetch = fetchMock as unknown as typeof fetch;
+        renderPage();
+        await screen.findByText("Robotics Club");
+        fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+        await screen.findByText("Which of your household wants to enroll?");
+        await selectMember("Kid One");
+        fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
+
+        expect(await screen.findByText(refusal)).toBeInTheDocument();
+        expect(screen.queryByText("Redirecting to Shopify for secure payment...")).not.toBeInTheDocument();
+        const discountCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/discount-code"));
+        expect(JSON.parse(String(discountCall?.[1]?.body)).participantIds).toHaveLength(1);
+    });
+
     // The payment-pending resume path: an already-enrolled-but-unpaid household
     // must be able to re-run checkout (participants POST 409s -> folded back in;
     // a FRESH single-use discount code is minted — the old one is 48h/one-use).

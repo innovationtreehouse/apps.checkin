@@ -45,9 +45,11 @@ export async function lockProgramAndCheckCapacity(
 }
 
 /**
- * Delete a PENDING participant and release its scholarship inventory hold
- * (+1), exactly once. This is the ONE implementation of "exit a participant"
- * shared by every code path that does it — manual self/admin withdrawal
+ * Delete a participant and put its seat back on sale (+1) when the seat was
+ * taken out of Shopify without a payment, exactly once: a scholarship hold
+ * (inventoryHeldAt set), or a comped/approved place (see isUnpaidPlace). A paid
+ * place returns nothing; a person decides that at the store. This is the ONE
+ * implementation of "exit a participant" shared by every code path that does it — manual self/admin withdrawal
  * (DELETE /api/programs/[id]/participants), the non-payment kick
  * (cron/pending-participants), and grace-period auto-withdrawal
  * (cron/scholarship-grace-expiry) — so the hold-ledger invariant (every
@@ -74,14 +76,14 @@ export async function lockProgramAndCheckCapacity(
 export async function withdrawAndReleaseHold(
     programId: number,
     personId: number,
-    program: { shopifyVariantId?: string | null },
+    program: ReleaseProgram,
     onlyStatus?: ProgramParticipantStatus,
 ): Promise<{ enrollment: ProgramParticipant; released: boolean; shopifyOk: boolean }> {
     const enrollment = await prisma.programParticipant.delete({
         where: { programId_personId: { programId, personId }, ...(onlyStatus && { status: onlyStatus }) },
     });
 
-    if (!enrollment.inventoryHeldAt) {
+    if (!enrollment.inventoryHeldAt && !isUnpaidPlace(enrollment, program)) {
         return { enrollment, released: false, shopifyOk: true };
     }
 
@@ -96,4 +98,21 @@ export async function withdrawAndReleaseHold(
 
     const shopifyOk = await adjustProgramInventory(program, 1);
     return { enrollment, released: true, shopifyOk };
+}
+
+type ReleaseProgram = {
+    shopifyVariantId?: string | null;
+    maxParticipants: number | null;
+    orgMemberPriceCents: number | null;
+    nonOrgMemberPriceCents: number | null;
+};
+
+/**
+ * A comped or approved place: ACTIVE with no order behind it, on a priced, capped
+ * program. Its seat came out of Shopify at comp/apply time, so withdrawal returns
+ * it. A free program's place never took one out; an uncapped program counts none.
+ */
+function isUnpaidPlace(row: ProgramParticipant, program: ReleaseProgram): boolean {
+    const priced = (program.orgMemberPriceCents ?? 0) > 0 || (program.nonOrgMemberPriceCents ?? 0) > 0;
+    return row.status === "ACTIVE" && row.shopifyOrderId === null && program.maxParticipants !== null && priced;
 }

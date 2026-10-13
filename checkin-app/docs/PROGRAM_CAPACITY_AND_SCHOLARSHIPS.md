@@ -56,7 +56,7 @@ state: non-null means a hold is outstanding.
                  apply    │              │  approve
         PENDING ───────►  │  HELD        │ ───────────►  ACTIVE (comped)
      (no hold)   -1       │ (inventoryHeldAt set)        inventoryHeldAt -> null
-                          │              │               (hold CONSUMED, no +1 ever)
+                          │              │               (hold CONSUMED; +1 on withdrawal)
                           └──────┬───────┘
                                  │ deny (no Shopify op)
                                  ▼
@@ -99,9 +99,9 @@ email — see §5.
 No Shopify operation either (the seat was already taken out of the pool at application
 time) — approval only stops billing the applicant. It additionally clears
 `inventoryHeldAt` to `null` **without** a `+1`: the hold is **consumed**, not released. An
-approved participant is a permanent comped enrollment; if they're later removed from the
-program, that removal must not credit a seat back that was never returned to Shopify. Sends
-no automatic email — see §5.
+approved participant is a comped enrollment (`ACTIVE`, no order). Removing one later puts
+the seat back on sale (`+1`) like any comped place — see "Withdrawing a comped place"
+below. Sends no automatic email — see §5.
 
 ### Release, exactly once — three paths
 
@@ -111,6 +111,11 @@ All three share one implementation, `withdrawAndReleaseHold`
 boundary — a given row can be deleted at most once, so double-release across concurrent
 callers isn't possible; a second delete attempt hits Prisma P2025 and is treated as an
 idempotent no-op by every caller.
+
+**Withdrawing a comped place.** The same function returns the seat (`+1`) when the deleted
+row is `ACTIVE` with no `shopifyOrderId` (an admin comp or an approved scholarship) on a
+priced, capped program: its seat left Shopify at comp or apply time without a sale. A paid
+place returns nothing; the board restocks it by hand if it wants to.
 
 **Failure semantics (best-effort, not transactional).** The DB write and the Shopify
 call cannot share a transaction, so "every −1 comes back +1 exactly once" is guaranteed

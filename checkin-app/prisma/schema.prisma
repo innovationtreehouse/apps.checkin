@@ -1685,6 +1685,9 @@ enum PaymentExceptionKind {
   // A paid program order buys seats no pending enrollment uses (withdrawn,
   // expired, or extra quantity). Inventory is left for the board to settle.
   UNCLAIMED_SEATS
+  // A paid program order names children from more than one household. One order
+  // pays for one household, so nobody is activated; the board decides.
+  MIXED_HOUSEHOLDS
 }
 
 enum PaymentExceptionSeverity {
