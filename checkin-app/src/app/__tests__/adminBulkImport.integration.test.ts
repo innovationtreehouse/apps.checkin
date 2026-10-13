@@ -76,6 +76,7 @@ describe('Admin Bulk Import API Integration Tests', () => {
         try {
             // Clean up participants created during tests
             await prisma.auditLog.deleteMany({ where: { actorId: testAdminId } });
+            await prisma.paymentException.deleteMany({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY' } });
             await prisma.orgMembership.deleteMany({});
             await prisma.person.deleteMany({
                 where: { email: { contains: 'batch-import-test' } }
@@ -302,7 +303,7 @@ describe('Admin Bulk Import API Integration Tests', () => {
             expect(await prisma.person.findFirst({ where: { name: 'Off Batch Import Test' } })).toBeNull();
         });
 
-        it('moves a NONE household to ACTIVE with an audit row, and never overwrites DENIED', async () => {
+        it('moves a NONE household to ACTIVE with an audit row; a DENIED one is left alone and raised to the board', async () => {
             const noneParent = await prisma.person.create({
                 data: { email: 'none-parent-batch-import-test@example.com', name: 'None Parent Batch Import Test', household: { create: { name: 'None Batch Household' } } }
             });
@@ -323,6 +324,7 @@ describe('Admin Bulk Import API Integration Tests', () => {
 
             expect((await prisma.orgMembership.findUnique({ where: { householdId: noneParent.householdId } }))?.status).toBe('ACTIVE');
             expect((await prisma.orgMembership.findUnique({ where: { householdId: deniedParent.householdId } }))?.status).toBe('DENIED');
+            expect(await prisma.paymentException.findFirst({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: deniedParent.id } })).not.toBeNull();
             const audit = await prisma.auditLog.findFirst({ where: { tableName: 'OrgMembership', affectedEntityId: noneMembership.id } });
             expect(audit).toMatchObject({ actorId: testAdminId, oldData: { status: 'NONE' }, newData: { status: 'ACTIVE' } });
         });

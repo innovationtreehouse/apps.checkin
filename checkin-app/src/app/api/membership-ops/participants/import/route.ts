@@ -12,6 +12,8 @@ import { LIVE_PERSON } from "@/lib/person/filters";
 import { mintPersonId } from "@/lib/person/mintId";
 import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 import { config } from "@/lib/config";
+import { ensureHouseholdMembership, raiseDeniedHouseholdActivity, setHouseholdStatus } from "@/lib/membership/householdStatus";
+import { personActor } from "@/lib/auditActor";
 
 export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (req: NextRequest, auth) => {
     if (!config.csvImportEnabled()) {
@@ -127,41 +129,29 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         // Helper: mark an imported household ACTIVE. Import may only move a
         // household NONE → ACTIVE; any other status (REVOKED, DENIED) is a board
         // decision import must not overwrite, so it returns a reason for the
-        // operator instead. Returns null when the household is (now) ACTIVE.
-        const ensureHouseholdMembership = async (
-            householdId: number,
-            db: DbClient = prisma,
-        ): Promise<string | null> => {
-            const existing = await db.orgMembership.findUnique({ where: { householdId } });
+        // operator instead (and a DENIED one also goes to the board). Returns null
+        // when the household is (now) ACTIVE.
+        const activateImportedHousehold = async (householdId: number): Promise<string | null> => {
+            const existing = await prisma.orgMembership.findUnique({ where: { householdId }, select: { status: true } });
             const from = existing?.status ?? 'NONE';
             if (from === 'ACTIVE') return null;
+            if (from === 'DENIED') {
+                await raiseDeniedHouseholdActivity({ householdId, what: 'CSV import tried to make this household ACTIVE' });
+            }
             if (from !== 'NONE') {
                 return `household ${householdId} is ${from}; import does not change that status — a board member must handle it.`;
             }
             if (sharesHousehold(actorHouseholdId, householdId)) {
                 return `household ${householdId} is your own — someone outside your household must activate it.`;
             }
-            // ponytail: direct NONE → ACTIVE write; swaps to setHouseholdStatus once the household status machine lands.
-            if (existing) {
-                const { count } = await db.orgMembership.updateMany({
-                    where: { householdId, status: 'NONE' },
-                    data: { status: 'ACTIVE' },
-                });
-                if (count !== 1) throw new Error(`household ${householdId} membership changed during import`);
-            }
-            const membership = existing ?? await db.orgMembership.create({ data: { householdId, status: 'ACTIVE' } });
-            await db.auditLog.create({
-                data: {
-                    actorId: auth.user.id,
-                    action: existing ? "EDIT" : "CREATE",
-                    tableName: "OrgMembership",
-                    affectedEntityId: membership.id,
-                    secondaryAffectedEntity: householdId,
-                    oldData: { status: from },
-                    newData: { status: 'ACTIVE', source: 'csv-import' },
-                },
+            const membership = await ensureHouseholdMembership(prisma, householdId);
+            const applied = await setHouseholdStatus(prisma, membership.id, {
+                from: ['NONE'],
+                to: 'ACTIVE',
+                actor: personActor(auth.user.id),
+                reason: 'csv-import',
             });
-            return null;
+            return applied ? null : `household ${householdId} changed status during the import; nothing was written.`;
         };
 
         // Parse all rows first
@@ -499,7 +489,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 const participant = await prisma.person.findUnique({ where: { id: pr.participantId }, select: { householdId: true } });
                 if (!participant || activated.has(participant.householdId)) continue;
                 activated.add(participant.householdId);
-                const refusal = await ensureHouseholdMembership(participant.householdId);
+                const refusal = await activateImportedHousehold(participant.householdId);
                 if (refusal) errors.push(`Row ${pr.index + 2} (${pr.fullName}): membership not set: ${refusal}`);
             } catch (err: unknown) {
                 logger.error(`Error in pass 3 for row ${pr.index + 2}:`, err);
