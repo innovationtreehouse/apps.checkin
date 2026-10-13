@@ -75,8 +75,14 @@ describe('PATCH /api/finance-ops/payments/[id] — own-household guard', () => {
         exception.processId = 3;
         (prisma.orgMembershipProcess.findUnique as jest.Mock).mockResolvedValue({
             orgMembership: { householdId: ACTOR_HOUSEHOLD },
-            subjectPerson: null,
+            subjectPersonId: null,
         });
+        expect((await call()).status).toBe(403);
+    });
+
+    it("refuses an exception whose background-check subject is in the actor's household", async () => {
+        exception.processId = 3;
+        (prisma.orgMembershipProcess.findUnique as jest.Mock).mockResolvedValue({ orgMembership: null, subjectPersonId: 21 });
         expect((await call()).status).toBe(403);
     });
 

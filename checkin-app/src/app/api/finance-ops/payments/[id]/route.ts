@@ -5,6 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 import { ordersByLegacyIds, type MirrorOrder } from "@/lib/shopifyRead/client";
+import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
  * PATCH /api/finance-ops/payments/[id] — the board acknowledges or resolves one
@@ -98,18 +99,20 @@ async function exceptionConflict(id: number, actorId: number): Promise<boolean |
     if (!exception) return false; // the update below 409s
 
     const subjectHouseholds: (number | null | undefined)[] = [];
-    if (exception.personId !== null) {
-        if (exception.personId === actorId) return true;
-        const person = await prisma.person.findUnique({ where: { id: exception.personId }, select: { householdId: true } });
-        subjectHouseholds.push(person?.householdId);
-    }
+    const subjectPersonIds: (number | null)[] = [exception.personId];
     if (exception.processId !== null) {
         const process = await prisma.orgMembershipProcess.findUnique({
             where: { id: exception.processId },
-            select: { orgMembership: { select: { householdId: true } }, subjectPerson: { select: { id: true, householdId: true } } },
+            select: { orgMembership: { select: { householdId: true } }, subjectPersonId: true },
         });
-        if (process?.subjectPerson?.id === actorId) return true;
-        subjectHouseholds.push(process?.orgMembership?.householdId, process?.subjectPerson?.householdId);
+        subjectHouseholds.push(process?.orgMembership?.householdId);
+        subjectPersonIds.push(process?.subjectPersonId ?? null);
+    }
+    for (const personId of subjectPersonIds) {
+        if (personId === null) continue;
+        if (personId === actorId) return true;
+        const person = await prisma.person.findUnique({ where: { id: personId }, select: { householdId: true } });
+        subjectHouseholds.push(person?.householdId);
     }
     if (exception.shopifyOrderId !== null) {
         let orders: MirrorOrder[];
@@ -122,7 +125,7 @@ async function exceptionConflict(id: number, actorId: number): Promise<boolean |
         const payerEmail = orders[0]?.customerEmail;
         if (payerEmail) {
             const payer = await prisma.person.findFirst({
-                where: { email: { equals: payerEmail, mode: 'insensitive' } },
+                where: { email: { equals: payerEmail, mode: 'insensitive' }, ...LIVE_PERSON },
                 select: { id: true, householdId: true },
             });
             if (payer?.id === actorId) return true;
