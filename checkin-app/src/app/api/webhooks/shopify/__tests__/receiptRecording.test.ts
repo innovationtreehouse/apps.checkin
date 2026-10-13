@@ -71,12 +71,20 @@ beforeEach(() => {
     jest.clearAllMocks();
     auditCreate.mockResolvedValue({});
     boardSettingsFindUnique.mockResolvedValue(null);
-    activate.mockResolvedValue({ status: 'ACTIVE' });
+    activate.mockResolvedValue({ outcome: 'active', process: { status: 'ACTIVE' } });
     prisma.auditLog.create = auditCreate as unknown as typeof prisma.auditLog.create;
     prisma.boardSettings.findUnique = boardSettingsFindUnique as unknown as typeof prisma.boardSettings.findUnique;
 });
 
 describe('POST /api/webhooks/shopify — delivery receipts', () => {
+    it('never settles a membership from a Shopify test order', async () => {
+        const body = JSON.stringify({ ...JSON.parse(MEMBERSHIP_BODY), test: true });
+        const res = await POST(webhookReq(body, sign(body)));
+        expect(res.status).toBe(200);
+        expect(activate).not.toHaveBeenCalled();
+        expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({ test: true, outcome: 'test order for process 12 — ignored' });
+    });
+
     it('records a valid membership delivery with hmacValid true and a settled outcome', async () => {
         const res = await POST(webhookReq(MEMBERSHIP_BODY, sign(MEMBERSHIP_BODY)));
         expect(res.status).toBe(200);
@@ -91,7 +99,7 @@ describe('POST /api/webhooks/shopify — delivery receipts', () => {
             hmacValid: true,
             test: false,
             orderId: '999001',
-            outcome: 'settled process 12',
+            outcome: 'process 12: active',
         });
     });
 

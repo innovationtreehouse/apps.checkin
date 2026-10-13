@@ -91,8 +91,9 @@ export const download: DonationFileRouteHandler = async ({ req, params }) => {
   return { row: file, contentType: "text/plain", filename: file.originalFilename };
 };
 
-export const deleteBlob: DonationRouteHandler = async ({ params }) => {
+export const deleteBlob: DonationRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
   const orgId = await getOrgId();
-  return { UploadedFile: await mapServiceErrors(() => uploadedFileService.deleteBlob(orgId, id)) };
+  const audit = await auditContext(req);
+  return { UploadedFile: await mapServiceErrors(() => uploadedFileService.deleteBlob(orgId, id, audit)) };
 };

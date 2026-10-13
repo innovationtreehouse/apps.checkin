@@ -43,6 +43,8 @@ jest.mock('@/lib/prisma', () => ({
     default: {
         person: { findUnique: jest.fn(), update: jest.fn(), create: jest.fn() },
         household: { create: jest.fn() },
+        personRole: { count: jest.fn().mockResolvedValue(0) },
+        auditLog: { count: jest.fn().mockResolvedValue(0) },
         // createParticipantWithHousehold mints the person id through
         // mintPersonId(tx), which is one $queryRaw on the tx client (#1693).
         $queryRaw: jest.fn().mockResolvedValue([{ value: 2503 }]),
@@ -64,7 +66,7 @@ jest.mock('@/lib/roles', () => ({
 // jest.setup.js globally mocks @/lib/auth-options to `{}`; unmock to get the real callbacks.
 jest.unmock('@/lib/auth-options');
 
-import { authOptions, PERSONA_MINT_PROVIDER_ID } from '@/lib/auth-options';
+import { authOptions, PERSONA_MINT_PROVIDER_ID, SESSION_MAX_AGE_SECONDS } from '@/lib/auth-options';
 import { FLAG_TO_KIND, type RoleFlag } from '@/lib/roles';
 
 const mockFindUnique = (prisma as unknown as { person: { findUnique: jest.Mock } })
@@ -197,10 +199,61 @@ describe('jwt() callback — revocation enforcement on refresh', () => {
     });
 
     it('no token.id and no user ⇒ no DB lookup, token passed through untouched', async () => {
-        const result = await callRefresh({ hd: 'x', emailVerified: true });
+        const signedInAt = Math.floor(Date.now() / 1000);
+        const result = await callRefresh({ hd: 'x', emailVerified: true, signedInAt });
 
         expect(mockFindUnique).not.toHaveBeenCalled();
-        expect(result).toEqual({ hd: 'x', emailVerified: true });
+        expect(result).toEqual({ hd: 'x', emailVerified: true, signedInAt });
+    });
+});
+
+describe('jwt() callback — absolute session lifetime', () => {
+    const nowSeconds = () => Math.floor(Date.now() / 1000);
+
+    it('stamps signedInAt at sign-in', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant());
+        const before = nowSeconds();
+
+        const result = (await jwt({
+            token: {},
+            user: { email: 'p@example.com' },
+            account: { provider: 'google' },
+            profile: { email_verified: true },
+        } as unknown as Parameters<JwtCallback>[0])) as Record<string, unknown>;
+
+        expect(result.signedInAt).toBeGreaterThanOrEqual(before);
+    });
+
+    it('keeps refreshing a session younger than the limit', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant());
+        const signedInAt = nowSeconds() - SESSION_MAX_AGE_SECONDS + 60;
+
+        const result = (await callRefresh({ id: 7, signedInAt })) as Record<string, unknown>;
+
+        expect(result.id).toBe(7);
+        expect(result.isSysadmin).toBe(true);
+        expect(result.signedInAt).toBe(signedInAt);
+    });
+
+    it('ends a session once the limit passes, however recently it refreshed', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant());
+
+        const result = await callRefresh({
+            id: 7, isSysadmin: true, signedInAt: nowSeconds() - SESSION_MAX_AGE_SECONDS,
+        });
+
+        expect(result).toEqual({});
+        expect(mockFindUnique).not.toHaveBeenCalled();
+    });
+
+    it('starts the clock on a token that predates signedInAt', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant());
+        const before = nowSeconds();
+
+        const result = (await callRefresh({ id: 7 })) as Record<string, unknown>;
+
+        expect(result.id).toBe(7);
+        expect(result.signedInAt).toBeGreaterThanOrEqual(before);
     });
 });
 
@@ -265,23 +318,28 @@ describe('jwt() callback — initial sign-in branch (user present)', () => {
         );
     });
 
-    it('promotes a BOOTSTRAP_SYSADMINS email to isSysadmin on sign-in', async () => {
+    // Signs boss@example.com in with BOOTSTRAP_SYSADMINS set, against a system holding
+    // `sysadmins` SYSADMIN rows and `revocations` past isSysadmin revocations for this person.
+    async function bootstrapSignIn(sysadmins: number, revocations: number) {
         const prevEnv = process.env.BOOTSTRAP_SYSADMINS;
         process.env.BOOTSTRAP_SYSADMINS = 'Boss@Example.com';
         let freshJwt!: JwtCallback;
-        let freshFindUnique!: jest.Mock;
         let freshSetRoleFlag!: jest.Mock;
         try {
             jest.isolateModules(() => {
                 // Fresh module registry so BOOTSTRAP_SYSADMINS is re-read from the env just set above.
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                const freshPrisma = (require('@/lib/prisma') as { default: { person: { findUnique: jest.Mock; update: jest.Mock } } }).default;
-                freshFindUnique = freshPrisma.person.findUnique;
-                freshFindUnique.mockResolvedValue(dbParticipant({ isSysadmin: false, email: 'boss@example.com' }));
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                freshSetRoleFlag = (require('@/lib/roles') as { setRoleFlag: jest.Mock }).setRoleFlag;
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                freshJwt = (require('@/lib/auth-options') as typeof import('@/lib/auth-options')).authOptions.callbacks!.jwt!;
+                const freshPrisma = (jest.requireMock('@/lib/prisma') as {
+                    default: {
+                        person: { findUnique: jest.Mock };
+                        personRole: { count: jest.Mock };
+                        auditLog: { count: jest.Mock };
+                    };
+                }).default;
+                freshPrisma.person.findUnique.mockResolvedValue(dbParticipant({ isSysadmin: false, email: 'boss@example.com' }));
+                freshPrisma.personRole.count.mockResolvedValue(sysadmins);
+                freshPrisma.auditLog.count.mockResolvedValue(revocations);
+                freshSetRoleFlag = (jest.requireMock('@/lib/roles') as { setRoleFlag: jest.Mock }).setRoleFlag;
+                freshJwt = (jest.requireActual('@/lib/auth-options') as typeof import('@/lib/auth-options')).authOptions.callbacks!.jwt!;
             });
 
             const result = (await freshJwt({
@@ -290,22 +348,41 @@ describe('jwt() callback — initial sign-in branch (user present)', () => {
                 account: { provider: 'google' },
                 profile: { email_verified: true },
             } as unknown as Parameters<JwtCallback>[0])) as Record<string, unknown>;
-
-            // Env comparison is case-insensitive (BOOTSTRAP_SYSADMINS is lowercased on parse).
-            // The bootstrap promotion routes through the same write choke point every role
-            // grant uses (lib/roles.ts setRoleFlag), passing a named system actor — not a
-            // direct person.update, and not the matrix (there's no requesting user to check).
-            expect(freshSetRoleFlag).toHaveBeenCalledWith(
-                expect.anything(),
-                7,
-                'isSysadmin',
-                true,
-                { system: 'system:bootstrap-sysadmin' },
-            );
-            expect(result.isSysadmin).toBe(true);
+            return { result, setRoleFlag: freshSetRoleFlag };
         } finally {
             process.env.BOOTSTRAP_SYSADMINS = prevEnv;
         }
+    }
+
+    it('promotes a BOOTSTRAP_SYSADMINS email to isSysadmin while no sysadmin exists', async () => {
+        const { result, setRoleFlag } = await bootstrapSignIn(0, 0);
+
+        // Env comparison is case-insensitive (BOOTSTRAP_SYSADMINS is lowercased on parse).
+        // The bootstrap promotion routes through the same write choke point every role
+        // grant uses (lib/roles.ts setRoleFlag), which writes the AuditLog row under this
+        // named system actor.
+        expect(setRoleFlag).toHaveBeenCalledWith(
+            expect.anything(),
+            7,
+            'isSysadmin',
+            true,
+            { system: 'system:bootstrap-sysadmin' },
+        );
+        expect(result.isSysadmin).toBe(true);
+    });
+
+    it('does not promote a BOOTSTRAP_SYSADMINS email once any sysadmin exists', async () => {
+        const { result, setRoleFlag } = await bootstrapSignIn(1, 0);
+
+        expect(setRoleFlag).not.toHaveBeenCalled();
+        expect(result.isSysadmin).toBe(false);
+    });
+
+    it('never re-grants a BOOTSTRAP_SYSADMINS email whose isSysadmin was revoked', async () => {
+        const { result, setRoleFlag } = await bootstrapSignIn(0, 1);
+
+        expect(setRoleFlag).not.toHaveBeenCalled();
+        expect(result.isSysadmin).toBe(false);
     });
 
     it('does not re-promote a participant already isSysadmin', async () => {

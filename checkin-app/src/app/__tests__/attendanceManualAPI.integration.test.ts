@@ -14,6 +14,12 @@ import { getServerSession } from 'next-auth/next';
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn()
 }));
+// The route fires check-in notifications without awaiting; stub them so no
+// query outlives the suite's teardown.
+jest.mock('@/lib/notifications', () => ({
+    ...jest.requireActual('@/lib/notifications'),
+    sendCheckinNotifications: jest.fn().mockResolvedValue(undefined),
+}));
 describe('Manual Attendance API Integration Tests', () => {
     let testUserId: number;
     let testHouseholdId: number;
@@ -127,6 +133,48 @@ describe('Manual Attendance API Integration Tests', () => {
             expect(res.status).toBe(400);
             const data = await res.json();
             expect(data.error).toBe('Departure time must be after arrival time');
+        });
+
+        it('should return 400 if departure time is in the future beyond the skew allowance', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testUserId }
+            });
+
+            const arrivedAt = new Date(Date.now() - 3600000);
+            const departedAt = new Date(Date.now() + 60 * 60 * 1000);
+
+            const req = new Request('http://localhost:4000/api/attendance/manual', {
+                method: 'POST',
+                body: JSON.stringify({ arrivedAt: arrivedAt.toISOString(), departedAt: departedAt.toISOString() })
+            });
+
+            const res = await POST(req as unknown as import("next/server").NextRequest);
+            expect(res.status).toBe(400);
+            const data = await res.json();
+            expect(data.error).toBe('Departure time cannot be in the future.');
+        });
+
+        it('clamps a departure inside the skew allowance back to now', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testUserId }
+            });
+
+            const arrivedAt = new Date(Date.now() - 3600000);
+            const departedAt = new Date(Date.now() + 2 * 60 * 1000);
+
+            const req = new Request('http://localhost:4000/api/attendance/manual', {
+                method: 'POST',
+                body: JSON.stringify({ arrivedAt: arrivedAt.toISOString(), departedAt: departedAt.toISOString() })
+            });
+
+            const res = await POST(req as unknown as import("next/server").NextRequest);
+            expect(res.status).toBe(201);
+            const visit = await prisma.visit.findFirst({
+                where: { personId: testUserId, arrivedAt },
+                orderBy: { id: 'desc' }
+            });
+            expect(visit?.departedAt).not.toBeNull();
+            expect(visit!.departedAt!.getTime()).toBeLessThanOrEqual(Date.now());
         });
 
         it('should successfully record a manual visit with both arrivedAt and departedAt defined', async () => {

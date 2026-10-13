@@ -5,6 +5,7 @@ import {
 } from "@mantine/core";
 import { formatCents } from "@inventory/money";
 import { STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
+import { reimburseeUnknown } from "../lib/signoff";
 import { send, useBuckets, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
 
@@ -124,6 +125,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses" }
 
   const capitalRows = e.lineItems.map((l) => ({ line: l, value: capital[l.id] ?? { isCapital: l.isCapital, years: l.depreciationYears ?? "", owner: l.capitalOwnerId ? String(l.capitalOwnerId) : "" } }));
   const needsBucket = dialog && ["finance-assign", "assign-owner", "resolve-unknown"].includes(dialog.action);
+  // The reimbursee is FINANCE-only; when the response omits it the server stays the only check.
+  const held = e.reimburseePersonId !== undefined
+    && reimburseeUnknown({ needsReimbursement: e.needsReimbursement, backfill: e.backfill, reimburseePersonId: e.reimburseePersonId });
 
   return (
     <Stack>
@@ -174,10 +178,11 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses" }
                     <Stack gap={2}>
                       {s.filled.map((seat) => <Text key={seat} size="xs">✓ {SEAT_LABEL[seat] ?? seat}</Text>)}
                       {s.missing.map((seat) => (
-                        <Button key={seat} size="compact-xs" variant="outline" onClick={() => void sign(l.id, seat)}>
+                        <Button key={seat} size="compact-xs" variant="outline" disabled={held} onClick={() => void sign(l.id, seat)}>
                           Sign as {SEAT_LABEL[seat] ?? seat}
                         </Button>
                       ))}
+                      {held && s.missing.length > 0 && <Text size="xs" c="dimmed">Held until FINANCE sets the reimbursee</Text>}
                       {s.blocked.length > 0 && <Text size="xs" c="red">Held: {s.blocked.map((x) => SEAT_LABEL[x] ?? x).join(", ")}</Text>}
                     </Stack>
                   ) : "—"}
@@ -201,13 +206,15 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses" }
       {isFinance && e.needsReimbursement && !e.backfill && (
         <Paper withBorder p="sm">
           <Text fw={600} mb="xs">Reimbursee {e.reimburseePersonId ? `(person #${e.reimburseePersonId})` : "(unknown — held)"}</Text>
-          <Group>
-            <TextInput placeholder="Person id" value={reimbursee} onChange={(ev) => setReimbursee(ev.currentTarget.value)} />
-            <Button
-              disabled={!/^\d+$/.test(reimbursee)}
-              onClick={async () => { if (await send(`${base}/reimbursee`, "PUT", { personId: Number(reimbursee) }, "Reimbursee set")) reloadAll(); }}
-            >Set reimbursee</Button>
-          </Group>
+          {!e.reimburseePersonId && (
+            <Group>
+              <TextInput placeholder="Person id" value={reimbursee} onChange={(ev) => setReimbursee(ev.currentTarget.value)} />
+              <Button
+                disabled={!/^\d+$/.test(reimbursee)}
+                onClick={async () => { if (await send(`${base}/reimbursee`, "PUT", { personId: Number(reimbursee) }, "Reimbursee set")) reloadAll(); }}
+              >Set reimbursee</Button>
+            </Group>
+          )}
         </Paper>
       )}
 

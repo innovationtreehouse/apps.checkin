@@ -11,6 +11,7 @@ import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
 import { checkApprovalAutoTransition } from "../../lib/financial-flow";
 import { setDepreciationCycle, seedCapitalAssets, submitCapitalReview } from "../../services/capitalService";
 import { checkOffFlag, listOpenFlags, raiseFlag } from "../../services/flagService";
+import { expenseOpsCounts } from "../../services/badgeCounts";
 import { excludeQbTxn, qbMatchInputs } from "../../services/qbMatchService";
 
 const FINANCE = principal(3, { isFinance: true });
@@ -176,7 +177,7 @@ describeDb("sign-off seats", () => {
 
       await signLine(principal(1), li, "SUBMITTER");
       await signLine(principal(2), li, "PROGRAM_APPROVER");
-      await signLine(FINANCE, li, "TREASURER");
+      await signLine(principal(9, { isFinance: true }), li, "TREASURER");
       expect(await events(id)).toBe(1);
     });
 
@@ -197,22 +198,6 @@ describeDb("sign-off seats", () => {
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
     });
 
-    it("a sign-off by someone the new reimbursee conflicts is voided and must be re-signed", async () => {
-      const { id, li } = await reimburseeLine({ approvers: [10] }, 7);
-      await signLine(principal(1), li, "SUBMITTER");
-      await signLine(principal(10), li, "PROGRAM_APPROVER");
-
-      await setReimbursee(ORG, id, 9, FINANCE);
-
-      const status = (await signoffStatus(id))[0];
-      expect(status.filled).toEqual([{ seat: "SUBMITTER", signerUserId: 1 }]);
-      expect(status.missing).toEqual(["PROGRAM_APPROVER", "TREASURER"]);
-      const voided = await db.expenseAuditLog.findMany({ where: { expenseId: id, action: "signoff_voided" } });
-      expect(voided.map((a) => [a.userId, a.lineItemId, a.valueBefore])).toEqual([[3, li, "PROGRAM_APPROVER"]]);
-      await expect(signLine(principal(10), li, "PROGRAM_APPROVER")).rejects.toMatchObject({ statusCode: 403 });
-      await signLine(principal(5), li, "PROGRAM_APPROVER");
-    });
-
     it("FINANCE cannot name a reimbursee who is not a Person", async () => {
       const { id } = await unknownReimbursee();
       bindPorts({ signoff: directory({ finance: [3], unknownPeople: [42] }) });
@@ -220,15 +205,23 @@ describeDb("sign-off seats", () => {
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
     });
 
-    it("REIMBURSEE_UNKNOWN cannot be checked off while the hold applies; it can once the expense is closed", async () => {
+    it("REIMBURSEE_UNKNOWN cannot be checked off while the hold applies; it leaves the queue once the expense is closed", async () => {
       const { id } = await unknownReimbursee();
       const [flag] = await listOpenFlags(FINANCE);
       await expect(checkOffFlag(FINANCE, flag.id)).rejects.toMatchObject({ statusCode: 409 });
       expect((await listOpenFlags(FINANCE)).map((f) => f.kind)).toEqual(["REIMBURSEE_UNKNOWN"]);
 
       await db.expense.update({ where: { id }, data: { state: "rejected" } });
-      await checkOffFlag(FINANCE, flag.id);
       expect(await listOpenFlags(FINANCE)).toEqual([]);
+      expect(await expenseOpsCounts(FINANCE)).toMatchObject({ openFlags: 0 });
+      await checkOffFlag(FINANCE, flag.id);
+    });
+
+    it("a control flag on a closed expense stays in the queue", async () => {
+      const { id } = await unknownReimbursee();
+      await raiseFlag(id, "TAX_ATTACHED");
+      await db.expense.update({ where: { id }, data: { state: "rejected" } });
+      expect((await listOpenFlags(FINANCE)).map((f) => f.kind)).toEqual(["TAX_ATTACHED"]);
     });
 
     it("a card charge or a backfilled expense takes no reimbursee", async () => {

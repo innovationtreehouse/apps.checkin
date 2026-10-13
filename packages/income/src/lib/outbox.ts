@@ -16,6 +16,7 @@ import {
   incomeKey,
   lockReconciliation,
   matchWindow,
+  otherLaneClaims,
   runReconcile,
   windowDays,
   type ReconcileResult,
@@ -31,12 +32,15 @@ export type PostCounts = Record<PostOutcome, number> & {
 
 export interface DrainResult {
   reconcile: ReconcileResult;
-  /** "gated": posting is bound but the mirror is not declared newest-wins, so nothing is created. */
+  /**
+   * "unbound": posting or the finance alert is not bound. "gated": the mirror is not declared
+   * newest-wins. Either way nothing is created.
+   */
   post: PostCounts | "unbound" | "gated" | "busy";
 }
 
 /** WAITING rows are the drain's; POST_FAILED and OVER_CAP rows move only on finance's retry. */
-const isPostable = (r: Pick<PayoutReconciliation, "status" | "kind">) =>
+export const isPostable = (r: Pick<PayoutReconciliation, "status" | "kind">) =>
   r.status === RECON_STATUS.WAITING ||
   (r.status === RECON_STATUS.OPEN && (r.kind === RECON_KIND.POST_FAILED || r.kind === RECON_KIND.OVER_CAP));
 
@@ -139,6 +143,7 @@ export async function postPayout(
     buildError = e instanceof Error ? e.message : String(e);
   }
 
+  const foreign = await otherLaneClaims(orgId);
   return db.$transaction(
     async (tx) => {
       if (!(await lockReconciliation(tx, orgId, wait))) return null;
@@ -155,7 +160,7 @@ export async function postPayout(
             key: incomeKey(current.payoutGid),
             window,
             takeoverLine: line,
-            claimedIds: new Set(held.flatMap((h) => (h.depositId ? [h.depositId] : []))),
+            claimedIds: new Set([...foreign, ...held.flatMap((h) => (h.depositId ? [h.depositId] : []))]),
             excludedIds: new Set(excluded.map((e) => e.qbTxnId)),
           })
         : { kind: "failed", error: buildError };
@@ -237,7 +242,8 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
   const reconcile = await runReconcile(orgId, now);
   if (reconcile.status !== "ran") return { reconcile, post: reconcile.status };
   const { mirror, posting, alerts } = getIncomeConfig();
-  if (!mirror || !posting) return { reconcile, post: "unbound" };
+  // A cap hit must reach finance, so the drain never creates without the alert bound.
+  if (!mirror || !posting || !alerts) return { reconcile, post: "unbound" };
   if (!posting.mirrorNewestWins) return { reconcile, post: "gated" };
 
   const line = await incomeTakeoverLine(orgId);
@@ -254,7 +260,7 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
   const post: PostCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, over_cap: 0, capped: null };
   let createdCents = 0;
   const alert = (cap: "count" | "cents", remaining: number) =>
-    alerts?.postCapReached({ orgId, cap, created: post.posted, createdCents, remaining });
+    alerts.postCapReached({ orgId, cap, created: post.posted, createdCents, remaining });
 
   for (const [i, r] of due.entries()) {
     const cents = Math.abs(r.payoutNetCents);

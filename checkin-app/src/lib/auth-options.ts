@@ -159,12 +159,33 @@ const patchedAdapter = {
     },
 };
 
-// Bootstrap isSysadmin emails — comma-separated list from env.
-// Any account matching these emails will be auto-promoted to isSysadmin on login.
+// Bootstrap isSysadmin emails — comma-separated list from env. A listed account is
+// promoted to isSysadmin on sign-in only while the system has no sysadmin at all.
 const BOOTSTRAP_SYSADMINS = (process.env.BOOTSTRAP_SYSADMINS || "")
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
+
+/**
+ * First-run bootstrap is open only while no sysadmin exists, and never for a person whose
+ * isSysadmin was revoked before (setRoleFlag audits every revocation), so a revoke sticks.
+ */
+async function isBootstrapOpen(personId: number): Promise<boolean> {
+    const [sysadmins, revocations] = await Promise.all([
+        prisma.personRole.count({ where: { role: "SYSADMIN" } }),
+        prisma.auditLog.count({
+            where: {
+                tableName: "PersonRole",
+                affectedEntityId: personId,
+                newData: { path: ["isSysadmin"], equals: false },
+            },
+        }),
+    ]);
+    return sysadmins === 0 && revocations === 0;
+}
+
+/** Absolute session lifetime from sign-in; the 15-minute refresh never extends past it. */
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
 
 export const authOptions: NextAuthOptions = {
     debug: config.isDevInstance(),
@@ -310,7 +331,7 @@ export const authOptions: NextAuthOptions = {
         // Bound token lifetime so a stale or forgotten session cannot live for the
         // 30-day NextAuth default. The jwt callback below also re-syncs role flags
         // from the DB on every request so revocations take effect promptly.
-        maxAge: 60 * 60 * 8,   // 8 hours
+        maxAge: SESSION_MAX_AGE_SECONDS,
         updateAge: 60 * 15,    // 15 minutes
     },
     callbacks: {
@@ -333,6 +354,18 @@ export const authOptions: NextAuthOptions = {
             return `/signin?error=${UNVERIFIED_EMAIL_SIGNIN_ERROR}`;
         },
         async jwt({ token, user, account, profile }) {
+            const now = Math.floor(Date.now() / 1000);
+            if (user) {
+                token.signedInAt = now;
+            } else {
+                // A token from before this claim existed starts its clock now.
+                token.signedInAt ??= now;
+                if (now - token.signedInAt >= SESSION_MAX_AGE_SECONDS) {
+                    // Expired: an empty token fails every authorization check closed. JWT
+                    // requires `id`, and omitting it is the point.
+                    return {} as JWT;
+                }
+            }
             // Capture Google's hosted-domain + email_verified claims on sign-in so the dev-instance
             // middleware can gate on verified org membership (docs/ops/dev-instance.md,
             // "Running the cloud dev instance").
@@ -384,11 +417,13 @@ export const authOptions: NextAuthOptions = {
                     if (
                         !dbParticipant.isSysadmin &&
                         dbParticipant.email &&
-                        BOOTSTRAP_SYSADMINS.includes(dbParticipant.email.toLowerCase())
+                        BOOTSTRAP_SYSADMINS.includes(dbParticipant.email.toLowerCase()) &&
+                        (await isBootstrapOpen(dbParticipant.id))
                     ) {
                         // System bypass: bootstrap self-promotion off an env-configured
                         // allowlist, not a user-initiated authority-matrix request — there is
                         // no actor to check against, only a trusted source deciding its own grant.
+                        // setRoleFlag writes the grant's AuditLog row under this system actor.
                         await setRoleFlag(prisma, dbParticipant.id, "isSysadmin", true, { system: "system:bootstrap-sysadmin" });
                         dbParticipant.isSysadmin = true;
                         // Claims derive from `roles`, not the mirror column — push the grant

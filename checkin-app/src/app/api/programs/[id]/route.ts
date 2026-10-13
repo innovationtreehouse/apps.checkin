@@ -5,11 +5,12 @@ import prisma from "@/lib/prisma";
 import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { isActiveOrgMember, isDuesSettled, isDuesSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { maybeAnnounceOnOpen } from "@/lib/programAnnounce";
-import { adjustProgramInventory } from "@/lib/shopify";
+import { adjustProgramInventory, syncProgramPrice } from "@/lib/shopify";
 import { dollarsToCentsOrNull } from "@inventory/money";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
+import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { parseDateOnly } from "@/lib/time";
 import { ProgramPhase, EnrollmentStatus } from "@/generated/prisma/client";
 
@@ -271,13 +272,20 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             }
             const mentor = await prisma.person.findUnique({
                 where: { id: leadMentorId },
-                select: { dateOfBirth: true, isDeclaredAdult: true },
+                select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
             });
             if (!mentor) {
                 return apiError("Lead mentor not found", 400);
             }
             if (!isLeaderAgeEligible(mentor)) {
                 return apiError("Lead mentor must be at least 23 years old", 400);
+            }
+            // Leading a program makes its leader an expense approver. The edit form
+            // resends the current lead on every save, so only a change is refused.
+            if (leadMentorId !== currentProgram.leadMentorId && (
+                leadMentorId === user.id || await hasHouseholdConflict(prisma, user.id, mentor.householdId)
+            )) {
+                return apiError("Forbidden: You cannot make yourself or a member of your household a program lead", 403);
             }
         }
 
@@ -431,6 +439,19 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
                 // flip on the variant, which this PR intentionally doesn't attempt.
                 logger.warn(`[SHOPIFY] Program ${updatedProgram.id} maxParticipants transitioned ${oldMax} -> ${newMax} (capped/uncapped); inventory not adjusted automatically.`);
                 warning = "Capacity changed between capped and uncapped. Shopify inventory was not updated automatically — run Sync to Shopify or edit inventory directly in Shopify.";
+            }
+        }
+
+        // Both Shopify variants carry the base price (members pay via a discount code),
+        // so only a base-price change is pushed. Only admin/board can change prices.
+        const basePriceCents = (p: { nonOrgMemberPriceCents: number | null; orgMemberPriceCents: number | null }) =>
+            p.nonOrgMemberPriceCents ?? p.orgMemberPriceCents ?? null;
+        const newBase = basePriceCents(updatedProgram);
+        if (newBase !== basePriceCents(currentProgram)) {
+            const ok = await syncProgramPrice(updatedProgram, newBase);
+            if (!ok) {
+                const priceWarning = "Program saved, but the Shopify price is out of date — admins have been emailed. Set the price by hand in Shopify on both the public and reserved-seat products.";
+                warning = warning ? `${warning} ${priceWarning}` : priceWarning;
             }
         }
 

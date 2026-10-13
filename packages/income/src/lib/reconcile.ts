@@ -88,6 +88,22 @@ export async function lockReconciliation(tx: TxClient, orgId: string, wait: bool
   return locked;
 }
 
+/** Deposits another lane holds; empty while that port is unbound. */
+// ponytail: read-then-claim across two databases, so two lanes running at the same instant can
+// still race; a shared claim table in one database closes it if the lanes ever run concurrently.
+export async function otherLaneClaims(orgId: string): Promise<string[]> {
+  return (await getIncomeConfig().otherLaneClaims?.claimedDepositIds(orgId)) ?? [];
+}
+
+/** Deposits income holds, for another lane to keep out of its own matching. */
+export async function incomeClaimedDepositIds(orgId: string): Promise<string[]> {
+  const rows = await db.payoutReconciliation.findMany({
+    where: { orgId, depositId: { not: null } },
+    select: { depositId: true },
+  });
+  return rows.flatMap((r) => (r.depositId ? [r.depositId] : []));
+}
+
 export async function collectPayouts(mirror: PayoutMirror): Promise<PayoutFact[]> {
   const { reconcileFrom } = getIncomeConfig();
   const facts: PayoutFact[] = [];
@@ -152,6 +168,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
     ...settled.flatMap((r): DayRange[] => (r.depositTxnDate ? [[r.depositTxnDate, r.depositTxnDate]] : [])),
   ];
   const deposits = await depositsIn(depositSource, ranges);
+  const foreign = await otherLaneClaims(orgId);
   const depositsById = new Map(deposits.map((d) => [d.id, d]));
 
   return db.$transaction(
@@ -161,7 +178,7 @@ export async function runReconcile(orgId: string, now: Date = new Date()): Promi
       const result = { status: "ran" as const, matched: 0, opened: 0, drifted: 0 };
       const rows = await tx.payoutReconciliation.findMany({ where: { orgId } });
       const byGid = new Map(rows.map((r) => [r.payoutGid, r]));
-      const claimed = new Set(rows.flatMap((r) => (r.depositId ? [r.depositId] : [])));
+      const claimed = new Set([...foreign, ...rows.flatMap((r) => (r.depositId ? [r.depositId] : []))]);
       const exclusions = await tx.incomeQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } });
       const excluded = new Set(exclusions.map((e) => e.qbTxnId));
 

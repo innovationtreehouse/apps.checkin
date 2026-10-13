@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { systemActor } from "@/lib/auditActor";
 import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
-import { activateByProcessId } from "@/lib/membership/payment";
+import { activateByProcessId, type ActivateOutcome } from "@/lib/membership/payment";
 import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
 import { fromWhere } from "@/lib/programs/enrollmentState";
@@ -67,7 +67,9 @@ export type PaymentExceptionKind =
     | "ACTIVE_WITHOUT_PAYMENT"
     | "DISCOUNT_UNAUTHORIZED"
     | "PAYMENT_UNVERIFIABLE"
-    | "DENIED_HOUSEHOLD_ACTIVITY";
+    | "DENIED_HOUSEHOLD_ACTIVITY"
+    | "DUPLICATE_PAYMENT"
+    | "UNCLAIMED_SEATS";
 
 type Severity = "WARN" | "CRITICAL";
 
@@ -133,6 +135,24 @@ export async function raisePaymentException(kind: PaymentExceptionKind, ref: Exc
     }
 }
 
+/**
+ * Raise what a membership payment's outcome needs the board to see. Shared by the
+ * orders/paid webhook and the forward pass so a missed webhook raises the same row.
+ * A DENIED household is raised inside activate() itself.
+ */
+export async function raiseMembershipPaymentOutcome(
+    outcome: ActivateOutcome,
+    ref: { shopifyOrderId: string | null; processId: number },
+): Promise<void> {
+    const kind: PaymentExceptionKind | null =
+        outcome === "paid_while_blocked" ? "PAID_WHILE_BLOCKED"
+        : outcome === "no_item" ? "NO_ITEM"
+        // Duplicate order, both leads paying, payment after close or certify.
+        : outcome === "nothing_due" ? "UNMATCHED_ORDER"
+        : null;
+    if (kind) await raisePaymentException(kind, ref);
+}
+
 // ── predicates over a mirror order ───────────────────────────────────────────
 
 /**
@@ -194,38 +214,66 @@ export function usesVolunteerCodeUnentitled(order: MirrorOrder, volunteerCode: s
 
 /** The order facts a program entitlement is judged on — built from the webhook
  *  payload or the mirror, so both paths judge the same thing. */
-export interface EntitlementOrder extends Pick<MirrorOrder, "financialStatus" | "cancelledAt" | "totalRefundedCents"> {
+export interface EntitlementOrder extends Pick<MirrorOrder, "financialStatus" | "cancelledAt" | "totalRefundedCents" | "legacyId"> {
     lines: { variantId: string; quantity: number }[];
 }
 
+/** A paid seat no pending enrollment consumes, raised for the board alongside (or instead of) activation. */
+export interface Surplus {
+    kind: "DUPLICATE_PAYMENT" | "UNCLAIMED_SEATS";
+    personId?: number;
+}
+
 /** ok, or the exception to raise; `kind: null` = nothing to do yet, raise nothing. */
-export type Entitlement = { ok: true } | { ok: false; kind: PaymentExceptionKind | null; nothingAwaiting?: true };
+export type Entitlement =
+    | { ok: true; surplus?: Surplus }
+    | { ok: false; kind: PaymentExceptionKind | null; personId?: number; nothingAwaiting?: true };
 
 /**
  * Does this order pay for activating these people in this program? Paid and not
  * reversed, carries one of the program's variants (public or claimant), and
- * buys at least one seat per person still awaiting payment. Nobody awaiting payment is a no-op (a redelivery,
- * or ids no longer pending), judged before the order so it raises nothing. A seat
- * shortfall activates nobody: the order cannot say which of the household it was
- * meant for, so the board decides.
+ * buys at least one seat per person still awaiting payment. A seat shortfall
+ * activates nobody: the order cannot say which of the household it was meant
+ * for, so the board decides.
+ *
+ * Seats beyond those awaiting payment, and not already activated by this same
+ * order (a redelivery), are a surplus for the board: DUPLICATE_PAYMENT when a
+ * person named is already enrolled (paid, comped or approved), else
+ * UNCLAIMED_SEATS (withdrawn, expired, or extra quantity). Matched per person, so
+ * siblings paying on separate orders never trip it. Inventory is never adjusted.
  */
 export async function orderEntitlesEnrollment(order: EntitlementOrder, programId: number, personIds: number[]): Promise<Entitlement> {
     const awaiting = await prisma.programParticipant.count({ where: { programId, personId: { in: personIds }, ...fromWhere("PENDING_UNPAID") } });
-    if (awaiting === 0) return { ok: false, kind: null, nothingAwaiting: true };
+    if (awaiting === 0 && !isPaid(order)) return { ok: false, kind: null, nothingAwaiting: true };
     if (isReversed(order)) return { ok: false, kind: "REVERSED_BEFORE_ACTIVATION" };
     if (!isPaid(order)) return { ok: false, kind: null };
 
     const program = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyVariantId: true, claimantShopifyVariantId: true } });
     const variantIds = new Set(program ? programVariantIds(program) : []);
     const seats = order.lines.filter((l) => variantIds.has(l.variantId)).reduce((n, l) => n + l.quantity, 0);
+    if (awaiting === 0) {
+        const surplus = await surplusSeats(order, programId, personIds, seats);
+        return { ok: false, kind: surplus?.kind ?? null, personId: surplus?.personId, nothingAwaiting: true };
+    }
     if (seats === 0) return { ok: false, kind: "NO_ITEM" };
     if (seats < awaiting) return { ok: false, kind: "AMOUNT_MISMATCH" };
-    return { ok: true };
+    return { ok: true, surplus: await surplusSeats(order, programId, personIds, seats - awaiting) };
+}
+
+async function surplusSeats(order: EntitlementOrder, programId: number, personIds: number[], unspent: number): Promise<Surplus | undefined> {
+    if (unspent <= 0) return undefined;
+    const active = await prisma.programParticipant.findMany({
+        where: { programId, personId: { in: personIds }, status: "ACTIVE" },
+        select: { personId: true, shopifyOrderId: true },
+    });
+    const otherwisePaid = active.filter((r) => !order.legacyId || r.shopifyOrderId !== order.legacyId);
+    if (unspent - (active.length - otherwisePaid.length) <= 0) return undefined;
+    return otherwisePaid.length > 0 ? { kind: "DUPLICATE_PAYMENT", personId: otherwisePaid[0].personId } : { kind: "UNCLAIMED_SEATS" };
 }
 
 // ── forward pass (recover missed payments) ───────────────────────────────────
 
-type ResolvedProcess = { id: number; orgMembershipId: number | null } | "none" | "ambiguous";
+type ResolvedProcess = { id: number; orgMembershipId: number | null; awaiting: boolean } | "none" | "ambiguous";
 
 /**
  * Which membership process (if any) is this order paying for?
@@ -240,8 +288,8 @@ type ResolvedProcess = { id: number; orgMembershipId: number | null } | "none" |
  * processes resolve to "none"/"ambiguous" rather than picking one.
  *
  * Either way the caller checks the order contains a membership variant before
- * activating (amount-gating only pre-#1048 orders), and only a PENDING_PAYMENT
- * process is ever a recovery candidate.
+ * activating (amount-gating only pre-#1048 orders). Only PENDING_PAYMENT and BLOCKED
+ * processes are `awaiting`; a paid order on any other process is raised, not recovered.
  */
 async function resolveMembershipProcess(order: MirrorOrder): Promise<ResolvedProcess> {
     const raw = mirror.orderAttr(order, "Membership_Process_ID");
@@ -254,10 +302,9 @@ async function resolveMembershipProcess(order: MirrorOrder): Promise<ResolvedPro
         });
         // Attribute names a process that doesn't exist — forged/replayed/stale. Never guess.
         if (!p) return "ambiguous";
-        // It IS a membership order; it just isn't awaiting payment (already settled,
-        // still in review, archived...). activate() would no-op — nothing to recover.
-        if (p.status !== "PENDING_PAYMENT") return "none";
-        return { id: p.id, orgMembershipId: p.orgMembershipId };
+        // BLOCKED still takes the payment (recorded, refund needed). Any other status
+        // means the money landed on nothing awaiting it.
+        return { id: p.id, orgMembershipId: p.orgMembershipId, awaiting: p.status === "PENDING_PAYMENT" || p.status === "BLOCKED" };
     }
 
     const email = order.customerEmail?.toLowerCase().trim();
@@ -272,7 +319,7 @@ async function resolveMembershipProcess(order: MirrorOrder): Promise<ResolvedPro
     });
     if (pending.length === 0) return "none"; // family has no membership awaiting payment.
     if (pending.length > 1) return "ambiguous"; // can't safely pick which one this paid for.
-    return pending[0];
+    return { ...pending[0], awaiting: true };
 }
 
 /**
@@ -291,6 +338,11 @@ async function reconcileForwardMembership(order: MirrorOrder): Promise<boolean> 
     if (proc === "none") return false; // not a membership order — a program pass may claim it.
     if (proc === "ambiguous") {
         await raisePaymentException("UNMATCHED_ORDER", { shopifyOrderId: order.legacyId });
+        return true;
+    }
+
+    if (!proc.awaiting) {
+        if (isPaid(order)) await raiseMembershipPaymentOutcome("nothing_due", { shopifyOrderId: order.legacyId, processId: proc.id });
         return true;
     }
 
@@ -362,11 +414,9 @@ async function reconcileForwardMembership(order: MirrorOrder): Promise<boolean> 
     // and is matched to this specific pending process (honest missed-webhook
     // assumption; the reconciler is not the attack surface the public webhook is, and
     // it leaves a full AuditLog trail via activate()).
-    const result = await activateByProcessId(proc.id, order.legacyId ?? "", true);
-    logger.info(`[reconcile] recovered missed payment: process ${proc.id} ← order ${order.legacyId} (${result?.status})`);
-    if (result?.status === "BLOCKED") {
-        await raisePaymentException("PAID_WHILE_BLOCKED", { shopifyOrderId: order.legacyId, processId: proc.id });
-    }
+    const { outcome } = await activateByProcessId(proc.id, order.legacyId ?? "", true);
+    logger.info(`[reconcile] recovered missed payment: process ${proc.id} ← order ${order.legacyId} (${outcome})`);
+    await raiseMembershipPaymentOutcome(outcome, { shopifyOrderId: order.legacyId, processId: proc.id });
     return true;
 }
 
@@ -393,13 +443,7 @@ async function reconcileForwardProgram(order: MirrorOrder): Promise<boolean> {
             if (isPaid(order)) await raisePaymentException("UNMATCHED_ORDER", { shopifyOrderId: order.legacyId });
             return true;
         }
-        // Only those actually awaiting payment; a redelivery/re-run finds none and no-ops.
-        const pending = await prisma.programParticipant.findMany({
-            where: { programId, personId: { in: ids }, status: "PENDING" },
-            select: { personId: true },
-        });
-        if (pending.length === 0) return true; // it IS this program's order, nothing to recover.
-        return activateProgramFromOrder(order, programId, pending.map((p) => p.personId));
+        return activateProgramFromOrder(order, programId, ids);
     }
 
     // Fallback for orders without attributes: the purchaser (household lead) and
@@ -438,9 +482,12 @@ async function activateProgramFromOrder(order: MirrorOrder, programId: number, p
     if (!entitlement.ok) {
         if (entitlement.kind) {
             logger.warn(`[reconcile] program order ${order.legacyId} not entitled (${entitlement.kind}, program ${programId}) — NOT activated`);
-            await raisePaymentException(entitlement.kind, { shopifyOrderId: order.legacyId, programId, personId: personIds[0] ?? null });
+            await raisePaymentException(entitlement.kind, { shopifyOrderId: order.legacyId, programId, personId: entitlement.personId ?? personIds[0] ?? null });
         }
         return true;
+    }
+    if (entitlement.surplus) {
+        await raisePaymentException(entitlement.surplus.kind, { shopifyOrderId: order.legacyId, programId, personId: entitlement.surplus.personId ?? personIds[0] ?? null });
     }
 
     // Coupon entitlement, parity with the membership forward branch above: the order

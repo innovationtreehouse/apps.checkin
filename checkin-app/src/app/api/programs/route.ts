@@ -11,6 +11,7 @@ import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { staleWhileRevalidate } from "@/lib/staleCache";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
+import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 
 
 // Public catalog projection: every Program column whose `/// @sensitivity:` tier
@@ -185,15 +186,20 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             return apiError("Lead Mentor is required", 400);
         }
 
+        const mentorId = parseInt(leadMentorId, 10);
         const mentor = await prisma.person.findUnique({
-            where: { id: parseInt(leadMentorId, 10) },
-            select: { dateOfBirth: true, isDeclaredAdult: true },
+            where: { id: mentorId },
+            select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
         });
         if (!mentor) {
             return apiError("Lead mentor not found", 400);
         }
         if (!isLeaderAgeEligible(mentor)) {
             return apiError("Lead mentor must be at least 23 years old", 400);
+        }
+        // Leading a program makes its leader an expense approver.
+        if (mentorId === auth.user.id || await hasHouseholdConflict(prisma, auth.user.id, mentor.householdId)) {
+            return apiError("Forbidden: You cannot make yourself or a member of your household a program lead", 403);
         }
 
         if (!startAt) {
@@ -233,7 +239,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         const newProgram = await prisma.program.create({
             data: {
                 name,
-                leadMentorId: parseInt(leadMentorId, 10),
+                leadMentorId: mentorId,
                 startAt: new Date(startAt),
                 endAt: new Date(endAt),
                 orgMemberOnly: orgMemberOnly || false,

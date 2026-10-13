@@ -673,6 +673,7 @@ describe("Merge Participants API", () => {
             // Refused before the transaction — nothing moved.
             expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
             expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.email).toBe("merge@example.com");
+            expect(await prisma.auditLog.count({ where: { actorId, tableName: "SelfGrantRefusal" } })).toBe(1);
         });
 
         it("403s when the actor shares a household with the merged-away record only", async () => {
@@ -689,6 +690,16 @@ describe("Merge Participants API", () => {
             await prisma.person.update({ where: { id: actorId }, data: { householdId } });
             mockGetServerSession.mockResolvedValue({
                 user: { id: actorId, email: "actor@example.com", isSysadmin: true, isBoardMember: true }
+            });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(403);
+            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+        });
+
+        it("403s an actor who resolves to nobody before anything moves (fail closed)", async () => {
+            mockGetServerSession.mockResolvedValue({
+                user: { id: actorId + 1_000_000, email: "ghost@example.com", isBoardMember: true }
             });
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
@@ -1306,6 +1317,62 @@ describe("Merge Participants API", () => {
             const granted = await prisma.personRole.findUnique({ where: { personId_role: { personId: actorId, role: "KEYHOLDER" } } });
             expect(granted?.grantedById).toBe(pKeepId);
             expect(await movedTallies()).toMatchObject({ roleGrants: 1 });
+        });
+
+        it("writes a PersonRole audit row for each role it moves", async () => {
+            await prisma.personRole.create({ data: { personId: pMergeId, role: "KEYHOLDER" } });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            const rows = await prisma.auditLog.findMany({
+                where: { tableName: "PersonRole", actorId, affectedEntityId: { in: [pKeepId, pMergeId] } },
+                select: { affectedEntityId: true, oldData: true, newData: true },
+            });
+            expect(rows).toHaveLength(2);
+            expect(rows).toEqual(expect.arrayContaining([
+                { affectedEntityId: pKeepId, oldData: { isKeyholder: false }, newData: { isKeyholder: true } },
+                { affectedEntityId: pMergeId, oldData: { isKeyholder: true }, newData: { isKeyholder: false } },
+            ]));
+        });
+
+        it("keeps the original grant metadata on a moved role", async () => {
+            const grantedAt = new Date("2024-02-03T04:05:06Z");
+            await prisma.personRole.create({ data: { personId: pMergeId, role: "KEYHOLDER", grantedById: actorId, grantedAt } });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            const row = await prisma.personRole.findUnique({ where: { personId_role: { personId: pKeepId, role: "KEYHOLDER" } } });
+            expect(row?.grantedById).toBe(actorId);
+            expect(row?.grantedAt.toISOString()).toBe(grantedAt.toISOString());
+        });
+
+        // Moving BOARD revokes it from the merged-away record, which only a board
+        // member may do: refused before anything is written.
+        it("refuses a sysadmin who is not on the board when the merged-away record holds BOARD", async () => {
+            await prisma.personRole.create({ data: { personId: pMergeId, role: "BOARD" } });
+            mockGetServerSession.mockResolvedValue({
+                user: { id: actorId, email: "actor@example.com", isSysadmin: true, isBoardMember: false },
+            });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(403);
+
+            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            expect(await prisma.personRole.count({ where: { personId: pMergeId, role: "BOARD" } })).toBe(1);
+            expect(await prisma.personRole.count({ where: { personId: pKeepId } })).toBe(0);
+        });
+
+        it("refuses to move BOARD onto a keeper whose household is DENIED", async () => {
+            await prisma.orgMembership.create({ data: { householdId, status: "DENIED" } });
+            await prisma.personRole.create({ data: { personId: pMergeId, role: "BOARD" } });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(409);
+
+            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            expect(await prisma.personRole.count({ where: { personId: pKeepId, role: "BOARD" } })).toBe(0);
         });
 
         // The repoint AND the proof it isn't over-refused: two DIFFERENT reviewers each

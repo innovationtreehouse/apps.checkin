@@ -68,6 +68,7 @@ import * as workflowGenerated from './generated/workflow-classifications';
 import * as workflowSynthetic from './workflowSyntheticClassifications';
 import * as receiptGenerated from './generated/receipt-classifications';
 import * as receiptSynthetic from './receiptSyntheticClassifications';
+import * as programSynthetic from './programSyntheticClassifications';
 import type { BusinessRole } from '@/types/auth';
 import { assertNever } from '@/lib/lifecycle/classify';
 
@@ -95,6 +96,7 @@ export const CLASSIFICATION_SOURCES = [
     { source: 'workflow-synthetic', classifications: workflowSynthetic.classifications, relations: workflowSynthetic.relations },
     { source: 'receipt', classifications: receiptGenerated.classifications, relations: receiptGenerated.relations },
     { source: 'receipt-synthetic', classifications: receiptSynthetic.classifications, relations: receiptSynthetic.relations },
+    { source: 'program-synthetic', classifications: programSynthetic.classifications, relations: programSynthetic.relations },
 ] as const;
 
 type ClassificationSource = (typeof CLASSIFICATION_SOURCES)[number];
@@ -227,9 +229,9 @@ export type Authorize =
     // or a volunteer (keyed by email). Broader than the ops roles, deliberately:
     // the catalog is non-pii reference data (writes stay INVENTORY_MANAGER-only).
     | 'catalog-viewer'
-    // Receipt submission (#1265 §6): any signed-in known adult, or a Treehouse
-    // Volunteer (role holder or staff account) whatever their recorded age. No membership, volunteer status or
-    // background check (docs/rules/inventory.md).
+    // Receipt submission (#1265 §6): an adult whose household membership is
+    // ACTIVE, or a Treehouse Volunteer (role holder or staff account) whatever
+    // their age or membership. No background check (docs/rules/inventory.md).
     | 'receipt-submitter'
     // Catalog write admission (#1286 §6): INVENTORY_MANAGER only.
     | 'inventory-manager'
@@ -243,7 +245,7 @@ export type Authorize =
     // or a program treasurer. No sysadmin auto-admit. Rows stay handler-filtered
     // to the buckets the caller approves.
     | 'expense-approver'
-    // Expense sign-off admission (#1272 §6): `receipt-submitter` (any known adult or
+    // Expense sign-off admission (#1272 §6): `receipt-submitter` (an adult member or
     // Treehouse Volunteer, for the submitter seat) or `expense-approver` (program
     // approver, Treasurer, Board seats). Far wider than the seat holders; the
     // library refuses a caller who holds no seat on the line.

@@ -3,7 +3,7 @@ import { logBackendError } from "@/lib/logger";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
 import { householdBgIsFresh, nextBoundary } from "@/lib/membership/renewal";
-import { applyVolunteerStatus, clearBackgroundCheck, notifyClearanceOutcome, notifyPaymentOpenOnExistingCheck } from "@/lib/membership/review";
+import { applyVolunteerStatus, clearBackgroundCheck, notifyClearanceOutcome, notifyPaymentOpenOnExistingCheck, reviewTransaction } from "@/lib/membership/review";
 
 /**
  * A participant merge moves the newer of the two `lastBackgroundCheck` dates onto
@@ -162,7 +162,7 @@ async function clearHeldRow(
 ): Promise<void> {
     const { status, from } = held;
     for (const process of await uncleared(householdId, from)) {
-        const outcome = await prisma.$transaction(async (tx) => {
+        const outcome = await reviewTransaction(async (tx) => {
             // clearBackgroundCheck's contract; also serializes against a concurrent attest.
             await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${process.id} FOR UPDATE`;
             const fresh = await tx.orgMembershipProcess.findUnique({

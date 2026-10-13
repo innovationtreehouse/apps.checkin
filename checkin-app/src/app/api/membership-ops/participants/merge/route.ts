@@ -4,15 +4,23 @@ import type { Person, PersonRoleKind } from "@/generated/prisma/client";
 import { withAuth } from "@/lib/auth";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
-import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { personBgOpen } from "@/lib/membership/lifecycle";
 import { advanceHouseholdBgAfterMerge, householdBgFresh } from "@/lib/membership/mergeBgAdvance";
+import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import type { TxClient } from "@/lib/db-client";
-import { KIND_TO_MIRROR } from "@/lib/roles";
+import {
+    KIND_TO_FLAG,
+    KIND_TO_MIRROR,
+    setRoleFlag,
+    RoleMatrixError,
+    LastBoardMemberError,
+    DeniedHouseholdBoardError,
+    OwnHouseholdRoleError,
+} from "@/lib/roles";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
-import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock } from "./membershipGuard";
+import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock, roleMergeBlock } from "./membershipGuard";
 
 export const dynamic = 'force-dynamic';
 
@@ -101,10 +109,9 @@ function mergeSnapshot(p: Person) {
 }
 
 /**
- * Person's legacy boolean role mirrors for a set of held roles. `applyRoleFlag`
- * (lib/roles.ts) dual-writes these alongside every PersonRole write; the merge
- * moves PersonRole rows directly, so it owes the same mirror write. Derived
- * from KIND_TO_MIRROR so a new mirrored role is covered the day it exists.
+ * Person's legacy boolean role mirrors for a set of held roles, as `applyRoleFlag`
+ * (lib/roles.ts) dual-writes them. Derived from KIND_TO_MIRROR so a new mirrored
+ * role is covered the day it exists.
  */
 function roleMirrors(held: Set<PersonRoleKind>): Record<string, boolean> {
     return Object.fromEntries(
@@ -300,12 +307,16 @@ export const POST = withAuth(
             // date on their own family with no second actor — the thing attest() and
             // overrideBlocked refuse. Both subjects count: the tombstone's household is
             // where the carried date comes from, the keeper's is where it lands, and the
-            // two need not be the same household. No role bypasses this.
-            if (auth.type === 'session' && (
-                await hasHouseholdConflict(prisma, auth.user.id, keepParticipant.householdId)
-                || await hasHouseholdConflict(prisma, auth.user.id, mergeParticipant.householdId)
-            )) {
-                return apiError("You cannot merge a record in your own household — someone outside your household must.", 403);
+            // two need not be the same household. No role bypasses this, and an actor
+            // whose household can't be resolved is refused (fail closed).
+            if (auth.type === 'session') {
+                const attempt = { table: "Person" as const, attempted: { keepId: keepParticipant.id, mergeId: mergeParticipant.id } };
+                if (
+                    await refuseSelfGrant(prisma, auth.user.id, { personId: keepParticipant.id, householdId: keepParticipant.householdId }, attempt)
+                    || await refuseSelfGrant(prisma, auth.user.id, { personId: mergeParticipant.id, householdId: mergeParticipant.householdId }, attempt)
+                ) {
+                    return apiError("You cannot merge a record in your own household — someone outside your household must.", 403);
+                }
             }
 
             const isLead = mergeParticipant.isHouseholdLead;
@@ -323,6 +334,17 @@ export const POST = withAuth(
             );
             if (membershipBlock) {
                 return apiError(membershipBlock, 400);
+            }
+
+            const roleActor = auth.type === 'session' ? auth.user : null;
+            const roleBlock = roleMergeBlock(
+                roleActor,
+                mergeParticipant.roles.map(r => r.role),
+                keepParticipant.roles.map(r => r.role),
+                householdMembershipStatus(keepParticipant.household),
+            );
+            if (roleBlock) {
+                return apiError(roleBlock.error, roleBlock.status);
             }
 
             // ---- Collision detection: refuse decision-bearing collisions (#1456 Phase 1) ----
@@ -631,36 +653,44 @@ export const POST = withAuth(
                 moved.archivedMerges = (await tx.personMerge.updateMany({ where: { toId: mergeId }, data: { toId: keepId } })).count;
 
                 // PersonRole.personId is CASCADE — a role left on the tombstone is a
-                // security grant a later delete destroys with no audit row. PK is
-                // (personId, role), so move each role the survivor lacks and drop the
-                // duplicate: the survivor already holds that grant.
-                const keepRoles = new Set(keepParticipant.roles.map(r => r.role));
-                for (const { role } of mergeParticipant.roles) {
-                    const where = { personId_role: { personId: mergeId, role } };
-                    if (keepRoles.has(role)) {
-                        await tx.personRole.delete({ where });
-                        moved.roles.deduped++;
-                    } else {
-                        await tx.personRole.update({ where, data: { personId: keepId } });
+                // security grant a later delete destroys. Each role moves through
+                // setRoleFlag, the role routes' choke point, so it runs their guards
+                // and writes one audit row per change: granted to the keeper first (a
+                // no-op when the keeper already holds it), then revoked from the
+                // tombstone, so a moving BOARD never counts down to zero. A moved row
+                // keeps its original grant metadata; the audit rows name the merging
+                // actor. Read in the transaction so a role granted after the pre-tx
+                // read still moves.
+                const tombstoneRoles = await tx.personRole.findMany({
+                    where: { personId: mergeId },
+                    select: { role: true, grantedById: true, grantedAt: true },
+                });
+                for (const { role, grantedById, grantedAt } of tombstoneRoles) {
+                    if (!roleActor) throw new RoleMatrixError("Forbidden");
+                    const flag = KIND_TO_FLAG[role];
+                    const granted = await setRoleFlag(tx, keepId, flag, true, roleActor);
+                    await setRoleFlag(tx, mergeId, flag, false, roleActor);
+                    if (granted.changed) {
+                        await tx.personRole.update({
+                            where: { personId_role: { personId: keepId, role } },
+                            data: { grantedById, grantedAt },
+                        });
                         moved.roles.migrated++;
+                    } else {
+                        moved.roles.deduped++;
                     }
                 }
                 // After the holder pass, so a granter stamp on a deduped row isn't counted.
                 moved.roleGrants = (await tx.personRole.updateMany({ where: { grantedById: mergeId }, data: { grantedById: keepId } })).count;
-                // The rows above moved without applyRoleFlag, which is what normally
-                // dual-writes Person's legacy mirrors — leaving e.g. a migrated
-                // BG_REVIEWER unable to attest (canReviewBackgroundChecks reads the
-                // mirror) and dropped from reviewer notifications. Written from the
-                // keeper's whole final role set, not patched per migrated row, so it
-                // also heals drift a pre-2b-0 merge already left behind.
+                // setRoleFlag mirrors each role it moves; this rewrite from the keeper's
+                // whole final role set also heals mirror drift the keeper already had
+                // (canReviewBackgroundChecks and reviewer notifications read the mirror).
                 //
                 // Re-read IN the transaction rather than reusing the pre-tx snapshot:
                 // this write asserts all four flags at once, so a role revoked from the
                 // keeper between the pre-tx read and here would be re-asserted true with
                 // no row behind it (privilege retention), and one granted in that window
-                // zeroed with a row present. The snapshot is fine for deciding what to
-                // MOVE (a missed row stays put, which is safe); it is not fine as the
-                // source of an unconditional overwrite.
+                // zeroed with a row present.
                 const keeperFinalRoles = await tx.personRole.findMany({ where: { personId: keepId }, select: { role: true } });
                 await tx.person.update({
                     where: { id: keepId },
@@ -780,6 +810,18 @@ export const POST = withAuth(
         } catch (error: unknown) {
             if (error instanceof AlreadyMergedError) {
                 return apiError("Cannot merge: this participant has already been merged.", 409);
+            }
+            if (error instanceof OwnHouseholdRoleError) {
+                return apiError("You cannot merge a record in your own household — someone outside your household must.", 403);
+            }
+            if (error instanceof RoleMatrixError) {
+                return apiError(`Cannot merge: ${error.message}`, 403);
+            }
+            if (error instanceof LastBoardMemberError) {
+                return apiError("Cannot merge: it would remove the last board member.", 409);
+            }
+            if (error instanceof DeniedHouseholdBoardError) {
+                return apiError("Cannot merge: the kept record's household has been denied membership, so it cannot take the board role.", 409);
             }
             const field = prismaUniqueConflictField(error);
             if (field) {

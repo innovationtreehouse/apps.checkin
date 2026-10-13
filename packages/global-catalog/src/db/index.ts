@@ -11,7 +11,7 @@
  * `datasource.url` itself. In production CATALOG_DATABASE_URL should route through RDS
  * Proxy / pgBouncer (`?pgbouncer=true&connection_limit=1`).
  */
-import { PrismaClient, Prisma } from "../generated/prisma/client";
+import { PrismaClient } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
 declare global {
@@ -84,8 +84,9 @@ export async function initDb(): Promise<void> {
   );
 }
 
+/** True for a Prisma P2002 unique-constraint violation, duck-typed so it holds for any client. */
 export function isUniqueConstraintError(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === "P2002";
 }
 
 /**

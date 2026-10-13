@@ -98,6 +98,14 @@ export interface QbDeposit {
 }
 
 /**
+ * QuickBooks deposits another lane (bulk donation) holds. Income never claims one, and that
+ * lane reads income's holds through incomeClaimedDepositIds.
+ */
+export interface OtherLaneClaims {
+  claimedDepositIds(orgId: string): Promise<string[]>;
+}
+
+/**
  * Read-only QuickBooks deposit feed: deposits with txnDate in [from, to], both inclusive
  * YYYY-MM-DD, at most MAX_WINDOW_DAYS wide. `quickBooksDepositSource` binds it to QuickBooks.
  */

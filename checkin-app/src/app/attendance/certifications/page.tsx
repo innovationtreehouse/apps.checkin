@@ -56,6 +56,9 @@ function KioskCertificationsInner() {
   const [tools, setTools] = useState<Tool[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The kiosk proxy answers 204 while the building is known empty.
+  const [kioskResting, setKioskResting] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   // Off the kiosk, "present" is stated as fact only while the kiosk is reachable.
   const [presenceConfirmed, setPresenceConfirmed] = useState(false);
   const minute = useSyncExternalStore(subscribeToClock, currentMinute, noMinute);
@@ -76,8 +79,14 @@ function KioskCertificationsInner() {
       }
 
       const res = await fetch(`/api/kioskdisplay/certifications?limit_to_present=${limitToPresent}`, { headers });
+      setKioskResting(res.status === 204);
+      if (res.status === 204) {
+        setError(null);
+        return;
+      }
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.participants && data.tools) {
+        setLoaded(true);
         setParticipants(data.participants);
         setTools(data.tools);
         setPresenceConfirmed(data.building?.reachable === true);
@@ -97,8 +106,8 @@ function KioskCertificationsInner() {
   }, [searchParams, limitToPresent]);
 
   // Visibility gate only, NO idle-stop: this is an unattended wall display, so
-  // idle-stop would freeze it. It's also cookieless (kiosk signature, not a
-  // session), so it can't wake a slept env and can't defeat the overnight curfew.
+  // idle-stop would freeze it. On the kiosk, the Pi's proxy answers these polls
+  // itself (204) while the building is known empty.
   usePolling(fetchData, 10000);
 
   const getColorForLevel = (level: ToolStatusLevel | undefined) =>
@@ -215,6 +224,8 @@ function KioskCertificationsInner() {
           <Center py="xl"><Loader /></Center>
         ) : error ? (
           <Alert color="red">{error}</Alert>
+        ) : !loaded && kioskResting ? (
+          <Center py="xl"><Text c="dimmed">Kiosk resting — zzz. Badge in to wake it.</Text></Center>
         ) : participants.length === 0 || tools.length === 0 ? (
           <Center py="xl"><Text c="dimmed">No {limitToPresent ? "active people" : "people"} found.</Text></Center>
         ) : (

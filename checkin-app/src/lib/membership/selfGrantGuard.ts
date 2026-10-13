@@ -1,14 +1,14 @@
 import type { Prisma } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
-import { sharesHousehold } from "@/lib/conflictOfInterest";
+import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
  * The one own-household check for grants that discount dues or clear a person:
  * the household volunteer flag, a volunteer designation, and a background-check
- * date. Every route that writes one of these calls it (selfGrantGuard.test.ts
- * enforces that).
+ * date. Every writer of one of these calls it (selfGrantGuard.test.ts enforces
+ * that).
  *
  * Refuses when the subject is the actor or shares the actor's household, and when
  * the actor's household can't be resolved (fail closed). No role is exempt. Every
@@ -30,6 +30,9 @@ export const SELF_GRANT_REFUSAL_TABLE = "SelfGrantRefusal";
 export const SELF_GRANT_REFUSAL_MESSAGE =
     "You cannot grant this to yourself or your own household — someone outside your household must.";
 
+/** A refused grant, as its audit row records it. */
+export type SelfGrantRefusal = { actorId: number; affectedEntityId: number; newData: Prisma.InputJsonObject };
+
 /**
  * Whether the grant is refused. Writes the refusal's audit row when it is; the
  * caller returns 403 and writes nothing else.
@@ -40,9 +43,22 @@ export async function refuseSelfGrant(
     subject: GrantSubject,
     attempt: GrantAttempt,
 ): Promise<boolean> {
-    // ponytail: same fail-closed lookup as #1888's resolveActorHouseholdId; switch to it once both land.
-    const actor = await db.person.findUnique({ where: { id: actorId }, select: { householdId: true } });
-    const actorHouseholdId = actor?.householdId ?? null;
+    const refusal = await findSelfGrantRefusal(db, actorId, subject, attempt);
+    if (refusal) await recordSelfGrantRefusal(db, refusal);
+    return refusal !== null;
+}
+
+/**
+ * The refusal for this grant, or null when it may proceed. Writes nothing, so a
+ * caller inside a transaction can throw it out and record it after the rollback.
+ */
+export async function findSelfGrantRefusal(
+    db: DbClient,
+    actorId: number,
+    subject: GrantSubject,
+    attempt: GrantAttempt,
+): Promise<SelfGrantRefusal | null> {
+    const actorHouseholdId = await resolveActorHouseholdId(db, actorId);
 
     let reason: "actor_household_unresolved" | "own_household" | null = null;
     let affectedEntityId = actorId;
@@ -62,18 +78,13 @@ export async function refuseSelfGrant(
         if (sharesHousehold(actorHouseholdId, subject.householdId)) reason = "own_household";
     }
 
-    if (reason === null) return false;
+    if (reason === null) return null;
+    return { actorId, affectedEntityId, newData: { reason, table: attempt.table, subject, attempted: attempt.attempted } };
+}
 
-    await db.auditLog.create({
-        data: {
-            actorId,
-            action: "EDIT",
-            tableName: SELF_GRANT_REFUSAL_TABLE,
-            affectedEntityId,
-            newData: { reason, table: attempt.table, subject, attempted: attempt.attempted },
-        },
-    });
-    return true;
+/** Writes a refusal's audit row under `SELF_GRANT_REFUSAL_TABLE`. */
+export async function recordSelfGrantRefusal(db: DbClient, refusal: SelfGrantRefusal): Promise<void> {
+    await db.auditLog.create({ data: { ...refusal, action: "EDIT", tableName: SELF_GRANT_REFUSAL_TABLE } });
 }
 
 /** The id of the person in the actor's household whose email is `email` (canonical), or null. */

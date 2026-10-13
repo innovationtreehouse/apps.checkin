@@ -222,8 +222,17 @@ Procedure below is built on them.
   written reason — wider than the policy, which requires documentation only for a
   disqualifying offence.  [Decision — *Policy: Membership Policy, Art. IX*]
 
-- An abandoned application is archived, never destroyed, and restores to the
-  status it held before.  [Decision — *Principle: decisions are reversible*]
+- The board closes a long-idle, unpaid application ("Close application"); it is
+  never destroyed, and "Reopen" returns it to the step it was closed from. A paid,
+  blocked, clearance-waiting or active application cannot be closed. Reopening
+  refuses a denied household, or one with another open application. The word
+  "archive" is reserved for archiving a household.  [Decision —
+  *Principle: decisions are reversible*]
+
+- A refund made in Shopify is recorded by the board ("Record refund"), with a
+  reason, by someone outside the household. A paid application waiting on its
+  background check returns to awaiting payment, check untouched; a paid blocked
+  application stays blocked.  [Decision]
 
 - Pre-designating a household volunteer-only sets what it owes and nothing else
   — it does not skip review or open payment. The policy grants only the

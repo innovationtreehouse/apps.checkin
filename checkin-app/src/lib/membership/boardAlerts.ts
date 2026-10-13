@@ -28,7 +28,7 @@ export async function notifyBoardPaidReject(processId: number): Promise<void> {
 const EXCEPTION_BLURB: Record<string, string> = {
     PAID_WHILE_BLOCKED: "a household paid but its application is blocked at background check — a refund may be needed",
     NO_ITEM: "a paid order did not contain the membership/program product",
-    UNMATCHED_ORDER: "a paid order could not be attributed to a family (no or ambiguous match)",
+    UNMATCHED_ORDER: "a paid order could not be attributed to an application awaiting payment (no or ambiguous match, a duplicate payment, or a payment after the application was closed or certified)",
     REFUND: "an active membership/enrollment's order was refunded",
     CHARGEBACK: "a chargeback/dispute was filed against an active membership/enrollment's payment",
     CANCELLED: "an active membership/enrollment's order was cancelled",
@@ -38,6 +38,8 @@ const EXCEPTION_BLURB: Record<string, string> = {
     ACTIVE_WITHOUT_PAYMENT: "a membership/enrollment is active with no matching payment on file",
     DENIED_HOUSEHOLD_ACTIVITY: "something happened to a household the board denied (a payment, an approval or an application) — its status was not changed",
     PAYMENT_UNVERIFIABLE: "an active membership/enrollment records a Shopify order that isn't in the mirror — its payment can't be verified",
+    DUPLICATE_PAYMENT: "a paid program order bought a seat for someone already enrolled (paid, comped or approved) — a refund may be needed",
+    UNCLAIMED_SEATS: "a paid program order bought seats no pending enrollment uses (withdrawn, expired or extra) — money taken, seat unused",
 };
 
 /**

@@ -3,7 +3,8 @@
  *
  * A household member with a linked sign-in keeps their sign-in address: the
  * household member edit refuses any `email` field for them and says how to change
- * it. Members without a sign-in stay editable.
+ * it. A member without a sign-in who holds board-granted authority keeps the
+ * address that authority was granted to. Other members stay editable.
  */
 
 import type { NextRequest } from "next/server";
@@ -45,8 +46,16 @@ const LEAD = 1;
 const CO_LEAD = 2;
 const KID = 3;
 
-function target(id: number, accounts: number) {
-    return { id, householdId: 10, email: `p${id}@example.com`, _count: { accounts } };
+const NO_GRANTS = { roles: 0, programsLed: 0, programVolunteers: 0, bgAttestationsAsSubject: 0, personBgProcesses: 0 };
+
+function target(id: number, accounts: number, grants: Partial<typeof NO_GRANTS> = {}, lastBackgroundCheck: Date | null = null) {
+    return {
+        id,
+        householdId: 10,
+        email: `p${id}@example.com`,
+        lastBackgroundCheck,
+        _count: { accounts, ...NO_GRANTS, ...grants },
+    };
 }
 
 function patch(body: Record<string, unknown>) {
@@ -109,5 +118,65 @@ describe("PATCH /api/household/member — sign-in email lock", () => {
         const res = await patch({ participantId: KID, email: "Kid@Example.com" });
         expect(res.status).toBe(200);
         expect(tx.person.update.mock.calls[0][0].data.email).toBe("kid@example.com");
+    });
+});
+
+describe("PATCH /api/household/member — granted-authority email lock", () => {
+    const GRANT_HELP = "This member's email can only be changed by the board. To change it, email the board at board@example.org.";
+
+    it.each([
+        ["a role", { roles: 1 }],
+        ["a program they lead", { programsLed: 1 }],
+        ["a program volunteer row", { programVolunteers: 1 }],
+        ["a background-check attestation", { bgAttestationsAsSubject: 1 }],
+        ["a background-check process", { personBgProcesses: 1 }],
+    ])("refuses a lead changing the email of a member without a sign-in who holds %s", async (_label, grants) => {
+        findPerson.mockResolvedValue(target(KID, 0, grants));
+        const res = await patch({ participantId: KID, email: "other@example.com" });
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe(GRANT_HELP);
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses the change for a member with a recorded background check", async () => {
+        findPerson.mockResolvedValue(target(KID, 0, {}, new Date("2026-01-01")));
+        const res = await patch({ participantId: KID, email: "other@example.com" });
+        expect(res.status).toBe(400);
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses clearing the email of a member holding a grant", async () => {
+        findPerson.mockResolvedValue(target(KID, 0, { roles: 1 }));
+        const res = await patch({ participantId: KID, email: "" });
+        expect(res.status).toBe(400);
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("saves a granted member's other fields when the email is resent unchanged", async () => {
+        findPerson.mockResolvedValue(target(KID, 0, { roles: 1 }));
+        const res = await patch({ participantId: KID, name: "Kid", email: `P${KID}@example.com` });
+        expect(res.status).toBe(200);
+        expect(tx.person.update).toHaveBeenCalled();
+    });
+
+    it("saves a granted member whose stored email is mixed-case when the email is resent unchanged", async () => {
+        findPerson.mockResolvedValue({ ...target(KID, 0, { roles: 1 }), email: "Kid.Name@Example.com " });
+        const res = await patch({ participantId: KID, name: "Kid", email: "Kid.Name@Example.com " });
+        expect(res.status).toBe(200);
+        expect(tx.person.update.mock.calls[0][0].data.email).toBeUndefined();
+    });
+
+    it("never writes an equivalent address over a granted member's stored email", async () => {
+        findPerson.mockResolvedValue(target(KID, 0, { roles: 1 }));
+        const res = await patch({ participantId: KID, email: `p${KID}+tag@example.com` });
+        expect(res.status).toBe(200);
+        expect(tx.person.update.mock.calls[0][0].data.email).toBeUndefined();
+    });
+
+    it("still lets a lead change the email of a member without a sign-in or any grant", async () => {
+        findPerson.mockResolvedValue(target(KID, 0));
+        const res = await patch({ participantId: KID, email: "teen@example.com" });
+        expect(res.status).toBe(200);
+        expect(tx.person.update.mock.calls[0][0].data.email).toBe("teen@example.com");
     });
 });

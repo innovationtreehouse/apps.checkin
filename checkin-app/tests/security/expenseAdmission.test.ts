@@ -170,9 +170,15 @@ describe('expense admission', () => {
         expect(await admitted(route, {})).toBe(false);
     });
 
-    test('an adult with no role and no membership is admitted on sign-off only', async () => {
+    test('an adult with an ACTIVE membership and no role is admitted on sign-off only', async () => {
         for (const [endpoint, route] of expense) {
-            expect([endpoint, await admitted(route, { ageBand: 'adult' })]).toEqual([endpoint, endpoint === SIGN_OFF]);
+            expect([endpoint, await admitted(route, { ageBand: 'adult', isActiveOrgMember: true })]).toEqual([endpoint, endpoint === SIGN_OFF]);
+        }
+    });
+
+    test('an adult with no role and no ACTIVE membership is admitted nowhere', async () => {
+        for (const [endpoint, route] of expense) {
+            expect([endpoint, await admitted(route, { ageBand: 'adult' })]).toEqual([endpoint, false]);
         }
     });
 
@@ -182,7 +188,7 @@ describe('expense admission', () => {
         }
     });
 
-    // Whatever receipt-submitter requires (a known adult), a program leader
+    // Whatever receipt-submitter requires (an adult member), a program leader
     // or treasurer still reaches sign-off through the approver leg.
     test.each<[string, Partial<AuthenticatedUser>, { programId: number } | null]>([
         ['program leader', { programsLed: [1] }, null],
@@ -202,6 +208,7 @@ describe('expense admission', () => {
             ['BOARD', { isBoardMember: true }, null],
             ['keyholder', { isKeyholder: true }, null],
             ['adult with no role', { ageBand: 'adult' }, null],
+            ['adult member with no role', { ageBand: 'adult', isActiveOrgMember: true }, null],
             ['youth Volunteer Family member', { ageBand: 'youth', isVolunteerFamily: true, isActiveOrgMember: true }, null],
         ];
         for (const [who, user, treasurer] of callers) {

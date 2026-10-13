@@ -69,7 +69,8 @@ const attrs = (o: Record<string, string>) => Object.entries(o).map(([key, value]
 /** A household whose lead has `email`, an OrgMembership, and one process. */
 async function makeApplicant(opts: {
     email: string;
-    status: "PENDING_PAYMENT" | "ACTIVE";
+    status: "PENDING_PAYMENT" | "ACTIVE" | "BLOCKED" | "ARCHIVED";
+    household?: "NONE" | "DENIED";
     bgCleared?: boolean;
     isVolunteer?: boolean;
     shopifyOrderId?: string;
@@ -80,7 +81,7 @@ async function makeApplicant(opts: {
         data: { email: opts.email, name: `Lead ${opts.email}`, isHouseholdLead: true, householdId: hh.id },
     });
     const m = await prisma.orgMembership.create({
-        data: { householdId: hh.id, status: opts.status === "ACTIVE" ? "ACTIVE" : "NONE", isVolunteer: !!opts.isVolunteer },
+        data: { householdId: hh.id, status: opts.household ?? (opts.status === "ACTIVE" ? "ACTIVE" : "NONE"), isVolunteer: !!opts.isVolunteer },
     });
     const proc = await prisma.orgMembershipProcess.create({
         data: {
@@ -198,6 +199,48 @@ describe("forward recovery", () => {
         // Idempotent: second run does nothing new (order now recorded on the process).
         await runReconcile();
         expect(await prisma.paymentException.count({ where: { processId } })).toBe(0);
+    });
+
+    it("recovers a missed paid-while-blocked webhook: records the payment and raises PAID_WHILE_BLOCKED", async () => {
+        const oid = `${TAG}-blocked`;
+        const { processId } = await makeApplicant({ email: `blocked-${TAG}@ex.com`, status: "BLOCKED" });
+        orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) })]);
+
+        await runReconcile();
+        const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+        expect(proc?.status).toBe("BLOCKED");
+        expect(proc?.shopifyOrderId).toBe(oid);
+        expect(await prisma.paymentException.count({ where: { kind: "PAID_WHILE_BLOCKED", shopifyOrderId: oid, processId } })).toBe(1);
+        await runReconcile();
+        expect(await prisma.paymentException.count({ where: { shopifyOrderId: oid } })).toBe(1);
+    });
+
+    it.each([
+        ["a closed application", "ARCHIVED", false],
+        ["a second order on an already-paid application", "ACTIVE", true],
+    ] as const)("raises a paid order on %s instead of ignoring it", async (_label, status, paid) => {
+        const oid = `${TAG}-nothing-due-${status}`;
+        const { processId } = await makeApplicant({ email: `nothing-due-${status}-${TAG}@ex.com`, status, paid, shopifyOrderId: paid ? `${TAG}-first` : undefined });
+        orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) })]);
+
+        await runReconcile();
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe(status);
+        expect(await prisma.paymentException.count({ where: { kind: "UNMATCHED_ORDER", shopifyOrderId: oid, processId } })).toBe(1);
+    });
+
+    it("never activates a DENIED household: nothing changes", async () => {
+        const oid = `${TAG}-denied`;
+        const { processId, membershipId } = await makeApplicant({ email: `denied-${TAG}@ex.com`, status: "PENDING_PAYMENT", household: "DENIED", bgCleared: true });
+        orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) })]);
+
+        await runReconcile();
+        const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+        expect(proc?.status).toBe("PENDING_PAYMENT");
+        expect(proc?.paidAt).toBeNull();
+        expect((await prisma.orgMembership.findUnique({ where: { id: membershipId } }))?.status).toBe("DENIED");
     });
 
     // An order whose pass throws is isolated (the sweep goes on) but counted: the
@@ -598,6 +641,64 @@ describe("program order entitlement (same check as the webhook)", () => {
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
         expect(await kinds(oid)).toEqual(["REVERSED_BEFORE_ACTIVATION"]);
+    });
+
+    const attributed = (oid: string, programId: number, ids: string) =>
+        order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: ids }) });
+
+    it.each([
+        ["already paid on another order", `${TAG}-old-order`],
+        ["comped or approved (no order)", undefined],
+    ])("raises DUPLICATE_PAYMENT, changing nothing, when the child is %s", async (_label, priorOrder) => {
+        const oid = `${TAG}-607-${priorOrder ? "paid" : "comp"}`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-dup-${priorOrder ? "paid" : "comp"}-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: priorOrder });
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+
+        await runReconcile();
+        const row = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId } } });
+        expect(row?.shopifyOrderId).toBe(priorOrder ?? null);
+        const raised = await prisma.paymentException.findMany({ where: { shopifyOrderId: oid } });
+        expect(raised.map((e) => [e.kind, e.personId])).toEqual([["DUPLICATE_PAYMENT", personId]]);
+        await runReconcile();
+        expect(await kinds(oid)).toEqual(["DUPLICATE_PAYMENT"]);
+    });
+
+    it("raises UNCLAIMED_SEATS when the child named has no enrollment (withdrawn or expired)", async () => {
+        const oid = `${TAG}-608`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-gone-${TAG}@ex.com`, status: "PENDING" });
+        await prisma.programParticipant.delete({ where: { programId_personId: { programId, personId } } });
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBeUndefined();
+        expect(await kinds(oid)).toEqual(["UNCLAIMED_SEATS"]);
+    });
+
+    it("activates and raises UNCLAIMED_SEATS when the order buys more seats than people awaiting", async () => {
+        const oid = `${TAG}-609`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-extra-${TAG}@ex.com`, status: "PENDING" });
+        orderLines.mockResolvedValue([{ variantId, quantity: 3 }]);
+        ordersChangedSince.mockResolvedValue([attributed(oid, programId, String(personId))]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("ACTIVE");
+        expect(await kinds(oid)).toEqual(["UNCLAIMED_SEATS"]);
+    });
+
+    it("raises nothing for siblings paying on separate orders", async () => {
+        const email = `ent-sibs-${TAG}@ex.com`;
+        const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
+        const sibId = await addSibling(householdId, programId, email);
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([attributed(`${TAG}-610a`, programId, String(personId)), attributed(`${TAG}-610b`, programId, String(sibId))]);
+
+        await runReconcile();
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("ACTIVE");
+        expect(await statusOf(programId, sibId)).toBe("ACTIVE");
+        expect(await prisma.paymentException.count({ where: { programId } })).toBe(0);
     });
 
     it("waits on an order not yet paid: no activation, no exception", async () => {

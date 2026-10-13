@@ -63,9 +63,12 @@ export async function signLine(principal: ExpensePrincipal, lineItemId: number, 
   }
 }
 
+const REIMBURSEE_KNOWN = "The reimbursee is already set and cannot be changed";
+
 /**
- * Sets the Person owed a reimbursement, clears REIMBURSEE_UNKNOWN, and voids every non-submitter
- * sign-off on the expense, so each seat is signed again for the new payee.
+ * Names the Person owed a reimbursement whose reimbursee is unknown, clears REIMBURSEE_UNKNOWN,
+ * and voids every non-submitter sign-off on the expense, so each seat is signed for that payee.
+ * A known reimbursee is never changed.
  */
 export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, principal) => {
   await assertOrg(orgId);
@@ -78,6 +81,7 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
   if (!expense.needsReimbursement) throw new ServiceError(400, "Expense is not a reimbursement");
   if (expense.backfill) throw new ServiceError(400, "A backfilled expense is already booked; it takes no reimbursee");
   if (CLOSED_STATES.has(expense.state)) throw new ServiceError(400, `Expense is ${expense.state}`);
+  if (!reimburseeUnknown(expense)) throw new ServiceError(409, REIMBURSEE_KNOWN);
   const dir = getExpenseRuntime().signoff;
   if (!(await dir.personExists(personId))) throw new ServiceError(404, "Person not found");
   const ownHousehold = [personId, ...(await dir.householdOf([personId]))];
@@ -87,16 +91,18 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
     await lockExpense(tx, expenseId);
     const current = (await tx.expense.findUnique({ where: { id: expenseId } }))!;
     if (CLOSED_STATES.has(current.state)) throw new ServiceError(400, `Expense is ${current.state}`);
+    if (!reimburseeUnknown(current)) throw new ServiceError(409, REIMBURSEE_KNOWN);
+    // reimbursementFor stays as the receipt's free-text payee; reimburseePersonId is authoritative.
     await tx.expense.update({ where: { id: expenseId }, data: { reimburseePersonId: personId } });
     await writeAudit(tx, actor, {
       expenseId,
       action: "reimbursee_set",
       fieldChanged: "reimburseePersonId",
-      valueBefore: current.reimburseePersonId === null ? null : String(current.reimburseePersonId),
+      valueBefore: null,
       valueAfter: String(personId),
     });
-    // Every seat was signed for the previous payee, so each is signed again for the new one.
-    await voidSignoffs(tx, actor, expenseId, null, "the reimbursee changed");
+    // Any seat signed while the payee was unknown is signed again for the payee.
+    await voidSignoffs(tx, actor, expenseId, null, "the reimbursee was set");
     await tx.expenseFlag.updateMany({
       where: { expenseId, kind: "REIMBURSEE_UNKNOWN", checkedOffAt: null },
       data: { checkedOffAt: new Date(), checkedOffByUserId: actor.userId, checkedOffByUsername: actor.username, notes: "reimbursee set" },

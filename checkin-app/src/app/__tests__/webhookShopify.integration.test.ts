@@ -22,7 +22,7 @@ import { activateByProcessId } from '@/lib/membership/payment';
 import { DEV_MOCK_SHOPIFY_WEBHOOK_SECRET } from '@/lib/config';
 
 jest.mock('@/lib/membership/payment', () => ({
-    activateByProcessId: jest.fn().mockResolvedValue(undefined),
+    activateByProcessId: jest.fn().mockResolvedValue({ outcome: 'active', process: null }),
 }));
 
 // Keep the REAL logIntegrationError (it writes to the DB — the 500-catch test
@@ -197,8 +197,8 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         expect(res.status).toBe(400);
     });
 
-    it('acknowledges (200) but makes no change when the participant is not enrolled', async () => {
-        // p1 has no programParticipant row for this program yet.
+    it('acknowledges (200) and enrolls nobody when the participant is not enrolled, raising UNCLAIMED_SEATS', async () => {
+        // p1 has no programParticipant row (withdrawn or expired before paying).
         await prisma.programParticipant.deleteMany({ where: { programId, personId: p1 } });
         const body = programPayload(String(p1));
         const res = await POST(webhookReq(body, sign(body)));
@@ -208,6 +208,9 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
             where: { programId_personId: { programId, personId: p1 } },
         });
         expect(row).toBeNull();
+        const raised = await prisma.paymentException.findMany({ where: { shopifyOrderId: '555' } });
+        expect(raised.map((e) => [e.kind, e.programId, e.personId])).toEqual([['UNCLAIMED_SEATS', programId, p1]]);
+        await prisma.paymentException.deleteMany({ where: { shopifyOrderId: '555' } });
     });
 
     it('activates a PENDING participant and is idempotent across a replayed delivery', async () => {
@@ -273,8 +276,89 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
             (await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId } } }))?.status;
         const exceptionKinds = async () =>
             (await prisma.paymentException.findMany({ where: { shopifyOrderId: '555' } })).map((e) => e.kind);
-        afterEach(async () => {
-            await prisma.paymentException.deleteMany({ where: { shopifyOrderId: '555' } });
+        const clearExceptions = () => prisma.paymentException.deleteMany({ where: { programId } });
+        beforeEach(clearExceptions);
+        afterEach(clearExceptions);
+
+        const orderBody = (id: number, accountIds: string, quantity: number) => JSON.stringify({
+            id,
+            financial_status: 'paid',
+            line_items: [{ variant_id: PROGRAM_VARIANT_ID, quantity }],
+            note_attributes: [
+                { name: 'CheckMeIn_Account_ID', value: accountIds },
+                { name: 'Program_ID', value: String(programId) },
+            ],
+        });
+        const setActive = (personId: number, shopifyOrderId: string | null) => prisma.programParticipant.upsert({
+            where: { programId_personId: { programId, personId } },
+            update: { status: 'ACTIVE', pendingSince: null, shopifyOrderId },
+            create: { programId, personId, status: 'ACTIVE', shopifyOrderId },
+        });
+        const exceptionsOn = async (orderId: string) =>
+            (await prisma.paymentException.findMany({ where: { shopifyOrderId: orderId } })).map((e) => [e.kind, e.personId]);
+
+        it.each([
+            ['already paid on another order', '444'],
+            ['comped or approved (no order)', null],
+        ])('raises DUPLICATE_PAYMENT, changing nothing, when the child is %s', async (_label, priorOrder) => {
+            await setActive(p1, priorOrder);
+            const body = orderBody(555, String(p1), 1);
+            await POST(webhookReq(body, sign(body)));
+            const row = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId: p1 } } });
+            expect(row?.status).toBe('ACTIVE');
+            expect(row?.shopifyOrderId).toBe(priorOrder);
+            expect(await exceptionsOn('555')).toEqual([['DUPLICATE_PAYMENT', p1]]);
+        });
+
+        it('raises DUPLICATE_PAYMENT when the second payment comes through the hidden claimant product', async () => {
+            const CLAIMANT_VARIANT_ID = '445567';
+            await prisma.program.update({ where: { id: programId }, data: { claimantShopifyVariantId: CLAIMANT_VARIANT_ID } });
+            try {
+                await setActive(p1, '444');
+                const body = JSON.stringify({
+                    id: 555,
+                    financial_status: 'paid',
+                    line_items: [{ variant_id: CLAIMANT_VARIANT_ID, quantity: 1 }],
+                    note_attributes: [
+                        { name: 'CheckMeIn_Account_ID', value: String(p1) },
+                        { name: 'Program_ID', value: String(programId) },
+                    ],
+                });
+                await POST(webhookReq(body, sign(body)));
+                expect(await exceptionsOn('555')).toEqual([['DUPLICATE_PAYMENT', p1]]);
+            } finally {
+                await prisma.program.update({ where: { id: programId }, data: { claimantShopifyVariantId: null } });
+            }
+        });
+
+        it('activates the pending child and raises DUPLICATE_PAYMENT for the already-paid one named on the same order', async () => {
+            await setActive(p1, '444');
+            await setPending(p2);
+            const body = orderBody(555, `${p1},${p2}`, 2);
+            await POST(webhookReq(body, sign(body)));
+            expect(await statusOf(p2)).toBe('ACTIVE');
+            expect(await exceptionsOn('555')).toEqual([['DUPLICATE_PAYMENT', p1]]);
+        });
+
+        it('activates and raises UNCLAIMED_SEATS when the order buys more seats than people awaiting', async () => {
+            await setPending(p1);
+            const body = orderBody(555, String(p1), 2);
+            await POST(webhookReq(body, sign(body)));
+            expect(await statusOf(p1)).toBe('ACTIVE');
+            expect(await exceptionsOn('555')).toEqual([['UNCLAIMED_SEATS', p1]]);
+        });
+
+        it('raises nothing for siblings paying on separate orders, nor on a replay', async () => {
+            await setPending(p1);
+            await setPending(p2);
+            const first = orderBody(555, String(p1), 1);
+            const second = orderBody(556, String(p2), 1);
+            await POST(webhookReq(first, sign(first)));
+            await POST(webhookReq(second, sign(second)));
+            await POST(webhookReq(first, sign(first)));
+            expect(await statusOf(p1)).toBe('ACTIVE');
+            expect(await statusOf(p2)).toBe('ACTIVE');
+            expect(await prisma.paymentException.count({ where: { programId } })).toBe(0);
         });
 
         it('raises NO_ITEM when the order lacks the program variant', async () => {

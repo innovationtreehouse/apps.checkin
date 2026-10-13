@@ -6,7 +6,8 @@ import { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
 import { disbursementService } from "../services/disbursementService";
 import { getNavCounts } from "../services/navCountsService";
-import { donationError, getOrgId, getPrincipal, mapServiceErrors } from "../runtime";
+import { donationError, getOrgId, mapServiceErrors } from "../runtime";
+import { recordEvent } from "../repositories/audit";
 import type { DonationRouteHandler } from "../contract";
 import { auditContext, parseBody } from "./_shared";
 
@@ -68,11 +69,15 @@ export const listExclusions: DonationRouteHandler = async () => ({
 export const createExclusion: DonationRouteHandler = async ({ req }) => {
   const { qbTxnId, reason } = await parseBody(req, exclusionSchema);
   const orgId = await getOrgId();
-  const principal = await getPrincipal();
+  const audit = await auditContext(req);
   try {
     return {
-      DonationQbMatchExclusion: await db.donationQbMatchExclusion.create({
-        data: { orgId, qbTxnId, reason, excludedByUserId: principal.id },
+      DonationQbMatchExclusion: await db.$transaction(async (tx) => {
+        const row = await tx.donationQbMatchExclusion.create({
+          data: { orgId, qbTxnId, reason, excludedByUserId: audit.actorUserId },
+        });
+        await recordEvent(tx, { orgId, entityType: "qb_exclusion", entityId: row.id, eventType: "QB_TXN_EXCLUDED", ...audit, payload: { qbTxnId } });
+        return row;
       }),
     };
   } catch (err) {

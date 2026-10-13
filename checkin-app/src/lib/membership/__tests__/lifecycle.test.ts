@@ -32,6 +32,8 @@ import {
     ALL_KINDS,
     ARCHIVABLE_STATUSES,
     RESTORABLE_STATUSES,
+    LEGACY_REOPEN_STATUSES,
+    openProcess,
     INITIAL_STATES,
     type ProcessStatus,
 } from '@/lib/membership/lifecycle';
@@ -107,8 +109,8 @@ describe('grantableRenewalWhere / settledThisCycleWhere', () => {
     test('settledThisCycleWhere (money) is kind-agnostic: ACTIVE or paid-awaiting-clearance', () => {
         // A family that joins during the renewal window (INITIAL) buys the coming
         // year exactly as a renewer does, so no kind clause. Paid and waiting on the
-        // board's clearance is settled money too. ARCHIVED never completed payment
-        // (archive refuses ACTIVE) and must not extend a horizon.
+        // board's clearance is settled money too. ARCHIVED (closed) is unpaid by rule
+        // and must not extend a horizon.
         const settledSince = new Date('2026-06-01T00:00:00.000Z');
         expect(settledThisCycleWhere(settledSince)).toEqual({
             OR: [
@@ -223,29 +225,36 @@ describe('isLegalTransition covers §5', () => {
         expect(isLegalTransition('BLOCKED', 'ACTIVE')).toBe(true);
     });
 
-    test('accepts archive from every pre-terminal status, not from ACTIVE', () => {
-        for (const from of ['INTAKE', 'PENDING_EXTERNAL_ACTION', 'PENDING_BG_REVIEW', 'PENDING_PAYMENT', 'PENDING_BG_CLEARANCE', 'PENDING_RENEWAL', 'BLOCKED'] as ProcessStatus[]) {
+    test('close only from the unpaid, long-idle steps — never paid, blocked or active', () => {
+        for (const from of ['INTAKE', 'PENDING_EXTERNAL_ACTION', 'PENDING_BG_REVIEW', 'PENDING_PAYMENT', 'PENDING_RENEWAL'] as ProcessStatus[]) {
             expect(isLegalTransition(from, 'ARCHIVED')).toBe(true);
         }
-        expect(isLegalTransition('ACTIVE', 'ARCHIVED')).toBe(false);
+        for (const from of ['ACTIVE', 'BLOCKED', 'PENDING_BG_CLEARANCE'] as ProcessStatus[]) {
+            expect(isLegalTransition(from, 'ARCHIVED')).toBe(false);
+        }
     });
 
-    test('accepts unarchive back to every archivable status — ARCHIVED is not sealed', () => {
-        for (const to of ['INTAKE', 'PENDING_EXTERNAL_ACTION', 'PENDING_BG_REVIEW', 'PENDING_PAYMENT', 'PENDING_BG_CLEARANCE', 'PENDING_RENEWAL', 'BLOCKED'] as ProcessStatus[]) {
+    test('reopen returns to every closable step and to the legacy closed-from steps — ARCHIVED is not sealed', () => {
+        for (const to of ['INTAKE', 'PENDING_EXTERNAL_ACTION', 'PENDING_BG_REVIEW', 'PENDING_PAYMENT', 'PENDING_RENEWAL'] as ProcessStatus[]) {
             expect(isLegalTransition('ARCHIVED', to)).toBe(true);
+        }
+        for (const to of ['PENDING_BG_CLEARANCE', 'BLOCKED'] as ProcessStatus[]) {
+            expect(TRANSITIONS.some((t) => t.from === 'ARCHIVED' && t.to === to && t.legacy)).toBe(true);
         }
         expect(isLegalTransition('ARCHIVED', 'ARCHIVED')).toBe(false);
     });
 
-    // GUARD (new): the restore set and the transition table are two lists, and the
-    // gap between them is deliberate. RENEWAL_PENDING_BG IS restorable at runtime —
-    // archive's gate is `status !== ACTIVE`, and migration 20260806160000 backfills
-    // that value — but declaring the edge would make an unreachable status reachable
-    // and delete the unreachable report machineSpecs.ts exists to surface. So the
-    // table stays silent and this records the divergence instead of denying it.
-    test('GUARD: the restore set is the archivable set plus the legacy status, and nothing else', () => {
+    test('record refund returns a paid clearance wait to payment', () => {
+        expect(TRANSITIONS.some((t) => t.from === 'PENDING_BG_CLEARANCE' && t.to === 'PENDING_PAYMENT' && t.event === 'recordRefund')).toBe(true);
+    });
+
+    // GUARD: the restore set and the transition table differ by one status on purpose.
+    // RENEWAL_PENDING_BG is restorable (rows closed under the older rule may hold it,
+    // migration 20260806160000 backfills it) but declaring the edge would make an
+    // unreachable status reachable and hide machineSpecs.ts's unreachable report.
+    test('GUARD: the restore set is the closable set plus the legacy closed-from steps and status, and nothing else', () => {
         expect([...RESTORABLE_STATUSES].sort()).toEqual(
-            [...ARCHIVABLE_STATUSES, ...LEGACY_STATUSES].sort(),
+            [...ARCHIVABLE_STATUSES, ...LEGACY_REOPEN_STATUSES, ...LEGACY_STATUSES].sort(),
         );
         expect(RESTORABLE_STATUSES.has('RENEWAL_PENDING_BG')).toBe(true);
         expect(isLegalTransition('ARCHIVED', 'RENEWAL_PENDING_BG')).toBe(false);
@@ -265,6 +274,10 @@ describe('isLegalTransition covers §5', () => {
         // assert the RENEWAL edge exists explicitly in the table.
         expect(TRANSITIONS.some((t) => t.from === 'PENDING_PAYMENT' && t.to === 'ACTIVE' && t.kind === 'RENEWAL')).toBe(true);
     });
+});
+
+test('openProcess is every status but the finished and closed ones', () => {
+    expect([...openProcess.statuses].sort()).toEqual(ALL_STATUSES.filter((st) => st !== 'ACTIVE' && st !== 'ARCHIVED').sort());
 });
 
 describe('reachability', () => {

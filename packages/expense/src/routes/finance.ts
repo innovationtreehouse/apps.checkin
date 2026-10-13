@@ -8,6 +8,8 @@ import { db } from "../db";
 import type { ExpenseRouteHandler } from "../contract";
 import { getExpenseRuntime, getOrgId, getPrincipal } from "../runtime";
 import { createPartOwnerRepository } from "../repositories/partOwner";
+import { writeOrgAudit } from "../lib/audit";
+import { actorOf } from "../lib/caller";
 import { requireFinance } from "../services/approvalService";
 import { CapitalSeedSchema, seedCapitalAssets } from "../services/capitalService";
 import { checkOffFlag, listOpenFlags } from "../services/flagService";
@@ -66,29 +68,47 @@ export const accountMappings: ExpenseRouteHandler = async () => ({
 
 export const createAccountMapping: ExpenseRouteHandler = async ({ req }) => {
   const data = await parseBody(req, mappingSchema);
-  await asFinance();
-  return { AccountMapping: await db.accountMapping.create({ data: { orgId: await getOrgId(), ...data } }) };
+  const actor = actorOf(await asFinance());
+  const orgId = await getOrgId();
+  return {
+    AccountMapping: await db.$transaction(async (tx) => {
+      const row = await tx.accountMapping.create({ data: { orgId, ...data } });
+      await writeOrgAudit(tx, orgId, actor, { entityType: "account_mapping", entityId: row.id, action: "created", after: row });
+      return row;
+    }),
+  };
 };
 
-async function ownedRow(find: () => Promise<unknown>): Promise<void> {
-  if (!(await find())) throw httpError(404, "Not found");
+async function ownedRow<T>(find: () => Promise<T | null>): Promise<T> {
+  const row = await find();
+  if (!row) throw httpError(404, "Not found");
+  return row;
 }
 
 export const updateAccountMapping: ExpenseRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
   const data = await parseBody(req, mappingSchema);
-  await asFinance();
+  const actor = actorOf(await asFinance());
   const orgId = await getOrgId();
-  await ownedRow(() => db.accountMapping.findFirst({ where: { id, orgId } }));
-  return { AccountMapping: await db.accountMapping.update({ where: { id }, data }) };
+  const before = await ownedRow(() => db.accountMapping.findFirst({ where: { id, orgId } }));
+  return {
+    AccountMapping: await db.$transaction(async (tx) => {
+      const row = await tx.accountMapping.update({ where: { id }, data });
+      await writeOrgAudit(tx, orgId, actor, { entityType: "account_mapping", entityId: id, action: "updated", before, after: row });
+      return row;
+    }),
+  };
 };
 
 export const deleteAccountMapping: ExpenseRouteHandler = async ({ params }) => {
   const id = parseId(params.id);
-  await asFinance();
+  const actor = actorOf(await asFinance());
   const orgId = await getOrgId();
-  await ownedRow(() => db.accountMapping.findFirst({ where: { id, orgId } }));
-  await db.accountMapping.delete({ where: { id } });
+  const before = await ownedRow(() => db.accountMapping.findFirst({ where: { id, orgId } }));
+  await db.$transaction(async (tx) => {
+    await tx.accountMapping.delete({ where: { id } });
+    await writeOrgAudit(tx, orgId, actor, { entityType: "account_mapping", entityId: id, action: "deleted", before });
+  });
   return {};
 };
 
@@ -105,23 +125,43 @@ export const qbAccounts: ExpenseRouteHandler = async () => ({
 
 export const createQbAccount: ExpenseRouteHandler = async ({ req }) => {
   const data = await parseBody(req, qbAccountSchema);
-  await asFinance();
-  return { ExpenseQbAccount: await db.expenseQbAccount.create({ data: { orgId: await getOrgId(), ...data } }) };
+  const actor = actorOf(await asFinance());
+  const orgId = await getOrgId();
+  return {
+    ExpenseQbAccount: await db.$transaction(async (tx) => {
+      const row = await tx.expenseQbAccount.create({ data: { orgId, ...data } });
+      await writeOrgAudit(tx, orgId, actor, { entityType: "qb_account", entityId: row.id, action: "created", after: row });
+      return row;
+    }),
+  };
 };
 
 export const updateQbAccount: ExpenseRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
   const data = await parseBody(req, qbAccountSchema);
-  await asFinance();
+  const actor = actorOf(await asFinance());
   const orgId = await getOrgId();
-  await ownedRow(() => db.expenseQbAccount.findFirst({ where: { id, orgId } }));
-  return { ExpenseQbAccount: await db.expenseQbAccount.update({ where: { id }, data }) };
+  const before = await ownedRow(() => db.expenseQbAccount.findFirst({ where: { id, orgId } }));
+  return {
+    ExpenseQbAccount: await db.$transaction(async (tx) => {
+      const row = await tx.expenseQbAccount.update({ where: { id }, data });
+      await writeOrgAudit(tx, orgId, actor, { entityType: "qb_account", entityId: id, action: "updated", before, after: row });
+      return row;
+    }),
+  };
 };
 
 export const deleteQbAccount: ExpenseRouteHandler = async ({ params }) => {
   const id = parseId(params.id);
-  await asFinance();
-  await db.expenseQbAccount.deleteMany({ where: { id, orgId: await getOrgId() } });
+  const actor = actorOf(await asFinance());
+  const orgId = await getOrgId();
+  const before = await db.expenseQbAccount.findFirst({ where: { id, orgId } });
+  if (before) {
+    await db.$transaction(async (tx) => {
+      await tx.expenseQbAccount.delete({ where: { id } });
+      await writeOrgAudit(tx, orgId, actor, { entityType: "qb_account", entityId: id, action: "deleted", before });
+    });
+  }
   return {};
 };
 
@@ -141,10 +181,14 @@ export const setOwnership: ExpenseRouteHandler = async ({ req }) => {
     req,
     z.object({ gtin13: z.string().regex(/^\d{13}$/, "gtin13 must be 13 digits"), ownerId: z.number().int().positive() }),
   );
-  await asFinance();
+  const actor = actorOf(await asFinance());
   if (!(await buckets()).some((b) => b.id === ownerId && !b.archivedAt)) throw httpError(400, "Unknown or archived bucket");
   const orgId = await getOrgId();
-  await createPartOwnerRepository(db).updateItemOwner(orgId, gtin13, ownerId);
+  await db.$transaction(async (tx) => {
+    const before = await tx.partOwnerMap.findFirst({ where: { orgId, gtin13 }, select: { ownerId: true } });
+    await createPartOwnerRepository(tx).updateItemOwner(orgId, gtin13, ownerId);
+    await writeOrgAudit(tx, orgId, actor, { entityType: "part_owner", entityId: gtin13, action: "owner_set", before, after: { ownerId } });
+  });
   return { PartOwnerMap: await db.partOwnerMap.findFirst({ where: { orgId, gtin13 } }) };
 };
 

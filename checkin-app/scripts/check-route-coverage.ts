@@ -9,8 +9,8 @@
  *   2. Every registry entry corresponds to an existing route file.
  *   3. Migrated routes (listed in scripts/migrated-routes.txt) must NOT call NextResponse.json / Response.json directly.
  *   4. Calls to third-party hosts (shopify.com, myshopify.com, resend.com, SHOPIFY_STORE_DOMAIN) live only in src/lib/shopify.ts and src/lib/email.ts.
- *   4b. In packages/* source (tests, fixtures and generated code excluded), any non-loopback
- *      URL literal, third-party host or API SDK lives only in a file of PACKAGE_EGRESS_FILES,
+ *   4b. In packages/* and *-function source (tests, fixtures and generated code excluded), any
+ *      non-loopback URL literal, third-party host or API SDK lives only in a file of PACKAGE_EGRESS_FILES,
  *      and every surface that map names is a defineOutbound entry in the registry.
  *   5. src/security/generated/classifications.ts is up to date with prisma/schema.prisma.
  *   6. RATCHET (blocking even in advisory mode): every exported route method is
@@ -50,13 +50,15 @@ const ALLOWED_THIRD_PARTY_FETCH_FILES = new Set<string>([
 // Each package egress file names the outbound surfaces it serves; every surface
 // must be a defineOutbound entry in the registry, so adding a file here is a
 // boundary change.
-const PACKAGES_DIR = path.resolve(REPO_ROOT, '../packages');
+// Keys are relative to the monorepo root.
+const MONOREPO_ROOT = path.resolve(REPO_ROOT, '..');
 export const PACKAGE_EGRESS_FILES: ReadonlyMap<string, readonly string[]> = new Map([
-    ['quickbooks/src/client.ts', ['quickbooks.query', 'quickbooks.create']],
-    ['quickbooks/src/oauth.ts', ['quickbooks.oauth']],
-    ['receipt/src/lib/ocr.ts', ['anthropic.receipt-ocr']],
+    ['packages/quickbooks/src/client.ts', ['quickbooks.query', 'quickbooks.create']],
+    ['packages/quickbooks/src/oauth.ts', ['quickbooks.oauth']],
+    ['packages/receipt/src/lib/ocr.ts', ['anthropic.receipt-ocr']],
     // Builds the endpoint; s-read-function makes the call.
-    ['s-ingest-core/src/config.ts', ['shopify.admin-read']],
+    ['packages/s-ingest-core/src/config.ts', ['shopify.admin-read']],
+    ['s-read-function/src/shopify/token.ts', ['shopify.oauth']],
 ]);
 
 export const THIRD_PARTY_HOST_RE =
@@ -64,10 +66,12 @@ export const THIRD_PARTY_HOST_RE =
 /** An absolute URL with a host (literal, `${…}` or `[ipv6]`), except loopback. A bare
  *  scheme prefix (`"https://" + host`) is not a fixed destination and does not match. */
 const NON_LOOPBACK_URL_RE = /\bhttps?:\/\/(?!(?:localhost|127\.0\.0\.1|\[::1\])(?![\w.-]))[\w$[]/;
-/** An API SDK hides its host (the Anthropic SDK defaults to api.anthropic.com). */
-const THIRD_PARTY_SDK_RE = /['"]@anthropic-ai\/sdk['"]/;
+/** An API SDK hides its host (the Anthropic SDK defaults to api.anthropic.com, resend to
+ *  api.resend.com). @aws-sdk/* is absent: it reaches only AWS, the platform the code runs on. */
+const THIRD_PARTY_SDK_RE = /['"](@anthropic-ai\/sdk|resend)['"]/;
 const PACKAGE_SKIP_DIR_RE = /^(node_modules|dist|generated|__tests__|__fixtures__|fixtures|test|tests)$/;
-const PACKAGE_SKIP_FILE_RE = /\.(test|spec)\.tsx?$/;
+const PACKAGE_SOURCE_FILE_RE = /\.(tsx?|[cm]?js)$/;
+const PACKAGE_SKIP_FILE_RE = /\.(test|spec)\.(tsx?|[cm]?js)$/;
 const VERB_EXPORT_RE = /export\s+(?:const|async\s+function|function)\s+(GET|POST|PUT|PATCH|DELETE)\b/g;
 /** `export { a as GET, POST }` — each specifier exports its `as` alias, else its own name. */
 const EXPORT_LIST_RE = /export\s*\{([^}]*)\}/g;
@@ -338,7 +342,7 @@ export function findUnregisteredPackageSurfaces(
         .map(surface => ({
             severity: 'error' as const,
             rule: 'package-third-party-egress',
-            file: `packages/${file}`,
+            file,
             message: `serves outbound surface '${surface}', which has no defineOutbound entry in the registry`,
         })));
 }
@@ -355,17 +359,25 @@ export function findPackageEgressLines(source: string): number[] {
     return hits;
 }
 
-// ponytail: .ts/.tsx only, like walkTsFiles; widen if a package ships .js/.mjs source.
 function walkPackageSourceFiles(dir: string, out: string[] = []): string[] {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) {
             if (!PACKAGE_SKIP_DIR_RE.test(entry.name)) walkPackageSourceFiles(full, out);
-        } else if (/\.tsx?$/.test(entry.name) && !PACKAGE_SKIP_FILE_RE.test(entry.name)) {
+        } else if (PACKAGE_SOURCE_FILE_RE.test(entry.name) && !PACKAGE_SKIP_FILE_RE.test(entry.name)) {
             out.push(full);
         }
     }
     return out;
+}
+
+/** Rule 4b scan set: source under packages/ and every root-level *-function dir,
+ *  as paths relative to monorepoRoot. */
+export function listEgressScanFiles(monorepoRoot: string): string[] {
+    const roots = fs.readdirSync(monorepoRoot, { withFileTypes: true })
+        .filter(e => e.isDirectory() && (e.name === 'packages' || e.name.endsWith('-function')))
+        .map(e => path.join(monorepoRoot, e.name));
+    return roots.flatMap(root => walkPackageSourceFiles(root)).map(f => path.relative(monorepoRoot, f));
 }
 
 function checkGeneratedFileFresh() {
@@ -478,16 +490,15 @@ function main() {
 
     findings.push(...findUnregisteredPackageSurfaces(PACKAGE_EGRESS_FILES, outbounds));
     for (const rel of PACKAGE_EGRESS_FILES.keys()) {
-        if (!fs.existsSync(path.join(PACKAGES_DIR, rel))) {
-            report('error', 'package-third-party-egress', `packages/${rel}`,
+        if (!fs.existsSync(path.join(MONOREPO_ROOT, rel))) {
+            report('error', 'package-third-party-egress', rel,
                 'PACKAGE_EGRESS_FILES names a file that does not exist — remove or fix the entry');
         }
     }
-    for (const file of walkPackageSourceFiles(PACKAGES_DIR)) {
-        const rel = path.relative(PACKAGES_DIR, file);
+    for (const rel of listEgressScanFiles(MONOREPO_ROOT)) {
         if (PACKAGE_EGRESS_FILES.has(rel)) continue;
-        for (const line of findPackageEgressLines(fs.readFileSync(file, 'utf-8'))) {
-            report('error', 'package-third-party-egress', `packages/${rel}`,
+        for (const line of findPackageEgressLines(fs.readFileSync(path.join(MONOREPO_ROOT, rel), 'utf-8'))) {
+            report('error', 'package-third-party-egress', rel,
                 `third-party host, URL or SDK outside a package egress file — register an ` +
                 `outbound surface in src/security/registry.ts and map the file to it in ` +
                 `PACKAGE_EGRESS_FILES`,

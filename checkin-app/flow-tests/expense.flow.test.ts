@@ -110,7 +110,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await setLead(await loginAs(BOARD), originalLead);
+  const board = await loginAs(BOARD);
+  // Nobody makes themself a program lead, so the board persona cannot take the seeded lead back.
+  if (originalLead !== board.personaId) await setLead(board, originalLead);
 });
 
 describe("expense — persona matrix", () => {
@@ -269,6 +271,7 @@ describe("expense — FINANCE journey", () => {
     const set = await send(f, "PUT", R, { personId: reimbursee });
     expect(set.status).toBe(200);
     expect(set.json).toMatchObject({ reimburseePersonId: reimbursee });
+    expect((await send(f, "PUT", R, { personId: reimbursee })).status).toBe(409);
     const open = await api<{ kind: string }[]>(f, "/api/expense/flags");
     expect(open.json.some((x) => x.kind === "REIMBURSEE_UNKNOWN")).toBe(false);
 

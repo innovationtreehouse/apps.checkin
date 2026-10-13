@@ -26,3 +26,29 @@ export async function writeAudit(db: Db, actor: Actor, entry: AuditEntry): Promi
     },
   });
 }
+
+export interface OrgAuditEntry {
+  entityType: "account_mapping" | "qb_account" | "part_owner" | "capital_asset";
+  entityId?: string | number | null;
+  action: string;
+  before?: unknown;
+  after?: unknown;
+}
+
+const json = (v: unknown) => (v === undefined || v === null ? null : JSON.stringify(v));
+
+/** One row in the org-level audit log, for FINANCE writes that belong to no single expense. */
+export async function writeOrgAudit(db: Db, orgId: string, actor: Actor, entry: OrgAuditEntry): Promise<void> {
+  await db.expenseOrgAuditLog.create({
+    data: {
+      orgId,
+      actorUserId: actor.userId,
+      actorUsername: actor.username ?? null,
+      entityType: entry.entityType,
+      entityId: entry.entityId != null ? String(entry.entityId) : null,
+      action: entry.action,
+      before: json(entry.before),
+      after: json(entry.after),
+    },
+  });
+}

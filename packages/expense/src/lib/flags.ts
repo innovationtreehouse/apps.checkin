@@ -17,6 +17,11 @@ export const FLAG_AUDIENCE: Record<FlagKind, FlagAudience> = {
   REIMBURSEE_UNKNOWN: "FINANCE",
 };
 
+/** Flags that stay open while the hold they signal applies, with why a check-off is refused. */
+export const HOLD_FLAGS: ReadonlyMap<string, string> = new Map<FlagKind, string>([
+  ["REIMBURSEE_UNKNOWN", "Set the reimbursee to clear this flag"],
+]);
+
 /**
  * Flags derivable from the expense and the org's thresholds, raised at intake. MISSING_RECEIPT
  * and NON_EVERYDAY are raised by hand.

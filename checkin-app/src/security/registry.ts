@@ -245,28 +245,22 @@ defineRoute({
     ],
 });
 
-// Staff directory SEARCH for un-enrolled participants to add to a program. The
-// rows are NOT in the program (by definition), so the per-row
-// their_program_participants scope grants nothing here — admission is the real
-// boundary: 'program-lead-mentor' (resolveAccess also admits sysadmin/board)
-// restricts callers to a lead of THIS program. Once admitted, staff see the
-// directory's contact band (name[public]/email[pii]); dateOfBirth is 'personal'
-// (the strict tier), so it reaches only sysadmin/board (everyones:personal) —
-// a program lead may NOT enumerate the whole directory's DOBs. The UI degrades
-// cleanly: the age-warning badge in the enroll picker needs dob, and only
-// sysadmin/board can enroll anyway. FINDING for the CODEOWNERS reviewer:
-// 'everyones:pii' here is a deliberate global-directory contact grant, not a
-// per-program scope.
+// Staff directory SEARCH for un-enrolled participants to add to a program.
+// Admission ('program-lead-mentor'; resolveAccess also admits sysadmin/board)
+// is the real boundary. The search returns names only (owner ruling,
+// docs/rules/programs.md) as EligibleCandidate rows: id, name and a computed
+// age-fit label, all public. Person is not in the bag, so no email or date of
+// birth can leave even if the query over-selects.
 defineRoute({
     endpoint: 'GET /api/programs/[id]/eligible-participants',
     authorize: 'program-lead-mentor',
     envelope: 'members',
-    // Bag: { Person }.
-    returns: ['Person'],
+    // Bag: { EligibleCandidate }.
+    returns: ['EligibleCandidate'],
     orderedView: [
-        ['isSysadmin',        ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
-        ['isBoardMember',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
-        ['programLeadMentor', ['everyones:pii', 'member', 'public']],
+        ['isSysadmin',        ['public']],
+        ['isBoardMember',     ['public']],
+        ['programLeadMentor', ['public']],
     ],
 });
 
@@ -519,17 +513,17 @@ defineRoute({
 // Board's payment-plan approval queue. Returns pending ProgramParticipant rows
 // with the full participant + program nested, plus the participant's
 // household/orgMembership (so the board can see CURRENT membership while
-// deciding — wasOrgMemberAtApproval is only stamped on approval). Board/sysadmin
-// only, and they hold everyones:* so they see every field — the win is the
-// declared policy: any role later added to this view is field-stripped
+// deciding — wasOrgMemberAtApproval is only stamped on approval). Board/finance
+// only, no sysadmin, and they hold everyones:* so they see every field — the win
+// is the declared policy: any role later added to this view is field-stripped
 // automatically.
 defineRoute({
     endpoint: 'GET /api/finance-ops/payment-plans',
-    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    authorize: 'finance-or-board',
     envelope: null,
     returns: ['ProgramParticipant', 'Person', 'Program', 'Household', 'OrgMembership', 'BoardSettings'],
     orderedView: [
-        ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
     ],
 });
@@ -580,16 +574,16 @@ defineRoute({
 
 // Board's membership payment-plan approval queue. Returns PENDING_PAYMENT
 // OrgMembershipProcess rows the household asked to pay by plan, with the
-// membership + household nested. Board/sysadmin only, and they hold everyones:*
-// so they see every field — the win is the declared policy: any role later added
-// to this view is field-stripped automatically.
+// membership + household nested. Board/finance only, no sysadmin, and they hold
+// everyones:* so they see every field — the win is the declared policy: any role
+// later added to this view is field-stripped automatically.
 defineRoute({
     endpoint: 'GET /api/finance-ops/membership-payment-plans',
-    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    authorize: 'finance-or-board',
     envelope: null,
     returns: ['OrgMembershipProcess', 'OrgMembership', 'Household', 'Person'],
     orderedView: [
-        ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
     ],
 });
@@ -894,6 +888,13 @@ defineOutbound({
     surface: 'shopify.admin-read',
     // packages/s-ingest-core/src/config.ts builds the Admin GraphQL endpoint that
     // s-read-function calls. Read-only bulk/order queries and cursors; no model data.
+    tiers: [],
+});
+
+defineOutbound({
+    surface: 'shopify.oauth',
+    // s-read-function/src/shopify/token.ts → <shop>.myshopify.com/admin/oauth/access_token.
+    // The app's client credentials for a client-credentials grant; no model data.
     tiers: [],
 });
 

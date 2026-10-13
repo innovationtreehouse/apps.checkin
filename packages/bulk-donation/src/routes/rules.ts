@@ -29,10 +29,11 @@ export const listCommentRules: DonationRouteHandler = async ({ req }) => {
   return { TransactionCommentRule: await commentRuleService.listCommentRules(await getOrgId(), reader) };
 };
 
-export const deleteCommentRule: DonationRouteHandler = async ({ params }) => {
+export const deleteCommentRule: DonationRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
   const orgId = await getOrgId();
-  await mapServiceErrors(() => commentRuleService.deleteCommentRule(orgId, id));
+  const audit = await auditContext(req);
+  await mapServiceErrors(() => commentRuleService.deleteCommentRule(orgId, id, audit));
   return {};
 };
 

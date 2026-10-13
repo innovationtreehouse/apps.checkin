@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import path from "node:path";
+import { MAX_UPLOAD_BODY_BYTES } from "./src/lib/requestBodyLimit";
 
 const nextConfig: NextConfig = {
   output: 'standalone',
@@ -14,6 +15,11 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: path.join(__dirname, '..'),
   // The membership-agreement PDF is fetched from S3 at runtime (not read from
   // disk or imported), so there's nothing to bundle into the standalone image.
+  experimental: {
+    // The middleware runs on /api, so Next buffers each request body for the route up to this
+    // size and stops reading there. It must fit the largest upload.
+    proxyClientMaxBodySize: MAX_UPLOAD_BODY_BYTES,
+  },
 };
 
 export default nextConfig;

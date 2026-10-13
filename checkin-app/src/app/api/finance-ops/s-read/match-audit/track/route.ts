@@ -11,7 +11,7 @@ import { isPaid, raisePaymentException } from "@/lib/finance/reconcile";
  * row (MatchAuditPanel's "Track" button) to a tracked PaymentException. Human-
  * per-row only: nothing here is auto-raised.
  *
- * Same board/sysadmin gate + mirror-503 shape as the sibling GET — the panel
+ * Same board gate + mirror-503 shape as the sibling GET — the panel
  * that surfaces these rows is itself mirror-gated (its GET 503s when unwired),
  * so a track request only ever reaches here after a successful audit.
  *
@@ -137,7 +137,7 @@ async function trackEnrollment(programId: number, personId: number): Promise<Nex
 }
 
 export const POST = withAuth(
-    { roles: ["isSysadmin", "isBoardMember"] },
+    { roles: ["isBoardMember"] },
     async (req: NextRequest, auth) => {
         if (auth.type !== "session") {
             return apiError("Unauthorized", 401);

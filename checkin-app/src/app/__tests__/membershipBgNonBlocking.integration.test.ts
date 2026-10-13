@@ -168,6 +168,26 @@ describe('background check is non-blocking', () => {
         expect(await membershipStatusOf(orgMembershipId)).toBe('ACTIVE');
     });
 
+    it('a deny that commits while certify waits on the household lock refuses the certify', async () => {
+        const { processId, orgMembershipId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
+        await markContractSigned(processId);
+        await markBgConsent(processId, revA);
+        expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
+
+        let certify!: Promise<unknown>;
+        await prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
+            certify = certifyPaymentPlan(processId, revA).catch((e: unknown) => e);
+            // Let certify take the process lock and block on the household row.
+            await new Promise((r) => setTimeout(r, 500));
+            await tx.orgMembership.update({ where: { id: orgMembershipId }, data: { status: 'DENIED' } });
+        });
+
+        expect(await certify).toMatchObject({ code: 'wrong_phase' });
+        expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.paidAt).toBeNull();
+    });
+
     it('reject after payment → BLOCKED, membership stays inactive', async () => {
         const { processId, orgMembershipId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);

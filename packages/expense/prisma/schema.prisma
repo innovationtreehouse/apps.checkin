@@ -59,6 +59,34 @@ model ExpenseOrgSettingsChange {
   @@map("org_settings_changes")
 }
 
+// FINANCE's org-level config writes (account mapping, QuickBooks accounts, part ownership,
+// capital seed): who changed which row, with its value before and after as JSON.
+model ExpenseOrgAuditLog {
+  /// @sensitivity:internal
+  id            Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId         String   @map("org_id")
+  /// @sensitivity:pii
+  actorUserId   Int      @map("actor_user_id")
+  /// @sensitivity:pii
+  actorUsername String?  @map("actor_username")
+  /// @sensitivity:internal
+  entityType    String   @map("entity_type")
+  /// @sensitivity:internal
+  entityId      String?  @map("entity_id")
+  /// @sensitivity:internal
+  action        String
+  /// @sensitivity:internal
+  before        String?
+  /// @sensitivity:internal
+  after         String?
+  /// @sensitivity:internal
+  changedAt     DateTime @default(now()) @map("changed_at")
+
+  @@index([orgId])
+  @@map("org_audit_log")
+}
+
 model Expense {
   /// @sensitivity:internal
   id                 String    @id

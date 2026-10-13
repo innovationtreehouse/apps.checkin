@@ -68,8 +68,8 @@ describeDb("a line is assigned only to a live bucket", () => {
 });
 
 describeDb("seats follow the payee", () => {
-  it("changing the reimbursee voids every non-submitter sign-off, conflicted or not", async () => {
-    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5] }) });
+  it("a known reimbursee cannot be changed, and its seats stand", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3, 4], board: [5] }) });
     const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 7 });
     const li = await seedLineItem(id);
     await seedApproval(id, li, { ownerId: 100 });
@@ -77,36 +77,51 @@ describeDb("seats follow the payee", () => {
     await signLine(principal(2), li, "PROGRAM_APPROVER");
     await signLine(FINANCE, li, "TREASURER");
 
-    await setReimbursee(ORG, id, 9, principal(4, { isFinance: true }));
+    await expect(setReimbursee(ORG, id, 9, principal(4, { isFinance: true }))).rejects.toMatchObject({ statusCode: 409 });
 
-    expect(await seatsOf(li)).toEqual([["SUBMITTER", 1]]);
+    expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBe(7);
+    expect(await seatsOf(li)).toEqual([["SUBMITTER", 1], ["PROGRAM_APPROVER", 2], ["TREASURER", 3]]);
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "reimbursee_set" } })).toBe(0);
   });
 
-  it("a reimbursee change cannot commit between a sign-off's checks and its insert", async () => {
-    // 10 approves bucket 100 and is in the household of 9, who becomes the reimbursee mid-sign.
-    let pending: Promise<void> | null = null;
-    const base = directory({ approvers: { 100: [10] }, finance: [3], board: [5], households: [[9, 10]] });
-    bindPorts({
-      signoff: {
-        ...base,
-        financeHolders: async () => {
-          if (!pending) {
-            pending = setReimbursee(ORG, id, 9, FINANCE);
-            await Promise.race([pending, new Promise((r) => setTimeout(r, 300))]);
-          }
-          return base.financeHolders();
-        },
-      },
-    });
-    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, reimburseePersonId: 7 });
+  it("two FINANCE holders naming a reimbursee at once: one wins, the other is refused", async () => {
+    bindPorts({ signoff: directory({ finance: [3, 4] }) });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true });
+
+    const results = await Promise.allSettled([setReimbursee(ORG, id, 7, FINANCE), setReimbursee(ORG, id, 9, principal(4, { isFinance: true }))]);
+
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(results.find((r) => r.status === "rejected")).toMatchObject({ reason: { statusCode: 409 } });
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "reimbursee_set" } })).toBe(1);
+  });
+
+  it("whoever named the reimbursee cannot sign as Treasurer; another FINANCE holder can", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3, 4], board: [5] }) });
+    const id = await seedExpense({ state: "qb_pending", needsReimbursement: true });
+    await db.expense.update({ where: { id }, data: { reimbursementFor: "Pat" } });
+    const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await seedApproval(id, li, { ownerId: 100, status: "approved" });
+
+    await setReimbursee(ORG, id, 7, FINANCE);
+    expect((await db.expense.findFirst({ where: { id } }))!.reimbursementFor).toBe("Pat");
+    await signLine(principal(1), li, "SUBMITTER");
+    await signLine(principal(2), li, "PROGRAM_APPROVER");
+
+    await expect(signLine(FINANCE, li, "TREASURER")).rejects.toMatchObject({ statusCode: 403 });
+    await signLine(principal(4, { isFinance: true }), li, "TREASURER");
+    expect(await db.expenseEvent.count({ where: { expenseId: id } })).toBe(1);
+  });
+
+  it("the only FINANCE holder named the reimbursee: a Board member takes the Treasurer seat", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [3, 5] }) });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true });
     const li = await seedLineItem(id);
     await seedApproval(id, li, { ownerId: 100 });
 
-    await signLine(principal(10), li, "PROGRAM_APPROVER").catch(() => undefined);
-    await pending;
+    await setReimbursee(ORG, id, 7, FINANCE);
 
-    expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBe(9);
-    expect(await seatsOf(li)).toEqual([]);
+    await expect(signLine(principal(3, { isFinance: true, isBoard: true }), li, "TREASURER")).rejects.toMatchObject({ statusCode: 403 });
+    await signLine(BOARD, li, "TREASURER");
   });
 
   it("the outbox event names the reimbursee the seats were signed for", async () => {

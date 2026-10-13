@@ -25,6 +25,7 @@ jest.mock('@/lib/shopify', () => ({
         claimantShopifyProductId: 'mock-claimant-product-id',
         claimantShopifyVariantId: 'mock-claimant-variant-id',
     }),
+    syncProgramPrice: jest.fn().mockResolvedValue(true),
 }));
 
 // Mock Prisma
@@ -92,6 +93,7 @@ const mockGetSession = require('next-auth/next').getServerSession;
 describe('Full Program Signup Integration Flow', () => {
     const sysAdminId = 1;
     const leadUserId = 2;
+    const mentorId = 4;
     const childParticipantId = 3;
     const programId = 10;
     const householdId = 100;
@@ -117,7 +119,7 @@ describe('Full Program Signup Integration Flow', () => {
                 endAt: '2026-12-31',
                 memberPrice: 50,
                 nonMemberPrice: 100,
-                leadMentorId: sysAdminId,
+                leadMentorId: mentorId,
                 maxParticipants: 50,
             }),
         });

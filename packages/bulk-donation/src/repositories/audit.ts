@@ -5,7 +5,8 @@ export type EntityType =
   | "transaction"
   | "account_map"
   | "uploaded_file"
-  | "comment_rule";
+  | "comment_rule"
+  | "qb_exclusion";
 
 export interface WorkflowEventInput {
   orgId: string;

@@ -317,7 +317,7 @@ const EDGE_INCLUDE_ALLOWLIST: Record<string, string> = {
     'events/mine': 'query-shaped — self + own household only (activityMembers → where participantId in memberIds)',
     'facility/trends': 'admin-role-gated — sysadmin/board',
     'facility/visits': 'admin-role-gated — sysadmin/board',
-    'finance-ops/payment-plans': 'admin-role-gated — registry authorize anyRole [sysadmin, board]',
+    'finance-ops/payment-plans': 'admin-role-gated — registry authorize finance-or-board',
     'household/visits': "query-shaped — own household only (where householdId = caller's)",
     'membership-audit/compliance': 'admin-role-gated — withAuth roles [sysadmin, board]; reads ProgramParticipant/Volunteer to flag people needing a background check',
     'membership-audit/turning-18': 'admin-role-gated — registry authorize anyRole [sysadmin, board]; reads ProgramParticipant to mark which 18-year-olds are enrolled in a program',

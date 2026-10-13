@@ -22,6 +22,7 @@ const base: SignoffFacts = {
   finance: [3],
   board: [5, 6],
   conflicted: [1, 8],
+  reimburseeSetter: null,
 };
 const seats = (...s: Array<[FilledSeat["seat"], number]>): FilledSeat[] => s.map(([seat, signerUserId]) => ({ seat, signerUserId }));
 
@@ -118,5 +119,23 @@ describe("missingSeats", () => {
   it("a line is held until submitter, program approver and Treasurer have all signed", () => {
     expect(missingSeats(base, seats(["SUBMITTER", 1], ["PROGRAM_APPROVER", 2]))).toEqual(["TREASURER"]);
     expect(missingSeats(base, seats(["SUBMITTER", 1], ["PROGRAM_APPROVER", 2], ["TREASURER", 3]))).toEqual([]);
+  });
+});
+
+describe("the reimbursee's setter", () => {
+  it("cannot fill the Treasurer seat; another FINANCE holder can", () => {
+    const facts = { ...base, finance: [3, 4], reimburseeSetter: 3 };
+    expect(signoffRefusal(facts, [], "TREASURER", 3)).toMatch(/set the reimbursee/);
+    expect(signoffRefusal(facts, [], "TREASURER", 4)).toBeNull();
+  });
+
+  it("as the only FINANCE holder, leaves the Treasurer seat to the Board, and cannot take it as a Board member", () => {
+    const facts = { ...base, board: [3, 5], reimburseeSetter: 3 };
+    expect(signoffRefusal(facts, [], "TREASURER", 3)).toMatch(/set the reimbursee/);
+    expect(signoffRefusal(facts, [], "TREASURER", 5)).toBeNull();
+  });
+
+  it("may still fill the program-approver seat", () => {
+    expect(signoffRefusal({ ...base, approvers: [3], reimburseeSetter: 3 }, [], "PROGRAM_APPROVER", 3)).toBeNull();
   });
 });
