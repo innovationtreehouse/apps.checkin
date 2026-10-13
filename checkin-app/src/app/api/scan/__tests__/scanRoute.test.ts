@@ -470,6 +470,7 @@ describe('POST /api/scan', () => {
             ['with an unknown intent', { intent: 'SIDEWAYS' }],
             ['with a malformed protocolVersion', { protocolVersion: '2' }],
         ])('parks a replay %s as client_dead:400 instead of refusing it', async (_label, overrides) => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
             const res = await POST(replayReq(overrides));
             expect(res.status).toBe(200);
             expect((await res.json()).type).toBe('parked');
@@ -486,6 +487,7 @@ describe('POST /api/scan', () => {
         ])('parks a replay of %s as unresolvable instead of refusing it', async (_label, overrides) => {
             (prisma.person.findUnique as jest.Mock).mockResolvedValue(null);
             (prisma.personMerge.findUnique as jest.Mock).mockResolvedValue(null);
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
             const res = await POST(replayReq(overrides));
             expect(res.status).toBe(200);
             expect((await res.json()).type).toBe('parked');
