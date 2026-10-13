@@ -781,7 +781,8 @@ export async function setProgramInventory(
  * Called by the sale sweep (lib/programs/saleSweep.ts) on the off-sale date for
  * programs that have a reserved-seat product. Nothing re-lists it automatically.
  *
- * Never throws: logs + emails the admin via reportShopifyFailure and returns false.
+ * Never throws: logs + emails the admin via reportShopifyFailure and returns
+ * false, so the sweep retries on its next run.
  */
 export async function setProgramProductOffSale(
     program: { shopifyProductId?: string | null },
@@ -797,7 +798,12 @@ export async function setProgramProductOffSale(
     const storeDomain = config.shopifyStoreDomain();
     const accessToken = await getAccessToken();
     if (!storeDomain || !accessToken) {
-        console.warn("Shopify integration is disabled: Missing credentials or unable to obtain access token");
+        await reportShopifyFailure(
+            "setProgramProductOffSale",
+            new Error("Shopify credentials missing or access token unavailable"),
+            { shopifyProductId: productId },
+            `Failed to take a program's Shopify product off sale after its off-sale date. It will be retried on the next daily run.`,
+        );
         return false;
     }
 
@@ -821,7 +827,7 @@ export async function setProgramProductOffSale(
             "setProgramProductOffSale",
             error,
             { shopifyProductId: productId },
-            `Failed to take a program's Shopify product off sale after its off-sale date. Take it off sale in Shopify by hand.`,
+            `Failed to take a program's Shopify product off sale after its off-sale date. It will be retried on the next daily run.`,
         );
         return false;
     }

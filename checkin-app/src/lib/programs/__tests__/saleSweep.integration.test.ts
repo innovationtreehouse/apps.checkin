@@ -95,6 +95,21 @@ describe('program sale sweep', () => {
         expect(oursHidden()).toEqual([]);
     });
 
+    it('retries a failed hide on the next run and stamps productHiddenAt only on success', async () => {
+        const program = await mkProgram('retryhide', { startAt: day('2026-10-12'), claimantShopifyVariantId: 'claimant-retry' });
+        offSale.mockImplementation(async (p) => p.shopifyProductId !== 'prod-retryhide');
+        await runSaleSweep(NOW);
+        expect(oursHidden()).toEqual(['prod-retryhide']);
+        expect((await prisma.program.findUniqueOrThrow({ where: { id: program.id } })).productHiddenAt).toBeNull();
+
+        offSale.mockReset();
+        offSale.mockResolvedValue(true);
+        const later = new Date(NOW.getTime() + DAY_MS);
+        await runSaleSweep(later);
+        expect(oursHidden()).toEqual(['prod-retryhide']);
+        expect((await prisma.program.findUniqueOrThrow({ where: { id: program.id } })).productHiddenAt).toEqual(later);
+    });
+
     it('keeps the public product on sale and alerts the admins when there is no reserved-seat product', async () => {
         await mkProgram('noclaimant', { startAt: day('2026-10-12') });
         await runSaleSweep(NOW);

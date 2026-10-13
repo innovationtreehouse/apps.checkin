@@ -984,6 +984,10 @@ model Program {
   /// Set when the board was emailed this program's unpaid claims, a week after the sale ended.
   /// @sensitivity:internal
   unpaidClaimsNotifiedAt         DateTime?
+  /// Set once the sale sweep has hidden the public store product for this sale end;
+  /// cleared when the board reopens the sale.
+  /// @sensitivity:internal
+  productHiddenAt                DateTime?
   /// @sensitivity:public
   orgMemberOnly                  Boolean          @default(false)
   /// When an orgMemberOnly program is publiclyVisible, it appears in the public

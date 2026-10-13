@@ -1199,6 +1199,7 @@ describe('Individual Program API Integration Tests', () => {
                     shopifyProductId: 'dev-mock-product-hidden',
                     claimantShopifyVariantId: 'dev-mock-claimant-hidden',
                     saleEndedAt: new Date(),
+                    productHiddenAt: new Date(),
                 },
             });
             const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -1210,9 +1211,44 @@ describe('Individual Program API Integration Tests', () => {
                 expect(res.status).toBe(200);
                 expect((await res.json()).notice).toMatch(/stays hidden: re-list it in Shopify by hand/);
                 expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('dev-mock-product-hidden'));
-                expect((await prisma.program.findUniqueOrThrow({ where: { id: ended.id } })).saleEndedAt).toBeNull();
+                const row = await prisma.program.findUniqueOrThrow({ where: { id: ended.id } });
+                expect(row.saleEndedAt).toBeNull();
+                expect(row.productHiddenAt).toBeNull();
             } finally {
                 logSpy.mockRestore();
+                await prisma.program.delete({ where: { id: ended.id } });
+            }
+        });
+
+        it('moving only the start date later leaves an ended sale ended', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            // Ended by its date (off-sale date null = the start date), before the sweep stamped it.
+            const ended = await prisma.program.create({
+                data: {
+                    startAt: new Date('2026-01-01'),
+                    endAt: new Date('2099-12-31'),
+                    name: 'Prog ID API Test Sale Ended Start Move',
+                    phase: 'RUNNING',
+                    leadMentorId: leadId,
+                    enrollmentStatus: 'CLOSED',
+                },
+            });
+            try {
+                const res = await PATCH(
+                    new Request(`http://localhost:4000/api/programs/${ended.id}`, { method: 'PATCH', headers: { cookie: 'session=test' }, body: JSON.stringify({ startAt: '2099-01-01', enrollmentStatus: 'OPEN' }) }) as unknown as import("next/server").NextRequest,
+                    createParams(ended.id) as unknown as never,
+                );
+                expect(res.status).toBe(409);
+
+                const moved = await PATCH(
+                    new Request(`http://localhost:4000/api/programs/${ended.id}`, { method: 'PATCH', headers: { cookie: 'session=test' }, body: JSON.stringify({ startAt: '2099-01-01' }) }) as unknown as import("next/server").NextRequest,
+                    createParams(ended.id) as unknown as never,
+                );
+                expect(moved.status).toBe(200);
+                const row = await prisma.program.findUniqueOrThrow({ where: { id: ended.id } });
+                expect(row.startAt.toISOString()).toBe('2099-01-01T00:00:00.000Z');
+                expect(row.offSaleAt?.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+            } finally {
                 await prisma.program.delete({ where: { id: ended.id } });
             }
         });

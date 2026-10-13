@@ -16,13 +16,10 @@ const offSaleOnOrBefore = (at: Date) => ({
 });
 
 /**
- * Ends every sale whose off-sale date has arrived: closes enrollment, stamps
- * saleEndedAt (which stops the restock +1) and hides the public store product.
- * Only ever reduces visibility; a re-arm never re-lists the product.
- *
- * The product is hidden only when the program has its hidden reserved-seat
- * product, which is how families who claimed in time pay. Without one the
- * public product stays up and the admins are alerted to create it.
+ * Ends every sale whose off-sale date has arrived: closes enrollment and stamps
+ * saleEndedAt, which stops the restock +1. Only ever reduces visibility.
+ * A program without a hidden reserved-seat product, which is how families who
+ * claimed in time pay, keeps its public product; the admins are alerted once.
  */
 async function endDueSales(now: Date): Promise<number> {
     const due = await prisma.program.findMany({
@@ -37,11 +34,7 @@ async function endDueSales(now: Date): Promise<number> {
         });
         if (count === 0) continue;
         ended++;
-        if (!program.shopifyProductId) continue;
-        if (program.claimantShopifyVariantId) {
-            // Never throws; a failure is logged and emailed by setProgramProductOffSale.
-            await setProgramProductOffSale(program);
-        } else {
+        if (program.shopifyProductId && !program.claimantShopifyVariantId) {
             await reportShopifyFailure(
                 "saleSweep.noClaimantProduct",
                 new Error(`Program ${program.id} has no reserved-seat product`),
@@ -51,6 +44,29 @@ async function endDueSales(now: Date): Promise<number> {
         }
     }
     return ended;
+}
+
+/**
+ * Hides the public store product of every ended sale that has a reserved-seat
+ * product and is not hidden yet. productHiddenAt is stamped only after Shopify
+ * confirms, so a failed hide (already alerted) is retried on the next run.
+ * A re-arm never re-lists the product.
+ */
+async function hideEndedProducts(now: Date): Promise<number> {
+    const owed = await prisma.program.findMany({
+        where: { saleEndedAt: { not: null }, productHiddenAt: null, phase: { not: "FINISHED" }, shopifyProductId: { not: null }, claimantShopifyVariantId: { not: null } },
+        select: { id: true, shopifyProductId: true },
+    });
+    let hidden = 0;
+    for (const program of owed) {
+        if (!(await setProgramProductOffSale(program))) continue;
+        const { count } = await prisma.program.updateMany({
+            where: { id: program.id, productHiddenAt: null },
+            data: { productHiddenAt: now },
+        });
+        hidden += count;
+    }
+    return hidden;
 }
 
 /**
@@ -94,9 +110,10 @@ async function notifyUnpaidClaims(now: Date): Promise<number> {
 }
 
 /** Daily program-sale sweep. Idempotent; never throws. */
-export async function runSaleSweep(now: Date = new Date()): Promise<{ salesEnded: number; unpaidNotified: number } | { error: string }> {
+export async function runSaleSweep(now: Date = new Date()): Promise<{ salesEnded: number; productsHidden: number; unpaidNotified: number } | { error: string }> {
     try {
-        return { salesEnded: await endDueSales(now), unpaidNotified: await notifyUnpaidClaims(now) };
+        const salesEnded = await endDueSales(now);
+        return { salesEnded, productsHidden: await hideEndedProducts(now), unpaidNotified: await notifyUnpaidClaims(now) };
     } catch (e) {
         logger.error("[sale-sweep] failed:", e);
         return { error: e instanceof Error ? e.message : String(e) };

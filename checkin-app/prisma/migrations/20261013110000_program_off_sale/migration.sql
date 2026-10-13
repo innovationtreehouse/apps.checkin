@@ -6,5 +6,6 @@ BEGIN;
 ALTER TABLE "Program" ADD COLUMN "offSaleAt" DATE;
 ALTER TABLE "Program" ADD COLUMN "saleEndedAt" TIMESTAMP(3);
 ALTER TABLE "Program" ADD COLUMN "unpaidClaimsNotifiedAt" TIMESTAMP(3);
+ALTER TABLE "Program" ADD COLUMN "productHiddenAt" TIMESTAMP(3);
 UPDATE "Program" SET "offSaleAt" = "startAt";
 COMMIT;

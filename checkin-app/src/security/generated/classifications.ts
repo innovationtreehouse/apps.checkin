@@ -216,6 +216,7 @@ export const classifications = {
         offSaleAt: 'public',
         saleEndedAt: 'internal',
         unpaidClaimsNotifiedAt: 'internal',
+        productHiddenAt: 'internal',
         orgMemberOnly: 'public',
         publiclyVisible: 'public',
         announceOnOpen: 'public',

@@ -323,7 +323,8 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         }
 
         // Off-sale date: board-only. null follows the start date. An untouched
-        // date still equal to the start date moves with it.
+        // date still equal to the start date moves with it, unless the sale has
+        // ended: then moving the start leaves the sale ended.
         const { offSaleAt } = body;
         if (offSaleAt !== undefined && !isSysAdminOrBoard) {
             return apiError("Forbidden: Only administrators can change the off-sale date", 403);
@@ -331,14 +332,18 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         if (offSaleAt != null && (typeof offSaleAt !== "string" || isNaN(Date.parse(offSaleAt)))) {
             return apiError("Invalid off-sale date", 400);
         }
+        const saleEndedNow = isSaleEnded(currentProgram);
+        const followsStart = currentProgram.offSaleAt === null
+            || currentProgram.offSaleAt.getTime() === currentProgram.startAt.getTime();
         const newOffSaleAt = offSaleAt !== undefined
             ? parseDateOnly(offSaleAt)
-            : (newStartAt && currentProgram.offSaleAt?.getTime() === currentProgram.startAt.getTime() ? newStartAt : undefined);
-        // Only the board reopens an ended sale, by moving its date later: that
-        // re-arms the sweep. Enrollment stays closed unless this save opens it.
-        const saleEndedNow = isSaleEnded(currentProgram);
-        const rearmSale = isSysAdminOrBoard && saleEndedNow && newOffSaleAt !== undefined
-            && !isSaleEnded({ startAt: newStartAt ?? currentProgram.startAt, offSaleAt: newOffSaleAt, saleEndedAt: null });
+            : !newStartAt || !followsStart ? undefined
+            : saleEndedNow ? currentProgram.offSaleAt ?? currentProgram.startAt
+            : newStartAt;
+        // Only the board reopens an ended sale, by moving the off-sale date itself
+        // later: that re-arms the sweep. Enrollment stays closed unless this save opens it.
+        const rearmSale = isSysAdminOrBoard && saleEndedNow && offSaleAt !== undefined
+            && !isSaleEnded({ startAt: newStartAt ?? currentProgram.startAt, offSaleAt: newOffSaleAt ?? null, saleEndedAt: null });
         if (enrollmentStatus === 'OPEN' && currentProgram.enrollmentStatus !== 'OPEN' && saleEndedNow && !rearmSale) {
             return apiError("Sales for this program have ended. To reopen enrollment, move the off-sale date later.", 409);
         }
@@ -383,7 +388,7 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             ...(newStartAt !== undefined && { startAt: newStartAt }),
             ...(newEndAt !== undefined && { endAt: newEndAt }),
             ...(newOffSaleAt !== undefined && { offSaleAt: newOffSaleAt }),
-            ...(rearmSale && { saleEndedAt: null, unpaidClaimsNotifiedAt: null }),
+            ...(rearmSale && { saleEndedAt: null, unpaidClaimsNotifiedAt: null, productHiddenAt: null }),
             ...(orgMemberOnly !== undefined && { orgMemberOnly }),
             // publiclyVisible only has meaning for a members-only program. Recompute
             // it on the POST-PATCH effective state so neither flipping orgMemberOnly
@@ -491,7 +496,7 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         const responseObj: Record<string, unknown> = { success: true, program: updatedProgram };
         if (warning) responseObj.warning = warning;
         // The sweep hid the public product; reopening never re-lists it (automatic changes only reduce visibility).
-        if (rearmSale && currentProgram.saleEndedAt && currentProgram.claimantShopifyVariantId && currentProgram.shopifyProductId) {
+        if (rearmSale && currentProgram.productHiddenAt) {
             responseObj.notice = "Sale reopened. The public store product stays hidden: re-list it in Shopify by hand if it should sell again.";
         }
         return NextResponse.json(responseObj);
