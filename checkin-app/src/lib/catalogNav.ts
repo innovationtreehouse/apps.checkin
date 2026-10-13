@@ -11,6 +11,7 @@ import { INVENTORY_LIBRARY_TABS, visibleLibraryTabs, type NavTab } from "@/lib/l
 import { CATALOG_NAV_LINKS, CATALOG_TOP_NAV } from "@inventory/global-catalog/nav";
 import { INVENTORY_NAV_LINKS } from "@inventory/local-inventory/nav";
 import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
+import { canSeeCatalog } from "@/lib/volunteer";
 
 export { CATALOG_TOP_NAV };
 
@@ -37,22 +38,9 @@ export function inventoryAreaLinks(user: SessionUser | undefined, counts: TodoCo
 }
 
 /**
- * Client mirror of the server `catalog-viewer` gate (§6): authenticated AND any
- * of — an RBAC role, leading ≥1 program, or a VolunteerDesignation. Every leg is
- * on the session (the volunteer leg rides in as `hasVolunteerDesignation`, set by
- * the JWT callback), so the nav matches server admission exactly — no leg the
- * client can't see. Kept in lockstep with access-resolvers' 'catalog-viewer'.
+ * Client mirror of the server `catalog-viewer` gate: the same `canSeeCatalog`
+ * predicate over the session claims the server reads.
  */
 export function isCatalogViewerClient(user: SessionUser | undefined): boolean {
-  if (!user) return false;
-  return (
-    !!user.isSysadmin ||
-    !!user.isBoardMember ||
-    !!user.isKeyholder ||
-    !!user.isBackgroundCheckReviewer ||
-    !!user.isOperations ||
-    !!user.isInventoryManager ||
-    (user.programsLed?.length ?? 0) > 0 ||
-    !!user.hasVolunteerDesignation
-  );
+  return canSeeCatalog(user);
 }

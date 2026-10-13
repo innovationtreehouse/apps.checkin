@@ -169,11 +169,11 @@ const BOOTSTRAP_SYSADMINS = (process.env.BOOTSTRAP_SYSADMINS || "")
     .filter(Boolean);
 
 /**
- * Stamp the catalog-viewer volunteer leg (#1286) onto an already-claimed token.
- * Designations are keyed by email (no Person FK), so this can't ride the person
- * load. Matching canonicalizes both sides (Gmail dot/plus-insensitive), the same
- * rule as the dues path and the server gate. The lookup runs only when the leg
- * decides admission: a DENIED token or one another leg already admits skips it.
+ * Stamp `hasVolunteerDesignation` onto an already-claimed token. No catalog or
+ * nav gate reads it. Designations are keyed by email (no Person FK), so this
+ * can't ride the person load. Matching canonicalizes both sides (Gmail
+ * dot/plus-insensitive), the same rule as the dues path. A DENIED token or one
+ * the catalog-viewer predicate already admits skips the lookup.
  */
 async function stampVolunteerDesignation(token: JWT, email: string | null | undefined): Promise<void> {
     token.hasVolunteerDesignation = false;

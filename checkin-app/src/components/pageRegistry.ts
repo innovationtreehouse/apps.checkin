@@ -13,18 +13,10 @@ import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
 import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
 import { membershipOpsRouteVisible } from '@/lib/membershipOpsNav';
 import { isLibraryVisible, type LibraryKey } from '@/lib/libraryRelease';
+import { canSeeCatalog, type VolunteerClaims } from '@/lib/volunteer';
 
-export type RegistryUser = {
-  isSysadmin?: boolean;
-  isBoardMember?: boolean;
-  isKeyholder?: boolean;
-  isBackgroundCheckReviewer?: boolean;
-  isOperations?: boolean;
-  isInventoryManager?: boolean;
-  isFinance?: boolean;
+export type RegistryUser = VolunteerClaims & {
   householdLead?: boolean;
-  programsLed?: number[];
-  hasVolunteerDesignation?: boolean;
   toolStatuses?: Array<{ level: string }>;
 };
 
@@ -58,19 +50,8 @@ const SHOP_ADMIN: Visible = (u) => shopRoles(u).isAdmin;
 // Membership Ops gates per tab (Review admits reviewers, Participants admits
 // operations, the rest are admin-only). One definition in membershipOpsNav.
 const MOPS = (href: string): Visible => (u) => membershipOpsRouteVisible(href, u);
-// Global catalog (#1286 §7). Mirrors isCatalogViewerClient / the server
-// 'catalog-viewer' gate: any RBAC role, a program leader, or a volunteer
-// (hasVolunteerDesignation, set on the session by the JWT callback).
-const CATALOG_VIEWER: Visible = (u, signedIn) =>
-  signedIn &&
-  (!!u?.isSysadmin ||
-    !!u?.isBoardMember ||
-    !!u?.isKeyholder ||
-    !!u?.isBackgroundCheckReviewer ||
-    !!u?.isOperations ||
-    !!u?.isInventoryManager ||
-    (u?.programsLed?.length ?? 0) > 0 ||
-    !!u?.hasVolunteerDesignation);
+// Global catalog (#1286 §7): the server 'catalog-viewer' predicate.
+const CATALOG_VIEWER: Visible = (u, signedIn) => signedIn && canSeeCatalog(u);
 
 // Expense Ops: FINANCE or BOARD, no sysadmin (docs/rules/finance-payments.md).
 const FINANCE_OR_BOARD: Visible = (u) => !!u?.isFinance || !!u?.isBoardMember;

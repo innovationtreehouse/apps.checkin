@@ -2,6 +2,7 @@ import { readdirSync } from 'fs';
 import { join } from 'path';
 import { PAGES, REGISTRY_EXCLUDED } from '@/components/pageRegistry';
 import { FACILITY_NAV_LINKS } from '@/lib/facilityNav';
+import { LIBRARY_KEYS } from '@/lib/libraryRelease';
 
 // Walk src/app for every page.tsx and turn it into its route path, skipping
 // dynamic segments ([id]) which the directory deliberately omits.
@@ -110,5 +111,28 @@ describe('Shop Ops directory agrees with the section gates', () => {
   it('still lists Manage and the hub to a certifier', () => {
     expect(entryFor('/shop-ops/manage').visible(certifier, true, null)).toBe(true);
     expect(entryFor('/shop-ops').visible(certifier, true, null)).toBe(true);
+  });
+});
+
+describe('Inventory directory agrees with the catalog-viewer gate', () => {
+  const inventoryEntries = PAGES.filter((p) => p.section === 'Inventory' && /^\/(catalog|inventory\/org-items)/.test(p.href));
+  const counts = {
+    member: { household: [], programs: [], programsAwaitingFinance: 0 },
+    building: 0,
+    buildingHousehold: 0,
+    buildingReachable: true,
+    activePrograms: 0,
+    releasedLibraries: [...LIBRARY_KEYS],
+  };
+
+  it('lists no Inventory entries to a user whose only claim is a volunteer designation', () => {
+    const designationOnly = { ageBand: 'adult' as const, hasVolunteerDesignation: true };
+    expect(inventoryEntries.length).toBeGreaterThan(0);
+    for (const entry of inventoryEntries) expect(entry.visible(designationOnly, true, counts)).toBe(false);
+  });
+
+  it('lists the Inventory entries to an active youth program volunteer', () => {
+    const youthVolunteer = { ageBand: 'youth' as const, isProgramVolunteer: true, isActiveOrgMember: true };
+    for (const entry of inventoryEntries) expect(entry.visible(youthVolunteer, true, counts)).toBe(true);
   });
 });
