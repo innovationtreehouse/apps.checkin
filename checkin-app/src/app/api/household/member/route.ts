@@ -14,6 +14,7 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { getEmailSenderIdentity } from "@/lib/emailIdentity";
 import { signInEmailHelp } from "@/lib/person/signInEmail";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
+import { canonicalizeEmail } from "@/lib/emailNormalize";
 
 export const PATCH = withAuth(
     {},
@@ -69,7 +70,9 @@ export const PATCH = withAuth(
                 return apiError(signInEmailHelp(replyTo?.[0]), 400);
             }
 
-            if (email && await isDesignatedEmail(prisma, email)) {
+            // The form resends an unchanged email on every save; only a change is refused.
+            const emailChanged = email && canonicalizeEmail(email) !== canonicalizeEmail(targetHouseholdMember.email ?? "");
+            if (emailChanged && await isDesignatedEmail(prisma, email)) {
                 return apiError(await designatedEmailRefusalForBoard(), 400);
             }
 
