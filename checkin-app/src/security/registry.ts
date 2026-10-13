@@ -892,6 +892,13 @@ defineOutbound({
 });
 
 defineOutbound({
+    surface: 'shopify.oauth',
+    // s-read-function/src/shopify/token.ts → <shop>.myshopify.com/admin/oauth/access_token.
+    // The app's client credentials for a client-credentials grant; no model data.
+    tiers: [],
+});
+
+defineOutbound({
     surface: 'anthropic.receipt-ocr',
     // packages/receipt/src/lib/ocr.ts → api.anthropic.com via @anthropic-ai/sdk.
     // The receipt file's bytes (Receipt.fileBlob, 'pii'): a receipt can show a
