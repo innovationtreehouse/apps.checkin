@@ -3,8 +3,8 @@
  */
 /**
  * Admission and view invariants for the expense routes (#1272 §5/§6). No DB:
- * next-auth's getServerSession is the jest.setup.js mock, and the two admission
- * lookups (program treasurer, volunteer designation) are stubbed per test.
+ * next-auth's getServerSession is the jest.setup.js mock, and the program
+ * treasurer admission lookup is stubbed per test.
  *
  * 1. An id-less session holding every flag gets 401 from handler() on every
  *    expense route, and the route body never runs: authenticateRequest turns a
@@ -12,8 +12,10 @@
  *    Every expense gate also denies it at resolveAccess on its own.
  * 2. `expense-approver` admits FINANCE, BOARD, a program leader or a program
  *    treasurer (one DB read), never a plain member or a sysadmin alone. It gates
- *    the nine approver routes; sign-off is `catalog-viewer`, for the submitter.
- * 3. No expense route lists isSysadmin in its orderedView, and pii/personal go to
+ *    the nine approver routes.
+ * 3. Sign-off is `expense-signer`: anyone `catalog-viewer` (the submitter seat)
+ *    or `expense-approver` (every other seat) admits. The library picks the seat.
+ * 4. No expense route lists isSysadmin in its orderedView, and pii/personal go to
  *    FINANCE and BOARD alone.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
@@ -66,6 +68,11 @@ const ctx = (auth: AuthResult): ResolverContext => ({
 });
 
 const expense = [...allRoutes()].filter(([endpoint]) => endpoint.split(' ')[1].startsWith('/api/expense/'));
+const expenseRoute = (endpoint: string) => {
+    const route = expense.find(([e]) => e === endpoint)?.[1];
+    if (!route) throw new Error(`${endpoint} is not registered`);
+    return route;
+};
 const byGate = (a: Authorize) => expense.filter(([, r]) => r.authorize === a).map(([e]) => e);
 
 const SIGN_OFF = 'POST /api/expense/expenses/[id]/line-items/[lineItemId]/signoffs';
@@ -82,15 +89,12 @@ const APPROVER_ROUTES = [
 ];
 
 let treasurerRow: { programId: number } | null;
-let designationRow: { id: number } | null;
 const treasurerLookup = jest.fn(async () => treasurerRow);
 
 beforeEach(() => {
     treasurerRow = null;
-    designationRow = null;
     treasurerLookup.mockClear();
     prisma.programVolunteer.findFirst = treasurerLookup as unknown as typeof prisma.programVolunteer.findFirst;
-    prisma.volunteerDesignation.findFirst = jest.fn(async () => designationRow) as unknown as typeof prisma.volunteerDesignation.findFirst;
 });
 
 const admitted = async (route: { authorize: Authorize }, user: Partial<AuthenticatedUser>) =>
@@ -110,14 +114,14 @@ describe('expense admission', () => {
         for (const [endpoint, r] of expense) {
             expect([endpoint, r.authorize]).toEqual([
                 endpoint,
-                expect.stringMatching(/^(finance|finance-or-board|expense-approver|catalog-viewer)$/),
+                expect.stringMatching(/^(finance|finance-or-board|expense-approver|expense-signer)$/),
             ]);
         }
     });
 
-    test('the approver routes are exactly the expense-approver ones; sign-off alone is catalog-viewer', () => {
+    test('the approver routes are exactly the expense-approver ones; sign-off alone is expense-signer', () => {
         expect(byGate('expense-approver').sort()).toEqual([...APPROVER_ROUTES].sort());
-        expect(byGate('catalog-viewer')).toEqual([SIGN_OFF]);
+        expect(byGate('expense-signer')).toEqual([SIGN_OFF]);
     });
 
     test('setReimbursee is FINANCE only', () => {
@@ -126,7 +130,6 @@ describe('expense admission', () => {
 
     test.each(expense)('%s denies an id-less session holding every flag at resolveAccess', async (_e, route) => {
         treasurerRow = { programId: 1 };
-        designationRow = { id: 1 };
         expect((await resolveAccess(route.authorize, ctx(idless))).allowed).toBe(false);
     });
 
@@ -150,25 +153,62 @@ describe('expense admission', () => {
         expect(await admitted(route, { isSysadmin: true })).toBe(endpoint === SIGN_OFF);
     });
 
-    test.each(expense)('%s: a program leader is admitted on approver routes and sign-off', async (endpoint, route) => {
+    test.each(expense)('%s: a program leader with an ACTIVE membership is admitted on approver routes and sign-off', async (endpoint, route) => {
+        expect(await admitted(route, { programsLed: [1], isActiveOrgMember: true })).toBe(APPROVER_ROUTES.includes(endpoint) || endpoint === SIGN_OFF);
+    });
+
+    test.each(expense)('%s: a program leader without an ACTIVE membership is admitted on approver routes and sign-off', async (endpoint, route) => {
         expect(await admitted(route, { programsLed: [1] })).toBe(APPROVER_ROUTES.includes(endpoint) || endpoint === SIGN_OFF);
     });
 
-    test.each(expense)('%s: a treasurer with no flag is admitted only on approver routes', async (endpoint, route) => {
+    test.each(expense)('%s: a treasurer who leads no program is admitted on approver routes and sign-off', async (endpoint, route) => {
         treasurerRow = { programId: 1 };
-        expect(await admitted(route, {})).toBe(APPROVER_ROUTES.includes(endpoint));
+        expect(await admitted(route, {})).toBe(APPROVER_ROUTES.includes(endpoint) || endpoint === SIGN_OFF);
     });
 
     test.each(expense)('%s: a plain member is admitted nowhere', async (_e, route) => {
         expect(await admitted(route, {})).toBe(false);
     });
 
-    test('a receipt submitter (volunteer designation) is admitted on sign-off only', async () => {
-        designationRow = { id: 1 };
+    test('a Volunteer Family member with an ACTIVE membership is admitted on sign-off only', async () => {
         for (const [endpoint, route] of expense) {
-            expect([endpoint, await admitted(route, {})]).toEqual([endpoint, endpoint === SIGN_OFF]);
+            expect([endpoint, await admitted(route, { isVolunteerFamily: true, isActiveOrgMember: true })]).toEqual([endpoint, endpoint === SIGN_OFF]);
         }
     });
+
+    // Whatever catalog-viewer requires (e.g. ACTIVE membership), a program leader
+    // or treasurer still reaches sign-off through the approver leg.
+    test.each<[string, Partial<AuthenticatedUser>, { programId: number } | null]>([
+        ['program leader', { programsLed: [1] }, null],
+        ['treasurer leading no program', {}, { programId: 1 }],
+    ])('sign-off admits a %s on the approver leg', async (_who, user, treasurer) => {
+        treasurerRow = treasurer;
+        expect(await admitted({ authorize: 'expense-approver' }, user)).toBe(true);
+        expect(await admitted(expenseRoute(SIGN_OFF), user)).toBe(true);
+    });
+
+    test('sign-off admits exactly the union of catalog-viewer and expense-approver', async () => {
+        const callers: Array<[string, Partial<AuthenticatedUser>, { programId: number } | null]> = [
+            ['plain member', {}, null],
+            ['treasurer leading no program', {}, { programId: 1 }],
+            ['program leader', { programsLed: [1] }, null],
+            ['FINANCE', { isFinance: true }, null],
+            ['BOARD', { isBoardMember: true }, null],
+            ['keyholder', { isKeyholder: true }, null],
+        ];
+        for (const [who, user, treasurer] of callers) {
+            treasurerRow = treasurer;
+            const union = (await admitted({ authorize: 'catalog-viewer' }, user)) || (await admitted({ authorize: 'expense-approver' }, user));
+            expect([who, await admitted(expenseRoute(SIGN_OFF), user)]).toEqual([who, union]);
+        }
+    });
+
+    test.each(['GET /api/expense/queue', 'GET /api/expense/counts', SIGN_OFF])(
+        '%s answers a plain member 403 without running the body',
+        async (endpoint) => {
+            expect(await call(endpoint, { id: 5 })).toEqual({ status: 403, ran: false });
+        },
+    );
 
     test('the treasurer leg reads the DB once, for the caller, only when no flag or lead admits', async () => {
         treasurerRow = { programId: 1 };
@@ -181,13 +221,6 @@ describe('expense admission', () => {
         expect(await admitted({ authorize: 'expense-approver' }, { isFinance: true })).toBe(true);
         expect(treasurerLookup).not.toHaveBeenCalled();
     });
-
-    test.each(['GET /api/expense/queue', 'GET /api/expense/counts'])(
-        '%s answers a plain member 403 without running the body',
-        async (endpoint) => {
-            expect(await call(endpoint, { id: 5 })).toEqual({ status: 403, ran: false });
-        },
-    );
 });
 
 describe('expense views', () => {

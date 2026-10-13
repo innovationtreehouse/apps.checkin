@@ -142,14 +142,17 @@ describe("the last keyholder's single badge is a leave", () => {
         });
     });
 
-    it("checks a token-less replay out as a leave, with no offer and nothing parked", async () => {
+    it("checks a token-less replay out as a leave, with no offer, flagged for review", async () => {
         const db = fakeDb(present);
         const body = await (await processCheckout(keyholder, 42, "kiosk", db, null, new Date(), "evt-replay-1")).json();
 
         expect(body.type).toBe("checkout");
         expect(body.facilityClosed).toBe(false);
         expect(body.forceCloseToken).toBeUndefined();
-        expect(db.rawBadgeLog.update).not.toHaveBeenCalled();
+        expect(db.rawBadgeLog.update).toHaveBeenCalledWith({
+            where: { clientEventId: "evt-replay-1" },
+            data: { reviewReason: "force_close_review" },
+        });
         expect(db.auditLog.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 newData: expect.objectContaining({ choice: "leave", via: "KIOSK_OFFLINE", handoverToId: null }),

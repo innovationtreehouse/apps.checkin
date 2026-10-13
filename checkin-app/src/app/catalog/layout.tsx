@@ -8,19 +8,25 @@ import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { inventoryAreaLinks, isCatalogViewerClient } from "@/lib/catalogNav";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
+import { sectionTabBadge } from "@/components/navBadges";
+import { TabBadge } from "@/components/ui/CountBadge";
 
 export default function CatalogLayout({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
   const router = useRouter();
-  const authorized = isCatalogViewerClient(session?.user);
   const counts = useTodoCounts(status === "authenticated");
+  const links = inventoryAreaLinks(session?.user, counts);
+  // Admitted as a catalog viewer, or as a library tab's own audience (e.g.
+  // FINANCE on Receiving). Tab visibility needs the release list from counts, so
+  // the redirect waits for counts. Each page and route keeps its own gate.
+  const authorized = isCatalogViewerClient(session?.user) || links.length > 0;
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/");
-    else if (status === "authenticated" && !authorized) router.push("/");
-  }, [status, authorized, router]);
+    else if (status === "authenticated" && counts !== null && !authorized) router.push("/");
+  }, [status, counts, authorized, router]);
 
-  if (status === "loading") {
+  if (status === "loading" || (!authorized && counts === null)) {
     return (
       <Center mih="60vh">
         <Stack align="center">
@@ -35,7 +41,11 @@ export default function CatalogLayout({ children }: { children: React.ReactNode 
 
   return (
     <PageContainer>
-      <SectionTabs links={inventoryAreaLinks(session?.user, counts?.releasedLibraries)} mb="md" />
+      <SectionTabs
+        links={links}
+        mb="md"
+        badgeFor={(href) => <TabBadge badge={sectionTabBadge(links, href, counts)} />}
+      />
       <Box style={{ minWidth: 0 }}>{children}</Box>
     </PageContainer>
   );

@@ -134,6 +134,9 @@ describe('Admin Households API Integration Tests', () => {
         await prisma.program.deleteMany({
             where: { id: testProgramId }
         });
+        await prisma.orgMembershipProcess.deleteMany({
+            where: { orgMembership: { householdId: { in: [testHousehold1Id, testHousehold2Id] } } }
+        });
         await prisma.orgMembership.deleteMany({
             where: { householdId: { in: [testHousehold1Id, testHousehold2Id] } }
         });
@@ -335,14 +338,14 @@ describe('Admin Households API Integration Tests', () => {
             expect(res.status).toBe(400);
         });
 
-        it('should successfully activate membership for a household', async () => {
+        it('grant pays an application rather than setting the household ACTIVE', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
                 user: { id: testAdminId, isSysadmin: true }
             });
 
             const req = new Request('http://localhost:4000/api/membership-ops/households', {
                 method: 'POST',
-                body: JSON.stringify({ householdId: testHousehold1Id, active: true })
+                body: JSON.stringify({ householdId: testHousehold1Id, active: true, reason: 'Paid by check' })
             });
 
             const res = await POST(req as unknown as import("next/server").NextRequest);
@@ -350,12 +353,10 @@ describe('Admin Households API Integration Tests', () => {
 
             const data = await res.json();
             expect(data.success).toBe(true);
-            expect(data.membership.status).toBe('ACTIVE');
+            expect(data.paid).toBe(false);
 
-            const membership = await prisma.orgMembership.findFirst({
-                where: { householdId: testHousehold1Id, status: 'ACTIVE' }
-            });
-            expect(membership).toBeDefined();
+            const membership = await prisma.orgMembership.findUnique({ where: { householdId: testHousehold1Id } });
+            expect(membership?.status).not.toBe('ACTIVE');
         });
 
         it('should successfully deactivate membership for a household', async () => {

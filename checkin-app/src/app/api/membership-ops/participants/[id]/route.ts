@@ -4,8 +4,22 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
-import { apiError } from "@/lib/api-response";
+import { apiError, apiJson } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
+import { monthsBefore, nextBoundary } from "@/lib/membership/renewal";
+
+/**
+ * Whether a check dated `date` covers the coming membership year — the per-lead
+ * form of householdBgIsFresh's rule. Unset policy means nothing is fresh.
+ */
+async function bgCoversComingYear(date: Date | null): Promise<{ fresh: boolean; boundary: Date | null }> {
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true, bgRecheckMonths: true } });
+    const recheckMonths = settings?.bgRecheckMonths ?? 0;
+    const boundary = settings?.orgMembershipYearBoundary ? nextBoundary(settings.orgMembershipYearBoundary, new Date()) : null;
+    if (!date || !boundary || recheckMonths <= 0) return { fresh: false, boundary };
+    return { fresh: date.getTime() >= monthsBefore(boundary, recheckMonths).getTime(), boundary };
+}
 
 export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -47,30 +61,61 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             updateData.phone = body.phone === "" || body.phone === null ? null : formatPhone(body.phone);
         }
         if (body.isDeclaredAdult !== undefined) updateData.isDeclaredAdult = Boolean(body.isDeclaredAdult);
+        let lastBackgroundCheck: Date | null | undefined;
         if (body.lastBackgroundCheck !== undefined) {
             // "" or null clears the date; otherwise expect a YYYY-MM-DD string
             const raw = body.lastBackgroundCheck;
             if (raw === "" || raw === null) {
-                updateData.lastBackgroundCheck = null;
+                lastBackgroundCheck = null;
             } else {
-                const d = new Date(raw);
-                if (isNaN(d.getTime())) {
+                lastBackgroundCheck = new Date(raw);
+                if (isNaN(lastBackgroundCheck.getTime())) {
                     return apiError("Invalid background check review date", 400);
                 }
-                updateData.lastBackgroundCheck = d;
             }
+            updateData.lastBackgroundCheck = lastBackgroundCheck;
         }
 
         if (Object.keys(updateData).length === 0) {
             return apiError("No fields to update provided", 400);
         }
 
-        // dateOfBirth is read for the guard below but deliberately kept out of the
-        // audit payload — this route neither ships nor writes it.
-        const { dateOfBirth: priorDob, ...prior } = (await prisma.person.findUnique({
+        // dateOfBirth, householdId and isHouseholdLead are read for the guards below but deliberately
+        // kept out of the audit payload — this route neither ships nor writes them.
+        const existing = await prisma.person.findUnique({
             where: { id },
-            select: { name: true, nickname: true, email: true, phone: true, dateOfBirth: true, isDeclaredAdult: true, lastBackgroundCheck: true },
-        })) ?? {};
+            select: { name: true, nickname: true, email: true, phone: true, dateOfBirth: true, isDeclaredAdult: true, lastBackgroundCheck: true, householdId: true, isHouseholdLead: true },
+        });
+        if (!existing) {
+            return apiError("Participant not found", 404);
+        }
+        const { dateOfBirth: priorDob, householdId, isHouseholdLead, ...prior } = existing;
+
+        // A background-check date clears a person, so no actor may change it for
+        // themselves or their own household. Compared by value because the edit form
+        // resubmits the unchanged date with every save.
+        let bgStaleWarning: string | undefined;
+        if (lastBackgroundCheck !== undefined) {
+            const changed = (prior.lastBackgroundCheck?.getTime() ?? null) !== (lastBackgroundCheck?.getTime() ?? null);
+            if (changed && await refuseSelfGrant(prisma, auth.user.id, { personId: id, householdId }, {
+                table: "Person",
+                attempted: { lastBackgroundCheck },
+            })) {
+                return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);
+            }
+
+            // A lead's check going from covering the coming year to not covering it can
+            // affect the household's membership, so the board confirms before it saves.
+            if (changed && isHouseholdLead) {
+                const before = await bgCoversComingYear(prior.lastBackgroundCheck);
+                if (before.fresh && !(await bgCoversComingYear(lastBackgroundCheck)).fresh) {
+                    bgStaleWarning = `${prior.name}'s background check covers the membership year starting ${before.boundary?.toISOString().slice(0, 10)}, and will not after this change. This could affect their household's membership.`;
+                    if (body.confirmBgStale !== true) {
+                        return apiJson({ error: bgStaleWarning, warning: bgStaleWarning, requiresConfirmation: true }, 409);
+                    }
+                }
+            }
+        }
 
         // A date of birth on file supersedes the over-25 declaration (normalizeAdultDob):
         // a person has one or the other, never both. Coerced rather than refused so a row
@@ -81,26 +126,27 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             updateData.isDeclaredAdult = false;
         }
 
-        const updatedParticipant = await prisma.person.update({
-            where: { id },
-            data: updateData,
-            include: {
-                household: true
-            }
-        });
+        const [updatedParticipant] = await prisma.$transaction([
+            prisma.person.update({
+                where: { id },
+                data: updateData,
+                include: {
+                    household: true
+                }
+            }),
+            prisma.auditLog.create({
+                data: {
+                    actorId: auth.user.id,
+                    action: "EDIT",
+                    tableName: "Person",
+                    affectedEntityId: id,
+                    oldData: prior,
+                    newData: { ...updateData, ...(bgStaleWarning && { bgStaleWarning }) },
+                },
+            }),
+        ]);
         // Name, DOB/adult and keyholder fields all feed the live roster.
         invalidateAttendanceCache();
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: auth.user.id,
-                action: "EDIT",
-                tableName: "Person",
-                affectedEntityId: id,
-                oldData: prior,
-                newData: updateData,
-            },
-        });
 
         const formatted = {
             id: updatedParticipant.id,
