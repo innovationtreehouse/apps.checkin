@@ -11,7 +11,7 @@ import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
 import { parseDateOnly } from "@/lib/time";
-import { isSaleEnded } from "@/lib/programs/saleState";
+import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { ProgramPhase, EnrollmentStatus } from "@/generated/prisma/client";
 
 // ORDER MATTERS: this export sits ABOVE getProgram so the routeAuthDrift
@@ -454,13 +454,14 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             if (!(await setProgramInventory(updatedProgram, Math.max(0, newMax - taken)))) {
                 warning = "Program updated, but setting the Shopify inventory failed. Capacity may be out of sync — check System Status > Link Status.";
             }
-        } else if (oldMax !== newMax && hasShopifyVariant && !isSaleEnded(updatedProgram)) {
+        } else if (oldMax !== newMax && hasShopifyVariant) {
             if (oldMax !== null && newMax !== null) {
-                const ok = await adjustProgramInventory(updatedProgram, newMax - oldMax);
-                if (!ok) {
+                // After the sale ends a cut still goes through; a raise does not.
+                const delta = saleStockDelta(updatedProgram, newMax - oldMax);
+                if (delta !== 0 && !(await adjustProgramInventory(updatedProgram, delta))) {
                     warning = "Program updated, but the Shopify inventory adjustment failed. Capacity may be out of sync — check System Status > Link Status.";
                 }
-            } else {
+            } else if (!isSaleEnded(updatedProgram)) {
                 // Null transition (capped <-> uncapped): a relative adjust can't express
                 // "start/stop tracking inventory" — that needs an inventory_management
                 // flip on the variant, which this PR intentionally doesn't attempt.
