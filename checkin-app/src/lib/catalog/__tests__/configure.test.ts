@@ -1,7 +1,6 @@
 import type { CatalogRuntimeConfig } from "@inventory/global-catalog";
 import { getServerSession } from "next-auth";
 import { config } from "@/lib/config";
-import { getPrincipal } from "../configure";
 
 const findUnique = jest.fn();
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { org: { findUnique } } }));
@@ -71,6 +70,7 @@ describe("getPrincipal", () => {
   });
 
   const signedIn = (user: Record<string, unknown>) => mockSession.mockResolvedValue({ user });
+  const getPrincipal = async () => (await import("../configure")).getPrincipal();
 
   it("returns the principal for a live session", async () => {
     signedIn({ id: 7, name: "Ada" });
