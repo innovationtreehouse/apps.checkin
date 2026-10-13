@@ -17,7 +17,6 @@ import { activate, activateByProcessId, certifyPaymentPlan } from '@/lib/members
 jest.mock('@/lib/prisma', () => {
     const mock = {
         orgMembershipProcess: { findUnique: jest.fn(), updateMany: jest.fn() },
-        orgMembership: { findUnique: jest.fn() },
         boardSettings: { findUnique: jest.fn() },
         auditLog: { create: jest.fn() },
         person: { findMany: jest.fn().mockResolvedValue([]) },
@@ -49,12 +48,15 @@ const { setHouseholdStatus, raiseDeniedHouseholdActivity } = require('@/lib/memb
 const { hasHouseholdConflict } = require('@/lib/conflictOfInterest');
 
 const PROCESS_ID = 5;
+let household: { householdId: number; status: string };
 const MEMBERSHIP_ID = 9;
 
 beforeEach(() => {
     jest.clearAllMocks();
     prisma.boardSettings.findUnique.mockResolvedValue({ standardMembershipFeeCents: 10000, volunteerMembershipFeeCents: 2500 });
-    prisma.orgMembership.findUnique.mockResolvedValue({ householdId: 3, status: 'NONE' });
+    household = { householdId: 3, status: 'NONE' };
+    prisma.$queryRaw.mockImplementation((sql: TemplateStringsArray) =>
+        Promise.resolve(sql.join('?').includes('FROM "OrgMembership"') ? [household] : []));
     prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
     setHouseholdStatus.mockResolvedValue(true);
     hasHouseholdConflict.mockResolvedValue(false);
@@ -162,7 +164,7 @@ describe('payments that land on nothing awaiting them', () => {
 
     it('a DENIED household changes nothing and raises the board item', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue(proc({}));
-        prisma.orgMembership.findUnique.mockResolvedValue({ householdId: 3, status: 'DENIED' });
+        household.status = 'DENIED';
         expect((await activateByProcessId(PROCESS_ID, 'order-2', true)).outcome).toBe('denied');
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
         expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 3, processId: PROCESS_ID }));
@@ -212,9 +214,19 @@ describe('certifyPaymentPlan checks under the row lock', () => {
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 
+    it('reads the household status with FOR UPDATE, after the process lock', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, orgMembershipId: MEMBERSHIP_ID, orgMembership: { householdId: 3 } });
+        await certifyPaymentPlan(PROCESS_ID, 1);
+        const sqls = prisma.$queryRaw.mock.calls.map(([sql]: [TemplateStringsArray]) => sql.join('?'));
+        expect(sqls).toEqual([
+            expect.stringMatching(/FROM "OrgMembershipProcess" WHERE id = \? FOR UPDATE/),
+            expect.stringMatching(/FROM "OrgMembership" WHERE id = \? FOR UPDATE/),
+        ]);
+    });
+
     it('refuses a DENIED household', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, orgMembershipId: MEMBERSHIP_ID });
-        prisma.orgMembership.findUnique.mockResolvedValue({ householdId: 3, status: 'DENIED' });
+        household.status = 'DENIED';
         await expect(certifyPaymentPlan(PROCESS_ID, 1)).rejects.toMatchObject({ code: 'wrong_phase' });
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });

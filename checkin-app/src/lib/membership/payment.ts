@@ -7,7 +7,7 @@ import { openPersonAgreementForNewMember } from "@/lib/membership/personAgreemen
 import { config } from "@/lib/config";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 import { fromWhere } from "@/lib/membership/lifecycle";
-import { setHouseholdStatus, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+import { setHouseholdStatus, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
 import type { Prisma } from "@/generated/prisma/client";
 
 /**
@@ -116,9 +116,9 @@ export type ActivateOutcome =
  * household ACTIVE and send one congrats email; otherwise hold the process at
  * PENDING_BG_CLEARANCE until two reviewers approve (review.ts › clearBackgroundCheck).
  *
- * FOR UPDATE serializes against the review path's attest() transaction, which
- * takes the same row lock, and every status write is still conditional on the
- * status it read.
+ * FOR UPDATE on the process row, then the household row, serializes against the
+ * review path's attest() transaction and a board deny, and every status write is
+ * still conditional on the status it read.
  *
  * - A board certify (via "manual") must find the process awaiting payment under
  *   the lock; otherwise it throws.
@@ -137,8 +137,10 @@ async function settle(
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
         const process = await tx.orgMembershipProcess.findUnique({ where: { id: processId } });
         if (!process) throw new PaymentError("not_found", "Application not found.");
+        // Household row locked after the process row (the order review.ts takes), so a
+        // deny can't commit between this DENIED check and the payment write.
         // orgMembershipId is non-null for a payable process (PERSON_BG has no checkout).
-        const membership = await tx.orgMembership.findUnique({ where: { id: process.orgMembershipId! }, select: { householdId: true, status: true } });
+        const [membership] = await tx.$queryRaw<{ householdId: number; status: HouseholdStatus }[]>`SELECT "householdId", status FROM "OrgMembership" WHERE id = ${process.orgMembershipId!} FOR UPDATE`;
         if (!membership) throw new PaymentError("not_found", "Membership not found.");
 
         if (opts.via === "manual") {
