@@ -213,7 +213,7 @@ describeDb("drainIncomeOutbox — the line never steps back", () => {
     await drain();
     qbo.mode = "ok";
     qbo.hand("H2", "2026-06-29", 499);
-    await reconciliationService.matchToDeposit(ORG_A, (await rowFor(p)).id, "H2", { userId: 9 });
+    await reconciliationService.matchToDeposit(ORG_A, (await rowFor(p)).id, "H2", { userId: 9 }, "bank fee taken");
     expect(await incomeTakeoverLine(ORG_A)).toBe("2026-06-28");
   });
 });
@@ -498,6 +498,15 @@ describeDb("drainIncomeOutbox — mirror reverts and binding", () => {
     bind({ posting: { client: new QuickBooksClient(tokens, realm), accounts: ACCOUNTS, mirrorNewestWins: false } });
     const p = payout(2, "2026-06-28", 500);
     expect(await drain()).toMatchObject({ reconcile: { status: "ran" }, post: "gated" });
+    expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("creates nothing while the finance alert is unbound", async () => {
+    bind({ alerts: undefined });
+    handBooked(1, "2026-06-01", 970);
+    const p = payout(2, "2026-06-28", 500);
+    expect(await drain()).toMatchObject({ reconcile: { status: "ran", matched: 1 }, post: "unbound" });
     expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
     expect(qbo.posts).toHaveLength(0);
   });
