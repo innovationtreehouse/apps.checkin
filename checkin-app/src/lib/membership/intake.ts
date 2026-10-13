@@ -14,6 +14,7 @@ import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
 import { withTx } from "@/lib/db-client";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
+import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
  * Membership intake service — the write/read model behind the "Join the
@@ -70,7 +71,7 @@ async function loadUserWithHousehold(userId: number) {
         include: {
             household: {
                 include: {
-                    householdMembers: { orderBy: { id: "asc" } },
+                    householdMembers: { where: LIVE_PERSON, orderBy: { id: "asc" } },
                     orgMembership: { include: { processes: true } },
                     emergencyContacts: { orderBy: [{ priority: "asc" }, { id: "asc" }] },
                 },

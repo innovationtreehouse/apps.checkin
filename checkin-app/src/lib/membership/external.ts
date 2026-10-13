@@ -9,7 +9,7 @@ import { signingMockActive } from "@/lib/membership/contract/signingTarget";
 import { loadAgreementPdf, stampWatermark, AGREEMENT_FILENAME, AgreementUnavailableError } from "@/lib/membership/contract/agreementDocument";
 import { latestPendingExternal } from "@/lib/membership/phases";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
-import { fromWhere, zohoWebhookMatchable } from "@/lib/membership/lifecycle";
+import { fromWhere, openProcess, zohoWebhookMatchable } from "@/lib/membership/lifecycle";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 
 /**
@@ -257,7 +257,9 @@ export async function selfRecordBgConsent(userId: number): Promise<ExternalStatu
 export async function setZohoEnvelope(processId: number, requestId: string, actorId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ExternalError("not_found", "Application not found.");
-    const updated = await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { zohoEnvelopeId: requestId, zohoActionId: null, zohoSignerPersonId: null } });
+    const { count } = await prisma.orgMembershipProcess.updateMany({ where: { id: processId, ...openProcess.where }, data: { zohoEnvelopeId: requestId, zohoActionId: null, zohoSignerPersonId: null } });
+    if (!count) throw new ExternalError("wrong_phase", "This application is closed; its signing request can't be changed.");
+    const updated = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId } });
     await prisma.auditLog.create({
         data: { actorId, action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { zohoEnvelopeId: requestId, zohoActionId: null, zohoSignerPersonId: null } },
     });
