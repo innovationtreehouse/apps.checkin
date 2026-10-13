@@ -21,7 +21,7 @@ export async function conflictedParties(expense: { submitterId: number; reimburs
 /** Sign-off facts for each line of an expense, read once through the SignoffDirectory port. */
 export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promise<Map<number, SignoffFacts>> {
   const dir = getExpenseRuntime().signoff;
-  const [lines, approvals, finance, board, conflicted, purchaserIsMember, settings] = await Promise.all([
+  const [lines, approvals, finance, board, conflicted, purchaserIsMember, settings, setterRow] = await Promise.all([
     db.expenseLineItem.findMany({ where: { expenseId: expense.id }, select: { id: true } }),
     db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true } }),
     dir.financeHolders(),
@@ -29,6 +29,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
     conflictedParties(expense),
     dir.isOrgMember(expense.submitterId),
     readExpenseSettings(db, expense.orgId),
+    db.expenseAuditLog.findFirst({ where: { expenseId: expense.id, action: "reimbursee_set" }, orderBy: { id: "desc" }, select: { userId: true } }),
   ]);
   const bucketOf = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
   const bucketsById = new Map<number, BucketApprovers>();
@@ -52,6 +53,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
         finance,
         board,
         conflicted,
+        reimburseeSetter: setterRow?.userId ?? null,
       };
       return [l.id, facts];
     }),

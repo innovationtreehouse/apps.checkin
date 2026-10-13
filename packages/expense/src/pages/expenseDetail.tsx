@@ -201,13 +201,15 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses" }
       {isFinance && e.needsReimbursement && !e.backfill && (
         <Paper withBorder p="sm">
           <Text fw={600} mb="xs">Reimbursee {e.reimburseePersonId ? `(person #${e.reimburseePersonId})` : "(unknown — held)"}</Text>
-          <Group>
-            <TextInput placeholder="Person id" value={reimbursee} onChange={(ev) => setReimbursee(ev.currentTarget.value)} />
-            <Button
-              disabled={!/^\d+$/.test(reimbursee)}
-              onClick={async () => { if (await send(`${base}/reimbursee`, "PUT", { personId: Number(reimbursee) }, "Reimbursee set")) reloadAll(); }}
-            >Set reimbursee</Button>
-          </Group>
+          {!e.reimburseePersonId && (
+            <Group>
+              <TextInput placeholder="Person id" value={reimbursee} onChange={(ev) => setReimbursee(ev.currentTarget.value)} />
+              <Button
+                disabled={!/^\d+$/.test(reimbursee)}
+                onClick={async () => { if (await send(`${base}/reimbursee`, "PUT", { personId: Number(reimbursee) }, "Reimbursee set")) reloadAll(); }}
+              >Set reimbursee</Button>
+            </Group>
+          )}
         </Paper>
       )}
 
