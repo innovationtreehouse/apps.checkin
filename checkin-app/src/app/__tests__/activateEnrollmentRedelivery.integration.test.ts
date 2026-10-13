@@ -108,10 +108,37 @@ describe('activateProgramEnrollment — atomic collapse + redelivery no-op', () 
             });
 
             const result = await activateProgramEnrollment({ programId, personIds: [personId], shopifyOrderId: 'order-redeliv-ended' });
-            expect(result).toEqual({ activatedCount: 1, releasedHoldCount: 1 });
+            expect(result).toEqual({ activatedCount: 1, releasedHoldCount: 1, claimantSeatCount: 0 });
             expect(mockAdjust).not.toHaveBeenCalled();
         } finally {
             await prisma.program.update({ where: { id: programId }, data: { saleEndedAt: null } });
+        }
+    });
+
+    it('still takes a claimant-paid unheld seat out of public stock (-1) after the sale has ended', async () => {
+        await prisma.program.update({
+            where: { id: programId },
+            data: { saleEndedAt: new Date(), maxParticipants: 10, claimantShopifyVariantId: 'dev-mock-claimant-redeliv' },
+        });
+        try {
+            await prisma.programParticipant.upsert({
+                where: { programId_personId: { programId, personId } },
+                update: { status: 'PENDING', isPaymentPlanRequested: false, inventoryHeldAt: null, paymentPlanDeniedAt: null, pendingSince: new Date() },
+                create: { programId, personId, status: 'PENDING', pendingSince: new Date() },
+            });
+
+            const result = await activateProgramEnrollment({
+                programId, personIds: [personId], shopifyOrderId: 'order-redeliv-claimant-ended',
+                lines: [{ variantId: 'dev-mock-claimant-redeliv', quantity: 1 }],
+            });
+            expect(result).toEqual({ activatedCount: 1, releasedHoldCount: 0, claimantSeatCount: 1 });
+            expect(mockAdjust).toHaveBeenCalledTimes(1);
+            expect(mockAdjust).toHaveBeenCalledWith(expect.objectContaining({ shopifyVariantId: 'dev-mock-variant-redeliv' }), -1);
+        } finally {
+            await prisma.program.update({
+                where: { id: programId },
+                data: { saleEndedAt: null, maxParticipants: null, claimantShopifyVariantId: null },
+            });
         }
     });
 });
