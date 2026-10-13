@@ -15,6 +15,8 @@
  *   QBO_INCOME_BANK_ACCOUNT_ID. Unset, a run answers "unbound" and matches
  *   nothing.
  * - owners: checkin's budget-owner buckets.
+ * - alerts: a drain that stops at a cap emails finance (the board when no one
+ *   holds FINANCE), so the payouts it left waiting reach a person.
  */
 import {
   configureIncome,
@@ -22,6 +24,7 @@ import {
   mirrorSource,
   quickBooksDepositSource,
   type MirrorBalanceTxn,
+  type IncomeAlerts,
   type MirrorPayout,
   type OwnerDirectory,
   type PayoutMirror,
@@ -38,6 +41,7 @@ import {
   isConfigured as mirrorConfigured,
   type IncomeMirrorPayoutRow,
 } from "@/lib/shopifyRead/client";
+import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 
 function toPayout(row: IncomeMirrorPayoutRow): MirrorPayout | null {
@@ -75,6 +79,18 @@ const owners: OwnerDirectory = {
   },
 };
 
+const alerts: IncomeAlerts = {
+  async postCapReached({ cap, created, remaining }) {
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    const limit = cap === "count" ? "number of deposits" : "dollar total";
+    await notifyFinanceAlert(
+      "Income: deposit creation stopped at its per-run cap",
+      `<p>Today's income run created ${created} QuickBooks deposit(s) and stopped at its per-run ${limit} cap; ${remaining} payout(s) are still waiting. Nothing else was posted. <a href="${config.baseUrl()}/income/reconciliation">Open income reconciliation</a></p>`,
+      "Income cap alert failed:",
+    );
+  },
+};
+
 function depositSource(): QbDepositSource | undefined {
   const realm = qboRealm();
   if (!realm) return undefined;
@@ -94,5 +110,6 @@ export function configureRuntime(): void {
     deposits: depositSource(),
     bankAccountId: process.env.QBO_INCOME_BANK_ACCOUNT_ID || undefined,
     owners,
+    alerts,
   });
 }
