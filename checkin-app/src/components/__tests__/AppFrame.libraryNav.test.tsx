@@ -59,10 +59,10 @@ describe("AppFrame library nav slots", () => {
     expect(screen.queryByText("My Programs")).not.toBeInTheDocument();
   });
 
-  it("FINANCE-only: Revenue Ops lands on Income (no legacy tab); Inventory lands on the catalog (a role holder is a catalog viewer)", () => {
+  it("FINANCE-only: Revenue Ops lands on Donations (no legacy tab); Inventory lands on the catalog (a role holder is a catalog viewer)", () => {
     setSession({ id: 2, isFinance: true });
     renderFrame();
-    expect(hrefOf("Revenue Ops")).toBe("/income");
+    expect(hrefOf("Revenue Ops")).toBe("/donations");
     expect(hrefOf("Expense Ops")).toBe("/expense");
     expect(hrefOf("Inventory")).toBe("/catalog/items");
   });

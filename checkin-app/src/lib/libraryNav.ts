@@ -13,6 +13,7 @@ import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
 import { EXPENSE_TABS } from "@inventory/expense/nav";
 import { libraryCount } from "@/components/navBadges";
 import { canSubmitReceipts } from "@/lib/volunteer";
+import { isDonationViewerClient } from "@/lib/donationNav";
 
 export type { LibraryKey };
 
@@ -55,7 +56,19 @@ export const hasAnyRole = (user: SessionUser | undefined, roles: readonly NavRol
 export const INVENTORY_LIBRARY_TABS: LibraryTab[] = [];
 
 /** Revenue Ops section (/finance-ops, /income, /donations): Income, Donations. */
-export const REVENUE_OPS_LIBRARY_TABS: LibraryTab[] = [];
+export const REVENUE_OPS_LIBRARY_TABS: LibraryTab[] = [
+  {
+    name: "Donations",
+    href: "/donations",
+    icon: "🎁",
+    library: "bulk-donation",
+    visible: isDonationViewerClient,
+    badge: (c) => {
+      const n = libraryCount(c, "bulk-donation", "unassignedQueue") + libraryCount(c, "bulk-donation", "disbursementHolds");
+      return n > 0 ? { count: n, color: "red", label: `${n} unassigned gifts and disbursement holds` } : null;
+    },
+  },
+];
 
 /** Expense Ops section (/expense, /budgets, …): Expenses, Receipts review, Budgets, Settings. */
 export const EXPENSE_OPS_TABS: LibraryTab[] = [
