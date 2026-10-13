@@ -290,10 +290,13 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 insertedOrUpdatedCount++;
 
             } catch (err: unknown) {
-                logger.error(`Error processing row ${pr.index + 2}:`, err);
-                const errorMessage = err instanceof OwnHouseholdRoleError
-                    ? "You cannot change a record in your own household through import — someone outside your household must."
-                    : err instanceof Error ? err.message : 'Unknown error';
+                let errorMessage: string;
+                if (err instanceof OwnHouseholdRoleError) {
+                    errorMessage = "You cannot change a record in your own household through import — someone outside your household must.";
+                } else {
+                    logger.error(`Error processing row ${pr.index + 2}:`, err);
+                    errorMessage = err instanceof Error ? err.message : 'Unknown error';
+                }
                 errors.push(`Row ${pr.index + 2} (${pr.fullName || 'Unknown'}): ${errorMessage}`);
             }
         }
