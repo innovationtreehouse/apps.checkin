@@ -77,9 +77,9 @@ describe("My Programs Expense approvals tab", () => {
 describe("expense count provider", () => {
   const provider = LIBRARY_COUNT_PROVIDERS.find((p) => p.library === "expense");
 
-  it("is registered for FINANCE, Board and program leads only", () => {
+  it("is registered for every signed-in person, so a treasurer gets the approver count", () => {
     expect(provider).toBeDefined();
-    expect([finance, board, lead, member].map((u) => provider?.visible(u))).toEqual([true, true, true, false]);
+    expect([finance, board, lead, member].map((u) => provider?.visible(u))).toEqual([true, true, true, true]);
   });
 
   it("contributes no counts when the expense database is not configured", async () => {

@@ -16,7 +16,8 @@ import { TabBadge } from "@/components/ui/CountBadge";
 import { PageLoader } from "@/components/ui/PageLoader";
 /**
  * Program-leader "My Programs" chrome: section title + subtabs (Attendance inbox /
- * Conflicts), gated to program lead mentors. Lead status rides in on the
+ * Conflicts) for program lead mentors, plus library tabs for whoever they admit
+ * (Expense approvals: leads and program treasurers). Lead status rides in on the
  * todo-counts payload the nav already fetches — no new session field. Matches the
  * program-ops layout's route-driven Tabs pattern.
  */
@@ -35,7 +36,7 @@ export default function MyProgramsLayout({ children }: { children: React.ReactNo
 
   useEffect(() => {
     if (status === "unauthenticated") router.push("/");
-    // Authenticated but leads no program → not their home. Wait for counts (null)
+    // Authenticated but neither lead nor admitted by a library tab → not their home. Wait for counts (null)
     // so we don't bounce a real lead mid-fetch.
     else if (authed && counts !== null && !admitted) router.push("/");
   }, [status, authed, counts, admitted, router]);

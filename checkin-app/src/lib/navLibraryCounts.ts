@@ -21,7 +21,8 @@ export type LibraryCountProvider = {
 export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   {
     library: "expense",
-    visible: (u) => !!u.isFinance || !!u.isBoardMember || (u.programsLed?.length ?? 0) > 0,
+    // Any signed-in person: a program treasurer holds no session flag, so the provider decides.
+    visible: (u) => typeof u.id === "number",
     // An unconfigured library contributes no counts; lazy so the expense library loads only when used.
     count: async (u) =>
       process.env.EXPENSE_DATABASE_URL ? (await import("@/lib/expense/navCounts")).expenseLibraryCounts(u) : {},
