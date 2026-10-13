@@ -8,6 +8,11 @@ export function signInEmailHelp(boardReplyTo?: string | null): string {
     return `This is the address you sign in with. To change it, ${howToReachBoard(boardReplyTo)}.`;
 }
 
+/** The 400 the household member edit returns for a member holding board-granted authority. */
+export function grantedAuthorityEmailHelp(boardReplyTo?: string | null): string {
+    return `This member's email can only be changed by the board. To change it, ${howToReachBoard(boardReplyTo)}.`;
+}
+
 /** "email the board at <addr>", or "contact the board" when no reply-to is set. */
 export function howToReachBoard(boardReplyTo?: string | null): string {
     const address = boardReplyTo?.match(/<([^>]*)>\s*$/)?.[1] ?? boardReplyTo?.trim();
