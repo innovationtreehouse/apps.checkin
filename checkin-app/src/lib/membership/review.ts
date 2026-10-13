@@ -16,6 +16,7 @@ import { awaitingBgReview, fromWhere } from "@/lib/membership/lifecycle";
 import { raiseDeniedHouseholdActivity, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { approvalsForSubject, establishedSubject } from "@/lib/membership/approvals";
+import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject } from "@/lib/membership/selfGrantGuard";
 
 /**
  * Background-check review — now a PARALLEL track, not a blocking phase.
@@ -383,6 +384,8 @@ export async function clearBackgroundCheck(
     // convergence entirely, and do NOT touch the household-lead blanket stamp (that's
     // the household path below, whose lead-stamp change is Phase 5).
     if (process.subjectPersonId) {
+        const subject = { personId: process.subjectPersonId, householdId: await applicantHousehold(tx, process) };
+        await refuseClearingOwnHousehold(actorId, subject, { lastBackgroundCheck: now.toISOString() });
         await tx.person.update({ where: { id: process.subjectPersonId }, data: { lastBackgroundCheck: now } });
         const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...expected.where }, data: { bgClearedAt: now, status: "ACTIVE", stageEnteredAt: now } });
         if (!count) throw movedOn();
@@ -409,6 +412,7 @@ export async function clearBackgroundCheck(
     // Expiry is derived from this plus BoardSettings.bgRecheckMonths at read time (see
     // householdBgIsFresh) — not stored.
     const cleared = opts.subjectOverride ?? subjectsWithTwoApprovals(process.attestations);
+    await refuseClearingOwnHousehold(actorId, { householdId }, { lastBackgroundCheck: now.toISOString(), clearedPersonIds: cleared });
     if (cleared.length) {
         await tx.person.updateMany({ where: { id: { in: cleared } }, data: { lastBackgroundCheck: now } });
     }
@@ -429,6 +433,13 @@ export async function clearBackgroundCheck(
 /** An unlocked writer (archive) can still move the row between the locked read and the write. */
 function movedOn() {
     return new ReviewError("wrong_phase", "This application changed while it was being reviewed. Reload and try again.");
+}
+
+/** Throws when the actor would clear their own household; the guard's audit row goes through prisma so it outlives the tx rollback. */
+async function refuseClearingOwnHousehold(actorId: number, subject: GrantSubject, attempted: Prisma.InputJsonObject) {
+    if (await refuseSelfGrant(prisma, actorId, subject, { table: "Person", attempted })) {
+        throw new ReviewError("same_household_applicant", SELF_GRANT_REFUSAL_MESSAGE);
+    }
 }
 
 /** What a clearance settled to, for the sends that run after the transaction commits. */
@@ -488,6 +499,8 @@ export function matchesVolunteerDesignation(parentEmails: string[], designationE
  * (external advance, fresh-check intake shortcut, fresh-check renewal) so the
  * allowlist drives dues BEFORE the check clears (#874), and again at clearance
  * with the reviewers' volunteer marks.
+ * Not a self-grant site: designations are guarded where written, and the
+ * reviewer-marked pass runs only behind clearBackgroundCheck's guard.
  */
 export async function applyVolunteerStatus(db: DbClient, orgMembershipId: number, householdId: number, markedByReviewer: boolean) {
     let isVolunteer = markedByReviewer;

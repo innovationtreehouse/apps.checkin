@@ -1,14 +1,14 @@
 import type { Prisma } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
-import { sharesHousehold } from "@/lib/conflictOfInterest";
+import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
  * The one own-household check for grants that discount dues or clear a person:
  * the household volunteer flag, a volunteer designation, and a background-check
- * date. Every route that writes one of these calls it (selfGrantGuard.test.ts
- * enforces that).
+ * date. Every writer of one of these calls it (selfGrantGuard.test.ts enforces
+ * that).
  *
  * Refuses when the subject is the actor or shares the actor's household, and when
  * the actor's household can't be resolved (fail closed). No role is exempt. Every
@@ -40,9 +40,7 @@ export async function refuseSelfGrant(
     subject: GrantSubject,
     attempt: GrantAttempt,
 ): Promise<boolean> {
-    // ponytail: same fail-closed lookup as #1888's resolveActorHouseholdId; switch to it once both land.
-    const actor = await db.person.findUnique({ where: { id: actorId }, select: { householdId: true } });
-    const actorHouseholdId = actor?.householdId ?? null;
+    const actorHouseholdId = await resolveActorHouseholdId(db, actorId);
 
     let reason: "actor_household_unresolved" | "own_household" | null = null;
     let affectedEntityId = actorId;
