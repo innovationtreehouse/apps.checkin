@@ -1,10 +1,25 @@
 # Lifecycle machines — running and regenerating
 
-Two entities carry a written-down lifecycle: program enrollment
-(`ProgramParticipant`) and the membership process (`OrgMembershipProcess`). Each
-has one declarative definition naming its legal states, the query filter for each
-state set, its transition table, and a `validate()` that flags rows sitting off
-the diagram.
+Three machines are written down, each as one declarative definition with its
+legal states and its transition table:
+
+- **Enrollment** (`ProgramParticipant.status`): a participant's place in a program, from
+  unenrolled through payment or a scholarship hold to active.
+- **Membership process** (`OrgMembershipProcess.status`): one application or
+  renewal, from intake through review and payment to active or archived.
+- **Household status** (`OrgMembership.status`): whether the household is a
+  member — NONE, ACTIVE, REVOKED or DENIED. Only a membership process converging
+  (paid and check cleared) makes it ACTIVE; DENIED's one exit is the board's
+  restore to NONE. `setHouseholdStatus` is its one writer, and
+  `noRawStatusWrites.test.ts` fails CI on a status write anywhere else.
+
+Enrollment and the membership process also name the query filter for each state
+set and a `validate()` that flags rows sitting off the diagram.
+
+**Not modelled: the grace layer (backlog M1).** Household status has no GRACE or
+INACTIVE state and nothing moves an ACTIVE household on when its year runs out
+unpaid. Lapse is a manual board revoke until M1 is designed. The membership
+process ends at ACTIVE or ARCHIVED and does not cover it either.
 
 The rules those machines exist to hold are in `docs/rules/`; the discipline they
 are built on is in `docs/conventions.md`. This file is how you operate them.
@@ -17,7 +32,8 @@ Run everything below from `checkin-app/`.
 |---|---|
 | Shared primitives (state sets, transitions, classify/validate, enum parity) | `src/lib/lifecycle/` |
 | Enrollment machine | `src/lib/programs/enrollmentState.ts` |
-| Membership machine | `src/lib/membership/lifecycle.ts` |
+| Membership process machine | `src/lib/membership/lifecycle.ts` |
+| Household status machine and its writer | `src/lib/membership/householdStatus.ts` |
 | Generated diagrams, coverage matrix, reachability | `docs/generated/lifecycle/` |
 | Off-diagram sweep | `src/lib/lifecycleDrift.ts`, `src/app/api/cron/lifecycle-reconcile/` |
 
@@ -37,7 +53,7 @@ is also the step that updates every artifact at once.
 
 ## Reading a red lifecycle test
 
-Five guards cover this area, and each fails for a different reason:
+Six guards cover this area, and each fails for a different reason:
 
 - **Artifacts drift** — a machine changed and the generated files were not
   regenerated. Run the command above.
@@ -51,14 +67,19 @@ Five guards cover this area, and each fails for a different reason:
   `classify` and `validate` disagreed somewhere in it. One of the two is wrong.
 - **Enum parity** — a status was added to or removed from the Prisma enum without
   the machine's local union following.
+- **No raw status writes** — code writes `OrgMembership.status` or
+  `OrgMembershipProcess.status` outside a declared helper, or an allowlisted
+  file's write count changed. Route the write through the machine's helper, or
+  drop the allowlist row once its file has moved onto it.
 
 ## Off-diagram rows in production
 
-A cron sweep scans both models with the machines' own `validate()`. It repairs
-one case on its own — an enrollment holding a seat it has already been granted —
-by releasing the seat back to the store. Everything else is reported to the
-sysadmin and board channel, and shows up in System Status under **Lifecycle**, for
-a person to resolve. Nothing ambiguous is changed automatically.
+A cron sweep scans the enrollment and membership-process models with their own
+`validate()`. Household status has no sweep: every status is a legal resting
+state. The sweep repairs one case on its own — an enrollment holding a seat it
+has already been granted — by releasing the seat back to the store. Everything
+else is reported to the sysadmin and board channel, and shows up in System Status
+under **Lifecycle**, for a person to resolve. Nothing ambiguous is changed automatically.
 
 This is distinct from the store reconciliation cron, which recovers rows that are
 *on* the diagram but stuck at a checkpoint because a webhook never arrived.

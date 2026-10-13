@@ -3,7 +3,7 @@ import { Prisma, type OrgMembershipProcess } from "@/generated/prisma/client";
 import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL } from "@/lib/membership/lifecycle";
 import type { DbClient } from "@/lib/db-client";
-import { ensureHouseholdMembership, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+import { ensureHouseholdMembership, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
 
 /**
  * Board "Grant Membership" for the current year: money only (owner, 2026-10-12).
@@ -36,7 +36,10 @@ const IN_FLIGHT_WHERE: Prisma.OrgMembershipProcessWhereInput = {
 /** Refuse any board grant, current or coming year, on a DENIED household, and raise it to the board. */
 export async function refuseGrantIfDenied(householdId: number, actorId: number): Promise<void> {
     const membership = await prisma.orgMembership.findUnique({ where: { householdId }, select: { status: true } });
-    if (membership?.status !== "DENIED") return;
+    if (membership?.status === "DENIED") await refuseDenied(householdId, actorId);
+}
+
+async function refuseDenied(householdId: number, actorId: number): Promise<never> {
     await raiseDeniedHouseholdActivity({ householdId, what: `board grant attempted by person ${actorId}` });
     throw new PaymentError("wrong_phase", "This household is denied. Restore it before granting membership.");
 }
@@ -78,20 +81,27 @@ export async function grantCurrentYear(
     if (membership.status === "ACTIVE") {
         throw new PaymentError("wrong_phase", "This household is already an active member; there is no application to pay.");
     }
-    return { paid: false, ...(await openInitial(membership.id, householdId, actor)) };
+    const opened = await openInitial(membership.id, householdId, actor);
+    if (opened === "denied") return refuseDenied(householdId, actor.actorId);
+    return { paid: false, ...opened };
 }
 
-/** Open an INITIAL application at INTAKE, serialized on the membership row like startIntake. */
+/**
+ * Open an INITIAL application at INTAKE, serialized on the membership row like
+ * startIntake. The DENIED check sits under that row lock, so a deny that lands
+ * after the caller's pre-check still stops the open.
+ */
 async function openInitial(
     orgMembershipId: number,
     householdId: number,
     actor: { actorId: number; reason: string },
-): Promise<{ process: OrgMembershipProcess; opened: boolean }> {
+): Promise<{ process: OrgMembershipProcess; opened: boolean } | "denied"> {
     const findInFlight = (db: DbClient) =>
         db.orgMembershipProcess.findFirst({ where: { orgMembershipId, kind: "INITIAL", status: { in: [...IN_FLIGHT_INITIAL] } }, orderBy: { id: "desc" } });
     try {
         return await prisma.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
+            const [locked] = await tx.$queryRaw<{ status: HouseholdStatus }[]>`SELECT status FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
+            if (locked?.status === "DENIED") return "denied" as const;
             const raced = await findInFlight(tx);
             if (raced) return { process: raced, opened: false };
             const process = await tx.orgMembershipProcess.create({ data: { orgMembershipId, kind: "INITIAL", status: "INTAKE" } });

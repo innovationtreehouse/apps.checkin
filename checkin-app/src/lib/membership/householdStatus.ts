@@ -18,7 +18,7 @@
  * and the writers take the client as a parameter.
  */
 import type { Prisma, OrgMembershipStatus } from "@/generated/prisma/client";
-import type { DbClient } from "@/lib/db-client";
+import { withTx, type DbClient } from "@/lib/db-client";
 import type { AuditActor } from "@/lib/auditActor";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { fromStatusWhere, isLegalTransition, type Transition, type Expect, type Equal } from "@/lib/lifecycle";
@@ -68,10 +68,11 @@ export async function ensureHouseholdMembership(db: DbClient, householdId: numbe
 
 /**
  * The one writer of OrgMembership.status. Moves the row to `to` only if its status
- * is still one of `from` (compare-and-set), writes the audit row, and returns
- * whether it applied. A row already at `to` with `to` listed in `from` is a no-op
- * success (an ACTIVE household's renewal converging). Throws on an edge the table
- * doesn't declare — a programming error, not a race.
+ * is still one of `from` (compare-and-set), writes the audit row in the same
+ * transaction (a savepoint when `db` is already a tx), and returns whether it
+ * applied. A row already at `to` with `to` listed in `from` is a no-op success (an
+ * ACTIVE household's renewal converging). Throws on an edge the table doesn't
+ * declare — a programming error, not a race.
  */
 export async function setHouseholdStatus(
     db: DbClient,
@@ -84,29 +85,31 @@ export async function setHouseholdStatus(
             throw new Error(`Household status ${f} → ${to} is not a declared transition`);
         }
     }
-    const row = await db.orgMembership.findUnique({ where: { id: membershipId }, select: { status: true, householdId: true } });
-    if (!row || !from.includes(row.status)) return false;
-    if (row.status === to) return true;
+    return withTx(db, async (tx) => {
+        const row = await tx.orgMembership.findUnique({ where: { id: membershipId }, select: { status: true, householdId: true } });
+        if (!row || !from.includes(row.status)) return false;
+        if (row.status === to) return true;
 
-    // CAS on the status just read, so the audit's oldData is exact and a concurrent
-    // write in between (a deny landing before a revoke) makes this one miss.
-    const { count } = await db.orgMembership.updateMany({
-        where: { id: membershipId, ...fromWhere(row.status) },
-        data: { status: to },
+        // CAS on the status just read, so the audit's oldData is exact and a concurrent
+        // write in between (a deny landing before a revoke) makes this one miss.
+        const { count } = await tx.orgMembership.updateMany({
+            where: { id: membershipId, ...fromWhere(row.status) },
+            data: { status: to },
+        });
+        if (count !== 1) return false;
+        await tx.auditLog.create({
+            data: {
+                ...actor,
+                action: "EDIT",
+                tableName: "OrgMembership",
+                affectedEntityId: membershipId,
+                secondaryAffectedEntity: row.householdId,
+                oldData: { status: row.status },
+                newData: { status: to, reason },
+            },
+        });
+        return true;
     });
-    if (count !== 1) return false;
-    await db.auditLog.create({
-        data: {
-            ...actor,
-            action: "EDIT",
-            tableName: "OrgMembership",
-            affectedEntityId: membershipId,
-            secondaryAffectedEntity: row.householdId,
-            oldData: { status: row.status },
-            newData: { status: to, reason },
-        },
-    });
-    return true;
 }
 
 /**
