@@ -622,7 +622,7 @@ describe("program order entitlement (same check as the webhook)", () => {
     });
 
     it("activates nobody and raises MIXED_HOUSEHOLDS when the order names children of two households", async () => {
-        const oid = `${TAG}-604`;
+        const oid = `${TAG}-698`;
         const email = `ent-mixed-${TAG}@ex.com`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
         const otherHh = await prisma.household.create({ data: { name: `HH ${TAG} other-${email}` } });
