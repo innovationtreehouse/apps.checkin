@@ -7,6 +7,8 @@
  */
 
 import { GET, PATCH } from '@/app/api/programs/[id]/route';
+import { GET as getMine } from '@/app/api/programs/mine/route';
+import * as emailRecipients from '@/lib/emailRecipients';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
@@ -1560,6 +1562,173 @@ describe('Individual Program API Integration Tests', () => {
 
             const data = await res.json();
             expect(data.program.shopifyVariantId).toBeNull();
+        });
+    });
+
+    // Payment status (status: PENDING = not paid yet, ACTIVE = paid): staff see
+    // every row's; a household lead sees their own household's; nobody else —
+    // not a youth, not a non-lead member, not another family — receives it.
+    describe('payment status visibility', () => {
+        let programId: number;
+        let leadAId: number, kidAId: number, kidA2Id: number, leadBId: number, kidBId: number;
+        let householdAId: number;
+
+        const getAs = async (user: Record<string, unknown>) => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user });
+            const req = new Request(`http://localhost:4000/api/programs/${programId}`, { method: 'GET' });
+            const res = await GET(req as unknown as import("next/server").NextRequest, createParams(programId) as unknown as never);
+            expect(res.status).toBe(200);
+            return (await res.json()).participants as { personId: number; status?: string; pendingSince?: string }[];
+        };
+        const statusOf = (rows: { personId: number; status?: string }[], id: number) => rows.find(r => r.personId === id)?.status;
+
+        beforeAll(async () => {
+            const hhA = await prisma.household.create({ data: { name: 'Pay HH A' } });
+            const hhB = await prisma.household.create({ data: { name: 'Pay HH B' } });
+            householdAId = hhA.id;
+            const mk = (email: string, householdId: number, isHouseholdLead = false) =>
+                prisma.person.create({ data: { email: `${email}-prog-id-api-test@example.com`, name: email, householdId, isHouseholdLead } });
+            leadAId = (await mk('pay-lead-a', hhA.id, true)).id;
+            kidAId = (await mk('pay-kid-a', hhA.id)).id;
+            kidA2Id = (await mk('pay-kid-a2', hhA.id)).id;
+            leadBId = (await mk('pay-lead-b', hhB.id, true)).id;
+            kidBId = (await mk('pay-kid-b', hhB.id)).id;
+            programId = (await prisma.program.create({
+                data: { name: 'Pay Status Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'RUNNING', leadMentorId: leadId },
+            })).id;
+            await prisma.programParticipant.createMany({
+                data: [
+                    { programId, personId: kidAId, status: 'PENDING' },
+                    { programId, personId: kidA2Id, status: 'ACTIVE' },
+                    { programId, personId: kidBId, status: 'PENDING' },
+                ],
+            });
+        });
+
+        afterAll(async () => {
+            const ids = [leadAId, kidAId, kidA2Id, leadBId, kidBId];
+            await prisma.programParticipant.deleteMany({ where: { programId } });
+            await prisma.program.deleteMany({ where: { id: programId } });
+            const hh = await prisma.person.findMany({ where: { id: { in: ids } }, select: { householdId: true } });
+            await prisma.person.deleteMany({ where: { id: { in: ids } } });
+            await prisma.household.deleteMany({ where: { id: { in: hh.map(h => h.householdId) } } });
+        });
+
+        it("a household lead sees their own children's status and not another family's", async () => {
+            const rows = await getAs({ id: leadAId, householdId: householdAId, householdLead: true, ageBand: 'adult' });
+            expect(statusOf(rows, kidAId)).toBe('PENDING');
+            expect(statusOf(rows, kidA2Id)).toBe('ACTIVE');
+            expect(rows.some(r => r.personId === kidBId)).toBe(true);
+            expect(statusOf(rows, kidBId)).toBeUndefined();
+        });
+
+        it("a youth receives no status, their own or anyone's", async () => {
+            const rows = await getAs({ id: kidAId, householdId: householdAId, householdLead: false, ageBand: 'youth' });
+            expect(rows.length).toBe(3);
+            expect(rows.every(r => r.status === undefined && r.pendingSince === undefined)).toBe(true);
+        });
+
+        it('a non-lead adult household member receives no status', async () => {
+            const rows = await getAs({ id: kidA2Id, householdId: householdAId, householdLead: false, ageBand: 'adult' });
+            expect(rows.every(r => r.status === undefined)).toBe(true);
+        });
+
+        it("the program lead mentor still sees every row's status", async () => {
+            const rows = await getAs({ id: leadId });
+            expect(statusOf(rows, kidAId)).toBe('PENDING');
+            expect(statusOf(rows, kidBId)).toBe('PENDING');
+        });
+
+        it('/api/programs/mine gives the lead status and a youth none', async () => {
+            const mine = async (user: Record<string, unknown>) => {
+                (getServerSession as jest.Mock).mockResolvedValue({ user });
+                const res = await getMine(new Request('http://localhost:4000/api/programs/mine') as unknown as import("next/server").NextRequest, {} as never);
+                expect(res.status).toBe(200);
+                return (await res.json()) as { personId: number; programId: number; status?: string; isPaymentPlanRequested?: boolean }[];
+            };
+            const leadRows = (await mine({ id: leadAId, householdId: householdAId, householdLead: true, ageBand: 'adult' })).filter(r => r.programId === programId);
+            expect(leadRows.find(r => r.personId === kidAId)?.status).toBe('PENDING');
+
+            const youthRows = (await mine({ id: kidAId, householdId: householdAId, householdLead: false, ageBand: 'youth' })).filter(r => r.programId === programId);
+            expect(youthRows).toHaveLength(1);
+            expect(youthRows[0]).not.toHaveProperty('status');
+            expect(youthRows[0]).not.toHaveProperty('isPaymentPlanRequested');
+        });
+    });
+
+    // A start-date or age-bound edit flags, for the Board, enrolled people who fitted
+    // before and no longer do. Enrollments are never changed.
+    describe('PATCH /api/programs/[id] — age re-check on date/age edits', () => {
+        let programId: number;
+        let kid10Id: number, kid15Id: number, hhId: number;
+        let emailSpy: jest.SpyInstance;
+
+        const patch = async (body: Record<string, unknown>) => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            const req = new Request(`http://localhost:4000/api/programs/${programId}`, { method: 'PATCH', body: JSON.stringify(body) });
+            const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(programId) as unknown as never);
+            expect(res.status).toBe(200);
+        };
+        const flaggedHtml = () => emailSpy.mock.calls.map(c => String(c[1])).join('\n');
+
+        beforeAll(async () => {
+            hhId = (await prisma.household.create({ data: { name: 'Age HH' } })).id;
+            // Ages at the 2026-06-15 start: 10 and 15.
+            kid10Id = (await prisma.person.create({ data: { email: 'age10-prog-id-api-test@example.com', name: 'Ten Year Canary', householdId: hhId, dateOfBirth: new Date(Date.UTC(2016, 0, 1)) } })).id;
+            kid15Id = (await prisma.person.create({ data: { email: 'age15-prog-id-api-test@example.com', name: 'Fifteen Year Canary', householdId: hhId, dateOfBirth: new Date(Date.UTC(2011, 0, 1)) } })).id;
+            programId = (await prisma.program.create({
+                data: { name: 'Age Recheck Prog ID API Test', startAt: new Date('2026-06-15'), endAt: new Date('2026-08-31'), phase: 'UPCOMING', leadMentorId: leadId },
+            })).id;
+            await prisma.programParticipant.createMany({
+                data: [
+                    { programId, personId: kid10Id, status: 'ACTIVE' },
+                    { programId, personId: kid15Id, status: 'PENDING' },
+                ],
+            });
+        });
+
+        beforeEach(() => {
+            emailSpy = jest.spyOn(emailRecipients, 'emailBoardMembers').mockResolvedValue();
+        });
+        afterEach(() => emailSpy.mockRestore());
+
+        afterAll(async () => {
+            await prisma.programParticipant.deleteMany({ where: { programId } });
+            await prisma.program.deleteMany({ where: { id: programId } });
+            await prisma.person.deleteMany({ where: { id: { in: [kid10Id, kid15Id] } } });
+            await prisma.household.deleteMany({ where: { id: hhId } });
+        });
+
+        it('sends nothing when neither dates nor ages change', async () => {
+            await patch({ name: 'Age Recheck Prog ID API Test' });
+            expect(emailSpy).not.toHaveBeenCalled();
+        });
+
+        it('raising minAge flags the child who no longer fits, once, and keeps both enrollments', async () => {
+            await patch({ minAge: 12 });
+            expect(emailSpy).toHaveBeenCalledTimes(1);
+            expect(flaggedHtml()).toContain('Ten Year Canary');
+            expect(flaggedHtml()).not.toContain('Fifteen Year Canary');
+
+            const statuses = await prisma.programParticipant.findMany({ where: { programId }, select: { personId: true, status: true } });
+            expect(statuses).toEqual(expect.arrayContaining([
+                { personId: kid10Id, status: 'ACTIVE' },
+                { personId: kid15Id, status: 'PENDING' },
+            ]));
+            expect(statuses).toHaveLength(2);
+        });
+
+        it('a later edit names only newly out-of-range children', async () => {
+            // Moving the start two years later makes the 15-year-old 17.
+            await patch({ maxAge: 16, startAt: '2028-06-15', endAt: '2028-08-31' });
+            expect(emailSpy).toHaveBeenCalledTimes(1);
+            expect(flaggedHtml()).toContain('Fifteen Year Canary');
+            expect(flaggedHtml()).not.toContain('Ten Year Canary');
+        });
+
+        it('widening the bounds flags nobody', async () => {
+            await patch({ minAge: null, maxAge: null });
+            expect(emailSpy).not.toHaveBeenCalled();
         });
     });
 });

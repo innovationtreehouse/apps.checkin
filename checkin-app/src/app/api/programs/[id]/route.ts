@@ -9,12 +9,16 @@ import { adjustProgramInventory, setProgramInventory, syncProgramPrice } from "@
 import { dollarsToCentsOrNull } from "@inventory/money";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
-import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
+import { validateProgramAgeBounds, isLeaderAgeEligible, checkProgramAge } from "@/lib/programAge";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
+import { seesHouseholdPaymentStatus } from "@/lib/programs/paymentVisibility";
+import { emailBoardMembers } from "@/lib/emailRecipients";
+import { config } from "@/lib/config";
+import { escapeHtml } from "@/lib/email-templates/base";
 import { parseDateOnly } from "@/lib/time";
 import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { STATES as ENROLLMENT_STATES } from "@/lib/programs/enrollmentState";
-import { ProgramPhase, EnrollmentStatus } from "@/generated/prisma/client";
+import { ProgramPhase, EnrollmentStatus, type Program } from "@/generated/prisma/client";
 
 // ORDER MATTERS: this export sits ABOVE getProgram so the routeAuthDrift
 // guard attributes getProgram's edge-model reads to the nearest preceding
@@ -184,18 +188,27 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     // (_count.participants), not names — a count is fine, the names are the leak.
     // The registry orderedView tiers remain as defense-in-depth, stripping
     // pii/personal on the rows for non-staff-but-enrolled callers.
-    const isEnrolled = !!sessionUser && program.participants.some(p =>
+    const isOwnHousehold = (p: { personId: number; person: { householdId: number } | null }) => !!sessionUser && (
         p.personId === sessionUser.id ||
         (sessionUser.householdId != null && p.person?.householdId === sessionUser.householdId)
     );
+    const isEnrolled = program.participants.some(isOwnHousehold);
     if (!isPrivileged && !isEnrolled) {
         const metadata: Record<string, unknown> = { ...program };
         delete metadata.volunteers;
         delete metadata.participants;
         return { Program: metadata };
     }
+    if (isPrivileged) return { Program: program };
 
-    return { Program: program };
+    // Payment status (status = paid vs not paid yet) is staff's, plus a household
+    // lead's for their own household. The stripper can't express "own household",
+    // so other rows are dropped of it here — including every row for a youth.
+    const showOwnPayment = seesHouseholdPaymentStatus(sessionUser);
+    const participants = program.participants.map(({ status, pendingSince, ...row }) =>
+        showOwnPayment && isOwnHousehold(row) ? { ...row, status, pendingSince } : row
+    );
+    return { Program: { ...program, participants } };
 });
 
 
@@ -440,6 +453,10 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             }
         });
 
+        // The edit has landed; a failed re-check is logged, not reported as a failed save.
+        await flagEnrollmentsNoLongerFitting(currentProgram, updatedProgram)
+            .catch(e => logger.error("Program age re-check failed:", e));
+
         // Announce trigger — transition rule, once-per-lifetime claim, audit row,
         // and fire-without-await all live in the helper. Never throws.
         await maybeAnnounceOnOpen({
@@ -513,3 +530,28 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         return apiError("Failed to update program", 500);
     }
 });
+
+// A start-date or age-bound edit can leave enrolled people outside the program's
+// ages (measured at the start date). The Board is told who; enrollments are
+// never changed. Only people who fitted before the edit are named, so a re-save
+// doesn't repeat old news.
+async function flagEnrollmentsNoLongerFitting(before: Program, after: Program): Promise<void> {
+    if (before.minAge === after.minAge && before.maxAge === after.maxAge && before.startAt.getTime() === after.startAt.getTime()) return;
+    const rule = (p: Program) => ({ minAge: p.minAge, maxAge: p.maxAge, asOf: p.startAt });
+    const enrolled = await prisma.programParticipant.findMany({
+        where: { programId: after.id, person: LIVE_PERSON },
+        select: { status: true, person: { select: { name: true, dateOfBirth: true, isDeclaredAdult: true } } },
+    });
+    const misfits = enrolled.flatMap(({ status, person }) => {
+        const now = checkProgramAge(person, rule(after));
+        return !now.ok && checkProgramAge(person, rule(before)).ok ? [{ name: person.name, status, label: now.label }] : [];
+    });
+    if (misfits.length === 0) return;
+
+    const rows = misfits.map(m => `<li>${escapeHtml(m.name ?? "Unnamed")}: ${m.label} (${m.status === "ACTIVE" ? "paid" : "not paid yet"})</li>`).join("");
+    await emailBoardMembers(
+        `Program "${after.name}": ${misfits.length} enrolled no longer fit its ages`,
+        `<p>An edit to the dates or age limits of <strong>${escapeHtml(after.name)}</strong> leaves these enrolled people outside its ages at the start date. Nothing was changed; please decide with the program leader and the families.</p><ul>${rows}</ul><p><a href="${config.baseUrl()}/program-ops/programs/${after.id}">Open the program</a></p>`,
+        "Program age re-check board alert failed:",
+    );
+}
