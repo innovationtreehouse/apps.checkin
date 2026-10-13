@@ -1,0 +1,45 @@
+{
+  "receiptId": "R-2002",
+  "orgId": "org-1",
+  "submitterId": 7,
+  "vendorName": "Home Depot",
+  "receiptNumber": "INV-555",
+  "orderNumber": null,
+  "currency": "USD",
+  "taxCents": 0,
+  "shippingCents": 0,
+  "discountCents": 0,
+  "receiptTotalCents": 2000,
+  "receiptDate": "2026-06-01",
+  "needsReimbursement": false,
+  "reimbursementFor": null,
+  "submittedAt": "2026-06-01T12:00:00.000Z",
+  "lineItems": [
+    {
+      "receiptLineItemId": 1,
+      "lineNumber": 1,
+      "description": "Known",
+      "partNumber": "PN-1",
+      "manufacturer": "Acme",
+      "quantity": 1,
+      "unitPriceCents": 1000,
+      "totalPriceCents": 1000,
+      "isDelayed": false,
+      "gtin13": "0001234500017"
+    },
+    {
+      "receiptLineItemId": 2,
+      "lineNumber": 2,
+      "description": "New SKU pending catalog",
+      "partNumber": "PN-NEW",
+      "manufacturer": "Acme",
+      "quantity": 1,
+      "unitPriceCents": 1000,
+      "totalPriceCents": 1000,
+      "isDelayed": false,
+      "gtin13": "0009999900015",
+      "isProvisional": true,
+      "provisionalName": "New SKU pending catalog"
+    }
+  ]
+}

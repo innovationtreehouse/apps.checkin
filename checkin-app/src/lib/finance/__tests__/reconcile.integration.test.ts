@@ -30,6 +30,7 @@ jest.mock("@/lib/shopifyRead/client", () => ({
     // the reconciler's transitional amount-gate fallback. Tests of the variant path
     // set this explicitly.
     orderLineVariantIds: jest.fn(async () => [] as string[]),
+    orderLines: jest.fn(async () => [] as { variantId: string; quantity: number }[]),
 }));
 import * as mirror from "@/lib/shopifyRead/client";
 
@@ -40,6 +41,7 @@ const ordersChangedSince = mirror.ordersChangedSince as jest.Mock;
 const ordersByLegacyIds = mirror.ordersByLegacyIds as jest.Mock;
 const disputedOrderGids = mirror.disputedOrderGids as jest.Mock;
 const orderLineVariantIds = mirror.orderLineVariantIds as jest.Mock;
+const orderLines = mirror.orderLines as jest.Mock;
 
 function order(overrides: Partial<MirrorOrder> & { legacyId: string }): MirrorOrder {
     return {
@@ -110,7 +112,7 @@ async function makeProgramEnrollment(opts: {
     status: "PENDING" | "ACTIVE";
     membership?: "ACTIVE" | "REVOKED";
     shopifyOrderId?: string;
-}): Promise<{ householdId: number; personId: number; programId: number }> {
+}): Promise<{ householdId: number; personId: number; programId: number; variantId: string }> {
     const hh = await prisma.household.create({ data: { name: `HH ${TAG} ${opts.email}` } });
     const person = await prisma.person.create({
         data: { email: opts.email, name: `Lead ${opts.email}`, isHouseholdLead: true, householdId: hh.id },
@@ -118,13 +120,14 @@ async function makeProgramEnrollment(opts: {
     if (opts.membership) {
         await prisma.orgMembership.create({ data: { householdId: hh.id, status: opts.membership } });
     }
+    const variantId = `variant-prg-${opts.email}`;
     const program = await prisma.program.create({
-        data: { name: `Program ${TAG} ${opts.email}`, startAt: new Date("2026-06-01"), endAt: new Date("2026-08-01") },
+        data: { name: `Program ${TAG} ${opts.email}`, startAt: new Date("2026-06-01"), endAt: new Date("2026-08-01"), shopifyVariantId: variantId },
     });
     await prisma.programParticipant.create({
         data: { programId: program.id, personId: person.id, status: opts.status, shopifyOrderId: opts.shopifyOrderId ?? null },
     });
-    return { householdId: hh.id, personId: person.id, programId: program.id };
+    return { householdId: hh.id, personId: person.id, programId: program.id, variantId };
 }
 
 beforeAll(async () => {
@@ -140,6 +143,7 @@ afterEach(async () => {
     ordersByLegacyIds.mockResolvedValue([]);
     disputedOrderGids.mockResolvedValue(new Set());
     orderLineVariantIds.mockResolvedValue([]);
+    orderLines.mockResolvedValue([]);
     // Reset cursor so each test scans its own fixtures from scratch.
     await prisma.boardSettings.update({ where: { id: 1 }, data: { shopifyReconcileCursorAt: null } });
 });
@@ -476,7 +480,8 @@ describe("program member-code entitlement (judged at the money event)", () => {
     it("activates normally when the paying household IS dues-settled through the program's coverage date", async () => {
         // The entitled money event: same code, same forward path, no flag.
         const oid = `${TAG}-502`;
-        const { personId, programId } = await makeProgramEnrollment({ email: `prgent-${TAG}@ex.com`, status: "PENDING", membership: "ACTIVE" });
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `prgent-${TAG}@ex.com`, status: "PENDING", membership: "ACTIVE" });
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
         ordersChangedSince.mockResolvedValue([
             order({
                 legacyId: oid,
@@ -495,7 +500,8 @@ describe("program member-code entitlement (judged at the money event)", () => {
     it("raises DISCOUNT_UNAUTHORIZED and does NOT activate a PENDING enrollment when the order carries the program's PRG code and the household is unentitled", async () => {
         const email = `prgfwd-${TAG}@ex.com`;
         const oid = `${TAG}-510`;
-        const { personId, programId } = await makeProgramEnrollment({ email, status: "PENDING" });
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
         // Preferred attribute path (mirrors the enroll checkout link) — no customer
         // email on the order at all, so the attribute alone must carry it.
         ordersChangedSince.mockResolvedValue([
@@ -517,6 +523,110 @@ describe("program member-code entitlement (judged at the money event)", () => {
         // exception still must not duplicate.
         await runReconcile();
         expect(await prisma.paymentException.count({ where: { kind: "DISCOUNT_UNAUTHORIZED", shopifyOrderId: oid } })).toBe(1);
+    });
+});
+
+describe("program order entitlement (same check as the webhook)", () => {
+    const statusOf = async (programId: number, personId: number) =>
+        (await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId } } }))?.status;
+    const kinds = async (oid: string) => (await prisma.paymentException.findMany({ where: { shopifyOrderId: oid } })).map((e) => e.kind);
+
+    /** A second household member enrolled PENDING in the same program. */
+    async function addSibling(householdId: number, programId: number, email: string): Promise<number> {
+        const sib = await prisma.person.create({ data: { email: `sib-${email}`, name: `Sib ${email}`, householdId } });
+        await prisma.programParticipant.create({ data: { programId, personId: sib.id, status: "PENDING" } });
+        return sib.id;
+    }
+
+    it("raises NO_ITEM and does not activate when the attributed order lacks the program variant", async () => {
+        const oid = `${TAG}-600`;
+        const { personId, programId } = await makeProgramEnrollment({ email: `ent-noitem-${TAG}@ex.com`, status: "PENDING" });
+        orderLines.mockResolvedValue([{ variantId: "variant-tshirt-99", quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }) })]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("PENDING");
+        expect(await kinds(oid)).toEqual(["NO_ITEM"]);
+        await runReconcile();
+        expect(await kinds(oid)).toEqual(["NO_ITEM"]);
+    });
+
+    it("activates nobody and raises AMOUNT_MISMATCH when the order buys fewer seats than people awaiting payment", async () => {
+        const oid = `${TAG}-601`;
+        const email = `ent-short-${TAG}@ex.com`;
+        const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
+        const sibId = await addSibling(householdId, programId, email);
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: `${personId},${sibId}` }) })]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("PENDING");
+        expect(await statusOf(programId, sibId)).toBe("PENDING");
+        expect(await kinds(oid)).toEqual(["AMOUNT_MISMATCH"]);
+    });
+
+    it("activates everyone when the order buys a seat per person", async () => {
+        const oid = `${TAG}-602`;
+        const email = `ent-full-${TAG}@ex.com`;
+        const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
+        const sibId = await addSibling(householdId, programId, email);
+        orderLines.mockResolvedValue([{ variantId, quantity: 2 }]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: `${personId},${sibId}` }) })]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("ACTIVE");
+        expect(await statusOf(programId, sibId)).toBe("ACTIVE");
+        expect(await kinds(oid)).toEqual([]);
+    });
+
+    it.each([
+        ["PARTIALLY_REFUNDED", { financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents: 1000 }],
+        ["VOIDED", { financialStatus: "VOIDED" }],
+        ["cancelled", { cancelledAt: new Date() }],
+    ])("raises REVERSED_BEFORE_ACTIVATION and does not activate a %s order", async (label, over) => {
+        const oid = `${TAG}-603-${label}`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-rev-${label}-${TAG}@ex.com`, status: "PENDING" });
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, ...over, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }) })]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("PENDING");
+        expect(await kinds(oid)).toEqual(["REVERSED_BEFORE_ACTIVATION"]);
+    });
+
+    it("waits on an order not yet paid: no activation, no exception", async () => {
+        const oid = `${TAG}-604`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-unpaid-${TAG}@ex.com`, status: "PENDING" });
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, financialStatus: "PARTIALLY_PAID", noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: String(personId) }) })]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("PENDING");
+        expect(await kinds(oid)).toEqual([]);
+    });
+
+    it("email fallback leaves a lead's merchandise order untouched", async () => {
+        const oid = `${TAG}-605`;
+        const email = `ent-merch-${TAG}@ex.com`;
+        const { personId, programId } = await makeProgramEnrollment({ email, status: "PENDING" });
+        orderLines.mockResolvedValue([{ variantId: "variant-tshirt-99", quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("PENDING");
+        expect(await kinds(oid)).toEqual([]);
+    });
+
+    it("email fallback activates when the order carries the pending program's variant", async () => {
+        const oid = `${TAG}-606`;
+        const email = `ent-fallback-${TAG}@ex.com`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
+        orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("ACTIVE");
+        expect(await kinds(oid)).toEqual([]);
     });
 });
 

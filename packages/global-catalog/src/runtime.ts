@@ -59,16 +59,22 @@ export function getDb(): PrismaClient {
 }
 
 /**
- * Build a host-rendered HTTP error. Uses the injected factory (checkin's
- * ApiResponseError, which handler() maps to status + message); falls back to a
- * plain Error carrying `status` when unconfigured (tests).
+ * An HTTP-status error thrown by a route factory. The host translates it into
+ * its own API error at the route boundary; the library never imports the
+ * host's error class.
  */
-export function catalogError(status: number, message: string): Error {
-  const make = globalForRuntime.__gcRuntime?.httpError;
-  if (make) return make(status, message);
-  const err = new Error(message) as Error & { status: number };
-  err.status = status;
-  return err;
+export class CatalogHttpError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CatalogHttpError";
+  }
+}
+
+export function catalogError(status: number, message: string): CatalogHttpError {
+  return new CatalogHttpError(status, message);
 }
 
 /** Run a service call, remapping its ServiceError to a host-rendered HTTP error. */

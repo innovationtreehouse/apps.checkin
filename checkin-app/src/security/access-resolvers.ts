@@ -72,7 +72,9 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
         ledHouseholdMemberIds: new Set(),
     };
 
-    if (auth.type !== 'session') return ctx;
+    // Prisma drops an undefined `where` value, so an id-less session would match every
+    // program below; it gets the empty context instead.
+    if (auth.type !== 'session' || typeof auth.user.id !== 'number') return ctx;
 
     ctx.selfId = auth.user.id;
     ctx.householdId = auth.user.householdId;

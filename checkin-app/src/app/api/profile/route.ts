@@ -8,6 +8,7 @@ import { isYouth } from "@/lib/time";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 export const GET = handler('GET /api/profile', async ({ auth }) => {
     if (auth.type !== 'session') throw unauthorized();
@@ -83,6 +84,7 @@ export const PATCH = withAuth(
                     emailSuppressed: true,
                 }
             });
+            invalidateAttendanceCache();
 
             await prisma.auditLog.create({
                 data: {

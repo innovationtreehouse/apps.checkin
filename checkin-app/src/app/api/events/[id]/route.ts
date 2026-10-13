@@ -8,6 +8,7 @@ import { apiError } from "@/lib/api-response";
 import { parseVisitTime, departureAfterArrival, withinMaxDuration } from "@/lib/visitTimes";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { LIVE_VISIT } from "@/lib/visit/filters";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 
 // FAIL-CLOSED, staff-only. This payload is fundamentally a roster — who is
@@ -175,6 +176,7 @@ export const PATCH = withAuth({}, async (req: Request, auth, { params }: { param
                         prisma.visit.updateMany({ where: { associatedEventId: { in: eventIds } }, data: { associatedEventId: null } }),
                         prisma.event.deleteMany({ where: { id: { in: eventIds } } }),
                     ]);
+                    invalidateAttendanceCache();
 
                     return NextResponse.json({ success: true, count: futureEvents.length });
                 } else if (body.action === 'editTime') {
@@ -201,6 +203,7 @@ export const PATCH = withAuth({}, async (req: Request, auth, { params }: { param
                         prisma.visit.updateMany({ where: { associatedEventId: event.id }, data: { associatedEventId: null } }),
                         prisma.event.delete({ where: { id: event.id } }),
                     ]);
+                    invalidateAttendanceCache();
                     return NextResponse.json({ success: true });
                 } else if (body.action === 'editTime') {
                     const updatedEvent = await prisma.event.update({
@@ -431,6 +434,7 @@ export const PATCH = withAuth({}, async (req: Request, auth, { params }: { param
                 }
                 return null;
             }, { maxWait: 5000, timeout: 15000 });
+            invalidateAttendanceCache();
 
             if (failure) return apiError(failure, 400);
 

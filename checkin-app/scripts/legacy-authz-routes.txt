@@ -118,10 +118,8 @@ PATCH /api/profile
 POST /api/programs/[id]/discount-code
 POST /api/programs/[id]/participants
 DELETE /api/programs/[id]/participants
-POST /api/programs/[id]/publish
 POST /api/programs/[id]/request-payment-plan
 PATCH /api/programs/[id]
-PATCH /api/programs/[id]/settings
 POST /api/programs/[id]/sync-shopify
 POST /api/programs/[id]/volunteers
 PATCH /api/programs/[id]/volunteers

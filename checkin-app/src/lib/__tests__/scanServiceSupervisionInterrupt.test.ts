@@ -53,6 +53,7 @@ function fakeDb(householdIds: number[], warnedAt: Date | null = null, youthPrese
         $executeRaw: jest.fn().mockResolvedValue(0),
         boardSettings: { findUnique: jest.fn().mockResolvedValue({ orgMembershipYearBoundary: null, bgRecheckMonths: 0 }) },
         visit: {
+            findFirst: jest.fn().mockResolvedValue(null),
             count: jest.fn().mockResolvedValue(1),
             findMany: jest.fn().mockImplementation(({ where }) =>
                 where.person?.isDeclaredAdult === false

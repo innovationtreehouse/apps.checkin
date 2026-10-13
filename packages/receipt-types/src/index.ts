@@ -39,12 +39,8 @@ export type { CompletedReceipt, CompletedReceiptLineItem } from "./completed-rec
 
 export {
   RECEIPT_CONTRACT_VERSION,
-  SCHEMA_VERSION_HEADER,
-  IDEMPOTENCY_KEY_HEADER,
   majorVersion,
   isContractVersionCompatible,
-  expenseApplyIdempotencyKey,
-  inventoryApplyIdempotencyKey,
 } from "./contract";
 
 // S5 — global-catalog → consumers org-event contract

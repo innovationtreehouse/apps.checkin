@@ -66,7 +66,7 @@ describe('activateProgramEnrollment — atomic collapse + redelivery no-op', () 
 
         // First activation (the paid webhook).
         const first = await activateProgramEnrollment({
-            programId, personIds: [personId], shopifyOrderId: 'order-redeliv-1', hasProgramItem: true,
+            programId, personIds: [personId], shopifyOrderId: 'order-redeliv-1',
         });
         expect(first).toEqual({ activatedCount: 1, releasedHoldCount: 1 });
 
@@ -86,7 +86,7 @@ describe('activateProgramEnrollment — atomic collapse + redelivery no-op', () 
 
         // Redelivery: same order arrives again. Guard finds the row already ACTIVE.
         const second = await activateProgramEnrollment({
-            programId, personIds: [personId], shopifyOrderId: 'order-redeliv-1', hasProgramItem: true,
+            programId, personIds: [personId], shopifyOrderId: 'order-redeliv-1',
         });
         expect(second).toEqual({ activatedCount: 0, releasedHoldCount: 0 }); // no double-activate, no double-release
         expect(mockAdjust).not.toHaveBeenCalled();                            // no double +1

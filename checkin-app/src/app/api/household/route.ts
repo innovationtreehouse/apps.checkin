@@ -12,6 +12,7 @@ import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { mintPersonId } from "@/lib/person/mintId";
 import { apiError } from "@/lib/api-response";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 export const GET = withAuth(
     {},
@@ -139,6 +140,7 @@ export const PATCH = withAuth(
 
                 return { member, warning };
             });
+            invalidateAttendanceCache();
 
             return NextResponse.json({ member, warning }, { status: 200 });
         } catch (error: unknown) {

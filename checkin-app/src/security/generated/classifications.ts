@@ -435,6 +435,10 @@ export const classifications = {
         sentAt: 'internal',
         error: 'internal',
     },
+    Org: {
+        id: 'public',
+        name: 'public',
+    },
 } as const;
 
 export const relations = {
@@ -605,6 +609,8 @@ export const relations = {
     },
     BulkSendItem: {
         bulkSend: { model: 'BulkSend', isList: false },
+    },
+    Org: {
     },
 } as const;
 

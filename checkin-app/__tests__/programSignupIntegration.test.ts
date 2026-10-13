@@ -60,6 +60,7 @@ jest.mock('@/lib/prisma', () => {
       create: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
       deleteMany: jest.fn(),
       count: jest.fn(),
     },
@@ -203,9 +204,13 @@ describe('Full Program Signup Integration Flow', () => {
 
         // 8. Shopify Webhook call
         (prisma.programParticipant.findUnique as jest.Mock).mockResolvedValue({ programId, personId: childParticipantId, status: 'PENDING' });
-        (prisma.programParticipant.update as jest.Mock).mockResolvedValue({ programId, personId: childParticipantId, status: 'ACTIVE' });
+        (prisma.program.findUnique as jest.Mock).mockResolvedValue({ id: programId, shopifyVariantId: 'mock-variant-id' });
+        (prisma.programParticipant.count as jest.Mock).mockResolvedValue(1);
+        (prisma.programParticipant.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
 
         const webhookPayload = JSON.stringify({
+            financial_status: 'paid',
+            line_items: [{ variant_id: 'mock-variant-id', quantity: 1 }],
             note_attributes: [
                 { name: 'CheckMeIn_Account_ID', value: String(childParticipantId) },
                 { name: 'Program_ID', value: String(programId) },
@@ -216,18 +221,18 @@ describe('Full Program Signup Integration Flow', () => {
             method: 'POST',
             headers: {
                 'x-shopify-hmac-sha256': hmac,
+                'x-shopify-topic': 'orders/paid',
             },
             body: webhookPayload,
         });
         const webhookRes = await ShopifyWebhook(webhookReq);
         expect(webhookRes.status).toBe(200);
 
-        // 9. Final Verification - ACTIVE status
-        (prisma.programParticipant.findUnique as jest.Mock).mockResolvedValue({ programId, personId: childParticipantId, status: 'ACTIVE' });
-        const finalParticipantRecord = await prisma.programParticipant.findUnique({
-            where: { programId_personId: { programId, personId: childParticipantId } },
-        });
-        expect(finalParticipantRecord?.status).toBe('ACTIVE');
+        // 9. Final Verification - the paid order flipped the enrollment ACTIVE
+        expect(prisma.programParticipant.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ programId, personId: childParticipantId }),
+            data: expect.objectContaining({ status: 'ACTIVE' }),
+        }));
     });
 
     it('should fail to enroll if not a household lead and not self', async () => {

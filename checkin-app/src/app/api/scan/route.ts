@@ -1,14 +1,14 @@
-import { Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { apiError, apiJson } from "@/lib/api-response";
-import { processCheckin, processCheckout, finalizeFacilityClose, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/scan-service";
+import { processCheckin, processCheckout, finalizeFacilityClose, forceCloseTokenMatches, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/scan-service";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
 import { applyPresenceIntent, flushParkedClosed } from "@/lib/presence/project";
 import { config } from "@/lib/config";
 import { withKiosk } from "@/lib/kioskAuth";
 import { SCAN_PROTOCOL_VERSION } from "@/lib/scanProtocol";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 
 // A merged-away badge should still get its owner through the door — an admin
 // tidying up dupes must not be the reason a member gets rejected at the
@@ -21,6 +21,14 @@ const MAX_MERGE_HOPS = 5;
 // on while the kiosk was offline, and a bare toggle can't tell entering from
 // leaving.
 const REPLAY_FRESHNESS_WINDOW_MS = 10 * 60 * 1000;
+
+// A replay stamped further ahead of server now than this came from a kiosk
+// whose clock is wrong; it parks as clock_suspect instead of toggling.
+const REPLAY_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
+
+// Outbox-only fields: they rewrite a scan's event time, skip its interrupts, or
+// inject review rows. Only a signed kiosk may send them.
+const KIOSK_ONLY_FIELDS = ["replay", "dead", "deadStatus", "scannedAt", "forceCloseConfirmed", "clockSuspect"] as const;
 
 // F7: the out-of-order guard needs the true latest activity across ALL of a
 // participant's visits, not just the most-recently-arrived one -- a
@@ -42,6 +50,13 @@ export const POST = withKiosk(
 
         if (!participantId || typeof participantId !== 'number') {
             return apiError("A valid numeric participantId is required.", 400);
+        }
+
+        if (auth.type !== 'kiosk') {
+            const sent = KIOSK_ONLY_FIELDS.filter((f) => body[f] !== undefined);
+            if (sent.length > 0) {
+                return apiError(`Only a kiosk may send: ${sent.join(", ")}.`, 400);
+            }
         }
 
         // Optional replay fields from a queued kiosk scan. Absent → exactly
@@ -109,9 +124,8 @@ export const POST = withKiosk(
                 : null;
 
         // The kiosk ran the force-close warning+confirm locally while offline and
-        // has no server token to echo. Honored only on a replay (processCheckout),
-        // and only when the server independently sees a last-keyholder-with-others
-        // close — the flag bypasses the token, never the occupancy guards.
+        // has no server token to echo. Honored only on a replay, and only from a
+        // keyholder — the flag bypasses the token, never the keyholder check.
         const forceCloseConfirmed = body.forceCloseConfirmed === true;
 
         // Displayed direction (invariant 5). Absent → legacy live-state toggle.
@@ -143,26 +157,14 @@ export const POST = withKiosk(
             }
         }
 
-        // Web session: check if user can scan this participant
-        let pendingHouseholdCheck = false;
-        if (auth.type === 'session') {
-            const user = auth.user;
-            const isSelf = participantId === Number(user.id);
-            const isAdmin = user.isSysadmin || user.isKeyholder || user.isBoardMember;
-
-            // In production, only privileged users may self-check-in via web.
-            // Everyone else must use the kiosk badge scanner.
-            if (isSelf && !isAdmin && config.isProd()) {
-                return apiError("Please use the kiosk badge scanner to check in.", 403);
-            }
-
-            if (!isSelf && !isAdmin) {
-                if (user.householdId && user.householdLead) {
-                    pendingHouseholdCheck = true;
-                } else {
-                    return apiError("Forbidden: You are not authorized to scan this user.", 403);
-                }
-            }
+        // Web session: refuse up front anyone who could only ever scan
+        // themselves, so the lookup below can't serve them as an id oracle.
+        // The full self/household check runs on the resolved participant.
+        const sessionUser = auth.type === 'session' && !(auth.user.isSysadmin || auth.user.isKeyholder || auth.user.isBoardMember)
+            ? auth.user
+            : null;
+        if (sessionUser && participantId !== Number(sessionUser.id) && !(sessionUser.householdId && sessionUser.householdLead)) {
+            return apiError("Forbidden: You are not authorized to scan this user.", 403);
         }
 
         // 3. Lookup participant
@@ -228,9 +230,16 @@ export const POST = withKiosk(
             });
         }
 
-        // Household lead check: verify participant is in the same household
-        if (pendingHouseholdCheck && auth.type === 'session') {
-            if (participant.householdId !== auth.user.householdId) {
+        // Checked against the resolved id, so a merged-away id can't disguise
+        // a self scan as a household scan.
+        if (sessionUser) {
+            const isSelf = participant.id === Number(sessionUser.id);
+            // In production, only privileged users may self-check-in via web.
+            // Everyone else must use the kiosk badge scanner.
+            if (isSelf && config.isProd()) {
+                return apiError("Please use the kiosk badge scanner to check in.", 403);
+            }
+            if (!isSelf && !(sessionUser.householdLead && sessionUser.householdId && participant.householdId === sessionUser.householdId)) {
                 return apiError("Forbidden: You are not authorized to scan this user.", 403);
             }
         }
@@ -276,10 +285,10 @@ export const POST = withKiosk(
             // the warning scan itself lands well under that age and must still
             // debounce, or the room's warning would auto-confirm with no human
             // acknowledgment at all.
+            // The token may sit on a departed visit: a close offered with a checkout.
             const isConfirm = (confirmToken !== null && (await tx.visit.count({
                 where: {
                     personId: participant.id,
-                    departedAt: null,
                     deletedAt: null,
                     forceCloseToken: confirmToken,
                 },
@@ -317,19 +326,54 @@ export const POST = withKiosk(
                 });
             }
 
+            // A facility close the keyholder confirmed at the kiosk applies whenever
+            // it arrives, however late: the keyholder was at the reader and saw the
+            // room. It needs the keyholder in the building at the scan time — a
+            // visit still open, or one the nightly cron closed after the scan.
+            // A scan time ahead of server now is a fast kiosk clock, not a close
+            // time to trust: it parks as clock_suspect below.
+            const aheadOfNow = eventTime.getTime() - Date.now() > REPLAY_FUTURE_TOLERANCE_MS;
+            const lateCloseVisit = isReplay && !aheadOfNow && participant.isKeyholder && intent !== "IN"
+                && (forceCloseConfirmed || confirmToken !== null)
+                ? await tx.visit.findFirst({
+                    where: {
+                        personId: participant.id,
+                        deletedAt: null,
+                        arrivedAt: { lte: eventTime },
+                        OR: [
+                            { departedAt: null },
+                            { departedVia: "AUTO_CLOSE", departedAt: { gt: eventTime } },
+                        ],
+                    },
+                    orderBy: { arrivedAt: "desc" },
+                    select: { departedAt: true, forceCloseToken: true },
+                })
+                : null;
+
             // A replay older than the freshness window, or one that lands behind
             // visit activity newer than its own scan time, can't be trusted to
             // toggle — state has moved past it. Park it for a human instead.
             // A dead-lettered event always parks: it never reaches the server
             // live, so there is nothing here for it to safely toggle against.
+            // A confirmed close is exempt from all three, a clock-step flag included:
+            // the kiosk clock is trusted unless it reads ahead of server now.
+            // Against a cron-closed visit the server never ran the confirm, so a
+            // token that doesn't match parks exactly as processCheckout's would.
             let parkReason: string | null = null;
-            if (clockSuspect) {
+            if (lateCloseVisit?.departedAt && !forceCloseConfirmed
+                && !forceCloseTokenMatches(lateCloseVisit.forceCloseToken, confirmToken)) {
+                parkReason = "force_close_review";
+            } else if (lateCloseVisit) {
+                // applied below
+            } else if (clockSuspect) {
                 parkReason = "clock_suspect";
             } else if (isDead) {
                 parkReason = `client_dead:${deadStatus}`;
             } else if (isReplay) {
                 const stale = Date.now() - eventTime.getTime() > REPLAY_FRESHNESS_WINDOW_MS;
-                if (stale) {
+                if (eventTime.getTime() - Date.now() > REPLAY_FUTURE_TOLERANCE_MS) {
+                    parkReason = "clock_suspect";
+                } else if (stale) {
                     parkReason = "stale_replay";
                 } else {
                     const activity = await tx.visit.aggregate({
@@ -372,6 +416,21 @@ export const POST = withKiosk(
                     clockSuspect,
                 });
                 return apiJson({ type: 'parked', message: 'Recorded for review.' });
+            }
+
+            // The cron already departed the keyholder, so there is no checkout left
+            // to run — but the close still applies: the sweep pulls that night's
+            // AUTO_CLOSE departures back to the keyholder's scan time.
+            if (lateCloseVisit?.departedAt) {
+                await appendPresenceEvent(tx, {
+                    personId: participant.id,
+                    occurredAt: eventTime,
+                    direction: "OUT",
+                    source: "SCANNER",
+                    clientEventId,
+                    classification: PresenceClass.PROJECTED,
+                });
+                return apiJson({ type: 'checkout', message: 'Checked out and Facility closed', facilityClosed: true });
             }
 
             // Live path. Direction: the displayed intent if the kiosk sent one,
@@ -446,7 +505,10 @@ export const POST = withKiosk(
             // Cross-lock race on the same clientEventId (e.g. two replay attempts
             // of one queued event racing different advisory-lock windows) — the
             // unique constraint is the backstop the pre-read can't fully close.
-            if (clientEventId && err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+            // Only a clientEventId collision is a duplicate: any other P2002
+            // (e.g. the one-open-visit index) must 500 so the kiosk retries
+            // instead of acking a scan whose rows just rolled back.
+            if (clientEventId && uniqueViolationFields(err)?.includes("clientEventId")) {
                 return apiJson({ type: 'duplicate_ignored', message: 'Event already recorded.' });
             }
             throw err;
@@ -457,7 +519,7 @@ export const POST = withKiosk(
         // kick out of the locked section means a last-isKeyholder close no longer
         // blocks concurrent scans for other participants. No-op unless the
         // response reports facilityClosed.
-        await finalizeFacilityClose(res);
+        await finalizeFacilityClose(res, isReplay ? eventTime : undefined);
         // After the tx (+ optional facility sweep) commits, so a concurrent
         // GET cannot refill the cache from uncommitted rows.
         invalidateAttendanceCache();

@@ -29,16 +29,10 @@ const updateSchema = z
   })
   .strict();
 
-export const list: CatalogRouteHandler = async ({ req }) => {
-  const sp = query(req);
+/** The item filter shared by the list and its count, so page totals match rows. */
+function itemWhere(sp: URLSearchParams): Prisma.ItemWhereInput {
   const includeArchived = sp.get("includeArchived") === "true";
-  const page = Math.max(1, Number.parseInt(sp.get("page") ?? "1", 10) || 1);
-  const limit = Math.min(200, Math.max(1, Number.parseInt(sp.get("limit") ?? "50", 10) || 50));
   const q = sp.get("q")?.trim() ?? "";
-  const sortByParam = sp.get("sortBy");
-  const sortBy = sortByParam === "id" || sortByParam === "category" ? sortByParam : "name";
-  const sortDir: Prisma.SortOrder = sp.get("sortDir") === "desc" ? "desc" : "asc";
-
   const where: Prisma.ItemWhereInput = {};
   if (!includeArchived) where.archivedAt = null;
   if (q) {
@@ -49,6 +43,18 @@ export const list: CatalogRouteHandler = async ({ req }) => {
       { subcategory: { name: { contains: q } } },
     ];
   }
+  return where;
+}
+
+export const list: CatalogRouteHandler = async ({ req }) => {
+  const sp = query(req);
+  const page = Math.max(1, Number.parseInt(sp.get("page") ?? "1", 10) || 1);
+  const limit = Math.min(200, Math.max(1, Number.parseInt(sp.get("limit") ?? "50", 10) || 50));
+  const sortByParam = sp.get("sortBy");
+  const sortBy = sortByParam === "id" || sortByParam === "category" ? sortByParam : "name";
+  const sortDir: Prisma.SortOrder = sp.get("sortDir") === "desc" ? "desc" : "asc";
+
+  const where = itemWhere(sp);
   const orderBy: Prisma.ItemOrderByWithRelationInput[] =
     sortBy === "id"
       ? [{ gtin13: sortDir }]
@@ -58,6 +64,14 @@ export const list: CatalogRouteHandler = async ({ req }) => {
 
   const { rows } = await repo().listItemsPaginated({ where, orderBy, page, limit });
   return { Item: rows };
+};
+
+// Count of items matching the same q/includeArchived filter as `list`, for the
+// paginated UI's page count. Returns the synthetic CatalogItemCount model bag
+// ({ total } — public); a scalar can't ride a Prisma model bag (#1286 §7).
+export const count: CatalogRouteHandler = async ({ req }) => {
+  const total = await repo().countItems(itemWhere(query(req)));
+  return { CatalogItemCount: { total } };
 };
 
 export const get: CatalogRouteHandler = async ({ params }) => {

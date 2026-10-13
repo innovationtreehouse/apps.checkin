@@ -2,6 +2,7 @@
 // under /api/catalog/* through checkin's handler() (admission + stripper).
 // The endpoint string MUST match its src/security/registry.ts entry.
 import { handler } from "@/security/handler";
+import { catalogRoute } from "@/lib/catalog/route";
 import { routes } from "@inventory/global-catalog";
 
-export const PUT = handler("PUT /api/catalog/reference-conflicts/[id]/resolve", routes.referenceConflicts.resolve);
+export const PUT = handler("PUT /api/catalog/reference-conflicts/[id]/resolve", catalogRoute(routes.referenceConflicts.resolve));

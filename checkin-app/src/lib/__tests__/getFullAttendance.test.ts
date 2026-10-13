@@ -76,9 +76,21 @@ describe("getFullAttendance({ kiosk: true })", () => {
         expect(attendance[0]).toEqual({
             id: 201,
             arrivedAt: rows[0].arrivedAt,
-            participant: { id: 50, name: "Karen Keyholder", nickname: "Kay", isKeyholder: true, isYouth: false },
+            participant: { id: 50, name: "Kay", isKeyholder: true, isYouth: false },
             event: { program: { id: 3, name: "Robotics" } },
         });
+    });
+
+    it("ships the kiosk label, never a last name — initial only to tell two apart", async () => {
+        const kid = (id: number, name: string) => ({
+            id, arrivedAt: rows[0].arrivedAt, departedAt: null, personId: id, event: null,
+            person: { id, email: null, name, nickname: null, isKeyholder: false, dateOfBirth: yearsAgo(12), householdId: null, phone: null },
+        });
+        findMany.mockResolvedValue([kid(1, "Sam Lee"), kid(2, "Sam Park"), kid(3, "Jordan Quinlan")]);
+        const { attendance } = await getFullAttendance({ kiosk: true });
+
+        expect(attendance.map(v => v.participant.name)).toEqual(["Sam L.", "Sam P.", "Jordan"]);
+        expect(JSON.stringify(attendance)).not.toMatch(/Lee|Park|Quinlan/);
     });
 
     it("still gives the display what it renders: name fallback, youth split, program badge", async () => {
@@ -86,8 +98,8 @@ describe("getFullAttendance({ kiosk: true })", () => {
 
         // name-or-email-prefix resolved server-side; raw address never ships
         expect(attendance[1].participant.name).toBe("stu");
-        // the kiosk renders the nickname over the first name, so it has to ship
-        expect(attendance[0].participant.nickname).toBe("Kay");
+        // the nickname is folded into the label server-side
+        expect(attendance[0].participant.name).toBe("Kay");
         expect(JSON.stringify(attendance)).not.toContain("@example.com");
         // youth column still populates without dateOfBirth
         expect(attendance[1].participant.isYouth).toBe(true);
@@ -142,16 +154,24 @@ describe("held PARKED_CLOSED scans (#1782)", () => {
         });
     });
 
-    it("ships id/name/nickname/time only — no email — on both the privileged and kiosk paths", async () => {
+    it("ships id/name/nickname/time only — no email — on the privileged path", async () => {
         heldFindMany.mockResolvedValue(heldRows);
-        for (const kiosk of [false, true]) {
-            const { held } = await getFullAttendance({ kiosk });
-            expect(held).toEqual([
-                { id: 900, occurredAt: heldRows[0].occurredAt, name: "Held Person", nickname: "Hp" },
-                { id: 901, occurredAt: heldRows[1].occurredAt, name: "noname", nickname: null },
-            ]);
-            expect(JSON.stringify(held)).not.toContain("@example.com");
-        }
+        const { held } = await getFullAttendance();
+        expect(held).toEqual([
+            { id: 900, occurredAt: heldRows[0].occurredAt, name: "Held Person", nickname: "Hp" },
+            { id: 901, occurredAt: heldRows[1].occurredAt, name: "noname", nickname: null },
+        ]);
+        expect(JSON.stringify(held)).not.toContain("@example.com");
+    });
+
+    it("ships only the kiosk label on the kiosk path — no last name, no email", async () => {
+        heldFindMany.mockResolvedValue(heldRows);
+        const { held } = await getFullAttendance({ kiosk: true });
+        expect(held).toEqual([
+            { id: 900, occurredAt: heldRows[0].occurredAt, name: "Hp" },
+            { id: 901, occurredAt: heldRows[1].occurredAt, name: "noname" },
+        ]);
+        expect(JSON.stringify(held)).not.toMatch(/Person|@example\.com/);
     });
 
     it("never folds held scans into counts or safety", async () => {
@@ -242,4 +262,43 @@ describe("attendance cache", () => {
         await getFullAttendance({ kiosk: true });
         expect(findMany).toHaveBeenCalledTimes(3);
     });
+
+    it("does not store a result an invalidate raced past", async () => {
+        let release!: (v: unknown) => void;
+        findMany.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+        const inFlight = getFullAttendance({ kiosk: true });
+        await Promise.resolve();
+        invalidateAttendanceCache();
+        release(rows);
+        await inFlight;
+
+        // The pre-invalidate result was returned but not cached.
+        findMany.mockResolvedValue([]);
+        const fresh = await getFullAttendance({ kiosk: true });
+        expect(fresh.counts.total).toBe(0);
+        expect(findMany).toHaveBeenCalledTimes(2);
+    });
+
+    describe("staleness bound", () => {
+        const fakeClock = (now: string) => jest.useFakeTimers({ now: new Date(now), doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
+        afterEach(() => jest.useRealTimers());
+
+        it("refills after 60s while the building is occupied", async () => {
+            fakeClock("2026-10-05T12:00:00Z");
+            await getFullAttendance({ kiosk: true });
+            jest.setSystemTime(new Date("2026-10-05T12:01:01Z"));
+            await getFullAttendance({ kiosk: true });
+            expect(findMany).toHaveBeenCalledTimes(2);
+        });
+
+        it("never expires an empty building, so the database can pause", async () => {
+            findMany.mockResolvedValue([]);
+            fakeClock("2026-10-05T12:00:00Z");
+            await getFullAttendance({ kiosk: true });
+            jest.setSystemTime(new Date("2026-10-05T18:00:00Z"));
+            await getFullAttendance({ kiosk: true });
+            expect(findMany).toHaveBeenCalledTimes(1);
+        });
+    });
 });
+

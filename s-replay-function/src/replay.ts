@@ -9,7 +9,7 @@
  *                     replay that fails mid-stream leaves a partial (but valid) projection;
  *                     the FAILED sync_run records how far it got (processed / distinctGids /
  *                     lastCommittedId). Re-running is safe and idempotent (upsert by
- *                     (store_id, GID), newest-wins) but restarts from the beginning — there
+ *                     (store_id, GID)) but restarts from the beginning — there
  *                     is no resume.
  * - resetWatermark()  moves `sync_state` (backward or clear) so the NEXT scheduled run
  *                     of s-read-function re-pulls a range from Shopify.
@@ -61,8 +61,9 @@ export async function replay(prisma: PrismaClient, args: ReplayArgs): Promise<Re
     let lastCommittedId: bigint | undefined;
 
     try {
-      // Stream in id ASC order so the newest payload for a gid is projected last —
-      // the final live-table state matches the most recent event.
+      // id ASC is NOT newest-first for orders: a bulk snapshot taken before an incremental
+      // sync is logged after it. Orders are protected by projectOrder's updatedAt guard;
+      // payouts/balance txns are only fetched live, so for them id order is fetch order.
 
       while (true) {
         const rows = await prisma.shopifyRawEvent.findMany({
@@ -70,11 +71,11 @@ export async function replay(prisma: PrismaClient, args: ReplayArgs): Promise<Re
           orderBy: { id: "asc" },
           take: batchSize,
           ...(cursorId !== undefined ? { cursor: { id: cursorId }, skip: 1 } : {}),
-          select: { id: true, storeId: true, objectType: true, payload: true, shopifyGid: true },
+          select: { id: true, storeId: true, objectType: true, payload: true, shopifyGid: true, source: true },
         });
         if (rows.length === 0) break;
         for (const row of rows) {
-          await prisma.$transaction((tx) => projectNode(tx, row.storeId, row.objectType, row.payload));
+          await prisma.$transaction((tx) => projectNode(tx, row.storeId, row.objectType, row.payload, row.source));
           processed++;
           seen.add(row.shopifyGid);
           lastCommittedId = row.id;

@@ -10,6 +10,7 @@ import { householdLeadship } from "@/lib/household/leads";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 export const PATCH = withAuth(
     {},
@@ -141,6 +142,7 @@ export const PATCH = withAuth(
 
                 return { updatedHouseholdMember, leadRejection, warning };
             });
+            invalidateAttendanceCache();
 
             return NextResponse.json({
                 householdMember: updatedHouseholdMember,

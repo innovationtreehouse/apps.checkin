@@ -1,0 +1,85 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  runtime      = "nodejs"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// One row per paid mirror payout once it is matched to a QuickBooks deposit or raised for
+// finance. deposit_id is set only while the row holds a deposit, so the unique pair means a
+// deposit backs at most one payout. payout_net_cents is the net seen at the last decision.
+// status: WAITING | OPEN | MATCHED | POSTED | RESOLVED. origin: matched | created, set while
+// the row holds a deposit. WAITING, POSTED, POST_FAILED and "created" belong to the create path.
+model PayoutReconciliation {
+  id                Int       @id @default(autoincrement()) @map("id")
+  orgId             String    @map("org_id")
+  payoutGid         String    @map("payout_gid")
+  payoutDate        String    @map("payout_date")
+  payoutNetCents    Int       @map("payout_net_cents")
+  status            String    @map("status")
+  kind              String?   @map("kind")
+  resolution        String?   @map("resolution")
+  origin            String?   @map("origin")
+  depositId         String?   @map("deposit_id")
+  depositTxnDate    String?   @map("deposit_txn_date")
+  depositTotalCents Int?      @map("deposit_total_cents")
+  reason            String?   @map("reason")
+  resolvedByUserId  Int?      @map("resolved_by_user_id")
+  resolvedAt        DateTime? @map("resolved_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@unique([orgId, payoutGid])
+  @@unique([orgId, depositId])
+  @@index([orgId, status])
+  @@map("payout_reconciliations")
+}
+
+// Finance's mapping of a Shopify variant to a budget-owner bucket (its QuickBooks category).
+// budget_owner_id is checkin's BudgetOwner.id in another database: no FK, validated through
+// the OwnerDirectory port. Unmapped variants book at organization level.
+model IncomeItemCategory {
+  id            Int      @id @default(autoincrement()) @map("id")
+  orgId         String   @map("org_id")
+  variantId     String   @map("variant_id")
+  budgetOwnerId Int      @map("budget_owner_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@unique([orgId, variantId])
+  @@map("income_item_categories")
+}
+
+// A QuickBooks deposit finance has permanently removed from matching (D5).
+model IncomeQbMatchExclusion {
+  id               Int      @id @default(autoincrement()) @map("id")
+  orgId            String   @map("org_id")
+  qbTxnId          String   @map("qb_txn_id")
+  reason           String   @map("reason")
+  excludedByUserId Int      @map("excluded_by_user_id")
+  excludedAt       DateTime @default(now()) @map("excluded_at")
+
+  @@unique([orgId, qbTxnId])
+  @@map("qb_match_exclusion")
+}
+
+model IncomeAuditLog {
+  id            Int      @id @default(autoincrement()) @map("id")
+  orgId         String   @map("org_id")
+  actorUserId   Int?     @map("actor_user_id")
+  actorUsername String?  @map("actor_username")
+  action        String   @map("action")
+  entityType    String   @map("entity_type")
+  entityId      String?  @map("entity_id")
+  before        String?  @map("before")
+  after         String?  @map("after")
+  reason        String?  @map("reason")
+  correlationId String?  @map("correlation_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("audit_log")
+}

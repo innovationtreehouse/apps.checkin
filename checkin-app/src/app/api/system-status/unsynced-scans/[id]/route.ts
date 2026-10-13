@@ -7,6 +7,7 @@ import { lockFacility } from "@/lib/facilityLock";
 import { flushParkedClosed } from "@/lib/presence/project";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { LIVE_VISIT } from "@/lib/visit/filters";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 // Registry-governed (POST /api/system-status/unsynced-scans/[id]): admission
 // anyRole sysadmin/board/keyholder (Q15; operations stay out — #1633);
@@ -203,6 +204,7 @@ export const POST = handler<{ id: string }>(
         if (parsedDeparted) {
             await processVisitCheckout(visitId, parsedDeparted, undefined, "TYPED");
         }
+        invalidateAttendanceCache();
 
         await prisma.auditLog.create({
             data: {

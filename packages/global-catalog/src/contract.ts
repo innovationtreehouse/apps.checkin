@@ -36,13 +36,6 @@ export interface CatalogRuntimeConfig {
    * per request — same seam, no library change.
    */
   org: () => OrgIdentity;
-  /**
-   * Map a status + message to the host's API error. checkin passes its
-   * `ApiResponseError`, so the error a route factory throws is caught and
-   * rendered by the host's handler() (status + message) — the library never
-   * imports the host's error class.
-   */
-  httpError: (status: number, message: string) => Error;
 }
 
 /**

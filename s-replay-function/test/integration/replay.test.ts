@@ -49,6 +49,8 @@ run("s-replay-function admin operations", () => {
     expect(result.processed).toBe(1);
     expect(result.distinctGids).toBe(1);
     expect(await orderCount()).toBe(1); // restored from the log
+    // The restored row carries the raw event's provenance, not a default.
+    expect((await liveOrder(orderGid(9001)))?.source).toBe("TEST_LOADED");
 
     const adminRuns = await prisma.syncRun.count({ where: { storeId: STORE, kind: "ADMIN" } });
     expect(adminRuns).toBeGreaterThanOrEqual(1);
@@ -68,6 +70,20 @@ run("s-replay-function admin operations", () => {
     expect(result.processed).toBe(2);
     expect(result.distinctGids).toBe(1);
     expect((await liveOrder(gid))?.name).toBe("#second");
+  });
+
+  it("a stale bulk event with a HIGHER id does not revert newer state on replay", async () => {
+    const gid = orderGid(5002);
+    // Incremental event (newer state) logged first; the older bulk snapshot logged after it.
+    await prisma.shopifyRawEvent.create({
+      data: rawOrderEvent(STORE, gid, orderNode(gid, { updatedAt: "2026-03-01T00:00:00Z", displayFinancialStatus: "REFUNDED" }), { hash: "new" }),
+    });
+    await prisma.shopifyRawEvent.create({
+      data: rawOrderEvent(STORE, gid, orderNode(gid, { updatedAt: "2026-02-01T00:00:00Z", displayFinancialStatus: "PAID" }), { hash: "old" }),
+    });
+
+    await replay(prisma, { storeId: STORE, actor: "test", reason: "stale-bulk" });
+    expect((await liveOrder(gid))?.financialStatus).toBe("REFUNDED");
   });
 
   it("records partial progress on the FAILED run when projection dies mid-stream", async () => {

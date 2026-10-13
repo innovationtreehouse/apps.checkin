@@ -42,7 +42,7 @@ function sign(body: string, secret = SECRET): string {
 }
 
 function webhookReq(body: string, signature: string | null, ip?: string) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'x-shopify-topic': 'orders/paid' };
     if (signature !== null) headers['x-shopify-hmac-sha256'] = signature;
     if (ip) headers['x-forwarded-for'] = ip;
     return new Request('http://localhost/api/webhooks/shopify', {
@@ -104,6 +104,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
     afterAll(async () => {
         await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipVariantId: prevMembershipVariantId } });
         await prisma.integrationErrorLog.deleteMany({ where: { source: 'shopify-webhook' } });
+        await prisma.paymentException.deleteMany({ where: { programId } });
         await prisma.programParticipant.deleteMany({ where: { programId } });
         await prisma.program.delete({ where: { id: programId } });
         await prisma.person.deleteMany({ where: { id: { in: [p1, p2] } } });
@@ -123,8 +124,9 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
     // no line items, or an explicit mismatched id, to exercise it.
     function programPayload(accountIds: string, variantId: string | null = PROGRAM_VARIANT_ID, discountCodes?: string[]) {
         return JSON.stringify({
+            financial_status: 'paid',
             id: 555,
-            ...(variantId ? { line_items: [{ variant_id: variantId }] } : {}),
+            ...(variantId ? { line_items: [{ variant_id: variantId, quantity: accountIds.split(',').length }] } : {}),
             ...(discountCodes ? { discount_codes: discountCodes.map((code) => ({ code })) } : {}),
             note_attributes: [
                 { name: 'CheckMeIn_Account_ID', value: accountIds },
@@ -265,6 +267,73 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         expect(row?.pendingSince).not.toBeNull();
     });
 
+    describe('order entitlement (shared with the reconciler)', () => {
+        const statusOf = async (personId: number) =>
+            (await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId } } }))?.status;
+        const exceptionKinds = async () =>
+            (await prisma.paymentException.findMany({ where: { shopifyOrderId: '555' } })).map((e) => e.kind);
+        afterEach(async () => {
+            await prisma.paymentException.deleteMany({ where: { shopifyOrderId: '555' } });
+        });
+
+        it('raises NO_ITEM when the order lacks the program variant', async () => {
+            await setPending(p1);
+            const body = programPayload(String(p1), OTHER_VARIANT_ID);
+            await POST(webhookReq(body, sign(body)));
+            expect(await statusOf(p1)).toBe('PENDING');
+            expect(await exceptionKinds()).toEqual(['NO_ITEM']);
+        });
+
+        it('activates nobody and raises AMOUNT_MISMATCH when the order buys fewer seats than people named', async () => {
+            await setPending(p1);
+            await setPending(p2);
+            const body = JSON.stringify({
+                id: 555,
+                financial_status: 'paid',
+                line_items: [{ variant_id: PROGRAM_VARIANT_ID, quantity: 1 }],
+                note_attributes: [
+                    { name: 'CheckMeIn_Account_ID', value: `${p1},${p2}` },
+                    { name: 'Program_ID', value: String(programId) },
+                ],
+            });
+            await POST(webhookReq(body, sign(body)));
+            expect(await statusOf(p1)).toBe('PENDING');
+            expect(await statusOf(p2)).toBe('PENDING');
+            expect(await exceptionKinds()).toEqual(['AMOUNT_MISMATCH']);
+        });
+
+        it.each([
+            ['lacks the program variant', OTHER_VARIANT_ID, {}],
+            ['was refunded', PROGRAM_VARIANT_ID, { financial_status: 'refunded' }],
+        ])('raises nothing for an order that %s when nobody named is awaiting payment', async (_label, variantId, extra) => {
+            await prisma.programParticipant.upsert({
+                where: { programId_personId: { programId, personId: p1 } },
+                update: { status: 'ACTIVE', pendingSince: null },
+                create: { programId, personId: p1, status: 'ACTIVE' },
+            });
+            const body = JSON.stringify({ ...JSON.parse(programPayload(String(p1), variantId)), ...extra });
+            await POST(webhookReq(body, sign(body)));
+            expect(await statusOf(p1)).toBe('ACTIVE');
+            expect(await exceptionKinds()).toEqual([]);
+        });
+
+        it.each([
+            ['an unpaid financial_status', 'orders/paid', { financial_status: 'pending' }],
+            ['a refunded financial_status', 'orders/paid', { financial_status: 'partially_refunded' }],
+            ['a cancelled order', 'orders/paid', { financial_status: 'paid', cancelled_at: '2026-10-01T00:00:00Z' }],
+            ['a topic other than orders/paid', 'orders/create', { financial_status: 'paid' }],
+        ])('ignores %s without activating or raising', async (_label, topic, extra) => {
+            await setPending(p1);
+            const body = JSON.stringify({ ...JSON.parse(programPayload(String(p1))), ...extra });
+            const req = webhookReq(body, sign(body));
+            req.headers.set('x-shopify-topic', topic);
+            const res = await POST(req);
+            expect(res.status).toBe(200);
+            expect(await statusOf(p1)).toBe('PENDING');
+            expect(await exceptionKinds()).toEqual([]);
+        });
+    });
+
     it('flags DISCOUNT_UNAUTHORIZED and does NOT activate when the order redeems the program member code from an unentitled household', async () => {
         // Member-code entitlement is judged HERE, at the money event — seconds after
         // checkout, against the household's state at the sale. h1 holds no
@@ -352,6 +421,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                 data: { programId: noVariantProgram.id, personId: p1, status: 'PENDING', pendingSince: new Date() },
             });
             const body = JSON.stringify({
+            financial_status: 'paid',
                 id: 654,
                 line_items: [{ variant_id: PROGRAM_VARIANT_ID }], // even a "valid-looking" variant can't match — nothing configured
                 note_attributes: [
@@ -395,6 +465,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
 
     it('routes a Membership_Process_ID payload to activateByProcessId and returns 200', async () => {
         const body = JSON.stringify({
+            financial_status: 'paid',
             id: 98765,
             line_items: [{ variant_id: MEMBERSHIP_VARIANT_ID }],
             note_attributes: [{ name: 'Membership_Process_ID', value: '42' }],
@@ -412,6 +483,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         (activateByProcessId as jest.Mock).mockRejectedValueOnce(new Error('handler boom'));
 
         const body = JSON.stringify({
+            financial_status: 'paid',
             id: 13579,
             note_attributes: [{ name: 'Membership_Process_ID', value: '99' }],
         });
@@ -466,6 +538,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                     create: { programId: singlePoolProgramId, personId: sgp1, status: 'PENDING', pendingSince: new Date() },
                 });
                 const body = JSON.stringify({
+            financial_status: 'paid',
                     id: 888,
                     line_items: [{ variant_id: SINGLE_VARIANT_ID }],
                     note_attributes: [
@@ -507,6 +580,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                     create: { programId: singlePoolProgramId, personId: sgp1, status: 'PENDING', pendingSince: new Date(), isPaymentPlanRequested: false, inventoryHeldAt: new Date(), paymentPlanDeniedAt: new Date() },
                 });
                 const body = JSON.stringify({
+            financial_status: 'paid',
                     id: 889,
                     line_items: [{ variant_id: SINGLE_VARIANT_ID }],
                     note_attributes: [

@@ -230,7 +230,8 @@ export interface ReingestBulkExportsResult extends Record<string, unknown> {
 /**
  * Recovery path: re-reassemble and re-project stored bulk exports — no Shopify calls. Use
  * after a reassembly-logic fix to repair backfilled data. Idempotent: re-ingest dedupes the
- * raw log on identical payloads and upserts the live tables by GID. Watermarks are untouched.
+ * raw log on identical payloads and upserts the live tables by GID, newest-wins on the order's
+ * `updatedAt`, so an old export never overwrites newer incremental state. Watermarks are untouched.
  */
 export async function reingestBulkExports(
   prisma: PrismaClient,
@@ -243,7 +244,6 @@ export async function reingestBulkExports(
   if (args.sinceFetchedAt) where.fetchedAt = { gte: args.sinceFetchedAt };
   if (args.bulkOperationId) where.bulkOperationId = args.bulkOperationId;
 
-  // Oldest-first so a newer export's payloads project last (final state = most recent).
   const ids = await prisma.shopifyBulkExport.findMany({ where, orderBy: { id: "asc" }, select: { id: true } });
 
   let ingested = 0;
