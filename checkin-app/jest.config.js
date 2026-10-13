@@ -89,7 +89,7 @@ const customJestConfig = {
         '^@inventory/bulk-donation$': '<rootDir>/../packages/bulk-donation/src/index.ts',
         '^@inventory/expense/(.*)$': '<rootDir>/../packages/expense/src/$1',
         '^@inventory/expense$': '<rootDir>/../packages/expense/src/index.ts',
-        // Expense's own workspace deps, loaded once a test imports its index.
+        // Shared packages the libraries import; their `exports` declare only `import`.
         '^@inventory/workflows/(.*)$': '<rootDir>/../packages/workflows/src/$1',
         '^@inventory/workflows$': '<rootDir>/../packages/workflows/src/index.ts',
         '^@inventory/receipt-types/(.*)$': '<rootDir>/../packages/receipt-types/src/$1',
