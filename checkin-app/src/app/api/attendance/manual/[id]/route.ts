@@ -137,9 +137,21 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
             // landed since the pre-check must not have its tombstone overwritten.
             const live = await tx.visit.findFirst({
                 where: { id: visitId, personId: visit.personId, deletedAt: null },
-                select: { id: true },
             });
             if (!live) return null;
+            // The validation above read the visit before the lock; re-check the
+            // times that will actually be stored against the row as it is now.
+            if (!!live.departedAt !== !!visit.departedAt) {
+                throw new ApiResponseError(409, "This visit changed while you were editing it. Reload and try again.");
+            }
+            if (!arrivalEdited) nextArrived = live.arrivedAt;
+            if (!departureEdited) nextDeparted = live.departedAt;
+            if (nextDeparted && !departureAfterArrival(nextArrived, nextDeparted)) {
+                throw badRequest("Departure time must be after arrival time");
+            }
+            if (nextDeparted && !withinMaxDuration(nextArrived, nextDeparted)) {
+                throw badRequest("A visit cannot be longer than 24 hours.");
+            }
             // A corrected time becomes a typed clock: an edited arrival stamps
             // arrivedVia TYPED, an edited departure stamps departedVia TYPED.
             // Significance already read the pre-edit source above, so restamping

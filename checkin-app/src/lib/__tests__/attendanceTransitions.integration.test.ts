@@ -184,6 +184,21 @@ describe('attendanceTransitions', () => {
             expect(result[result.length - 1].departedAt).toEqual(cap);
         });
 
+        it('closes a checkout at or before arrival as a zero-length visit, never deleting it', async () => {
+            const t0 = new Date(Date.now() - HOUR);
+            await makeEvent('covering', new Date(t0.getTime() - HOUR), new Date(t0.getTime() + HOUR));
+            const visit = await prisma.visit.create({ data: { personId: participantId, arrivedAt: t0 } });
+
+            const result = await processVisitCheckout(visit.id, new Date(t0.getTime() - 60_000), prisma, "TYPED");
+
+            expect(result).toHaveLength(1);
+            expect(result[0].id).toBe(visit.id);
+            expect(result[0].departedAt).toEqual(t0);
+            const row = await prisma.visit.findUnique({ where: { id: visit.id } });
+            expect(row?.departedAt).toEqual(t0);
+            expect(row?.departedVia).toBe('TYPED');
+        });
+
         it('returns [] for an already-departedAt visit (idempotent)', async () => {
             const visit = await prisma.visit.create({
                 data: { personId: participantId, arrivedAt: new Date(Date.now() - HOUR), departedAt: new Date() },
