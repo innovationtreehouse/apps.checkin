@@ -100,6 +100,9 @@ it('returns the queue with live mirror amounts for a board member, and no buyer 
 it('lists the row without a live block when the mirror read fails', async () => {
     mockSession.mockResolvedValue({ user: { id: 5, isBoardMember: true } });
     ordersByLegacyIdsMock.mockRejectedValue(new Error('mirror down'));
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const [row] = await (await GET(req())).json();
     expect(row.live).toBeNull();
+    expect(errorSpy).toHaveBeenCalledWith('Failed to hydrate payment-exception order amounts:', expect.any(Error));
+    errorSpy.mockRestore();
 });
