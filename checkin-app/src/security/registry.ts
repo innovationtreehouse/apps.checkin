@@ -519,17 +519,17 @@ defineRoute({
 // Board's payment-plan approval queue. Returns pending ProgramParticipant rows
 // with the full participant + program nested, plus the participant's
 // household/orgMembership (so the board can see CURRENT membership while
-// deciding — wasOrgMemberAtApproval is only stamped on approval). Board/sysadmin
-// only, and they hold everyones:* so they see every field — the win is the
-// declared policy: any role later added to this view is field-stripped
+// deciding — wasOrgMemberAtApproval is only stamped on approval). Board/finance
+// only, no sysadmin, and they hold everyones:* so they see every field — the win
+// is the declared policy: any role later added to this view is field-stripped
 // automatically.
 defineRoute({
     endpoint: 'GET /api/finance-ops/payment-plans',
-    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    authorize: 'finance-or-board',
     envelope: null,
     returns: ['ProgramParticipant', 'Person', 'Program', 'Household', 'OrgMembership', 'BoardSettings'],
     orderedView: [
-        ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
     ],
 });
@@ -580,16 +580,16 @@ defineRoute({
 
 // Board's membership payment-plan approval queue. Returns PENDING_PAYMENT
 // OrgMembershipProcess rows the household asked to pay by plan, with the
-// membership + household nested. Board/sysadmin only, and they hold everyones:*
-// so they see every field — the win is the declared policy: any role later added
-// to this view is field-stripped automatically.
+// membership + household nested. Board/finance only, no sysadmin, and they hold
+// everyones:* so they see every field — the win is the declared policy: any role
+// later added to this view is field-stripped automatically.
 defineRoute({
     endpoint: 'GET /api/finance-ops/membership-payment-plans',
-    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    authorize: 'finance-or-board',
     envelope: null,
     returns: ['OrgMembershipProcess', 'OrgMembership', 'Household', 'Person'],
     orderedView: [
-        ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
     ],
 });

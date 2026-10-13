@@ -92,6 +92,9 @@ Things the app takes as true because they are handled outside it.
 
 - Finance Ops belongs to the board; sysadmins are excluded outright.  [Unsettled — which superuser]
 
+- Membership and program payment plans are read by the board and finance only;
+  a sysadmin role alone does not admit.  [Decision — owner]
+
 - The store is the source of truth for what was paid. The local mirror is a copy
   that reconciliation reads; no payment fact is authored here.  [Decision]
 
