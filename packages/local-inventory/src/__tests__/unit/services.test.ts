@@ -9,7 +9,6 @@ import { db } from "../../lib/db/index";
 import { createLocationRepository } from "../../lib/repositories/locationRepository";
 import { createReceiveQueueRepository } from "../../lib/repositories/receiveQueueRepository";
 import { createInventoryRepository } from "../../lib/repositories/inventoryRepository";
-import { createProvisionalItemRepository } from "../../lib/repositories/provisionalItemRepository";
 import { createLocationService } from "../../lib/services/locationService";
 import { createReceiveQueueService } from "../../lib/services/receiveQueueService";
 import { createInventoryService } from "../../lib/services/inventoryService";
@@ -32,8 +31,7 @@ function makeInventoryService() {
 function makeReceiveQueueService() {
   return createReceiveQueueService({
     receiveQueueRepo: createReceiveQueueRepository(db),
-    provisionalRepo: createProvisionalItemRepository(db),
-    inventoryService: makeInventoryService(),
+    db,
   });
 }
 
@@ -160,16 +158,20 @@ describeDb("InventoryService", () => {
     });
   });
 
-  it("deletes an org item", async () => {
+  it("deletes an org item and logs the removed row with its actor", async () => {
     const svc = makeInventoryService();
-    await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000005" }, 1);
-    await svc.deleteItem(TEST_ORG_ID, "1000000000005");
+    await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000005", existingQuantity: 4, desiredQuantity: 6 }, 1);
+    await svc.deleteItem(TEST_ORG_ID, "1000000000005", 42, "manager");
     expect(await svc.getItem(TEST_ORG_ID, "1000000000005")).toBeNull();
+
+    const log = await db.inventoryLog.findFirst({ where: { gtin13: "1000000000005", fieldChanged: "deleted" } });
+    expect(log).toMatchObject({ orgId: TEST_ORG_ID, userId: 42, username: "manager", valueAfter: null });
+    expect(JSON.parse(log?.valueBefore ?? "{}")).toMatchObject({ existingQuantity: 4, desiredQuantity: 6 });
   });
 
   it("throws 404 deleting a non-existent item", async () => {
     const svc = makeInventoryService();
-    await expect(svc.deleteItem(TEST_ORG_ID, "9999999999998")).rejects.toMatchObject({
+    await expect(svc.deleteItem(TEST_ORG_ID, "9999999999998", 1)).rejects.toMatchObject({
       statusCode: 404,
     });
   });
@@ -258,25 +260,40 @@ describeDb("ReceiveQueueService", () => {
     });
   });
 
-  it("cancel removes an unfulfilled item", async () => {
+  it("cancel keeps the line, stamped with its actor, and logs it", async () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem();
-    await svc.cancel(item.id, TEST_ORG_ID);
-    const list = await svc.listQueue(TEST_ORG_ID, true);
-    expect(list.find((i) => i.id === item.id)).toBeUndefined();
+    await svc.cancel(item.id, TEST_ORG_ID, 42, "manager");
+
+    expect(await svc.listQueue(TEST_ORG_ID)).toHaveLength(0);
+    const kept = (await svc.listQueue(TEST_ORG_ID, true)).find((i) => i.id === item.id);
+    expect(kept).toMatchObject({ cancelledBy: 42, cancelledByUsername: "manager", fulfilledAt: null });
+    expect(kept?.cancelledAt).not.toBeNull();
+    expect(await db.inventoryLog.findFirst({ where: { gtin13: item.gtin13 } })).toMatchObject({
+      userId: 42, username: "manager", fieldChanged: "receiveQueue", valueBefore: "3", valueAfter: "cancelled",
+    });
+  });
+
+  it("a cancelled line cannot be fulfilled or cancelled again", async () => {
+    const svc = makeReceiveQueueService();
+    const item = await seedQueueItem();
+    await svc.cancel(item.id, TEST_ORG_ID, 1);
+    await expect(svc.fulfill(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({ statusCode: 409 });
+    await expect(svc.cancel(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({ statusCode: 409 });
+    expect(await db.orgItem.count({ where: { gtin13: item.gtin13 } })).toBe(0);
   });
 
   it("throws 409 cancelling a fulfilled item", async () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem(TEST_ORG_ID, true);
-    await expect(svc.cancel(item.id, TEST_ORG_ID)).rejects.toMatchObject({
+    await expect(svc.cancel(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({
       statusCode: 409,
     });
   });
 
   it("throws 404 cancelling a non-existent item", async () => {
     const svc = makeReceiveQueueService();
-    await expect(svc.cancel(9999, TEST_ORG_ID)).rejects.toMatchObject({
+    await expect(svc.cancel(9999, TEST_ORG_ID, 1)).rejects.toMatchObject({
       statusCode: 404,
     });
   });

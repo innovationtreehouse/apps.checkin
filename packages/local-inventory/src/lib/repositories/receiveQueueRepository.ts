@@ -19,16 +19,6 @@ export function createReceiveQueueRepository(db: Db) {
       return db.receiveQueue.create({ data });
     },
 
-    async markFulfilled(id: number): Promise<ReceiveQueue> {
-      return db.receiveQueue.update({
-        where: { id },
-        data: { fulfilledAt: new Date() },
-      });
-    },
-
-    async delete(id: number): Promise<void> {
-      await db.receiveQueue.delete({ where: { id } });
-    },
   };
 }
 

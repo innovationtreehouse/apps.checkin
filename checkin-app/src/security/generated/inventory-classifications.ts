@@ -44,6 +44,9 @@ export const classifications = {
         lineItemId: 'internal',
         queuedAt: 'public',
         fulfilledAt: 'public',
+        cancelledAt: 'public',
+        cancelledBy: 'internal',
+        cancelledByUsername: 'internal',
     },
     InventoryProvisionalItem: {
         id: 'public',
@@ -84,6 +87,7 @@ export const classifications = {
         rejectionReason: 'internal',
         recordedAt: 'public',
         sourceEventId: 'internal',
+        conversionFactor: 'public',
     },
     InventoryReceivedOrgEvent: {
         id: 'public',

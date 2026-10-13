@@ -116,6 +116,13 @@ model ReceiveQueue {
   queuedAt    DateTime  @default(now()) @map("queued_at")
   /// @sensitivity:public
   fulfilledAt DateTime? @map("fulfilled_at")
+  // A cancelled line stays as the record of who withdrew it; it is never fulfilled.
+  /// @sensitivity:public
+  cancelledAt         DateTime? @map("cancelled_at")
+  /// @sensitivity:internal
+  cancelledBy         Int?      @map("cancelled_by")
+  /// @sensitivity:internal
+  cancelledByUsername String?   @map("cancelled_by_username")
 
   @@map("receive_queue")
 }
@@ -206,6 +213,10 @@ model InventoryProvisionalResolution {
   recordedAt        DateTime @default(now()) @map("recorded_at")
   /// @sensitivity:internal
   sourceEventId     Int?     @map("source_event_id")
+  // The resolved real item's conversion factor from the event, applied when the
+  // provisional row arrives after it. Null when the event carried none.
+  /// @sensitivity:public
+  conversionFactor  Int?     @map("conversion_factor")
 
   @@unique([orgId, provisionalGtin13], name: "provisional_resolution_org_gtin_unique")
   @@map("provisional_resolutions")

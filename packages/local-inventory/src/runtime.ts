@@ -70,8 +70,7 @@ function buildServices() {
     }),
     receiveQueueService: createReceiveQueueService({
       receiveQueueRepo: createReceiveQueueRepository(db),
-      provisionalRepo,
-      inventoryService,
+      db,
     }),
   };
 }

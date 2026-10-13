@@ -13,7 +13,10 @@ export const list: InventoryRouteHandler = async ({ req }) => ({
 export const remove: InventoryRouteHandler = async ({ params }) => {
   const id = parseId(params.id);
   const orgId = await getOrgId();
-  await mapServiceErrors(() => getServices().receiveQueueService.cancel(id, orgId));
+  const principal = await getPrincipal();
+  await mapServiceErrors(() =>
+    getServices().receiveQueueService.cancel(id, orgId, principal.id, principal.name ?? undefined),
+  );
   return {};
 };
 
