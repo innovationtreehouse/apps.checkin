@@ -159,6 +159,20 @@ describe("PATCH /api/household/member — granted-authority email lock", () => {
         expect(tx.person.update).toHaveBeenCalled();
     });
 
+    it("saves a granted member whose stored email is mixed-case when the email is resent unchanged", async () => {
+        findPerson.mockResolvedValue({ ...target(KID, 0, { roles: 1 }), email: "Kid.Name@Example.com " });
+        const res = await patch({ participantId: KID, name: "Kid", email: "Kid.Name@Example.com " });
+        expect(res.status).toBe(200);
+        expect(tx.person.update.mock.calls[0][0].data.email).toBeUndefined();
+    });
+
+    it("never writes an equivalent address over a granted member's stored email", async () => {
+        findPerson.mockResolvedValue(target(KID, 0, { roles: 1 }));
+        const res = await patch({ participantId: KID, email: `p${KID}+tag@example.com` });
+        expect(res.status).toBe(200);
+        expect(tx.person.update.mock.calls[0][0].data.email).toBeUndefined();
+    });
+
     it("still lets a lead change the email of a member without a sign-in or any grant", async () => {
         findPerson.mockResolvedValue(target(KID, 0));
         const res = await patch({ participantId: KID, email: "teen@example.com" });
