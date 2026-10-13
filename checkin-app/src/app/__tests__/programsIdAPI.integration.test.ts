@@ -1622,6 +1622,13 @@ describe('Individual Program API Integration Tests', () => {
             expect(statusOf(rows, kidBId)).toBeUndefined();
         });
 
+        it("another family's lead receives only their own household's status", async () => {
+            const hhB = (await prisma.person.findUniqueOrThrow({ where: { id: leadBId }, select: { householdId: true } })).householdId;
+            const rows = await getAs({ id: leadBId, householdId: hhB, householdLead: true, ageBand: 'adult' });
+            expect(statusOf(rows, kidBId)).toBe('PENDING');
+            expect(rows.filter(r => r.personId !== kidBId).every(r => r.status === undefined && r.pendingSince === undefined)).toBe(true);
+        });
+
         it("a youth receives no status, their own or anyone's", async () => {
             const rows = await getAs({ id: kidAId, householdId: householdAId, householdLead: false, ageBand: 'youth' });
             expect(rows.length).toBe(3);
