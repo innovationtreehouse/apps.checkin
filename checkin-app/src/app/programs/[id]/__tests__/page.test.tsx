@@ -683,6 +683,42 @@ describe("ProgramEnrollmentPage", () => {
         expect(await screen.findByText("Redirecting to Shopify for secure payment...")).toBeInTheDocument();
     });
 
+    // The repeat-payment check is advisory: a failed roster re-read is logged and
+    // checks the loaded roster, and checkout still proceeds.
+    it.each([
+        { outcome: "returns 500", failedRead: () => Promise.resolve({ ok: false, status: 500, json: async () => ({}) } as Response) },
+        { outcome: "throws", failedRead: () => Promise.reject(new Error("down")) },
+    ])("logs and continues to checkout when the roster re-read $outcome", async ({ failedRead }) => {
+        setSession({ id: 100, ageBand: 'adult' });
+        setShopifyStoreDomain("shop.example.com");
+        const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+        let programReads = 0;
+        global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body }) as Response;
+            if (url.includes("/api/programs/10/participants")) return json({ ok: true });
+            if (url.includes("/api/household")) return json(household);
+            if (url.endsWith("/api/programs/10")) {
+                programReads += 1;
+                if (programReads > 1) return failedRead();
+                return json(baseProgram({
+                    nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null, shopifyVariantId: "gid://variant",
+                    participants: [],
+                }));
+            }
+            return json({}, 404);
+        });
+        renderPage();
+        await screen.findByText("Robotics Club");
+        fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+        await selectMember("Kid One");
+        fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
+
+        expect(await screen.findByText("Redirecting to Shopify for secure payment...")).toBeInTheDocument();
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("roster re-read failed"), expect.any(Error));
+        warnSpy.mockRestore();
+    });
+
     // Membership-duration guard: pricing decisions use the server-computed
     // viewerMemberPricingEligible flag over the household-status-derived isMember,
     // so a current member not covered through the program's end doesn't get the
