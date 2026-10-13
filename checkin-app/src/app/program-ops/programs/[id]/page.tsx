@@ -54,7 +54,9 @@ export type ProgramDetail = {
   claimantShopifyVariantId?: string | null;
 };
 
-export type ParticipantOption = { id: number; name: string | null; email: string; dateOfBirth?: string | null };
+export type ParticipantOption = { id: number; name: string | null; email: string };
+// The eligible-participants search returns names only.
+export type EligibleOption = { id: number; name: string | null };
 
 const PHASE_BADGE: Record<string, { label: string; color: string }> = {
   PLANNING: { label: 'Planning', color: 'gray' },

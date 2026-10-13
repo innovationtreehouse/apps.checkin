@@ -20,6 +20,8 @@ describe('Program Volunteers API Integration Tests', () => {
     
     let candidateId: number; // For testing POST
     let existingVolunteerId: number; // For testing PATCH & DELETE
+    let youthVolunteerId: number;
+    let treasurerId: number;
     
     let targetProgramId: number;
 
@@ -69,9 +71,19 @@ describe('Program Volunteers API Integration Tests', () => {
         candidateId = candidate.id;
 
         const existingVol = await prisma.person.create({
-            data: { email: 'existing-volun-api-test@example.com', name: 'Existing Volunteer', household: { create: { name: "Test HH" } } }
+            data: { email: 'existing-volun-api-test@example.com', name: 'Existing Volunteer', isDeclaredAdult: true, household: { create: { name: "Test HH" } } }
         });
         existingVolunteerId = existingVol.id;
+
+        const youthVol = await prisma.person.create({
+            data: { email: 'youth-volun-api-test@example.com', name: 'Youth Volunteer', dateOfBirth: new Date('2014-01-01'), household: { create: { name: "Test HH" } } }
+        });
+        youthVolunteerId = youthVol.id;
+
+        const treasurer = await prisma.person.create({
+            data: { email: 'treasurer-volun-api-test@example.com', name: 'Treasurer', household: { create: { name: "Test HH" } } }
+        });
+        treasurerId = treasurer.id;
 
         // Create mock program
         const program = await prisma.program.create({
@@ -82,7 +94,11 @@ describe('Program Volunteers API Integration Tests', () => {
                 phase: 'RUNNING', 
                 leadMentorId: leadId,
                 volunteers: {
-                    create: { personId: existingVolunteerId, isCore: false }
+                    create: [
+                        { personId: existingVolunteerId, isCore: false },
+                        { personId: youthVolunteerId, isCore: false },
+                        { personId: treasurerId, isCore: false, isTreasurer: true },
+                    ]
                 }
             }
         });
@@ -90,7 +106,7 @@ describe('Program Volunteers API Integration Tests', () => {
     });
 
     afterAll(async () => {
-        const existingUserIds = [adminId, leadId, commonId, candidateId, existingVolunteerId].filter(id => id !== undefined);
+        const existingUserIds = [adminId, leadId, commonId, candidateId, existingVolunteerId, youthVolunteerId, treasurerId].filter(id => id !== undefined);
 
         if (existingUserIds.length > 0) {
             await prisma.programVolunteer.deleteMany({
@@ -241,6 +257,33 @@ describe('Program Volunteers API Integration Tests', () => {
              expect(data.error).toBe("participantId and isCore are required");
         });
 
+        const patch = (participantId: number, isCore: boolean) => PATCH(
+            new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
+                method: 'PATCH',
+                body: JSON.stringify({ participantId, isCore })
+            }) as unknown as import("next/server").NextRequest,
+            createParams(targetProgramId) as unknown as never
+        );
+
+        it('refuses to make a youth a core volunteer, even for an admin', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+             const res = await patch(youthVolunteerId, true);
+             expect(res.status).toBe(400);
+             expect((await res.json()).error).toBe("A core volunteer must be an adult.");
+        });
+
+        it('refuses to make someone of unknown age a core volunteer', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+             const res = await patch(treasurerId, true);
+             expect(res.status).toBe(400);
+        });
+
+        it('still lets a youth be un-cored', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+             const res = await patch(youthVolunteerId, false);
+             expect(res.status).toBe(200);
+        });
+
         it('should allow admins to toggle the isCore flag of a volunteer', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
 
@@ -266,6 +309,31 @@ describe('Program Volunteers API Integration Tests', () => {
              });
              const res = await DELETE(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
              expect(res.status).toBe(403);
+        });
+
+        const del = (participantId: number) => DELETE(
+            new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
+                method: 'DELETE',
+                body: JSON.stringify({ participantId })
+            }) as unknown as import("next/server").NextRequest,
+            createParams(targetProgramId) as unknown as never
+        );
+
+        it('refuses the lead mentor removing the program treasurer', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+             const res = await del(treasurerId);
+             expect(res.status).toBe(403);
+             expect((await res.json()).error).toMatch(/treasurer/);
+             const row = await prisma.programVolunteer.findUnique({
+                 where: { programId_personId: { programId: targetProgramId, personId: treasurerId } }
+             });
+             expect(row?.isTreasurer).toBe(true);
+        });
+
+        it('lets the board remove the program treasurer', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
+             const res = await del(treasurerId);
+             expect(res.status).toBe(200);
         });
 
         it('should allow the assigned lead mentor to remove a volunteer', async () => {

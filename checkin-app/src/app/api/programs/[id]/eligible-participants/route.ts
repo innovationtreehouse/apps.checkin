@@ -6,13 +6,9 @@ import { LIVE_PERSON } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 
 // Admission + field stripping declared in src/security/registry.ts under
-// 'GET /api/programs/[id]/eligible-participants'. Admission ('program-lead-mentor',
-// which resolveAccess also grants to sysadmin/board) is the real boundary: this
-// is a staff directory SEARCH returning participants who are NOT in the program
-// (un-enrolled candidates to add), so the per-row their_program_participants
-// scope can't grant them — the registry view grants the admitted staff
-// 'everyones:pii' deliberately. The stripper is defense-in-depth: only
-// classified + permitted fields ship even if the query over-selects.
+// 'GET /api/programs/[id]/eligible-participants'. A staff directory SEARCH for
+// people NOT yet in the program; it returns names only (no contact or age data,
+// youth included), and matches on name or id, never email.
 export const GET = handler<{ id: string }>('GET /api/programs/[id]/eligible-participants', async ({ req, params }) => {
     const programId = parseInt(params.id, 10);
     if (isNaN(programId)) throw badRequest('Invalid program ID');
@@ -41,7 +37,6 @@ export const GET = handler<{ id: string }>('GET /api/programs/[id]/eligible-part
         andClauses.push({
             OR: [
                 { name: { contains: q, mode: 'insensitive' } },
-                { email: { contains: q, mode: 'insensitive' } },
                 ...(idQuery !== null ? [{ id: idQuery }] : []),
             ]
         });
@@ -56,7 +51,7 @@ export const GET = handler<{ id: string }>('GET /api/programs/[id]/eligible-part
 
     const members = await prisma.person.findMany({
         where: { AND: andClauses, ...LIVE_PERSON },
-        select: { id: true, name: true, email: true, dateOfBirth: true },
+        select: { id: true, name: true },
         orderBy: { name: 'asc' },
         take: 50
     });

@@ -103,6 +103,10 @@ Things the app takes as true because they are handled outside it.
 - A program leader is 23 or older, the floor belonging to the role rather than to
   adulthood. A program volunteer has no age floor at all — youth volunteer too.  [Decision — *Policy: Sponsored Program Policy, Art. IV*]
 
+- A core volunteer is a known adult: 18 or older by date of birth, or declared
+  adult. Being core opens families' contact details, so a youth or someone of
+  unknown age is refused. No board approval is needed beyond that.  [Decision — *Principle: least privilege*]
+
 - Nothing checks that a program leader is a member who has passed a background
   check.  [Short of policy — *Policy: Sponsored Program Policy, Art. IV*]
 
@@ -285,6 +289,14 @@ Things the app takes as true because they are handled outside it.
   scholarship, and payment plan are not theirs.  [Decision — *Principle: least privilege*]
 
 - Only the board and sysadmins set a program's store variant.  [Decision — *Principle: least privilege*]
+
+- A program leader cannot remove the program's treasurer from its volunteers.
+  The treasurer comes from the budget agreed between the board and the program
+  leader, so only the board or a sysadmin removes them.  [Decision]
+
+- The search a program leader uses to add volunteers and participants returns
+  names only, and matches a name or an id, never an email. Contact details and
+  dates of birth of people outside the program, youth above all, are not theirs.  [Decision — *Principle: least privilege*]
 
 - A program's detail page shows which of the household is already enrolled and
   what the program limits, and hides the non-member price where the program is
