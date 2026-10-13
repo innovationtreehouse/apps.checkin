@@ -90,6 +90,9 @@ jobs:
             exit 1
           fi
 
+      - name: Check image sources (no anonymous Docker Hub pulls)
+        run: bash scripts/check-image-sources.sh
+
       - id: detect
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -331,21 +334,11 @@ jobs:
     permissions:
       contents: read
       checks: write
-
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: testuser
-          POSTGRES_PASSWORD: testpassword
-          POSTGRES_DB: checkmein_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+      id-token: write      # mint the GitHub OIDC token to assume the AWS role (no stored creds)
+    env:
+      AWS_REGION: us-east-2
+      # Least-privilege OIDC role (ecr-public auth only), as in flow-tests.yml.
+      PULL_ROLE: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
 
     steps:
       - name: Skip notice (client-only change)
@@ -357,6 +350,36 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref }}   # empty on push/PR = default ref; the tag when called by deploy-prod
+
+      - name: Configure AWS credentials (OIDC)
+        if: needs.changes.outputs.app == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.PULL_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR Public
+        if: needs.changes.outputs.app == 'true'
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      # The DB runs as a step, not a service container: services start before
+      # any step, so their pull can't use the ECR Public login above.
+      - name: Start Postgres
+        if: needs.changes.outputs.app == 'true'
+        run: |
+          bash scripts/ci-pull-image.sh public.ecr.aws/docker/library/postgres:15
+          docker run -d --name postgres -p 5432:5432 \
+            -e POSTGRES_USER=testuser -e POSTGRES_PASSWORD=testpassword -e POSTGRES_DB=checkmein_test \
+            public.ecr.aws/docker/library/postgres:15
+          # Probe over TCP: the image's first-start init server listens only on
+          # the unix socket, so a TCP answer means the post-init restart is done.
+          for _ in $(seq 1 30); do
+            pg_isready -q -h localhost -p 5432 && exit 0
+            sleep 2
+          done
+          docker logs postgres; exit 1
 
       - name: Setup Node.js
         if: needs.changes.outputs.app == 'true'
@@ -622,6 +645,16 @@ jobs:
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write      # mint the GitHub OIDC token to assume the AWS role (no stored creds)
+    env:
+      AWS_REGION: us-east-2
+      # Least-privilege OIDC role (ecr-public auth only), as in flow-tests.yml.
+      PULL_ROLE: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
+      # Ryuk (testcontainers' reaper) has no ECR Public mirror; the harness
+      # stops its own container and the runner VM is discarded anyway.
+      TESTCONTAINERS_RYUK_DISABLED: "true"
     steps:
       - name: Skip notice (no package/function change)
         if: needs.changes.outputs.packages != 'true'
@@ -670,6 +703,25 @@ jobs:
         run: |
           npm run check:library-boundaries
           bash scripts/test-check-library-boundaries.sh
+
+      - name: Configure AWS credentials (OIDC)
+        if: needs.changes.outputs.packages == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.PULL_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR Public
+        if: needs.changes.outputs.packages == 'true'
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      # Same image as pg-test-harness' DEFAULT_PG_IMAGE; testcontainers reuses
+      # the local copy, so this pull is the one that gets retried.
+      - name: Pull the testcontainers Postgres image
+        if: needs.changes.outputs.packages == 'true'
+        run: bash scripts/ci-pull-image.sh public.ecr.aws/docker/library/postgres:17-alpine
 
       - name: Test packages
         if: needs.changes.outputs.packages == 'true'
@@ -765,6 +817,25 @@ jobs:
         with:
           ref: ${{ inputs.ref }}   # empty on push/PR = default ref; the tag when called by deploy-prod
 
+      # Authenticate the base-image and smoke-step pulls. Anonymous ECR Public
+      # is rate-limited per shared-runner IP; authenticated is per-account.
+      - name: Configure AWS credentials (OIDC)
+        if: needs.changes.outputs.app == 'true'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.PULL_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR Public
+        if: needs.changes.outputs.app == 'true'
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - name: Pull base image
+        if: needs.changes.outputs.app == 'true'
+        run: bash scripts/ci-pull-image.sh public.ecr.aws/docker/library/node:24-alpine
+
       # Mirrors deploy-dev.yml's build step minus `docker push`. Architecture is irrelevant
       # (the image is discarded), so the default x64 runner is fine — the deploy builds arm64
       # on its own runner for ECS.
@@ -819,21 +890,6 @@ jobs:
       # with a migrated DB and a signed-in FINANCE+BOARD+INVENTORY_MANAGER person:
       # malformed JSON must answer 400, a duplicate create 409, never 500.
       # The `builder` stage is already in the layer cache from the build above.
-      # Authenticate the smoke step's postgres pull. Anonymous ECR Public is
-      # rate-limited per shared-runner IP; authenticated is per-account.
-      - name: Configure AWS credentials (OIDC)
-        if: needs.changes.outputs.app == 'true'
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ env.PULL_ROLE }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to Amazon ECR Public
-        if: needs.changes.outputs.app == 'true'
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          registry-type: public
-
       - name: Smoke test — library error statuses
         if: needs.changes.outputs.app == 'true'
         run: |

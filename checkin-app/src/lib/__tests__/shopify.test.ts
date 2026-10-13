@@ -98,15 +98,34 @@ describe('adjustProgramInventory', () => {
         );
     });
 
-    it('returns false without calling fetch when credentials are missing', async () => {
+    it('adjusts at an ACTIVE location, not locations[0]', async () => {
+        mockTokenResponse(fetchMock);
+        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ locations: [{ id: 111, active: false }, { id: 222, active: true }] }) });
+        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ variant: { inventory_item_id: 333 } }) });
+        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) }); // adjust
+
+        const result = await adjustProgramInventory(program, -1);
+
+        expect(result).toBe(true);
+        expect(JSON.parse((fetchMock.mock.calls[3][1] as RequestInit).body as string).location_id).toBe(222);
+    });
+
+    it('returns false and emails admins without calling fetch when credentials are missing', async () => {
         delete process.env.SHOPIFY_STORE_DOMAIN;
         delete process.env.SHOPIFY_CLIENT_ID;
         delete process.env.SHOPIFY_CLIENT_SECRET;
+        (prisma.person.findMany as jest.Mock).mockResolvedValueOnce([{ email: 'admin@test.com' }]);
 
         const result = await adjustProgramInventory(program, 5);
 
         expect(result).toBe(false);
         expect(fetchMock).not.toHaveBeenCalled();
+        expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ operation: 'adjustProgramInventory' }));
+        expect(sendEmail).toHaveBeenCalledWith(
+            'admin@test.com',
+            'Shopify Integration Error',
+            expect.stringContaining('Failed to adjust Shopify inventory'),
+        );
     });
 
     it('no-ops successfully when the Shopify mock is active', async () => {

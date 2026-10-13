@@ -167,7 +167,7 @@ class BackendClient:
     def post_scan(self, participant_id, force_close_token=None,
                   client_event_id=None, scanned_at=None, replay=False,
                   dead=False, dead_status=None, intent=None, clock_suspect=False,
-                  force_close_confirmed=False):
+                  force_close_confirmed=False, shown_empty=None):
         path = "/api/scan"
         payload = {"protocolVersion": SCAN_PROTOCOL_VERSION}
         try:
@@ -200,6 +200,11 @@ class BackendClient:
             # Offline force-close: the two-scan confirm ran on the kiosk, so there
             # is no server token to echo. The server honors this only on a replay.
             payload["forceCloseConfirmed"] = True
+        if shown_empty is not None:
+            # On every keyholder OUT: whether the kiosk showed nobody else
+            # inside. True closes the building with this one badge; false
+            # leaves and offers the close. Absent, the server's records decide.
+            payload["shownEmpty"] = bool(shown_empty)
         body = json.dumps(payload)
 
         headers = self._headers("POST", path, body)
@@ -255,10 +260,10 @@ class BackendClient:
 CLOCK_STEP_SECONDS = 180
 
 # The scan-body generation this client speaks (2 = replay/dead/intent/
-# clockSuspect; 3 = the kiosk filters repeat reads itself). Sent with every POST /api/scan; replay behavior is enabled
+# clockSuspect; 3 = the kiosk filters repeat reads itself; 5 = shownEmpty). Sent with every POST /api/scan; replay behavior is enabled
 # only when the server advertises at least this via kiosk-version, so an
 # auto-updated kiosk can't race a not-yet-deployed server.
-SCAN_PROTOCOL_VERSION = 3
+SCAN_PROTOCOL_VERSION = 5
 
 
 class ClockWatch:
@@ -386,16 +391,30 @@ class AttendanceState:
             return False
 
     def offline_close_offer(self, participant_id):
-        """From the last roster: is this badge a keyholder with anyone else
-        still recorded inside -- another keyholder included, who may simply have
-        forgotten to badge out. Then a second badge closes the building. Stale
-        while offline, but the keyholder can see the room."""
+        """Is this badge a keyholder with anyone else shown inside -- another
+        keyholder included, who may simply have forgotten to badge out. Then a
+        second badge closes the building. The kiosk's own view (roster plus
+        queued scans): stale while offline, but the keyholder can see the room.
+        The complement of shows_empty, so one OUT is never both."""
         try:
             pid = int(participant_id)
         except (TypeError, ValueError):
             return False
         with self.lock:
-            return pid in self.keyholder_ids and self.current_counts.get("total", 0) > 1
+            return pid in self.keyholder_ids and bool(self.present_ids - {pid})
+
+    def shows_empty(self, participant_id):
+        """For a keyholder: True when nobody else is shown inside (their OUT
+        closes the building with one badge), False when anyone is (leave and
+        offer the close). None for anyone else, so the field is left out."""
+        try:
+            pid = int(participant_id)
+        except (TypeError, ValueError):
+            return None
+        with self.lock:
+            if pid not in self.keyholder_ids:
+                return None
+            return not (self.present_ids - {pid})
 
     def offline_supervision_warning(self):
         """Yellow supervision caution from the last known safety state, or None.
@@ -1133,6 +1152,7 @@ def handle_scan(backend, state, outbox, participant_id):
         # Displayed direction, from the local presence view, carried with the
         # event. The server must not re-infer it from live state.
         intent = state.displayed_intent(participant_id)
+    shown_empty = state.shows_empty(participant_id) if intent == "OUT" else None
     state.note_presence(participant_id, checking_in=(intent == "IN"))
 
     # A fresh scan must not jump its own predecessor -- if this participant
@@ -1149,7 +1169,8 @@ def handle_scan(backend, state, outbox, participant_id):
     outbox.enqueue(
         client_event_id, participant_id, scanned_at, confirm_token,
         intent=intent, clock_suspect=clock_suspect,
-        force_close_confirmed=force_close_confirmed, inflight=not queue_only,
+        force_close_confirmed=force_close_confirmed, shown_empty=shown_empty,
+        inflight=not queue_only,
     )
 
     if queue_only:
@@ -1169,13 +1190,16 @@ def handle_scan(backend, state, outbox, participant_id):
             scanned_at=scanned_at,
             intent=intent,
             clock_suspect=clock_suspect,
+            shown_empty=shown_empty,
         )
         outcome = classify_response(status, body)
-    finally:
+    except BaseException:
         outbox.release(client_event_id)
+        raise
 
     if outcome == "retry":
         # Unconfirmed: the row stays pending for the drain.
+        outbox.release(client_event_id)
         queued = outbox.pending_count()
         if intent == "OUT" and state.offline_close_offer(participant_id):
             # Offline keyholder close: no server to warn or mint a token, so the

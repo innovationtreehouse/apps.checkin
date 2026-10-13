@@ -373,11 +373,48 @@ class TestForceCloseConfirm(unittest.TestCase):
 
             client.post_scan(7)
             self.assertEqual(json.loads(post.call_args.kwargs["data"]),
-                             {"participantId": 7, "protocolVersion": 3})
+                             {"participantId": 7, "protocolVersion": 5})
 
             client.post_scan(7, "tok-1")
             self.assertEqual(json.loads(post.call_args.kwargs["data"]),
-                             {"participantId": 7, "protocolVersion": 3, "forceCloseToken": "tok-1"})
+                             {"participantId": 7, "protocolVersion": 5, "forceCloseToken": "tok-1"})
+
+            client.post_scan(7, shown_empty=True)
+            self.assertEqual(json.loads(post.call_args.kwargs["data"]),
+                             {"participantId": 7, "protocolVersion": 5, "shownEmpty": True})
+
+            client.post_scan(7, shown_empty=False)
+            self.assertEqual(json.loads(post.call_args.kwargs["data"]),
+                             {"participantId": 7, "protocolVersion": 5, "shownEmpty": False})
+
+    def test_a_keyholder_out_shows_empty_only_with_nobody_else_shown(self):
+        state = AttendanceState()
+        state.seed_from_attendance({"attendance": [
+            {"participant": {"id": 1, "isKeyholder": True}},
+            {"participant": {"id": 2, "isKeyholder": True}},
+            {"participant": {"id": 3}},
+        ]})
+        self.assertIs(state.shows_empty(1), False)
+        self.assertIsNone(state.shows_empty(3), "a non-keyholder sends no flag")
+        # Anyone shown inside, keyholder or not, means the close needs a second scan.
+        state.note_presence(2, checking_in=False)
+        self.assertFalse(state.shows_empty(1))
+        state.note_presence(3, checking_in=False)
+        self.assertTrue(state.shows_empty(1))
+
+        backend = Mock()
+        backend.post_scan.return_value = (None, 0, None)
+        ob = Outbox(":memory:")
+        handle_scan(backend, state, ob, 1)
+        self.assertTrue(backend.post_scan.call_args.kwargs["shown_empty"])
+        self.assertEqual(ob.pending_rows()[0][9], 1, "the queued OUT keeps the flag for the drain")
+
+        # A keyholder OUT with others shown still carries the flag, as false.
+        state.note_presence(3, checking_in=True)
+        state.note_presence(1, checking_in=True)
+        backend.post_scan.reset_mock()
+        handle_scan(backend, state, Outbox(":memory:"), 1)
+        self.assertIs(backend.post_scan.call_args.kwargs["shown_empty"], False)
 
     def test_token_is_single_use_and_dies_with_the_countdown(self):
         state = AttendanceState()
@@ -870,12 +907,12 @@ class TestOfflineForceClose(unittest.TestCase):
         # The other keyholder may be a forgotten badge-out: any keyholder can close.
         state = self._state()
         state.keyholder_ids = {9, 3}
-        state.current_counts = {"keyholders": 2, "total": 3}
+        state.present_ids = {9, 3}
         self.assertTrue(state.offline_close_offer(9))
 
     def test_no_close_offer_for_a_keyholder_alone(self):
         state = self._state()
-        state.current_counts = {"keyholders": 1, "total": 1}
+        state.present_ids = {9}
         self.assertFalse(state.offline_close_offer(9))
 
     def test_local_close_is_bound_single_use_and_expires(self):

@@ -7,12 +7,15 @@
  * at the keyholder's scan time (docs/rules/attendance-checkin.md, kiosk
  * resilience) — but never anyone who arrived after it. That includes a confirm
  * arriving after the keyholder's own badge already checked them out and offered
- * the close. Unconfirmed stale replays still park.
+ * the close, and a keyholder's late OUT the kiosk showed with nobody else
+ * inside. A close fences a late check-in scanned before it. Unconfirmed
+ * intent-less stale replays still park.
  */
 import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
 import { LATE_CLOSE_SKEW_MS } from '@/lib/scan-service';
+import { SCAN_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 import type { Person } from '@/generated/prisma/client';
 
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
@@ -58,6 +61,7 @@ describe('Late confirmed facility close (real DB)', () => {
     // The sweep is facility-wide: start every test from an empty building.
     beforeEach(async () => {
         await prisma.visit.updateMany({ where: { departedAt: null }, data: { departedAt: new Date(0) } });
+        await prisma.facilityClose.updateMany({ where: { closedAt: { gt: new Date(Date.now() - 2 * 86_400_000) } }, data: { closedAt: new Date(0) } });
     });
 
     afterEach(async () => {
@@ -128,15 +132,101 @@ describe('Late confirmed facility close (real DB)', () => {
         expect(late.departedVia).toBe('FACILITY_CLOSE');
     });
 
-    it('parks a confirmed close whose scan time is ahead of server now (fast kiosk clock)', async () => {
+    it('closes at server now when the confirmed close is stamped ahead of it (fast kiosk clock)', async () => {
         await occupy();
-        const scannedAt = new Date(Date.now() + 3 * HOUR);
-        const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-fast', scannedAt: scannedAt.toISOString(), replay: true, forceCloseConfirmed: true }));
-        expect((await res.json()).type).toBe('parked');
-        expect((await visitOf(keyholder)).departedAt).toBeNull();
+        const before = Date.now();
+        const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-fast', scannedAt: new Date(before + 3 * HOUR).toISOString(), replay: true, forceCloseConfirmed: true, protocolVersion: SCAN_PROTOCOL_VERSION }));
+        expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: true });
+        const departed = (await visitOf(member)).departedAt!.getTime();
+        expect(departed).toBeGreaterThanOrEqual(before);
+        expect(departed).toBeLessThanOrEqual(Date.now());
+        // Applied, never silently: the doubtful clock goes to review.
+        expect((await prisma.rawBadgeLog.findUnique({ where: { clientEventId: 'evt-fast' } }))?.reviewReason).toBe('clock_suspect');
+    });
+
+    // The last keyholder leaving closes the building,
+    // however late that scan arrives, and is not held or flagged for review.
+    it.each([
+        ['open visit', undefined],
+        ['cron-closed visit', 'cron'],
+    ])('a late shownEmpty OUT from an %s closes at the scan time, unflagged, past others still recorded', async (_label, cron) => {
+        const cronAt = new Date(Date.now() - 30 * 60_000);
+        await occupy(cron ? { at: cronAt, via: 'AUTO_CLOSE' } : undefined);
+        // A keyholder who forgot to badge out; the kiosk did not show them.
+        await prisma.visit.create({ data: { personId: opener.id, arrivedAt: new Date(Date.now() - 4 * HOUR), arrivedVia: 'SCANNER', ...(cron ? { departedAt: cronAt, departedVia: 'AUTO_CLOSE' as const } : {}) } });
+        const scannedAt = new Date(Date.now() - 3 * HOUR);
+        const id = `evt-last-${_label}`;
+        const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: id, scannedAt: scannedAt.toISOString(), replay: true, intent: 'OUT', shownEmpty: true }));
+        expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: true });
+
+        for (const p of [keyholder, member, opener]) {
+            expect((await visitOf(p)).departedAt?.getTime()).toBe(scannedAt.getTime());
+        }
+        expect((await visitOf(member)).departedVia).toBe('FACILITY_CLOSE');
+        expect((await prisma.rawBadgeLog.findUnique({ where: { clientEventId: id } }))?.reviewReason).toBeNull();
+    });
+
+    it('a late keyholder OUT shown with others and no second scan leaves without closing, flagged', async () => {
+        await occupy();
+        const scannedAt = new Date(Date.now() - 3 * HOUR);
+        const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-not-empty', scannedAt: scannedAt.toISOString(), replay: true, intent: 'OUT', shownEmpty: false, protocolVersion: SCAN_PROTOCOL_VERSION }));
+        expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: false });
+        expect((await visitOf(keyholder)).departedAt?.getTime()).toBe(scannedAt.getTime());
         expect((await visitOf(member)).departedAt).toBeNull();
-        const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId: 'evt-fast' } });
-        expect(log?.reviewReason).toBe('clock_suspect');
+        expect((await prisma.rawBadgeLog.findUnique({ where: { clientEventId: 'evt-not-empty' } }))?.reviewReason).toBe('force_close_review');
+    });
+
+    describe('a close fences a late check-in scanned before it', () => {
+        const closeAt = () => new Date(Date.now() - 2 * HOUR);
+        const closeRow = (at: Date) => prisma.facilityClose.create({ data: { closedAt: at, closedById: keyholder.id, via: 'KIOSK' } });
+        const inReplay = (id: string, at: Date, intent: 'IN' | 'OUT' = 'IN') =>
+            POST(scanReq({ participantId: lateComer.id, clientEventId: id, scannedAt: at.toISOString(), replay: true, intent, protocolVersion: SCAN_PROTOCOL_VERSION }));
+        const reasonOf = async (id: string) => (await prisma.rawBadgeLog.findUnique({ where: { clientEventId: id } }))?.reviewReason;
+
+        afterEach(async () => {
+            await prisma.visit.deleteMany({ where: { personId: lateComer.id } });
+            await prisma.facilityClose.deleteMany({ where: { closedById: keyholder.id } });
+        });
+
+        it('an IN scanned before a close departs at that close, flagged', async () => {
+            const at = closeAt();
+            const close = await closeRow(at);
+            const scannedAt = new Date(at.getTime() - HOUR);
+            expect((await (await inReplay('evt-fence-before', scannedAt)).json()).type).toBe('checkin');
+
+            const v = await visitOf(lateComer);
+            expect(v.arrivedAt.getTime()).toBe(scannedAt.getTime());
+            expect(v.departedAt?.getTime()).toBe(at.getTime());
+            expect(v.departedVia).toBe('FACILITY_CLOSE');
+            expect(v.facilityCloseId).toBe(close.id);
+            expect(await reasonOf('evt-fence-before')).toBe('closed_before_delivery');
+        });
+
+        it('an IN scanned after a close opens a visit as usual', async () => {
+            const at = closeAt();
+            await closeRow(at);
+            const scannedAt = new Date(at.getTime() + HOUR);
+            expect((await (await inReplay('evt-fence-after', scannedAt)).json()).type).toBe('checkin');
+
+            const v = await visitOf(lateComer);
+            expect(v.arrivedAt.getTime()).toBe(scannedAt.getTime());
+            expect(v.departedAt).toBeNull();
+            expect(await reasonOf('evt-fence-after')).toBe('stale_replay');
+        });
+
+        it('the same person\'s queued OUT before the close pulls the fenced departure back to it', async () => {
+            const at = closeAt();
+            await closeRow(at);
+            await inReplay('evt-fence-in', new Date(at.getTime() - HOUR));
+            const outAt = new Date(at.getTime() - 30 * 60_000);
+            expect((await (await inReplay('evt-fence-out', outAt, 'OUT')).json()).type).toBe('checkout');
+
+            const v = await visitOf(lateComer);
+            expect(v.departedAt?.getTime()).toBe(outAt.getTime());
+            expect(v.departedVia).toBe('SCANNER');
+            expect(v.facilityCloseId).toBeNull();
+            expect(await reasonOf('evt-fence-out')).toBe('out_of_order');
+        });
     });
 
     it('an unconfirmed stale keyholder replay still parks', async () => {
