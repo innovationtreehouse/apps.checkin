@@ -48,11 +48,13 @@ export const POST = withAuth({}, async (req, auth) => {
             return apiError("Invalid arrival time", 400);
         }
 
-        // No future arrivals. Allow a 5-min skew (clock drift, the minute it takes
-        // to fill the form) and clamp anything inside that window back to now, so a
-        // slightly-future time records as-of-now instead of being rejected.
+        // No future arrivals or departures. Allow a 5-min skew (clock drift, the
+        // minute it takes to fill the form) and clamp anything inside that window
+        // back to now, so a slightly-future time records as-of-now instead of
+        // being rejected.
         const now = new Date();
-        if (arrivalTime.getTime() > now.getTime() + 5 * 60 * 1000) {
+        const futureSkewMs = 5 * 60 * 1000;
+        if (arrivalTime.getTime() > now.getTime() + futureSkewMs) {
             return apiError("Arrival time cannot be in the future.", 400);
         }
         if (arrivalTime.getTime() > now.getTime()) {
@@ -60,6 +62,12 @@ export const POST = withAuth({}, async (req, auth) => {
         }
         if (departureTime && isNaN(departureTime.getTime())) {
             return apiError("Invalid departure time", 400);
+        }
+        if (departureTime && departureTime.getTime() > now.getTime() + futureSkewMs) {
+            return apiError("Departure time cannot be in the future.", 400);
+        }
+        if (departureTime && departureTime.getTime() > now.getTime()) {
+            departureTime.setTime(now.getTime());
         }
 
         if (departureTime && departureTime <= arrivalTime) {

@@ -80,7 +80,8 @@ export async function findAssociatedEventAt(participantId: number, targetTime: D
  * The departure is capped at `arrivedAt + MAX_VISIT_MS`. A caller that took a
  * typed time has already rejected anything longer, so the cap only ever bites
  * on a stamped-now close — where the alternative is a record no human path
- * would have been allowed to write.
+ * would have been allowed to write. A departure at or before arrival is raised
+ * to the arrival: the visit closes with zero length and is never deleted.
  *
  * It returns the final list of visits spanning their arrival to departure.
  */
@@ -106,9 +107,14 @@ export async function processVisitCheckout(
 
     // Cap the whole span, before the event lookup, so every chunk boundary below
     // derives from the capped departure and the segments still sum to one visit.
-    const departure = new Date(Math.min(checkoutTime.getTime(), arrivedAt.getTime() + MAX_VISIT_MS));
+    // A visit never departs before it arrived: a checkout at or before arrival
+    // records a zero-length visit on the original row rather than chunking it away.
+    const departure = new Date(Math.max(
+        arrivedAt.getTime(),
+        Math.min(checkoutTime.getTime(), arrivedAt.getTime() + MAX_VISIT_MS),
+    ));
 
-    const relevantProgramIds = await getRelevantProgramIds(participantId, db);
+    const relevantProgramIds = departure > arrivedAt ? await getRelevantProgramIds(participantId, db) : [];
 
     if (relevantProgramIds.length === 0) {
         // No programs enrolled, just close the visit normally

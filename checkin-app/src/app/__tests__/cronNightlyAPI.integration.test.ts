@@ -317,6 +317,27 @@ describe('Cron Nightly API Integration Tests', () => {
             expect(sendEmail).not.toHaveBeenCalled(); // no duplicate board/post-event email
         });
 
+        it('notifies the board of every force-closed visit, not only keyholders', async () => {
+            await closeAllOpenVisits();
+            await prisma.auditLog.deleteMany();
+            mockBadVisitIds.clear();
+
+            const arrivedAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
+            await prisma.visit.create({ data: { personId: normalUserId, arrivedAt } });
+
+            const res = await GET(cronReq());
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.facilityClose.checkedOutCount).toBe(1);
+            expect(data.facilityClose.boardNotified).toBe(true);
+
+            const notes = await prisma.auditLog.findMany({ where: { tableName: 'SYSTEM_NOTIFY' } });
+            expect(notes).toHaveLength(1);
+            const message = (notes[0].newData as { message: string }).message;
+            expect(message).toContain('Normal User');
+            expect(message).not.toContain('Abandoned keyholders');
+        });
+
         it('caps a visit the sweep missed at arrival + MAX_VISIT_MS instead of stamping run time', async () => {
             await closeAllOpenVisits();
             await prisma.auditLog.deleteMany();

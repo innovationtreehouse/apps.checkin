@@ -10,6 +10,7 @@ import { LIVE_VISIT } from "@/lib/visit/filters";
 import { runPersonAgreementSweep } from "@/lib/membership/personAgreementTriggers";
 import { systemActor } from "@/lib/auditActor";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { lockFacility } from "@/lib/facilityLock";
 
 export const GET = withCron(async () => {
         const now = new Date();
@@ -37,68 +38,73 @@ export const GET = withCron(async () => {
                 data: { closedAt: now, closedById: null, via: "NIGHTLY_SWEEP" },
                 select: { id: true },
             });
-            // Force everybody out concurrently. One bad checkout must not abort the rest,
-            // so each visit's checkout and its departure logs commit together, alone.
-            const results = await Promise.allSettled(
+            // One bad checkout must not abort the rest, so each visit's checkout and
+            // its departure logs commit together, alone. Each takes the person lock
+            // then the facility lock (the order every check-in path uses), so a
+            // racing departure or close is serialized, not overwritten. Sequential:
+            // concurrent transactions would only queue on the facility lock.
+            const forceClosed: typeof abandonedVisits = [];
+            for (const visit of abandonedVisits) {
                 // AUTO_CLOSE: stamped at cron-run time, so the member's real leave
                 // may be hours earlier. Correcting one of these is expected by
                 // construction and never flags (lib/visit/significance.ts).
-                abandonedVisits.map((visit) => prisma.$transaction(async (tx) => {
-                    // Empty: someone else departed the visit first, so this close set nothing.
-                    const segments = await processVisitCheckout(visit.id, now, tx, "AUTO_CLOSE", close.id);
-                    // A visit split across events departs as several rows; each is logged.
-                    const departures: DepartureChange[] = segments.flatMap((seg) => seg.departedAt && seg.departedVia ? [{
-                        id: seg.id,
-                        previousVisitId: visit.id,
-                        personId: visit.personId,
-                        oldDepartedAt: visit.departedAt,
-                        oldDepartedVia: visit.departedVia,
-                        departedAt: seg.departedAt,
-                        departedVia: seg.departedVia,
-                    }] : []);
-                    await logCloseDepartures(tx, close.id, systemActor("cron:nightly"), departures, "NIGHTLY_SWEEP");
-                    return segments;
-                }))
-            );
+                try {
+                    const segments = await prisma.$transaction(async (tx) => {
+                        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${visit.personId})`;
+                        await lockFacility(tx);
+                        // Empty: someone else departed the visit first, so this close set nothing.
+                        const segments = await processVisitCheckout(visit.id, now, tx, "AUTO_CLOSE", close.id);
+                        // A visit split across events departs as several rows; each is logged.
+                        const departures: DepartureChange[] = segments.flatMap((seg) => seg.departedAt && seg.departedVia ? [{
+                            id: seg.id,
+                            previousVisitId: visit.id,
+                            personId: visit.personId,
+                            oldDepartedAt: visit.departedAt,
+                            oldDepartedVia: visit.departedVia,
+                            departedAt: seg.departedAt,
+                            departedVia: seg.departedVia,
+                        }] : []);
+                        await logCloseDepartures(tx, close.id, systemActor("cron:nightly"), departures, "NIGHTLY_SWEEP");
+                        return segments;
+                    });
+                    checkedOutCount += 1;
+                    if (segments.length > 0) forceClosed.push(visit);
+                } catch (err) {
+                    failed += 1;
+                    logger.error(`Failed to check out visit ${visit.id} (person ${visit.person.email}):`, err);
+                }
+            }
             // After every per-visit transaction commits: the checkout's own
             // invalidation runs inside the transaction, so a concurrent read
             // could refill the cache from the still-open rows.
             invalidateAttendanceCache();
-            results.forEach((result, i) => {
-                if (result.status === "fulfilled") {
-                    checkedOutCount += 1;
-                } else {
-                    failed += 1;
-                    const visit = abandonedVisits[i];
-                    logger.error(`Failed to check out visit ${visit.id} (person ${visit.person.email}):`, result.reason);
-                }
-            });
 
-            // If at least one was a isKeyholder, the facility was left "Open". We need to alert the board.
-            const abandonedKeyholders = abandonedVisits.filter(v => v.person.isKeyholder);
-            
-            if (abandonedKeyholders.length > 0) {
+            // Every visit the sweep closed is a missed badge-out the board should see.
+            // An abandoned keyholder means the facility was left open, so it is
+            // reported even when its own checkout failed.
+            const nameOf = (v: (typeof abandonedVisits)[number]) => v.person.name || v.person.email;
+            const keyholderNames = abandonedVisits.filter(v => v.person.isKeyholder).map(nameOf).join(', ');
+            const closedNames = forceClosed.map(nameOf).join(', ');
+
+            if (closedNames || keyholderNames) {
                 const boardMembers = await prisma.person.findMany({
                     where: { isBoardMember: true, ...LIVE_PERSON },
                     select: { email: true }
                 });
+                const message = `Auto-closed facility at midnight. Force-closed visits: ${closedNames || 'none'}.`
+                    + (keyholderNames ? ` Abandoned keyholders: ${keyholderNames}.` : '');
 
-                const keyholderNames = abandonedKeyholders.map(v => v.person.name || v.person.email).join(', ');
-
-                // System Audit Log for the violation
                 await prisma.auditLog.create({
                     data: {
                         ...systemActor("cron:nightly"),
                         action: 'CREATE',
                         tableName: 'SYSTEM_NOTIFY',
                         affectedEntityId: 0,
-                        newData: { message: `Auto-closed facility at midnight. Abandoned keyholders: ${keyholderNames}` } as unknown as never
+                        newData: { message } as unknown as never
                     }
                 });
 
-                logger.info(`CRITICAL NOTIFICATION TO BOARD MEMBERS (${boardMembers.map(m => m.email).join(', ')}):`);
-                logger.info(`Facility was auto-closed by the nightly cron. The following keyholders failed to badge out: ${keyholderNames}`);
-                
+                logger.info(`NOTIFICATION TO BOARD MEMBERS (${boardMembers.map(m => m.email).join(', ')}): ${message}`);
                 boardNotified = true;
             }
         }
