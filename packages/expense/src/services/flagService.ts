@@ -50,9 +50,10 @@ export async function checkOffFlag(principal: ExpensePrincipal, flagId: number, 
     throw new ServiceError(403, "You are a party to this expense and cannot check off its flags");
   }
   // A COI flag is raised by a sign-off, so no signer on the expense, nor their household, checks it off.
+  // Signers come from the audit log: a voided sign-off loses its seat row but the flag stays open.
   if (flag.kind === "COI") {
-    const signoffs = await db.expenseLineSignoff.findMany({ where: { expenseId: flag.expenseId }, select: { signerUserId: true } });
-    const signers = [...new Set(signoffs.map((s) => s.signerUserId))];
+    const signoffs = await db.expenseAuditLog.findMany({ where: { expenseId: flag.expenseId, action: "signoff" }, select: { userId: true } });
+    const signers = [...new Set(signoffs.map((s) => s.userId))];
     if (signers.length > 0 && [...signers, ...(await getExpenseRuntime().signoff.householdOf(signers))].includes(actor.userId)) {
       throw new ServiceError(403, "You signed this expense, or are in a signer's household, and cannot check off its conflict flag");
     }
