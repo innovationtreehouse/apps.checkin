@@ -157,6 +157,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses" }
           {e.lineItems.map((l) => {
             const a = approvalRows.find((r) => r.lineItemId === l.id);
             const s = statusOf.get(l.id);
+            const noBucket = a?.ownerId == null;
             return (
               <Table.Tr key={l.id}>
                 <Table.Td>{l.lineNumber}</Table.Td>
@@ -178,11 +179,12 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses" }
                     <Stack gap={2}>
                       {s.filled.map((seat) => <Text key={seat} size="xs">✓ {SEAT_LABEL[seat] ?? seat}</Text>)}
                       {s.missing.map((seat) => (
-                        <Button key={seat} size="compact-xs" variant="outline" disabled={held} onClick={() => void sign(l.id, seat)}>
+                        <Button key={seat} size="compact-xs" variant="outline" disabled={held || (seat === "PROGRAM_APPROVER" && noBucket)} onClick={() => void sign(l.id, seat)}>
                           Sign as {SEAT_LABEL[seat] ?? seat}
                         </Button>
                       ))}
                       {held && s.missing.length > 0 && <Text size="xs" c="dimmed">Held until FINANCE sets the reimbursee</Text>}
+                      {noBucket && s.missing.includes("PROGRAM_APPROVER") && <Text size="xs" c="dimmed">Waiting for Finance to assign a budget bucket</Text>}
                       {s.blocked.length > 0 && <Text size="xs" c="red">Held: {s.blocked.map((x) => SEAT_LABEL[x] ?? x).join(", ")}</Text>}
                     </Stack>
                   ) : "—"}
