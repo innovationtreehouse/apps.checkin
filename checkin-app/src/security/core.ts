@@ -68,6 +68,7 @@ import * as workflowGenerated from './generated/workflow-classifications';
 import * as workflowSynthetic from './workflowSyntheticClassifications';
 import * as receiptGenerated from './generated/receipt-classifications';
 import * as receiptSynthetic from './receiptSyntheticClassifications';
+import * as programSynthetic from './programSyntheticClassifications';
 import type { BusinessRole } from '@/types/auth';
 import { assertNever } from '@/lib/lifecycle/classify';
 
@@ -95,6 +96,7 @@ export const CLASSIFICATION_SOURCES = [
     { source: 'workflow-synthetic', classifications: workflowSynthetic.classifications, relations: workflowSynthetic.relations },
     { source: 'receipt', classifications: receiptGenerated.classifications, relations: receiptGenerated.relations },
     { source: 'receipt-synthetic', classifications: receiptSynthetic.classifications, relations: receiptSynthetic.relations },
+    { source: 'program-synthetic', classifications: programSynthetic.classifications, relations: programSynthetic.relations },
 ] as const;
 
 type ClassificationSource = (typeof CLASSIFICATION_SOURCES)[number];
