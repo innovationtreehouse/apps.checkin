@@ -82,16 +82,26 @@ async function candidatesFor(line: Awaited<ReturnType<typeof loadLine>>): Promis
   if (!date) return { entity, txns: [] };
   const from = shiftDate(date, -MATCH_WINDOW_DAYS);
   const to = shiftDate(date, MATCH_WINDOW_DAYS);
-  const reader = getExpenseRuntime().quickbooks.reader;
+  const { reader, refs } = getExpenseRuntime().quickbooks;
+  const personId = line.expense.reimburseePersonId;
+  const expectedRef =
+    entity === "Bill" ? (personId === null ? null : await refs.vendorIdFor(personId)) : await refs.paymentAccountId();
+  if (expectedRef === null) return { entity, txns: [] };
   const txns = entity === "Bill" ? await reader.billsBetween(from, to) : await reader.purchasesBetween(from, to);
   const skip = new Set((await qbMatchInputs()).skipIds);
-  const inWindow = (t: QbTxn) => t.txnDate >= from && t.txnDate <= to;
-  return { entity, txns: txns.filter((t) => t.totalCents === line.totalPriceCents && inWindow(t) && !skip.has(t.id)) };
+  const matches = (t: QbTxn) =>
+    t.totalCents === line.totalPriceCents &&
+    t.txnDate >= from &&
+    t.txnDate <= to &&
+    (entity === "Bill" ? t.vendorRef : t.accountRef) === expectedRef &&
+    !skip.has(t.id);
+  return { entity, txns: txns.filter(matches) };
 }
 
 /**
  * QuickBooks entries a line may match: a Bill for a reimbursement, else a Purchase, of the
- * line's amount, inside the window around its receipt date, never claimed or excluded.
+ * line's amount, inside the window around its receipt date, booked against the expected vendor
+ * or payment account, never claimed or excluded.
  */
 export async function qbCandidates(principal: ExpensePrincipal, lineItemId: number): Promise<QbTxn[]> {
   requireFinance(principal);
