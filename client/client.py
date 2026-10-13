@@ -26,6 +26,9 @@ import requests
 from outbox import Outbox, classify_response, replay_drain, new_event_id, now_iso, in_closed_window
 from health import health_monitor
 
+# The board's own roster GETs, proxied through this Pi.
+ROSTER_GET_PATHS = ("/api/attendance", "/api/kioskdisplay/certifications")
+
 CLOCK_INTERVAL_S = 30
 
 
@@ -37,6 +40,36 @@ def local_clock_label(now=None):
     if in_closed_window(now):
         label += " · overnight"
     return label
+
+
+def is_roster_get_path(path):
+    return any(
+        path == p or path.startswith(p + "?") or path.startswith(p + "/")
+        for p in ROSTER_GET_PATHS
+    )
+
+
+def building_known_empty(state):
+    """True only when the last real roster fetch reported nobody inside and no
+    badge on this Pi has put anyone inside since."""
+    with state.lock:
+        return (state.counts_known and state.current_counts.get("total", 0) == 0
+                and not state.present_ids)
+
+
+def overnight_and_empty(state, in_closed_window_fn=in_closed_window):
+    """Overnight in a building known to be empty: the one case the kiosk stops
+    asking the server, until a badge or the morning."""
+    return bool(in_closed_window_fn()) and building_known_empty(state)
+
+
+def skip_roster_get(state, method, path, in_closed_window_fn=in_closed_window):
+    """True when the proxy answers the board's roster GET itself, with a 204
+    and no body: the board keeps the last real roster it rendered. The kiosk
+    never serves a roster the server did not send."""
+    if state is None or method != "GET" or not is_roster_get_path(path):
+        return False
+    return overnight_and_empty(state, in_closed_window_fn)
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +278,8 @@ class AttendanceState:
         self.lock = threading.Lock()
         self.subscribers = []  # list of queue.Queue for SSE clients
         self.current_counts = {"total": 0, "keyholders": 0, "volunteers": 0, "students": 0}
+        # False until a real roster fetch: "unknown" never counts as empty.
+        self.counts_known = False
         self.confirm_token = None    # force-close confirm token, if a countdown is running
         self.confirm_participant = None  # the keyholder that token was shown to
         self.confirm_deadline = 0.0  # monotonic clock, end of that countdown
@@ -463,6 +498,7 @@ class AttendanceState:
             self.present_ids = present
             self.keyholder_ids = keyholders
             self.last_two_deep_violation = bool(safety.get("isTwoDeepViolation"))
+            self.counts_known = True
 
     def apply_pending(self, pending):
         """Overlay undelivered outbox rows when there is no roster to seed from."""
@@ -813,6 +849,16 @@ class KioskHandler(BaseHTTPRequestHandler):
                 
         sig_headers = sign_request(self.backend.signing_key, method, sign_path, body_str)
         req_headers.update(sig_headers)
+
+        if skip_roster_get(self.state, method, sign_path):
+            # Chromium is still up; don't let last_browser_seen look like a crash.
+            self.state.last_browser_seen = time.monotonic()
+            try:
+                self.send_response(204)
+                self.end_headers()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            return
 
         try:
             # Use requests.request (stateless) so cookies flow directly between browser and backend
@@ -1207,14 +1253,20 @@ def handle_scan(backend, state, outbox, participant_id):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def attendance_poller(backend, state, outbox, interval=30, sleep_fn=time.sleep):
-    """Background thread that polls attendance counts periodically, day and
-    night, empty or occupied. Pushes SSE status events when counts change so
-    the blackout logic works on display-only kiosks without a scanner, and
-    occupancy created off this Pi (a web check-in, another entrance) wakes
-    the screen."""
+def attendance_poller(backend, state, outbox, interval=30, sleep_fn=time.sleep,
+                       in_closed_window_fn=in_closed_window):
+    """Background thread that polls attendance counts periodically. Pushes SSE
+    status events when counts change so the blackout logic works on
+    display-only kiosks without a scanner, and occupancy created off this Pi
+    (a web check-in, another entrance) wakes the screen. It pauses only
+    overnight in a building known to be empty, so the database can sleep;
+    a badge here or the morning resumes it. Accepted trade-off: overnight in
+    that state, a web check-in or another entrance does not reach the screen
+    until then."""
     while True:
         sleep_fn(interval)
+        if overnight_and_empty(state, in_closed_window_fn):
+            continue
         pending = outbox.pending_rows()
         att_data, att_status = backend.get_attendance()
         if att_status == 200 and "counts" in att_data:

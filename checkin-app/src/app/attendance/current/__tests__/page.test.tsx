@@ -361,6 +361,44 @@ describe("attendance/current page", () => {
     expect(screen.getByText("No keyholder")).toBeInTheDocument();
   });
 
+  describe("when the kiosk proxy answers 204 overnight", () => {
+    function mockResting(first: "roster" | "resting") {
+      let calls = 0;
+      global.fetch = jest.fn(async () => {
+        calls += 1;
+        const resting = first === "resting" || calls > 1;
+        return {
+          ok: true,
+          status: resting ? 204 : 200,
+          json: async () => (resting ? Promise.reject(new SyntaxError("no body")) : attendanceData),
+        } as unknown as Response;
+      }) as unknown as typeof fetch;
+    }
+
+    it("says after hours, not unavailable, when it has no roster yet", async () => {
+      setSearchParams("mode=kiosk");
+      mockResting("resting");
+      renderWithProviders(<KioskDisplay />);
+
+      expect(await screen.findByText("After hours — zzz. Badge in to wake the kiosk.")).toBeInTheDocument();
+      expect(screen.queryByText("Attendance is unavailable — the roster could not be loaded.")).not.toBeInTheDocument();
+      expect(screen.queryByText("The facility is currently empty.")).not.toBeInTheDocument();
+    });
+
+    it("keeps the last real roster instead of replacing it", async () => {
+      setSearchParams("mode=kiosk");
+      mockResting("roster");
+      renderWithProviders(<KioskDisplay />);
+      expect(await screen.findByText("People Present: 3")).toBeInTheDocument();
+
+      window.postMessage("refresh-attendance", "*");
+      await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+
+      expect(screen.getByText("People Present: 3")).toBeInTheDocument();
+      expect(screen.queryByText("After hours — zzz. Badge in to wake the kiosk.")).not.toBeInTheDocument();
+    });
+  });
+
   describe("when the kiosk is unreachable", () => {
     const unreachable = {
       ...attendanceData,

@@ -26,6 +26,7 @@ from client import (
     latest_release_tag,
     main,
     resolve_update_target,
+    skip_roster_get,
 )
 from outbox import Outbox, in_closed_window
 
@@ -551,17 +552,24 @@ class TestForceCloseConfirm(unittest.TestCase):
         queued = [r for r in outbox.pending_rows() if r[0] != "evt-0"]
         self.assertEqual(queued[0][4], "tok-2")
 
-class TestAttendancePollerAroundTheClock(unittest.TestCase):
-    """The roster poll never stops: overnight or not, empty or occupied, the
-    kiosk shows what the server holds."""
+def _state(total=None, present=()):
+    """total=None: no real roster fetch yet (occupancy unknown)."""
+    state = AttendanceState()
+    if total is not None:
+        state.counts_known = True
+        state.current_counts = {"total": total}
+    state.present_ids = set(present)
+    state.push_event = lambda event: None
+    return state
 
-    def _run(self, total_before, iterations=2):
+
+class TestAttendancePollerOvernight(unittest.TestCase):
+    """The poll pauses only overnight in a building known to be empty, until
+    a badge or the morning; otherwise the kiosk keeps asking the server."""
+
+    def _run(self, state, overnight, iterations=2):
         backend = Mock(attendance_path="/attendance/current")
         backend.get_attendance.return_value = ({"counts": {"total": 1}}, 200)
-        state = AttendanceState()
-        state.current_counts = {"total": total_before}
-        state.push_event = lambda event: None
-
         calls = {"n": 0}
 
         def fake_sleep(secs):
@@ -569,21 +577,46 @@ class TestAttendancePollerAroundTheClock(unittest.TestCase):
             if calls["n"] >= iterations:
                 raise _StopLoop()
 
-        with patch("client.in_closed_window", return_value=True):
-            with self.assertRaises(_StopLoop):
-                attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep)
-        return backend, state
+        with self.assertRaises(_StopLoop):
+            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep,
+                               in_closed_window_fn=lambda: overnight)
+        return backend
 
-    def test_polls_overnight(self):
-        backend, _ = self._run(total_before=3)
-        backend.get_attendance.assert_called()
+    def test_pauses_overnight_when_known_empty(self):
+        self._run(_state(total=0), overnight=True).get_attendance.assert_not_called()
 
-    def test_polls_an_empty_building(self):
+    def test_polls_overnight_while_people_are_inside(self):
+        self._run(_state(total=3, present={5}), overnight=True).get_attendance.assert_called()
+
+    def test_polls_overnight_while_occupancy_is_unknown(self):
+        self._run(_state(), overnight=True).get_attendance.assert_called()
+
+    def test_a_badge_in_resumes_polling_overnight(self):
+        state = _state(total=0)
+        state.note_presence(5, checking_in=True)
+        self._run(state, overnight=True).get_attendance.assert_called()
+
+    def test_polls_an_empty_building_by_day(self):
         """Occupancy created off this Pi (web check-in, another entrance) must
         reach the screen."""
-        backend, state = self._run(total_before=0)
-        backend.get_attendance.assert_called()
-        self.assertEqual(state.current_counts, {"total": 1})
+        self._run(_state(total=0), overnight=False).get_attendance.assert_called()
+
+    def test_morning_resumes_polling(self):
+        hours = iter([True, False])
+        state = _state(total=0)
+        backend = Mock(attendance_path="/attendance/current")
+        backend.get_attendance.return_value = ({"counts": {"total": 0}}, 200)
+        calls = {"n": 0}
+
+        def fake_sleep(secs):
+            calls["n"] += 1
+            if calls["n"] >= 3:
+                raise _StopLoop()
+
+        with self.assertRaises(_StopLoop):
+            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep,
+                               in_closed_window_fn=lambda: next(hours))
+        backend.get_attendance.assert_called_once()
 
 
 class TestReseedKeepsUndeliveredScans(unittest.TestCase):
@@ -645,24 +678,64 @@ class TestReseedKeepsUndeliveredScans(unittest.TestCase):
         self.assertEqual(state.displayed_intent(5), "OUT")
 
 
-class TestProxyForwardsRosterGets(unittest.TestCase):
-    """The board's own roster GET always reaches the server; the kiosk never
-    answers it with a roster the server did not send."""
+class TestProxyRosterGets(unittest.TestCase):
+    """The board's roster GETs reach the server except overnight in a building
+    known to be empty, where the proxy answers 204 with no body. The kiosk
+    never answers them with a roster the server did not send."""
 
-    def test_forwards_the_attendance_get_overnight(self):
+    def test_skips_overnight_when_known_empty(self):
+        for path in ("/api/attendance", "/api/kioskdisplay/certifications?limit_to_present=true"):
+            self.assertTrue(skip_roster_get(_state(total=0), "GET", path, in_closed_window_fn=lambda: True))
+
+    def test_forwards_overnight_while_people_are_inside(self):
+        self.assertFalse(skip_roster_get(_state(total=3, present={5}), "GET", "/api/attendance",
+                                         in_closed_window_fn=lambda: True))
+
+    def test_forwards_overnight_after_a_badge_in(self):
+        self.assertFalse(skip_roster_get(_state(total=0, present={5}), "GET", "/api/attendance",
+                                         in_closed_window_fn=lambda: True))
+
+    def test_forwards_overnight_while_occupancy_is_unknown(self):
+        self.assertFalse(skip_roster_get(_state(), "GET", "/api/attendance",
+                                         in_closed_window_fn=lambda: True))
+
+    def test_forwards_an_empty_building_by_day(self):
+        self.assertFalse(skip_roster_get(_state(total=0), "GET", "/api/attendance",
+                                         in_closed_window_fn=lambda: False))
+
+    def test_forwards_scan_posts(self):
+        self.assertFalse(skip_roster_get(_state(total=0), "POST", "/api/scan",
+                                         in_closed_window_fn=lambda: True))
+
+    def _proxy_get(self, state, overnight, upstream_body=b""):
         handler = KioskHandler.__new__(KioskHandler)
         handler.path = "/api/attendance"
         handler.headers = {}
-        handler.state = AttendanceState()
+        handler.state = state
         handler.backend = Mock(base_url="http://backend", signing_key=SigningKey.generate())
         handler.wfile = io.BytesIO()
-        handler.send_response = handler.send_header = handler.end_headers = Mock()
-        roster = b'{"access": "full", "attendance": [], "counts": {"total": 3}}'
+        handler.send_response = Mock()
+        handler.send_header = handler.end_headers = Mock()
         resp = Mock(status_code=200, headers={})
-        resp.iter_content.return_value = [roster]
+        resp.iter_content.return_value = [upstream_body]
+
+        def skip(st, method, path):
+            return skip_roster_get(st, method, path, in_closed_window_fn=lambda: overnight)
+
         with patch("client.requests.request", return_value=resp) as upstream, \
-                patch("client.in_closed_window", return_value=True):
+                patch("client.skip_roster_get", side_effect=skip):
             handler._proxy_request("GET")
+        return handler, upstream
+
+    def test_skipped_get_answers_204_with_no_body(self):
+        handler, upstream = self._proxy_get(_state(total=0), overnight=True)
+        upstream.assert_not_called()
+        handler.send_response.assert_called_once_with(204)
+        self.assertEqual(handler.wfile.getvalue(), b"")
+
+    def test_forwarded_get_passes_the_server_roster_through(self):
+        roster = b'{"access": "full", "attendance": [], "counts": {"total": 3}}'
+        handler, upstream = self._proxy_get(_state(total=3, present={5}), overnight=True, upstream_body=roster)
         upstream.assert_called_once()
         self.assertEqual(handler.wfile.getvalue(), roster)
 

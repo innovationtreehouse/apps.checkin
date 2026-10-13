@@ -65,6 +65,8 @@ function KioskDisplayInner() {
   const [data, setData] = useState<AttendanceResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The kiosk proxy answers 204 overnight in a building it knows is empty.
+  const [kioskResting, setKioskResting] = useState(false);
   const [checkingOut, setCheckingOut] = useState<number | null>(null);
   const [household, setHousehold] = useState<{ householdMembers: Person[] } | null>(null);
   const [showSignOutModal, setShowSignOutModal] = useState(false);
@@ -160,6 +162,7 @@ function KioskDisplayInner() {
       }
 
       const res = await fetch("/api/attendance", { headers });
+      setKioskResting(res.status === 204);
       const json = await res.json().catch(() => ({}));
       if (res.ok && (json.access === "full" || json.access === "limited")) {
         setData(json);
@@ -506,6 +509,8 @@ function KioskDisplayInner() {
           <Center py="xl"><Loader /></Center>
         ) : error ? (
           <Alert color="red">{error === "Unauthorized" ? "Access Denied: Please sign in to view attendance." : error}</Alert>
+        ) : !data && kioskResting ? (
+          <Center py="xl"><Text c="dimmed">After hours — zzz. Badge in to wake the kiosk.</Text></Center>
         ) : !data ? (
           <Alert color="red">Attendance is unavailable — the roster could not be loaded.</Alert>
         ) : counts.total === 0 ? (

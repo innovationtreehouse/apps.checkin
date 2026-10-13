@@ -338,12 +338,14 @@ hours at a time — is a normal operating mode here, not an incident.
   holds regardless, and checking in or out decides from the visit record
   either way.  [Decision — *Principle: fail closed*]
 
-- The kiosk keeps the server's roster current around the clock: it fetches
-  the roster and delivers queued scans at night and in an empty building the
-  same as by day. An accurate roster outweighs the hosting cost of keeping the
-  service awake overnight, and a wrong kiosk clock must not be able to stop
-  it. The kiosk never answers its own screen with a roster the server did not
-  send.  [Decision — *Principle: fail closed*]
+- The kiosk keeps the server's roster current around the clock. It stops
+  asking for the roster in one case only: overnight, by its own clock, in a
+  building its last real roster showed empty with no badge since; a badge at
+  the kiosk or the morning resumes it. While anyone is inside, or occupancy is
+  unknown, it keeps fetching whatever its clock says — an accurate roster
+  outweighs the hosting cost, and a wrong kiosk clock must not hide people
+  inside. Queued scans are delivered at any hour. The kiosk never answers its
+  own screen with a roster the server did not send.  [Decision — *Principle: fail closed*]
 
 - Youth and two-deep math stay server-side, never computed on the kiosk. Resolving
   a parked scan runs the same fail-closed safety math the live path does.  [Decision — *Principle: fail closed*]
