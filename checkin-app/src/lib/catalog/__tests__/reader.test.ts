@@ -3,12 +3,13 @@
  */
 import { catalogReader } from '../reader';
 
-const down = () => Promise.reject(new Error('connect ECONNREFUSED'));
-
-jest.mock('@inventory/global-catalog', () => ({
-    readService: { listCategories: down, listSubcategories: down, getItem: down },
-    referenceMatchingService: { lookupMany: down, checkReferences: down },
-}));
+jest.mock('@inventory/global-catalog', () => {
+    const down = () => Promise.reject(new Error('connect ECONNREFUSED'));
+    return {
+        readService: { listCategories: down, listSubcategories: down, getItem: down },
+        referenceMatchingService: { lookupMany: down, checkReferences: down },
+    };
+});
 
 beforeEach(() => jest.spyOn(console, 'warn').mockImplementation(() => undefined));
 afterEach(() => jest.restoreAllMocks());

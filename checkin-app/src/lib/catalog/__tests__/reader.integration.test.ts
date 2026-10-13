@@ -4,8 +4,8 @@
 /**
  * X3 binding: the host's catalog reader, bound by each consumer's configureRuntime(),
  * reading a real global-catalog database migrated from its committed migrations. The
- * last test drops that database to show the display reads fall back and the
- * reference check fails closed.
+ * last tests point the catalog at a missing database to show the display reads fall
+ * back and the reference check fails closed.
  */
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -75,10 +75,11 @@ beforeAll(async () => {
     configureWorkflowRuntime();
 }, 120_000);
 
+// DROP DATABASE waits on a forced checkpoint, which can outlast the default hook timeout.
 afterAll(async () => {
     await catalog?.$disconnect();
     await admin((c) => c.query(`DROP DATABASE IF EXISTS "${DB}" WITH (FORCE)`));
-});
+}, 60_000);
 
 describe('expense CatalogReader bound to the catalog', () => {
     it('reads categories, subcategories, an item and a lookup', async () => {
@@ -107,9 +108,11 @@ describe('workflow-mapping CatalogReader bound to the catalog', () => {
 });
 
 describe('catalog database down', () => {
-    beforeAll(async () => {
-        await catalog.$disconnect();
-        await admin((c) => c.query(`DROP DATABASE IF EXISTS "${DB}" WITH (FORCE)`));
+    // The catalog client is a lazy global singleton: clear it so the next read builds one
+    // against a database that does not exist.
+    beforeAll(() => {
+        globalThis.__gcPrisma = undefined;
+        process.env.CATALOG_DATABASE_URL = withDb(base, `${DB}_missing`);
     });
 
     it('display reads return the inert result', async () => {
