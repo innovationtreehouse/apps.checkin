@@ -23,6 +23,7 @@
 import { POST } from '@/app/api/programs/[id]/sync-shopify/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { Client } from 'pg';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -128,6 +129,28 @@ describe('POST /api/programs/[id]/sync-shopify', () => {
         // IntegrationErrorLog is emitted. Pins current behavior (see file header).
         const errLogsAfter = await prisma.integrationErrorLog.count({ where: { source: 'shopify' } });
         expect(errLogsAfter).toBe(errLogsBefore);
+    });
+
+    it('refuses (409) while another sync holds the program, creating nothing', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const program = await makeBrokenProgram();
+        const holder = new Client({ connectionString: process.env.DATABASE_URL });
+        await holder.connect();
+        try {
+            await holder.query('BEGIN');
+            await holder.query('SELECT pg_advisory_xact_lock(7302, $1)', [program.id]);
+
+            const res = await POST(req(), params(program.id));
+            expect(res.status).toBe(409);
+            const after = await prisma.program.findUnique({ where: { id: program.id } });
+            expect(after?.shopifyVariantId).toBeNull();
+        } finally {
+            await holder.query('ROLLBACK').catch(() => { });
+            await holder.end();
+        }
+
+        // Released: the same request now repairs the program.
+        expect((await POST(req(), params(program.id))).status).toBe(200);
     });
 
     it('backfills only the claimant product on a program that has its public variant', async () => {

@@ -1095,6 +1095,27 @@ describe('Program payment-plan routes', () => {
             expect(ack).toEqual([expect.objectContaining({ to: participant.email })]);
         });
 
+        it('a double-submitted request sends the review-team notify and the ack once', async () => {
+            const householdId = await makeHousehold('double');
+            const participant = await makePerson('double-participant', householdId);
+            await prisma.programParticipant.create({
+                data: { programId: emailProgramId, personId: participant.id, status: 'PENDING', isPaymentPlanRequested: false, pendingSince: new Date() },
+            });
+            mockSession.mockResolvedValue({ user: { id: participant.id } });
+
+            const [a, b] = await Promise.all([
+                RequestPost(requestReq({ participantId: participant.id }), params(emailProgramId)),
+                RequestPost(requestReq({ participantId: participant.id }), params(emailProgramId)),
+            ]);
+            expect([a.status, b.status]).toEqual([200, 200]);
+
+            const sent = __getSentEmails();
+            const review = sent.filter((e) => e.subject.startsWith('New scholarship / payment-plan request'));
+            expect(review.map((e) => e.to).sort()).toEqual(REVIEW_TEAM_EMAILS);
+            const ack = sent.filter((e) => e.subject === 'We received your scholarship / payment-plan request');
+            expect(ack).toHaveLength(1);
+        });
+
         it('a no-op re-POST (already PENDING_HELD) sends zero emails', async () => {
             const householdId = await makeHousehold('noop');
             const participant = await makePerson('noop-participant', householdId);

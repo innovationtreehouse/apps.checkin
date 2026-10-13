@@ -6,6 +6,7 @@ import { apiError } from "@/lib/api-response";
 import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck, resolveAckCopy } from "@/lib/scholarshipEmails";
 import { config } from "@/lib/config";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { fromWhere } from "@/lib/membership/lifecycle";
 import { ScholarshipRequestKind } from "@/generated/prisma/client";
 import { scholarshipRequestKindLabel } from "@/lib/scholarshipRequestKind";
 
@@ -59,13 +60,12 @@ export const POST = withAuth({}, async (req, auth) => {
             return NextResponse.json({ success: true });
         }
 
-        // select: the UI reads only res.ok — never echo the raw process row
-        // (internal-tier zoho/shopify ids and stage timestamps) to the lead.
-        await prisma.orgMembershipProcess.update({
-            where: { id: processId },
+        // Compare-and-set on the flag, so of two concurrent submits only one sends the emails.
+        const flipped = await prisma.orgMembershipProcess.updateMany({
+            where: { id: processId, ...fromWhere('PENDING_PAYMENT'), isPaymentPlanRequested: false },
             data: { isPaymentPlanRequested: true, ...(kind ? { scholarshipRequestKind: kind as ScholarshipRequestKind } : {}) },
-            select: { id: true },
         });
+        if (flipped.count === 0) return NextResponse.json({ success: true });
 
         const base = config.baseUrl();
         const householdId = process.orgMembership.householdId;
