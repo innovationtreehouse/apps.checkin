@@ -8,6 +8,7 @@
 
 import { POST, DELETE } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
+import { withdrawAndReleaseHold } from '@/lib/program/capacity';
 import { getServerSession } from 'next-auth/next';
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
@@ -1179,6 +1180,26 @@ describe('Program Participants API Integration Tests', () => {
                 await prisma.programParticipant.delete({ where: { programId_personId: { programId: freeProgramId, personId: youthDepId } } });
             } else {
                 expect(row).toBeNull();
+            }
+        });
+
+        // The lead path's paid check lives in the delete itself, so a row that
+        // turned ACTIVE after any earlier read is still refused, never deleted.
+        it('refuses the unpaid-only delete once the row is ACTIVE, keeping the row', async () => {
+            await prisma.programParticipant.upsert({
+                where: { programId_personId: { programId: freeProgramId, personId: youthDepId } },
+                create: { programId: freeProgramId, personId: youthDepId, status: 'ACTIVE' },
+                update: { status: 'ACTIVE' },
+            });
+            try {
+                await expect(withdrawAndReleaseHold(freeProgramId, youthDepId, {}, 'PENDING'))
+                    .rejects.toMatchObject({ code: 'P2025' });
+                const row = await prisma.programParticipant.findUnique({
+                    where: { programId_personId: { programId: freeProgramId, personId: youthDepId } },
+                });
+                expect(row?.status).toBe('ACTIVE');
+            } finally {
+                await prisma.programParticipant.deleteMany({ where: { programId: freeProgramId, personId: youthDepId } });
             }
         });
 

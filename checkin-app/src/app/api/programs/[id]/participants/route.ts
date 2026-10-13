@@ -297,19 +297,13 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         const isLeadMentor = currentProgram.leadMentorId === currentUserId;
         const isSysAdminOrBoard = auth.user.isSysadmin || auth.user.isBoardMember;
 
-        if (!isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard) {
-            if (!(await isLeadOfParticipant(currentUserId, participantId))) {
-                return apiError("Forbidden: Not authorized to remove this participant", 403);
-            }
-            // A household lead may withdraw only an unpaid enrollment: a paid
-            // withdrawal (refund, restock) is the board's call.
-            const row = await prisma.programParticipant.findUnique({
-                where: { programId_personId: { programId, personId: participantId } },
-                select: { status: true },
-            });
-            if (row?.status === 'ACTIVE') {
-                return apiError("This child has paid; ask the board to withdraw them.", 403);
-            }
+        // A household lead may withdraw only an unpaid enrollment: a paid
+        // withdrawal (refund, restock) is the board's call. Enforced by the
+        // conditional delete below, not a separate read, so a payment landing
+        // mid-request cannot slip through.
+        const isHouseholdLeadPath = !isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard;
+        if (isHouseholdLeadPath && !(await isLeadOfParticipant(currentUserId, participantId))) {
+            return apiError("Forbidden: Not authorized to remove this participant", 403);
         }
 
         // Withdrawal is a household lead's action, not a youth's: beyond matching
@@ -330,7 +324,22 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         // scholarship seat (inventoryHeldAt set), releasing it back to
         // Shopify (+1) happens with the removal, exactly once (see
         // withdrawAndReleaseHold).
-        const { enrollment, released, shopifyOk } = await withdrawAndReleaseHold(programId, participantId, currentProgram);
+        let withdrawal: Awaited<ReturnType<typeof withdrawAndReleaseHold>>;
+        try {
+            withdrawal = await withdrawAndReleaseHold(programId, participantId, currentProgram, isHouseholdLeadPath ? 'PENDING' : undefined);
+        } catch (error) {
+            if (isHouseholdLeadPath && isPrismaError(error, 'P2025')) {
+                const row = await prisma.programParticipant.findUnique({
+                    where: { programId_personId: { programId, personId: participantId } },
+                    select: { status: true },
+                });
+                if (row?.status === 'ACTIVE') {
+                    return apiError("This child has paid; ask the board to withdraw them.", 403);
+                }
+            }
+            throw error;
+        }
+        const { enrollment, released, shopifyOk } = withdrawal;
 
         await prisma.auditLog.create({
             data: {
