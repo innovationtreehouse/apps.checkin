@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { isActiveOrgMember, isDuesSettled, isDuesSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { maybeAnnounceOnOpen } from "@/lib/programAnnounce";
-import { adjustProgramInventory, syncProgramPrice } from "@/lib/shopify";
+import { adjustProgramInventory, setProgramInventory, syncProgramPrice } from "@/lib/shopify";
 import { dollarsToCentsOrNull } from "@inventory/money";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
@@ -333,10 +333,14 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         const newOffSaleAt = offSaleAt !== undefined
             ? parseDateOnly(offSaleAt)
             : (newStartAt && currentProgram.offSaleAt?.getTime() === currentProgram.startAt.getTime() ? newStartAt : undefined);
-        // Moving the date into the future re-arms the sale sweep; the product
-        // and enrollment stay closed until the board reopens them.
-        const rearmSale = newOffSaleAt !== undefined
+        // Only the board reopens an ended sale, by moving its date later: that
+        // re-arms the sweep. Enrollment stays closed unless this save opens it.
+        const saleEndedNow = isSaleEnded(currentProgram);
+        const rearmSale = isSysAdminOrBoard && saleEndedNow && newOffSaleAt !== undefined
             && !isSaleEnded({ startAt: newStartAt ?? currentProgram.startAt, offSaleAt: newOffSaleAt, saleEndedAt: null });
+        if (enrollmentStatus === 'OPEN' && currentProgram.enrollmentStatus !== 'OPEN' && saleEndedNow && !rearmSale) {
+            return apiError("Sales for this program have ended. To reopen enrollment, move the off-sale date later.", 409);
+        }
 
         // Variant⟺price invariant: a program has a Shopify variant iff it
         // has a price on some tier — the capacity/oversell math assumes this
@@ -440,7 +444,17 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         const newMax = updatedProgram.maxParticipants;
         const hasShopifyVariant = !!updatedProgram.shopifyVariantId;
 
-        if (oldMax !== newMax && hasShopifyVariant && !isSaleEnded(updatedProgram)) {
+        if (rearmSale && hasShopifyVariant && newMax !== null) {
+            // Changes skipped while the sale was ended are lost to a relative push;
+            // set the absolute stock instead: capacity minus seats Shopify counts
+            // as taken (every ACTIVE seat and every held PENDING seat).
+            const taken = await prisma.programParticipant.count({
+                where: { programId, person: LIVE_PERSON, OR: [{ status: 'ACTIVE' }, { inventoryHeldAt: { not: null } }] },
+            });
+            if (!(await setProgramInventory(updatedProgram, Math.max(0, newMax - taken)))) {
+                warning = "Program updated, but setting the Shopify inventory failed. Capacity may be out of sync — check System Status > Link Status.";
+            }
+        } else if (oldMax !== newMax && hasShopifyVariant && !isSaleEnded(updatedProgram)) {
             if (oldMax !== null && newMax !== null) {
                 const ok = await adjustProgramInventory(updatedProgram, newMax - oldMax);
                 if (!ok) {

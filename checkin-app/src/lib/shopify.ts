@@ -727,6 +727,53 @@ export async function syncProgramPrice(
 }
 
 /**
+ * Sets a program's Shopify stock to an absolute quantity, for when relative
+ * adjustments were skipped (a sale that ended and is re-armed). Never throws:
+ * failures go to IntegrationErrorLog and return false.
+ */
+export async function setProgramInventory(
+    program: { shopifyVariantId?: string | null },
+    quantity: number,
+): Promise<boolean> {
+    const variantId = program.shopifyVariantId;
+    if (!variantId) return true;
+
+    if (config.shopifyMockActive()) {
+        console.log(`[SHOPIFY] (mock) Would set inventory to ${quantity} for variant: ${variantId}`);
+        return true;
+    }
+
+    const storeDomain = config.shopifyStoreDomain();
+    const accessToken = await getAccessToken();
+    if (!storeDomain || !accessToken) {
+        await reportShopifyFailure(
+            "setProgramInventory",
+            new Error("Shopify credentials missing or access token unavailable"),
+            { shopifyVariantId: variantId, quantity },
+            `Failed to set Shopify inventory to ${quantity} after a program's sale was reopened.`,
+        );
+        return false;
+    }
+
+    try {
+        const variantRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/variants/${variantId}.json`, {
+            headers: { 'X-Shopify-Access-Token': accessToken },
+        }, "Shopify get variant");
+        if (!variantRes.ok) throw new Error(`Shopify variant lookup failed for ${variantId}: ${variantRes.status}`);
+        const inventoryItemId = (await variantRes.json()).variant?.inventory_item_id;
+        return await setInitialShopifyInventory(storeDomain, accessToken, inventoryItemId, quantity, variantId);
+    } catch (error) {
+        await reportShopifyFailure(
+            "setProgramInventory",
+            error,
+            { shopifyVariantId: variantId, quantity },
+            `Failed to set Shopify inventory to ${quantity} after a program's sale was reopened.`,
+        );
+        return false;
+    }
+}
+
+/**
  * Takes a program's store product off sale by setting its status to draft, so
  * neither the store page nor an old cart link can buy it. Idempotent. A program
  * without a product has nothing to take down and succeeds.

@@ -19,6 +19,7 @@ stateDiagram-v2
     ON_SALE --> SALE_ENDED: off-sale date reached
     SALE_ENDED --> FINISHED: program ends
     SALE_ENDED --> NOT_ON_SALE: off-sale date moved later
+    SALE_ENDED --> ON_SALE: board reopens (date moved later + open)
     [*] --> NOT_ON_SALE: program created
     FINISHED --> [*]
 ```
@@ -27,13 +28,13 @@ stateDiagram-v2
 
 A blank (`—`) cell is a **deliberate** absent edge — a decision to ratify, not an oversight.
 
-| state ╲ event | board closes (off-sale date set to today) | cancelled | off-sale date moved later | off-sale date reached | open enrollment | pause enrollment | program created | program ends |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ∅ | — | — | — | — | — | — | NOT_ON_SALE | — |
-| NOT_ON_SALE | — | FINISHED | — | SALE_ENDED | ON_SALE | — | — | — |
-| ON_SALE | SALE_ENDED | — | — | SALE_ENDED | — | NOT_ON_SALE | — | — |
-| SALE_ENDED | — | — | NOT_ON_SALE | — | — | — | — | FINISHED |
-| FINISHED | — | — | — | — | — | — | — | — |
+| state ╲ event | board closes (off-sale date set to today) | board reopens (date moved later + open) | cancelled | off-sale date moved later | off-sale date reached | open enrollment | pause enrollment | program created | program ends |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ∅ | — | — | — | — | — | — | — | NOT_ON_SALE | — |
+| NOT_ON_SALE | — | — | FINISHED | — | SALE_ENDED | ON_SALE | — | — | — |
+| ON_SALE | SALE_ENDED | — | — | — | SALE_ENDED | — | NOT_ON_SALE | — | — |
+| SALE_ENDED | — | ON_SALE | — | NOT_ON_SALE | — | — | — | — | FINISHED |
+| FINISHED | — | — | — | — | — | — | — | — | — |
 
 ## Reachability
 

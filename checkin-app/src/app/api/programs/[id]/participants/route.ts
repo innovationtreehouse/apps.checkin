@@ -10,6 +10,7 @@ import { householdLeadship } from "@/lib/household/leads";
 import { isDuesSettled } from "@/lib/orgMembership";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
 import { adjustProgramInventory } from "@/lib/shopify";
+import { isSaleEnded } from "@/lib/programs/saleState";
 import { apiError } from "@/lib/api-response";
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
@@ -114,6 +115,11 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             // Check Enrollment Status
             if (currentProgram.enrollmentStatus === 'CLOSED') {
                 return NextResponse.json({ error: "Program enrollment is currently closed.", requiresOverride: true }, { status: 400 });
+            }
+            // The off-sale date closes new claims at once; the daily sweep only
+            // records it. Claims made in time returned 409 above and still pay.
+            if (isSaleEnded(currentProgram)) {
+                return NextResponse.json({ error: "Sales for this program have ended.", requiresOverride: true }, { status: 400 });
             }
 
             // Members-only, judged on the PERSON being enrolled (a household lead

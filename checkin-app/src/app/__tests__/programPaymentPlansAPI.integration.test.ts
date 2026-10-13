@@ -65,7 +65,7 @@ describe('Program payment-plan routes', () => {
         householdIds.push(mentor.householdId);
 
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Program ${TAG}`, leadMentorId: mentorId, enrollmentStatus: 'OPEN' },
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Program ${TAG}`, leadMentorId: mentorId, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01') },
         });
         programId = program.id;
 
@@ -281,7 +281,7 @@ describe('Program payment-plan routes', () => {
                     endAt: new Date('2026-12-31'),
                     name: `PP Shopify Program ${TAG}`,
                     leadMentorId: mentorId,
-                    enrollmentStatus: 'OPEN',
+                    enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'),
                     shopifyVariantId: 'dev-mock-variant-pp',
                 },
             });
@@ -526,7 +526,7 @@ describe('Program payment-plan routes', () => {
 
             beforeAll(async () => {
                 const p = await prisma.program.create({
-                    data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Apply Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-apply-pp' },
+                    data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Apply Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-apply-pp' },
                 });
                 shopifyProgramId = p.id;
             });
@@ -641,7 +641,7 @@ describe('Program payment-plan routes', () => {
         it('denies a pending request: no Shopify op, hold persists, denial stamped', async () => {
             const fetchSpy = jest.spyOn(global, 'fetch');
             const shopifyProgram = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Refuse Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-refuse-pp' },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Refuse Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-refuse-pp' },
             });
             try {
                 // inventoryHeldAt set, as APPLICATION would have stamped it.
@@ -688,7 +688,7 @@ describe('Program payment-plan routes', () => {
             process.env.CHECKIN_ENV = 'local';
             const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
             const shopifyProgram = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Reapply Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-reapply-pp' },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Reapply Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-reapply-pp' },
             });
             const reqParams = (id: string | number) => ({ params: Promise.resolve({ id: String(id) }) });
             try {
@@ -751,7 +751,7 @@ describe('Program payment-plan routes', () => {
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
                     name: `PP Scholarship Program ${TAG}`,
-                    enrollmentStatus: 'OPEN',
+                    enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'),
                     maxParticipants: 1,
                     orgMemberPriceCents: 1000,
                     nonOrgMemberPriceCents: 1500,
@@ -865,7 +865,7 @@ describe('Program payment-plan routes', () => {
             // Default env: shopifyMockActive() is false and no credentials are
             // configured, so adjustProgramInventory returns false without throwing.
             const p = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-rollback-pp' },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-rollback-pp' },
             });
             try {
                 await prisma.programParticipant.create({
@@ -1059,7 +1059,7 @@ describe('Program payment-plan routes', () => {
         let restoreBoardSettings: () => Promise<void> = async () => {};
         beforeAll(async () => {
             const p = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Email Behavior Program ${TAG}`, enrollmentStatus: 'OPEN' },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Email Behavior Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01') },
             });
             emailProgramId = p.id;
             // Pin the review-team address list so the exact-recipients assertions are
@@ -1222,7 +1222,7 @@ describe('Program payment-plan routes', () => {
                 },
             });
             const p = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Ack Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-ack-rollback-pp' },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Ack Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-ack-rollback-pp' },
             });
             try {
                 await prisma.programParticipant.create({

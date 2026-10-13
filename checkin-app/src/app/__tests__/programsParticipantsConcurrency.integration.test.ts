@@ -79,7 +79,7 @@ describe('POST /api/programs/[id]/participants concurrency (capacity lock)', () 
                 endAt: new Date('2026-12-31'),
                 name: `${TAG} program`,
                 phase: 'RUNNING',
-                enrollmentStatus: 'OPEN',
+                enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'),
                 maxParticipants: 1, // one seat
                 orgMemberPriceCents: null,
                 nonOrgMemberPriceCents: null, // free → no override needed, capacity still enforced

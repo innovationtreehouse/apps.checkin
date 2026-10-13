@@ -53,7 +53,7 @@ describe("flow: program purchase with member pricing", () => {
         // enrollment before anyone can join.
         const opened = await api(board, `/api/programs/${programId}`, {
             method: "PATCH",
-            body: JSON.stringify({ enrollmentStatus: "OPEN" }),
+            body: JSON.stringify({ enrollmentStatus: "OPEN", offSaleAt: "2999-01-01" }),
         });
         expect(opened.status).toBe(200);
 
