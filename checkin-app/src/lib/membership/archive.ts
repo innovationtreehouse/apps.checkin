@@ -29,6 +29,11 @@ function closeRefusal(process: OrgMembershipProcess): string | null {
  * drops off every live list. The step it was closed from is captured on the row
  * (`archivedFromStatus`) in the same write; who/when go to AuditLog. Closing an
  * already-closed application is a no-op.
+ *
+ * The Zoho signing request stays live on purpose: Zoho charges per request, so
+ * close/reopen never recall or recreate one. A signature that lands while closed is
+ * picked up after Reopen (by the advance re-run below, or by syncContractStatus on
+ * the applicant's next visit), with no new request.
  */
 export async function archiveApplication(processId: number, actorId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });

@@ -303,6 +303,18 @@ describe('Membership application archive API', () => {
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe('ARCHIVED');
     });
 
+    it('refuses to reopen a joining application once the household is ACTIVE (409, says why)', async () => {
+        const { processId, membershipId } = await makeProcess('NowActive', 'INTAKE');
+        asBoard(boardId);
+        await ARCHIVE(req({ processId }) as never);
+        await prisma.orgMembership.update({ where: { id: membershipId }, data: { status: 'ACTIVE' } });
+
+        const res = await UNARCHIVE(unarchiveReq({ processId }) as never);
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toMatch(/already an active member/i);
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe('ARCHIVED');
+    });
+
     it('refuses to reopen while the household has a BLOCKED application (409)', async () => {
         const { processId, membershipId } = await makeProcess('BlockedSibling', 'INTAKE');
         asBoard(boardId);
