@@ -225,9 +225,6 @@ export const POST = withAuth({}, async (req, auth) => {
                 return apiError("Participant not found", 404);
             }
 
-            const arrivalTime = new Date();
-            const eventId = await findAssociatedEventAt(participant.id, arrivalTime);
-
             // Read-then-create on this participant's open-visit state. Without
             // serialization, two concurrent MANUAL_CHECKINs — or one racing a kiosk
             // /api/scan or /api/attendance/manual — both pass the "already checked in?"
@@ -239,6 +236,9 @@ export const POST = withAuth({}, async (req, auth) => {
             const result = await prisma.$transaction(async (tx) => {
                 await tx.$executeRaw`SELECT pg_advisory_xact_lock(${participant.id})`;
                 await lockFacility(tx);
+                // Stamped under the facility lock: after any close it waited
+                // behind was carried out, so it reads as arriving after that close.
+                const arrivalTime = new Date();
 
                 const activeVisit = await tx.visit.findFirst({
                     where: {
@@ -264,6 +264,7 @@ export const POST = withAuth({}, async (req, auth) => {
                     return { facilityClosed: true as const };
                 }
 
+                const eventId = await findAssociatedEventAt(participant.id, arrivalTime, tx);
                 const visit = await tx.visit.create({
                     data: {
                         personId: participant.id,

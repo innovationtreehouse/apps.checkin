@@ -77,18 +77,12 @@ describe('POST /api/scan facility-close lock (#254)', () => {
         await prisma.household.deleteMany({ where: { id: { in: householdIds } } });
     });
 
-    it('concurrent last-keyholder confirm and non-keyholder check-in: sweep is complete, racer checks in', async () => {
+    it('concurrent keyholder close and non-keyholder check-in: sweep is complete, racer checks in', async () => {
         await prisma.visit.create({ data: { personId: keyholderId, arrivedAt: new Date() } });
         await prisma.visit.create({ data: { personId: otherId, arrivedAt: new Date() } });
 
-        const offer = await POST(scanReq(keyholderId, { intent: 'OUT' }));
-        expect(offer.status).toBe(200);
-        const offerBody = await offer.json();
-        expect(offerBody.type).toBe('checkout');
-        expect(offerBody.forceCloseToken).toEqual(expect.any(String));
-
         const [closeRes, checkinRes] = await Promise.all([
-            POST(scanReq(keyholderId, { intent: 'OUT', forceCloseToken: offerBody.forceCloseToken })),
+            POST(scanReq(keyholderId, { intent: 'OUT', close: 'confirmed' })),
             POST(scanReq(racerId)),
         ]);
 

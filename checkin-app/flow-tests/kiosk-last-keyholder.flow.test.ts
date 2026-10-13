@@ -2,9 +2,11 @@
  * @jest-environment node
  */
 /**
- * Flow test: at the kiosk, the last recorded keyholder's single badge with others
- * inside checks them out and offers the close; a second badge echoing the offer
- * closes the facility (docs/rules/attendance-checkin.md, Opening and closing).
+ * Flow test: at the kiosk, a keyholder closes. An older kiosk's single badge with
+ * others recorded inside checks the last keyholder out and offers the close, and
+ * a second badge echoing the offer closes; a kiosk that sends close requests
+ * closes on the one badge it sent as a close, whoever the server records
+ * (docs/rules/attendance-checkin.md, Opening and closing).
  *
  * Under CHECKIN_ENV=local a cookieless request is the keyless kiosk. People are
  * checked in through the board's manual check-in.
@@ -42,12 +44,13 @@ describe("flow: the last keyholder at the kiosk", () => {
     const badge = (extra: Record<string, unknown> = {}) =>
         api<Offer>(null, "/api/scan", { method: "POST", body: JSON.stringify({ participantId: keyholderId, intent: "OUT", protocolVersion: 5, ...extra }) });
 
-    /** The board closes whatever is open, leaving an empty building. */
+    /** The board signs out whatever is open, leaving an empty building. Not a
+     *  keyholder, it may only leave, never close. */
     async function emptyBuilding() {
         for (const v of (await roster()).attendance) {
             const res = await api<{ type?: string; forceCloseToken?: string }>(board, "/api/attendance", { method: "DELETE", body: JSON.stringify({ visitId: v.id }) });
             if (res.status === 400 && res.json.type === "close_choice") {
-                await api(board, "/api/attendance", { method: "DELETE", body: JSON.stringify({ visitId: v.id, forceCloseToken: res.json.forceCloseToken, closeChoice: "close" }) });
+                await api(board, "/api/attendance", { method: "DELETE", body: JSON.stringify({ visitId: v.id, forceCloseToken: res.json.forceCloseToken, closeChoice: "leave" }) });
             }
         }
         expect((await roster()).attendance).toHaveLength(0);
@@ -79,6 +82,16 @@ describe("flow: the last keyholder at the kiosk", () => {
 
         const close = await badge({ forceCloseToken: offer.json.forceCloseToken });
         expect(close.json).toMatchObject({ type: "checkout", facilityClosed: true });
+        expect((await roster()).attendance).toHaveLength(0);
+    });
+
+    it("a kiosk that sends close requests closes on one badge when it showed nobody else", async () => {
+        await checkIn(keyholderId);
+        await checkIn(otherId);
+
+        const close = await badge({ protocolVersion: 6, close: "alone" });
+        expect(close.json).toMatchObject({ type: "checkout", facilityClosed: true });
+        expect(close.json.forceCloseToken).toBeUndefined();
         expect((await roster()).attendance).toHaveLength(0);
     });
 });

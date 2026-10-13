@@ -1,14 +1,17 @@
 /**
- * The scan route's post-commit side effects: the facility-close sweep (retried
- * once, then recorded in ErrorLog) and the check-in/out email (stamped with the
- * scan's own event time, only for a toggle that actually happened).
+ * The scan route's post-commit side effects: carrying out recorded closes (a
+ * failure is logged and left for the next re-drive) and the check-in/out email
+ * (stamped with the scan's own event time, only for a toggle that happened).
  */
 import prisma from "@/lib/prisma";
-import { finalizeFacilityClose, notifyScanOutcome } from "@/lib/scan-service";
+import { executePendingCloses, notifyScanOutcome } from "@/lib/scan-service";
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { logBackendError } from "@/lib/logger";
 
-jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { $transaction: jest.fn() } }));
+jest.mock("@/lib/prisma", () => ({
+    __esModule: true,
+    default: { $transaction: jest.fn(), facilityClose: { findMany: jest.fn() } },
+}));
 jest.mock("@/lib/notifications", () => ({
     sendCheckinNotifications: jest.fn().mockResolvedValue(undefined),
 }));
@@ -16,59 +19,63 @@ jest.mock("@/lib/logger", () => ({ logBackendError: jest.fn() }));
 jest.mock("@/lib/postEventEmails", () => ({ processPostEventEmails: jest.fn().mockResolvedValue(undefined) }));
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
-const closer = { closedById: 1, via: "KIOSK" as const };
 const tx = prisma.$transaction as jest.Mock;
+const findMany = prisma.facilityClose.findMany as jest.Mock;
 
 beforeEach(() => jest.clearAllMocks());
 
-describe("finalizeFacilityClose", () => {
-    it("retries a failed sweep once and does not log when the retry succeeds", async () => {
-        tx.mockRejectedValueOnce(new Error("Transaction already closed")).mockResolvedValueOnce(undefined);
-
-        await finalizeFacilityClose(json({ facilityClosed: true }), closer);
-
-        expect(tx).toHaveBeenCalledTimes(2);
-        expect(logBackendError).not.toHaveBeenCalled();
-    });
-
-    it("records a second failure in ErrorLog instead of throwing", async () => {
-        const err = new Error("connection dropped");
-        tx.mockRejectedValueOnce(new Error("first")).mockRejectedValueOnce(err);
-
-        await expect(finalizeFacilityClose(json({ facilityClosed: true }), closer)).resolves.toBeUndefined();
-
-        expect(tx).toHaveBeenCalledTimes(2);
-        expect(logBackendError).toHaveBeenCalledWith(err, "facility-close");
-    });
-
-    it("carries the late-close time into the retried sweep, not the retry's own clock", async () => {
-        const closeTime = new Date("2026-10-01T21:30:00Z");
-        const sweepTimes: unknown[] = [];
-        let attempt = 0;
-        tx.mockImplementation(async (cb: (t: unknown) => Promise<unknown>) => {
-            attempt++;
-            const fakeTx = {
-                $executeRaw: jest.fn(async () => 0),
-                $queryRaw: jest.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => {
-                    if (values.includes(closeTime.toISOString())) sweepTimes.push(values[0]);
-                    return [];
-                }),
-                visit: { findFirst: jest.fn(async () => null) },
-                facilityClose: { create: jest.fn(async () => ({ id: 1 })) },
-            };
-            await cb(fakeTx);
-            if (attempt === 1) throw new Error("Transaction already closed");
-        });
-
-        await finalizeFacilityClose(json({ facilityClosed: true }), closer, closeTime);
-
-        expect(sweepTimes).toEqual([closeTime.toISOString(), closeTime.toISOString()]);
-        expect(logBackendError).not.toHaveBeenCalled();
-    });
-
-    it("does nothing unless the response reports facilityClosed", async () => {
-        await finalizeFacilityClose(json({ type: "checkout", facilityClosed: false }), closer);
+describe("executePendingCloses", () => {
+    it("does nothing when every close has run", async () => {
+        findMany.mockResolvedValue([]);
+        await executePendingCloses();
         expect(tx).not.toHaveBeenCalled();
+    });
+
+    it("sweeps at the recorded close time and marks the close executed", async () => {
+        const closedAt = new Date("2026-10-01T21:30:00Z");
+        findMany.mockResolvedValue([{ id: 7 }]);
+        const sweepTimes: unknown[] = [];
+        const update = jest.fn(async () => ({}));
+        tx.mockImplementation(async (cb: (t: unknown) => Promise<unknown>) => cb({
+            $executeRaw: jest.fn(async () => 0),
+            $queryRaw: jest.fn(async (_s: TemplateStringsArray, ...values: unknown[]) => {
+                sweepTimes.push(values[0]);
+                return [];
+            }),
+            facilityClose: {
+                findFirst: jest.fn(async () => ({ id: 7, closedAt, closedById: 1 })),
+                update,
+            },
+        }));
+
+        await executePendingCloses();
+
+        expect(sweepTimes).toEqual([closedAt.toISOString()]);
+        expect(update).toHaveBeenCalledWith({ where: { id: 7 }, data: { executedAt: expect.any(Date) } });
+    });
+
+    it("skips a close another executor already ran", async () => {
+        findMany.mockResolvedValue([{ id: 7 }]);
+        const queryRaw = jest.fn();
+        tx.mockImplementation(async (cb: (t: unknown) => Promise<unknown>) => cb({
+            $executeRaw: jest.fn(async () => 0),
+            $queryRaw: queryRaw,
+            facilityClose: { findFirst: jest.fn(async () => null), update: jest.fn() },
+        }));
+
+        await executePendingCloses();
+
+        expect(queryRaw).not.toHaveBeenCalled();
+    });
+
+    it("logs a failed sweep instead of throwing; the close stays recorded for the next re-drive", async () => {
+        const err = new Error("connection dropped");
+        findMany.mockResolvedValue([{ id: 7 }]);
+        tx.mockRejectedValue(err);
+
+        await expect(executePendingCloses()).resolves.toBeUndefined();
+
+        expect(logBackendError).toHaveBeenCalledWith(err, "facility-close");
     });
 });
 

@@ -1392,15 +1392,24 @@ model FacilityClose {
   /// earlier time moves the close. Null when the closer had no visit of their own.
   /// @sensitivity:internal
   closerVisitId Int?
-  /// When the server applied it; differs from closedAt on a late or offline close.
+  /// When the server recorded it; differs from closedAt on a late or offline close.
   /// @sensitivity:internal
   createdAt  DateTime         @default(now())
+  /// The kiosk scan that asked for this close. Null on a web or nightly close.
+  /// @sensitivity:internal
+  clientEventId String?       @unique
+  /// When the sweep ran. Null while the close is recorded but not yet carried
+  /// out; any such row is executed by the next re-drive (lib/scan-service.ts).
+  /// The default marks a row written by code that sweeps as it records.
+  /// @sensitivity:internal
+  executedAt DateTime?        @default(now())
 
   closedBy Person? @relation(fields: [closedById], references: [id], onDelete: SetNull)
   visits   Visit[]
 
   @@index([closedById])
   @@index([closerVisitId])
+  @@index([executedAt])
 }
 
 model AuditLog {

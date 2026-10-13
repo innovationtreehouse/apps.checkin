@@ -12,7 +12,6 @@ import { DELETE as dashboardDELETE } from '@/app/api/attendance/route';
 import { PATCH as manualPATCH, DELETE as manualDELETE } from '@/app/api/attendance/manual/[id]/route';
 import { GET as nightlyGET } from '@/app/api/cron/nightly/route';
 import { PATCH as staffPATCH } from '@/app/api/facility/visits/route';
-import { closeOnOfferConfirm } from '@/lib/scan-service';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
 import { getServerSession } from 'next-auth/next';
@@ -149,7 +148,7 @@ describe('facility close record and departure log (real DB)', () => {
     }
     const fresh = [{ departedAt: null, departedVia: null }][0];
 
-    describe('kiosk', () => {
+    describe('kiosk below scan protocol 6 (the checkout decides the close)', () => {
         it('the last keyholder\'s leave then confirming badge writes one KIOSK close', async () => {
             asKiosk();
             await open(keyholder);
@@ -211,6 +210,55 @@ describe('facility close record and departure log (real DB)', () => {
                 { person: member2, before: fresh },
             ], keyholder);
             expect(close.closedAt.getTime()).toBe(scannedAt.getTime());
+        });
+    });
+
+    describe('kiosk on scan protocol 6 (the kiosk sends the close)', () => {
+        const v6 = (body: Record<string, unknown>) => req('/api/scan', 'POST', { protocolVersion: 6, ...body });
+
+        it('a keyholder shown alone closes with one scan: one KIOSK close, past others the server records', async () => {
+            asKiosk();
+            const kv = await open(keyholder);
+            await open(member);
+            await open(member2);
+
+            const res = await scanPOST(v6({ participantId: keyholder.id, intent: 'OUT', close: 'alone' }));
+            expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: true });
+            expect((await visitOf(member)).departedVia).toBe('FACILITY_CLOSE');
+            expect((await visitOf(keyholder)).departedVia).toBe('SCANNER');
+
+            const close = await expectOneClose('KIOSK', keyholder.id, [
+                { person: member, before: fresh },
+                { person: member2, before: fresh },
+            ], keyholder);
+            expect(close.executedAt).not.toBeNull();
+            expect(close.closerVisitId).toBe(kv.id);
+        });
+
+        it('a plain OUT with others recorded only leaves; the confirmed close then writes one KIOSK close', async () => {
+            asKiosk();
+            await open(keyholder);
+            await open(member);
+
+            const first = await scanPOST(v6({ participantId: keyholder.id, intent: 'OUT' }));
+            const left = await first.json();
+            expect(left).toMatchObject({ type: 'checkout', facilityClosed: false });
+            expect(left).not.toHaveProperty('forceCloseToken');
+            expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(0);
+
+            const second = await scanPOST(v6({ participantId: keyholder.id, intent: 'OUT', close: 'confirmed' }));
+            expect(await second.json()).toMatchObject({ facilityClosed: true });
+
+            await expectOneClose('KIOSK', keyholder.id, [{ person: member, before: fresh }], keyholder);
+        });
+
+        it('a plain OUT closes nothing even when the server records nobody else', async () => {
+            asKiosk();
+            await open(keyholder);
+
+            const res = await scanPOST(v6({ participantId: keyholder.id, intent: 'OUT' }));
+            expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: false });
+            expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(0);
         });
     });
 
@@ -504,7 +552,11 @@ describe('facility close record and departure log (real DB)', () => {
             const kv = await open(keyholder, { departedAt: leftAt, departedVia: 'SCANNER' });
             const mv = await open(member);
 
-            await closeOnOfferConfirm(keyholder, 'kiosk', prisma, null, `evt-late-${TAG}`, true, confirmedAt);
+            asKiosk();
+            await scanPOST(req('/api/scan', 'POST', {
+                participantId: keyholder.id, clientEventId: `evt-late-${TAG}`, scannedAt: confirmedAt.toISOString(),
+                replay: true, intent: 'OUT', close: 'confirmed', protocolVersion: 6,
+            }));
             const close = await theClose();
             expect(close).toMatchObject({ via: 'KIOSK_OFFLINE', closerVisitId: kv.id, closedAt: confirmedAt });
 

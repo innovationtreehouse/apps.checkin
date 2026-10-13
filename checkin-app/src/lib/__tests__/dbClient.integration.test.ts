@@ -11,7 +11,7 @@ import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
 import { isRootClient, withTx } from '@/lib/db-client';
-import { closeOnOfferConfirm } from '@/lib/scan-service';
+import { processCloseRequest } from '@/lib/scan-service';
 import { processPostEventEmails } from '@/lib/postEventEmails';
 
 jest.mock('@/lib/auth', () => ({
@@ -117,35 +117,37 @@ describe('db-client root detection', () => {
         expect(await prisma.visit.count({ where: { personId: member } })).toBe(0);
     });
 
-    it('a close confirmed under a caller transaction defers the facility sweep', async () => {
+    it('a close recorded under a caller transaction defers the facility sweep', async () => {
         await arriveAll([k2, member]);
         const kh = await prisma.person.findUniqueOrThrow({ where: { id: k1 } });
         await prisma.$transaction(async (tx) => {
-            const res = await closeOnOfferConfirm(kh, 'kiosk', tx, null, `${TAG}-offline`, true);
-            expect((await res!.json()).facilityClosed).toBe(true);
+            const res = await processCloseRequest(kh, tx, new Date(), null, true);
+            expect((await res.json()).facilityClosed).toBe(true);
             expect(await tx.visit.count({ where: { personId: { in: [k2, member] }, departedAt: null } })).toBe(2);
         });
         await settle();
         expect(processPostEventEmails).not.toHaveBeenCalled();
+        expect(await openVisitsFor([k2, member])).toBe(2);
+        await prisma.facilityClose.deleteMany({ where: { closedById: k1, executedAt: null } });
     });
 
-    it('a scan-route close by the last keyholder sweeps once and kicks post-event emails once', async () => {
+    it('a scan-route close by the keyholder alone sweeps once and kicks post-event emails once', async () => {
         await arriveAll([k1]);
-        const res = await (await POST(scanReq({ participantId: k1, intent: 'OUT' }))).json();
+        const res = await (await POST(scanReq({ participantId: k1, intent: 'OUT', close: 'alone' }))).json();
         expect(res.facilityClosed).toBe(true);
         await settle();
         expect(processPostEventEmails).toHaveBeenCalledTimes(1);
         expect(await openVisitsFor([k1])).toBe(0);
     });
 
-    it('a scan-route close on the offered confirm sweeps everyone once and kicks post-event emails once', async () => {
+    it('a plain keyholder OUT then the confirmed close sweeps everyone once and kicks post-event emails once', async () => {
         await arriveAll(ids());
-        const offer = await (await POST(scanReq({ participantId: k1, intent: 'OUT' }))).json();
-        expect(offer.forceCloseToken).toEqual(expect.any(String));
+        const left = await (await POST(scanReq({ participantId: k1, intent: 'OUT' }))).json();
+        expect(left.facilityClosed).toBe(false);
         await settle();
         expect(processPostEventEmails).not.toHaveBeenCalled();
 
-        const closed = await (await POST(scanReq({ participantId: k1, intent: 'OUT', forceCloseToken: offer.forceCloseToken }))).json();
+        const closed = await (await POST(scanReq({ participantId: k1, intent: 'OUT', close: 'confirmed' }))).json();
         expect(closed.facilityClosed).toBe(true);
         await settle();
         expect(processPostEventEmails).toHaveBeenCalledTimes(1);

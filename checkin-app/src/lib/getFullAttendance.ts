@@ -6,6 +6,7 @@ import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits }
 import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
 import { invalidatableCache } from "@/lib/invalidatableCache";
 import { getKioskDisplayNames } from "@/lib/kiosk-names";
+import { LATE_CLOSE_SKEW_MS } from "@/lib/visitTimes";
 
 /**
  * Current-attendance feed.
@@ -168,8 +169,23 @@ async function computeFullAttendance(kiosk: boolean) {
     const noKeyholder = (isKeyholder: boolean, arrivedAt: Date) =>
         !isKeyholder && visitHadNoKeyholder(arrivedAt, keyholderCover);
 
+    // A keyholder check-in scanned by the latest close but delivered after it
+    // ran is one that close should have ended, so it does not reopen the
+    // building. Its scan time is before the close ran; a live arrival after the
+    // close is stamped after it, and reopens. The nightly sweep runs on an empty
+    // building, so any arrival within the skew of it is such a check-in.
+    const lastClose = keyholderVisits.length === 0 ? null : await prisma.facilityClose.findFirst({
+        where: { executedAt: { not: null } },
+        orderBy: { closedAt: "desc" },
+        select: { closedAt: true, executedAt: true, via: true },
+    });
+    const opensBuilding = (arrivedAt: Date) =>
+        !lastClose
+        || arrivedAt.getTime() > lastClose.closedAt.getTime() + LATE_CLOSE_SKEW_MS
+        || (lastClose.via !== "NIGHTLY_SWEEP" && arrivedAt >= lastClose.executedAt!);
+
     const safety = {
-        facilityOpen: keyholderVisits.length > 0,
+        facilityOpen: keyholderVisits.some(v => opensBuilding(v.arrivedAt)),
         isLastKeyholder: keyholderVisits.length === 1,
         isTwoDeepViolation: unaccompaniedYouth.length > 0
             && supervisingAdultCount(await supervisingAdultVisits()) < MIN_SUPERVISING_ADULTS,

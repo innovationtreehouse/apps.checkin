@@ -2,7 +2,7 @@ import type { Person, PresenceDirection } from "@/generated/prisma/client";
 import { apiJson } from "@/lib/api-response";
 import type { DbClient } from "@/lib/db-client";
 import { LIVE_VISIT } from "@/lib/visit/filters";
-import { closeOnOfferConfirm, processCheckin, processCheckout } from "@/lib/scan-service";
+import { type LegacyKiosk, processCheckin, processCheckout } from "@/lib/scan-service";
 import {
     PresenceClass,
     appendPresenceEvent,
@@ -23,12 +23,10 @@ export async function applyPresenceIntent(
         authType: string;
         source: "SCANNER" | "TYPED";
         clientEventId?: string | null;
-        confirmToken?: string | null;
-        replayEventId?: string | null;
-        forceCloseConfirmed?: boolean;
+        isReplay?: boolean;
         clockSuspect?: boolean;
         webClose?: boolean;
-        shownEmpty?: boolean | null;
+        legacyKiosk?: LegacyKiosk | null;
     },
 ): Promise<Response> {
     const event = await appendPresenceEvent(db, {
@@ -54,25 +52,12 @@ export async function applyPresenceIntent(
             return apiJson({ type: "parked", message: "Recorded for review." });
         }
 
-        const res = await processCheckin(args.participant, args.authType, db, args.occurredAt);
+        const res = await processCheckin(args.participant, args.authType, db, args.isReplay ? args.occurredAt : undefined);
         await classifyCheckin(db, event.id, res, args.participant.id, args.clientEventId);
         return res;
     }
 
     if (!openVisit) {
-        const closed = await closeOnOfferConfirm(
-            args.participant,
-            args.authType,
-            db,
-            args.confirmToken ?? null,
-            args.replayEventId ?? null,
-            args.forceCloseConfirmed ?? false,
-            args.occurredAt,
-        );
-        if (closed) {
-            await classifyPresenceEvent(db, event.id, PresenceClass.PROJECTED);
-            return closed;
-        }
         await classifyPresenceEvent(db, event.id, PresenceClass.CONFLICT_OUT_NO_IN);
         await flagForReview(db, args.participant.id, args.clientEventId, "conflict_out_no_in");
         return apiJson({ type: "parked", message: "Recorded for review." });
@@ -83,16 +68,14 @@ export async function applyPresenceIntent(
         openVisit.id,
         args.authType,
         db,
-        args.confirmToken ?? null,
         args.occurredAt,
-        args.replayEventId ?? null,
-        args.forceCloseConfirmed ?? false,
+        args.isReplay ?? false,
         args.webClose ?? false,
-        args.shownEmpty ?? null,
+        args.legacyKiosk ?? null,
     );
     // Mirror the IN branch: PROJECTED only when someone actually left. A
-    // force-close warning or a review park leaves the visit open — the
-    // confirming re-badge writes its own event and projects then.
+    // supervision warning leaves the visit open — the confirming re-badge
+    // writes its own event and projects then.
     if (await checkoutConfirmed(res)) {
         await classifyPresenceEvent(db, event.id, PresenceClass.PROJECTED, openVisit.id);
     }

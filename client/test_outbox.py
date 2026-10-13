@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 from outbox import (Outbox, classify_response, replay_drain, new_event_id, now_iso,
                     in_closed_window, MIN_BACKOFF_SECONDS, DRAIN_PACE_SECONDS, MAX_5XX_ATTEMPTS)
-from client import handle_scan, _saved_banner_html, ClockWatch
+from client import handle_scan, _saved_banner_html, ClockWatch, SCAN_PROTOCOL_VERSION
 
 
 class _StopLoop(Exception):
@@ -17,18 +17,15 @@ class _StopLoop(Exception):
 
 
 class FakeState:
-    def __init__(self, confirm_token=None):
+    def __init__(self):
         self.events = []
-        self.confirm_token = confirm_token
         self.clock_watch = ClockWatch()
         self.present_ids = set()
+        self.scan_protocol = SCAN_PROTOCOL_VERSION
+        self.known_people = {}
 
     def push_event(self, data):
         self.events.append(data)
-
-    def take_confirm(self, participant_id):
-        token, self.confirm_token = self.confirm_token, None
-        return token
 
     def displayed_intent(self, participant_id):
         return "IN"
@@ -48,8 +45,11 @@ class FakeState:
     def is_repeat_read(self, participant_id):
         return False
 
-    def offline_close_offer(self, participant_id):
-        return False
+    def close_decision(self, participant_id):
+        return None, []
+
+    def clear_present(self):
+        self.present_ids = set()
 
     def offline_supervision_warning(self):
         return None

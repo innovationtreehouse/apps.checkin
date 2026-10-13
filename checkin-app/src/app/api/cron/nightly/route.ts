@@ -4,7 +4,7 @@ import { withCron } from "@/lib/cronAuth";
 import prisma from "@/lib/prisma";
 import { processPostEventEmails } from "@/lib/postEventEmails";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
-import { type DepartureChange, logCloseDepartures } from "@/lib/scan-service";
+import { type DepartureChange, executePendingCloses, logCloseDepartures } from "@/lib/scan-service";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { LIVE_VISIT } from "@/lib/visit/filters";
 import { runPersonAgreementSweep } from "@/lib/membership/personAgreementTriggers";
@@ -13,6 +13,9 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { lockFacility } from "@/lib/facilityLock";
 
 export const GET = withCron(async () => {
+        // A keyholder's recorded close whose sweep never ran departs people at
+        // the keyholder's time, so it runs before this sweep stamps them at now.
+        await executePendingCloses();
         const now = new Date();
 
         // 1. Find all users who are currently checked in (abandoned visits)
