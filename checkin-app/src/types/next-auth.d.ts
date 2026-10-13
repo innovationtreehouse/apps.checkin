@@ -74,6 +74,8 @@ declare module "next-auth/jwt" {
     emailVerified?: boolean;
     // Inert impersonation provenance — display/audit only, never read by authz.
     impersonatedBy?: string | null;
+    // Epoch seconds of the sign-in that minted this session; bounds its absolute lifetime.
+    signedInAt?: number;
     isSysadmin?: boolean;
     isKeyholder?: boolean;
     isBoardMember?: boolean;
