@@ -241,13 +241,12 @@ export async function reportShopifyFailure(
 }
 
 /**
- * Picks the inventory location from a `/locations.json` body. Prefers an active
- * location: `locations[0]` may be a deactivated or fulfillment-service location
- * that inventory writes 422 against.
+ * Picks the inventory location from a `/locations.json` body: the first location
+ * explicitly marked `active: true`, else null. Fails closed — an inactive or
+ * unknown-state location 422s inventory writes, which hides the real cause.
  */
-function pickActiveLocationId(locData: { locations?: Array<{ id?: number; active?: boolean }> }): number | undefined {
-    const locations = locData.locations ?? [];
-    return (locations.find((l) => l.active !== false) ?? locations[0])?.id;
+function pickActiveLocationId(locData: { locations?: Array<{ id?: number; active?: boolean }> }): number | null {
+    return locData.locations?.find((l) => l.active === true)?.id ?? null;
 }
 
 /**
@@ -295,7 +294,7 @@ async function setInitialShopifyInventory(
 
         const locationId = pickActiveLocationId(await locRes.json());
         if (!locationId) {
-            await logIntegrationError("shopify", new Error("no Shopify location available to set inventory"), { operation: "setInitialShopifyInventory", label, quantity });
+            await logIntegrationError("shopify", new Error("no active Shopify location; cannot set inventory"), { operation: "setInitialShopifyInventory", label, quantity });
             return false;
         }
 
@@ -509,7 +508,7 @@ export async function adjustProgramInventory(
         }, "Shopify get locations");
         if (!locRes.ok) throw new Error(`Shopify locations lookup failed: ${locRes.status}`);
         const locationId = pickActiveLocationId(await locRes.json());
-        if (!locationId) throw new Error("Shopify store has no locations configured");
+        if (!locationId) throw new Error("no active Shopify location");
 
         const variantRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/variants/${variantId}.json`, {
             headers: { 'X-Shopify-Access-Token': accessToken },
