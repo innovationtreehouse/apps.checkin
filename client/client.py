@@ -26,43 +26,6 @@ import requests
 from outbox import Outbox, classify_response, replay_drain, new_event_id, now_iso, in_closed_window
 from health import health_monitor
 
-# Browser iframe polls these with idleStopMs unset. Swallowing them overnight
-# is what lets prod's 5-minute curfew fire — the Python attendance_poller
-# alone is not enough. Empty-building skip stays on the poller only, so a
-# display-only / other-entrance check-in still lands via this proxied GET.
-KIOSK_KEEPALIVE_PATHS = ("/api/attendance", "/api/kioskdisplay/certifications")
-
-
-def is_kiosk_keepalive_path(path):
-    return any(
-        path == p or path.startswith(p + "?") or path.startswith(p + "/")
-        for p in KIOSK_KEEPALIVE_PATHS
-    )
-
-
-def skip_kiosk_keepalive(state, method, path, in_closed_window_fn=in_closed_window):
-    """True when a proxied GET must not hit the ALB (overnight only)."""
-    if method != "GET" or not is_kiosk_keepalive_path(path):
-        return False
-    return bool(in_closed_window_fn())
-
-
-def synthetic_keepalive_body(path, state):
-    """JSON the iframe already knows how to parse, without a backend round-trip.
-
-    Must include `safety` (and `access`/`youth`): a missing safety object is
-    treated as UNKNOWN and paints the orange supervision fail-safe even on
-    an empty overnight board.
-    """
-    if is_kiosk_keepalive_path(path) and path.startswith("/api/kioskdisplay/certifications"):
-        return json.dumps({"participants": [], "tools": []})
-    return json.dumps({
-        "access": "full",
-        "counts": {"total": 0, "keyholders": 0, "volunteers": 0, "youth": 0},
-        "safety": {"isLastKeyholder": False, "isTwoDeepViolation": False},
-        "attendance": [],
-    })
-
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -755,21 +718,6 @@ class KioskHandler(BaseHTTPRequestHandler):
         sig_headers = sign_request(self.backend.signing_key, method, sign_path, body_str)
         req_headers.update(sig_headers)
 
-        if skip_kiosk_keepalive(self.state, method, sign_path):
-            # Chromium is still up; don't let last_browser_seen look like a crash.
-            if self.state is not None:
-                self.state.last_browser_seen = time.monotonic()
-            body = synthetic_keepalive_body(sign_path, self.state).encode()
-            try:
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-            except (BrokenPipeError, ConnectionResetError):
-                return
-            return
-        
         try:
             # Use requests.request (stateless) so cookies flow directly between browser and backend
             resp = requests.request(

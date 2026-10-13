@@ -1,4 +1,5 @@
 import inspect
+import io
 import json
 import os
 import subprocess
@@ -18,6 +19,7 @@ from client import (
     CLOSED_HOLD_DWELL_S,
     OFFLINE_HOLD_COPY,
     FORCE_CLOSE_CONFIRM_SECONDS,
+    KioskHandler,
     _saved_banner_html,
     _scan_result_banner_html,
     attendance_poller,
@@ -25,8 +27,6 @@ from client import (
     latest_release_tag,
     main,
     resolve_update_target,
-    skip_kiosk_keepalive,
-    synthetic_keepalive_body,
 )
 from outbox import Outbox, in_closed_window
 
@@ -634,49 +634,26 @@ class TestAttendancePollerClosedWindow(unittest.TestCase):
         backend.get_attendance.assert_called()
 
 
-class TestProxyKeepaliveSkip(unittest.TestCase):
-    """Iframe polls /api/attendance every 60s with idleStopMs unset. The proxy
-    must swallow those GETs overnight and when empty or ALB never goes quiet."""
+class TestProxyForwardsRosterGets(unittest.TestCase):
+    """The board's roster GET always reaches the server; the kiosk never
+    answers it with a roster the server did not send."""
 
-    def test_skips_attendance_get_overnight(self):
-        state = AttendanceState()
-        self.assertTrue(
-            skip_kiosk_keepalive(state, "GET", "/api/attendance",
-                                 in_closed_window_fn=lambda: True)
-        )
-
-    def test_forwards_certs_get_when_known_empty_during_the_day(self):
-        """Display-only / other-entrance occupancy comes back on this GET."""
-        state = AttendanceState()
-        state.counts_known = True
-        state.current_counts = {"total": 0}
-        self.assertFalse(
-            skip_kiosk_keepalive(state, "GET", "/api/kioskdisplay/certifications",
-                                 in_closed_window_fn=lambda: False)
-        )
-
-    def test_forwards_scan_posts(self):
-        state = AttendanceState()
-        self.assertFalse(
-            skip_kiosk_keepalive(state, "POST", "/api/scan",
-                                 in_closed_window_fn=lambda: True)
-        )
-
-    def test_forwards_when_occupied(self):
-        state = AttendanceState()
-        state.counts_known = True
-        state.current_counts = {"total": 3}
-        self.assertFalse(
-            skip_kiosk_keepalive(state, "GET", "/api/attendance",
-                                 in_closed_window_fn=lambda: False)
-        )
-
-    def test_synthetic_attendance_body_is_json_the_iframe_parses(self):
-        body = json.loads(synthetic_keepalive_body("/api/attendance", AttendanceState()))
-        self.assertEqual(body["access"], "full")
-        self.assertEqual(body["counts"]["youth"], 0)
-        self.assertEqual(body["safety"], {"isLastKeyholder": False, "isTwoDeepViolation": False})
-        self.assertEqual(body["attendance"], [])
+    def test_forwards_the_attendance_get_overnight(self):
+        handler = KioskHandler.__new__(KioskHandler)
+        handler.path = "/api/attendance"
+        handler.headers = {}
+        handler.state = AttendanceState()
+        handler.backend = Mock(base_url="http://backend", signing_key=SigningKey.generate())
+        handler.wfile = io.BytesIO()
+        handler.send_response = handler.send_header = handler.end_headers = Mock()
+        roster = b'{"access": "full", "attendance": [], "counts": {"total": 3}}'
+        resp = Mock(status_code=200, headers={})
+        resp.iter_content.return_value = [roster]
+        with patch("client.requests.request", return_value=resp) as upstream, \
+                patch("client.in_closed_window", return_value=True):
+            handler._proxy_request("GET")
+        upstream.assert_called_once()
+        self.assertEqual(handler.wfile.getvalue(), roster)
 
 
 class TestOfflineForceClose(unittest.TestCase):
