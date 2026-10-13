@@ -478,6 +478,27 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         expect(activateByProcessId).toHaveBeenCalledWith(42, '98765', true);
     });
 
+    it('activates the program seat AND the membership when one order carries both', async () => {
+        await setPending(p1);
+        const body = JSON.stringify({
+            financial_status: 'paid',
+            id: 98766,
+            line_items: [{ variant_id: MEMBERSHIP_VARIANT_ID, quantity: 1 }, { variant_id: PROGRAM_VARIANT_ID, quantity: 1 }],
+            note_attributes: [
+                { name: 'Membership_Process_ID', value: '43' },
+                { name: 'CheckMeIn_Account_ID', value: String(p1) },
+                { name: 'Program_ID', value: String(programId) },
+            ],
+        });
+        const res = await POST(webhookReq(body, sign(body)));
+        expect(res.status).toBe(200);
+        expect(activateByProcessId).toHaveBeenCalledWith(43, '98766', true);
+        const row = await prisma.programParticipant.findUnique({
+            where: { programId_personId: { programId, personId: p1 } },
+        });
+        expect(row?.status).toBe('ACTIVE');
+    });
+
     it('returns 500 and writes one IntegrationErrorLog row when a handler throws', async () => {
         // Clean slate so the survivor count is exact.
         await prisma.integrationErrorLog.deleteMany({ where: { source: 'shopify-webhook' } });
