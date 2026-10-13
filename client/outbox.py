@@ -368,7 +368,8 @@ def _send_dead_row(outbox, send_fn, push_fn=None, backoff=MIN_BACKOFF_SECONDS):
     return _backoff_seconds(retry_after, backoff), min(backoff * 2, MAX_BACKOFF_SECONDS)
 
 
-def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok_fn=lambda: True):
+def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok_fn=lambda: True,
+                 quiet_fn=lambda: False):
     """Single drain thread: pulls pending rows in scanned_at order,
     resubmits each one (send_fn re-signs per call), and applies the
     ack/retry/dead outcome. Runs forever; call in a background thread."""
@@ -393,6 +394,11 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok
         rows = outbox.pending_rows(skip_inflight=True)
         if not rows:
             backoff = MIN_BACKOFF_SECONDS
+            # Dead rows wait out a known-empty building: retiring them is not
+            # worth deferring prod's overnight curfew. Pending rows always go.
+            if quiet_fn():
+                sleep_fn(DRAIN_PACE_SECONDS)
+                continue
             dead_wait, dead_backoff = _send_dead_row(outbox, send_fn, push_fn, dead_backoff)
             sleep_fn(dead_wait if dead_wait is not None else DRAIN_PACE_SECONDS)
             continue

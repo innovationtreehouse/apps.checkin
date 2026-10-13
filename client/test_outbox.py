@@ -382,6 +382,41 @@ class TestReplayDrain(unittest.TestCase):
             send_fn.assert_called()
             self.assertEqual(ob.pending_count(), 0)
 
+    def test_dead_pass_waits_while_quiet(self):
+        with tempfile.TemporaryDirectory() as d:
+            ob = Outbox(os.path.join(d, "outbox.db"))
+            ob.enqueue("evt-1", "1", now_iso())
+            ob.mark_dead("evt-1", 404)
+            send_fn = MagicMock()
+            sleeps = {"n": 0}
+
+            def fake_sleep(secs):
+                sleeps["n"] += 1
+                if sleeps["n"] >= 3:
+                    raise _StopLoop()
+
+            with self.assertRaises(_StopLoop):
+                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep, quiet_fn=lambda: True)
+            send_fn.assert_not_called()
+            self.assertEqual(ob.dead_count(), 1)
+
+    def test_pending_rows_go_out_even_while_quiet(self):
+        with tempfile.TemporaryDirectory() as d:
+            ob = Outbox(os.path.join(d, "outbox.db"))
+            ob.enqueue("evt-1", "1", now_iso())
+            send_fn = MagicMock(return_value=({"type": "checkin"}, 200, None))
+            sleeps = {"n": 0}
+
+            def fake_sleep(secs):
+                sleeps["n"] += 1
+                if sleeps["n"] >= 3:
+                    raise _StopLoop()
+
+            with self.assertRaises(_StopLoop):
+                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep, quiet_fn=lambda: True)
+            send_fn.assert_called()
+            self.assertEqual(ob.pending_count(), 0)
+
     def test_same_client_event_id_reused_across_retries_until_acked(self):
         # The idempotency key must not change between attempts -- a retried
         # send after a warming/network failure is a redelivery of the same

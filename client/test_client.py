@@ -552,15 +552,22 @@ class TestForceCloseConfirm(unittest.TestCase):
         queued = [r for r in outbox.pending_rows() if r[0] != "evt-0"]
         self.assertEqual(queued[0][4], "tok-2")
 
-def _state(total=None, present=()):
-    """total=None: no real roster fetch yet (occupancy unknown)."""
+def _state(total=None, present=(), served=()):
+    """total=None: no real roster fetch yet (occupancy unknown). `served`: board
+    roster paths already given the server's answer since the last fetch."""
     state = AttendanceState()
     if total is not None:
         state.counts_known = True
         state.current_counts = {"total": total}
+        state.roster_generation = 1
     state.present_ids = set(present)
+    state.served_generation = {p: state.roster_generation for p in served}
     state.push_event = lambda event: None
     return state
+
+
+ROSTER = "/api/attendance"
+CERTS = "/api/kioskdisplay/certifications"
 
 
 class TestAttendancePollerPausesWhenEmpty(unittest.TestCase):
@@ -598,6 +605,26 @@ class TestAttendancePollerPausesWhenEmpty(unittest.TestCase):
         state = _state(total=0)
         state.note_presence(5, checking_in=True)
         self._run(state).get_attendance.assert_called()
+
+    def test_a_change_pushes_the_real_roster_to_the_board(self):
+        """The board renders what the server sent instead of re-fetching into a
+        proxy that may already be resting."""
+        roster = {"attendance": [], "counts": {"total": 0}, "safety": {"isLastKeyholder": False}}
+        backend = Mock(attendance_path="/attendance/current")
+        backend.get_attendance.return_value = (roster, 200)
+        state = _state(total=1, present={5})
+        pushed = []
+        state.push_event = pushed.append
+        calls = {"n": 0}
+
+        def fake_sleep(secs):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise _StopLoop()
+
+        with self.assertRaises(_StopLoop):
+            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep)
+        self.assertEqual(pushed, [{"html": "", **roster}])
 
 
 class TestReseedKeepsUndeliveredScans(unittest.TestCase):
@@ -661,52 +688,80 @@ class TestReseedKeepsUndeliveredScans(unittest.TestCase):
 
 class TestProxyRosterGets(unittest.TestCase):
     """The board's roster GETs reach the server except while the building is
-    known empty, where the proxy answers 204 with no body. The kiosk never
+    known empty and that board path has already had the real roster since the
+    last fetch; then the proxy answers 204 with no body. The kiosk never
     answers them with a roster the server did not send."""
 
-    def test_skips_when_known_empty(self):
-        for path in ("/api/attendance", "/api/kioskdisplay/certifications?limit_to_present=true"):
-            self.assertTrue(skip_roster_get(_state(total=0), "GET", path))
+    def test_skips_when_known_empty_and_already_served(self):
+        for path in (ROSTER, CERTS + "?limit_to_present=true"):
+            self.assertTrue(skip_roster_get(_state(total=0, served=(ROSTER, CERTS)), "GET", path))
+
+    def test_forwards_the_first_get_after_a_fetch_shows_empty(self):
+        """A web checkout that empties the building: the board must get the
+        real empty roster once, not keep showing who left."""
+        self.assertFalse(skip_roster_get(_state(total=0), "GET", ROSTER))
+
+    def test_each_board_path_gets_its_own_real_answer(self):
+        self.assertFalse(skip_roster_get(_state(total=0, served=(ROSTER,)), "GET", CERTS))
 
     def test_forwards_while_people_are_inside(self):
-        self.assertFalse(skip_roster_get(_state(total=3, present={5}), "GET", "/api/attendance"))
+        self.assertFalse(skip_roster_get(_state(total=3, present={5}, served=(ROSTER,)), "GET", ROSTER))
 
     def test_forwards_after_a_badge_in(self):
-        self.assertFalse(skip_roster_get(_state(total=0, present={5}), "GET", "/api/attendance"))
+        self.assertFalse(skip_roster_get(_state(total=0, present={5}, served=(ROSTER,)), "GET", ROSTER))
 
     def test_forwards_while_occupancy_is_unknown(self):
-        self.assertFalse(skip_roster_get(_state(), "GET", "/api/attendance"))
+        self.assertFalse(skip_roster_get(_state(), "GET", ROSTER))
 
     def test_forwards_scan_posts(self):
-        self.assertFalse(skip_roster_get(_state(total=0), "POST", "/api/scan"))
+        self.assertFalse(skip_roster_get(_state(total=0, served=(ROSTER,)), "POST", "/api/scan"))
 
-    def _proxy_get(self, state, upstream_body=b""):
+    def _proxy(self, state, method="GET", path=ROSTER, upstream_body=b"", status=200):
         handler = KioskHandler.__new__(KioskHandler)
-        handler.path = "/api/attendance"
+        handler.path = path
         handler.headers = {}
         handler.state = state
         handler.backend = Mock(base_url="http://backend", signing_key=SigningKey.generate())
         handler.wfile = io.BytesIO()
+        handler.rfile = io.BytesIO(b"")
         handler.send_response = Mock()
         handler.send_header = handler.end_headers = Mock()
-        resp = Mock(status_code=200, headers={})
+        resp = Mock(status_code=status, headers={})
         resp.iter_content.return_value = [upstream_body]
-
         with patch("client.requests.request", return_value=resp) as upstream:
-            handler._proxy_request("GET")
+            handler._proxy_request(method)
         return handler, upstream
 
     def test_skipped_get_answers_204_with_no_body(self):
-        handler, upstream = self._proxy_get(_state(total=0))
+        handler, upstream = self._proxy(_state(total=0, served=(ROSTER,)))
         upstream.assert_not_called()
         handler.send_response.assert_called_once_with(204)
         self.assertEqual(handler.wfile.getvalue(), b"")
 
     def test_forwarded_get_passes_the_server_roster_through(self):
         roster = b'{"access": "full", "attendance": [], "counts": {"total": 3}}'
-        handler, upstream = self._proxy_get(_state(total=3, present={5}), upstream_body=roster)
+        handler, upstream = self._proxy(_state(total=3, present={5}), upstream_body=roster)
         upstream.assert_called_once()
         self.assertEqual(handler.wfile.getvalue(), roster)
+
+    def test_the_real_empty_roster_is_served_once_then_rests(self):
+        state = _state(total=0)
+        _, first = self._proxy(state, upstream_body=b'{"attendance": []}')
+        _, second = self._proxy(state)
+        first.assert_called_once()
+        second.assert_not_called()
+
+    def test_a_board_check_in_makes_occupancy_unknown(self):
+        """A check-in made on the board itself does not pass the scanner."""
+        state = _state(total=0, served=(ROSTER,))
+        self._proxy(state, method="POST", status=200)
+        self.assertFalse(state.counts_known)
+        self.assertFalse(skip_roster_get(state, "GET", ROSTER))
+
+    def test_a_failed_board_post_leaves_occupancy_known(self):
+        state = _state(total=0, served=(ROSTER,))
+        self._proxy(state, method="POST", status=400)
+        self.assertTrue(state.counts_known)
 
 
 class TestRepeatReadFilter(unittest.TestCase):

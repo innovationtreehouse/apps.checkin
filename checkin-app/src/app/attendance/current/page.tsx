@@ -163,6 +163,10 @@ function KioskDisplayInner() {
 
       const res = await fetch("/api/attendance", { headers });
       setKioskResting(res.status === 204);
+      if (res.status === 204) {
+        setError(null);
+        return;
+      }
       const json = await res.json().catch(() => ({}));
       if (res.ok && (json.access === "full" || json.access === "limited")) {
         setData(json);
@@ -230,7 +234,7 @@ function KioskDisplayInner() {
       headers["x-kiosk-nonce"] = nonceParamsUrl;
     }
     const attRes = await fetch("/api/attendance", { headers });
-    const json = await attRes.json();
+    const json = await attRes.json().catch(() => ({}));
     if (attRes.ok && (json.access === "full" || json.access === "limited")) {
       setData(json);
       if (json.signedRequest) setIsKioskMode(true);

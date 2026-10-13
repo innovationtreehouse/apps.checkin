@@ -385,6 +385,29 @@ describe("attendance/current page", () => {
       expect(screen.queryByText("The facility is currently empty.")).not.toBeInTheDocument();
     });
 
+    it("clears an earlier error so the resting message shows", async () => {
+      setSearchParams("mode=kiosk");
+      let calls = 0;
+      global.fetch = jest.fn(async () => {
+        calls += 1;
+        if (calls === 1) {
+          return { ok: false, status: 502, json: async () => ({}) } as unknown as Response;
+        }
+        return {
+          ok: true,
+          status: 204,
+          json: async () => Promise.reject(new SyntaxError("no body")),
+        } as unknown as Response;
+      }) as unknown as typeof fetch;
+      renderWithProviders(<KioskDisplay />);
+      expect(await screen.findByText("Failed to load attendance")).toBeInTheDocument();
+
+      window.postMessage("refresh-attendance", "*");
+
+      expect(await screen.findByText("Kiosk resting — zzz. Badge in to wake it.")).toBeInTheDocument();
+      expect(screen.queryByText("Failed to load attendance")).not.toBeInTheDocument();
+    });
+
     it("keeps the last real roster instead of replacing it", async () => {
       setSearchParams("mode=kiosk");
       mockResting("roster");

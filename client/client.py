@@ -42,13 +42,6 @@ def local_clock_label(now=None):
     return label
 
 
-def is_roster_get_path(path):
-    return any(
-        path == p or path.startswith(p + "?") or path.startswith(p + "/")
-        for p in ROSTER_GET_PATHS
-    )
-
-
 def building_known_empty(state):
     """True only when the last real roster fetch reported nobody inside and no
     badge on this Pi has put anyone inside since."""
@@ -57,14 +50,32 @@ def building_known_empty(state):
                 and not state.present_ids)
 
 
+def roster_get_key(path):
+    """The ROSTER_GET_PATHS entry a proxied path belongs to, or None."""
+    for p in ROSTER_GET_PATHS:
+        if path == p or path.startswith(p + "?") or path.startswith(p + "/"):
+            return p
+    return None
+
+
 def skip_roster_get(state, method, path):
     """True when the proxy answers the board's roster GET itself, with a 204
-    and no body: the building is known empty, and with one door every arrival
-    badges here first. The board keeps the last real roster it rendered; the
-    kiosk never serves a roster the server did not send."""
-    if state is None or method != "GET" or not is_roster_get_path(path):
+    and no body: the building is known empty (with one door, every arrival
+    badges here first) and this board path has already been served the real
+    roster since the last fetch. The board keeps that real roster; the kiosk
+    never serves a roster the server did not send."""
+    key = roster_get_key(path)
+    if state is None or method != "GET" or key is None:
         return False
-    return building_known_empty(state)
+    with state.lock:
+        served = state.served_generation.get(key) == state.roster_generation
+    return served and building_known_empty(state)
+
+
+def kiosk_quiet(state, outbox):
+    """Known empty with nothing queued: the kiosk sends the server nothing on
+    its own, so prod's overnight curfew can fire and the database can pause."""
+    return building_known_empty(state) and outbox.pending_count() == 0
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +286,10 @@ class AttendanceState:
         self.current_counts = {"total": 0, "keyholders": 0, "volunteers": 0, "students": 0}
         # False until a real roster fetch: "unknown" never counts as empty.
         self.counts_known = False
+        # Bumped on every real roster fetch. A board roster path is served the
+        # server's answer at least once per generation before the proxy rests it.
+        self.roster_generation = 0
+        self.served_generation = {}
         self.confirm_token = None    # force-close confirm token, if a countdown is running
         self.confirm_participant = None  # the keyholder that token was shown to
         self.confirm_deadline = 0.0  # monotonic clock, end of that countdown
@@ -494,6 +509,7 @@ class AttendanceState:
             self.keyholder_ids = keyholders
             self.last_two_deep_violation = bool(safety.get("isTwoDeepViolation"))
             self.counts_known = True
+            self.roster_generation += 1
 
     def apply_pending(self, pending):
         """Overlay undelivered outbox rows when there is no roster to seed from."""
@@ -869,6 +885,15 @@ class KioskHandler(BaseHTTPRequestHandler):
 
             if self.state is not None:
                 self.state.last_browser_seen = time.monotonic()
+                key = roster_get_key(sign_path)
+                if method == "GET" and key is not None and resp.status_code == 200:
+                    with self.state.lock:
+                        self.state.served_generation[key] = self.state.roster_generation
+                elif method != "GET" and 200 <= resp.status_code < 300:
+                    # A check-in/out made on the board itself: occupancy is
+                    # unknown until the next real fetch.
+                    with self.state.lock:
+                        self.state.counts_known = False
                 if sign_path == "/api/attendance":
                     if resp.status_code == 200:
                         self.state.last_attendance_ok = time.monotonic()
@@ -1269,7 +1294,11 @@ def attendance_poller(backend, state, outbox, interval=30, sleep_fn=time.sleep):
                 state.current_counts = new_counts
             if changed:
                 log.info(f"Attendance poll: {new_counts.get('total', '?')} present")
-                state.push_event({"html": "", "counts": new_counts})
+                event = {"html": ""}
+                for key in ("attendance", "counts", "safety"):
+                    if key in att_data:
+                        event[key] = att_data[key]
+                state.push_event(event)
 
 def _read_last_restart_target(path=SELF_UPDATE_STATE_FILE):
     # Missing/unreadable file means "never restarted" -- same as no target.
@@ -1335,8 +1364,10 @@ def resolve_update_target():
         ["git", "rev-parse", "origin/main"], text=True
     ).strip()
 
-def version_poller(backend, state, interval=60, state_path=SELF_UPDATE_STATE_FILE):
-    """Background thread that checks for client and server version updates."""
+def version_poller(backend, state, outbox, interval=60, state_path=SELF_UPDATE_STATE_FILE):
+    """Background thread that checks for client and server version updates.
+    The server check is skipped while the kiosk is quiet (known empty, nothing
+    queued): any request defers prod's overnight curfew."""
     last_restart_target = _read_last_restart_target(state_path)
 
     # Get initial server version
@@ -1357,17 +1388,18 @@ def version_poller(backend, state, interval=60, state_path=SELF_UPDATE_STATE_FIL
         # succeeded: the drain's protocol gate feeds off this poll, and a
         # kiosk that boots while the backend is down (the exact condition
         # that fills the outbox) must still learn the protocol once the
-        # server is back.
-        sv, sp, status = backend.get_server_version()
-        if status == 200:
-            state.scan_protocol = sp
-        if status == 200 and sv and initial_server_version is None:
-            initial_server_version = sv
-            log.info(f"Server version (late init): {sv} (scan protocol {sp})")
-        elif status == 200 and sv and sv != initial_server_version:
-            log.info(f"Server version changed from {initial_server_version} to {sv}. Requesting reload.")
-            state.push_event({"reload": True})
-            initial_server_version = sv  # Update to prevent spam
+        # server is back. Queued rows keep the kiosk out of quiet.
+        if not kiosk_quiet(state, outbox):
+            sv, sp, status = backend.get_server_version()
+            if status == 200:
+                state.scan_protocol = sp
+            if status == 200 and sv and initial_server_version is None:
+                initial_server_version = sv
+                log.info(f"Server version (late init): {sv} (scan protocol {sp})")
+            elif status == 200 and sv and sv != initial_server_version:
+                log.info(f"Server version changed from {initial_server_version} to {sv}. Requesting reload.")
+                state.push_event({"reload": True})
+                initial_server_version = sv  # Update to prevent spam
 
         # 2. Check Client Version Update
         try:
@@ -1454,7 +1486,7 @@ def main():
         poller.start()
 
     # Start version poller thread
-    vpoller = threading.Thread(target=version_poller, args=(backend, state), daemon=True)
+    vpoller = threading.Thread(target=version_poller, args=(backend, state, outbox), daemon=True)
     vpoller.start()
 
     allow_reboot = bool(config.get("allow_reboot", False))
@@ -1471,7 +1503,8 @@ def main():
     # re-signing and resubmitting each one, once the backend is reachable.
     drain = threading.Thread(
         target=replay_drain, args=(outbox, backend.post_scan, state.push_event),
-        kwargs={"protocol_ok_fn": lambda: state.scan_protocol >= SCAN_PROTOCOL_VERSION}, daemon=True
+        kwargs={"protocol_ok_fn": lambda: state.scan_protocol >= SCAN_PROTOCOL_VERSION,
+                "quiet_fn": lambda: building_known_empty(state)}, daemon=True
     )
     drain.start()
 

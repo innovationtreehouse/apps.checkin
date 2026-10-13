@@ -7,11 +7,13 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from client import (
+    AttendanceState,
     _read_last_restart_target,
     _write_last_restart_target,
     _should_restart_for_update,
     version_poller,
 )
+from outbox import Outbox
 
 
 class TestShouldRestartForUpdate(unittest.TestCase):
@@ -82,7 +84,7 @@ class TestVersionPollerLoopGuard(unittest.TestCase):
                  patch("client.os._exit") as exit_mock, \
                  patch("client.time.sleep", side_effect=fake_sleep):
                 with self.assertRaises(_StopLoop):
-                    version_poller(backend, state, interval=0, state_path=state_path)
+                    version_poller(backend, state, Outbox(":memory:"), interval=0, state_path=state_path)
         return exit_mock
 
     def test_mismatch_then_stuck_checkout_then_genuine_advance(self):
@@ -108,30 +110,51 @@ class TestVersionPollerLoopGuard(unittest.TestCase):
         self.assertTrue(any("Not restarting" in m for m in logs.output))
 
 
-class TestVersionPollerOvernight(unittest.TestCase):
-    """The server-version GET feeds the drain's protocol gate, so it runs
-    around the clock; self-update (git, no server) runs alongside it."""
+class TestVersionPollerQuiet(unittest.TestCase):
+    """The server-version GET pauses while the kiosk is quiet (known empty,
+    nothing queued), so prod's overnight curfew can fire. Self-update (git, no
+    server) runs regardless."""
 
-    def test_polls_the_version_get_overnight(self):
+    def _run(self, state, outbox):
         backend = MagicMock()
         backend.get_server_version.return_value = ("v1", 2, 200)
-        state = MagicMock()
         calls = {"n": 0}
 
         def fake_sleep(_):
             calls["n"] += 1
-            if calls["n"] >= 2:
+            if calls["n"] >= 3:
                 raise _StopLoop()
 
         with tempfile.TemporaryDirectory() as d:
             with patch("client.subprocess.run") as run_mock, \
                  patch("client.subprocess.check_output", return_value="same\n"), \
-                 patch("client.time.sleep", side_effect=fake_sleep), \
-                 patch("client.in_closed_window", return_value=True):
+                 patch("client.time.sleep", side_effect=fake_sleep):
                 with self.assertRaises(_StopLoop):
-                    version_poller(backend, state, interval=0, state_path=os.path.join(d, "state"))
-        self.assertGreater(backend.get_server_version.call_count, 1)
+                    version_poller(backend, state, outbox, interval=0, state_path=os.path.join(d, "state"))
+        return backend, run_mock
+
+    def _known_empty(self):
+        state = AttendanceState()
+        state.counts_known = True
+        state.current_counts = {"total": 0}
+        return state
+
+    def test_skips_the_version_get_while_quiet(self):
+        backend, run_mock = self._run(self._known_empty(), Outbox(":memory:"))
+        # The bootstrap call only; none from the recurring check.
+        self.assertEqual(backend.get_server_version.call_count, 1)
         run_mock.assert_called()
+
+    def test_queued_scans_keep_the_version_get_going(self):
+        """The drain's protocol gate feeds off this poll."""
+        ob = Outbox(":memory:")
+        ob.enqueue("evt-1", "5", "2026-10-13T03:00:00Z")
+        backend, _ = self._run(self._known_empty(), ob)
+        self.assertGreater(backend.get_server_version.call_count, 1)
+
+    def test_polls_while_occupancy_is_unknown(self):
+        backend, _ = self._run(AttendanceState(), Outbox(":memory:"))
+        self.assertGreater(backend.get_server_version.call_count, 1)
 
 
 class TestVersionPollerLateInit(unittest.TestCase):
@@ -158,7 +181,7 @@ class TestVersionPollerLateInit(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             with patch("client.subprocess.run"),                  patch("client.subprocess.check_output", return_value="same\n"),                  patch("client.time.sleep", side_effect=fake_sleep):
                 with self.assertRaises(_StopLoop):
-                    version_poller(backend, state, interval=0,
+                    version_poller(backend, state, Outbox(":memory:"), interval=0,
                                    state_path=os.path.join(d, "state"))
 
         self.assertEqual(state.scan_protocol, 2)

@@ -334,17 +334,20 @@ hours at a time — is a normal operating mode here, not an incident.
   whether it is two deep — as fact only while the server has heard from the
   kiosk within the last five minutes. Otherwise it says it can't confirm the
   building's state and when the kiosk was last heard from, and what it lists is
-  the visit record, not presence. The kiosk's own screen shows what the kiosk
-  holds regardless, and checking in or out decides from the visit record
-  either way.  [Decision — *Principle: fail closed*]
+  the visit record, not presence. A kiosk resting in a building it knows is
+  empty sends nothing on purpose, so that is the expected reading then. The
+  kiosk's own screen shows what the kiosk holds regardless, and checking in or
+  out decides from the visit record either way.  [Decision — *Principle: fail closed*]
 
-- The kiosk stops asking the server for the roster only while the building is
-  known empty — its last real roster showed nobody inside and no badge at the
-  kiosk since — at any hour, and the next badge resumes it. This rests on the
-  front door being the only scanner: every arrival badges there first. While
-  anyone is inside, or occupancy is unknown, it keeps fetching whatever its
-  clock says. Queued scans are delivered at any hour. The kiosk never answers
-  its own screen with a roster the server did not send.  [Decision — *Principle: fail closed*]
+- The kiosk rests — sends the server nothing on its own — only while the
+  building is known empty: its last real roster showed nobody inside, no badge
+  at the kiosk and no check-in made on its screen since, and no scan waiting
+  to be delivered. That holds at any hour, and the next badge ends it. Before
+  it rests, its screen shows the real empty roster. This rests on the front
+  door being the only scanner: every arrival badges there first. While anyone
+  is inside, or occupancy is unknown, it keeps fetching whatever its clock
+  says. The kiosk never answers its own screen with a roster the server did
+  not send.  [Decision — *Principle: fail closed*]
 
 - Youth and two-deep math stay server-side, never computed on the kiosk. Resolving
   a parked scan runs the same fail-closed safety math the live path does.  [Decision — *Principle: fail closed*]

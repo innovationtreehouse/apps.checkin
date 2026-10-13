@@ -15,10 +15,11 @@ let lastSeenAtMs: number | null = null;
 
 /**
  * How recent a signed kiosk request must be for the web to state building
- * state as fact. Daytime, the kiosk's display polls /api/attendance (signed
- * by the Pi's proxy) once a minute whether or not anyone is inside, so five
- * minutes of silence means the server cannot reach the building. Overnight (23:00–06:00 kiosk local time) the kiosk stops polling
- * on purpose and this reads unreachable, as it should.
+ * state as fact. While anyone is inside, or the kiosk doesn't know, its display
+ * polls /api/attendance (signed by the Pi's proxy) once a minute, so five
+ * minutes of silence means the server cannot reach the building. In a building
+ * the kiosk knows is empty it sends nothing on purpose, and this reads
+ * unreachable then, as it should.
  */
 export const KIOSK_FRESH_MS = 5 * 60_000;
 
