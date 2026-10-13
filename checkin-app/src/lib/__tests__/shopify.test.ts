@@ -1,4 +1,4 @@
-import { createShopifySingleVariantProgram, createClaimantProduct, adjustProgramInventory, mintMemberDiscountCode, resetTokenCache } from '../shopify';
+import { createShopifySingleVariantProgram, createClaimantProduct, adjustProgramInventory, syncProgramPrice, mintMemberDiscountCode, resetTokenCache } from '../shopify';
 import { sendEmail } from '../email';
 import prisma from '../prisma';
 
@@ -614,5 +614,117 @@ describe('createClaimantProduct', () => {
 
         expect(await createClaimantProduct('Old API', 3500)).toBeNull();
         expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ operation: 'createClaimantProduct', orphanedProductId: '711' }));
+    });
+});
+
+describe('syncProgramPrice', () => {
+    let originalEnv: NodeJS.ProcessEnv;
+    let fetchMock: jest.Mock;
+
+    const program = { id: 7, name: 'Robotics', shopifyVariantId: '111', claimantShopifyVariantId: '222' };
+
+    beforeEach(() => {
+        originalEnv = { ...process.env };
+        delete process.env.CHECKIN_ENV;
+        process.env.SHOPIFY_STORE_DOMAIN = 'test.myshopify.com';
+        process.env.SHOPIFY_CLIENT_ID = 'test_client_id';
+        process.env.SHOPIFY_CLIENT_SECRET = 'test_client_secret';
+
+        fetchMock = jest.fn();
+        global.fetch = fetchMock;
+
+        jest.clearAllMocks();
+        resetTokenCache();
+    });
+
+    afterEach(() => {
+        process.env = originalEnv;
+        jest.restoreAllMocks();
+    });
+
+    it('sets the base price on both the public and the claimant variant', async () => {
+        mockTokenResponse(fetchMock);
+        fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
+
+        const result = await syncProgramPrice(program, 12500);
+
+        expect(result).toBe(true);
+        expect(fetchMock).toHaveBeenCalledTimes(3); // token + 2 variant PUTs
+        const puts = fetchMock.mock.calls.slice(1);
+        expect(puts.map(([url]) => String(url))).toEqual([
+            expect.stringContaining('/admin/api/2026-01/variants/111.json'),
+            expect.stringContaining('/admin/api/2026-01/variants/222.json'),
+        ]);
+        for (const [, init] of puts) {
+            expect((init as RequestInit).method).toBe('PUT');
+            expect(JSON.parse((init as RequestInit).body as string).variant.price).toBe('125.00');
+        }
+    });
+
+    it('updates only the public variant when the program has no claimant product', async () => {
+        mockTokenResponse(fetchMock);
+        fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
+
+        const result = await syncProgramPrice({ ...program, claimantShopifyVariantId: null }, 5000);
+
+        expect(result).toBe(true);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(String(fetchMock.mock.calls[1][0])).toContain('variants/111.json');
+    });
+
+    it('no-ops successfully (no fetch, no alert) when the program has no variants', async () => {
+        const result = await syncProgramPrice({ id: 7, name: 'Free', shopifyVariantId: null, claimantShopifyVariantId: null }, 0);
+
+        expect(result).toBe(true);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(logIntegrationError).not.toHaveBeenCalled();
+    });
+
+    it.each([0, null])('never pushes a base of %p: alerts admins and returns false', async (base) => {
+        (prisma.person.findMany as jest.Mock).mockResolvedValueOnce([{ email: 'admin@test.com' }]);
+
+        const result = await syncProgramPrice(program, base);
+
+        expect(result).toBe(false);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ operation: 'syncProgramPrice', programId: 7 }));
+        expect(sendEmail).toHaveBeenCalledWith('admin@test.com', 'Shopify Integration Error', expect.stringContaining('price for program'));
+    });
+
+    it('returns false and alerts admins when a variant update fails', async () => {
+        mockTokenResponse(fetchMock);
+        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+        fetchMock.mockResolvedValueOnce({ ok: false, status: 404, text: async () => 'Not Found' });
+        (prisma.person.findMany as jest.Mock).mockResolvedValueOnce([{ email: 'admin@test.com' }]);
+
+        const result = await syncProgramPrice(program, 12500);
+
+        expect(result).toBe(false);
+        expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.objectContaining({ message: expect.stringContaining('222') }), expect.objectContaining({ operation: 'syncProgramPrice' }));
+        expect(sendEmail).toHaveBeenCalledWith('admin@test.com', 'Shopify Integration Error', expect.stringContaining('out of date'));
+    });
+
+    it('returns false and alerts admins without fetching when credentials are missing', async () => {
+        delete process.env.SHOPIFY_STORE_DOMAIN;
+        delete process.env.SHOPIFY_CLIENT_ID;
+        delete process.env.SHOPIFY_CLIENT_SECRET;
+        (prisma.person.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+        const result = await syncProgramPrice(program, 12500);
+
+        expect(result).toBe(false);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ operation: 'syncProgramPrice' }));
+    });
+
+    it('logs and succeeds without fetching when the Shopify mock is active', async () => {
+        process.env.CHECKIN_ENV = 'local';
+        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+        const result = await syncProgramPrice(program, 12500);
+
+        expect(result).toBe(true);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('125.00'));
     });
 });
