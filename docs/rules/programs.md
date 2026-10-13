@@ -106,6 +106,9 @@ Things the app takes as true because they are handled outside it.
 - Nothing checks that a program leader is a member who has passed a background
   check.  [Short of policy — *Policy: Sponsored Program Policy, Art. IV*]
 
+- Nobody sets themself or anyone in their own household as a program's leader,
+  because the leader approves the program's expenses.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
 - Nobody under 18 enrolls themselves, and nobody whose age is unknown does
   either; only a known adult may. The bar is the guardian-consent line and is
   separate from the ages a program targets. A youth is enrolled, and withdrawn,

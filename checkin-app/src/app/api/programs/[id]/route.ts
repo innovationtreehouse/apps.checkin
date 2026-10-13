@@ -10,6 +10,7 @@ import { dollarsToCentsOrNull } from "@inventory/money";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
+import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { parseDateOnly } from "@/lib/time";
 import { ProgramPhase, EnrollmentStatus } from "@/generated/prisma/client";
 
@@ -271,13 +272,20 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             }
             const mentor = await prisma.person.findUnique({
                 where: { id: leadMentorId },
-                select: { dateOfBirth: true, isDeclaredAdult: true },
+                select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
             });
             if (!mentor) {
                 return apiError("Lead mentor not found", 400);
             }
             if (!isLeaderAgeEligible(mentor)) {
                 return apiError("Lead mentor must be at least 23 years old", 400);
+            }
+            // Leading a program makes its leader an expense approver. The edit form
+            // resends the current lead on every save, so only a change is refused.
+            if (leadMentorId !== currentProgram.leadMentorId && (
+                leadMentorId === user.id || await hasHouseholdConflict(prisma, user.id, mentor.householdId)
+            )) {
+                return apiError("Forbidden: You cannot make yourself or a member of your household a program lead", 403);
             }
         }
 

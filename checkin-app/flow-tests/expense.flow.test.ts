@@ -110,7 +110,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await setLead(await loginAs(BOARD), originalLead);
+  const board = await loginAs(BOARD);
+  // Nobody makes themself a program lead, so the board persona cannot take the seeded lead back.
+  if (originalLead !== board.personaId) await setLead(board, originalLead);
 });
 
 describe("expense — persona matrix", () => {
