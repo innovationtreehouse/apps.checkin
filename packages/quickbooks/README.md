@@ -90,6 +90,8 @@ null while off). Its token comes from the refresher Lambda (`QBO_REFRESHER_FN`):
       alone; a weekly keepalive invoke; alarms on `invalid_grant` and on `GetSecretValue` by any
       other principal.
 - [ ] Prod: the Board sets the realm on Settings → QuickBooks after consent.
+- Binding a posting port (QB-2): set its `prod` flag from `CHECKIN_ENV === "prod"`, the same raw
+  check the guard uses.
 
 ## One-time setup (you do this — OAuth consent can't be automated)
 

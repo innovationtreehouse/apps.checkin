@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { buildQuickBooks, lambdaAccessTokenSource } from "../client";
 
+jest.mock("@aws-sdk/client-lambda", () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,
     default: { boardSettings: { findUnique: jest.fn() } },

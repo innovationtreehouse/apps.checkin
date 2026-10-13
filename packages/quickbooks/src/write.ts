@@ -91,14 +91,15 @@ export async function findOrCreate(client: QuickBooksClient, req: FindOrCreateRe
  * An existing Vendor with the resulting name is returned as found via "name" (DisplayName is
  * unique, and this is how a retry after a crash recovers), never created twice. A Vendor
  * carries only its DisplayName, so a name hit is never told apart as the app's own creation.
- * On the sandbox the name carries TEST_VENDOR_PREFIX.
+ * On the sandbox the name carries TEST_VENDOR_PREFIX, added only when missing.
  */
 export async function createVendor(
   client: QuickBooksClient,
   name: string,
   key: string,
 ): Promise<{ kind: "found"; via: "name"; id: string; displayName: string } | { kind: "created"; id: string; displayName: string }> {
-  const trimmed = client.env === "sandbox" ? `${TEST_VENDOR_PREFIX}${name.trim()}` : name.trim();
+  const bare = name.trim();
+  const trimmed = client.env === "sandbox" && !bare.startsWith(TEST_VENDOR_PREFIX) ? `${TEST_VENDOR_PREFIX}${bare}` : bare;
   const displayName = (await client.customerNamed(trimmed)) ? `${trimmed} (Vendor)` : trimmed;
   const existing = await client.vendorNamed(displayName);
   if (existing) return { kind: "found", via: "name", id: existing.Id, displayName };

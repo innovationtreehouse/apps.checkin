@@ -139,7 +139,7 @@ describe("closed-enum writer", () => {
   });
 
   it("sends the caller's key as requestid on every write", async () => {
-    const writes: WriteRequest[] = [deposit, purchase, bill, { entity: "Vendor", fields: { displayName: "Ann" } }];
+    const writes: WriteRequest[] = [deposit, purchase, bill, { entity: "Vendor", fields: { displayName: "TEST-Ann" } }];
     for (const w of writes) fetchMock.mockResolvedValueOnce(json({ [w.entity]: { Id: "9" } }));
     for (const [i, w] of writes.entries()) await client()[CREATE](w, `key-${i}`);
     expect(posts().map((c) => [c.url.pathname.split("/").pop(), c.url.searchParams.get("requestid")])).toEqual([
@@ -417,6 +417,12 @@ describe("createVendor", () => {
     fetchMock.mockResolvedValueOnce(rows("Customer", [])).mockResolvedValueOnce(rows("Vendor", [{ Id: "41", DisplayName: "TEST-Ann Lee" }]));
     await expect(createVendor(client(), "Ann Lee", "v-1")).resolves.toEqual({ kind: "found", via: "name", id: "41", displayName: "TEST-Ann Lee" });
     expect(posts()).toEqual([]);
+  });
+
+  it("adds the sandbox prefix only when the name lacks it", async () => {
+    fetchMock.mockResolvedValueOnce(rows("Customer", [])).mockResolvedValueOnce(rows("Vendor", [])).mockResolvedValueOnce(json({ Vendor: { Id: "42" } }));
+    await expect(createVendor(client(), "TEST-Lumber Co", "v-2")).resolves.toEqual({ kind: "created", id: "42", displayName: "TEST-Lumber Co" });
+    expect(posts()[0].body).toEqual({ DisplayName: "TEST-Lumber Co" });
   });
 
   it("rejects a control character in the name before any request", async () => {
