@@ -386,7 +386,7 @@ export async function clearBackgroundCheck(
     // the household path below, whose lead-stamp change is Phase 5).
     if (process.subjectPersonId) {
         const subject = { personId: process.subjectPersonId, householdId: await applicantHousehold(tx, process) };
-        await refuseClearingOwnHousehold(actorId, subject, { lastBackgroundCheck: now.toISOString() });
+        await refuseClearingOwnHousehold(tx, actorId, subject, { lastBackgroundCheck: now.toISOString() });
         await tx.person.update({ where: { id: process.subjectPersonId }, data: { lastBackgroundCheck: now } });
         const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...expected.where }, data: { bgClearedAt: now, status: "ACTIVE", stageEnteredAt: now } });
         if (!count) throw movedOn();
@@ -413,7 +413,7 @@ export async function clearBackgroundCheck(
     // Expiry is derived from this plus BoardSettings.bgRecheckMonths at read time (see
     // householdBgIsFresh) — not stored.
     const cleared = opts.subjectOverride ?? subjectsWithTwoApprovals(process.attestations);
-    await refuseClearingOwnHousehold(actorId, { householdId }, { lastBackgroundCheck: now.toISOString(), clearedPersonIds: cleared });
+    await refuseClearingOwnHousehold(tx, actorId, { householdId }, { lastBackgroundCheck: now.toISOString(), clearedPersonIds: cleared });
     if (cleared.length) {
         await tx.person.updateMany({ where: { id: { in: cleared } }, data: { lastBackgroundCheck: now } });
     }
@@ -436,9 +436,13 @@ function movedOn() {
     return new ReviewError("wrong_phase", "This application changed while it was being reviewed. Reload and try again.");
 }
 
-/** Throws when the actor would clear their own household; the guard's audit row goes through prisma so it outlives the tx rollback. */
-async function refuseClearingOwnHousehold(actorId: number, subject: GrantSubject, attempted: Prisma.InputJsonObject) {
-    if (await refuseSelfGrant(prisma, actorId, subject, { table: "Person", attempted })) {
+/**
+ * Throws when the actor would clear their own household. A backstop: every caller
+ * refuses an own-household actor before its transaction, so the guard's audit row,
+ * which rolls back with the throw, records nothing a caller hasn't already refused.
+ */
+async function refuseClearingOwnHousehold(tx: TxClient, actorId: number, subject: GrantSubject, attempted: Prisma.InputJsonObject) {
+    if (await refuseSelfGrant(tx, actorId, subject, { table: "Person", attempted })) {
         throw new ReviewError("same_household_applicant", SELF_GRANT_REFUSAL_MESSAGE);
     }
 }

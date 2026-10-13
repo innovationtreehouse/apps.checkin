@@ -696,8 +696,10 @@ describe("Merge Participants API", () => {
             expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
         });
 
-        it("403s an actor with no household before anything moves (fail closed)", async () => {
-            await prisma.person.update({ where: { id: actorId }, data: { householdId: null } });
+        it("403s an actor who resolves to nobody before anything moves (fail closed)", async () => {
+            mockGetServerSession.mockResolvedValue({
+                user: { id: actorId + 1_000_000, email: "ghost@example.com", isBoardMember: true }
+            });
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(403);

@@ -55,7 +55,7 @@ describe("clearBackgroundCheck self-grant guard", () => {
         await expect(clearBackgroundCheck(tx as unknown as TxClient, 7, 1)).rejects.toBeInstanceOf(ReviewError);
         expect(tx.person.update).not.toHaveBeenCalled();
         expect(tx.person.updateMany).not.toHaveBeenCalled();
-        expect(db.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ tableName: SELF_GRANT_REFUSAL_TABLE }) });
+        expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ tableName: SELF_GRANT_REFUSAL_TABLE }) });
     });
 
     it("refuses an actor whose household can't be resolved", async () => {
@@ -68,7 +68,7 @@ describe("clearBackgroundCheck self-grant guard", () => {
         const tx = fakeTx({ subjectPersonId: 3, householdId: 20 });
         await clearBackgroundCheck(tx as unknown as TxClient, 7, 1);
         expect(tx.person.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 3 } }));
-        expect(db.auditLog.create).not.toHaveBeenCalled();
+        expect(tx.auditLog.create).not.toHaveBeenCalledWith({ data: expect.objectContaining({ tableName: SELF_GRANT_REFUSAL_TABLE }) });
     });
 });
 
