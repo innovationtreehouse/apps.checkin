@@ -275,6 +275,34 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
         }
     });
 
+    // A refused replay would block the head of the kiosk's queue, so the server
+    // parks it in one hop, as the kiosk's dead-letter pass would have.
+    it('a replay naming no one parks for review instead of 404ing, and dedups', async () => {
+        const scannedAt = new Date(Date.now() - 2 * 60_000);
+        const body = {
+            participantId: 2147483000, clientEventId: 'evt-replay-unresolvable',
+            scannedAt: scannedAt.toISOString(), replay: true, intent: 'IN',
+        };
+        try {
+            const first = await POST(scanReq(body));
+            expect(first.status).toBe(200);
+            expect((await first.json()).type).toBe('parked');
+
+            const retry = await POST(scanReq(body));
+            expect((await retry.json()).type).toBe('duplicate_ignored');
+
+            const rows = await prisma.rawBadgeLog.findMany({ where: { clientEventId: 'evt-replay-unresolvable' } });
+            expect(rows).toHaveLength(1);
+            expect(rows[0]).toMatchObject({
+                personId: null,
+                scannedValue: '2147483000',
+                reviewReason: 'client_dead:unresolvable',
+            });
+        } finally {
+            await prisma.rawBadgeLog.deleteMany({ where: { clientEventId: 'evt-replay-unresolvable' } });
+        }
+    });
+
     it('rejects dead:true and replay:true together', async () => {
         const res = await POST(scanReq({
             participantId: member.id, clientEventId: 'evt-dead-and-replay',
