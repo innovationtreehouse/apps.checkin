@@ -469,7 +469,10 @@ function classifyReversal(o: MirrorOrder, disputed: boolean): PaymentExceptionKi
 /** A refunded order line Shopify put back in stock (refund_line_items with a restock_type other than no_restock). */
 export interface RestockedLine {
     variantId: string;
+    /** Seats this refund restocked. */
     quantity: number;
+    /** Seats the order line bought. */
+    lineQuantity: number;
 }
 
 /**
@@ -478,11 +481,11 @@ export interface RestockedLine {
  * enrollment it activated and raise the given problem. Returns true if anything
  * matched. Shares the same idempotent raise as the daily reconciler.
  *
- * A REFUND that restocked a program's seats has already put them back on sale in
- * Shopify, so the enrollments that held them are removed here (still flagged for
- * the money side). The app sends no +1 of its own: that would count the seat twice.
- * Only the refunds/create payload says whether a refund restocked; the daily pass
- * can't see it and only flags.
+ * A REFUND that restocked every seat the order bought for a program has already put
+ * them back on sale in Shopify, so the enrollments on that order are removed here
+ * (still flagged for the money side). The app sends no +1 of its own: that would
+ * count the seat twice. Only the refunds/create payload says whether a refund
+ * restocked; the daily pass can't see it and only flags.
  */
 export async function raiseReversalByOrderId(orderLegacyId: string, kind: PaymentExceptionKind, restocked: RestockedLine[] = []): Promise<boolean> {
     let matched = false;
@@ -503,10 +506,11 @@ export async function raiseReversalByOrderId(orderLegacyId: string, kind: Paymen
         for (const programId of new Set(enrolls.map((e) => e.programId))) {
             const onProgram = enrolls.filter((e) => e.programId === programId);
             const variantId = onProgram[0].program.shopifyVariantId;
-            const seats = restocked.filter((l) => variantId && l.variantId === variantId).reduce((n, l) => n + l.quantity, 0);
-            // ponytail: a partial restock on a multi-person order can't say which child's
-            // seat went back, so nobody is removed; the board works it from the flags.
-            if (seats === 0 || seats < onProgram.length) continue;
+            const lines = restocked.filter((l) => variantId && l.variantId === variantId);
+            // ponytail: only a refund that restocks the whole line removes anyone. A partial
+            // restock can't say which child's seat went back, and the payload doesn't carry
+            // earlier refunds, so successive partial restocks stay with the board's flags.
+            if (lines.length === 0 || lines.some((l) => l.quantity < l.lineQuantity)) continue;
             for (const e of onProgram) await removeRefundedEnrollment(e.programId, e.personId, orderLegacyId);
         }
     }
@@ -520,20 +524,24 @@ export async function raiseReversalByOrderId(orderLegacyId: string, kind: Paymen
  */
 async function removeRefundedEnrollment(programId: number, personId: number, orderLegacyId: string): Promise<void> {
     const where = { programId, personId, shopifyOrderId: orderLegacyId };
-    const row = await prisma.programParticipant.findFirst({ where });
-    if (!row) return;
-    const { count } = await prisma.programParticipant.deleteMany({ where });
-    if (count === 0) return;
-    await prisma.auditLog.create({
-        data: {
-            ...systemActor("webhook:shopify-refund"),
-            action: "DELETE",
-            tableName: "ProgramParticipant",
-            affectedEntityId: personId,
-            secondaryAffectedEntity: programId,
-            oldData: { ...row, reason: `refund restocked the seat on order ${orderLegacyId}` },
-        },
+    const removed = await prisma.$transaction(async (tx) => {
+        const row = await tx.programParticipant.findFirst({ where });
+        if (!row) return false;
+        const { count } = await tx.programParticipant.deleteMany({ where });
+        if (count === 0) return false;
+        await tx.auditLog.create({
+            data: {
+                ...systemActor("webhook:shopify-refund"),
+                action: "DELETE",
+                tableName: "ProgramParticipant",
+                affectedEntityId: personId,
+                secondaryAffectedEntity: programId,
+                oldData: { ...row, reason: `refund restocked the seat on order ${orderLegacyId}` },
+            },
+        });
+        return true;
     });
+    if (!removed) return;
     logger.info(`[reconcile] removed enrollment program ${programId} / person ${personId}: refund on order ${orderLegacyId} restocked the seat`);
 }
 

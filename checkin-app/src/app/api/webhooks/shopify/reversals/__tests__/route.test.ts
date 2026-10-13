@@ -51,16 +51,16 @@ describe('POST /api/webhooks/shopify/reversals — restocked lines', () => {
         const res = await POST(req('refunds/create', {
             order_id: 555,
             refund_line_items: [
-                { quantity: 2, restock_type: 'return', line_item: { variant_id: 111 } },
+                { quantity: 2, restock_type: 'return', line_item: { variant_id: 111, quantity: 3 } },
                 { quantity: 1, restock_type: 'no_restock', line_item: { variant_id: 222 } },
-                { quantity: 1, restock_type: 'cancel', line_item: { variant_id: 333 } },
+                { quantity: 1, restock_type: 'cancel', line_item: { variant_id: 333, quantity: 1 } },
                 { quantity: 1, restock_type: 'return', line_item: {} },
             ],
         }));
         expect(res.status).toBe(200);
         expect(raise).toHaveBeenCalledWith('555', 'REFUND', [
-            { variantId: '111', quantity: 2 },
-            { variantId: '333', quantity: 1 },
+            { variantId: '111', quantity: 2, lineQuantity: 3 },
+            { variantId: '333', quantity: 1, lineQuantity: 1 },
         ]);
     });
 

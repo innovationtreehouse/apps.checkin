@@ -25,7 +25,7 @@ import {
 /**
  * ProgramParticipant enrollment. `UNENROLLED`
  * is the ∅/no-row state — both an entry and the withdrawal target — so it renders
- * as mermaid `[*]`. `ACTIVE` is the one non-∅ terminal.
+ * as mermaid `[*]`. `ACTIVE` is the one non-∅ resting state.
  */
 const ENROLLMENT: MachineSpec = {
     name: 'enrollment',

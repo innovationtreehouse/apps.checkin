@@ -27,13 +27,13 @@ interface ReversalPayload {
     id?: number | string;
     order_id?: number | string;
     // refunds/create only.
-    refund_line_items?: { quantity?: number; restock_type?: string; line_item?: { variant_id?: number | string | null } }[];
+    refund_line_items?: { quantity?: number; restock_type?: string; line_item?: { variant_id?: number | string | null; quantity?: number } }[];
 }
 
 function restockedLines(payload: ReversalPayload): RestockedLine[] {
     return (payload.refund_line_items ?? [])
         .filter((l) => l.restock_type && l.restock_type !== "no_restock" && l.line_item?.variant_id != null)
-        .map((l) => ({ variantId: String(l.line_item?.variant_id), quantity: l.quantity ?? 1 }));
+        .map((l) => ({ variantId: String(l.line_item?.variant_id), quantity: l.quantity ?? 1, lineQuantity: l.line_item?.quantity ?? 1 }));
 }
 
 function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: false; status: number; error: string } {

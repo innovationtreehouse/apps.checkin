@@ -656,7 +656,7 @@ describe("fast-path reversal webhook helper", () => {
     it("a restocked refund removes the enrollment, flags it, and is idempotent", async () => {
         const oid = `${TAG}-310`;
         const e = await makeProgramEnrollment({ email: `rs1-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
-        const lines = [{ variantId: e.variantId, quantity: 1 }];
+        const lines = [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }];
         expect(await raiseReversalByOrderId(oid, "REFUND", lines)).toBe(true);
         await raiseReversalByOrderId(oid, "REFUND", lines);
         expect(await enrolled(e.programId)).toBe(0);
@@ -675,7 +675,7 @@ describe("fast-path reversal webhook helper", () => {
     it("a restock of another variant leaves the enrollment", async () => {
         const oid = `${TAG}-312`;
         const e = await makeProgramEnrollment({ email: `rs3-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
-        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: "some-other-variant", quantity: 1 }]);
+        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: "some-other-variant", quantity: 1, lineQuantity: 1 }]);
         expect(await enrolled(e.programId)).toBe(1);
     });
 
@@ -683,7 +683,7 @@ describe("fast-path reversal webhook helper", () => {
         const oid = `${TAG}-313`;
         const e = await makeProgramEnrollment({ email: `rs4-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         const kidId = await addSibling(e, oid);
-        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 2 }]);
+        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 2, lineQuantity: 2 }]);
         const flagged = await prisma.paymentException.findMany({ where: { kind: "REFUND", shopifyOrderId: oid }, select: { personId: true } });
         expect(flagged.map((f) => f.personId).sort()).toEqual([e.personId, kidId].sort());
         expect(await enrolled(e.programId)).toBe(0);
@@ -693,15 +693,32 @@ describe("fast-path reversal webhook helper", () => {
         const oid = `${TAG}-314`;
         const e = await makeProgramEnrollment({ email: `rs5-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         await addSibling(e, oid);
-        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 1 }]);
+        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
         expect(await enrolled(e.programId)).toBe(2);
         expect(await prisma.paymentException.count({ where: { kind: "REFUND", shopifyOrderId: oid } })).toBe(2);
+    });
+
+    it("one child on an order that bought 2 seats: restocking 1 keeps the child who paid", async () => {
+        const oid = `${TAG}-316`;
+        const e = await makeProgramEnrollment({ email: `rs7-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
+        expect(await enrolled(e.programId)).toBe(1);
+        expect(await prisma.paymentException.count({ where: { kind: "REFUND", shopifyOrderId: oid } })).toBe(1);
+    });
+
+    it("siblings on one order, one withdrew: restocking the withdrawn seat keeps the other", async () => {
+        const oid = `${TAG}-317`;
+        const e = await makeProgramEnrollment({ email: `rs8-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        const kidId = await addSibling(e, oid);
+        await prisma.programParticipant.delete({ where: { programId_personId: { programId: e.programId, personId: kidId } } });
+        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
+        expect(await prisma.programParticipant.count({ where: { programId: e.programId, personId: e.personId } })).toBe(1);
     });
 
     it("a restocked cancellation is not a refund: flags only", async () => {
         const oid = `${TAG}-315`;
         const e = await makeProgramEnrollment({ email: `rs6-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
-        await raiseReversalByOrderId(oid, "CANCELLED", [{ variantId: e.variantId, quantity: 1 }]);
+        await raiseReversalByOrderId(oid, "CANCELLED", [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }]);
         expect(await enrolled(e.programId)).toBe(1);
     });
 });
