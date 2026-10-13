@@ -33,8 +33,8 @@ MAX_5XX_ATTEMPTS = 50
 def counts_toward_poison(status):
     return 500 <= status < 600 and status not in (502, 503, 504)
 
-# Overnight, 23:00-06:00 local: the health monitor's recovery ladder stays
-# quiet. Server traffic (roster, scans, the drain) is not gated on it.
+# Overnight, 23:00-06:00 local: the health monitor's nightly reboot window,
+# with its recovery ladder quiet. Roster, scan and drain traffic ignore it.
 CLOSED_WINDOW_START_HOUR = 23  # local time, inclusive
 CLOSED_WINDOW_END_HOUR = 6     # local time, exclusive
 

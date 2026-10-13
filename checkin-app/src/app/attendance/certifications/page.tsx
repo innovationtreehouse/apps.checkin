@@ -106,8 +106,8 @@ function KioskCertificationsInner() {
   }, [searchParams, limitToPresent]);
 
   // Visibility gate only, NO idle-stop: this is an unattended wall display, so
-  // idle-stop would freeze it. It's also cookieless (kiosk signature, not a
-  // session), so it can't wake a slept env and can't defeat the overnight curfew.
+  // idle-stop would freeze it. On the kiosk, the Pi's proxy answers these polls
+  // itself (204) while the building is known empty.
   usePolling(fetchData, 10000);
 
   const getColorForLevel = (level: ToolStatusLevel | undefined) =>
