@@ -10,6 +10,8 @@ import { assertConversionChallengeTransition } from "../workflows/conversion-cha
 import { WorkflowTransitionError } from "@inventory/workflows";
 import { emitOrgEvent, recordTransition } from "./orgEventService";
 
+const ALREADY_REVIEWED = "Challenge was already reviewed";
+
 export interface SubmitChallengeParams {
   orgId: string;
   orgName: string;
@@ -54,17 +56,16 @@ export async function acceptChallenge(challengeId: number, userId: number): Prom
   const ref = await itemRefRepo.findById(challenge.itemReferenceId);
   if (!ref) throw new ServiceError(404, "Item reference not found");
 
-  const newVersion = ref.conversionVersion + 1;
-
   await db.$transaction(async (tx) => {
-    await tx.itemReference.update({
-      where: { id: challenge.itemReferenceId },
-      data: { conversionFactor: challenge.proposedFactor, conversionVersion: newVersion },
-    });
-
-    await tx.conversionChallenge.update({
-      where: { id: challengeId },
+    const { count } = await tx.conversionChallenge.updateMany({
+      where: { id: challengeId, status: challenge.status },
       data: { status: acceptedStatus, reviewedByUserId: userId, reviewedAt: new Date() },
+    });
+    if (count === 0) throw new ServiceError(409, ALREADY_REVIEWED);
+
+    const { conversionVersion: newVersion } = await tx.itemReference.update({
+      where: { id: challenge.itemReferenceId },
+      data: { conversionFactor: challenge.proposedFactor, conversionVersion: { increment: 1 } },
     });
 
     await recordTransition(tx, "conversion_challenge", challengeId, challenge.status, acceptedStatus, userId);
@@ -92,10 +93,11 @@ export async function rejectChallenge(challengeId: number, userId: number): Prom
   }
 
   await db.$transaction(async (tx) => {
-    await tx.conversionChallenge.update({
-      where: { id: challengeId },
+    const { count } = await tx.conversionChallenge.updateMany({
+      where: { id: challengeId, status: challenge.status },
       data: { status: rejectedStatus, reviewedByUserId: userId, reviewedAt: new Date() },
     });
+    if (count === 0) throw new ServiceError(409, ALREADY_REVIEWED);
 
     await recordTransition(tx, "conversion_challenge", challengeId, challenge.status, rejectedStatus, userId);
     await emitOrgEvent(tx, challenge.orgId, {

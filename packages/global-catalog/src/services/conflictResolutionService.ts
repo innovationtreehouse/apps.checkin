@@ -63,17 +63,18 @@ export async function resolveConflict(
   }
 
   await db.$transaction(async (tx) => {
+    const { count } = await tx.referenceConflict.updateMany({
+      where: { id: conflictId, resolvedAt: null },
+      data: { resolvedAt: new Date(), resolution: nextState as ConflictResolution, resolvedByUserId: userId },
+    });
+    if (count === 0) throw new ServiceError(409, "Conflict was already resolved");
+
     if (nextState === "use_proposed") {
       await tx.itemReference.update({
         where: { id: conflict.itemReferenceId },
         data: { gtin13: conflict.proposedGtin13 },
       });
     }
-
-    await tx.referenceConflict.update({
-      where: { id: conflictId },
-      data: { resolvedAt: new Date(), resolution: nextState as ConflictResolution, resolvedByUserId: userId },
-    });
 
     await recordTransition(tx, "reference_conflict", conflictId, currentState, nextState, userId);
   });

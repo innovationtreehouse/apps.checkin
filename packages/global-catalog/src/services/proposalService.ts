@@ -119,7 +119,10 @@ export async function approveItemReferenceProposal(proposalId: number, userId: n
     : undefined;
 
   await db.$transaction(async (tx) => {
-    const now = new Date();
+    const reviewedAt = new Date();
+    const claimed = await proposalRepo.transitionItemReferenceProposal(tx, proposalId, proposal.status, { status: approvedStatus, reviewedByUserId: userId, reviewedAt });
+    if (claimed === 0) throw new ServiceError(409, "Proposal was already reviewed");
+
     await tx.itemReference.create({
       data: {
         gtin13: proposal.gtin13,
@@ -134,9 +137,6 @@ export async function approveItemReferenceProposal(proposalId: number, userId: n
         updatedByUsername: username ?? null,
       },
     });
-
-    const reviewedAt = new Date();
-    await proposalRepo.updateItemReferenceProposal(tx, proposalId, { status: approvedStatus, reviewedByUserId: userId, reviewedAt });
 
     await recordTransition(tx, "item_reference_proposal", proposalId, proposal.status, approvedStatus, userId);
     await emitOrgEvent(tx, proposal.orgId, {
@@ -190,7 +190,8 @@ export async function rejectItemReferenceProposal(
   }
 
   await db.$transaction(async (tx) => {
-    await proposalRepo.updateItemReferenceProposal(tx, proposalId, { status: rejectedStatus, reviewedByUserId: userId, reviewedAt: new Date(), rejectionReason: reason });
+    const claimed = await proposalRepo.transitionItemReferenceProposal(tx, proposalId, proposal.status, { status: rejectedStatus, reviewedByUserId: userId, reviewedAt: new Date(), rejectionReason: reason });
+    if (claimed === 0) throw new ServiceError(409, "Proposal was already reviewed");
     await recordTransition(tx, "item_reference_proposal", proposalId, proposal.status, rejectedStatus, userId, reason);
     await emitOrgEvent(tx, proposal.orgId, {
       eventType: "item_reference_proposal_rejected",
