@@ -738,24 +738,55 @@ describe("fast-path reversal webhook helper", () => {
     const enrolled = (programId: number) => prisma.programParticipant.count({ where: { programId } });
 
     const takenBack = () => adjustInventory.mock.calls.map(([, delta]) => delta);
+    /** A refunds/create delivery; the same refundId again is a Shopify redelivery. */
+    const refund = (oid: string, lines: Parameters<typeof raiseReversalByOrderId>[2], refundId = `${oid}-r1`) =>
+        raiseReversalByOrderId(oid, "REFUND", lines, refundId);
+
+    it("a redelivered refund that removed a named sibling takes nothing back", async () => {
+        const oid = `${TAG}-323`;
+        const e = await makeProgramEnrollment({ email: `rs13-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        const kidId = await addSibling(e, oid);
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1 }, { variantId: e.variantId, quantity: 1 }]);
+        const lines = [{ variantId: e.variantId, quantity: 1, lineQuantity: 1, personIds: [kidId] }];
+        await refund(oid, lines);
+        await refund(oid, lines);
+        const left = await prisma.programParticipant.findMany({ where: { programId: e.programId }, select: { personId: true } });
+        expect(left.map((r) => r.personId)).toEqual([e.personId]);
+        expect(takenBack()).toEqual([]);
+    });
+
+    it("a redelivered partial refund takes its seat back once; a second refund takes its own", async () => {
+        const oid = `${TAG}-324`;
+        const e = await makeProgramEnrollment({ email: `rs14-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        await addSibling(e, oid);
+        orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2 }]);
+        const lines = [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }];
+        await Promise.all([refund(oid, lines), refund(oid, lines)]);
+        await refund(oid, lines);
+        expect(takenBack()).toEqual([-1]);
+        await refund(oid, lines, `${oid}-r2`);
+        expect(takenBack()).toEqual([-1, -1]);
+        expect(await enrolled(e.programId)).toBe(2);
+    });
+
 
     it("a restocked refund removes the enrollment, flags it, and is idempotent", async () => {
         const oid = `${TAG}-310`;
         const e = await makeProgramEnrollment({ email: `rs1-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1 }]);
         const lines = [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }];
-        expect(await raiseReversalByOrderId(oid, "REFUND", lines)).toBe(true);
-        await raiseReversalByOrderId(oid, "REFUND", lines);
+        expect(await refund(oid, lines)).toBe(true);
+        await refund(oid, lines);
         expect(await enrolled(e.programId)).toBe(0);
         expect(await prisma.paymentException.count({ where: { kind: "REFUND", programId: e.programId, personId: e.personId } })).toBe(1);
-        expect(await prisma.auditLog.count({ where: { actorSystem: "webhook:shopify-refund", secondaryAffectedEntity: e.programId } })).toBe(1);
+        expect(await prisma.auditLog.count({ where: { actorSystem: "webhook:shopify-refund", tableName: "ProgramParticipant", secondaryAffectedEntity: e.programId } })).toBe(1);
         expect(takenBack()).toEqual([]);
     });
 
     it("a refund without restock only flags; the enrollment stays", async () => {
         const oid = `${TAG}-311`;
         const e = await makeProgramEnrollment({ email: `rs2-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
-        await raiseReversalByOrderId(oid, "REFUND", []);
+        await refund(oid, []);
         expect(await enrolled(e.programId)).toBe(1);
         expect(await prisma.paymentException.count({ where: { kind: "REFUND", programId: e.programId } })).toBe(1);
     });
@@ -763,7 +794,7 @@ describe("fast-path reversal webhook helper", () => {
     it("a restock of another variant leaves the enrollment", async () => {
         const oid = `${TAG}-312`;
         const e = await makeProgramEnrollment({ email: `rs3-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
-        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: "some-other-variant", quantity: 1, lineQuantity: 1 }]);
+        await refund(oid, [{ variantId: "some-other-variant", quantity: 1, lineQuantity: 1 }]);
         expect(await enrolled(e.programId)).toBe(1);
         expect(takenBack()).toEqual([]);
     });
@@ -773,7 +804,7 @@ describe("fast-path reversal webhook helper", () => {
         const e = await makeProgramEnrollment({ email: `rs4-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         const kidId = await addSibling(e, oid);
         orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2 }]);
-        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 2, lineQuantity: 2 }]);
+        await refund(oid, [{ variantId: e.variantId, quantity: 2, lineQuantity: 2 }]);
         const flagged = await prisma.paymentException.findMany({ where: { kind: "REFUND", shopifyOrderId: oid }, select: { personId: true } });
         expect(flagged.map((f) => f.personId).sort()).toEqual([e.personId, kidId].sort());
         expect(await enrolled(e.programId)).toBe(0);
@@ -785,7 +816,7 @@ describe("fast-path reversal webhook helper", () => {
         const e = await makeProgramEnrollment({ email: `rs9-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         const kidId = await addSibling(e, oid);
         orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1 }, { variantId: e.variantId, quantity: 1 }]);
-        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 1, lineQuantity: 1, personIds: [kidId] }]);
+        await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1, personIds: [kidId] }]);
         const left = await prisma.programParticipant.findMany({ where: { programId: e.programId }, select: { personId: true } });
         expect(left.map((r) => r.personId)).toEqual([e.personId]);
         expect(takenBack()).toEqual([]);
@@ -796,7 +827,7 @@ describe("fast-path reversal webhook helper", () => {
         const e = await makeProgramEnrollment({ email: `rs5-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         await addSibling(e, oid);
         orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2 }]);
-        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
+        await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
         expect(await enrolled(e.programId)).toBe(2);
         expect(await prisma.paymentException.count({ where: { kind: "REFUND", shopifyOrderId: oid } })).toBe(2);
         expect(takenBack()).toEqual([-1]);
@@ -805,7 +836,7 @@ describe("fast-path reversal webhook helper", () => {
     it("an order the mirror hasn't synced yet: nobody removed, the restocked seat taken back", async () => {
         const oid = `${TAG}-319`;
         const e = await makeProgramEnrollment({ email: `rs10-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
-        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }]);
+        await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }]);
         expect(await enrolled(e.programId)).toBe(1);
         expect(takenBack()).toEqual([-1]);
     });
@@ -816,7 +847,7 @@ describe("fast-path reversal webhook helper", () => {
         const claimant = `claimant-${e.variantId}`;
         await prisma.program.update({ where: { id: e.programId }, data: { claimantShopifyVariantId: claimant } });
         orderLines.mockResolvedValue([{ variantId: claimant, quantity: 1 }]);
-        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: claimant, quantity: 1, lineQuantity: 1, personIds: [e.personId] }]);
+        await refund(oid, [{ variantId: claimant, quantity: 1, lineQuantity: 1, personIds: [e.personId] }]);
         expect(await enrolled(e.programId)).toBe(1);
         expect(await prisma.paymentException.count({ where: { kind: "REFUND", shopifyOrderId: oid } })).toBe(1);
         expect(takenBack()).toEqual([]);
@@ -829,7 +860,7 @@ describe("fast-path reversal webhook helper", () => {
         const claimant = `claimant-${e.variantId}`;
         await prisma.program.update({ where: { id: e.programId }, data: { claimantShopifyVariantId: claimant } });
         orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 1 }, { variantId: claimant, quantity: 1 }]);
-        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }]);
+        await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 1 }]);
         expect(await enrolled(e.programId)).toBe(2);
         expect(takenBack()).toEqual([-1]);
     });
@@ -838,7 +869,7 @@ describe("fast-path reversal webhook helper", () => {
         const oid = `${TAG}-316`;
         const e = await makeProgramEnrollment({ email: `rs7-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2 }]);
-        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
+        await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
         expect(await enrolled(e.programId)).toBe(1);
         expect(await prisma.paymentException.count({ where: { kind: "REFUND", shopifyOrderId: oid } })).toBe(1);
     });
@@ -849,7 +880,7 @@ describe("fast-path reversal webhook helper", () => {
         const kidId = await addSibling(e, oid);
         await prisma.programParticipant.delete({ where: { programId_personId: { programId: e.programId, personId: kidId } } });
         orderLines.mockResolvedValue([{ variantId: e.variantId, quantity: 2 }]);
-        await raiseReversalByOrderId(oid, "REFUND", [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
+        await refund(oid, [{ variantId: e.variantId, quantity: 1, lineQuantity: 2 }]);
         expect(await prisma.programParticipant.count({ where: { programId: e.programId, personId: e.personId } })).toBe(1);
     });
 

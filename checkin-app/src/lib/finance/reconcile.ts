@@ -515,9 +515,15 @@ export interface RestockedLine {
  * matched. Shares the same idempotent raise as the daily reconciler. Only the
  * refunds/create payload says whether a refund restocked; the daily pass can't
  * see it and only flags. A REFUND that restocked public seats is settled per
- * program by settleRestockedSeats.
+ * program by settleRestockedSeats, once per refund id: Shopify redelivers
+ * webhooks, and a second settlement would take the same seats back again.
  */
-export async function raiseReversalByOrderId(orderLegacyId: string, kind: PaymentExceptionKind, restocked: RestockedLine[] = []): Promise<boolean> {
+export async function raiseReversalByOrderId(
+    orderLegacyId: string,
+    kind: PaymentExceptionKind,
+    restocked: RestockedLine[] = [],
+    refundId: string | null = null,
+): Promise<boolean> {
     let matched = false;
     const proc = await prisma.orgMembershipProcess.findFirst({ where: { shopifyOrderId: orderLegacyId }, select: { id: true } });
     if (proc) {
@@ -532,13 +538,46 @@ export async function raiseReversalByOrderId(orderLegacyId: string, kind: Paymen
         await raisePaymentException(kind, { shopifyOrderId: orderLegacyId, programId: e.programId, personId: e.personId });
         matched = true;
     }
-    if (kind === "REFUND") {
+    if (kind === "REFUND" && refundId) {
         for (const programId of new Set(enrolls.map((e) => e.programId))) {
             const onProgram = enrolls.filter((e) => e.programId === programId);
+            if (!(await claimRefundSettlement(refundId, orderLegacyId, programId))) continue;
             await settleRestockedSeats(orderLegacyId, programId, onProgram[0].program, onProgram.map((e) => e.personId), restocked);
         }
     }
     return matched;
+}
+
+const REFUND_SETTLEMENT_TABLE = "ShopifyRefundSettlement";
+
+/**
+ * Record that this refund's restock is being settled for this program; false when
+ * an earlier delivery already did. The advisory lock serialises concurrent
+ * deliveries of the same refund between the check and the insert.
+ */
+async function claimRefundSettlement(refundId: string, orderLegacyId: string, programId: number): Promise<boolean> {
+    const key = `${refundId}:${programId}`;
+    return prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+        const seen = await tx.auditLog.findFirst({
+            where: { tableName: REFUND_SETTLEMENT_TABLE, secondaryAffectedEntity: programId, newData: { path: ["key"], equals: key } },
+            select: { id: true },
+        });
+        if (seen) return false;
+        // ponytail: claimed before settling, so a crash mid-settlement leaves the rest to
+        // the board's REFUND flags rather than risking a second take-back.
+        await tx.auditLog.create({
+            data: {
+                ...systemActor("webhook:shopify-refund"),
+                action: "CREATE",
+                tableName: REFUND_SETTLEMENT_TABLE,
+                affectedEntityId: programId,
+                secondaryAffectedEntity: programId,
+                newData: { key, refundId, orderLegacyId, programId },
+            },
+        });
+        return true;
+    });
 }
 
 /**

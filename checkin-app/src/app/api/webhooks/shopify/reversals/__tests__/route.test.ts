@@ -49,6 +49,7 @@ beforeEach(() => jest.clearAllMocks());
 describe('POST /api/webhooks/shopify/reversals — restocked lines', () => {
     it('passes only restocked lines on refunds/create', async () => {
         const res = await POST(req('refunds/create', {
+            id: 9001,
             order_id: 555,
             refund_line_items: [
                 { quantity: 2, restock_type: 'return', line_item: { variant_id: 111, quantity: 3, properties: [{ name: 'CheckMeIn_Account_ID', value: '7, 8' }] } },
@@ -61,11 +62,11 @@ describe('POST /api/webhooks/shopify/reversals — restocked lines', () => {
         expect(raise).toHaveBeenCalledWith('555', 'REFUND', [
             { variantId: '111', quantity: 2, lineQuantity: 3, personIds: [7, 8] },
             { variantId: '333', quantity: 1, lineQuantity: 1, personIds: [] },
-        ]);
+        ], '9001');
     });
 
     it('passes no lines for a cancellation', async () => {
         await POST(req('orders/cancelled', { id: 777 }));
-        expect(raise).toHaveBeenCalledWith('777', 'CANCELLED', []);
+        expect(raise).toHaveBeenCalledWith('777', 'CANCELLED', [], null);
     });
 });

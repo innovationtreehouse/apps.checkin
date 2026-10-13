@@ -23,7 +23,7 @@ import { recordShopifyWebhookReceipt } from "@/lib/shopifyWebhookReceipt";
  */
 
 interface ReversalPayload {
-    // orders/cancelled: the order object → id. refunds/create & disputes/*: order_id.
+    // orders/cancelled: the order object → id. refunds/create: the refund's id. refunds/create & disputes/*: order_id.
     id?: number | string;
     order_id?: number | string;
     // refunds/create only.
@@ -92,7 +92,8 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
         outcome = `${topic}: no order id in payload — ignored`;
         logger.warn(`[SHOPIFY REVERSAL] ${outcome}`);
     } else {
-        const matched = await raiseReversalByOrderId(String(orderId), kind, restockedLines(payload));
+        const refundId = topic === "refunds/create" && payload.id != null ? String(payload.id) : null;
+        const matched = await raiseReversalByOrderId(String(orderId), kind, restockedLines(payload), refundId);
         outcome = matched
             ? `${topic}: raised ${kind} for order ${orderId}`
             : `${topic}: order ${orderId} not tied to any membership/enrollment — ignored`;
