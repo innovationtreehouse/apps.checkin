@@ -12,6 +12,7 @@ import { LIVE_PERSON } from "@/lib/person/filters";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
 import { parseDateOnly } from "@/lib/time";
 import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
+import { STATES as ENROLLMENT_STATES } from "@/lib/programs/enrollmentState";
 import { ProgramPhase, EnrollmentStatus } from "@/generated/prisma/client";
 
 // ORDER MATTERS: this export sits ABOVE getProgram so the routeAuthDrift
@@ -449,7 +450,11 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             // set the absolute stock instead: capacity minus seats Shopify counts
             // as taken (every ACTIVE seat and every held PENDING seat).
             const taken = await prisma.programParticipant.count({
-                where: { programId, person: LIVE_PERSON, OR: [{ status: 'ACTIVE' }, { inventoryHeldAt: { not: null } }] },
+                where: {
+                    programId,
+                    person: LIVE_PERSON,
+                    OR: [ENROLLMENT_STATES.ACTIVE.where, ENROLLMENT_STATES.PENDING_HELD.where, ENROLLMENT_STATES.PENDING_HELD_DENIED.where],
+                },
             });
             if (!(await setProgramInventory(updatedProgram, Math.max(0, newMax - taken)))) {
                 warning = "Program updated, but setting the Shopify inventory failed. Capacity may be out of sync — check System Status > Link Status.";
