@@ -36,6 +36,12 @@ export function isSaleEnded(p: Pick<SaleRow, 'startAt' | 'offSaleAt' | 'saleEnde
     return offSale instanceof Date && offSale <= orgCalendarDay(now);
 }
 
+/** The public-stock change allowed for a program: after its sale has ended a
+ *  change may only take stock away, never put a seat back on sale. */
+export function saleStockDelta(p: Pick<SaleRow, 'startAt' | 'offSaleAt' | 'saleEndedAt'>, delta: number, now: Date = new Date()): number {
+    return isSaleEnded(p, now) ? Math.min(delta, 0) : delta;
+}
+
 export function classify(p: SaleRow, now: Date = new Date()): SaleStateName {
     switch (p.phase) {
         case 'FINISHED':

@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { adjustProgramInventory } from "@/lib/shopify";
 import { fromWhere } from "@/lib/programs/enrollmentState";
-import { isSaleEnded } from "@/lib/programs/saleState";
+import { saleStockDelta } from "@/lib/programs/saleState";
 
 /**
  * Activate paid program enrollments — the single choke point the Shopify
@@ -93,8 +93,7 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
 
     // One stock call for the whole order; once the sale has ended only a
     // reduction goes through, so no seat goes back on sale. Never fatal.
-    const rawDelta = publicStockDelta(releasedHoldCount, claimantSeatCount);
-    const delta = program && isSaleEnded(program) ? Math.min(rawDelta, 0) : rawDelta;
+    const delta = program ? saleStockDelta(program, publicStockDelta(releasedHoldCount, claimantSeatCount)) : 0;
     if (delta !== 0) {
         const ok = await adjustProgramInventory({ shopifyVariantId: program?.shopifyVariantId ?? null }, delta);
         if (!ok) logger.error(`[enroll] Failed to adjust public stock by ${delta} for program ${programId} (${releasedHoldCount} hold(s) released, ${claimantSeatCount} claimant seat(s)) — capacity may be out of sync.`);

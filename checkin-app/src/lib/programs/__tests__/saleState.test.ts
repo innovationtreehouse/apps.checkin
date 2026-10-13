@@ -1,4 +1,4 @@
-import { classify, isSaleEnded, effectiveOffSaleAt, type SaleRow } from '@/lib/programs/saleState';
+import { classify, isSaleEnded, effectiveOffSaleAt, saleStockDelta, type SaleRow } from '@/lib/programs/saleState';
 
 const NOW = new Date('2026-10-12T15:00:00Z');
 const row = (over: Partial<SaleRow> = {}): SaleRow => ({
@@ -32,6 +32,13 @@ describe('program sale state', () => {
         const partial: Partial<SaleRow> = { phase: 'UPCOMING', enrollmentStatus: 'OPEN' };
         expect(isSaleEnded(partial as SaleRow, NOW)).toBe(false);
         expect(isSaleEnded({ startAt: new Date('2026-11-01') } as SaleRow, NOW)).toBe(false);
+    });
+
+    it('after the sale ends, a stock change may only reduce', () => {
+        const ended = row({ saleEndedAt: new Date('2026-10-01') });
+        expect(saleStockDelta(ended, 1, NOW)).toBe(0);
+        expect(saleStockDelta(ended, -1, NOW)).toBe(-1);
+        expect(saleStockDelta(row(), 2, NOW)).toBe(2);
     });
 
     it('stays ended once the sweep stamped it, and FINISHED wins', () => {
