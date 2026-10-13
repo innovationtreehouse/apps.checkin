@@ -974,6 +974,20 @@ model Program {
   phase                          ProgramPhase     @default(PLANNING)
   /// @sensitivity:public
   enrollmentStatus               EnrollmentStatus @default(CLOSED)
+  /// Date the program comes off sale (store product off sale, enrollment closed).
+  /// Board-editable; null means the start date.
+  /// @sensitivity:public
+  offSaleAt                      DateTime? @db.Date
+  /// Set by the daily sale sweep once the sale has ended and Shopify is off sale.
+  /// @sensitivity:internal
+  saleEndedAt                    DateTime?
+  /// Set when the board was emailed this program's unpaid claims, a week after the sale ended.
+  /// @sensitivity:internal
+  unpaidClaimsNotifiedAt         DateTime?
+  /// Set once the sale sweep has hidden the public store product for this sale end;
+  /// cleared when the board reopens the sale.
+  /// @sensitivity:internal
+  productHiddenAt                DateTime?
   /// @sensitivity:public
   orgMemberOnly                  Boolean          @default(false)
   /// When an orgMemberOnly program is publiclyVisible, it appears in the public

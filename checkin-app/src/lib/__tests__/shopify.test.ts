@@ -1,4 +1,4 @@
-import { createShopifySingleVariantProgram, createClaimantProduct, adjustProgramInventory, syncProgramPrice, mintMemberDiscountCode, resetTokenCache } from '../shopify';
+import { createShopifySingleVariantProgram, createClaimantProduct, adjustProgramInventory, syncProgramPrice, setProgramProductOffSale, mintMemberDiscountCode, resetTokenCache } from '../shopify';
 import { sendEmail } from '../email';
 import prisma from '../prisma';
 
@@ -161,6 +161,38 @@ describe('adjustProgramInventory', () => {
         expect(fetchMock).not.toHaveBeenCalled();
         expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('67890'));
         logSpy.mockRestore();
+    });
+});
+
+describe('setProgramProductOffSale', () => {
+    let originalEnv: NodeJS.ProcessEnv;
+    let fetchMock: jest.Mock;
+
+    beforeEach(() => {
+        originalEnv = { ...process.env };
+        fetchMock = jest.fn();
+        global.fetch = fetchMock;
+        jest.clearAllMocks();
+        resetTokenCache();
+    });
+
+    afterEach(() => {
+        process.env = originalEnv;
+        jest.restoreAllMocks();
+    });
+
+    it('returns false and emails admins when credentials are missing, so the sweep retries', async () => {
+        delete process.env.SHOPIFY_STORE_DOMAIN;
+        delete process.env.SHOPIFY_CLIENT_ID;
+        delete process.env.SHOPIFY_CLIENT_SECRET;
+        (prisma.person.findMany as jest.Mock).mockResolvedValueOnce([{ email: 'admin@test.com' }]);
+
+        const result = await setProgramProductOffSale({ shopifyProductId: '4242' });
+
+        expect(result).toBe(false);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ operation: 'setProgramProductOffSale' }));
+        expect(sendEmail).toHaveBeenCalledWith('admin@test.com', 'Shopify Integration Error', expect.stringContaining('retried on the next daily run'));
     });
 });
 

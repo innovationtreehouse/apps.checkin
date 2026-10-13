@@ -227,6 +227,29 @@ Things the app takes as true because they are handled outside it.
   store. A price change is made on both items by hand; the app does not push
   prices to the store.  [Decision — deliberate limit]
 
+- Each program has an off-sale date, set by the board, defaulting to its start
+  date; it may fall before or after the start. On that date new claims stop, and
+  the next daily run closes enrollment and hides the public item, retrying each
+  day until the store confirms. Families who claimed in time still pay through
+  the reserved-seat item. Moving only the start date never reopens an ended
+  sale.  [Decision]
+
+- A program with no reserved-seat item keeps its public item on sale past the
+  off-sale date, because hiding it would stop claimed families paying; the
+  admins are emailed to create one.  [Decision — deliberate limit]
+
+- After the off-sale date no seat goes back on sale: a withdrawal, a released
+  hold or a raised capacity changes no store stock, though a cut still lowers
+  it.  [Decision]
+
+- Automatic changes only reduce visibility. Nothing opens enrollment, re-lists a
+  product or reopens a sale on its own; the board reopens a sale by moving its
+  off-sale date later, which resets the store stock, and re-lists the public item
+  by hand.  [Decision]
+
+- One week after the off-sale date the board is emailed the claims still unpaid,
+  once per program.  [Decision]
+
 - A scholarship or payment-plan request takes its seat when requested, not when
   approved.  [Decision]
 

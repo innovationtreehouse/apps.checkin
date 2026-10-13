@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { adjustProgramInventory } from "@/lib/shopify";
 import { fromWhere } from "@/lib/programs/enrollmentState";
+import { saleStockDelta } from "@/lib/programs/saleState";
 
 /**
  * Activate paid program enrollments — the single choke point the Shopify
@@ -49,7 +50,10 @@ export function publicStockDelta(releasedHoldCount: number, claimantSeatCount: n
 
 export async function activateProgramEnrollment(input: ActivateEnrollmentInput): Promise<ActivateEnrollmentResult> {
     const { programId, personIds, shopifyOrderId, lines = [] } = input;
-    const program = await prisma.program.findUnique({ where: { id: programId } });
+    const program = await prisma.program.findUnique({
+        where: { id: programId },
+        select: { shopifyVariantId: true, claimantShopifyVariantId: true, maxParticipants: true, startAt: true, offSaleAt: true, saleEndedAt: true },
+    });
 
     let activatedCount = 0;
     let releasedHoldCount = 0;
@@ -87,8 +91,9 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
     // Uncapped programs don't track public stock, so there is nothing to take a claimant seat from.
     const claimantSeatCount = program?.maxParticipants != null ? Math.min(claimantPaid, activatedCount) : 0;
 
-    // One stock call for the whole order. Never fatal.
-    const delta = publicStockDelta(releasedHoldCount, claimantSeatCount);
+    // One stock call for the whole order; once the sale has ended only a
+    // reduction goes through, so no seat goes back on sale. Never fatal.
+    const delta = program ? saleStockDelta(program, publicStockDelta(releasedHoldCount, claimantSeatCount)) : 0;
     if (delta !== 0) {
         const ok = await adjustProgramInventory({ shopifyVariantId: program?.shopifyVariantId ?? null }, delta);
         if (!ok) logger.error(`[enroll] Failed to adjust public stock by ${delta} for program ${programId} (${releasedHoldCount} hold(s) released, ${claimantSeatCount} claimant seat(s)) — capacity may be out of sync.`);

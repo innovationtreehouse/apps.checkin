@@ -41,7 +41,7 @@ describe('activateProgramEnrollment — atomic collapse + redelivery no-op', () 
         personId = person.id;
         // Single-pool (shopifyVariantId present) → the legacy two-pool sibling mirror is skipped.
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Redelivery Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-redeliv' },
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Redelivery Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-redeliv' },
         });
         programId = program.id;
     });
@@ -96,5 +96,49 @@ describe('activateProgramEnrollment — atomic collapse + redelivery no-op', () 
         expect(db2.status).toBe('ACTIVE');
         expect(db2.inventoryHeldAt).toBeNull();
         expect(validate(toRow(db2))).toBeNull();
+    });
+
+    it('releases the hold without a +1 once the sale has ended', async () => {
+        await prisma.program.update({ where: { id: programId }, data: { saleEndedAt: new Date() } });
+        try {
+            await prisma.programParticipant.upsert({
+                where: { programId_personId: { programId, personId } },
+                update: { status: 'PENDING', isPaymentPlanRequested: true, inventoryHeldAt: new Date(), paymentPlanDeniedAt: null, pendingSince: new Date() },
+                create: { programId, personId, status: 'PENDING', isPaymentPlanRequested: true, inventoryHeldAt: new Date(), pendingSince: new Date() },
+            });
+
+            const result = await activateProgramEnrollment({ programId, personIds: [personId], shopifyOrderId: 'order-redeliv-ended' });
+            expect(result).toEqual({ activatedCount: 1, releasedHoldCount: 1, claimantSeatCount: 0 });
+            expect(mockAdjust).not.toHaveBeenCalled();
+        } finally {
+            await prisma.program.update({ where: { id: programId }, data: { saleEndedAt: null } });
+        }
+    });
+
+    it('still takes a claimant-paid unheld seat out of public stock (-1) after the sale has ended', async () => {
+        await prisma.program.update({
+            where: { id: programId },
+            data: { saleEndedAt: new Date(), maxParticipants: 10, claimantShopifyVariantId: 'dev-mock-claimant-redeliv' },
+        });
+        try {
+            await prisma.programParticipant.upsert({
+                where: { programId_personId: { programId, personId } },
+                update: { status: 'PENDING', isPaymentPlanRequested: false, inventoryHeldAt: null, paymentPlanDeniedAt: null, pendingSince: new Date() },
+                create: { programId, personId, status: 'PENDING', pendingSince: new Date() },
+            });
+
+            const result = await activateProgramEnrollment({
+                programId, personIds: [personId], shopifyOrderId: 'order-redeliv-claimant-ended',
+                lines: [{ variantId: 'dev-mock-claimant-redeliv', quantity: 1 }],
+            });
+            expect(result).toEqual({ activatedCount: 1, releasedHoldCount: 0, claimantSeatCount: 1 });
+            expect(mockAdjust).toHaveBeenCalledTimes(1);
+            expect(mockAdjust).toHaveBeenCalledWith(expect.objectContaining({ shopifyVariantId: 'dev-mock-variant-redeliv' }), -1);
+        } finally {
+            await prisma.program.update({
+                where: { id: programId },
+                data: { saleEndedAt: null, maxParticipants: null, claimantShopifyVariantId: null },
+            });
+        }
     });
 });

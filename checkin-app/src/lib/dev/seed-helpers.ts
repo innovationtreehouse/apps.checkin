@@ -317,6 +317,8 @@ export async function seedBaseline(prisma: Db): Promise<void> {
                 leadMentorId: isBoardMember.id,
                 startAt: new Date(),
                 endAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+                // Stays on sale through its run so the seeded program accepts claims.
+                offSaleAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
                 phase: "UPCOMING",
                 enrollmentStatus: "OPEN",
                 orgMemberOnly: false,
@@ -399,6 +401,7 @@ export async function createProgram(prisma: Db): Promise<string> {
             name: `Test Program ${tag}`,
             startAt,
             endAt,
+            offSaleAt: endAt,
             phase: "UPCOMING",
             enrollmentStatus: "OPEN",
             minAge: 8,

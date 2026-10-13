@@ -5,13 +5,15 @@ import prisma from "@/lib/prisma";
 import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { isActiveOrgMember, isDuesSettled, isDuesSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { maybeAnnounceOnOpen } from "@/lib/programAnnounce";
-import { adjustProgramInventory, syncProgramPrice } from "@/lib/shopify";
+import { adjustProgramInventory, setProgramInventory, syncProgramPrice } from "@/lib/shopify";
 import { dollarsToCentsOrNull } from "@inventory/money";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { parseDateOnly } from "@/lib/time";
+import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
+import { STATES as ENROLLMENT_STATES } from "@/lib/programs/enrollmentState";
 import { ProgramPhase, EnrollmentStatus } from "@/generated/prisma/client";
 
 // ORDER MATTERS: this export sits ABOVE getProgram so the routeAuthDrift
@@ -67,6 +69,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
             leadMentorId: true,
             startAt: true,
             endAt: true,
+            offSaleAt: true,
             phase: true,
             enrollmentStatus: true,
             orgMemberOnly: true,
@@ -327,6 +330,32 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             return apiError("Start date must be on or before the end date", 400);
         }
 
+        // Off-sale date: board-only. null follows the start date. An untouched
+        // date still equal to the start date moves with it, unless the sale has
+        // ended: then moving the start leaves the sale ended.
+        const { offSaleAt } = body;
+        if (offSaleAt !== undefined && !isSysAdminOrBoard) {
+            return apiError("Forbidden: Only administrators can change the off-sale date", 403);
+        }
+        if (offSaleAt != null && (typeof offSaleAt !== "string" || isNaN(Date.parse(offSaleAt)))) {
+            return apiError("Invalid off-sale date", 400);
+        }
+        const saleEndedNow = isSaleEnded(currentProgram);
+        const followsStart = currentProgram.offSaleAt == null
+            || currentProgram.offSaleAt.getTime() === currentProgram.startAt.getTime();
+        const newOffSaleAt = offSaleAt !== undefined
+            ? parseDateOnly(offSaleAt)
+            : !newStartAt || !followsStart ? undefined
+            : saleEndedNow ? currentProgram.offSaleAt ?? currentProgram.startAt
+            : newStartAt;
+        // Only the board reopens an ended sale, by moving the off-sale date itself
+        // later: that re-arms the sweep. Enrollment stays closed unless this save opens it.
+        const rearmSale = isSysAdminOrBoard && saleEndedNow && offSaleAt !== undefined
+            && !isSaleEnded({ startAt: newStartAt ?? currentProgram.startAt, offSaleAt: newOffSaleAt ?? null, saleEndedAt: null });
+        if (enrollmentStatus === 'OPEN' && currentProgram.enrollmentStatus !== 'OPEN' && saleEndedNow && !rearmSale) {
+            return apiError("Sales for this program have ended. To reopen enrollment, move the off-sale date later.", 409);
+        }
+
         // Variant⟺price invariant: a program has a Shopify variant iff it
         // has a price on some tier — the capacity/oversell math assumes this
         // everywhere. Compute the post-PATCH EFFECTIVE values (current row + body
@@ -366,6 +395,8 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             ...(leadMentorId !== undefined && { leadMentorId }),
             ...(newStartAt !== undefined && { startAt: newStartAt }),
             ...(newEndAt !== undefined && { endAt: newEndAt }),
+            ...(newOffSaleAt !== undefined && { offSaleAt: newOffSaleAt }),
+            ...(rearmSale && { saleEndedAt: null, unpaidClaimsNotifiedAt: null, productHiddenAt: null }),
             ...(orgMemberOnly !== undefined && { orgMemberOnly }),
             // publiclyVisible only has meaning for a members-only program. Recompute
             // it on the POST-PATCH effective state so neither flipping orgMemberOnly
@@ -419,7 +450,7 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         });
 
         // Shopify is the source of truth for program capacity: cap edits propagate
-        // as relative inventory adjustments.
+        // as relative inventory adjustments, until the sale has ended.
         // Only fires when the program already has Shopify checkout wired up —
         // creation and sync-shopify set inventory absolutely and are unaffected.
         let warning: string | undefined;
@@ -427,13 +458,28 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         const newMax = updatedProgram.maxParticipants;
         const hasShopifyVariant = !!updatedProgram.shopifyVariantId;
 
-        if (oldMax !== newMax && hasShopifyVariant) {
+        if (rearmSale && hasShopifyVariant && newMax !== null) {
+            // Changes skipped while the sale was ended are lost to a relative push;
+            // set the absolute stock instead: capacity minus seats Shopify counts
+            // as taken (every ACTIVE seat and every held PENDING seat).
+            const taken = await prisma.programParticipant.count({
+                where: {
+                    programId,
+                    person: LIVE_PERSON,
+                    OR: [ENROLLMENT_STATES.ACTIVE.where, ENROLLMENT_STATES.PENDING_HELD.where, ENROLLMENT_STATES.PENDING_HELD_DENIED.where],
+                },
+            });
+            if (!(await setProgramInventory(updatedProgram, Math.max(0, newMax - taken)))) {
+                warning = "Program updated, but setting the Shopify inventory failed. Capacity may be out of sync — check System Status > Link Status.";
+            }
+        } else if (oldMax !== newMax && hasShopifyVariant) {
             if (oldMax !== null && newMax !== null) {
-                const ok = await adjustProgramInventory(updatedProgram, newMax - oldMax);
-                if (!ok) {
+                // After the sale ends a cut still goes through; a raise does not.
+                const delta = saleStockDelta(updatedProgram, newMax - oldMax);
+                if (delta !== 0 && !(await adjustProgramInventory(updatedProgram, delta))) {
                     warning = "Program updated, but the Shopify inventory adjustment failed. Capacity may be out of sync — check System Status > Link Status.";
                 }
-            } else {
+            } else if (!isSaleEnded(updatedProgram)) {
                 // Null transition (capped <-> uncapped): a relative adjust can't express
                 // "start/stop tracking inventory" — that needs an inventory_management
                 // flip on the variant, which this PR intentionally doesn't attempt.
@@ -457,6 +503,10 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
 
         const responseObj: Record<string, unknown> = { success: true, program: updatedProgram };
         if (warning) responseObj.warning = warning;
+        // The sweep hid the public product; reopening never re-lists it (automatic changes only reduce visibility).
+        if (rearmSale && currentProgram.productHiddenAt) {
+            responseObj.notice = "Sale reopened. The public store product stays hidden: re-list it in Shopify by hand if it should sell again.";
+        }
         return NextResponse.json(responseObj);
     } catch (error) {
         logger.error("Program update error:", error);

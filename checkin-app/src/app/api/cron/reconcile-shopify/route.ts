@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withCron } from "@/lib/cronAuth";
 import { runReconcile } from "@/lib/finance/reconcile";
+import { runSaleSweep } from "@/lib/programs/saleSweep";
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
@@ -25,9 +26,14 @@ import { runReconcile } from "@/lib/finance/reconcile";
  * checkpoint) and raises refund/chargeback/cancel problems for the board. See
  * lib/finance/reconcile.ts. No-op when the mirror isn't wired
  * (config.shopifyReadDatabaseUrl() null — no SHOPIFY_READ_DB / override set).
+ *
+ * Also runs the program-sale sweep (lib/programs/saleSweep.ts): ends sales whose
+ * off-sale date has arrived and emails the board unpaid claims a week later.
  */
 export const GET = withCron(async () => {
     const result = await runReconcile();
     logger.info(`[reconcile] ${JSON.stringify(result)}`);
-    return NextResponse.json({ success: true, ...result });
+    const saleSweep = await runSaleSweep();
+    logger.info(`[sale-sweep] ${JSON.stringify(saleSweep)}`);
+    return NextResponse.json({ success: true, ...result, saleSweep });
 });

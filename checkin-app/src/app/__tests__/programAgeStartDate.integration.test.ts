@@ -50,7 +50,7 @@ describe('Program Age Start-Date Basis (authenticated route)', () => {
                 startAt: new Date('2026-09-01T00:00:00.000Z'),
                 endAt: new Date('2027-06-01T00:00:00.000Z'),
                 phase: 'UPCOMING',
-                enrollmentStatus: 'OPEN'
+                enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01')
             }
         });
         programId = program.id;

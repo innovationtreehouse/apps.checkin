@@ -10,6 +10,7 @@ import { householdLeadship } from "@/lib/household/leads";
 import { isDuesSettled } from "@/lib/orgMembership";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
 import { adjustProgramInventory } from "@/lib/shopify";
+import { isSaleEnded } from "@/lib/programs/saleState";
 import { apiError } from "@/lib/api-response";
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
@@ -114,6 +115,11 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             // Check Enrollment Status
             if (currentProgram.enrollmentStatus === 'CLOSED') {
                 return NextResponse.json({ error: "Program enrollment is currently closed.", requiresOverride: true }, { status: 400 });
+            }
+            // The off-sale date closes new claims at once; the daily sweep only
+            // records it. Claims made in time returned 409 above and still pay.
+            if (isSaleEnded(currentProgram)) {
+                return NextResponse.json({ error: "Sales for this program have ended.", requiresOverride: true }, { status: 400 });
             }
 
             // Members-only, judged on the PERSON being enrolled (a household lead
@@ -367,7 +373,8 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         // Staff-only: a lead mentor or self-removing parent can't act on Shopify
         // inventory, so the advisory is noise (and a foot-gun) for them.
         const hasShopifyVariant = !!currentProgram.shopifyVariantId;
-        if (isSysAdminOrBoard && !released && enrollment.status === 'ACTIVE' && currentProgram.maxParticipants !== null && hasShopifyVariant) {
+        // After the sale ends a freed seat is not resold, so there is nothing to advise.
+        if (isSysAdminOrBoard && !released && enrollment.status === 'ACTIVE' && currentProgram.maxParticipants !== null && hasShopifyVariant && !isSaleEnded(currentProgram)) {
             responseObj.notice = "Seat freed. This enrollment held a seat in Shopify; it was NOT put back on sale automatically. If you want it available for a paying family, add +1 to this program's inventory in Shopify.";
         }
         return NextResponse.json(responseObj);

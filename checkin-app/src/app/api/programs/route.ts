@@ -28,6 +28,7 @@ const PUBLIC_PROGRAM_SELECT = {
     endAt: true,
     phase: true,
     enrollmentStatus: true,
+    offSaleAt: true,
     orgMemberOnly: true,
     publiclyVisible: true,
     announceOnOpen: true,

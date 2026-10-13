@@ -110,17 +110,17 @@ describe('Individual Program API Integration Tests', () => {
 
         // Create mock programs
         const publicProgram = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), name: 'Public Prog ID API Test', phase: 'RUNNING', orgMemberOnly: false, leadMentorId: leadId }
+            data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), name: 'Public Prog ID API Test', phase: 'RUNNING', orgMemberOnly: false, leadMentorId: leadId }
         });
         publicProgramId = publicProgram.id;
 
         const orgMemberOnlyProgram = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, leadMentorId: leadId }
+            data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, leadMentorId: leadId }
         });
         orgMemberOnlyProgramId = orgMemberOnlyProgram.id;
 
         const publicMemberOnlyProgram = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Member Only Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true, leadMentorId: leadId }
+            data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Member Only Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true, leadMentorId: leadId }
         });
         publicMemberOnlyProgramId = publicMemberOnlyProgram.id;
 
@@ -516,7 +516,7 @@ describe('Individual Program API Integration Tests', () => {
             });
 
             const pastBoundaryProgram = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), name: 'Past Boundary Prog ID API Test', phase: 'UPCOMING', endAt: new Date(boundary.getTime() + 10 * DAY_MS) },
+                data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), name: 'Past Boundary Prog ID API Test', phase: 'UPCOMING', endAt: new Date(boundary.getTime() + 10 * DAY_MS) },
             });
             pastBoundaryProgramId = pastBoundaryProgram.id;
         });
@@ -713,7 +713,7 @@ describe('Individual Program API Integration Tests', () => {
         it('clamps publiclyVisible to false when PATCHed onto a public (non-members-only) program', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
              const prog = await prisma.program.create({
-                 data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Clamp Public Prog ID API Test', phase: 'RUNNING', orgMemberOnly: false, publiclyVisible: false, leadMentorId: leadId },
+                 data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Clamp Public Prog ID API Test', phase: 'RUNNING', orgMemberOnly: false, publiclyVisible: false, leadMentorId: leadId },
              });
              try {
                  const req = new Request(`http://localhost:4000/api/programs/${prog.id}`, { method: 'PATCH', body: JSON.stringify({ publiclyVisible: true }) });
@@ -731,7 +731,7 @@ describe('Individual Program API Integration Tests', () => {
         it('clears publiclyVisible when a members-only program is flipped to public', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
              const prog = await prisma.program.create({
-                 data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Clamp Flip Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true, leadMentorId: leadId },
+                 data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Clamp Flip Prog ID API Test', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true, leadMentorId: leadId },
              });
              try {
                  const req = new Request(`http://localhost:4000/api/programs/${prog.id}`, { method: 'PATCH', body: JSON.stringify({ orgMemberOnly: false }) });
@@ -781,7 +781,7 @@ describe('Individual Program API Integration Tests', () => {
             newLeadId = newLead.id;
 
             const noLeadProgram = await prisma.program.create({
-                data: {
+                data: { offSaleAt: new Date('2999-01-01'),
                     name: 'No Lead Prog ID API Test',
                     phase: 'PLANNING',
                     startAt: new Date('2026-01-01'),
@@ -792,12 +792,12 @@ describe('Individual Program API Integration Tests', () => {
             noLeadProgramId = noLeadProgram.id;
 
             const noEventsProgram = await prisma.program.create({
-                data: { name: 'No Events Prog ID API Test', phase: 'PLANNING', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId }
+                data: { offSaleAt: new Date('2999-01-01'), name: 'No Events Prog ID API Test', phase: 'PLANNING', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId }
             });
             noEventsProgramId = noEventsProgram.id;
 
             const finishedProgram = await prisma.program.create({
-                data: {
+                data: { offSaleAt: new Date('2999-01-01'),
                     name: 'Finished Prog ID API Test',
                     phase: 'FINISHED',
                     enrollmentStatus: 'CLOSED',
@@ -810,7 +810,7 @@ describe('Individual Program API Integration Tests', () => {
             finishedProgramId = finishedProgram.id;
 
             const validPublishProgram = await prisma.program.create({
-                data: {
+                data: { offSaleAt: new Date('2999-01-01'),
                     name: 'Valid Publish Prog ID API Test',
                     phase: 'PLANNING',
                     startAt: new Date('2026-01-01'),
@@ -1044,6 +1044,7 @@ describe('Individual Program API Integration Tests', () => {
                 data: {
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
+                    offSaleAt: new Date('2999-01-01'),
                     name: 'Prog ID API Test Shopify Capacity',
                     phase: 'RUNNING',
                     leadMentorId: leadId,
@@ -1058,6 +1059,7 @@ describe('Individual Program API Integration Tests', () => {
                 data: {
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
+                    offSaleAt: new Date('2999-01-01'),
                     name: 'Prog ID API Test Shopify Uncapped',
                     phase: 'RUNNING',
                     leadMentorId: leadId,
@@ -1124,6 +1126,209 @@ describe('Individual Program API Integration Tests', () => {
             expect(data.program.maxParticipants).toBe(30);
             expect(data.warning).toMatch(/capped and uncapped/i);
         });
+
+        it('does not push a capacity change to Shopify once the sale has ended', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            const ended = await prisma.program.create({
+                data: {
+                    startAt: new Date('2026-01-01'),
+                    endAt: new Date('2026-12-31'),
+                    name: 'Prog ID API Test Shopify Sale Ended',
+                    phase: 'RUNNING',
+                    leadMentorId: leadId,
+                    orgMemberPriceCents: 5000,
+                    maxParticipants: 20,
+                    shopifyVariantId: 'dev-mock-variant-sale-ended',
+                },
+            });
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            try {
+                const req = new Request(`http://localhost:4000/api/programs/${ended.id}`, {
+                    method: 'PATCH',
+                    headers: { cookie: 'session=test' },
+                    body: JSON.stringify({ maxParticipants: 25 }),
+                });
+                const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(ended.id) as unknown as never);
+                expect(res.status).toBe(200);
+                expect((await res.json()).program.maxParticipants).toBe(25);
+                expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory'));
+            } finally {
+                logSpy.mockRestore();
+                await prisma.program.delete({ where: { id: ended.id } });
+            }
+        });
+
+        it('still pushes a capacity cut to Shopify after the sale has ended', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            const ended = await prisma.program.create({
+                data: {
+                    startAt: new Date('2026-01-01'),
+                    endAt: new Date('2026-12-31'),
+                    name: 'Prog ID API Test Shopify Sale Ended Cut',
+                    phase: 'RUNNING',
+                    leadMentorId: leadId,
+                    orgMemberPriceCents: 5000,
+                    maxParticipants: 20,
+                    shopifyVariantId: 'dev-mock-variant-sale-ended-cut',
+                },
+            });
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            try {
+                const res = await PATCH(
+                    new Request(`http://localhost:4000/api/programs/${ended.id}`, { method: 'PATCH', headers: { cookie: 'session=test' }, body: JSON.stringify({ maxParticipants: 15 }) }) as unknown as import("next/server").NextRequest,
+                    createParams(ended.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                expect((await res.json()).warning).toBeUndefined();
+                expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory by -5 for variant: dev-mock-variant-sale-ended-cut'));
+            } finally {
+                logSpy.mockRestore();
+                await prisma.program.delete({ where: { id: ended.id } });
+            }
+        });
+
+        it('does not re-list a hidden public product when the board reopens the sale', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            const ended = await prisma.program.create({
+                data: {
+                    startAt: new Date('2026-01-01'),
+                    endAt: new Date('2099-12-31'),
+                    name: 'Prog ID API Test Sale Ended Hidden',
+                    phase: 'RUNNING',
+                    leadMentorId: leadId,
+                    shopifyProductId: 'dev-mock-product-hidden',
+                    claimantShopifyVariantId: 'dev-mock-claimant-hidden',
+                    saleEndedAt: new Date(),
+                    productHiddenAt: new Date(),
+                },
+            });
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            try {
+                const res = await PATCH(
+                    new Request(`http://localhost:4000/api/programs/${ended.id}`, { method: 'PATCH', headers: { cookie: 'session=test' }, body: JSON.stringify({ offSaleAt: '2999-01-01' }) }) as unknown as import("next/server").NextRequest,
+                    createParams(ended.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                expect((await res.json()).notice).toMatch(/stays hidden: re-list it in Shopify by hand/);
+                expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('dev-mock-product-hidden'));
+                const row = await prisma.program.findUniqueOrThrow({ where: { id: ended.id } });
+                expect(row.saleEndedAt).toBeNull();
+                expect(row.productHiddenAt).toBeNull();
+            } finally {
+                logSpy.mockRestore();
+                await prisma.program.delete({ where: { id: ended.id } });
+            }
+        });
+
+        it('moving only the start date later leaves an ended sale ended', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            // Ended by its date (off-sale date null = the start date), before the sweep stamped it.
+            const ended = await prisma.program.create({
+                data: {
+                    startAt: new Date('2026-01-01'),
+                    endAt: new Date('2099-12-31'),
+                    name: 'Prog ID API Test Sale Ended Start Move',
+                    phase: 'RUNNING',
+                    leadMentorId: leadId,
+                    enrollmentStatus: 'CLOSED',
+                },
+            });
+            try {
+                const res = await PATCH(
+                    new Request(`http://localhost:4000/api/programs/${ended.id}`, { method: 'PATCH', headers: { cookie: 'session=test' }, body: JSON.stringify({ startAt: '2099-01-01', enrollmentStatus: 'OPEN' }) }) as unknown as import("next/server").NextRequest,
+                    createParams(ended.id) as unknown as never,
+                );
+                expect(res.status).toBe(409);
+
+                const moved = await PATCH(
+                    new Request(`http://localhost:4000/api/programs/${ended.id}`, { method: 'PATCH', headers: { cookie: 'session=test' }, body: JSON.stringify({ startAt: '2099-01-01' }) }) as unknown as import("next/server").NextRequest,
+                    createParams(ended.id) as unknown as never,
+                );
+                expect(moved.status).toBe(200);
+                const row = await prisma.program.findUniqueOrThrow({ where: { id: ended.id } });
+                expect(row.startAt.toISOString()).toBe('2099-01-01T00:00:00.000Z');
+                expect(row.offSaleAt?.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+            } finally {
+                await prisma.program.delete({ where: { id: ended.id } });
+            }
+        });
+
+        it('refuses to reopen enrollment after the sale ended unless the off-sale date moves later', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            const ended = await prisma.program.create({
+                data: {
+                    startAt: new Date('2026-01-01'),
+                    endAt: new Date('2099-12-31'),
+                    name: 'Prog ID API Test Sale Ended Reopen',
+                    phase: 'RUNNING',
+                    leadMentorId: leadId,
+                    enrollmentStatus: 'CLOSED',
+                    saleEndedAt: new Date(),
+                },
+            });
+            const patch = (body: object) => PATCH(
+                new Request(`http://localhost:4000/api/programs/${ended.id}`, { method: 'PATCH', headers: { cookie: 'session=test' }, body: JSON.stringify(body) }) as unknown as import("next/server").NextRequest,
+                createParams(ended.id) as unknown as never,
+            );
+            try {
+                const refused = await patch({ enrollmentStatus: 'OPEN' });
+                expect(refused.status).toBe(409);
+                expect((await refused.json()).error).toMatch(/move the off-sale date later/i);
+
+                const reopened = await patch({ enrollmentStatus: 'OPEN', offSaleAt: '2999-01-01' });
+                expect(reopened.status).toBe(200);
+                const row = await prisma.program.findUniqueOrThrow({ where: { id: ended.id } });
+                expect(row.enrollmentStatus).toBe('OPEN');
+                expect(row.saleEndedAt).toBeNull();
+            } finally {
+                await prisma.program.delete({ where: { id: ended.id } });
+            }
+        });
+
+        it('on reopening an ended sale, sets the absolute Shopify stock (capacity minus active and held seats)', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            const ended = await prisma.program.create({
+                data: {
+                    startAt: new Date('2026-01-01'),
+                    endAt: new Date('2099-12-31'),
+                    name: 'Prog ID API Test Sale Ended Restock',
+                    phase: 'RUNNING',
+                    leadMentorId: leadId,
+                    orgMemberPriceCents: 5000,
+                    maxParticipants: 20,
+                    shopifyVariantId: 'dev-mock-variant-sale-reopen',
+                    saleEndedAt: new Date(),
+                },
+            });
+            const people = await Promise.all(['active', 'held', 'unpaid'].map((k) => prisma.person.create({
+                data: { name: `Reopen ${k}`, email: `reopen-${k}-${ended.id}@example.com`, household: { create: { name: 'Reopen HH' } } },
+            })));
+            await prisma.programParticipant.createMany({
+                data: [
+                    { programId: ended.id, personId: people[0].id, status: 'ACTIVE' },
+                    { programId: ended.id, personId: people[1].id, status: 'PENDING', isPaymentPlanRequested: true, inventoryHeldAt: new Date() },
+                    { programId: ended.id, personId: people[2].id, status: 'PENDING' },
+                ],
+            });
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            try {
+                const res = await PATCH(
+                    new Request(`http://localhost:4000/api/programs/${ended.id}`, { method: 'PATCH', headers: { cookie: 'session=test' }, body: JSON.stringify({ offSaleAt: '2999-01-01' }) }) as unknown as import("next/server").NextRequest,
+                    createParams(ended.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                expect((await res.json()).warning).toBeUndefined();
+                expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Would set inventory to 18 for variant: dev-mock-variant-sale-reopen'));
+                expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory'));
+            } finally {
+                logSpy.mockRestore();
+                await prisma.programParticipant.deleteMany({ where: { programId: ended.id } });
+                await prisma.program.delete({ where: { id: ended.id } });
+                const hh = people.map((p) => p.householdId);
+                await prisma.person.deleteMany({ where: { id: { in: people.map((p) => p.id) } } });
+                await prisma.household.deleteMany({ where: { id: { in: hh } } });
+            }
+        });
     });
 
     // ── Variant⟺price invariant (#1520) ──────────────────────────────────────
@@ -1138,17 +1343,17 @@ describe('Individual Program API Integration Tests', () => {
 
         beforeAll(async () => {
             const freeProgram = await prisma.program.create({
-                data: { name: 'Free Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId },
+                data: { offSaleAt: new Date('2999-01-01'), name: 'Free Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId },
             });
             freeProgramId = freeProgram.id;
 
             const pricedNoVariant = await prisma.program.create({
-                data: { name: 'Priced No Variant Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId, orgMemberPriceCents: 2500 },
+                data: { offSaleAt: new Date('2999-01-01'), name: 'Priced No Variant Prog ID API Test', startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: leadId, orgMemberPriceCents: 2500 },
             });
             pricedNoVariantProgramId = pricedNoVariant.id;
 
             const pricedWithVariant = await prisma.program.create({
-                data: {
+                data: { offSaleAt: new Date('2999-01-01'),
                     name: 'Priced With Variant Prog ID API Test',
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
