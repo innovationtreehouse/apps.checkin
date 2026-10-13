@@ -25,6 +25,7 @@ jest.mock('@/lib/shopify', () => ({
         claimantShopifyProductId: 'mock-claimant-product-id',
         claimantShopifyVariantId: 'mock-claimant-variant-id',
     }),
+    syncProgramPrice: jest.fn().mockResolvedValue(true),
 }));
 
 // Mock Prisma

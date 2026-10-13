@@ -9,6 +9,7 @@ import { logIntegrationError } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { programMemberCodePrefix } from "@/lib/programs/memberDiscountCode";
+import { programVariantIds } from "@/lib/programs/variants";
 
 let cachedToken: string | null = null;
 let tokenExpiresAt: number = 0;
@@ -648,6 +649,79 @@ export async function adjustProgramInventory(
             `Failed to adjust Shopify inventory (delta ${delta}) after a program capacity change.`,
         );
 
+        return false;
+    }
+}
+
+/**
+ * Sets the program's base price on every Shopify variant it sells — the public
+ * one and the hidden claimant one. Both carry the base (non-member) price; members
+ * get their discount through {@link mintMemberDiscountCode}, so the member price
+ * alone never reaches Shopify. Called from PATCH /api/programs/[id] when the
+ * base price changes.
+ *
+ * A zero or null base is never pushed: a $0 public variant gives seats away in
+ * the store. That case is reported to admins like any other failure.
+ *
+ * Never throws: on failure logs + emails admins via reportShopifyFailure and
+ * returns false, so the caller can warn that Shopify's price is out of date.
+ */
+export async function syncProgramPrice(
+    program: { id: number; name: string; shopifyVariantId?: string | null; claimantShopifyVariantId?: string | null },
+    basePriceCents: number | null,
+): Promise<boolean> {
+    const variantIds = programVariantIds(program);
+    if (variantIds.length === 0) return true;
+
+    const context = { programId: program.id, variantIds, basePriceCents };
+    const emailIntro = `The Shopify price for program <strong>${escapeHtml(program.name)}</strong> is out of date. Set it by hand in Shopify on every variant listed below.`;
+
+    if (!basePriceCents || basePriceCents <= 0) {
+        await reportShopifyFailure(
+            "syncProgramPrice",
+            new Error(`Base price is ${basePriceCents == null ? "unset" : "$0"}; Shopify variants ${variantIds.join(", ")} keep their old price`),
+            context,
+            emailIntro,
+        );
+        return false;
+    }
+    const price = (basePriceCents / 100).toFixed(2);
+
+    // See createShopifySingleVariantProgram for why this branch exists (CHECKIN_ENV=local mock).
+    if (config.shopifyMockActive()) {
+        console.log(`[SHOPIFY] (mock) Would set price ${price} on variants: ${variantIds.join(", ")}`);
+        return true;
+    }
+
+    const storeDomain = config.shopifyStoreDomain();
+    const accessToken = await getAccessToken();
+    if (!storeDomain || !accessToken) {
+        await reportShopifyFailure(
+            "syncProgramPrice",
+            new Error("Shopify credentials missing or access token unavailable"),
+            context,
+            emailIntro,
+        );
+        return false;
+    }
+
+    try {
+        // ponytail: REST product endpoints are legacy; switch to GraphQL productVariantsBulkUpdate with the capacity redesign's GraphQL move (≥2026-04).
+        for (const variantId of variantIds) {
+            const res = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/variants/${variantId}.json`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+                body: JSON.stringify({ variant: { id: Number(variantId), price } }),
+            }, "Shopify update variant price");
+            if (!res.ok) {
+                throw new Error(`Shopify price update failed for variant ${variantId}: ${res.status} ${await res.text()}`);
+            }
+        }
+        console.log(`[SHOPIFY] Set price ${price} on variants ${variantIds.join(", ")}`);
+        return true;
+    } catch (error) {
+        console.error("[Shopify Error] Failed to update program price:", error);
+        await reportShopifyFailure("syncProgramPrice", error, context, emailIntro);
         return false;
     }
 }
