@@ -25,8 +25,12 @@ export async function parseBody<T>(req: Request, schema: ZodType<T>): Promise<T>
   return result.data;
 }
 
-function correlationId(req: Request): string {
-  return req.headers.get("x-correlation-id") ?? crypto.randomUUID();
+/** A caller's correlation id is kept only when it is a short token; anything else gets a fresh UUID. */
+const CORRELATION_ID = /^[A-Za-z0-9._:-]{1,64}$/;
+
+export function correlationId(req: Request): string {
+  const supplied = req.headers.get("x-correlation-id");
+  return supplied && CORRELATION_ID.test(supplied) ? supplied : crypto.randomUUID();
 }
 
 /** Who acts, for workflow audit rows. The id comes only from the host principal. */

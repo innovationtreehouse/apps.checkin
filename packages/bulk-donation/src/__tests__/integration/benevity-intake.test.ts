@@ -110,6 +110,52 @@ describeDb("owner assignment", () => {
   });
 });
 
+describeDb("concurrent owner decisions", () => {
+  it("racing assign and organizational-level calls record exactly one decision; the loser is refused", async () => {
+    await upload(FILE);
+    const t1 = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "T-1" } });
+    const results = await Promise.allSettled([
+      transactionService.assignOwner(orgId, t1.id, 201, false, AUDIT),
+      transactionService.assignOwner(orgId, t1.id, 202, false, AUDIT),
+      transactionService.markOrganizationalLevel(orgId, t1.id, AUDIT),
+      transactionService.markOrganizationalLevel(orgId, t1.id, AUDIT),
+    ]);
+
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    for (const r of results) {
+      if (r.status === "rejected") {
+        expect(r.reason).toBeInstanceOf(ServiceError);
+        expect([400, 409]).toContain((r.reason as ServiceError).statusCode);
+      }
+    }
+    const row = await db.transaction.findUniqueOrThrow({ where: { id: t1.id } });
+    expect(row.ownerId !== null && row.isOrganizationalLevel).toBe(false);
+    const decisions = await db.workflowEvent.count({
+      where: { orgId, entityId: String(t1.id), eventType: { in: ["OWNER_ASSIGNED", "ORG_LEVEL_MARKED"] } },
+    });
+    expect(decisions).toBe(1);
+  });
+});
+
+describeDb("gifts for an already-completed disbursement", () => {
+  it("refuses the whole file, names the disbursement, and imports nothing", async () => {
+    await makeAccountMapRule(orgId);
+    await db.transactionCommentRule.create({ data: { orgId, comment: "Robotics team", ownerId: 201, createdByUserId: 1 } });
+    await upload(FILE.slice(0, 2));
+    await db.disbursementEvent.findFirstOrThrow({ where: { orgId, disbursementId: "D-1" } });
+    const filesBefore = await db.uploadedFile.count({ where: { orgId } });
+
+    const late = upload([
+      ...FILE.slice(0, 2),
+      "D-1,2026-09-01,Acme Corp,T-9,30.00,0,0,check,standard,Bo,Kim,Robotics team",
+      "D-2,2026-09-08,Acme Corp,T-10,5.00,0,0,check,standard,Al,Ng,Robotics team",
+    ]);
+    await expect(late).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining("D-1") });
+    expect(await db.transaction.count({ where: { orgId, transactionId: { in: ["T-9", "T-10"] } } })).toBe(0);
+    expect(await db.uploadedFile.count({ where: { orgId } })).toBe(filesBefore);
+  });
+});
+
 describeDb("comment rules apply at upload", () => {
   it("a later upload whose comment matches a rule takes its owner, attributed to the uploader", async () => {
     await upload(FILE);

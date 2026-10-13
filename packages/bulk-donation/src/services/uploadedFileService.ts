@@ -135,6 +135,23 @@ export const uploadedFileService = {
         });
       }
 
+      // A completed disbursement's payload is final, so a late gift for it would never be booked.
+      const newDisbursementIds = [...new Set(toInsert.flatMap((t) => (t.disbursementId ? [t.disbursementId] : [])))];
+      const completed =
+        newDisbursementIds.length > 0
+          ? await tx.disbursementEvent.findMany({
+              where: { orgId, disbursementId: { in: newDisbursementIds } },
+              select: { disbursementId: true },
+            })
+          : [];
+      if (completed.length > 0) {
+        const ids = completed.map((c) => c.disbursementId).sort().join(", ");
+        throw new ServiceError(
+          409,
+          `This file has new gifts for disbursements that are already completed (${ids}). Nothing was imported; these gifts need manual booking.`,
+        );
+      }
+
       const inserted =
         toInsert.length > 0
           ? await tx.transaction.createManyAndReturn({
