@@ -1325,6 +1325,18 @@ describe("Merge Participants API", () => {
             ]));
         });
 
+        it("keeps the original grant metadata on a moved role", async () => {
+            const grantedAt = new Date("2024-02-03T04:05:06Z");
+            await prisma.personRole.create({ data: { personId: pMergeId, role: "KEYHOLDER", grantedById: actorId, grantedAt } });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            const row = await prisma.personRole.findUnique({ where: { personId_role: { personId: pKeepId, role: "KEYHOLDER" } } });
+            expect(row?.grantedById).toBe(actorId);
+            expect(row?.grantedAt.toISOString()).toBe(grantedAt.toISOString());
+        });
+
         // Moving BOARD revokes it from the merged-away record, which only a board
         // member may do: refused before anything is written.
         it("refuses a sysadmin who is not on the board when the merged-away record holds BOARD", async () => {

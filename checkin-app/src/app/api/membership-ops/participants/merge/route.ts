@@ -653,16 +653,28 @@ export const POST = withAuth(
                 // setRoleFlag, the role routes' choke point, so it runs their guards
                 // and writes one audit row per change: granted to the keeper first (a
                 // no-op when the keeper already holds it), then revoked from the
-                // tombstone, so a moving BOARD never counts down to zero. Read in the
-                // transaction so a role granted after the pre-tx read still moves.
-                const tombstoneRoles = await tx.personRole.findMany({ where: { personId: mergeId }, select: { role: true } });
-                for (const { role } of tombstoneRoles) {
+                // tombstone, so a moving BOARD never counts down to zero. A moved row
+                // keeps its original grant metadata; the audit rows name the merging
+                // actor. Read in the transaction so a role granted after the pre-tx
+                // read still moves.
+                const tombstoneRoles = await tx.personRole.findMany({
+                    where: { personId: mergeId },
+                    select: { role: true, grantedById: true, grantedAt: true },
+                });
+                for (const { role, grantedById, grantedAt } of tombstoneRoles) {
                     if (!roleActor) throw new RoleMatrixError("Forbidden");
                     const flag = KIND_TO_FLAG[role];
                     const granted = await setRoleFlag(tx, keepId, flag, true, roleActor);
                     await setRoleFlag(tx, mergeId, flag, false, roleActor);
-                    if (granted.changed) moved.roles.migrated++;
-                    else moved.roles.deduped++;
+                    if (granted.changed) {
+                        await tx.personRole.update({
+                            where: { personId_role: { personId: keepId, role } },
+                            data: { grantedById, grantedAt },
+                        });
+                        moved.roles.migrated++;
+                    } else {
+                        moved.roles.deduped++;
+                    }
                 }
                 // After the holder pass, so a granter stamp on a deduped row isn't counted.
                 moved.roleGrants = (await tx.personRole.updateMany({ where: { grantedById: mergeId }, data: { grantedById: keepId } })).count;
