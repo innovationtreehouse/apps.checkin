@@ -12,8 +12,7 @@ import { LIVE_PERSON } from "@/lib/person/filters";
 import { mintPersonId } from "@/lib/person/mintId";
 import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 import { config } from "@/lib/config";
-import { ensureHouseholdMembership, raiseDeniedHouseholdActivity, setHouseholdStatus } from "@/lib/membership/householdStatus";
-import { personActor } from "@/lib/auditActor";
+import { ensureHouseholdMembership, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 
 export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (req: NextRequest, auth) => {
     if (!config.csvImportEnabled()) {
@@ -126,32 +125,18 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             });
         };
 
-        // Helper: mark an imported household ACTIVE. Import may only move a
-        // household NONE → ACTIVE; any other status (REVOKED, DENIED) is a board
-        // decision import must not overwrite, so it returns a reason for the
-        // operator instead (and a DENIED one also goes to the board). Returns null
-        // when the household is (now) ACTIVE.
-        const activateImportedHousehold = async (householdId: number): Promise<string | null> => {
-            const existing = await prisma.orgMembership.findUnique({ where: { householdId }, select: { status: true } });
-            const from = existing?.status ?? 'NONE';
-            if (from === 'ACTIVE') return null;
-            if (from === 'DENIED') {
-                await raiseDeniedHouseholdActivity({ householdId, what: 'CSV import tried to make this household ACTIVE' });
+        // Helper: give an imported household its membership row at NONE. Import
+        // never sets a status; a REVOKED or DENIED household is left as it is and
+        // reported to the operator (a DENIED one also goes to the board).
+        const recordImportedHousehold = async (householdId: number): Promise<string | null> => {
+            const { status } = await ensureHouseholdMembership(prisma, householdId);
+            if (status === 'DENIED') {
+                await raiseDeniedHouseholdActivity({ householdId, what: 'CSV import touched this household' });
             }
-            if (from !== 'NONE') {
-                return `household ${householdId} is ${from}; import does not change that status — a board member must handle it.`;
+            if (status === 'REVOKED' || status === 'DENIED') {
+                return `household ${householdId} is ${status}; import does not change that status — a board member must handle it.`;
             }
-            if (sharesHousehold(actorHouseholdId, householdId)) {
-                return `household ${householdId} is your own — someone outside your household must activate it.`;
-            }
-            const membership = await ensureHouseholdMembership(prisma, householdId);
-            const applied = await setHouseholdStatus(prisma, membership.id, {
-                from: ['NONE'],
-                to: 'ACTIVE',
-                actor: personActor(auth.user.id),
-                reason: 'csv-import',
-            });
-            return applied ? null : `household ${householdId} changed status during the import; nothing was written.`;
+            return null;
         };
 
         // Parse all rows first
@@ -347,7 +332,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             return null;
         };
 
-        // Rows whose household linking succeeded; pass 3 activates their households.
+        // Rows whose household linking succeeded; pass 3 records their households.
         const linked: (ParsedRow & { participantId: number })[] = [];
 
         for (const pr of parsedRows) {
@@ -480,17 +465,17 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             }
         }
 
-        // ===== PASS 3: Activate each linked row's final household once =====
-        // Runs after every merge so a household this import activates is never
-        // the source of a later merge in the same file.
-        const activated = new Set<number>();
+        // ===== PASS 3: Record each linked row's final household once =====
+        // Runs after every merge, so each surviving household is checked (and
+        // reported) once.
+        const recorded = new Set<number>();
         for (const pr of linked) {
             try {
                 const participant = await prisma.person.findUnique({ where: { id: pr.participantId }, select: { householdId: true } });
-                if (!participant || activated.has(participant.householdId)) continue;
-                activated.add(participant.householdId);
-                const refusal = await activateImportedHousehold(participant.householdId);
-                if (refusal) errors.push(`Row ${pr.index + 2} (${pr.fullName}): membership not set: ${refusal}`);
+                if (!participant || recorded.has(participant.householdId)) continue;
+                recorded.add(participant.householdId);
+                const refusal = await recordImportedHousehold(participant.householdId);
+                if (refusal) errors.push(`Row ${pr.index + 2} (${pr.fullName}): ${refusal}`);
             } catch (err: unknown) {
                 logger.error(`Error in pass 3 for row ${pr.index + 2}:`, err);
                 const errorMessage = err instanceof Error ? err.message : 'Unknown error';
