@@ -112,7 +112,7 @@ describe("closed-enum writer", () => {
         { Amount: 23.45, DetailType: "DepositLineDetail", DepositLineDetail: { AccountRef: { value: "81" } } },
         { Amount: -3, DetailType: "DepositLineDetail", DepositLineDetail: { AccountRef: { value: "90" } } },
       ],
-      PrivateNote: `Shopify payout\n[checkin:${KEY}]`,
+      PrivateNote: `Shopify payout\n[checkin-test] [checkin:${KEY}]`,
     });
   });
 
@@ -127,14 +127,14 @@ describe("closed-enum writer", () => {
       AccountRef: { value: "41" },
       EntityRef: { value: "5", type: "Vendor" },
       Line: [{ Amount: 19.99, DetailType: "AccountBasedExpenseLineDetail", AccountBasedExpenseLineDetail: { AccountRef: { value: "60" }, ClassRef: { value: "7" } } }],
-      PrivateNote: "[checkin:k-1]",
+      PrivateNote: "[checkin-test] [checkin:k-1]",
     });
     expect(b.body).toEqual({
       TxnDate: "2025-03-05",
       VendorRef: { value: "5" },
       DueDate: "2025-04-04",
       Line: [{ Amount: 42.1, DetailType: "AccountBasedExpenseLineDetail", AccountBasedExpenseLineDetail: { AccountRef: { value: "60" } } }],
-      PrivateNote: "[checkin:k-2]",
+      PrivateNote: "[checkin-test] [checkin:k-2]",
     });
   });
 
@@ -391,31 +391,31 @@ describe("findOrCreate", () => {
 describe("createVendor", () => {
   it("appends (Vendor) when a Customer holds the name", async () => {
     fetchMock
-      .mockResolvedValueOnce(rows("Customer", [{ Id: "3", DisplayName: "Pat O'Neil" }]))
+      .mockResolvedValueOnce(rows("Customer", [{ Id: "3", DisplayName: "TEST-Pat O'Neil" }]))
       .mockResolvedValueOnce(rows("Vendor", []))
       .mockResolvedValueOnce(json({ Vendor: { Id: "40" } }));
     await expect(createVendor(client(), "Pat O'Neil", "vendor-person-12")).resolves.toEqual({
       kind: "created",
       id: "40",
-      displayName: "Pat O'Neil (Vendor)",
+      displayName: "TEST-Pat O'Neil (Vendor)",
     });
     expect(queries()).toEqual([
-      "SELECT * FROM Customer WHERE DisplayName = 'Pat O\\'Neil'",
-      "SELECT * FROM Vendor WHERE DisplayName = 'Pat O\\'Neil (Vendor)'",
+      "SELECT * FROM Customer WHERE DisplayName = 'TEST-Pat O\\'Neil'",
+      "SELECT * FROM Vendor WHERE DisplayName = 'TEST-Pat O\\'Neil (Vendor)'",
     ]);
     const [c] = posts();
-    expect(c.body).toEqual({ DisplayName: "Pat O'Neil (Vendor)" });
+    expect(c.body).toEqual({ DisplayName: "TEST-Pat O'Neil (Vendor)" });
     expect(c.url.searchParams.get("requestid")).toBe("vendor-person-12");
   });
 
   it("keeps the name when no Customer holds it", async () => {
     fetchMock.mockResolvedValueOnce(rows("Customer", [])).mockResolvedValueOnce(rows("Vendor", [])).mockResolvedValueOnce(json({ Vendor: { Id: "41" } }));
-    await expect(createVendor(client(), "Ann Lee", "v-1")).resolves.toEqual({ kind: "created", id: "41", displayName: "Ann Lee" });
+    await expect(createVendor(client(), "Ann Lee", "v-1")).resolves.toEqual({ kind: "created", id: "41", displayName: "TEST-Ann Lee" });
   });
 
   it("returns an existing Vendor of that name as found, so a retry never creates twice", async () => {
-    fetchMock.mockResolvedValueOnce(rows("Customer", [])).mockResolvedValueOnce(rows("Vendor", [{ Id: "41", DisplayName: "Ann Lee" }]));
-    await expect(createVendor(client(), "Ann Lee", "v-1")).resolves.toEqual({ kind: "found", via: "name", id: "41", displayName: "Ann Lee" });
+    fetchMock.mockResolvedValueOnce(rows("Customer", [])).mockResolvedValueOnce(rows("Vendor", [{ Id: "41", DisplayName: "TEST-Ann Lee" }]));
+    await expect(createVendor(client(), "Ann Lee", "v-1")).resolves.toEqual({ kind: "found", via: "name", id: "41", displayName: "TEST-Ann Lee" });
     expect(posts()).toEqual([]);
   });
 

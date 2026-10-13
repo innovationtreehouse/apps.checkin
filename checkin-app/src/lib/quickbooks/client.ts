@@ -8,7 +8,6 @@ import {
   QuickBooksClient,
   assertQboClientId,
   assertQboTarget,
-  fileAccessTokenSource,
   qboEnvFromEnv,
   type AccessTokenSource,
   type QboRealm,
@@ -96,9 +95,7 @@ function tokenSource(checkinEnv: string | undefined, realmId: string): AccessTok
     }
     return lambdaSource.source;
   }
-  // A laptop may use the operator consent file; it reaches only the sandbox, per the guard.
-  const file = process.env.QBO_TOKEN_FILE;
-  return config.isLocal() && file ? fileAccessTokenSource(file) : null;
+  return null;
 }
 
 /** Builds the client, or answers null with the reason logged. Never throws. */

@@ -79,7 +79,6 @@ describe("buildQuickBooks", () => {
             QBO_SANDBOX_REALM_ALLOWED: SANDBOX,
             QBO_REFRESHER_FN: "qbo-refresher",
             QBO_DEV_CLIENT_ID: "dev-id",
-            QBO_TOKEN_FILE: undefined,
         });
     });
     afterEach(() => {
@@ -104,8 +103,14 @@ describe("buildQuickBooks", () => {
         expect(errorSpy).toHaveBeenCalledWith("QuickBooks is off:", expect.stringMatching(/allowlisted/));
     });
 
-    it("keeps a prod-data copy off the Board-set production realm", async () => {
-        env({ CHECKIN_ENV: "stg", QBO_REALM_ID: PROD, QBO_SANDBOX_REALM_ALLOWED: PROD });
+    it("is inert on stg: a prod-copy database holding a Board realm, no QBO env", async () => {
+        env({ CHECKIN_ENV: "stg", QBO_ENVIRONMENT: undefined, QBO_REALM_ID: undefined, QBO_SANDBOX_REALM_ALLOWED: undefined, QBO_REFRESHER_FN: undefined });
+        findUnique.mockResolvedValue({ qboProductionRealmId: PROD });
+        expect(await buildQuickBooks()).toBeNull();
+    });
+
+    it("is off on stg even when configured like dev", async () => {
+        env({ CHECKIN_ENV: "stg" });
         findUnique.mockResolvedValue({ qboProductionRealmId: PROD });
         expect(await buildQuickBooks()).toBeNull();
     });

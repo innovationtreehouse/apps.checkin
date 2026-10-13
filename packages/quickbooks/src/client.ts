@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { centsToDollars } from "@inventory/money";
 import { CREATE } from "./internal";
+import { TEST_NOTE_MARKER, assertPayloadMarked } from "./guard";
 import type {
   AccessTokenSource,
   QboAccount,
@@ -172,9 +173,10 @@ export function appKeyOf(entry: { PrivateNote?: string }): string | undefined {
   return keys.size ? [...keys].join(" ") : undefined;
 }
 
-function privateNote(memo: string | undefined, key: string): string {
+function privateNote(memo: string | undefined, key: string, env: QboEnv): string {
   if (memo !== undefined && KEY_MARKER.test(memo)) throw new Error("QBO memo must not carry an app key marker");
-  const note = memo ? `${memo}\n[checkin:${key}]` : `[checkin:${key}]`;
+  const tagged = env === "sandbox" ? `${TEST_NOTE_MARKER} [checkin:${key}]` : `[checkin:${key}]`;
+  const note = memo ? `${memo}\n${tagged}` : tagged;
   if (note.length > MAX_PRIVATE_NOTE) throw new Error(`QBO PrivateNote is ${note.length} chars; the limit is ${MAX_PRIVATE_NOTE}`);
   return note;
 }
@@ -195,7 +197,7 @@ function lines(rows: WriteLine[], detailType: "AccountBasedExpenseLineDetail" | 
 }
 
 /** The request body: only the listed fields of each entity, so no Id, SyncToken or sparse update can be sent. */
-function writeBody(req: WriteRequest, key: string): Record<string, unknown> {
+function writeBody(req: WriteRequest, key: string, env: QboEnv): Record<string, unknown> {
   switch (req.entity) {
     case "Purchase": {
       const f = req.fields;
@@ -209,7 +211,7 @@ function writeBody(req: WriteRequest, key: string): Record<string, unknown> {
         AccountRef: ref(f.accountId),
         ...(f.vendorId !== undefined && { EntityRef: { ...ref(f.vendorId), type: "Vendor" } }),
         Line: lines(f.lines, "AccountBasedExpenseLineDetail"),
-        PrivateNote: privateNote(f.memo, key),
+        PrivateNote: privateNote(f.memo, key, env),
       };
     }
     case "Bill": {
@@ -221,7 +223,7 @@ function writeBody(req: WriteRequest, key: string): Record<string, unknown> {
         VendorRef: ref(f.vendorId),
         ...(f.dueDate !== undefined && { DueDate: f.dueDate }),
         Line: lines(f.lines, "AccountBasedExpenseLineDetail"),
-        PrivateNote: privateNote(f.memo, key),
+        PrivateNote: privateNote(f.memo, key, env),
       };
     }
     case "Deposit": {
@@ -231,7 +233,7 @@ function writeBody(req: WriteRequest, key: string): Record<string, unknown> {
         TxnDate: f.txnDate,
         DepositToAccountRef: ref(f.depositToAccountId),
         Line: lines(f.lines, "DepositLineDetail"),
-        PrivateNote: privateNote(f.memo, key),
+        PrivateNote: privateNote(f.memo, key, env),
       };
     }
     case "Vendor": {
@@ -245,6 +247,11 @@ function writeBody(req: WriteRequest, key: string): Record<string, unknown> {
 export class QuickBooksClient {
   private readonly tokens: AccessTokenSource;
   private readonly realm: QboRealm;
+  /** Which QBO API this client talks to; sandbox writes carry the test marker. */
+  get env(): QboEnv {
+    return this.realm.env;
+  }
+
   /** intuit_tid of the most recent API response — quote it when contacting Intuit support. */
   lastTid: string | null = null;
 
@@ -378,7 +385,8 @@ export class QuickBooksClient {
     }
     assertAppKey(key);
     assertRealmAllowed(this.realm);
-    const body = writeBody(request, key);
+    const body = writeBody(request, key, this.realm.env);
+    assertPayloadMarked(this.realm.env, request.entity, body);
     const url = `${apiBase(this.realm.env)}/v3/company/${this.realm.realmId}/${request.entity.toLowerCase()}?minorversion=${MINOR_VERSION}&requestid=${encodeURIComponent(key)}`;
     const res = await this.send(`create ${request.entity}`, url, { method: "POST", body: JSON.stringify(body) });
     const created = (res as Record<string, { Id?: string } | undefined>)[request.entity];
