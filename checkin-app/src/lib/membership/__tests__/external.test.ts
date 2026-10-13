@@ -3,7 +3,7 @@
  */
 /**
  * Unit tests for external.ts (prisma + config + zoho provider mocked, no DB):
- *   - setZohoEnvelope / findProcessByEnvelope: simple prisma passthroughs.
+ *   - setZohoEnvelope: refuses a closed application; findProcessByEnvelope: a passthrough.
  *   - getOrCreateContractSigningUrl: the guard chain (not_configured/not_found/
  *     no_household/not_lead/wrong_phase), the mock-mode PDF short-circuit, and
  *     the already-claimed-ids short-circuit.
@@ -17,7 +17,7 @@ jest.mock('@/lib/prisma', () => ({
     default: {
         person: { findUnique: jest.fn() },
         orgMembership: { findUnique: jest.fn() },
-        orgMembershipProcess: { findUnique: jest.fn(), update: jest.fn(), findFirst: jest.fn(), updateMany: jest.fn() },
+        orgMembershipProcess: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), update: jest.fn(), findFirst: jest.fn(), updateMany: jest.fn() },
         auditLog: { create: jest.fn() },
         // signingMockActive reads the dev signing-target radio; null = default ('zoho').
         boardSettings: { findUnique: jest.fn().mockResolvedValue(null) },
@@ -98,15 +98,28 @@ describe('setZohoEnvelope', () => {
 
     it('updates the envelope id, clears any stale action id, and writes an audit row', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: 1 });
-        prisma.orgMembershipProcess.update.mockResolvedValue({ id: 1, zohoEnvelopeId: 'req-1', zohoActionId: null });
+        prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+        prisma.orgMembershipProcess.findUniqueOrThrow.mockResolvedValue({ id: 1, zohoEnvelopeId: 'req-1', zohoActionId: null });
 
         const result = await setZohoEnvelope(1, 'req-1', 5);
 
         // zohoActionId is nulled so re-pointing the envelope can't leave the old
         // action paired with the new request — restores the claimable state (#877).
-        expect(prisma.orgMembershipProcess.update).toHaveBeenCalledWith({ where: { id: 1 }, data: { zohoEnvelopeId: 'req-1', zohoActionId: null, zohoSignerPersonId: null } });
+        const call = prisma.orgMembershipProcess.updateMany.mock.calls[0][0];
+        expect(call.data).toEqual({ zohoEnvelopeId: 'req-1', zohoActionId: null, zohoSignerPersonId: null });
+        expect(call.where.id).toBe(1);
+        expect(call.where.status.in).not.toContain('ACTIVE');
+        expect(call.where.status.in).not.toContain('ARCHIVED');
         expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
         expect(result).toEqual({ id: 1, zohoEnvelopeId: 'req-1', zohoActionId: null });
+    });
+
+    it('refuses a closed application and writes no audit row', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: 1, status: 'ACTIVE' });
+        prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
+
+        await expect(setZohoEnvelope(1, 'req-1', 5)).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
     });
 });
 

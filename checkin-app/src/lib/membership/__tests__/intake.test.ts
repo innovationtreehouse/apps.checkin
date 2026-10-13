@@ -172,6 +172,15 @@ describe('getIntakeState', () => {
         expect(state.prefill.children).toEqual([]);
     });
 
+    it('loads only live (unmerged) household members', async () => {
+        prisma.person.findUnique.mockResolvedValue({ id: 1, householdId: null, household: null });
+
+        await getIntakeState(1);
+
+        const include = prisma.person.findUnique.mock.calls[0][0].include;
+        expect(include.household.include.householdMembers.where).toEqual({ mergedIntoId: null });
+    });
+
     it('household with an in-flight process, primary/secondary parents and a child → full prefill + external lookup', async () => {
         const dob = new Date('2000-01-01T00:00:00Z');
         prisma.person.findUnique.mockResolvedValue({

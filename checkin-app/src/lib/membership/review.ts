@@ -290,6 +290,7 @@ export async function attest(
         if (sharesHousehold(reviewer.householdId, applicantHouseholdId)) throw new ReviewError("same_household_applicant", "You cannot review an applicant in your own household.");
         if (process.attestations.some((a) => a.reviewerId === reviewerId)) throw new ReviewError("already_attested", "You have already reviewed this application.");
         if (process.attestations.some((a) => sharesHousehold(reviewer.householdId, a.reviewer.householdId))) throw new ReviewError("same_household_reviewer", "Another reviewer from your household has already reviewed this application.");
+        if (process.kind === "PERSON_BG" && !process.bgConsentAt) throw new ReviewError("wrong_phase", "This background check has not been submitted for review yet.");
 
         // The adult this attestation covers. A REJECT is whole-process and a PERSON_BG
         // already names its subject on the process, so both record a subject-less row;
@@ -307,10 +308,9 @@ export async function attest(
             if (settled !== null && requested[0] !== settled) {
                 throw new ReviewError("invalid_subject", "This review is already about a different adult. Reject it if that subject is wrong.");
             }
-            if (settled === null) {
-                const candidates = new Set(await liveHouseholdLeadIds(tx, applicantHouseholdId));
-                if (!candidates.has(requested[0])) throw new ReviewError("invalid_subject", "That person is not a household lead on this application.");
-            }
+            // Re-checked on every approval: the subject may have left the household or been merged since the first.
+            const candidates = new Set(await liveHouseholdLeadIds(tx, applicantHouseholdId));
+            if (!candidates.has(requested[0])) throw new ReviewError("invalid_subject", "That person is not a household lead on this application.");
             subjectPersonId = requested[0];
         }
 
