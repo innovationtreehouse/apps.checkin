@@ -64,7 +64,7 @@ function planAuthorize(authorize: Authorize): { gate: Gate; requiredRoles: Sessi
     // Catalog (#1286 §6): 'catalog-viewer' admits any staff relationship (a plain
     // authenticated user is rejected); 'inventory-manager' admits the role only.
     if (authorize === 'catalog-viewer') return { gate: 'catalog-viewer', requiredRoles: null };
-    // Receipt submission: any known adult; a youth or unknown age is rejected.
+    // Receipt submission: an adult with an ACTIVE membership; a non-member adult, youth or unknown age is rejected.
     if (authorize === 'receipt-submitter') return { gate: 'receipt-submitter', requiredRoles: null };
     if (authorize === 'inventory-manager') return { gate: 'inventory-manager', requiredRoles: null };
     // Finance (#1272 §6): neither admits a plain authenticated user or a sysadmin.
@@ -259,6 +259,10 @@ describe('Registry route admission gates', () => {
                     mockSession.mockResolvedValue({ user: { ...plainUser, ageBand: 'youth' } });
                     expect((await call(plan)).status).toBe(403);
                 });
+                itServed('rejects an adult with no ACTIVE membership with 403', async () => {
+                    mockSession.mockResolvedValue({ user: { ...plainUser, ageBand: 'adult' } });
+                    expect((await call(plan)).status).toBe(403);
+                });
             }
             if (plan.gate === 'catalog-viewer' || plan.gate === 'inventory-manager') {
                 itServed('rejects an authenticated caller with no catalog access with 403', async () => {
@@ -289,7 +293,7 @@ describe('Registry route admission gates', () => {
                     // Any role flag admits the viewer gate; isKeyholder is the simplest.
                     mockSession.mockResolvedValue({ user: { ...plainUser, isKeyholder: true } });
                 } else if (plan.gate === 'receipt-submitter') {
-                    mockSession.mockResolvedValue({ user: { ...plainUser, ageBand: 'adult' } });
+                    mockSession.mockResolvedValue({ user: { ...plainUser, ageBand: 'adult', isActiveOrgMember: true } });
                 } else if (plan.gate === 'inventory-manager') {
                     mockSession.mockResolvedValue({ user: { ...plainUser, isInventoryManager: true } });
                 } else if (plan.gate === 'finance' || plan.gate === 'finance-or-board' || plan.gate === 'expense-approver' || plan.gate === 'expense-signer') {

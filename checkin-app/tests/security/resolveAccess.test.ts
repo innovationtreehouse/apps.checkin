@@ -226,9 +226,12 @@ describe('finance vocabulary, catalog-viewer FINANCE admission, widened anyRole'
     });
 
     test.each<[string, Partial<Extract<AuthResult, { type: 'session' }>['user']>, boolean]>([
-        ['an adult with no role and no membership', { ageBand: 'adult' }, true],
-        ['an adult whose membership is not ACTIVE', { ageBand: 'adult', isProgramVolunteer: true, isActiveOrgMember: false }, true],
+        ['an adult with no role and no membership', { ageBand: 'adult' }, false],
+        ['an adult whose membership is not ACTIVE', { ageBand: 'adult', isProgramVolunteer: true, isActiveOrgMember: false }, false],
+        ['an adult with an ACTIVE membership and no role', { ageBand: 'adult', isActiveOrgMember: true }, true],
+        ['a member of unknown age', { ageBand: 'unknown', isActiveOrgMember: true }, false],
         ['a youth', { ageBand: 'youth' }, false],
+        ['a youth with an ACTIVE membership', { ageBand: 'youth', isActiveOrgMember: true }, false],
         ['a youth catalog viewer', { ageBand: 'youth', isVolunteerFamily: true, isActiveOrgMember: true }, false],
         ['a caller of unknown age', { ageBand: 'unknown' }, false],
         ['FINANCE of unknown age', { isFinance: true }, true],

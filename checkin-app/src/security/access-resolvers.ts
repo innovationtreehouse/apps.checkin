@@ -313,11 +313,12 @@ export async function resolveAccess(
                 // #1286 §6: the catalog audience (lib/volunteer.ts), read from session claims.
                 return { allowed: auth.type === 'session' && canSeeCatalog(auth.user) };
             case 'receipt-submitter':
-                // #1265 §6: a known adult (session age band), or a Treehouse Volunteer
-                // (role holder or staff account), so one with no DOB on file is kept.
+                // An adult in an ACTIVE-membership household, or a Treehouse Volunteer
+                // (role holder or staff account) whatever their age or membership.
                 return {
                     allowed: auth.type === 'session' &&
-                        (auth.user.ageBand === 'adult' || isTreehouseVolunteer(auth.user)),
+                        ((auth.user.isActiveOrgMember === true && auth.user.ageBand === 'adult') ||
+                            isTreehouseVolunteer(auth.user)),
                 };
             case 'inventory-manager':
                 // #1286 §6: catalog WRITE admission — INVENTORY_MANAGER only (a
