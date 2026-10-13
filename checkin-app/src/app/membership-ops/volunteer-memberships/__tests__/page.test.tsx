@@ -126,6 +126,25 @@ describe("membership-ops/volunteer-memberships page", () => {
     await waitFor(() => expect(fetchMock.mock.calls.filter((c) => String(c[0]) === ROSTER)).toHaveLength(2));
   });
 
+  it("lists every person on file with a designated address, signed in or not", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({
+      [ROSTER]: () => roster,
+      [DESIGNATIONS]: () => ({
+        designation: des(9, "pat@example.com", "2026-01-01T00:00:00Z"),
+        matches: [{ personName: "Pat Example", householdId: 20, householdName: "Example", hasMembership: true, isVolunteer: false, signInVerified: false }],
+      }),
+    });
+    renderWithProviders(<VolunteerMembershipsPage />);
+    await screen.findByText("Alvarez");
+
+    fireEvent.change(screen.getByLabelText("Volunteer email"), { target: { value: "pat@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    await screen.findByText(/Everyone on file with pat@example.com/);
+    expect(screen.getByText(/has never signed in with this address/)).toBeInTheDocument();
+  });
+
   it("shows an existing person's household and sets it only on confirm", async () => {
     setSession({ id: 1, isSysadmin: true });
     const match = { personName: "Pat Example", householdId: 20, householdName: "Example", isVolunteer: false };

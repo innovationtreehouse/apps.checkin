@@ -59,6 +59,7 @@ describe('own-household grant guards', () => {
         actorId = (await prisma.person.create({ data: { email: `actor-${TAG}@gmail.com`, name: 'Actor', isBoardMember: true, isSysadmin: true, householdId: own.id } })).id;
         spouseId = (await prisma.person.create({ data: { email: `spouse-${TAG}@gmail.com`, name: 'Spouse', householdId: own.id } })).id;
         outsiderId = (await prisma.person.create({ data: { email: `outsider-${TAG}@example.com`, name: 'Outsider', householdId: other.id } })).id;
+        await prisma.account.create({ data: { userId: outsiderId, type: 'oauth', provider: 'google', providerAccountId: `${TAG}-${outsiderId}` } });
     });
 
     beforeEach(() => {

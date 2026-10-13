@@ -48,9 +48,14 @@ describe('Membership settings + volunteer designations API', () => {
         boardId = (await prisma.person.create({ data: { email: `board-${TAG}@example.com`, name: 'Board', isBoardMember: true, household: { create: { name: `Board HH ${TAG}` } } } })).id;
         plainId = (await prisma.person.create({ data: { email: `plain-${TAG}@example.com`, name: 'Plain', household: { create: { name: `Plain HH ${TAG}` } } } })).id;
 
-        // A full-price active member, for the designation confirm flow.
-        await prisma.person.create({
+        // A full-price active member who has signed in, for the designation confirm flow.
+        const fullMember = await prisma.person.create({
             data: { email: `fullmember-${TAG}@example.com`, name: 'Full', household: { create: { name: `Full HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE', isVolunteer: false } } } } },
+        });
+        await prisma.account.create({ data: { userId: fullMember.id, type: 'oauth', provider: 'google', providerAccountId: `${TAG}-${fullMember.id}` } });
+        // A member of another household who has never signed in, holding an address before the Board designates it.
+        await prisma.person.create({
+            data: { email: `preclaimed-${TAG}@example.com`, name: 'Preclaim', household: { create: { name: `Preclaim HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE', isVolunteer: false } } } } },
         });
     });
 
@@ -186,6 +191,19 @@ describe('Membership settings + volunteer designations API', () => {
         const audit = await prisma.auditLog.findFirst({ where: { tableName: 'OrgMembership', affectedEntityId: household.orgMembership!.id, actorId: boardId } });
         expect(audit?.newData).toEqual({ isVolunteer: true });
         expect(await prisma.volunteerDesignation.count({ where: { email } })).toBe(0);
+    });
+
+    it('stores, rather than confirms, an address held only by someone who never signed in, and lists that holder', async () => {
+        asBoard(boardId);
+        const email = `preclaimed-${TAG}@example.com`;
+        const household = await prisma.household.findFirstOrThrow({ where: { name: `Preclaim HH ${TAG}` }, include: { orgMembership: true } });
+
+        const res = await DESIG_POST(jsonReq('POST', { email }));
+        expect(res.status).toBe(201);
+        const body = await res.json();
+        expect(body.requiresConfirmation).toBeUndefined();
+        expect(body.matches).toEqual([expect.objectContaining({ householdId: household.id, signInVerified: false, hasMembership: true })]);
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: household.orgMembership!.id } })).isVolunteer).toBe(false);
     });
 
     it('treats inbox variants of a designated email as already designated', async () => {

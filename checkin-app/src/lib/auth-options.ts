@@ -411,8 +411,8 @@ export const authOptions: NextAuthOptions = {
                         },
                         // Program ids led — drives the client program-ops row gate.
                         programsLed: { select: { id: true } },
-                        // One row is enough to make a Program Volunteer (Treehouse Volunteer input).
-                        programVolunteers: { select: { programId: true }, take: 1 },
+                        // One row on an unfinished program makes a Program Volunteer (Treehouse Volunteer input).
+                        programVolunteers: { where: { program: { phase: { not: "FINISHED" } } }, select: { programId: true }, take: 1 },
                         household: { include: { orgMembership: true } },
                         // Source of truth for the five authority claims (assignParticipantClaims).
                         roles: { select: { role: true } }
@@ -463,8 +463,8 @@ export const authOptions: NextAuthOptions = {
                         },
                         // Program ids led — drives the client program-ops row gate.
                         programsLed: { select: { id: true } },
-                        // One row is enough to make a Program Volunteer (Treehouse Volunteer input).
-                        programVolunteers: { select: { programId: true }, take: 1 },
+                        // One row on an unfinished program makes a Program Volunteer (Treehouse Volunteer input).
+                        programVolunteers: { where: { program: { phase: { not: "FINISHED" } } }, select: { programId: true }, take: 1 },
                         household: { include: { orgMembership: true } },
                         // Source of truth for the five authority claims (assignParticipantClaims).
                         roles: { select: { role: true } }

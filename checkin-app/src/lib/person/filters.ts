@@ -11,6 +11,18 @@ import type { Prisma } from "@/generated/prisma/client";
  */
 export const LIVE_PERSON: Prisma.PersonWhereInput = { mergedIntoId: null };
 
+/**
+ * A person whose email is sign-in-verified: they have a linked sign-in, which the
+ * provider verified for that address, and member-side edits cannot change a linked
+ * person's email. Only such a person counts as holding a volunteer-designated address.
+ */
+export const SIGN_IN_VERIFIED_PERSON: Prisma.PersonWhereInput = { accounts: { some: {} } };
+
+/** The in-memory form of SIGN_IN_VERIFIED_PERSON, over a `_count.accounts` select. */
+export function isSignInVerified(p: { _count: { accounts: number } }): boolean {
+    return p._count.accounts > 0;
+}
+
 /** How far back a finished program still counts as "in the building". */
 export const ATTACHMENT_LOOKBACK_MONTHS = 12;
 

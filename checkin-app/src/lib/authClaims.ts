@@ -21,7 +21,7 @@ export type ClaimSourceParticipant = {
     // Programs this participant is the lead mentor of (Program.leadMentorId === id).
     // Drives the client-side program-ops row gate; mirrors access-resolvers' programsLed.
     programsLed?: { id: number }[];
-    // Any ProgramVolunteer row makes this person a Program Volunteer; one row is enough.
+    // Any ProgramVolunteer row on an unfinished program makes this person a Program Volunteer; one is enough.
     programVolunteers?: unknown[];
     household?: { orgMembership?: { status: OrgMembershipStatus; isVolunteer?: boolean } | null } | null;
     // ops-stg access gate escape hatch — a plain Person column, NOT one of the

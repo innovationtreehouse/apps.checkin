@@ -1,10 +1,11 @@
 /**
  * @jest-environment node
  *
- * Designating an address that belongs to a person already in the app shows the
- * Board that person's household, and only the Board's explicit confirm sets the
- * household's OrgMembership.isVolunteer (audited). An address with no match is
- * stored as a designation (the dues preload).
+ * Designating an address that belongs to a sign-in-verified person already in the
+ * app shows the Board that person's household, and only the Board's explicit
+ * confirm sets the household's OrgMembership.isVolunteer (audited). Any other
+ * address is stored as a designation (the dues preload). Every response lists
+ * every person on file with the address.
  */
 
 import type { NextRequest } from "next/server";
@@ -38,9 +39,10 @@ const createDesignation = prisma.volunteerDesignation.create as jest.Mock;
 const findPeople = prisma.person.findMany as jest.Mock;
 
 const BOARD = 7;
-const person = (email: string, householdId: number, orgMembership: { id: number; isVolunteer: boolean } | null) => ({
+const person = (email: string, householdId: number, orgMembership: { id: number; isVolunteer: boolean } | null, signedIn = true) => ({
     name: "Pat Example",
     email,
+    _count: { accounts: signedIn ? 1 : 0 },
     household: { id: householdId, name: "Example Household", orgMembership },
 });
 
@@ -68,6 +70,7 @@ describe("POST volunteer-designations — existing person", () => {
         expect(await res.json()).toEqual({
             requiresConfirmation: true,
             match: { personName: "Pat Example", householdId: 20, householdName: "Example Household", isVolunteer: false },
+            matches: [{ personName: "Pat Example", householdId: 20, householdName: "Example Household", hasMembership: true, isVolunteer: false, signInVerified: true }],
         });
         expect(tx.orgMembership.update).not.toHaveBeenCalled();
         expect(createDesignation).not.toHaveBeenCalled();
@@ -105,8 +108,23 @@ describe("POST volunteer-designations — existing person", () => {
         ]);
         const res = await post({ email: "patexample@gmail.com", confirmHouseholdId: 20 });
         expect(res.status).toBe(409);
+        expect((await res.json()).matches.map((m: { householdId: number }) => m.householdId)).toEqual([20, 22]);
         expect(tx.orgMembership.update).not.toHaveBeenCalled();
         expect(createDesignation).not.toHaveBeenCalled();
+    });
+
+    it("confirms only the signed-in holder's household and lists the other holder", async () => {
+        findPeople.mockResolvedValue([
+            person("patexample@gmail.com", 22, { id: 32, isVolunteer: false }, false),
+            person("pat.example@gmail.com", 20, { id: 30, isVolunteer: false }),
+        ]);
+        const res = await post({ email: "patexample@gmail.com" });
+        const body = await res.json();
+        expect(body.match.householdId).toBe(20);
+        expect(body.matches).toEqual([
+            expect.objectContaining({ householdId: 22, signInVerified: false }),
+            expect.objectContaining({ householdId: 20, signInVerified: true }),
+        ]);
     });
 });
 
@@ -115,6 +133,15 @@ describe("POST volunteer-designations — no household membership to set", () =>
         const res = await post({ email: "newcomer@example.com" });
         expect(res.status).toBe(201);
         expect(createDesignation).toHaveBeenCalledWith({ data: { email: "newcomer@example.com", createdById: BOARD } });
+        expect(tx.orgMembership.update).not.toHaveBeenCalled();
+    });
+
+    it("stores a designation, never confirming, when the only holder has not signed in", async () => {
+        findPeople.mockResolvedValue([person("pat@example.com", 20, { id: 30, isVolunteer: false }, false)]);
+        const res = await post({ email: "pat@example.com", confirmHouseholdId: 20 });
+        expect(res.status).toBe(201);
+        expect((await res.json()).matches).toEqual([expect.objectContaining({ householdId: 20, hasMembership: true, signInVerified: false })]);
+        expect(createDesignation).toHaveBeenCalled();
         expect(tx.orgMembership.update).not.toHaveBeenCalled();
     });
 

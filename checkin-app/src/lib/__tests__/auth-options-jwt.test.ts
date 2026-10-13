@@ -270,14 +270,14 @@ describe('jwt() callback — absolute session lifetime', () => {
 });
 
 describe('jwt() callback — Treehouse Volunteer inputs', () => {
-    it('loads one ProgramVolunteer row and stamps the volunteer inputs', async () => {
+    it('loads one ProgramVolunteer row on an unfinished program and stamps the volunteer inputs', async () => {
         mockFindUnique.mockResolvedValue({
             ...dbParticipant({ household: { orgMembership: { status: 'ACTIVE', isVolunteer: true } } }),
             programVolunteers: [{ programId: 4 }],
         });
         const token = await callRefresh({ id: 7 });
 
-        expect(mockFindUnique.mock.calls[0][0].include.programVolunteers).toEqual({ select: { programId: true }, take: 1 });
+        expect(mockFindUnique.mock.calls[0][0].include.programVolunteers).toEqual({ where: { program: { phase: { not: 'FINISHED' } } }, select: { programId: true }, take: 1 });
         expect(token).toMatchObject({ isProgramVolunteer: true, isVolunteerFamily: true, isActiveOrgMember: true });
     });
 

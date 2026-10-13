@@ -32,6 +32,9 @@ const STATUS_RANK = Object.fromEntries(STATUS_CHIPS.map((c, i) => [c.value, i]))
 // createdAt is a true instant and takes the org's zone. See lib/time.ts.
 const memberSinceText = (iso: string | null) => (iso ? formatDateOnly(iso) : "—");
 
+/** A person on file with an address the Board is designating. */
+type AddressHolder = { personName: string; householdId: number; householdName: string; hasMembership: boolean; signInVerified: boolean };
+
 export default function VolunteerMembershipsPage() {
   const { ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
   // A designation's createdAt is an instant, so it renders in the org's display zone.
@@ -48,6 +51,8 @@ export default function VolunteerMembershipsPage() {
   const [showInactive, setShowInactive] = useState(false);
   // An existing person the typed email matched; the Board confirms before their household changes.
   const [match, setMatch] = useState<{ email: string; personName: string; householdId: number; householdName: string; isVolunteer: boolean } | null>(null);
+  // Everyone on file with the last address the Board entered, signed in or not.
+  const [holders, setHolders] = useState<{ email: string; matches: AddressHolder[] } | null>(null);
 
   const flash = (text: string, tone: "warning" | "error" = "error") =>
     setMessage(text ? { text, tone } : undefined);
@@ -107,6 +112,7 @@ export default function VolunteerMembershipsPage() {
         body: JSON.stringify(confirmHouseholdId === undefined ? { email: newEmail } : { email: newEmail, confirmHouseholdId }),
       });
       const data = await res.json().catch(() => ({}));
+      setHolders(data.matches?.length ? { email: newEmail, matches: data.matches } : null);
       if (res.ok && data.requiresConfirmation) {
         setMatch({ email: newEmail, ...data.match });
       } else if (res.ok) {
@@ -264,7 +270,7 @@ export default function VolunteerMembershipsPage() {
           <TextInput
             w={320}
             value={newEmail}
-            onChange={(e) => { setNewEmail(e.currentTarget.value); setEmailError(undefined); setMatch(null); }}
+            onChange={(e) => { setNewEmail(e.currentTarget.value); setEmailError(undefined); setMatch(null); setHolders(null); }}
             error={emailError}
             placeholder="volunteer@example.com"
             aria-label="Volunteer email"
@@ -283,6 +289,17 @@ export default function VolunteerMembershipsPage() {
               <Button disabled={saving || match.isVolunteer} onClick={() => addDesignation(match.householdId)}>Confirm household</Button>
               <Button variant="subtle" disabled={saving} onClick={() => setMatch(null)}>Cancel</Button>
             </Group>
+          </Stack>
+        )}
+        {holders && (
+          <Stack gap={4} mt="md">
+            <Text size="sm">Everyone on file with {holders.email}:</Text>
+            {holders.matches.map((h) => (
+              <Text size="sm" key={`${h.householdId}-${h.personName}`}>
+                <b>{h.personName}</b>, {h.householdName} household — {h.signInVerified ? "signed in with this address" : "has never signed in with this address"}
+                {h.hasMembership ? "" : ", no membership"}
+              </Text>
+            ))}
           </Stack>
         )}
       </Card>

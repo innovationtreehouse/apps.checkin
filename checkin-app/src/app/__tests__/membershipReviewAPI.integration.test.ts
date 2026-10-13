@@ -144,6 +144,7 @@ describe('Membership BG review API', () => {
         // Gmail drops dots, so vol.parent... matches the dotless designation. Non-Gmail
         // domains keep dots significant (see volunteerMatch.test.ts) — that's the fix.
         const proc = await makeApplicantProcess('Predesig', `vol.parent-${TAG}@gmail.com`);
+        await prisma.account.create({ data: { userId: proc.leadId, type: 'oauth', provider: 'google', providerAccountId: `predesig-${TAG}-${proc.leadId}` } });
         await prisma.volunteerDesignation.create({ data: { email: `volparent-${TAG}@gmail.com` } }); // no dot
         as(rev1, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
@@ -151,6 +152,17 @@ describe('Membership BG review API', () => {
         await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
         const membership = await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId } });
         expect(membership?.isVolunteer).toBe(true);
+    });
+
+    it('does not apply a pre-designation to a lead whose address was never verified at sign-in', async () => {
+        const proc = await makeApplicantProcess('PredesigUnverified', `unverified-parent-${TAG}@example.com`);
+        await prisma.volunteerDesignation.create({ data: { email: `unverified-parent-${TAG}@example.com` } });
+        as(rev1, { isBackgroundCheckReviewer: true });
+        await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
+        as(rev2, { isBackgroundCheckReviewer: true });
+        await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
+        const membership = await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId } });
+        expect(membership?.isVolunteer).toBe(false);
     });
 
     it('a single REJECT blocks the application', async () => {

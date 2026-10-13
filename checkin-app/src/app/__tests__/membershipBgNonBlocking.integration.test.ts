@@ -93,6 +93,10 @@ async function wipe() {
     await prisma.volunteerDesignation.deleteMany({ where: { email: { contains: TAG } } });
 }
 
+/** A linked sign-in, which makes the person's address sign-in-verified. */
+const linkSignIn = (personId: number) =>
+    prisma.account.create({ data: { userId: personId, type: 'oauth', provider: 'google', providerAccountId: `${TAG}-${personId}` } });
+
 const isVolunteerOf = async (id: number) => (await prisma.orgMembership.findUnique({ where: { id } }))?.isVolunteer;
 
 /**
@@ -250,6 +254,7 @@ describe('background check is non-blocking', () => {
     it('pre-designated volunteer family is flagged at PENDING_PAYMENT, before the check clears (#874)', async () => {
         const { processId, orgMembershipId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         const lead = await prisma.person.findUnique({ where: { id: leadId } });
+        await linkSignIn(leadId);
         await prisma.volunteerDesignation.create({ data: { email: lead!.email! } });
 
         await markContractSigned(processId);
@@ -268,6 +273,7 @@ describe('background check is non-blocking', () => {
         await prisma.household.update({ where: { id: householdId }, data: { line1: '123 Test St', city: 'Austin', state: 'TX', postalCode: '78701' } });
         await prisma.emergencyContact.create({ data: { householdId, name: 'Out Of House', phone: '555-555-1212', phoneDigits: '5555551212', priority: 0 } });
         const lead = await prisma.person.findUnique({ where: { id: leadId } });
+        await linkSignIn(leadId);
         await prisma.volunteerDesignation.create({ data: { email: lead!.email! } });
 
         await submitIntake(leadId);
@@ -280,6 +286,7 @@ describe('background check is non-blocking', () => {
     it('renewal with a still-valid background check matches a designation added since the last cycle (#874)', async () => {
         await setBgPolicy();
         const { orgMembershipId, processId, leadId, leadEmail } = await makeFreshRenewal();
+        await linkSignIn(leadId);
         await prisma.volunteerDesignation.create({ data: { email: leadEmail } });
 
         await beginRenewal(processId, leadId);
