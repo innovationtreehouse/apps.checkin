@@ -56,9 +56,10 @@ type GuardSite = {
     /** Transition the guard drives, as [from, to]; omit for a guard that changes no
      *  status at all (e.g. a flag-only deny). */
     edge?: [string, string];
-    /** 'spread' = migrated onto fromWhere; 'literal' = intentionally kept literal;
+    /** 'spread' = migrated onto fromWhere; 'read' = fromWhere(<row>.status), CAS on the
+     *  status just read (a guard serving several from-states); 'literal' = intentionally kept literal;
      *  'helper' = a setHouseholdStatus call naming `from` in its from-list and edge[1] as `to`. */
-    mode: 'spread' | 'literal' | 'helper';
+    mode: 'spread' | 'read' | 'literal' | 'helper';
 };
 
 const GUARDS: GuardSite[] = [
@@ -75,6 +76,10 @@ const GUARDS: GuardSite[] = [
     { file: 'lib/membership/external.ts', machine: 'membership', from: 'PENDING_EXTERNAL_ACTION', edge: ['PENDING_EXTERNAL_ACTION', 'ACTIVE'], mode: 'spread' },
     { file: 'lib/membership/renewal.ts', machine: 'membership', from: 'PENDING_RENEWAL', edge: ['PENDING_RENEWAL', 'PENDING_EXTERNAL_ACTION'], mode: 'spread' },
     { file: 'lib/membership/archive.ts', machine: 'membership', from: 'ARCHIVED', edge: ['ARCHIVED', 'PENDING_PAYMENT'], mode: 'spread' }, // unarchive: reverse of #13 (one representative target)
+    // close: CAS on the status it read (one representative closable step)
+    { file: 'lib/membership/archive.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'ARCHIVED'], mode: 'read' },
+    { file: 'lib/membership/refund.ts', machine: 'membership', from: 'PENDING_BG_CLEARANCE', edge: ['PENDING_BG_CLEARANCE', 'PENDING_PAYMENT'], mode: 'spread' },
+    { file: 'lib/membership/refund.ts', machine: 'membership', from: 'BLOCKED', mode: 'spread' }, // refund on a paid BLOCKED row: flag-only, stays BLOCKED
     { file: 'app/api/finance-ops/membership-payment-plans/route.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'ACTIVE'], mode: 'spread' },
     { file: 'app/api/finance-ops/membership-payment-plans/refuse/route.ts', machine: 'membership', from: 'PENDING_PAYMENT', mode: 'spread' }, // deny: flag-only, no status edge
     // merge BG carryover — two flag-only stamps (advanceExternalIfComplete / activate own the
@@ -173,6 +178,14 @@ describe('CAS guard ↔ TRANSITIONS from-state parity (#1080)', () => {
         };
         expect(sites).toEqual({ reject: true, clearance: true, reset: true });
         for (const s of awaitingBgReview.statuses) expect(MEMB_STATES).toContain(s);
+    });
+
+    it('read-mode guards CAS on the status they just read', () => {
+        for (const g of GUARDS) {
+            if (g.mode !== 'read') continue;
+            const spreads = /fromWhere\(\s*\w+\.status\s*\)/.test(read(g.file));
+            expect({ site: g.file, spreads }).toEqual({ site: g.file, spreads: true });
+        }
     });
 
     it('the personBg existence set lives in the definition, and both consumers spread it', () => {
