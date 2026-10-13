@@ -19,9 +19,10 @@
  *   4. The submitter view never returns donor or reimbursee names.
  *   5. The receipt file routes serve the uploader's own file and FINANCE's,
  *      and 404 anyone else's; both file columns are file-only.
- *   6. The submitter and shared routes admit any signed-in adult, with no
- *      role, membership or background check, and any role holder whatever
- *      their age; they refuse a youth or unknown age without a role.
+ *   6. The submitter, shared and file routes admit an adult whose household
+ *      membership is ACTIVE, and any role holder or staff account whatever
+ *      their age or membership; they refuse an adult with no ACTIVE
+ *      membership, and a youth or unknown age without a role.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
@@ -44,6 +45,9 @@ interface Flags {
     isActiveOrgMember?: boolean;
     isProgramVolunteer?: boolean;
     isKeyholder?: boolean;
+    email?: string;
+    hd?: string;
+    emailVerified?: boolean;
 }
 
 function user(id: unknown, flags: Flags = {}) {
@@ -239,13 +243,19 @@ describe('receipt submitter admission', () => {
         expect(getFileRoute(RECEIPT_FILE)?.authorize).toBe('receipt-submitter');
     });
 
-    it("serves a plain adult their own receipt file and 404s someone else's", async () => {
-        expect(await fileStatus({ ageBand: 'adult' }, 9)).toBe(200);
-        expect(await fileStatus({ ageBand: 'adult' }, 8)).toBe(404);
+    it("serves an adult member their own receipt file and 404s someone else's", async () => {
+        expect(await fileStatus({ ageBand: 'adult', isActiveOrgMember: true }, 9)).toBe(200);
+        expect(await fileStatus({ ageBand: 'adult', isActiveOrgMember: true }, 8)).toBe(404);
     });
 
     it('refuses a youth with no role on the receipt file route', async () => {
         expect(await fileStatus({ ageBand: 'youth' }, 9)).toBe(403);
+        expect(await fileStatus({ ageBand: 'youth', isActiveOrgMember: true }, 9)).toBe(403);
+    });
+
+    it('refuses an adult with no ACTIVE membership their own receipt file', async () => {
+        expect(await fileStatus({ ageBand: 'adult' }, 9)).toBe(403);
+        expect(await fileStatus({ ageBand: 'adult', isActiveOrgMember: false }, 9)).toBe(403);
     });
 
     it('admits a FINANCE holder of unknown age to the shared routes', async () => {
@@ -255,9 +265,9 @@ describe('receipt submitter admission', () => {
     });
 
     it.each([
-        ['an adult with no role and no membership', { ageBand: 'adult' }],
-        ['an adult whose background check is pending (membership not ACTIVE)', { ageBand: 'adult', isProgramVolunteer: true, isActiveOrgMember: false }],
-        ['a role holder of unknown age', { isKeyholder: true }],
+        ['an adult with an ACTIVE membership and no role', { ageBand: 'adult', isActiveOrgMember: true }],
+        ['a role holder of unknown age with no membership', { isKeyholder: true }],
+        ['a staff account with no membership', { email: 'staff@innovationtreehouse.org', hd: 'innovationtreehouse.org', emailVerified: true }],
     ] as [string, Flags][])('admits %s', async (_who, flags) => {
         for (const endpoint of SUBMITTER_ROUTES) {
             expect({ endpoint, status: await status(endpoint, flags) }).toEqual({ endpoint, status: 200 });
@@ -265,7 +275,10 @@ describe('receipt submitter admission', () => {
     });
 
     it.each([
+        ['an adult with no role and no membership', { ageBand: 'adult' }],
+        ['an adult whose background check is pending (membership not ACTIVE)', { ageBand: 'adult', isProgramVolunteer: true, isActiveOrgMember: false }],
         ['a youth', { ageBand: 'youth' }],
+        ['a youth with an ACTIVE membership', { ageBand: 'youth', isActiveOrgMember: true }],
         ['a program-volunteer youth with an ACTIVE membership', { ageBand: 'youth', isProgramVolunteer: true, isActiveOrgMember: true }],
         ['a caller of unknown age', { ageBand: 'unknown' }],
         ['a caller with no age band', {}],

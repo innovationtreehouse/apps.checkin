@@ -1,7 +1,7 @@
 // Receipt library (#1265 §6) route policy. Aggregated by ../registry.ts.
 import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 
-// Submitters are any signed-in adult or Treehouse Volunteer (`receipt-submitter`,
+// Submitters are adult members or Treehouse Volunteers (`receipt-submitter`,
 // docs/rules/inventory.md) and read only their own receipts: `their_own` resolves on the row's uploadedByUserId against
 // the session id (plan rule 6), and grants no pii, so donor and reimbursee names
 // never come back to the uploader. FINANCE acts org-wide; BOARD reads alongside
