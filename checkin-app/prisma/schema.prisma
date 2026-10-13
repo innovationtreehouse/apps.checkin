@@ -1356,6 +1356,10 @@ model FacilityClose {
   closedById Int?
   /// @sensitivity:internal
   via        FacilityCloseVia
+  /// The closer's own visit, whose departure is the close: correcting it to an
+  /// earlier time moves the close. Null when the closer had no visit of their own.
+  /// @sensitivity:internal
+  closerVisitId Int?
   /// When the server applied it; differs from closedAt on a late or offline close.
   /// @sensitivity:internal
   createdAt  DateTime         @default(now())
@@ -1364,6 +1368,7 @@ model FacilityClose {
   visits   Visit[]
 
   @@index([closedById])
+  @@index([closerVisitId])
 }
 
 model AuditLog {
@@ -1644,6 +1649,9 @@ enum PaymentExceptionKind {
   // (deleted in Shopify, or a mirror low-water/backfill gap). Distinct from
   // ACTIVE_WITHOUT_PAYMENT: a payment IS on record here, it just can't be verified.
   PAYMENT_UNVERIFIABLE
+  // Something reached a DENIED household after the deny (a payment, an approval,
+  // an application start). Nothing changed; the board decides.
+  DENIED_HOUSEHOLD_ACTIVITY
 }
 
 enum PaymentExceptionSeverity {

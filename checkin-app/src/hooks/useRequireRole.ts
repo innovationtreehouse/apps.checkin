@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import type { BusinessRole } from "@/types/auth";
+import type { NavRole } from "@/types/auth";
 
 type AdminSessionUser = NonNullable<ReturnType<typeof useSession>["data"]>["user"];
 
@@ -36,7 +36,7 @@ export interface RequireRoleResult {
  *   if (!ready) return null; // a redirect is in flight
  */
 export function useRequireRole(
-  allowed: (BusinessRole | "isFinance")[],
+  allowed: readonly NavRole[],
   options?: { redirectTo?: string },
 ): RequireRoleResult {
   const redirectTo = options?.redirectTo ?? "/";

@@ -59,17 +59,19 @@ describe("AppFrame", () => {
     expect(screen.getByText("Membership Ops")).toBeInTheDocument();
     expect(screen.getByText("Membership Audit")).toBeInTheDocument();
     expect(screen.getByText("Program Ops")).toBeInTheDocument();
-    // Finance Ops is board-only — a sysadmin does NOT see it (issue #1083).
-    expect(screen.queryByText("Finance Ops")).not.toBeInTheDocument();
+    // Revenue Ops admits FINANCE or BOARD — a sysadmin does NOT see it (issue #1083).
+    expect(screen.queryByText("Revenue Ops")).not.toBeInTheDocument();
     expect(screen.getByText("System Status")).toBeInTheDocument();
     expect(screen.getByText("Settings")).toBeInTheDocument();
   });
 
-  it("shows Finance Ops to a board member (board-only, issue #1083)", () => {
+  it("shows Revenue Ops (the renamed Finance Ops) to a board member", () => {
     setSession({ id: 1, isBoardMember: true });
     renderFrame();
 
-    expect(screen.getByText("Finance Ops")).toBeInTheDocument();
+    expect(screen.getByText("Revenue Ops")).toBeInTheDocument();
+    expect(screen.queryByText("Finance Ops")).not.toBeInTheDocument();
+    expect(screen.getByText("Revenue Ops").closest("a")).toHaveAttribute("href", "/finance-ops/payment-plan");
   });
 
   it("shows Shop Ops for a certifier without admin flags, and My Programs when leading a program", () => {

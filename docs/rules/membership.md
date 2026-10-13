@@ -251,6 +251,24 @@ Procedure below is built on them.
 - Granting the coming year completes the payment step on a renewal already under
   way. It stamps no other gate.  [Decision]
 
+- Only an application completing — paid and background check cleared — makes a
+  household a member. Granting the current year is money only: it pays the
+  household's application under way, or opens one for the family to complete,
+  and never sets membership directly or skips the check. A household already
+  active stays active.  [Decision]
+
+- An active household stops being one only by revocation or denial. A denied
+  household never becomes active again by any route; the board's restore
+  returns it to no membership, and the family starts over.  [Decision]
+
+- Anything that reaches a denied household after the denial — a payment, an
+  approval, a grant, an application — changes nothing and goes to the board's
+  payment-problems queue with an email.  [Decision — *Principle: people decide about people*]
+
+- Deny, restore, grant and revoke are each refused for the acting person's own
+  household, and each applies only if the household is still in the status the
+  action was decided against.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
 - A denied household holds no authority anywhere in the app.  [Decision — *Principle: identity is not authorisation*]
 
 - Denial locks every member of the household out of sign-in. Revocation does not

@@ -1,6 +1,6 @@
 /**
  * Registry-wide admission invariants for the role-flag gates (catalog-viewer,
- * finance, finance-or-board, expense-approver, anyRole). Pure: no DB, no HTTP.
+ * finance, finance-or-board, expense-approver, expense-signer, anyRole). Pure: no DB, no HTTP.
  *
  * 1. An id-less session — a JWT whose re-sync missed after a person merge or
  *    delete — is denied on every such route, even holding every flag. Prisma
@@ -17,10 +17,11 @@ import '@/security/registry';
 
 const isRoleFlagGate = (a: Authorize) =>
     a === 'catalog-viewer' || a === 'finance' || a === 'finance-or-board' || a === 'expense-approver' ||
+    a === 'expense-signer' ||
     (typeof a === 'object' && 'anyRole' in a);
 
 const isFinanceGate = (a: Authorize) =>
-    a === 'finance' || a === 'finance-or-board' || a === 'expense-approver' ||
+    a === 'finance' || a === 'finance-or-board' || a === 'expense-approver' || a === 'expense-signer' ||
     (typeof a === 'object' && 'anyRole' in a && a.anyRole.includes('isFinance'));
 
 const everyFlagUser: AuthenticatedUser = {
@@ -61,8 +62,7 @@ const gated = [...allRoutes()].filter(([, r]) => isRoleFlagGate(r.authorize));
 const finance = [...allRoutes()].filter(([, r]) => isFinanceGate(r.authorize));
 
 beforeEach(() => {
-    // The designation and treasurer legs would admit by lookup; make them match so only the id guard can deny.
-    prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue({ id: 1 });
+    // The treasurer leg would admit by lookup; make it match so only the id guard can deny.
     prisma.programVolunteer.findFirst = jest.fn().mockResolvedValue({ programId: 1 });
 });
 
@@ -76,23 +76,24 @@ describe('id-less session on role-flag gates', () => {
     });
 
     test.each<Authorize>([
-        'catalog-viewer', 'finance', 'finance-or-board', 'expense-approver',
+        'catalog-viewer', 'finance', 'finance-or-board', 'expense-approver', 'expense-signer',
         { anyRole: ['isFinance'] }, { anyRole: ['isSysadmin', 'isBoardMember'] },
     ])('%j denies an id-less session holding every flag', async (authorize) => {
         expect((await resolveAccess(authorize, ctx(idless))).allowed).toBe(false);
     });
 
-    test('catalog-viewer denies an id-less session on the designation leg alone', async () => {
-        const designationOnly: AuthResult = {
+    test('catalog-viewer denies an id-less session on the volunteer leg alone', async () => {
+        const volunteerOnly: AuthResult = {
             type: 'session',
             user: Object.assign({
                 ...everyFlagUser,
                 isSysadmin: false, isBoardMember: false, isKeyholder: false,
                 isBackgroundCheckReviewer: false, isOperations: false,
                 isInventoryManager: false, isFinance: false, programsLed: [],
+                isVolunteerFamily: true, isActiveOrgMember: true,
             }, { id: undefined }),
         };
-        expect((await resolveAccess('catalog-viewer', ctx(designationOnly))).allowed).toBe(false);
+        expect((await resolveAccess('catalog-viewer', ctx(volunteerOnly))).allowed).toBe(false);
     });
 
     test.each<Authorize>([

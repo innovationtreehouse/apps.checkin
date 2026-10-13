@@ -25,6 +25,7 @@ interface Counts {
   sent: number;
   failed: number;
   skipped_unsubscribed: number;
+  skipped_denied: number;
   sending: number;
   total: number;
 }
@@ -352,7 +353,8 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
     }
   };
 
-  const progress = (c: Counts) => (c.total === 0 ? 100 : Math.round(((c.sent + c.failed + c.skipped_unsubscribed) / c.total) * 100));
+  const done = (c: Counts) => c.sent + c.failed + c.skipped_unsubscribed + c.skipped_denied;
+  const progress = (c: Counts) => (c.total === 0 ? 100 : Math.round((done(c) / c.total) * 100));
 
   return (
     <Card withBorder radius="md" padding="lg" style={{ borderColor: "var(--mantine-color-yellow-5)" }}>
@@ -368,7 +370,7 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
         <Stack>
           <Alert color="blue" variant="light">
             A {TEMPLATE_LABEL[inFlight.emailType as TemplateKey] ?? inFlight.emailType} send (audience {inFlight.audience}) is
-            in progress — {inFlight.counts.sent + inFlight.counts.failed + inFlight.counts.skipped_unsubscribed} of{" "}
+            in progress — {done(inFlight.counts)} of{" "}
             {inFlight.counts.total} done.
           </Alert>
           <Progress value={progress(inFlight.counts)} animated={draining} />
@@ -408,7 +410,8 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
             <Text size="sm" c="dimmed">
               Last sent: {TEMPLATE_LABEL[lastCompleted.emailType as TemplateKey] ?? lastCompleted.emailType} (audience{" "}
               {lastCompleted.audience}) — {lastCompleted.counts.sent} sent, {lastCompleted.counts.failed} failed,{" "}
-              {lastCompleted.counts.skipped_unsubscribed} skipped (unsubscribed), on{" "}
+              {lastCompleted.counts.skipped_unsubscribed} skipped (unsubscribed),{" "}
+              {lastCompleted.counts.skipped_denied > 0 && `${lastCompleted.counts.skipped_denied} skipped (denied), `}on{" "}
               {lastCompleted.completedAt ? new Date(lastCompleted.completedAt).toLocaleString() : ""}.
               {lastCompleted.counts.failed > 0 && (
                 <>

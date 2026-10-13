@@ -3,22 +3,27 @@
 import { Box, Center, Loader, Stack, Text } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
-import { FINANCE_NAV_LINKS, FINANCE_SECTION_ROLES } from "@/lib/financeNav";
+import { REVENUE_OPS_SECTION_ROLES, revenueOpsTabs } from "@/lib/financeNav";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
-import { tabBadgeFor } from "@/components/navBadges";
-import { CountBadge } from "@/components/ui/CountBadge";
+import { sectionTabBadge } from "@/components/navBadges";
+import { TabBadge } from "@/components/ui/CountBadge";
 
-export default function FinanceOpsLayout({ children }: { children: React.ReactNode }) {
-  const { loading, ready } = useRequireRole(FINANCE_SECTION_ROLES);
-  const counts = useTodoCounts(true);
+/**
+ * Revenue Ops chrome, shared by /finance-ops, /income and /donations. Admits
+ * FINANCE or BOARD; a FINANCE-only viewer sees only the library tabs, and each
+ * Board-only finance page enforces its own Board gate.
+ */
+export default function RevenueOpsLayout({ children }: { children: React.ReactNode }) {
+  const { user, loading, ready } = useRequireRole(REVENUE_OPS_SECTION_ROLES);
+  const counts = useTodoCounts(ready);
 
   if (loading) {
     return (
       <Center mih="60vh">
         <Stack align="center">
           <Loader />
-          <Text>Verifying Finance Access...</Text>
+          <Text>Verifying Revenue Ops Access...</Text>
         </Stack>
       </Center>
     );
@@ -26,15 +31,14 @@ export default function FinanceOpsLayout({ children }: { children: React.ReactNo
 
   if (!ready) return null;
 
+  const links = revenueOpsTabs(user, counts);
   return (
     <PageContainer>
       <SectionTabs
-        links={FINANCE_NAV_LINKS}
+        links={links}
+        prefixMatch
         mb="md"
-        badgeFor={(href) => {
-          const b = tabBadgeFor(href, counts);
-          return b ? <CountBadge intent="action">{b.count}</CountBadge> : null;
-        }}
+        badgeFor={(href) => <TabBadge badge={sectionTabBadge(links, href, counts)} />}
       />
       <Box style={{ minWidth: 0 }}>{children}</Box>
     </PageContainer>

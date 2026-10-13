@@ -26,6 +26,7 @@ export async function applyPresenceIntent(
         confirmToken?: string | null;
         replayEventId?: string | null;
         forceCloseConfirmed?: boolean;
+        clockSuspect?: boolean;
         webClose?: boolean;
         shownEmpty?: boolean | null;
     },
@@ -37,6 +38,7 @@ export async function applyPresenceIntent(
         source: args.source,
         clientEventId: args.clientEventId,
         classification: null,
+        clockSuspect: args.clockSuspect,
     });
 
     const openVisit = await db.visit.findFirst({

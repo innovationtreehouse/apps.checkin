@@ -241,6 +241,16 @@ export async function reportShopifyFailure(
 }
 
 /**
+ * Picks the inventory location from a `/locations.json` body. Prefers an active
+ * location: `locations[0]` may be a deactivated or fulfillment-service location
+ * that inventory writes 422 against.
+ */
+function pickActiveLocationId(locData: { locations?: Array<{ id?: number; active?: boolean }> }): number | undefined {
+    const locations = locData.locations ?? [];
+    return (locations.find((l) => l.active !== false) ?? locations[0])?.id;
+}
+
+/**
  * Set the initial absolute inventory (== maxParticipants) for one variant's
  * inventory_item_id. A capped program's variant is created inline with
  * inventory_management='shopify' + inventory_policy='deny' and Shopify's default
@@ -283,11 +293,7 @@ async function setInitialShopifyInventory(
             return false;
         }
 
-        const locData = await locRes.json();
-        const locations: Array<{ id?: number; active?: boolean }> = locData.locations ?? [];
-        // Prefer an active location; `locations[0]` may be a deactivated or
-        // fulfillment-service location that `set` can't write to.
-        const locationId = (locations.find((l) => l.active !== false) ?? locations[0])?.id;
+        const locationId = pickActiveLocationId(await locRes.json());
         if (!locationId) {
             await logIntegrationError("shopify", new Error("no Shopify location available to set inventory"), { operation: "setInitialShopifyInventory", label, quantity });
             return false;
@@ -488,18 +494,21 @@ export async function adjustProgramInventory(
     const accessToken = await getAccessToken();
 
     if (!storeDomain || !accessToken) {
-        console.warn("Shopify integration is disabled: Missing credentials or unable to obtain access token");
+        await reportShopifyFailure(
+            "adjustProgramInventory",
+            new Error("Shopify credentials missing or access token unavailable"),
+            { shopifyVariantId: variantId, delta },
+            `Failed to adjust Shopify inventory (delta ${delta}) after a program capacity change.`,
+        );
         return false;
     }
 
     try {
-        // Store's primary location — same lookup pattern as setInitialShopifyInventory.
         const locRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/locations.json`, {
             headers: { 'X-Shopify-Access-Token': accessToken },
         }, "Shopify get locations");
         if (!locRes.ok) throw new Error(`Shopify locations lookup failed: ${locRes.status}`);
-        const locData = await locRes.json();
-        const locationId = locData.locations?.[0]?.id;
+        const locationId = pickActiveLocationId(await locRes.json());
         if (!locationId) throw new Error("Shopify store has no locations configured");
 
         const variantRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/variants/${variantId}.json`, {

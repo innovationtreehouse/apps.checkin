@@ -43,7 +43,7 @@ export function nextBoundary(boundary: Date, now: Date): Date {
     return b;
 }
 
-function monthsBefore(date: Date, months: number): Date {
+export function monthsBefore(date: Date, months: number): Date {
     const d = new Date(date);
     d.setUTCMonth(d.getUTCMonth() - months);
     return d;
