@@ -71,6 +71,22 @@ describeDb("sign-off seats", () => {
     expect(await db.expenseFlag.findMany({ where: { expenseId: id } })).toMatchObject([{ kind: "COI", audience: "BOARD" }]);
   });
 
+  it("the Board signer behind a COI flag, and their household, cannot check it off", async () => {
+    // 9 shares a household with Board signer 5; 6 is an independent Board member
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5, 6, 9], households: [[1, 3], [5, 9]] }) });
+    const id = await seedExpense({ state: "qb_pending", needsReimbursement: true, reimburseePersonId: 1 });
+    const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await seedApproval(id, li, { ownerId: 100, status: "approved" });
+    await signLine(principal(1), li, "SUBMITTER");
+    await signLine(principal(2), li, "PROGRAM_APPROVER");
+    await signLine(principal(5, { isBoard: true }), li, "TREASURER");
+    const flag = (await db.expenseFlag.findFirst({ where: { expenseId: id, kind: "COI" } }))!;
+
+    await expect(checkOffFlag(principal(5, { isBoard: true }), flag.id)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(checkOffFlag(principal(9, { isBoard: true }), flag.id)).rejects.toMatchObject({ statusCode: 403 });
+    await checkOffFlag(principal(6, { isBoard: true }), flag.id);
+  });
+
   it("a card charge needing two Board substitutions is held and flagged to the board", async () => {
     bindPorts({ signoff: directory({ orgLevel: [7], finance: [3], board: [5, 6], households: [[1, 3]] }) });
     const id = await seedExpense({ state: "qb_pending" });

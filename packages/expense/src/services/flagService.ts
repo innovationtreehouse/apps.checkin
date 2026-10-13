@@ -1,7 +1,7 @@
 // GC-FIN-CONTROL flags: raised for awareness, checked off by the audience they route to, audited.
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
-import { getOrgId } from "../runtime";
+import { getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { FLAG_AUDIENCE, HOLD_FLAGS, type FlagAudience, type FlagKind } from "../lib/flags";
@@ -48,6 +48,14 @@ export async function checkOffFlag(principal: ExpensePrincipal, flagId: number, 
   // its reimbursee, or anyone in their households.
   if ((await conflictedParties(expense)).includes(actor.userId)) {
     throw new ServiceError(403, "You are a party to this expense and cannot check off its flags");
+  }
+  // A COI flag is raised by a sign-off, so no signer on the expense, nor their household, checks it off.
+  if (flag.kind === "COI") {
+    const signoffs = await db.expenseLineSignoff.findMany({ where: { expenseId: flag.expenseId }, select: { signerUserId: true } });
+    const signers = [...new Set(signoffs.map((s) => s.signerUserId))];
+    if (signers.length > 0 && [...signers, ...(await getExpenseRuntime().signoff.householdOf(signers))].includes(actor.userId)) {
+      throw new ServiceError(403, "You signed this expense, or are in a signer's household, and cannot check off its conflict flag");
+    }
   }
   // REIMBURSEE_UNKNOWN is the queue's only sign of the hold, so it stays open while the hold applies.
   const holdReason = HOLD_FLAGS.get(flag.kind);
