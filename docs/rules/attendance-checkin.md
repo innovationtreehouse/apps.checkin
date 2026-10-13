@@ -2,6 +2,9 @@
 
 Opening and closing a facility, supervision, the kiosk, and the visit record.
 
+The check-in state machine signed off by the owner (scans, IN/OUT, closing the
+building) is in [`docs/ops/checkin-state-machine.md`](../ops/checkin-state-machine.md).
+
 ---
 
 ## Policy
