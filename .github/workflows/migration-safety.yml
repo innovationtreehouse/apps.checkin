@@ -359,6 +359,8 @@ jobs:
         if: steps.base.outputs.skip == 'false'
         env:
           PGPASSWORD: testpassword
+          # Library seeds refuse to run outside a local environment.
+          CHECKIN_ENV: local
         run: |
           set -euo pipefail
           BASE_TREE="${{ runner.temp }}/base"
