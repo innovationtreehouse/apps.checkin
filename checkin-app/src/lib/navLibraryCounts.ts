@@ -22,8 +22,9 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
   {
     library: "expense",
     visible: (u) => !!u.isFinance || !!u.isBoardMember || (u.programsLed?.length ?? 0) > 0,
-    // Lazy: the expense library and its DB client load only when a viewer may see the counts.
-    count: async (u) => (await import("@/lib/expense/navCounts")).expenseLibraryCounts(u),
+    // An unconfigured library contributes no counts; lazy so the expense library loads only when used.
+    count: async (u) =>
+      process.env.EXPENSE_DATABASE_URL ? (await import("@/lib/expense/navCounts")).expenseLibraryCounts(u) : {},
   },
 ];
 

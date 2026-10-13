@@ -81,4 +81,14 @@ describe("expense count provider", () => {
     expect(provider).toBeDefined();
     expect([finance, board, lead, member].map((u) => provider?.visible(u))).toEqual([true, true, true, false]);
   });
+
+  it("contributes no counts when the expense database is not configured", async () => {
+    const saved = process.env.EXPENSE_DATABASE_URL;
+    delete process.env.EXPENSE_DATABASE_URL;
+    try {
+      expect(await provider?.count(finance)).toEqual({});
+    } finally {
+      if (saved !== undefined) process.env.EXPENSE_DATABASE_URL = saved;
+    }
+  });
 });
