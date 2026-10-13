@@ -83,7 +83,7 @@ function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
                   <Table.Td><Code>{d.id}</Code></Table.Td>
                   <Table.Td>
                     <Group gap="xs">
-                      <Button size="xs" disabled={busy} onClick={() => resolve({ action: "match", depositId: d.id }, "Matched")}>Match</Button>
+                      <Button size="xs" disabled={busy} onClick={() => resolve({ action: "match", depositId: d.id, ...(reason.trim() ? { reason } : {}) }, "Matched")}>Match</Button>
                       <Button
                         size="xs"
                         variant="light"
@@ -101,7 +101,7 @@ function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
           </Table>
         )}
       <Group gap="xs" align="end">
-        <TextInput size="xs" label="Reason (dismiss or exclude)" value={reason} onChange={(e) => setReason(e.currentTarget.value)} w={320} />
+        <TextInput size="xs" label="Reason (dismiss, exclude, or match a deposit whose amount differs)" value={reason} onChange={(e) => setReason(e.currentTarget.value)} w={320} />
         <Button size="xs" variant="default" disabled={busy} onClick={() => needReason() && resolve({ action: "dismiss", reason }, "Dismissed")}>
           Dismiss
         </Button>

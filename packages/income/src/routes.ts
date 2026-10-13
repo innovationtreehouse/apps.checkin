@@ -79,8 +79,11 @@ export const candidates: IncomeRouteHandler = async ({ params }) => {
 
 function resolveAction(body: Record<string, unknown>): ResolveAction {
   switch (body.action) {
-    case "match":
-      return { action: "match", depositId: requiredString(body, "depositId") };
+    case "match": {
+      const reason = body.reason;
+      if (reason !== undefined && typeof reason !== "string") throw new IncomeHttpError(400, "reason must be a string");
+      return { action: "match", depositId: requiredString(body, "depositId"), reason };
+    }
     case "dismiss":
       return { action: "dismiss", reason: requiredString(body, "reason") };
     case "retry":
