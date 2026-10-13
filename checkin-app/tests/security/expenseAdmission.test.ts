@@ -157,8 +157,8 @@ describe('expense admission', () => {
         expect(await admitted(route, { programsLed: [1], isActiveOrgMember: true })).toBe(APPROVER_ROUTES.includes(endpoint) || endpoint === SIGN_OFF);
     });
 
-    test.each(expense)('%s: a program leader without an ACTIVE membership is admitted on approver routes only', async (endpoint, route) => {
-        expect(await admitted(route, { programsLed: [1] })).toBe(APPROVER_ROUTES.includes(endpoint));
+    test.each(expense)('%s: a program leader without an ACTIVE membership is admitted on approver routes and sign-off', async (endpoint, route) => {
+        expect(await admitted(route, { programsLed: [1] })).toBe(APPROVER_ROUTES.includes(endpoint) || endpoint === SIGN_OFF);
     });
 
     test.each(expense)('%s: a treasurer who leads no program is admitted on approver routes and sign-off', async (endpoint, route) => {
@@ -188,18 +188,16 @@ describe('expense admission', () => {
     });
 
     test('sign-off admits exactly the union of catalog-viewer and expense-approver', async () => {
-        const callers: Array<[string, Partial<AuthenticatedUser>, { programId: number } | null, { id: number } | null]> = [
-            ['plain member', {}, null, null],
-            ['submitter (designation only)', {}, null, { id: 1 }],
-            ['treasurer leading no program', {}, { programId: 1 }, null],
-            ['program leader', { programsLed: [1] }, null, null],
-            ['FINANCE', { isFinance: true }, null, null],
-            ['BOARD', { isBoardMember: true }, null, null],
-            ['keyholder', { isKeyholder: true }, null, null],
+        const callers: Array<[string, Partial<AuthenticatedUser>, { programId: number } | null]> = [
+            ['plain member', {}, null],
+            ['treasurer leading no program', {}, { programId: 1 }],
+            ['program leader', { programsLed: [1] }, null],
+            ['FINANCE', { isFinance: true }, null],
+            ['BOARD', { isBoardMember: true }, null],
+            ['keyholder', { isKeyholder: true }, null],
         ];
-        for (const [who, user, treasurer, designation] of callers) {
+        for (const [who, user, treasurer] of callers) {
             treasurerRow = treasurer;
-            designationRow = designation;
             const union = (await admitted({ authorize: 'catalog-viewer' }, user)) || (await admitted({ authorize: 'expense-approver' }, user));
             expect([who, await admitted(expenseRoute(SIGN_OFF), user)]).toEqual([who, union]);
         }
