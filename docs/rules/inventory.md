@@ -80,8 +80,8 @@ org identity, the own-database packaging — is described in
   band is adult and whose household membership is ACTIVE. A role holder or a
   Treehouse staff account is admitted whatever their recorded age or
   membership. A signed-in adult with no ACTIVE membership is refused, and so is
-  a youth or a person of unknown age without a role. No background check is
-  needed. The submitter sees only their own receipts, without donor or
+  a youth or a person of unknown age without a role, because a self-declared
+  age alone is not proof of adulthood. No background check is needed. The submitter sees only their own receipts, without donor or
   reimbursee names, and approval stays with FINANCE, so the audience exposes no
   other person's data and moves no money on its own. The same audience may
   reach an expense sign-off for the submitter seat, since that seat is filled
