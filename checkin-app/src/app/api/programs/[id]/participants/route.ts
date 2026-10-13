@@ -297,8 +297,19 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         const isLeadMentor = currentProgram.leadMentorId === currentUserId;
         const isSysAdminOrBoard = auth.user.isSysadmin || auth.user.isBoardMember;
 
-        if (!isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard && !(await isLeadOfParticipant(currentUserId, participantId))) {
-            return apiError("Forbidden: Not authorized to remove this participant", 403);
+        if (!isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard) {
+            if (!(await isLeadOfParticipant(currentUserId, participantId))) {
+                return apiError("Forbidden: Not authorized to remove this participant", 403);
+            }
+            // A household lead may withdraw only an unpaid enrollment: a paid
+            // withdrawal (refund, restock) is the board's call.
+            const row = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId, personId: participantId } },
+                select: { status: true },
+            });
+            if (row?.status === 'ACTIVE') {
+                return apiError("This child has paid; ask the board to withdraw them.", 403);
+            }
         }
 
         // Withdrawal is a household lead's action, not a youth's: beyond matching

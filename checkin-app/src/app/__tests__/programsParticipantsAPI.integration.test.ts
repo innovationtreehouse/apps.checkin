@@ -1150,13 +1150,16 @@ describe('Program Participants API Integration Tests', () => {
             }
         });
 
-        it('allows a household lead to withdraw their own child', async () => {
+        it.each([
+            ['PENDING', 200],
+            ['ACTIVE', 403],
+        ] as const)('lets a household lead withdraw their own %s child only while unpaid (%i)', async (status, expected) => {
             await prisma.programParticipant.upsert({
                 where: { programId_personId: { programId: freeProgramId, personId: youthDepId } },
-                create: { programId: freeProgramId, personId: youthDepId, status: 'ACTIVE' },
-                update: { status: 'ACTIVE' },
+                create: { programId: freeProgramId, personId: youthDepId, status },
+                update: { status },
             });
-            // No board flag on the session: the household-lead path alone must admit it.
+            // No board flag on the session: the household-lead path alone decides it.
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId } });
 
             const res = await DELETE(
@@ -1166,11 +1169,17 @@ describe('Program Participants API Integration Tests', () => {
                 }) as unknown as import("next/server").NextRequest,
                 createParams(freeProgramId) as unknown as never,
             );
-            expect(res.status).toBe(200);
+            expect(res.status).toBe(expected);
             const row = await prisma.programParticipant.findUnique({
                 where: { programId_personId: { programId: freeProgramId, personId: youthDepId } },
             });
-            expect(row).toBeNull();
+            if (expected === 403) {
+                expect((await res.json()).error).toMatch(/ask the board/i);
+                expect(row).not.toBeNull();
+                await prisma.programParticipant.delete({ where: { programId_personId: { programId: freeProgramId, personId: youthDepId } } });
+            } else {
+                expect(row).toBeNull();
+            }
         });
 
         it("refuses a household lead withdrawing another household's child", async () => {
