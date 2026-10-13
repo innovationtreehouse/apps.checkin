@@ -64,6 +64,8 @@ describe('expense tiering', () => {
             'ExpenseLineItem.capitalOwnerId',
             'ExpenseLineSignoff.signerUserId',
             'ExpenseLineSignoff.signerUsername',
+            'ExpenseOrgAuditLog.actorUserId',
+            'ExpenseOrgAuditLog.actorUsername',
             'ExpenseOrgSettingsChange.actorUserId',
             'ExpenseOrgSettingsChange.actorUsername',
             'ExpenseQbMatchExclusion.excludedByUserId',
