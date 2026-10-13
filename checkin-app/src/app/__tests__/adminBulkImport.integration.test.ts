@@ -234,6 +234,7 @@ describe('Admin Bulk Import API Integration Tests', () => {
             const dana = await prisma.person.findUnique({ where: { email: 'dana-batch-import-test@example.com' } });
             expect(dana).not.toBeNull();
             expect(dana!.householdId).not.toBe(admin.householdId);
+            expect(await prisma.auditLog.findFirst({ where: { tableName: 'SelfGrantRefusal', actorId: testAdminId, affectedEntityId: dana!.id } })).not.toBeNull();
         });
 
         it('should automatically create households for participants with no household links, and correctly assign lead status based on age', async () => {
@@ -380,6 +381,8 @@ describe('Admin Bulk Import API Integration Tests', () => {
             expect(after.name).toBe('Kin Batch Import Test');
             expect(after.dateOfBirth?.toISOString().slice(0, 10)).toBe('2015-03-04');
             expect((await prisma.person.findUniqueOrThrow({ where: { id: testAdminId } })).name).toBe('Admin Import Test');
+            const refused = await prisma.auditLog.findMany({ where: { tableName: 'SelfGrantRefusal', actorId: testAdminId }, select: { affectedEntityId: true } });
+            expect(refused.map(r => r.affectedEntityId).sort()).toEqual([kin.id, testAdminId].sort());
         });
 
         it('stores no date of birth for an adult on the update path, only the adult flag', async () => {

@@ -93,7 +93,9 @@ export class LastBoardMemberError extends Error {}
 /** Thrown by `setRoleFlag` when granting BOARD to a member of a DENIED household. */
 export class DeniedHouseholdBoardError extends Error {}
 /** Thrown when an actor changes a role or flag on themself or someone in their own household. */
-export class OwnHouseholdRoleError extends Error {}
+export class OwnHouseholdRoleError extends Error {
+    constructor(readonly targetId: number) { super(); }
+}
 
 /**
  * Refuses a role/flag change whose target is the actor or shares the actor's
@@ -104,9 +106,9 @@ export class OwnHouseholdRoleError extends Error {}
 export async function assertNotOwnHousehold(db: DbClient, actorId: number, targetId: number): Promise<void> {
     const actorHouseholdId = await resolveActorHouseholdId(db, actorId);
     if (actorHouseholdId === null) throw new RoleMatrixError("Forbidden");
-    if (actorId === targetId) throw new OwnHouseholdRoleError();
+    if (actorId === targetId) throw new OwnHouseholdRoleError(targetId);
     const target = await db.person.findUnique({ where: { id: targetId }, select: { householdId: true } });
-    if (sharesHousehold(actorHouseholdId, target?.householdId)) throw new OwnHouseholdRoleError();
+    if (sharesHousehold(actorHouseholdId, target?.householdId)) throw new OwnHouseholdRoleError(targetId);
 }
 
 /**

@@ -15,6 +15,7 @@ import { config } from "@/lib/config";
 import { ensureHouseholdMembership, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { assertNotOwnHousehold, OwnHouseholdRoleError } from "@/lib/roles";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
+import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 
 export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (req: NextRequest, auth) => {
     if (!config.csvImportEnabled()) {
@@ -31,6 +32,13 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         if (actorHouseholdId === null) {
             return apiError("Forbidden", 403);
         }
+        // Audited the way a refused merge is, after the row's transaction rolls back.
+        const recordRefusal = (affectedEntityId: number, row: number, subject: { personId: number } | { householdIds: number[] }) =>
+            recordSelfGrantRefusal(prisma, {
+                actorId: auth.user.id,
+                affectedEntityId,
+                newData: { reason: "own_household", table: "Person", subject, attempted: { csvImportRow: row } },
+            });
 
         const formData = await req.formData();
         const file = formData.get("file") as File;
@@ -292,6 +300,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             } catch (err: unknown) {
                 let errorMessage: string;
                 if (err instanceof OwnHouseholdRoleError) {
+                    await recordRefusal(err.targetId, pr.index + 2, { personId: err.targetId });
                     errorMessage = "You cannot change a record in your own household through import — someone outside your household must.";
                 } else {
                     logger.error(`Error processing row ${pr.index + 2}:`, err);
@@ -373,6 +382,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                         }
 
                         if (sharesHousehold(actorHouseholdId, sourceHouseholdId) || sharesHousehold(actorHouseholdId, targetHouseholdId)) {
+                            await recordRefusal(participantId, pr.index + 2, { householdIds: [sourceHouseholdId, targetHouseholdId] });
                             errors.push(`Row ${pr.index + 2} (${pr.fullName}): You cannot merge your own household — someone outside your household must.`);
                             continue;
                         }
