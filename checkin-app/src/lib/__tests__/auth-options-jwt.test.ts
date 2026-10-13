@@ -412,8 +412,7 @@ describe('jwt() callback — organization-account claim age limit', () => {
             token,
         } as unknown as Parameters<SessionCallback>[0]);
 
-        expect(result.user?.hd).toBeNull();
-        expect(result.user?.emailVerified).toBe(false);
+        expect(result.user).toMatchObject({ hd: null, emailVerified: false });
     });
 
     it('starts the clock on a token that carries the claims without one', async () => {
