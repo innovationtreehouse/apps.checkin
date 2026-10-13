@@ -64,6 +64,44 @@ describe("KioskCertificationsDisplay", () => {
         }
     });
 
+    it("says the kiosk is resting, not that nobody was found, on a 204 with no grid yet", async () => {
+        global.fetch = jest.fn(async () => ({
+            ok: true,
+            status: 204,
+            json: async () => Promise.reject(new SyntaxError("no body")),
+        } as unknown as Response)) as unknown as typeof fetch;
+        renderWithProviders(<KioskCertificationsDisplay />);
+
+        expect(await screen.findByText("Kiosk resting — zzz. Badge in to wake it.")).toBeInTheDocument();
+        expect(screen.queryByText("No active people found.")).not.toBeInTheDocument();
+    });
+
+    it("keeps the grid it has when the kiosk answers 204", async () => {
+        let calls = 0;
+        global.fetch = jest.fn(async () => {
+            calls += 1;
+            if (calls === 1) {
+                return { ok: true, status: 200, json: async () => ({ participants, tools }) } as unknown as Response;
+            }
+            return {
+                ok: true,
+                status: 204,
+                json: async () => Promise.reject(new SyntaxError("no body")),
+            } as unknown as Response;
+        }) as unknown as typeof fetch;
+        jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+        try {
+            renderWithProviders(<KioskCertificationsDisplay />);
+            expect(await screen.findByText("Alex")).toBeInTheDocument();
+            await act(async () => { jest.advanceTimersByTime(10_000); });
+            expect(global.fetch).toHaveBeenCalledTimes(2);
+            expect(screen.getByText("Alex")).toBeInTheDocument();
+            expect(screen.queryByText("Kiosk resting — zzz. Badge in to wake it.")).not.toBeInTheDocument();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("shows an error message when the fetch fails", async () => {
         mockFetchJson({});
         renderWithProviders(<KioskCertificationsDisplay />);

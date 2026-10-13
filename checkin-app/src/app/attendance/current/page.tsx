@@ -53,7 +53,7 @@ type Visit = {
 
 type Counts = { keyholders: number; volunteers: number; youth: number; total: number; needReview?: number };
 type SafetyFlags = { facilityOpen: boolean; isLastKeyholder: boolean; isTwoDeepViolation: boolean };
-// kioskAsOf: the kiosk proxy served its own view (server unreachable, or overnight)
+// kioskAsOf: the kiosk proxy served its own view (server unreachable)
 // from the roster it received at this time; null when it never had one.
 type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; kioskAsOf?: string | null };
 type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; self: Visit | null; household: Visit[] };
@@ -69,6 +69,8 @@ function KioskDisplayInner() {
   const [asOf, setAsOf] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The kiosk proxy answers 204 while the building is known empty.
+  const [kioskResting, setKioskResting] = useState(false);
   const [checkingOut, setCheckingOut] = useState<number | null>(null);
   const [household, setHousehold] = useState<{ householdMembers: Person[] } | null>(null);
   const [showSignOutModal, setShowSignOutModal] = useState(false);
@@ -165,6 +167,11 @@ function KioskDisplayInner() {
       }
 
       const res = await fetch("/api/attendance", { headers });
+      setKioskResting(res.status === 204);
+      if (res.status === 204) {
+        setError(null);
+        return;
+      }
       const json = await res.json().catch(() => ({}));
       if (res.ok && (json.access === "full" || json.access === "limited")) {
         setData(json);
@@ -235,7 +242,7 @@ function KioskDisplayInner() {
       headers["x-kiosk-nonce"] = nonceParamsUrl;
     }
     const attRes = await fetch("/api/attendance", { headers });
-    const json = await attRes.json();
+    const json = await attRes.json().catch(() => ({}));
     if (attRes.ok && (json.access === "full" || json.access === "limited")) {
       setData(json);
       setAsOf(json.kioskAsOf !== undefined ? json.kioskAsOf : new Date().toISOString());
@@ -516,6 +523,8 @@ function KioskDisplayInner() {
           <Center py="xl"><Loader /></Center>
         ) : error && !kioskStale ? (
           <Alert color="red">{error === "Unauthorized" ? "Access Denied: Please sign in to view attendance." : error}</Alert>
+        ) : !data && kioskResting ? (
+          <Center py="xl"><Text c="dimmed">Kiosk resting — zzz. Badge in to wake it.</Text></Center>
         ) : !data ? (
           <Alert color="red">Attendance is unavailable — the roster could not be loaded.</Alert>
         ) : counts.total === 0 ? (

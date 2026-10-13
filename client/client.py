@@ -26,11 +26,8 @@ import requests
 from outbox import Outbox, classify_response, replay_drain, new_event_id, now_iso, in_closed_window
 from health import health_monitor
 
-# Browser iframe polls these with idleStopMs unset. Swallowing them overnight
-# is what lets prod's 5-minute curfew fire — the Python attendance_poller
-# alone is not enough. Empty-building skip stays on the poller only, so a
-# display-only / other-entrance check-in still lands via this proxied GET.
-KIOSK_KEEPALIVE_PATHS = ("/api/attendance", "/api/kioskdisplay/certifications")
+# The board's own roster GETs, proxied through this Pi.
+ROSTER_GET_PATHS = ("/api/attendance", "/api/kioskdisplay/certifications")
 
 
 CLOCK_INTERVAL_S = 30
@@ -46,47 +43,56 @@ def local_clock_label(now=None):
     return label
 
 
-def is_kiosk_keepalive_path(path):
-    return any(
-        path == p or path.startswith(p + "?") or path.startswith(p + "/")
-        for p in KIOSK_KEEPALIVE_PATHS
-    )
+def roster_get_key(path):
+    """The ROSTER_GET_PATHS entry a proxied path (query already stripped) is,
+    or None."""
+    return path if path in ROSTER_GET_PATHS else None
 
 
-def skip_kiosk_keepalive(state, method, path, in_closed_window_fn=in_closed_window):
-    """True when a proxied GET must not hit the ALB (overnight only)."""
-    if method != "GET" or not is_kiosk_keepalive_path(path):
+def is_page_load(path):
+    """A board HTML navigation (not an API call or a static asset)."""
+    if path.startswith(("/api/", "/_next/")):
         return False
-    return bool(in_closed_window_fn())
+    return "." not in path.rsplit("/", 1)[-1]
 
 
-# With nothing seen yet, an empty board that must include `safety` (and
-# `access`/`youth`): a missing safety object is treated as UNKNOWN and paints
-# the orange supervision fail-safe.
-EMPTY_ATTENDANCE = {
+def building_known_empty(state):
+    """True only when the last real roster fetch reported nobody inside and no
+    badge on this Pi has put anyone inside since."""
+    with state.lock:
+        return (state.counts_known and state.current_counts.get("total", 0) == 0
+                and not state.present_ids)
+
+
+def skip_roster_get(state, method, path):
+    """True when the proxy answers the board's roster GET itself, with a 204
+    and no body: the building is known empty (with one door, every arrival
+    badges here first) and this board path has already been served the real
+    roster since the last fetch. The board keeps that real roster."""
+    key = roster_get_key(path)
+    if state is None or method != "GET" or key is None:
+        return False
+    with state.lock:
+        served = state.served_generation.get(key) == state.roster_generation
+    return served and building_known_empty(state)
+
+
+def kiosk_quiet(state, outbox):
+    """Known empty with nothing queued: the kiosk sends the server nothing on
+    its own, so prod's overnight curfew can fire and the database can pause."""
+    return building_known_empty(state) and outbox.pending_count() == 0
+
+
+# The kiosk's own view before any server roster: no `safety`, which the page
+# reads as unknown rather than as a compliant room.
+NO_ROSTER = {
     "access": "full",
     "counts": {"total": 0, "keyholders": 0, "volunteers": 0, "youth": 0},
-    "safety": {"isLastKeyholder": False, "isTwoDeepViolation": False},
     "attendance": [],
 }
 
 # Roster label for a badge the kiosk has never seen on a server roster.
 UNKNOWN_PERSON_NAME = "Checked in offline"
-
-
-def synthetic_keepalive_body(path, state):
-    """JSON the iframe already knows how to parse, without a backend round-trip.
-
-    Attendance is the kiosk's own view (last roster plus its scans since, marked
-    with the roster's time); other paths replay the last real body, so what the
-    iframe was shown stays up.
-    """
-    if path.split("?", 1)[0] == "/api/attendance":
-        return json.dumps(state.attendance_view() if state is not None else EMPTY_ATTENDANCE)
-    last = state.last_keepalive_bodies.get(path) if state is not None else None
-    if last is not None:
-        return last
-    return json.dumps({"participants": [], "tools": []})
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -294,9 +300,15 @@ class AttendanceState:
         self.lock = threading.Lock()
         self.subscribers = []  # list of queue.Queue for SSE clients
         self.current_counts = {"total": 0, "keyholders": 0, "volunteers": 0, "students": 0}
-        # False until a successful fetch. Distinguishes "unknown" from "known empty"
-        # so boot (and the first tick after overnight) still polls.
+        # False until a real roster fetch: "unknown" never counts as empty.
         self.counts_known = False
+        # Bumped on every real roster fetch. A board roster path is served the
+        # server's answer at least once per generation before the proxy rests it.
+        self.roster_generation = 0
+        self.served_generation = {}
+        # Bumped by every local presence change (a badge, a check-in on the
+        # board). A roster fetch that straddles one is not seeded.
+        self.presence_seq = 0
         self.confirm_token = None    # force-close confirm token, if a countdown is running
         self.confirm_participant = None  # the keyholder that token was shown to
         self.confirm_deadline = 0.0  # monotonic clock, end of that countdown
@@ -323,8 +335,8 @@ class AttendanceState:
         self.keyholder_ids = set()
         self.last_two_deep_violation = False
         self.clock_watch = ClockWatch()
-        # Last real 200 body per keepalive path, replayed during the closed window.
-        self.last_keepalive_bodies = {}
+        # The last server roster, the base of the kiosk's own offline view.
+        self.last_roster_body = None
         # Every roster participant seen, and when this kiosk saw each badge IN:
         # what it needs to draw someone the last roster does not show yet.
         self.known_people = {}
@@ -512,17 +524,22 @@ class AttendanceState:
         except (TypeError, ValueError):
             return
         with self.lock:
+            self.presence_seq += 1
             if checking_in:
                 self.present_ids.add(pid)
                 self.local_arrivals[pid] = now_iso()
             else:
                 self.present_ids.discard(pid)
 
-    def seed_from_attendance(self, att_data, pending=()):
+    def seed_from_attendance(self, att_data, pending=(), since_seq=None):
         """Replace the local presence view with the server roster, plus this
         kiosk's undelivered outbox rows, which the roster does not show yet. Snapshot `pending` BEFORE the fetch: a
         row that drains in between is then in both (harmless); taken after, it
-        could be in neither. Keyholder ids stay roster-only."""
+        could be in neither. Keyholder ids stay roster-only.
+
+        `since_seq` is presence_seq read with that snapshot. If a badge or a
+        board check-in landed during the fetch, the roster may predate it:
+        nothing is seeded and this returns False."""
         visits = att_data.get("attendance") or []
         present = set()
         keyholders = set()
@@ -538,6 +555,8 @@ class AttendanceState:
         _overlay_pending(present, pending, arrivals)
         safety = att_data.get("safety") or {}
         with self.lock:
+            if since_seq is not None and since_seq != self.presence_seq:
+                return False
             self.known_people.update(
                 (int(p["id"]), p) for p in (v.get("participant") for v in visits)
                 if p and p.get("id") is not None)
@@ -546,8 +565,16 @@ class AttendanceState:
             self.keyholder_ids = keyholders
             self.last_two_deep_violation = bool(safety.get("isTwoDeepViolation"))
             self.counts_known = True
-            self.last_keepalive_bodies["/api/attendance"] = json.dumps(att_data)
+            self.roster_generation += 1
+            self.last_roster_body = json.dumps(att_data)
             self.roster_at = now_iso()
+        return True
+
+    def roster_snapshot(self, outbox):
+        """(pending rows, presence_seq), read together before a roster fetch."""
+        with self.lock:
+            seq = self.presence_seq
+        return outbox.pending_rows(), seq
 
     def apply_pending(self, pending):
         """Overlay undelivered outbox rows when there is no roster to seed from."""
@@ -562,12 +589,12 @@ class AttendanceState:
         unknown). `kioskAsOf` (when the roster arrived, None if never) marks
         every such body as not fresh from the server."""
         with self.lock:
-            last = self.last_keepalive_bodies.get("/api/attendance")
+            last = self.last_roster_body
             roster_at = self.roster_at
             present = set(self.present_ids)
             people = dict(self.known_people)
             arrivals = dict(self.local_arrivals)
-        view = json.loads(last) if last else json.loads(json.dumps(EMPTY_ATTENDANCE))
+        view = json.loads(last) if last else json.loads(json.dumps(NO_ROSTER))
         roster = view.get("attendance") or []
         shown = [v for v in roster if _visit_pid(v) in present]
         missing = present - {_visit_pid(v) for v in shown}
@@ -948,6 +975,12 @@ class KioskHandler(BaseHTTPRequestHandler):
         from urllib.parse import urlparse
         sign_path = urlparse(self.path).path
 
+        if method == "GET" and is_page_load(sign_path) and self.state is not None:
+            # A reloaded board starts with nothing on screen: its roster GETs
+            # get the server's answer once more before the proxy rests them.
+            with self.state.lock:
+                self.state.served_generation.clear()
+
         body_str = ""
         if body_bytes:
             try:
@@ -958,18 +991,24 @@ class KioskHandler(BaseHTTPRequestHandler):
         sig_headers = sign_request(self.backend.signing_key, method, sign_path, body_str)
         req_headers.update(sig_headers)
 
-        if skip_kiosk_keepalive(self.state, method, sign_path):
+        if skip_roster_get(self.state, method, sign_path):
             # Chromium is still up; don't let last_browser_seen look like a crash.
-            if self.state is not None:
-                self.state.last_browser_seen = time.monotonic()
-            self._send_json(synthetic_keepalive_body(sign_path, self.state))
+            self.state.last_browser_seen = time.monotonic()
+            try:
+                self.send_response(204)
+                self.end_headers()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
             return
 
         # The kiosk shows its own view rather than an error when the server
         # cannot answer the roster GET.
         own_view = self.state is not None and method == "GET" and sign_path == "/api/attendance"
         # Snapshot before the fetch, as seed_from_attendance requires.
-        pending = self.outbox.pending_rows() if own_view and self.outbox is not None else ()
+        pending, seq = ((), None)
+        if own_view and self.outbox is not None:
+            pending, seq = self.state.roster_snapshot(self.outbox)
+        generation_at_send = self.state.roster_generation if self.state is not None else 0
         relayed = False
 
         try:
@@ -1008,8 +1047,9 @@ class KioskHandler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 return
 
+            key = roster_get_key(sign_path)
             remember = (self.state is not None and method == "GET"
-                        and resp.status_code == 200 and sign_path in KIOSK_KEEPALIVE_PATHS)
+                        and resp.status_code == 200 and key is not None)
             chunks = []
             try:
                 for chunk in resp.iter_content(chunk_size=8192):
@@ -1021,14 +1061,15 @@ class KioskHandler(BaseHTTPRequestHandler):
                 # Browser closed the connection, normal for HMR or page reloads
                 remember = False
             if remember:
-                text = b"".join(chunks).decode("utf-8", "replace")
-                roster = _full_roster(text) if sign_path == "/api/attendance" else None
-                if roster is not None:
-                    # The iframe's roster is the newest the kiosk has: it is the view.
-                    self.state.seed_from_attendance(roster, pending)
-                else:
-                    with self.state.lock:
-                        self.state.last_keepalive_bodies[sign_path] = text
+                self._note_roster_served(key, b"".join(chunks), pending, seq, generation_at_send)
+            elif (self.state is not None and method != "GET"
+                    and sign_path.startswith("/api/attendance") and 200 <= resp.status_code < 300):
+                # A check-in/out made on the board itself: occupancy is unknown
+                # until the next real fetch, and a fetch already in flight must
+                # not seed over it.
+                with self.state.lock:
+                    self.state.counts_known = False
+                    self.state.presence_seq += 1
 
         except Exception as e:
             if not isinstance(e, (BrokenPipeError, ConnectionResetError)):
@@ -1042,6 +1083,23 @@ class KioskHandler(BaseHTTPRequestHandler):
                 self.end_headers()
             except:
                 pass
+
+    def _note_roster_served(self, key, body, pending, seq, generation_at_send):
+        """Record that this board path was given the server's roster. A full
+        attendance roster is the newest the kiosk has, so it is seeded and
+        credited to the generation it creates; anything else is credited to the
+        generation current when it was sent, so an answer that predates a newer
+        fetch never rests the board."""
+        roster = _full_roster(body.decode("utf-8", "replace")) if key == "/api/attendance" else None
+        if roster is not None and self.state.seed_from_attendance(roster, pending, since_seq=seq):
+            with self.state.lock:
+                if "counts" in roster:
+                    self.state.current_counts = roster["counts"]
+                self.state.served_generation[key] = self.state.roster_generation
+            return
+        with self.state.lock:
+            if self.state.served_generation.get(key, -1) < generation_at_send:
+                self.state.served_generation[key] = generation_at_send
 
     def _send_json(self, text):
         body = text.encode()
@@ -1411,15 +1469,15 @@ def handle_scan(backend, state, outbox, participant_id):
 
     # Fetch fresh attendance and push update for the iframe
     if backend.attendance_path and outcome == "ack":
-        pending = outbox.pending_rows()
+        pending, seq = state.roster_snapshot(outbox)
         att_data, att_status = backend.get_attendance()
         if att_status == 200:
-            state.seed_from_attendance(att_data, pending)
+            seeded = state.seed_from_attendance(att_data, pending, since_seq=seq)
             event_payload = {"html": ""}
             for key in ("attendance", "counts", "safety"):
                 if key in att_data:
                     event_payload[key] = att_data[key]
-            if "counts" in att_data:
+            if seeded and "counts" in att_data:
                 with state.lock:
                     state.current_counts = att_data["counts"]
             state.push_event(event_payload)
@@ -1427,41 +1485,32 @@ def handle_scan(backend, state, outbox, participant_id):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def attendance_poller(backend, state, outbox, interval=30, sleep_fn=time.sleep,
-                       in_closed_window_fn=in_closed_window):
-    """Background thread that polls attendance counts periodically.
-    Pushes SSE status events when counts change so the blackout
-    logic works on display-only kiosks without a scanner. §3.1/Q17: a
-    24/7 kiosk must not defeat the overnight curfew with signed GETs.
-    Also skip while the last known roster is empty. Accepted trade-off: an
-    empty, asleep kiosk does NOT wake for occupancy created off this Pi (a
-    manual/web check-in, or a scan at another entrance). The next local scan
-    refetches /api/attendance and re-syncs to the live roster — only when that
-    refetch is online; an offline scan wakes the screen via the banner but
-    counts stay stale until connectivity returns."""
+def attendance_poller(backend, state, outbox, interval=30, sleep_fn=time.sleep):
+    """Background thread that polls attendance counts periodically while
+    anyone is inside or occupancy is unknown, pushing the real roster to the
+    board when counts change. It pauses while the building is known empty, at
+    any hour, so the database can sleep: with one door, every arrival badges
+    here and resumes it."""
     while True:
         sleep_fn(interval)
-        if in_closed_window_fn():
-            # Forget occupancy so the first daytime tick fetches again
-            # (otherwise total=0 would keep skipping after 06:45).
-            with state.lock:
-                state.counts_known = False
+        if building_known_empty(state):
             continue
-        with state.lock:
-            empty = state.counts_known and state.current_counts.get("total", 0) == 0
-        if empty:
-            continue
-        pending = outbox.pending_rows()
+        pending, seq = state.roster_snapshot(outbox)
         att_data, att_status = backend.get_attendance()
         if att_status == 200 and "counts" in att_data:
-            state.seed_from_attendance(att_data, pending)
+            if not state.seed_from_attendance(att_data, pending, since_seq=seq):
+                continue
             new_counts = att_data["counts"]
             with state.lock:
                 changed = new_counts != state.current_counts
                 state.current_counts = new_counts
             if changed:
                 log.info(f"Attendance poll: {new_counts.get('total', '?')} present")
-                state.push_event({"html": "", "counts": new_counts})
+                event = {"html": ""}
+                for key in ("attendance", "counts", "safety"):
+                    if key in att_data:
+                        event[key] = att_data[key]
+                state.push_event(event)
 
 def _read_last_restart_target(path=SELF_UPDATE_STATE_FILE):
     # Missing/unreadable file means "never restarted" -- same as no target.
@@ -1527,9 +1576,10 @@ def resolve_update_target():
         ["git", "rev-parse", "origin/main"], text=True
     ).strip()
 
-def version_poller(backend, state, interval=60, state_path=SELF_UPDATE_STATE_FILE,
-                    in_closed_window_fn=in_closed_window):
-    """Background thread that checks for client and server version updates."""
+def version_poller(backend, state, outbox, interval=60, state_path=SELF_UPDATE_STATE_FILE):
+    """Background thread that checks for client and server version updates.
+    The server check is skipped while the kiosk is quiet (known empty, nothing
+    queued): any request defers prod's overnight curfew."""
     last_restart_target = _read_last_restart_target(state_path)
 
     # Get initial server version
@@ -1546,15 +1596,13 @@ def version_poller(backend, state, interval=60, state_path=SELF_UPDATE_STATE_FIL
     while True:
         time.sleep(interval)
 
-        # 1. Check Server Version Update -- skipped during the closed window
-        # (§3.1): this signed GET keep-alives the service same as
-        # attendance_poller's. Self-update below is NOT gated: the git fetch
-        # hits no server, and overnight is the safe window to restart in.
-        # NOT gated on the init fetch having succeeded: the drain's protocol
-        # gate feeds off this poll, and a kiosk that boots while the backend
-        # is down (the exact condition that fills the outbox) must still
-        # learn the protocol once the server is back.
-        if not in_closed_window_fn():
+        # 1. Check Server Version Update. NOT gated on the init fetch having
+        # succeeded: the drain's protocol gate feeds off this poll, and a
+        # kiosk that boots while the backend is down (the exact condition
+        # that fills the outbox) must still learn the protocol once the
+        # server is back. Queued rows keep the kiosk out of quiet. Self-update
+        # below hits no server.
+        if not kiosk_quiet(state, outbox):
             sv, sp, status = backend.get_server_version()
             if status == 200:
                 state.scan_protocol = sp
@@ -1629,22 +1677,19 @@ def main():
     log.info(f"Outbox:  {outbox.path} ({outbox.pending_count()} pending on start)")
 
     # Fetch initial attendance state (only if attendance_path is configured).
-    # Unseeded (offline, overnight, no path), queued scans still set intent.
+    # Unseeded (offline, no path), queued scans still set intent.
     pending = outbox.pending_rows()
     seeded = False
     if attendance_path:
-        if in_closed_window():
-            log.info("Skipping initial attendance fetch (overnight idle)")
+        log.info("Fetching initial attendance state...")
+        att_data, att_status = backend.get_attendance()
+        if att_status == 200 and "counts" in att_data:
+            state.current_counts = att_data["counts"]
+            state.seed_from_attendance(att_data, pending)
+            seeded = True
+            log.info(f"Initial state: {state.current_counts['total']} people present")
         else:
-            log.info("Fetching initial attendance state...")
-            att_data, att_status = backend.get_attendance()
-            if att_status == 200 and "counts" in att_data:
-                state.current_counts = att_data["counts"]
-                state.seed_from_attendance(att_data, pending)
-                seeded = True
-                log.info(f"Initial state: {state.current_counts['total']} people present")
-            else:
-                log.warning("Could not fetch initial attendance state")
+            log.warning("Could not fetch initial attendance state")
     if not seeded:
         state.apply_pending(pending)
 
@@ -1654,7 +1699,7 @@ def main():
         poller.start()
 
     # Start version poller thread
-    vpoller = threading.Thread(target=version_poller, args=(backend, state), daemon=True)
+    vpoller = threading.Thread(target=version_poller, args=(backend, state, outbox), daemon=True)
     vpoller.start()
 
     allow_reboot = bool(config.get("allow_reboot", False))
@@ -1662,7 +1707,8 @@ def main():
     hmon = threading.Thread(
         target=health_monitor,
         args=(backend_url, state),
-        kwargs={"allow_reboot": allow_reboot, "allow_wifi_bounce": allow_wifi_bounce},
+        kwargs={"allow_reboot": allow_reboot, "allow_wifi_bounce": allow_wifi_bounce,
+                "quiet_fn": lambda: kiosk_quiet(state, outbox)},
         daemon=True,
     )
     hmon.start()
@@ -1671,7 +1717,8 @@ def main():
     # re-signing and resubmitting each one, once the backend is reachable.
     drain = threading.Thread(
         target=replay_drain, args=(outbox, backend.post_scan, state.push_event),
-        kwargs={"protocol_ok_fn": lambda: state.scan_protocol >= SCAN_PROTOCOL_VERSION}, daemon=True
+        kwargs={"protocol_ok_fn": lambda: state.scan_protocol >= SCAN_PROTOCOL_VERSION,
+                "quiet_fn": lambda: building_known_empty(state)}, daemon=True
     )
     drain.start()
 

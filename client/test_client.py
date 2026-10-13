@@ -28,8 +28,8 @@ from client import (
     latest_release_tag,
     main,
     resolve_update_target,
-    skip_kiosk_keepalive,
-    synthetic_keepalive_body,
+    building_known_empty,
+    skip_roster_get,
 )
 from outbox import Outbox, in_closed_window
 
@@ -555,71 +555,99 @@ class TestForceCloseConfirm(unittest.TestCase):
         queued = [r for r in outbox.pending_rows() if r[0] != "evt-0"]
         self.assertEqual(queued[0][4], "tok-2")
 
-class TestAttendancePollerClosedWindow(unittest.TestCase):
-    """§3.1/Q17: unlike the outbox drain, the poller had no closed-window
-    gate -- a 24/7 kiosk pointed at prod defeats the overnight curfew with
-    signed GETs every 30s."""
+def _state(total=None, present=(), served=()):
+    """total=None: no real roster fetch yet (occupancy unknown). `served`: board
+    roster paths already given the server's answer since the last fetch."""
+    state = AttendanceState()
+    if total is not None:
+        state.counts_known = True
+        state.current_counts = {"total": total}
+        state.roster_generation = 1
+    state.present_ids = set(present)
+    state.served_generation = {p: state.roster_generation for p in served}
+    state.push_event = lambda event: None
+    return state
 
-    def _run(self, in_closed_window_fn, iterations=2):
+
+ROSTER = "/api/attendance"
+CERTS = "/api/kioskdisplay/certifications"
+
+
+class TestAttendancePollerPausesWhenEmpty(unittest.TestCase):
+    """With one door, the poll pauses while the building is known empty, at any
+    hour, and a badge here resumes it; otherwise the kiosk keeps asking."""
+
+    def _run(self, state):
         backend = Mock(attendance_path="/attendance/current")
         backend.get_attendance.return_value = ({"counts": {"total": 1}}, 200)
-        state = AttendanceState()
-        state.push_event = lambda event: None
-
         calls = {"n": 0}
 
         def fake_sleep(secs):
             calls["n"] += 1
-            if calls["n"] >= iterations:
+            if calls["n"] >= 2:
                 raise _StopLoop()
 
         with self.assertRaises(_StopLoop):
-            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep,
-                               in_closed_window_fn=in_closed_window_fn)
+            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep)
         return backend
 
-    def test_swallows_the_fetch_at_2330(self):
-        backend = self._run(lambda: in_closed_window(datetime(2026, 8, 18, 23, 30)))
-        backend.get_attendance.assert_not_called()
+    def test_pauses_when_known_empty(self):
+        self._run(_state(total=0)).get_attendance.assert_not_called()
 
-    def test_polls_at_1200(self):
-        backend = self._run(lambda: in_closed_window(datetime(2026, 8, 18, 12, 0)))
-        backend.get_attendance.assert_called()
+    def test_polls_while_people_are_inside(self):
+        self._run(_state(total=3, present={5})).get_attendance.assert_called()
 
-    def test_skips_when_the_building_is_known_empty(self):
-        backend = Mock(attendance_path="/api/attendance")
-        backend.get_attendance.return_value = ({"counts": {"total": 0}}, 200)
-        state = AttendanceState()
-        state.current_counts = {"total": 0}
-        state.counts_known = True
+    def test_polls_while_occupancy_is_unknown(self):
+        self._run(_state()).get_attendance.assert_called()
+
+    def test_a_badge_in_resumes_polling(self):
+        state = _state(total=0)
+        state.note_presence(5, checking_in=True)
+        self._run(state).get_attendance.assert_called()
+
+    def test_a_badge_during_the_fetch_is_not_seeded_over(self):
+        """The roster may predate the badge: seeding it would drop the person
+        and rest the kiosk with them inside."""
+        state = _state()
+        state.push_event = lambda e: None
+        backend = Mock(attendance_path="/attendance/current")
+
+        def fetch_while_badging():
+            state.note_presence(7, checking_in=True)
+            return ({"attendance": [], "counts": {"total": 0}}, 200)
+
+        backend.get_attendance.side_effect = fetch_while_badging
         calls = {"n": 0}
 
-        def fake_sleep(_secs):
+        def fake_sleep(secs):
             calls["n"] += 1
             if calls["n"] >= 2:
                 raise _StopLoop()
 
         with self.assertRaises(_StopLoop):
-            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep,
-                               in_closed_window_fn=lambda: False)
-        backend.get_attendance.assert_not_called()
-
-    def test_unknown_occupancy_still_polls_during_the_day(self):
-        backend = Mock(attendance_path="/api/attendance")
-        backend.get_attendance.return_value = ({"counts": {"total": 0}}, 200)
-        state = AttendanceState()
+            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep)
+        self.assertEqual(state.present_ids, {7})
         self.assertFalse(state.counts_known)
+
+    def test_a_change_pushes_the_real_roster_to_the_board(self):
+        """The board renders what the server sent instead of re-fetching into a
+        proxy that may already be resting."""
+        roster = {"attendance": [], "counts": {"total": 0}, "safety": {"isLastKeyholder": False}}
+        backend = Mock(attendance_path="/attendance/current")
+        backend.get_attendance.return_value = (roster, 200)
+        state = _state(total=1, present={5})
+        pushed = []
+        state.push_event = pushed.append
         calls = {"n": 0}
 
-        def fake_sleep(_secs):
+        def fake_sleep(secs):
             calls["n"] += 1
             if calls["n"] >= 2:
                 raise _StopLoop()
 
         with self.assertRaises(_StopLoop):
-            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep,
-                               in_closed_window_fn=lambda: False)
-        backend.get_attendance.assert_called()
+            attendance_poller(backend, state, Outbox(":memory:"), sleep_fn=fake_sleep)
+        self.assertEqual(pushed, [{"html": "", **roster}])
 
 
 class TestReseedKeepsUndeliveredScans(unittest.TestCase):
@@ -669,8 +697,7 @@ class TestReseedKeepsUndeliveredScans(unittest.TestCase):
                 raise _StopLoop()
 
         with self.assertRaises(_StopLoop):
-            attendance_poller(backend, state, ob, sleep_fn=fake_sleep,
-                               in_closed_window_fn=lambda: False)
+            attendance_poller(backend, state, ob, sleep_fn=fake_sleep)
         backend.get_attendance.assert_called()
         self.assertEqual(state.displayed_intent(5), "OUT")
 
@@ -682,90 +709,155 @@ class TestReseedKeepsUndeliveredScans(unittest.TestCase):
         self.assertEqual(state.displayed_intent(5), "OUT")
 
 
-class TestProxyKeepaliveSkip(unittest.TestCase):
-    """Iframe polls /api/attendance every 60s with idleStopMs unset. The proxy
-    must swallow those GETs overnight and when empty or ALB never goes quiet."""
+class TestProxyRosterGets(unittest.TestCase):
+    """The board's roster GETs reach the server except while the building is
+    known empty and that board path has already had the real roster since the
+    last fetch; then the proxy answers 204 with no body. The kiosk never
+    answers them with a roster the server did not send."""
 
-    def test_skips_attendance_get_overnight(self):
-        state = AttendanceState()
-        self.assertTrue(
-            skip_kiosk_keepalive(state, "GET", "/api/attendance",
-                                 in_closed_window_fn=lambda: True)
-        )
+    def test_skips_when_known_empty_and_already_served(self):
+        for path in (ROSTER, CERTS):
+            self.assertTrue(skip_roster_get(_state(total=0, served=(ROSTER, CERTS)), "GET", path))
 
-    def test_forwards_certs_get_when_known_empty_during_the_day(self):
-        """Display-only / other-entrance occupancy comes back on this GET."""
-        state = AttendanceState()
-        state.counts_known = True
-        state.current_counts = {"total": 0}
-        self.assertFalse(
-            skip_kiosk_keepalive(state, "GET", "/api/kioskdisplay/certifications",
-                                 in_closed_window_fn=lambda: False)
-        )
+    def test_forwards_the_first_get_after_a_fetch_shows_empty(self):
+        """A web checkout that empties the building: the board must get the
+        real empty roster once, not keep showing who left."""
+        self.assertFalse(skip_roster_get(_state(total=0), "GET", ROSTER))
+
+    def test_each_board_path_gets_its_own_real_answer(self):
+        self.assertFalse(skip_roster_get(_state(total=0, served=(ROSTER,)), "GET", CERTS))
+
+    def test_forwards_while_people_are_inside(self):
+        self.assertFalse(skip_roster_get(_state(total=3, present={5}, served=(ROSTER,)), "GET", ROSTER))
+
+    def test_forwards_after_a_badge_in(self):
+        self.assertFalse(skip_roster_get(_state(total=0, present={5}, served=(ROSTER,)), "GET", ROSTER))
+
+    def test_forwards_while_occupancy_is_unknown(self):
+        self.assertFalse(skip_roster_get(_state(), "GET", ROSTER))
 
     def test_forwards_scan_posts(self):
-        state = AttendanceState()
-        self.assertFalse(
-            skip_kiosk_keepalive(state, "POST", "/api/scan",
-                                 in_closed_window_fn=lambda: True)
-        )
+        self.assertFalse(skip_roster_get(_state(total=0, served=(ROSTER,)), "POST", "/api/scan"))
 
-    def test_forwards_when_occupied(self):
-        state = AttendanceState()
-        state.counts_known = True
-        state.current_counts = {"total": 3}
-        self.assertFalse(
-            skip_kiosk_keepalive(state, "GET", "/api/attendance",
-                                 in_closed_window_fn=lambda: False)
-        )
-
-    def test_synthetic_attendance_body_is_json_the_iframe_parses(self):
-        body = json.loads(synthetic_keepalive_body("/api/attendance", AttendanceState()))
-        self.assertEqual(body["access"], "full")
-        self.assertEqual(body["counts"]["youth"], 0)
-        self.assertEqual(body["safety"], {"isLastKeyholder": False, "isTwoDeepViolation": False})
-        self.assertEqual(body["attendance"], [])
-
-    def test_synthetic_attendance_body_replays_the_last_real_roster(self):
-        state = AttendanceState()
-        roster = {
-            "access": "full",
-            "attendance": [{"participant": {"id": 9, "name": "Sam K.", "isKeyholder": True}}],
-            "counts": {"total": 1, "keyholders": 1, "volunteers": 0, "youth": 0},
-            "safety": {"isLastKeyholder": True, "isTwoDeepViolation": False},
-        }
-        with patch("client.now_iso", return_value="2026-10-11T22:00:00Z"):
-            state.seed_from_attendance(roster)
-        self.assertEqual(json.loads(synthetic_keepalive_body("/api/attendance", state)),
-                         {**roster, "kioskAsOf": "2026-10-11T22:00:00Z"})
-
-    def test_synthetic_certifications_body_is_empty_before_any_real_one(self):
-        body = json.loads(synthetic_keepalive_body("/api/kioskdisplay/certifications", AttendanceState()))
-        self.assertEqual(body, {"participants": [], "tools": []})
-
-    def _proxy_get(self, state, path, upstream_body):
+    def _proxy(self, state, method="GET", path=ROSTER, upstream_body=b"", status=200):
         handler = KioskHandler.__new__(KioskHandler)
         handler.path = path
         handler.headers = {}
         handler.state = state
         handler.backend = Mock(base_url="http://backend", signing_key=SigningKey.generate())
+        handler.outbox = None
         handler.wfile = io.BytesIO()
-        handler.send_response = handler.send_header = handler.end_headers = Mock()
-        resp = Mock(status_code=200, headers={})
+        handler.rfile = io.BytesIO(b"")
+        handler.send_response = Mock()
+        handler.send_header = handler.end_headers = Mock()
+        resp = Mock(status_code=status, headers={})
         resp.iter_content.return_value = [upstream_body]
         with patch("client.requests.request", return_value=resp) as upstream:
-            handler._proxy_request("GET")
-        return handler.wfile.getvalue(), upstream
+            handler._proxy_request(method)
+        return handler, upstream
 
-    def test_closed_window_replays_the_last_proxied_certifications(self):
-        state = AttendanceState()
-        certs = b'{"participants": [{"id": 9, "name": "Sam K."}], "tools": [{"id": 1}]}'
-        with patch("client.skip_kiosk_keepalive", return_value=False):
-            self._proxy_get(state, "/api/kioskdisplay/certifications", certs)
-        with patch("client.skip_kiosk_keepalive", return_value=True):
-            replayed, upstream = self._proxy_get(state, "/api/kioskdisplay/certifications", b"")
+    def test_skipped_get_answers_204_with_no_body(self):
+        handler, upstream = self._proxy(_state(total=0, served=(ROSTER,)))
         upstream.assert_not_called()
-        self.assertEqual(replayed, certs)
+        handler.send_response.assert_called_once_with(204)
+        self.assertEqual(handler.wfile.getvalue(), b"")
+
+    def test_forwarded_get_passes_the_server_roster_through(self):
+        roster = b'{"access": "full", "attendance": [], "counts": {"total": 3}}'
+        handler, upstream = self._proxy(_state(total=3, present={5}), upstream_body=roster)
+        upstream.assert_called_once()
+        self.assertEqual(handler.wfile.getvalue(), roster)
+
+    def test_the_real_empty_roster_is_served_once_then_rests(self):
+        state = _state(total=0)
+        _, first = self._proxy(state, upstream_body=b'{"attendance": []}')
+        _, second = self._proxy(state)
+        first.assert_called_once()
+        second.assert_not_called()
+
+    def test_a_board_roster_that_shows_empty_lets_the_board_rest(self):
+        """The board's own roster GET seeds the kiosk; a real empty answer is
+        credited to the generation it creates, so the next GET rests."""
+        state = _state()
+        empty = b'{"access": "full", "attendance": [], "counts": {"total": 0}}'
+        self._proxy(state, upstream_body=empty)
+        self.assertTrue(building_known_empty(state))
+        _, upstream = self._proxy(state)
+        upstream.assert_not_called()
+
+    def test_a_board_check_in_makes_occupancy_unknown(self):
+        """A check-in made on the board itself does not pass the scanner."""
+        state = _state(total=0, served=(ROSTER,))
+        self._proxy(state, method="POST", status=200)
+        self.assertFalse(state.counts_known)
+        self.assertFalse(skip_roster_get(state, "GET", ROSTER))
+
+    def test_a_board_check_in_blocks_an_in_flight_seed(self):
+        state = _state(total=0, served=(ROSTER,))
+        _, seq = state.roster_snapshot(Outbox(":memory:"))
+        self._proxy(state, method="POST", status=200)
+        self.assertFalse(state.seed_from_attendance({"attendance": [], "counts": {"total": 0}}, since_seq=seq))
+        self.assertFalse(state.counts_known)
+
+    def test_a_failed_board_post_leaves_occupancy_known(self):
+        state = _state(total=0, served=(ROSTER,))
+        self._proxy(state, method="POST", status=400)
+        self.assertTrue(state.counts_known)
+
+    def test_other_board_posts_leave_occupancy_known(self):
+        state = _state(total=0, served=(ROSTER,))
+        self._proxy(state, method="POST", path="/api/auth/_log", status=200)
+        self.assertTrue(state.counts_known)
+
+    def test_an_answer_that_predates_a_newer_fetch_does_not_rest_the_board(self):
+        """Evening close: the board's poll is in flight when the last badge-out
+        reseeds; its stale answer must not count as the empty roster."""
+        state = _state(total=1, present={5})
+        stale = b'{"attendance": [{"participant": {"id": 5}}], "counts": {"total": 1}}'
+
+        def reseed_empty_in_flight(**_kwargs):
+            state.note_presence(5, checking_in=False)
+            state.seed_from_attendance({"attendance": [], "counts": {"total": 0}})
+            state.current_counts = {"total": 0}
+            resp = Mock(status_code=200, headers={})
+            resp.iter_content.return_value = [stale]
+            return resp
+
+        handler = KioskHandler.__new__(KioskHandler)
+        handler.path = ROSTER
+        handler.headers = {}
+        handler.state = state
+        handler.backend = Mock(base_url="http://backend", signing_key=SigningKey.generate())
+        handler.outbox = None
+        handler.wfile = io.BytesIO()
+        handler.rfile = io.BytesIO(b"")
+        handler.send_response = handler.send_header = handler.end_headers = Mock()
+        with patch("client.requests.request", side_effect=reseed_empty_in_flight):
+            handler._proxy_request("GET")
+        self.assertTrue(building_known_empty(state))
+        self.assertFalse(skip_roster_get(state, "GET", ROSTER))
+
+    def test_only_the_board_roster_paths_count(self):
+        state = _state(total=0, served=(ROSTER,))
+        self.assertFalse(skip_roster_get(state, "GET", "/api/attendance/manual"))
+
+    def test_a_board_reload_gets_the_real_roster_again(self):
+        state = _state(total=0, served=(ROSTER, CERTS))
+        self._proxy(state, path="/attendance/current?mode=kiosk", upstream_body=b"<html>")
+        self.assertFalse(skip_roster_get(state, "GET", ROSTER))
+        self.assertFalse(skip_roster_get(state, "GET", CERTS))
+
+    def test_the_certifications_query_string_rests_too(self):
+        handler, upstream = self._proxy(_state(total=0, served=(CERTS,)),
+                                        path=CERTS + "?limit_to_present=true")
+        upstream.assert_not_called()
+        handler.send_response.assert_called_once_with(204)
+
+    def test_static_assets_do_not_count_as_a_reload(self):
+        state = _state(total=0, served=(ROSTER,))
+        self._proxy(state, path="/_next/static/chunks/app.js", upstream_body=b"")
+        self._proxy(state, path="/favicon.ico", upstream_body=b"")
+        self.assertTrue(skip_roster_get(state, "GET", ROSTER))
 
 
 class TestRepeatReadFilter(unittest.TestCase):
@@ -1115,7 +1207,7 @@ class TestKioskOwnView(unittest.TestCase):
         resp.iter_content.return_value = [body]
         upstream = patch("client.requests.request", side_effect=error) if error else \
             patch("client.requests.request", return_value=resp)
-        with patch("client.skip_kiosk_keepalive", return_value=False), upstream:
+        with upstream:
             handler._proxy_request("GET")
         return handler
 
@@ -1166,14 +1258,21 @@ class TestKioskOwnView(unittest.TestCase):
         self.assertEqual(state.present_ids, {9})
         self.assertEqual(state.known_people[5]["name"], "Ana")
 
-    def test_closed_window_replays_the_kiosk_view_marked_with_the_roster_time(self):
+    def test_the_own_view_is_marked_with_the_roster_time(self):
         state = AttendanceState()
         with patch("client.now_iso", return_value="2026-10-11T22:00:00Z"):
             state.seed_from_attendance(self.ROSTER)
         state.note_presence(5, checking_in=False)
-        view = json.loads(synthetic_keepalive_body("/api/attendance", state))
+        view = state.attendance_view()
         self.assertEqual([v["participant"]["id"] for v in view["attendance"]], [9])
         self.assertEqual(view["kioskAsOf"], "2026-10-11T22:00:00Z", "never presented as fresh")
+
+    def test_the_own_view_before_any_roster_states_no_safety(self):
+        """Not knowing is never an all-clear: the page reads a missing safety
+        object as unknown."""
+        view = AttendanceState().attendance_view()
+        self.assertNotIn("safety", view)
+        self.assertIsNone(view["kioskAsOf"])
 
 
 class TestCloseBanners(unittest.TestCase):
