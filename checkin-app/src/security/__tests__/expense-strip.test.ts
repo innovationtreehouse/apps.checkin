@@ -70,6 +70,7 @@ describe('expense tiering', () => {
             'ExpenseOrgSettingsChange.actorUsername',
             'ExpenseQbMatchExclusion.excludedByUserId',
             'ExpenseQbMatchExclusion.excludedByUsername',
+            'ExpenseReimburseeVendor.reimburseePersonId',
             'LineItemOwnerApproval.decidedByUserId',
         ]);
     });

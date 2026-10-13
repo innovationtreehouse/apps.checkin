@@ -513,13 +513,13 @@ model ExpenseReimburseeVendor {
   /// @sensitivity:internal
   orgId      String   @map("org_id")
   /// @sensitivity:pii
-  personId   Int      @map("person_id")
+  reimburseePersonId Int @map("reimbursee_person_id")
   /// @sensitivity:internal
   qbVendorId String   @map("qb_vendor_id")
   /// @sensitivity:internal
   createdAt  DateTime @default(now()) @map("created_at")
 
-  @@unique([orgId, personId])
+  @@unique([orgId, reimburseePersonId])
   @@map("reimbursee_vendor")
 }
 

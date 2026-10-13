@@ -25,8 +25,11 @@ function shiftDate(isoDate: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** The newest receipt date tied to a hand-booked QuickBooks entry; app-created entries never move it. */
-async function expenseTakeoverLine(orgId: string): Promise<string | null> {
+/**
+ * The configured takeover date, or the newest receipt date tied to a hand-booked QuickBooks
+ * entry when that is later; app-created entries never move it.
+ */
+async function expenseTakeoverLine(orgId: string, takeoverDate: string): Promise<string> {
   const rows = await db.expense.findMany({
     where: {
       orgId,
@@ -35,7 +38,7 @@ async function expenseTakeoverLine(orgId: string): Promise<string | null> {
     },
     select: { receiptDate: true },
   });
-  return takeoverLine(rows.map((r) => ({ date: r.receiptDate!, qbOrigin: "hand" as const })));
+  return takeoverLine([takeoverDate, ...rows.map((r) => r.receiptDate!)].map((date) => ({ date, qbOrigin: "hand" as const }))) ?? takeoverDate;
 }
 
 async function claimedAndExcluded(orgId: string, expenseId: string) {
@@ -67,7 +70,7 @@ async function buildWrite(orgId: string, payloadJson: string, posting: ExpensePo
   const memo = event.vendorName ?? undefined;
 
   if (event.needsReimbursement) {
-    const vendor = await db.expenseReimburseeVendor.findFirst({ where: { orgId, personId: event.reimburseePersonId! } });
+    const vendor = await db.expenseReimburseeVendor.findFirst({ where: { orgId, reimburseePersonId: event.reimburseePersonId! } });
     if (!vendor) return { queue: "the reimbursee has no QuickBooks Vendor" };
     return { write: { entity: "Bill", fields: { txnDate: event.receiptDate, vendorId: vendor.qbVendorId, lines: writeLines, memo } }, lineAccounts };
   }
@@ -83,16 +86,20 @@ async function buildWrite(orgId: string, payloadJson: string, posting: ExpensePo
 /**
  * One expense's turn through the outbox. found by key or created → CREATED; found by amount →
  * MATCHED; ambiguous or an unmapped reimbursee → AMBIGUOUS; before the takeover line →
- * BEFORE_LINE; a failure (QuickBooks down, rejected) → POST_FAILED, retried by the drain; no
- * takeover line yet → left as it is. A row lock serializes the request path and the cron drain.
+ * BEFORE_LINE; a failure (QuickBooks down, rejected) → POST_FAILED, retried by the drain. With no
+ * takeover date configured nothing is posted. A row lock serializes the request path and the cron drain.
  */
-export async function postExpenseToQb(orgId: string, expenseId: string): Promise<PostOutcome | "unbound"> {
+export async function postExpenseToQb(orgId: string, expenseId: string): Promise<PostOutcome | "unbound" | "no_takeover_date"> {
   const posting = getExpenseRuntime().quickbooks.posting;
   if (!posting) return "unbound";
+  if (!posting.takeoverDate) {
+    logWarn("qb_post_no_takeover_date", { expenseId, orgId });
+    return "no_takeover_date";
+  }
   const event = await db.expenseEvent.findFirst({ where: { orgId, expenseId } });
   if (!event) return "waiting";
 
-  const line = await expenseTakeoverLine(orgId);
+  const line = await expenseTakeoverLine(orgId, posting.takeoverDate);
   const { claimedIds, excludedIds } = await claimedAndExcluded(orgId, expenseId);
   let built: Built;
   try {
@@ -169,8 +176,13 @@ export type DrainCounts = Record<PostOutcome, number> & { overCap: number; cappe
  * at the count and cents caps and logs the hit; an expense over the cents cap on its own is
  * skipped and logged. Returns counts only.
  */
-export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound"> {
-  if (!getExpenseRuntime().quickbooks.posting) return "unbound";
+export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound" | "no_takeover_date"> {
+  const posting = getExpenseRuntime().quickbooks.posting;
+  if (!posting) return "unbound";
+  if (!posting.takeoverDate) {
+    logWarn("qb_drain_no_takeover_date", {});
+    return "no_takeover_date";
+  }
   const outboxed = new Set((await db.expenseEvent.findMany({ select: { expenseId: true } })).map((e) => e.expenseId));
   const due = (
     await db.expense.findMany({
@@ -195,7 +207,7 @@ export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound"> {
     }
     try {
       const outcome = await postExpenseToQb(e.orgId, e.id);
-      if (outcome === "unbound") break;
+      if (outcome === "unbound" || outcome === "no_takeover_date") break;
       counts[outcome]++;
       if (outcome === "posted") postedCents += e.receiptTotalCents;
     } catch (err) {

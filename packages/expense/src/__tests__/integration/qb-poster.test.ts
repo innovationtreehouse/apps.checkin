@@ -58,9 +58,15 @@ class FakeQbo {
 
 let qbo: FakeQbo;
 
-function bindQbo() {
-  const client = new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" });
-  bindPorts({ quickbooks: { posting: { client, paymentAccountId: PAYMENT_ACCOUNT, paymentType: "CreditCard" } } });
+const posting = (takeoverDate: string | null = "2026-01-01") => ({
+  client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }),
+  paymentAccountId: PAYMENT_ACCOUNT,
+  paymentType: "CreditCard" as const,
+  takeoverDate,
+});
+
+function bindQbo(takeoverDate?: string | null) {
+  bindPorts({ quickbooks: { posting: posting(takeoverDate) } });
 }
 
 /** A hand-booked match dated `day`: sets the takeover line there. */
@@ -128,7 +134,7 @@ describeDb("QB-2 posting — create", () => {
 
   it("posts a reimbursement as a Bill to the reimbursee's Vendor and stores the vendor id", async () => {
     await handMatched("2026-08-01");
-    await db.expenseReimburseeVendor.create({ data: { orgId: ORG, personId: 42, qbVendorId: VENDOR } });
+    await db.expenseReimburseeVendor.create({ data: { orgId: ORG, reimburseePersonId: 42, qbVendorId: VENDOR } });
     const { id } = await outboxed("2026-09-10", { reimburseePersonId: 42 });
 
     expect(await postExpenseToQb(ORG, id)).toBe("posted");
@@ -150,7 +156,7 @@ describeDb("QB-2 posting — create", () => {
     await handMatched("2026-08-01");
     bindPorts({
       catalog: catalogResolving({}),
-      quickbooks: { posting: { client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }), paymentAccountId: PAYMENT_ACCOUNT, paymentType: "CreditCard" } },
+      quickbooks: { posting: posting() },
     });
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 500 });
     await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10" } });
@@ -176,12 +182,30 @@ describeDb("QB-2 posting — match before create", () => {
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "MATCHED", qbTxnId: "900" });
   });
 
-  it("creates nothing without a takeover line", async () => {
+  it("posts nothing at all without a configured takeover date, even past a hand match", async () => {
+    bindQbo(null);
+    await handMatched("2026-08-01");
     const { id } = await outboxed("2026-09-10");
 
-    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+    expect(await postExpenseToQb(ORG, id)).toBe("no_takeover_date");
+    expect(await drainExpenseOutbox()).toBe("no_takeover_date");
     expect(qbo.posts).toHaveLength(0);
     expect((await expenseRow(id)).qbMatchState).toBe("UNMATCHED");
+  });
+
+  it("the configured takeover date alone lets a later expense be created", async () => {
+    const { id } = await outboxed("2026-09-10");
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+  });
+
+  it("an older hand match never moves the line before the configured date", async () => {
+    bindQbo("2026-09-15");
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+
+    expect(await postExpenseToQb(ORG, id)).toBe("queued");
+    expect(qbo.posts).toHaveLength(0);
+    expect((await expenseRow(id)).qbMatchState).toBe("BEFORE_LINE");
   });
 
   it("sends an expense on or before the takeover line to finance as BEFORE_LINE", async () => {

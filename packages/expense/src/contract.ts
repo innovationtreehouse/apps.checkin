@@ -182,6 +182,11 @@ export interface ExpensePosting {
   client: QuickBooksClient;
   paymentAccountId: string;
   paymentType: "Cash" | "CreditCard";
+  /**
+   * YYYY-MM-DD: finance booked everything up to here by hand, so only later receipts may be
+   * created. Null posts nothing. A newer hand-booked match moves the line later, never earlier.
+   */
+  takeoverDate: string | null;
 }
 
 // ── Surfaces expense exports to other libraries (bound by the host into theirs) ─

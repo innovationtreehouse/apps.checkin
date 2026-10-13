@@ -51,11 +51,14 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
 
     it('a throwing expense step still answers 200 with the reconcile result', async () => {
         jest.mocked(runExpenseCatchUp).mockRejectedValue(new Error('expense db down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
 
         const res = await GET(req());
 
         expect(res.status).toBe(200);
         expect(runReconcile).toHaveBeenCalledTimes(1);
         expect(await res.json()).toEqual({ success: true, ...RECONCILED, expense: { status: 'error' } });
+        expect(logged).toHaveBeenCalledWith('[reconcile] expense catch-up failed:', expect.any(Error));
+        logged.mockRestore();
     });
 });
