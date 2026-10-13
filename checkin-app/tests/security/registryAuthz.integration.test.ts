@@ -197,7 +197,8 @@ describe('Registry route admission gates', () => {
             // still runs (it proves planAuthorize handles catalog-viewer /
             // inventory-manager). Their admission is exercised end-to-end by the
             // library flow tests instead.
-            const isLibrary = libraries.flatMap(l => l.routePrefixes).some(p => plan.routePath.startsWith(p));
+            // A prefix also covers its bare root (e.g. GET /api/receipts for /api/receipts/).
+            const isLibrary = libraries.flatMap(l => l.routePrefixes).some(p => plan.routePath.startsWith(p) || plan.routePath === p.slice(0, -1));
             const itServed = routeFileExists(plan.routePath) && !isLibrary ? it : it.skip;
 
             it('has a handled authorize gate (route not silently skipped)', () => {

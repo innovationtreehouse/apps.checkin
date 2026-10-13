@@ -9,7 +9,6 @@ import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
 import {
   INVENTORY_LIBRARY_TABS,
-  MY_RECEIPTS_TABS,
   REVENUE_OPS_LIBRARY_TABS,
   type LibraryTab,
 } from "@/lib/libraryNav";
@@ -20,10 +19,9 @@ const mockedUseTodoCounts = useTodoCounts as jest.Mock;
 const financeOrBoard = (u: { isFinance?: boolean; isBoardMember?: boolean } | undefined) =>
   !!u?.isFinance || !!u?.isBoardMember;
 
-// Fake registrations for the libraries not wired yet; expense registers its own tabs.
+// Fake registrations for the libraries not wired yet; expense and receipt register their own tabs.
 const REGISTRATIONS: Array<[LibraryTab[], LibraryTab]> = [
   [REVENUE_OPS_LIBRARY_TABS, { name: "Income", href: "/income", library: "income", visible: financeOrBoard }],
-  [MY_RECEIPTS_TABS, { name: "My receipts", href: "/receipts/mine", library: "receipt", visible: (u) => !!u?.isKeyholder }],
   [
     INVENTORY_LIBRARY_TABS,
     { name: "Receiving", href: "/inventory/receiving", library: "workflow-mapping", visible: (u) => !!u?.isInventoryManager || financeOrBoard(u) },
@@ -57,7 +55,7 @@ describe("AppFrame library nav slots", () => {
     expect(hrefOf("Revenue Ops")).toBe("/finance-ops/payment-plan");
     expect(hrefOf("Expense Ops")).toBe("/expense");
     expect(hrefOf("Inventory")).toBe("/catalog/items");
-    expect(screen.queryByText("My Receipts")).not.toBeInTheDocument();
+    expect(hrefOf("My Receipts")).toBe("/receipts");
     expect(screen.queryByText("My Programs")).not.toBeInTheDocument();
   });
 
@@ -83,7 +81,7 @@ describe("AppFrame library nav slots", () => {
     setSession({ id: 4, isKeyholder: true });
     renderFrame();
     expect(hrefOf("Inventory")).toBe("/catalog/items");
-    expect(hrefOf("My Receipts")).toBe("/receipts/mine");
+    expect(hrefOf("My Receipts")).toBe("/receipts");
     const labels = screen.getAllByRole("link").map((a) => a.textContent);
     expect(labels.indexOf("My Receipts")).toBe(labels.indexOf("My Activities") + 1);
     expect(screen.queryByText("Revenue Ops")).not.toBeInTheDocument();
