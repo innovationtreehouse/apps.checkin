@@ -10,6 +10,7 @@
  */
 import { configureCatalog } from "@inventory/global-catalog";
 import type { CatalogPrincipal, OrgIdentity } from "@inventory/global-catalog";
+import type { Session } from "next-auth";
 
 /**
  * checkin is inherently single-org (#1286 §6). The org identity is a row in
@@ -20,17 +21,28 @@ import type { CatalogPrincipal, OrgIdentity } from "@inventory/global-catalog";
 const TREEHOUSE_ORG_ID = "treehouse";
 let cachedOrg: OrgIdentity | undefined;
 
-/** The signed-in person as a library principal; null unless the session carries an integer id. */
-export async function getPrincipal(): Promise<CatalogPrincipal | null> {
+/**
+ * The signed-in user, or null for any session `authenticateRequest` would refuse: no positive
+ * integer id, a denied household, or a caller the staging gate turns away. Every library adapter
+ * builds its principal from this, so no library sees a session checkin itself rejects.
+ */
+export async function sessionUser(): Promise<Session["user"] | null> {
   // Lazy: importing auth-options at boot would crash a Google-credless boot.
-  const [{ getServerSession }, { authOptions }] = await Promise.all([
+  const [{ getServerSession }, { authOptions }, { config, isStagingAccessAllowed }] = await Promise.all([
     import("next-auth"),
     import("@/lib/auth-options"),
+    import("@/lib/config"),
   ]);
-  const session = await getServerSession(authOptions);
-  const user = session?.user;
-  if (!user || typeof user.id !== "number") return null;
-  return { id: user.id, name: user.name ?? null };
+  const user = (await getServerSession(authOptions))?.user;
+  if (!user || !Number.isInteger(user.id) || user.id <= 0 || user.denied) return null;
+  if (config.isStaging() && !isStagingAccessAllowed(user)) return null;
+  return user;
+}
+
+/** The signed-in person as a library principal; null for any session checkin refuses. */
+export async function getPrincipal(): Promise<CatalogPrincipal | null> {
+  const user = await sessionUser();
+  return user ? { id: user.id, name: user.name ?? null } : null;
 }
 
 /**

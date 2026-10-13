@@ -410,12 +410,15 @@ person-linked. So the tiering is heavier and the **read audience is narrow** (§
   annotate `@sensitivity:secret` on the schema, and the app hosts **no OAuth route**
   (consent is an operator CLI step, §9) — so QB adds no new boundary surface at all
   beyond the app's read-only IAM grant to the access-token secret.
-- **`internal`** — **money + vendor + attribution + free text + plumbing**:
+- **`pii`** — **every person id and username**: `submitterId`,
+  `reimbursementFor`, `reimburseePersonId`, `decidedByUserId`, `signerUserId`,
+  `capitalOwnerId`, and every other actor `*UserId` / `*Username` (audit
+  `userId` / `username` included).
+- **`internal`** — **money + vendor + free text + plumbing**:
   amounts (`*Cents`, `unitPriceCents`, `taxCents`, thresholds), `vendorName`,
-  `receiptNumber` / `orderNumber`, `reimbursementFor`, `qbAccount` / account
+  `receiptNumber` / `orderNumber`, `qbAccount` / account
   mappings, `assetNumber` and the capital register, bucket ids
-  (`budgetOwnerId`), all actor ids/usernames (`submitterId`, `decidedByUserId`,
-  `capitalOwnerId`, `userId`, `username`), free text (`notes`, `reason`,
+  (`budgetOwnerId`), free text (`notes`, `reason`,
   `rejectionReason`, `failureReason`, audit `valueBefore`/`valueAfter`), and
   cross-app plumbing (`payload`, `payloadJson`, `matchedRows`, `receiptId`,
   `sourceQbTxnId`, `sourceEventId`).
@@ -423,11 +426,10 @@ person-linked. So the tiering is heavier and the **read audience is narrow** (§
   (Non-sensitive enums like a hold `status` string are `internal`, surfaced only
   to the finance/board reader.)
 
-**`reimbursementFor` and `submitterId` are person-linked** — treat them at least
-`internal` and consider whether the reimbursee's identity warrants `pii`
-handling if it is ever joined to a name in a response; default to `internal` +
-the narrow read gate, and raise it to `pii` if a route ever returns the person's
-contact details alongside.
+**Person ids stay `pii`, never `internal`.** A view granted `internal` only —
+the bucket approver's — then carries no submitter, reimbursee or decider id.
+Lowering any of them to `internal` would hand those ids to every `internal`
+reader.
 
 ### No scopeBindings — but the narrow read is a route+query concern, not a field scope
 
@@ -448,7 +450,7 @@ handler **filters the query** to lines whose bucket the principal approves (a
 `WHERE budgetOwnerId IN (buckets the principal approves)`, from the injected
 budget-owner accessor), returning a
 `FINANCE`-tier response shape over a restricted row set. So the field tiers stay
-flat (`internal` behind the finance/board reader), scopeBindings stay zero, and the
+flat (`internal` and `pii` behind the finance/board reader), scopeBindings stay zero, and the
 row-narrowing lives in the handler — consistent with catalog/inventory's
 registry-only boundary.
 
@@ -1301,7 +1303,7 @@ library skeleton + shared packages) has landed.
      only, audited) + classifications, and the derived bucket-approver lookup
      (§6).
 3. **Security boundary** — `@sensitivity` annotations (`internal` for money /
-   vendor / attribution / plumbing; **no `secret` field — QB tokens are external**,
+   vendor / plumbing, `pii` for every person id; **no `secret` field — QB tokens are external**,
    §5/§9), `generator security` for the expense schema (cross-package wiring, §5),
    registry route entries — **no scopeBindings** (expense FKs aren't scopable; the
    narrow read is a handler query-filter, not a field scope — §5). **QB adds no app
@@ -1459,9 +1461,8 @@ this doc.
   leader and a treasurer, an org-level bucket, and enough Board and `FINANCE`
   holders in separate households, so the COI flag, the bucket-approver gate and
   every sign-off seat (including +2 Board) are exercisable.
-- **`reimbursementFor` / reimbursee tiering** defaults to `internal` behind the
-  narrow gate; raise to `pii` if a route ever returns the person's contact details
-  alongside (§5).
+- **`reimbursementFor` / reimbursee tiering** is `pii`, as are all person ids
+  (§5).
 - **QuickBooks account/vendor identity:** the QBO chart of accounts + vendor list
   are the authority (QB-1 bootstraps the mapping tables); a 0-or-many match is
   resolved by the QB ambiguity queue, never guessed (§9 QB-2).

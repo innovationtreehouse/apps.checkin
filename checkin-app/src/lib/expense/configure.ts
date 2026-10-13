@@ -7,21 +7,16 @@
 import { configureExpense } from "@inventory/expense";
 import type { ExpensePrincipal, OwnerDirectory, SignoffDirectory } from "@inventory/expense";
 import type { PersonRoleKind } from "@/generated/prisma/client";
-import { getOrg } from "@/lib/catalog/configure";
+import { getOrg, sessionUser } from "@/lib/catalog/configure";
 
 async function db() {
   return (await import("@/lib/prisma")).default;
 }
 
-/** The signed-in person with their finance roles; null unless the session carries an integer id. */
+/** The signed-in person with their finance roles; null for any session checkin refuses. */
 async function getPrincipal(): Promise<ExpensePrincipal | null> {
-  // Lazy: importing auth-options at boot would crash a Google-credless boot.
-  const [{ getServerSession }, { authOptions }] = await Promise.all([
-    import("next-auth"),
-    import("@/lib/auth-options"),
-  ]);
-  const user = (await getServerSession(authOptions))?.user;
-  if (!user || typeof user.id !== "number") return null;
+  const user = await sessionUser();
+  if (!user) return null;
   return { id: user.id, name: user.name ?? null, isFinance: user.isFinance === true, isBoard: user.isBoardMember === true };
 }
 
