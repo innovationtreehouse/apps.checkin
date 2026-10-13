@@ -55,6 +55,21 @@ describeDb("sign-off seats", () => {
     await expect(signLine(principal(8), li, "TREASURER")).rejects.toMatchObject({ statusCode: 403 });
   });
 
+  it("one household holds one seat on an expense: a FINANCE holder's spouse is refused, a Board member substitutes", async () => {
+    // 3 holds FINANCE; 2, the program leader, is 3's spouse
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5], households: [[1], [2, 3]] }) });
+    const id = await seedExpense({ state: "qb_pending", needsReimbursement: true, reimburseePersonId: 1 });
+    const a = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    const b = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await seedApproval(id, a, { ownerId: 100, status: "approved" });
+    await seedApproval(id, b, { ownerId: 100, status: "approved" });
+
+    await signLine(FINANCE, a, "TREASURER");
+    await expect(signLine(principal(2), a, "PROGRAM_APPROVER")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(signLine(principal(2), b, "PROGRAM_APPROVER")).rejects.toMatchObject({ statusCode: 403 });
+    await signLine(BOARD, a, "PROGRAM_APPROVER");
+  });
+
   it("the only FINANCE holder conflicted: a Board member signs as Treasurer and a COI flag goes to the board", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5], households: [[1, 3]] }) });
     const id = await seedExpense({ state: "qb_pending", needsReimbursement: true, reimburseePersonId: 1 });
@@ -137,9 +152,9 @@ describeDb("sign-off seats", () => {
     });
 
     it("a line without reimburseePersonId has no reimbursee conflict", async () => {
-      const { id, li } = await reimburseeLine({ approvers: [9], finance: [10] });
+      const { id, li } = await reimburseeLine({ approvers: [9], finance: [3] });
       await signLine(principal(9), li, "PROGRAM_APPROVER");
-      await signLine(principal(10), li, "TREASURER");
+      await signLine(principal(3), li, "TREASURER");
       expect((await signoffStatus(id))[0].missing).toEqual(["SUBMITTER"]);
     });
 

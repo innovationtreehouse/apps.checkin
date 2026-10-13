@@ -18,15 +18,28 @@ export async function conflictedParties(expense: { submitterId: number; reimburs
   return [...new Set([...parties, ...(await getExpenseRuntime().signoff.householdOf(parties))])];
 }
 
+/**
+ * Household members of everyone seated on the expense outside the submitter seat, minus the
+ * seated people themselves: one household holds at most one seat on an expense.
+ */
+export async function seatedHouseholds(db: Db, expenseId: string): Promise<number[]> {
+  const dir = getExpenseRuntime().signoff;
+  const rows = await db.expenseLineSignoff.findMany({ where: { expenseId, seat: { not: "SUBMITTER" } }, select: { signerUserId: true } });
+  const signers = [...new Set(rows.map((r) => r.signerUserId))];
+  const mates = await Promise.all(signers.map(async (s) => (await dir.householdOf([s])).filter((id) => id !== s)));
+  return [...new Set(mates.flat())];
+}
+
 /** Sign-off facts for each line of an expense, read once through the SignoffDirectory port. */
 export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promise<Map<number, SignoffFacts>> {
   const dir = getExpenseRuntime().signoff;
-  const [lines, approvals, finance, board, conflicted, purchaserIsMember, settings, setterRow] = await Promise.all([
+  const [lines, approvals, finance, board, conflicted, seated, purchaserIsMember, settings, setterRow] = await Promise.all([
     db.expenseLineItem.findMany({ where: { expenseId: expense.id }, select: { id: true } }),
     db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true } }),
     dir.financeHolders(),
     dir.boardMembers(),
     conflictedParties(expense),
+    seatedHouseholds(db, expense.id),
     dir.isOrgMember(expense.submitterId),
     readExpenseSettings(db, expense.orgId),
     db.expenseAuditLog.findFirst({ where: { expenseId: expense.id, action: "reimbursee_set" }, orderBy: { id: "desc" }, select: { userId: true } }),
@@ -54,6 +67,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
         board,
         conflicted,
         reimburseeSetter: setterRow?.userId ?? null,
+        seatedHouseholds: seated,
       };
       return [l.id, facts];
     }),
