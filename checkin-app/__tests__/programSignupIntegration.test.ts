@@ -146,13 +146,15 @@ describe('Full Program Signup Integration Flow', () => {
         expect(addEventRes.status).toBe(200);
 
         // 3. SysAdmin publishes the program via the base PATCH
+        const programDates = { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), minAge: null, maxAge: null };
         (prisma.program.findUnique as jest.Mock).mockResolvedValue({
             id: programId,
             leadMentorId: sysAdminId,
             phase: 'PLANNING',
+            ...programDates,
         });
         (prisma.event.count as jest.Mock).mockResolvedValue(1);
-        (prisma.program.update as jest.Mock).mockResolvedValue({ id: programId, phase: 'UPCOMING', enrollmentStatus: 'OPEN' });
+        (prisma.program.update as jest.Mock).mockResolvedValue({ id: programId, phase: 'UPCOMING', enrollmentStatus: 'OPEN', ...programDates });
 
         const publishReq = new Request(`http://localhost/api/programs/${programId}`, {
             method: 'PATCH',
