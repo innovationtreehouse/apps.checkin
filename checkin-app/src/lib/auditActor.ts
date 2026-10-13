@@ -35,6 +35,7 @@ export const SYSTEM_ACTORS = [
     "webhook:zoho-contract",
     "webhook:shopify-order",
     "webhook:shopify-receipt",
+    "webhook:shopify-refund",
     "kiosk:two-deep",
 ] as const;
 

@@ -139,6 +139,11 @@ Things the app takes as true because they are handled outside it.
   reach membership and enrollment state. The app raises it for the board to work;
   it does not undo anything by itself.  [Decision — *Principle: people decide about people*]
 
+- A program refund that restocks the seat puts that seat back on sale. The store
+  has already added it back, so the app removes the child's enrollment, still
+  raises the refund for the board to settle the money, and sends no inventory
+  change of its own. A refund without a restock is only raised.  [Decision]
+
 - The store owns what a discount comes to; the app owns who may use one and until
   when. An order carrying the right item is correct whatever it totals — checking
   the total against a configured price drifts the moment the two disagree.  [Decision — deliberate limit]
