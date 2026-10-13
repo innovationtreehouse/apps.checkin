@@ -10,6 +10,7 @@ import {
 } from "../../lib/signoff";
 
 // 1 submitter · 2 program leader · 3 the FINANCE holder · 5,6 Board · 8 submitter's spouse
+// seatedHouseholds: household members of people already seated on the expense
 const base: SignoffFacts = {
   kind: "reimbursement",
   submitterId: 1,
@@ -23,6 +24,7 @@ const base: SignoffFacts = {
   board: [5, 6],
   conflicted: [1, 8],
   reimburseeSetter: null,
+  seatedHouseholds: [],
 };
 const seats = (...s: Array<[FilledSeat["seat"], number]>): FilledSeat[] => s.map(([seat, signerUserId]) => ({ seat, signerUserId }));
 
@@ -45,6 +47,33 @@ describe("independence", () => {
   it("while an eligible signer is available, a Board member cannot take the seat", () => {
     expect(signoffRefusal(base, [], "TREASURER", 5)).toMatch(/FINANCE/);
     expect(signoffRefusal(base, [], "PROGRAM_APPROVER", 5)).toMatch(/not an approver/);
+  });
+});
+
+describe("one seat per household on an expense", () => {
+  // 3 holds FINANCE; 2, the program leader, is 3's spouse.
+  const spouses = { ...base, seatedHouseholds: [2] };
+
+  it("a FINANCE holder's spouse cannot take the program-approver seat after the FINANCE holder signed", () => {
+    expect(signoffRefusal(spouses, seats(["TREASURER", 3]), "PROGRAM_APPROVER", 2)).toMatch(/household already holds a seat/);
+  });
+
+  it("the household check spans the expense, not just the line", () => {
+    expect(signoffRefusal(spouses, [], "PROGRAM_APPROVER", 2)).toMatch(/household already holds a seat/);
+  });
+
+  it("a Board member whose household already holds a seat cannot substitute", () => {
+    const facts = { ...base, approvers: [], seatedHouseholds: [5] };
+    expect(signoffRefusal(facts, seats(["TREASURER", 3]), "PROGRAM_APPROVER", 5)).toMatch(/household already holds a seat/);
+    expect(signoffRefusal(facts, seats(["TREASURER", 3]), "PROGRAM_APPROVER", 6)).toBeNull();
+  });
+
+  it("the only approver blocked by household: a Board member takes the seat", () => {
+    expect(signoffRefusal(spouses, seats(["TREASURER", 3]), "PROGRAM_APPROVER", 5)).toBeNull();
+  });
+
+  it("signers from different households are fine", () => {
+    expect(signoffRefusal(base, seats(["TREASURER", 3]), "PROGRAM_APPROVER", 2)).toBeNull();
   });
 });
 

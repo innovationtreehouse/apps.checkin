@@ -55,7 +55,9 @@ export async function signLine(principal: ExpensePrincipal, lineItemId: number, 
   if (seat === "TREASURER" && !facts.finance.includes(actor.userId)) {
     await raiseFlag(expense.id, "COI", "no FINANCE holder could sign; a Board member took the Treasurer seat");
   }
-  if (blockedSeats(facts, nowFilled).length > 0) {
+  const actorHousehold = (await getExpenseRuntime().signoff.householdOf([actor.userId])).filter((id) => id !== actor.userId);
+  const nowFacts = { ...facts, seatedHouseholds: [...facts.seatedHouseholds, ...actorHousehold] };
+  if (blockedSeats(nowFacts, nowFilled).length > 0) {
     await raiseFlag(expense.id, "COI", "a card charge needs a second Board substitution; held");
   }
   if (expense.state === "qb_pending" && (await unsignedLines(db, expense)).size === 0) {
