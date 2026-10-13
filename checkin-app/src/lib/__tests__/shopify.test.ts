@@ -209,13 +209,15 @@ describe('createShopifySingleVariantProgram', () => {
         );
     });
 
-    it('returns null when the token request fails', async () => {
+    it('returns null and emails admins when the token request fails', async () => {
         fetchMock.mockResolvedValueOnce({ ok: false, status: 401, text: async () => '{"error":"invalid_client"}' });
+        (prisma.person.findMany as jest.Mock).mockResolvedValueOnce([{ email: 'admin@test.com' }]);
 
         const result = await createShopifySingleVariantProgram('Test Program', 3500);
 
         expect(result).toBeNull();
         expect(fetchMock).toHaveBeenCalledTimes(1); // only the token request
+        expect(sendEmail).toHaveBeenCalledWith('admin@test.com', 'Shopify Integration Error', expect.stringContaining('no access token'));
     });
 
     it('emails admins when the product fetch throws', async () => {
