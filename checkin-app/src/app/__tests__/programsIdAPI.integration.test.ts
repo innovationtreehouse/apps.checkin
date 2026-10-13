@@ -8,7 +8,7 @@
 
 import { GET, PATCH } from '@/app/api/programs/[id]/route';
 import { GET as getMine } from '@/app/api/programs/mine/route';
-import * as emailRecipients from '@/lib/emailRecipients';
+import { emailBoardMembers } from '@/lib/emailRecipients';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
@@ -16,6 +16,10 @@ import { ORG_DOMAIN } from '@/lib/config';
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
+}));
+jest.mock('@/lib/emailRecipients', () => ({
+    ...jest.requireActual('@/lib/emailRecipients'),
+    emailBoardMembers: jest.fn().mockResolvedValue(undefined),
 }));
 describe('Individual Program API Integration Tests', () => {
     let adminId: number;
@@ -1668,7 +1672,7 @@ describe('Individual Program API Integration Tests', () => {
     describe('PATCH /api/programs/[id] — age re-check on date/age edits', () => {
         let programId: number;
         let kid10Id: number, kid15Id: number, hhId: number;
-        let emailSpy: jest.SpyInstance;
+        const emailSpy = emailBoardMembers as jest.Mock;
 
         const patch = async (body: Record<string, unknown>) => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
@@ -1694,10 +1698,7 @@ describe('Individual Program API Integration Tests', () => {
             });
         });
 
-        beforeEach(() => {
-            emailSpy = jest.spyOn(emailRecipients, 'emailBoardMembers').mockResolvedValue();
-        });
-        afterEach(() => emailSpy.mockRestore());
+        beforeEach(() => emailSpy.mockClear());
 
         afterAll(async () => {
             await prisma.programParticipant.deleteMany({ where: { programId } });
