@@ -243,6 +243,11 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // is finance-or-board (GET list and blob file route; FINANCE writes) with
     // everyones grants and no owner-scoped view, so it never earns `their_own`.
     'UploadedFile',
+    // Shopify-mirror response rows (registry/shopifyRead.ts). Their `personId` makes
+    // them scopable, but every route is board-only with everyones grants: the payment
+    // queue and the match audit are board bookkeeping, with no person-facing view.
+    'PaymentQueueRow',
+    'MatchAuditEnrollmentRow',
 ]);
 
 /**
