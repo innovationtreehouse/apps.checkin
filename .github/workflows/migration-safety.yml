@@ -37,9 +37,9 @@ on:
     branches: [main, 'rel/**']
     paths:
       - 'checkin-app/prisma/migrations/**'
-      # The mirror chain gets the history-invariants job below (the populated-DB
-      # job remains checkin-only and skips itself for mirror-only PRs).
-      - 'packages/s-ingest-core/prisma/migrations/**'
+      # Library chains (checkin-app/libraries.json) and the s-ingest-core mirror
+      # chain. Each populated-DB job skips itself when its own chains are unchanged.
+      - 'packages/*/prisma/migrations/**'
       - '.github/workflows/migration-safety.yml'
 
 # pull_request runs share one group per ref, so a new push cancels the run it
@@ -264,7 +264,120 @@ jobs:
           fi
           echo "Found $FILE"
 
-  # ── Release-anchored history invariants (both databases) ────────────────────
+  # The same populated-DB replay + drift check for each checkin-hosted library
+  # (checkin-app/libraries.json), each on its own database named by the entry,
+  # via the <NAME>_DATABASE_URL its prisma.config.ts reads. Libraries have no
+  # coalesce flow and no Event/RSVP tables, so those checkin steps don't apply.
+  migrate-populated-libraries:
+    name: Library migrations apply to populated DB
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write      # mint the GitHub OIDC token to assume the AWS role (no stored creds)
+
+    env:
+      AWS_REGION: us-east-2
+      # Least-privilege OIDC role (ecr-public auth only), as in flow-tests.yml.
+      PULL_ROLE: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
+
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Determine base + libraries with migration changes
+        id: base
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          BASE=$(git merge-base origin/main HEAD)
+          echo "Merge base with origin/main: $BASE"
+          echo "sha=$BASE" >> "$GITHUB_OUTPUT"
+          CHANGED="${{ runner.temp }}/changed-libraries"
+          : > "$CHANGED"
+          scripts/each-library.sh --list | while read -r NAME PKG DIR; do
+            if git diff --quiet "$BASE" HEAD -- "$DIR/prisma/migrations"; then
+              echo "[$NAME] no migration changes"
+            else
+              echo "[$NAME] new/changed migrations in $DIR"
+              echo "$NAME $PKG $DIR" >> "$CHANGED"
+            fi
+          done
+          if [ -s "$CHANGED" ]; then echo "skip=false" >> "$GITHUB_OUTPUT"; else echo "skip=true" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Configure AWS credentials (OIDC)
+        if: steps.base.outputs.skip == 'false'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.PULL_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR Public
+        if: steps.base.outputs.skip == 'false'
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      # Same postgres:15 as the checkin job above, started as a step after the
+      # ECR Public login.
+      - name: Start Postgres
+        if: steps.base.outputs.skip == 'false'
+        run: |
+          bash scripts/ci-pull-image.sh public.ecr.aws/docker/library/postgres:15
+          docker run -d --name postgres -p 5432:5432 \
+            -e POSTGRES_USER=testuser -e POSTGRES_PASSWORD=testpassword -e POSTGRES_DB=checkmein_migtest \
+            public.ecr.aws/docker/library/postgres:15
+          for _ in $(seq 1 30); do
+            pg_isready -q -h localhost -p 5432 && exit 0
+            sleep 2
+          done
+          docker logs postgres; exit 1
+
+      - name: Setup Node.js
+        if: steps.base.outputs.skip == 'false'
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Install PR dependencies
+        if: steps.base.outputs.skip == 'false'
+        run: npm ci
+
+      - name: Materialize base checkout
+        if: steps.base.outputs.skip == 'false'
+        run: |
+          git worktree add "${{ runner.temp }}/base" "${{ steps.base.outputs.sha }}"
+          cd "${{ runner.temp }}/base" && npm ci
+
+      # Per library: base migrations + seed populate its DB (with BASE's own
+      # prisma dir), then the PR's new migrations apply on top, then the drift
+      # check. A library new in this PR has no base chain and starts empty.
+      - name: Apply base + PR migrations per library, then drift check
+        if: steps.base.outputs.skip == 'false'
+        env:
+          PGPASSWORD: testpassword
+        run: |
+          set -euo pipefail
+          BASE_TREE="${{ runner.temp }}/base"
+          # fd 3, so npm/psql reading stdin cannot swallow the remaining entries.
+          while read -r NAME PKG DIR <&3; do
+            echo "::group::$NAME ($PKG)"
+            psql -v ON_ERROR_STOP=1 -h localhost -U testuser -d checkmein_migtest -c "CREATE DATABASE \"$NAME\";"
+            export "$(echo "$NAME" | tr '[:lower:]' '[:upper:]')_DATABASE_URL=postgresql://testuser:testpassword@localhost:5432/$NAME"
+            if [ -d "$BASE_TREE/$DIR/prisma/migrations" ]; then
+              (cd "$BASE_TREE" && npm -w "$PKG" exec -- prisma migrate deploy && npm -w "$PKG" run db:seed)
+            else
+              echo "[$NAME] no migrations at base — applying the PR chain to an empty DB"
+            fi
+            npm -w "$PKG" exec -- prisma migrate deploy
+            npm -w "$PKG" exec -- prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+            echo "::endgroup::"
+          done 3< "${{ runner.temp }}/changed-libraries"
+
+  # ── Release-anchored history invariants (checkin, mirror, every library) ────
   # 1. RELEASED MIGRATIONS ARE IMMUTABLE: any migration directory that existed
   #    at the previous v* release may not be modified or deleted — prod's
   #    ledger references those names, and every already-migrated database
@@ -294,7 +407,10 @@ jobs:
           fi
           echo "Previous release: $LAST_RELEASE"
           FAILED=0
-          for DIR in checkin-app/prisma/migrations packages/s-ingest-core/prisma/migrations; do
+          # Every package chain, at HEAD or at the release (so a deleted package still counts).
+          PACKAGE_DIRS=$( { ls -d packages/*/prisma/migrations 2>/dev/null || true
+            git ls-tree -d --name-only "$LAST_RELEASE" packages/ | sed 's|$|/prisma/migrations|'; } | sort -u)
+          for DIR in checkin-app/prisma/migrations $PACKAGE_DIRS; do
             BASE_DIRS=$(git ls-tree --name-only "$LAST_RELEASE:$DIR" 2>/dev/null | grep -v '^migration_lock\.toml$' | sort || true)
             HEAD_DIRS=$(git ls-tree --name-only "HEAD:$DIR" 2>/dev/null | grep -v '^migration_lock\.toml$' | sort || true)
             while IFS= read -r d; do
