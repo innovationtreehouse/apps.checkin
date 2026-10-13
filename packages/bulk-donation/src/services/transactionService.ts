@@ -36,7 +36,7 @@ const TRANSACTION_SELECT = {
 } as const;
 
 export const transactionService = {
-  async listTransactions(orgId: string, reader: DonorReadContext, assigned?: "true" | "false") {
+  async listTransactions(orgId: string, reader: DonorReadContext, assigned?: "true" | "false", page?: { skip: number; take: number }) {
     let where;
     if (assigned === "true") {
       where = { orgId, OR: [{ ownerId: { not: null } }, { isOrganizationalLevel: true }] };
@@ -45,16 +45,17 @@ export const transactionService = {
     } else {
       where = { orgId };
     }
-    const rows = await db.transaction.findMany({ where, select: TRANSACTION_SELECT, orderBy: { importedAt: "asc" } });
+    const rows = await db.transaction.findMany({ where, select: TRANSACTION_SELECT, orderBy: [{ importedAt: "asc" }, { id: "asc" }], ...page });
     await recordDonorDataRead(db, orgId, "transaction", reader, { filter: { assigned: assigned ?? null }, count: rows.length });
     return rows;
   },
 
-  async listUnassignedTransactions(orgId: string, reader: DonorReadContext) {
+  async listUnassignedTransactions(orgId: string, reader: DonorReadContext, page?: { skip: number; take: number }) {
     const rows = await db.transaction.findMany({
       where: { orgId, ownerId: null, isOrganizationalLevel: false },
       select: TRANSACTION_SELECT,
-      orderBy: { importedAt: "asc" },
+      orderBy: [{ importedAt: "asc" }, { id: "asc" }],
+      ...page,
     });
     await recordDonorDataRead(db, orgId, "transaction", reader, { filter: { unassigned: true }, count: rows.length });
     return rows;

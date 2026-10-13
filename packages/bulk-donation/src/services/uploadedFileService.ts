@@ -22,11 +22,12 @@ const SELECT_FILE_FIELDS = {
 } as const;
 
 export const uploadedFileService = {
-  async listFiles(orgId: string) {
+  async listFiles(orgId: string, page?: { skip: number; take: number }) {
     return db.uploadedFile.findMany({
       where: { orgId },
       select: SELECT_FILE_FIELDS,
-      orderBy: { uploadedAt: "desc" },
+      orderBy: [{ uploadedAt: "desc" }, { id: "desc" }],
+      ...page,
     });
   },
 

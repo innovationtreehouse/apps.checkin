@@ -1,8 +1,9 @@
 "use client";
 import { useState } from "react";
 import { Button, Group, Modal, Stack, Table, TextInput, Title } from "@mantine/core";
-import { act, api, useCanWrite, useLoad } from "../components/api";
+import { act, api, paged, useCanWrite, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
+import Pager from "../components/Pager";
 
 interface RuleRow {
   id: number;
@@ -30,7 +31,8 @@ const FIELDS: Array<[keyof Form, string]> = [
 /** /donations/account-map — the rules that pick each gift's ledger accounts; exactly one must match. */
 export default function AccountMapPage() {
   const canWrite = useCanWrite();
-  const rules = useLoad<RuleRow[]>("/account-map");
+  const [page, setPage] = useState(1);
+  const rules = useLoad<RuleRow[]>(paged("/account-map", page));
   const [editing, setEditing] = useState<{ id: number | null; form: Form } | null>(null);
 
   async function save() {
@@ -86,6 +88,7 @@ export default function AccountMapPage() {
           </Stack>
         )}
       </Modal>
+      <Pager page={page} onChange={setPage} rows={rules.data} />
     </>
   );
 }

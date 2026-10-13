@@ -9,7 +9,7 @@ import { getNavCounts } from "../services/navCountsService";
 import { donationError, getOrgId, mapServiceErrors } from "../runtime";
 import { recordEvent } from "../repositories/audit";
 import type { DonationRouteHandler } from "../contract";
-import { auditContext, parseBody } from "./_shared";
+import { auditContext, pageArgs, parseBody } from "./_shared";
 
 const exclusionSchema = z.object({
   qbTxnId: z.string().trim().min(1, "qbTxnId is required"),
@@ -27,8 +27,8 @@ async function requireEvent(orgId: string, id: string) {
   if (!event) throw donationError(404, "Disbursement event not found");
 }
 
-export const listHolds: DonationRouteHandler = async () => ({
-  DisbursementHold: await disbursementService.listPendingHolds(await getOrgId()),
+export const listHolds: DonationRouteHandler = async ({ req }) => ({
+  DisbursementHold: await disbursementService.listPendingHolds(await getOrgId(), pageArgs(req)),
 });
 
 export const resubmitHold: DonationRouteHandler = async ({ req, params }) => {
@@ -39,8 +39,8 @@ export const resubmitHold: DonationRouteHandler = async ({ req, params }) => {
   return {};
 };
 
-export const listEvents: DonationRouteHandler = async () => ({
-  DisbursementEvent: await disbursementService.listEvents(await getOrgId()),
+export const listEvents: DonationRouteHandler = async ({ req }) => ({
+  DisbursementEvent: await disbursementService.listEvents(await getOrgId(), pageArgs(req)),
 });
 
 export const navCounts: DonationRouteHandler = async () => ({
@@ -59,10 +59,11 @@ export const qbResolve: DonationRouteHandler = async ({ params }) => {
   throw donationError(503, "QuickBooks is not connected yet");
 };
 
-export const listExclusions: DonationRouteHandler = async () => ({
+export const listExclusions: DonationRouteHandler = async ({ req }) => ({
   DonationQbMatchExclusion: await db.donationQbMatchExclusion.findMany({
     where: { orgId: await getOrgId() },
-    orderBy: { excludedAt: "desc" },
+    orderBy: [{ excludedAt: "desc" }, { id: "desc" }],
+    ...pageArgs(req),
   }),
 });
 

@@ -19,8 +19,8 @@ interface AuditActor {
 }
 
 export const accountMapService = {
-  async listAccountMaps(orgId: string) {
-    return db.accountMap.findMany({ where: { orgId }, orderBy: { id: "asc" } });
+  async listAccountMaps(orgId: string, page?: { skip: number; take: number }) {
+    return db.accountMap.findMany({ where: { orgId }, orderBy: { id: "asc" }, ...page });
   },
 
   async createAccountMap(orgId: string, data: AccountMapData, actor: AuditActor) {

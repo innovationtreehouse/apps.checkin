@@ -27,10 +27,11 @@ async function asFinance() {
 
 // ── Holds ─────────────────────────────────────────────────────────────────────
 
-export const holds: ExpenseRouteHandler = async () => ({
+export const holds: ExpenseRouteHandler = async ({ req }) => ({
   ExpenseHold: await db.expenseHold.findMany({
     where: { orgId: await getOrgId(), status: "PENDING" },
     orderBy: [{ expenseId: "asc" }, { id: "asc" }],
+    ...pageArgs(query(req)),
     include: { lineItem: true, expense: true },
   }),
 });
@@ -62,8 +63,8 @@ const mappingSchema = z.object({
 });
 const qbAccountSchema = z.object({ name: z.string().trim().min(1), qbAccount: z.string().trim().min(1) });
 
-export const accountMappings: ExpenseRouteHandler = async () => ({
-  AccountMapping: await db.accountMapping.findMany({ where: { orgId: await getOrgId() }, orderBy: { id: "asc" } }),
+export const accountMappings: ExpenseRouteHandler = async ({ req }) => ({
+  AccountMapping: await db.accountMapping.findMany({ where: { orgId: await getOrgId() }, orderBy: { id: "asc" }, ...pageArgs(query(req)) }),
 });
 
 export const createAccountMapping: ExpenseRouteHandler = async ({ req }) => {
@@ -171,8 +172,8 @@ const buckets = () => getExpenseRuntime().budgetOwners.list();
 
 export const localOwners: ExpenseRouteHandler = async () => ({ ExpenseBucketView: await buckets() });
 
-export const ownershipMap: ExpenseRouteHandler = async () => ({
-  PartOwnerMap: await db.partOwnerMap.findMany({ where: { orgId: await getOrgId() }, orderBy: { gtin13: "asc" } }),
+export const ownershipMap: ExpenseRouteHandler = async ({ req }) => ({
+  PartOwnerMap: await db.partOwnerMap.findMany({ where: { orgId: await getOrgId() }, orderBy: { gtin13: "asc" }, ...pageArgs(query(req)) }),
   ExpenseBucketView: await buckets(),
 });
 
@@ -192,9 +193,13 @@ export const setOwnership: ExpenseRouteHandler = async ({ req }) => {
   return { PartOwnerMap: await db.partOwnerMap.findFirst({ where: { orgId, gtin13 } }) };
 };
 
-export const provisionalItems: ExpenseRouteHandler = async () => {
+export const provisionalItems: ExpenseRouteHandler = async ({ req }) => {
   const orgId = await getOrgId();
-  const items = await db.provisionalItemMap.findMany({ where: { orgId }, orderBy: { proposedAt: "desc" } });
+  const items = await db.provisionalItemMap.findMany({
+    where: { orgId },
+    orderBy: [{ proposedAt: "desc" }, { id: "desc" }],
+    ...pageArgs(query(req)),
+  });
   return {
     ProvisionalItemMap: items,
     PartOwnerMap: await db.partOwnerMap.findMany({ where: { orgId, gtin13: { in: items.map((i) => i.provisionalGtin13) } } }),
@@ -226,8 +231,12 @@ export const receivedPayloads: ExpenseRouteHandler = async ({ req }) => ({
   }),
 });
 
-export const qbExclusions: ExpenseRouteHandler = async () => ({
-  ExpenseQbMatchExclusion: await db.expenseQbMatchExclusion.findMany({ where: { orgId: await getOrgId() }, orderBy: { excludedAt: "desc" } }),
+export const qbExclusions: ExpenseRouteHandler = async ({ req }) => ({
+  ExpenseQbMatchExclusion: await db.expenseQbMatchExclusion.findMany({
+    where: { orgId: await getOrgId() },
+    orderBy: [{ excludedAt: "desc" }, { id: "desc" }],
+    ...pageArgs(query(req)),
+  }),
 });
 
 export const createQbExclusion: ExpenseRouteHandler = async ({ req }) => {

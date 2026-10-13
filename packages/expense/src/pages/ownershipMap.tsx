@@ -1,8 +1,9 @@
 "use client";
 import { useState } from "react";
 import { Button, Group, Select, Table, Text, TextInput, Title } from "@mantine/core";
-import { send, useLoad, useRoles, type Bucket } from "../components/api";
+import { paged, send, useLoad, useRoles, type Bucket } from "../components/api";
 import LoadError from "../components/LoadError";
+import Pager from "../components/Pager";
 import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface PartOwner {
@@ -14,7 +15,8 @@ interface PartOwner {
 /** /expense/ownership-map — which budget-owner bucket owns each part; FINANCE edits it. */
 export default function OwnershipMapPage() {
   const { isFinance } = useRoles();
-  const map = useLoad<{ PartOwnerMap: PartOwner[]; ExpenseBucketView: Bucket[] }>("/ownership-map");
+  const [page, setPage] = useState(1);
+  const map = useLoad<{ PartOwnerMap: PartOwner[]; ExpenseBucketView: Bucket[] }>(paged("/ownership-map", page));
   const [gtin13, setGtin13] = useState("");
   const [owner, setOwner] = useState<string | null>(null);
 
@@ -46,6 +48,7 @@ export default function OwnershipMapPage() {
           >Save</Button>
         </Group>
       )}
+      <Pager page={page} onChange={setPage} rows={map.data?.PartOwnerMap} />
     </>
   );
 }

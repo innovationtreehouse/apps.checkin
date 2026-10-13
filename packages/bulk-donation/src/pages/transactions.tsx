@@ -1,8 +1,9 @@
 "use client";
 import { useState } from "react";
 import { SegmentedControl, Table, Title } from "@mantine/core";
-import { cents, ownerName, useLoad, useOwners } from "../components/api";
+import { cents, ownerName, paged, useLoad, useOwners } from "../components/api";
 import LoadError from "../components/LoadError";
+import Pager from "../components/Pager";
 
 export interface GiftRow {
   id: number;
@@ -22,13 +23,14 @@ export interface GiftRow {
 /** /donations/transactions — every imported gift and who it belongs to. */
 export default function TransactionsPage() {
   const [filter, setFilter] = useState("all");
-  const gifts = useLoad<GiftRow[]>(filter === "all" ? "/transactions" : `/transactions?assigned=${filter}`);
+  const [page, setPage] = useState(1);
+  const gifts = useLoad<GiftRow[]>(paged(filter === "all" ? "/transactions" : `/transactions?assigned=${filter}`, page));
   const owners = useOwners();
 
   return (
     <>
       <Title order={3} mb="md">Gifts</Title>
-      <SegmentedControl mb="md" value={filter} onChange={setFilter}
+      <SegmentedControl mb="md" value={filter} onChange={(v) => { setFilter(v); setPage(1); }}
         data={[{ value: "all", label: "All" }, { value: "true", label: "Assigned" }, { value: "false", label: "Unassigned" }]} />
       {gifts.error && <LoadError what="gifts" message={gifts.error} onRetry={gifts.reload} />}
       <Table striped>
@@ -51,6 +53,7 @@ export default function TransactionsPage() {
           ))}
         </Table.Tbody>
       </Table>
+      <Pager page={page} onChange={setPage} rows={gifts.data} />
     </>
   );
 }
