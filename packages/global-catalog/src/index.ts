@@ -8,6 +8,7 @@ export * as provisionalGtinService from "./services/provisionalGtinService";
 export * as conversionChallengeService from "./services/conversionChallengeService";
 export * as conflictResolutionService from "./services/conflictResolutionService";
 export * as orgEventService from "./services/orgEventService";
+export * as readService from "./services/readService";
 export { prisma, db, getPrisma, initDb } from "./db";
 export * from "./db/schema";
 
