@@ -32,7 +32,7 @@ export const GET = withAuth({}, async (_req, auth) => {
             orderBy: { program: { startAt: "asc" } }
         });
 
-        if (seesHouseholdPaymentStatus(auth.user)) return NextResponse.json(enrollments);
+        if (await seesHouseholdPaymentStatus(auth.user.id)) return NextResponse.json(enrollments);
         return NextResponse.json(enrollments.map(({ programId, personId, person, program }) => ({ programId, personId, person, program })));
     } catch (error) {
         logger.error("Failed to fetch user programs:", error);

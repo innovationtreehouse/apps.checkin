@@ -204,7 +204,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     // Payment status (status = paid vs not paid yet) is staff's, plus a household
     // lead's for their own household. The stripper can't express "own household",
     // so other rows are dropped of it here — including every row for a youth.
-    const showOwnPayment = seesHouseholdPaymentStatus(sessionUser);
+    const showOwnPayment = !!sessionUser && await seesHouseholdPaymentStatus(sessionUser.id);
     const participants = program.participants.map(({ status, pendingSince, ...row }) =>
         showOwnPayment && isOwnHousehold(row) ? { ...row, status, pendingSince } : row
     );

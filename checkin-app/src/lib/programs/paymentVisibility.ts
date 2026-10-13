@@ -1,11 +1,20 @@
+import prisma from "@/lib/prisma";
+import { ageBand } from "@/lib/programAge";
+import { LIVE_PERSON } from "@/lib/person/filters";
+
 /**
  * Whether a non-staff viewer may see the payment status (paid / not paid yet) of
  * their own household's enrollments. Only a household lead who is not a known
  * youth; everyone else — a youth, a non-lead household member — sees none, and no
  * family ever sees another household's (docs/rules/programs.md, "Payment status").
  *
- * Client-safe: reads only session claims.
+ * Read from the DB, not the session claims: a lead change must take effect before
+ * the session re-syncs.
  */
-export function seesHouseholdPaymentStatus(user: { householdLead?: boolean; ageBand?: string } | null | undefined): boolean {
-    return !!user?.householdLead && user.ageBand !== 'youth';
+export async function seesHouseholdPaymentStatus(personId: number): Promise<boolean> {
+    const lead = await prisma.person.findFirst({
+        where: { id: personId, isHouseholdLead: true, ...LIVE_PERSON },
+        select: { dateOfBirth: true, isDeclaredAdult: true },
+    });
+    return !!lead && ageBand(lead) !== "youth";
 }
