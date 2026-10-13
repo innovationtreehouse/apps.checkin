@@ -21,10 +21,16 @@ function audiencesOf(principal: ExpensePrincipal): FlagAudience[] {
   return [...(principal.isFinance ? ["FINANCE" as const] : []), ...(principal.isBoard ? ["BOARD" as const] : [])];
 }
 
+/** Open flags for the caller's audience; a hold flag drops out once its expense is closed and the hold is moot. */
 export async function listOpenFlags(principal: ExpensePrincipal) {
   actorOf(principal);
   return db.expenseFlag.findMany({
-    where: { orgId: await getOrgId(), checkedOffAt: null, audience: { in: audiencesOf(principal) } },
+    where: {
+      orgId: await getOrgId(),
+      checkedOffAt: null,
+      audience: { in: audiencesOf(principal) },
+      NOT: { kind: { in: [...HOLD_FLAGS.keys()] }, expense: { state: { in: [...CLOSED_STATES] } } },
+    },
     orderBy: { raisedAt: "asc" },
   });
 }
