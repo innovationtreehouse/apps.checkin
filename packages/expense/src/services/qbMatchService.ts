@@ -85,7 +85,8 @@ async function candidatesFor(line: Awaited<ReturnType<typeof loadLine>>): Promis
   const reader = getExpenseRuntime().quickbooks.reader;
   const txns = entity === "Bill" ? await reader.billsBetween(from, to) : await reader.purchasesBetween(from, to);
   const skip = new Set((await qbMatchInputs()).skipIds);
-  return { entity, txns: txns.filter((t) => t.totalCents === line.totalPriceCents && !skip.has(t.id)) };
+  const inWindow = (t: QbTxn) => t.txnDate >= from && t.txnDate <= to;
+  return { entity, txns: txns.filter((t) => t.totalCents === line.totalPriceCents && inWindow(t) && !skip.has(t.id)) };
 }
 
 /**

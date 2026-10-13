@@ -349,10 +349,14 @@ describeDb("QuickBooks match inputs", () => {
 });
 
 describeDb("QuickBooks match", () => {
-  const txn = (id: string): QbTxn => ({ id, txnDate: "2026-05-02", totalCents: 100, accountRef: null, vendorRef: null });
+  type Entry = string | (Partial<QbTxn> & { id: string });
+  const txn = (e: Entry): QbTxn => ({ txnDate: "2026-05-02", totalCents: 100, accountRef: null, vendorRef: null, ...(typeof e === "string" ? { id: e } : e) });
 
-  /** A card-charge line of 100 cents dated 2026-05-01; QuickBooks holds the given Purchases and Bills. */
-  async function cardLine(qb: { purchases?: string[]; bills?: string[] }, opts: { signed?: boolean } = {}) {
+  /**
+   * A card-charge line of 100 cents dated 2026-05-01; QuickBooks holds the given Purchases and
+   * Bills. The reader ignores the window, so the service's own date check is what is tested.
+   */
+  async function cardLine(qb: { purchases?: Entry[]; bills?: Entry[] }, opts: { signed?: boolean } = {}) {
     bindPorts({
       signoff: directory({ finance: [3], board: [5] }),
       quickbooks: {
@@ -393,5 +397,24 @@ describeDb("QuickBooks match", () => {
     const li = await cardLine({ bills: ["42"] });
     await expect(matchLineToQb(FINANCE, li, "42")).rejects.toMatchObject({ statusCode: 409 });
     expect(await linked(li)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+  });
+
+  it("refuses an entry whose amount is off by a cent", async () => {
+    const li = await cardLine({ purchases: [{ id: "42", totalCents: 101 }] });
+    await expect(matchLineToQb(FINANCE, li, "42")).rejects.toMatchObject({ statusCode: 409 });
+    expect(await linked(li)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+  });
+
+  it("refuses an entry dated a day outside the match window", async () => {
+    const li = await cardLine({ purchases: [{ id: "42", txnDate: "2026-05-09" }, { id: "43", txnDate: "2026-04-23" }] });
+    await expect(matchLineToQb(FINANCE, li, "42")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(matchLineToQb(FINANCE, li, "43")).rejects.toMatchObject({ statusCode: 409 });
+    expect(await linked(li)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+  });
+
+  it("accepts an entry dated at the edge of the window", async () => {
+    const li = await cardLine({ purchases: [{ id: "42", txnDate: "2026-05-08" }] });
+    await matchLineToQb(FINANCE, li, "42");
+    expect(await linked(li)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
   });
 });
