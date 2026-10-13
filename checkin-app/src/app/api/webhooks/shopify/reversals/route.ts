@@ -23,17 +23,33 @@ import { recordShopifyWebhookReceipt } from "@/lib/shopifyWebhookReceipt";
  */
 
 interface ReversalPayload {
-    // orders/cancelled: the order object → id. refunds/create & disputes/*: order_id.
+    // orders/cancelled: the order object → id. refunds/create: the refund's id. refunds/create & disputes/*: order_id.
     id?: number | string;
     order_id?: number | string;
     // refunds/create only.
-    refund_line_items?: { quantity?: number; restock_type?: string; line_item?: { variant_id?: number | string | null; quantity?: number } }[];
+    refund_line_items?: {
+        quantity?: number;
+        restock_type?: string;
+        line_item?: { variant_id?: number | string | null; quantity?: number; properties?: { name?: string; value?: unknown }[] };
+    }[];
+}
+
+/** Children a line names in its CheckMeIn_Account_ID property (comma-joined ids, like the cart attribute). */
+function linePersonIds(properties: { name?: string; value?: unknown }[] = []): number[] {
+    const value = properties.find((p) => p.name === "CheckMeIn_Account_ID")?.value;
+    if (value == null) return [];
+    return String(value).split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
 }
 
 function restockedLines(payload: ReversalPayload): RestockedLine[] {
     return (payload.refund_line_items ?? [])
         .filter((l) => l.restock_type && l.restock_type !== "no_restock" && l.line_item?.variant_id != null)
-        .map((l) => ({ variantId: String(l.line_item?.variant_id), quantity: l.quantity ?? 1, lineQuantity: l.line_item?.quantity ?? 1 }));
+        .map((l) => ({
+            variantId: String(l.line_item?.variant_id),
+            quantity: l.quantity ?? 1,
+            lineQuantity: l.line_item?.quantity ?? 1,
+            personIds: linePersonIds(l.line_item?.properties),
+        }));
 }
 
 function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: false; status: number; error: string } {
@@ -76,7 +92,8 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
         outcome = `${topic}: no order id in payload — ignored`;
         logger.warn(`[SHOPIFY REVERSAL] ${outcome}`);
     } else {
-        const matched = await raiseReversalByOrderId(String(orderId), kind, restockedLines(payload));
+        const refundId = topic === "refunds/create" && payload.id != null ? String(payload.id) : null;
+        const matched = await raiseReversalByOrderId(String(orderId), kind, restockedLines(payload), refundId);
         outcome = matched
             ? `${topic}: raised ${kind} for order ${orderId}`
             : `${topic}: order ${orderId} not tied to any membership/enrollment — ignored`;
