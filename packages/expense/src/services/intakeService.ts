@@ -12,6 +12,7 @@ import { createProvisionalItemMapRepository } from "../repositories/provisionalI
 import { createProvisionalResolutionRepository } from "../repositories/provisionalResolution";
 import { createProvisionalItemMapService } from "./provisionalItemMapService";
 import { readExpenseSettings } from "./settingsService";
+import { ServiceError } from "./serviceError";
 
 export async function receiveCompletedReceipt(
   raw: unknown,
@@ -20,12 +21,17 @@ export async function receiveCompletedReceipt(
   await assertOrg(receipt.orgId);
   const { receiptId } = receipt;
 
-  const existingPayload = await db.receivedExpensePayload.findFirst({ where: { receiptId }, select: { status: true } });
+  const existingPayload = await db.receivedExpensePayload.findFirst({ where: { receiptId }, select: { status: true, payloadJson: true } });
   if (existingPayload?.status === "applied") return { receiptId, status: "already_applied" };
+
+  // Once the expense exists it was built from the stored payload, so a replay must match it.
+  const payloadJson = JSON.stringify(receipt);
+  if (existingPayload && existingPayload.payloadJson !== payloadJson && (await db.expense.count({ where: { id: receiptId } })) > 0) {
+    throw new ServiceError(409, `Receipt ${receiptId} was already received with a different payload`);
+  }
 
   // Record arrival as "received"; "applied" is written only after processing commits, so a crash
   // in between leaves a row the next call (or the catch-up sweep) finishes.
-  const payloadJson = JSON.stringify(receipt);
   const arrival = { orgId: receipt.orgId, payloadJson, status: "received", failureReason: null, receivedAt: new Date() };
   try {
     await db.receivedExpensePayload.upsert({ where: { receiptId }, create: { receiptId, ...arrival }, update: arrival });
@@ -199,8 +205,10 @@ async function trackProvisionals(receipt: CompletedReceipt): Promise<void> {
 }
 
 // Starts the flow once (initFinancialFlow claims the pending expense); pre-approved lines
-// (backfill, org-level buckets) then drive owner_approval straight through.
+// (backfill, org-level buckets) then drive owner_approval straight through. The backfill flag is
+// the stored expense's, never the incoming payload's.
 async function startFlow(receipt: CompletedReceipt): Promise<void> {
-  await initFinancialFlow(receipt.receiptId, receipt.orgId, receipt.backfill);
+  const { backfill } = await db.expense.findUniqueOrThrow({ where: { id: receipt.receiptId }, select: { backfill: true } });
+  await initFinancialFlow(receipt.receiptId, receipt.orgId, backfill);
   await checkApprovalAutoTransition(receipt.receiptId, SYSTEM_ACTOR);
 }

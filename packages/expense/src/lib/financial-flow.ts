@@ -3,7 +3,7 @@ import { createPartOwnerRepository } from "../repositories/partOwner";
 import { getExpenseRuntime } from "../runtime";
 import { checkAndProcessExpense } from "./expense-qb-processor";
 import { classifyCapital, isTerminalApproval, anyRejected } from "./expense-rules";
-import { advanceWorkflow, advanceWorkflowInTx, type Actor } from "./workflow-engine";
+import { advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from "./workflow-engine";
 import { SYSTEM_ACTOR } from "./system-actor";
 import { logError } from "./logger";
 
@@ -80,14 +80,15 @@ export async function checkOwnershipAutoTransition(expenseId: string, actor: Act
   const hasUnknowns = approvals.some((a) => a.status === "unknown");
 
   if (allHaveOwners && !hasUnknowns) {
-    await advanceWorkflow({
+    const moved = await advanceWorkflow({
       db,
       expenseId,
       currentState: "assign_ownership",
       event: { type: "ALL_OWNERS_ASSIGNED" },
       actor,
       action: "state_transition",
-    });
+    }).catch(unlessRaceLost);
+    if (moved === null) return;
     // Lines finance assigned to org-level buckets may already be approved.
     await checkApprovalAutoTransition(expenseId, actor);
   }
@@ -121,7 +122,7 @@ export async function checkApprovalAutoTransition(expenseId: string, actor: Acto
     context,
     actor,
     action: "state_transition",
-  });
+  }).catch(unlessRaceLost);
 
   if (nextState === "qb_pending") await drainExpense(expense.orgId, expenseId);
 }

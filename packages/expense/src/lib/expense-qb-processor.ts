@@ -213,6 +213,7 @@ function buildQbPayload(
   taxAlloc: Map<number, number>,
   shippingAlloc: Map<number, number>,
   discountAlloc: Map<number, number>,
+  bucketByLine: Map<number, number | null>,
 ): QbExpenseEvent {
   const payload = {
     schemaVersion: 1 as const,
@@ -240,6 +241,7 @@ function buildQbPayload(
         capitalOwnerId: full.capitalOwnerId ?? null,
         depreciationYears: full.depreciationYears ?? null,
         account: li.account,
+        bucketId: bucketByLine.get(li.id) ?? null,
       };
     }),
   };
@@ -417,7 +419,9 @@ async function processExpenseForQb(
   const shippingAlloc = allocateAmount(allocItems, expense.shippingCents);
   const discountAlloc = allocateAmount(allocItems, expense.discountCents);
 
-  const payload = buildQbPayload(expense, resolved, lineItems, taxAlloc, shippingAlloc, discountAlloc);
+  const approvals = await db.lineItemOwnerApproval.findMany({ where: { expenseId }, select: { lineItemId: true, ownerId: true } });
+  const bucketByLine = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
+  const payload = buildQbPayload(expense, resolved, lineItems, taxAlloc, shippingAlloc, discountAlloc, bucketByLine);
 
   try {
     await commitQbProcessing(

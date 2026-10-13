@@ -9,12 +9,13 @@ import { CLOSED_STATES, reimburseeUnknown } from "../lib/signoff";
 import { conflictedParties } from "../lib/signoff-facts";
 import { ServiceError } from "./serviceError";
 
-/** Raises a flag once per expense and kind; a repeat is a no-op. */
+/** Raises a flag; one row per expense and kind, so raising a checked-off flag reopens it. */
 export async function raiseFlag(expenseId: string, kind: FlagKind, detail: string | null = null): Promise<void> {
-  await db.expenseFlag.createMany({
-    data: [{ orgId: await getOrgId(), expenseId, kind, audience: FLAG_AUDIENCE[kind], detail }],
-    skipDuplicates: true,
-  });
+  const raised = { audience: FLAG_AUDIENCE[kind], detail, raisedAt: new Date() };
+  const reopened = { ...raised, checkedOffAt: null, checkedOffByUserId: null, checkedOffByUsername: null, notes: null };
+  const reopen = await db.expenseFlag.updateMany({ where: { expenseId, kind, checkedOffAt: { not: null } }, data: reopened });
+  if (reopen.count > 0) return;
+  await db.expenseFlag.createMany({ data: [{ orgId: await getOrgId(), expenseId, kind, ...raised }], skipDuplicates: true });
 }
 
 function audiencesOf(principal: ExpensePrincipal): FlagAudience[] {

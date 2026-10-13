@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { fixture } from "@inventory/receipt-contract-fixtures";
 import { describeDb } from "../helpers/db";
-import { bindPorts, directory } from "../helpers/seed";
+import { bindPorts, directory, seedExpense } from "../helpers/seed";
 import { db } from "../../db";
 import { receiveCompletedReceipt, replayReceivedPayloads } from "../../services/intakeService";
 
@@ -174,6 +174,24 @@ describeDb("S2 intake — applied is written only after processing commits", () 
     expect(s.approvals).toBe(allRecognized.lineItems.length);
     expect(await db.expenseAuditLog.count({ where: { expenseId: allRecognized.receiptId, action: "financial_flow_started" } })).toBe(1);
     expect(s.payloads.map((p) => p.status)).toEqual(["applied"]);
+  });
+
+  it("refuses a replay whose payload differs from the one an existing expense was built from", async () => {
+    await receiveCompletedReceipt(allRecognized);
+    await db.receivedExpensePayload.updateMany({ data: { status: "received" } });
+    const before = await snapshot(allRecognized.receiptId);
+
+    await expect(receiveCompletedReceipt({ ...allRecognized, backfill: true })).rejects.toMatchObject({ statusCode: 409 });
+
+    expect(await snapshot(allRecognized.receiptId)).toEqual(before);
+  });
+
+  it("starts the flow from the stored expense's backfill flag, not the payload's", async () => {
+    await seedExpense({ id: allRecognized.receiptId, orgId: allRecognized.orgId, backfill: false });
+
+    await receiveCompletedReceipt({ ...allRecognized, backfill: true });
+
+    expect((await db.expense.findFirst({ where: { id: allRecognized.receiptId } }))!.state).toBe("assign_ownership");
   });
 
   it("the catch-up sweep replays a payload left received or failed", async () => {
