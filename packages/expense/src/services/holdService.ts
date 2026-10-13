@@ -4,6 +4,8 @@ import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getOrgId } from "../runtime";
 import { checkAndProcessExpense } from "../lib/expense-qb-processor";
+import { writeAudit } from "../lib/audit";
+import { actorOf } from "../lib/caller";
 import { requireFinance } from "./approvalService";
 import { ServiceError } from "./serviceError";
 
@@ -16,10 +18,20 @@ export async function setHeldLineAccount(
   requireFinance(principal);
   const li = await db.expenseLineItem.findFirst({
     where: { id: lineItemId, expenseId, expense: { orgId: await getOrgId() } },
-    select: { id: true },
+    select: { id: true, manualQbAccount: true },
   });
   if (!li) throw new ServiceError(404, "Line item not found");
-  await db.expenseLineItem.update({ where: { id: lineItemId }, data: { manualQbAccount: qbAccount } });
+  await db.$transaction(async (tx) => {
+    await tx.expenseLineItem.update({ where: { id: lineItemId }, data: { manualQbAccount: qbAccount } });
+    await writeAudit(tx, actorOf(principal), {
+      expenseId,
+      action: "hold_account_set",
+      lineItemId,
+      fieldChanged: "manualQbAccount",
+      valueBefore: li.manualQbAccount,
+      valueAfter: qbAccount,
+    });
+  });
 }
 
 export async function resubmitHeldExpense(principal: ExpensePrincipal, expenseId: string): Promise<void> {
@@ -27,5 +39,7 @@ export async function resubmitHeldExpense(principal: ExpensePrincipal, expenseId
   const orgId = await getOrgId();
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId }, select: { id: true } });
   if (!expense) throw new ServiceError(404, "Expense not found");
+  // Processing runs as the system actor across its own transactions; this row records who asked.
+  await writeAudit(db, actorOf(principal), { expenseId, action: "hold_resubmitted" });
   await checkAndProcessExpense(orgId, expenseId);
 }

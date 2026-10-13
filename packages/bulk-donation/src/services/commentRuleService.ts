@@ -1,5 +1,6 @@
 import { db } from "../db";
-import { recordDonorDataRead, type DonorReadContext } from "../repositories/audit";
+import { recordDonorDataRead, recordEvent, type DonorReadContext } from "../repositories/audit";
+import type { AuditContext } from "../workflows/disbursement.actor";
 import { ServiceError } from "./serviceError";
 
 export const commentRuleService = {
@@ -9,9 +10,20 @@ export const commentRuleService = {
     return rows;
   },
 
-  async deleteCommentRule(orgId: string, id: number) {
+  async deleteCommentRule(orgId: string, id: number, audit: AuditContext) {
     const existing = await db.transactionCommentRule.findFirst({ where: { id, orgId } });
     if (!existing) throw new ServiceError(404, "Comment rule not found");
-    await db.transactionCommentRule.delete({ where: { id } });
+    await db.$transaction(async (tx) => {
+      await tx.transactionCommentRule.delete({ where: { id } });
+      // The rule's comment is donor text; the row names the rule by id only.
+      await recordEvent(tx, {
+        orgId,
+        entityType: "comment_rule",
+        entityId: id,
+        eventType: "COMMENT_RULE_DELETED",
+        ...audit,
+        payload: { ownerId: existing.ownerId },
+      });
+    });
   },
 };

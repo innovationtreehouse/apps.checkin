@@ -5,7 +5,7 @@ import { isAutoOrganizationalLevel } from "../lib/domain-rules";
 import type { BenevityRow } from "../lib/csv-parser";
 import { ServiceError } from "./serviceError";
 import { getOwnerDirectory } from "../runtime";
-import { runOwnerAssignedCycleTx } from "../workflows/disbursement.actor";
+import { runOwnerAssignedCycleTx, type AuditContext } from "../workflows/disbursement.actor";
 
 const SELECT_FILE_FIELDS = {
   id: true,
@@ -188,12 +188,15 @@ export const uploadedFileService = {
     });
   },
   /** Drop the stored CSV of an upload that added nothing; the file row stays. */
-  async deleteBlob(orgId: string, id: number) {
+  async deleteBlob(orgId: string, id: number, audit: AuditContext) {
     const file = await db.uploadedFile.findFirst({ where: { id, orgId }, select: { allDuplicate: true, blobDeleted: true } });
     if (!file) throw new ServiceError(404, "File not found");
     if (!file.allDuplicate) throw new ServiceError(400, "Blob can only be deleted for fully-duplicate uploads");
     if (file.blobDeleted) throw new ServiceError(400, "Blob already deleted");
-    await db.uploadedFile.update({ where: { id }, data: { fileBlob: null, blobDeleted: true } });
+    await db.$transaction(async (tx) => {
+      await tx.uploadedFile.update({ where: { id }, data: { fileBlob: null, blobDeleted: true } });
+      await recordEvent(tx, { orgId, entityType: "uploaded_file", entityId: id, eventType: "FILE_BLOB_DELETED", ...audit });
+    });
     return { id, blobDeleted: true };
   },
 };

@@ -19,6 +19,18 @@ export const classifications = {
         after: 'internal',
         changedAt: 'internal',
     },
+    ExpenseOrgAuditLog: {
+        id: 'internal',
+        orgId: 'internal',
+        actorUserId: 'pii',
+        actorUsername: 'pii',
+        entityType: 'internal',
+        entityId: 'internal',
+        action: 'internal',
+        before: 'internal',
+        after: 'internal',
+        changedAt: 'internal',
+    },
     Expense: {
         id: 'internal',
         orgId: 'internal',
@@ -219,6 +231,8 @@ export const relations = {
     ExpenseOrgSettings: {
     },
     ExpenseOrgSettingsChange: {
+    },
+    ExpenseOrgAuditLog: {
     },
     Expense: {
         lineItems: { model: 'ExpenseLineItem', isList: true },

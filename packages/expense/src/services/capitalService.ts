@@ -4,7 +4,7 @@ import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
-import { writeAudit } from "../lib/audit";
+import { writeAudit, writeOrgAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
 import { advanceWorkflowInTx } from "../lib/workflow-engine";
 import { formatItfa, fullyDepreciatedDate, nextItfaSeq, parseItfa } from "../lib/capital-register";
@@ -196,6 +196,7 @@ export async function seedCapitalAssets(
   rows: z.infer<typeof CapitalSeedSchema>,
 ): Promise<CapitalSeedResult> {
   requireFinance(principal);
+  const actor = actorOf(principal);
   const orgId = await getOrgId();
   const results: CapitalSeedResult["results"] = [];
   for (const r of rows) {
@@ -203,21 +204,27 @@ export async function seedCapitalAssets(
     if (seq === null) { results.push({ assetNumber: r.assetNumber, status: "error", error: "not an ITFA number" }); continue; }
     const assetNumber = formatItfa(seq); // canonicalize (no space/dash, zero-padded)
     const parentSeq = r.parentAssetNumber ? parseItfa(r.parentAssetNumber) : null;
-    const created = await db.capitalAsset.createMany({
-      data: [{
-        orgId,
-        assetNumber,
-        parentAssetNumber: parentSeq === null ? null : formatItfa(parentSeq),
-        description: r.description,
-        acquisitionDate: r.acquisitionDate ?? null,
-        costCents: r.costCents ?? null,
-        depreciationYears: r.depreciationYears ?? null,
-        fullyDepreciatedDate: fullyDepreciatedDate(r.acquisitionDate, r.depreciationYears),
-        status: "tracked",
-        sourceQbTxnId: r.sourceQbTxnId ?? null,
-        seeded: true,
-      }],
-      skipDuplicates: true,
+    const created = await db.$transaction(async (tx) => {
+      const result = await tx.capitalAsset.createMany({
+        data: [{
+          orgId,
+          assetNumber,
+          parentAssetNumber: parentSeq === null ? null : formatItfa(parentSeq),
+          description: r.description,
+          acquisitionDate: r.acquisitionDate ?? null,
+          costCents: r.costCents ?? null,
+          depreciationYears: r.depreciationYears ?? null,
+          fullyDepreciatedDate: fullyDepreciatedDate(r.acquisitionDate, r.depreciationYears),
+          status: "tracked",
+          sourceQbTxnId: r.sourceQbTxnId ?? null,
+          seeded: true,
+        }],
+        skipDuplicates: true,
+      });
+      if (result.count === 1) {
+        await writeOrgAudit(tx, orgId, actor, { entityType: "capital_asset", entityId: assetNumber, action: "seeded", after: r });
+      }
+      return result;
     });
     results.push({ assetNumber, status: created.count === 1 ? "created" : "skipped" });
   }

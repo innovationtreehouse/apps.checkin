@@ -17,6 +17,7 @@ afterEach(async () => {
   await db.accountMapping.deleteMany();
   await db.expenseOrgSettings.deleteMany();
   await db.expenseOrgSettingsChange.deleteMany();
+  await db.expenseOrgAuditLog.deleteMany();
   await db.partOwnerMap.deleteMany();
   await db.provisionalItemMap.deleteMany();
   await db.expenseProvisionalResolution.deleteMany();

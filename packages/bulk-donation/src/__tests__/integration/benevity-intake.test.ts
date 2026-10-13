@@ -62,8 +62,8 @@ describeDb("upload and dedup", () => {
     expect(again).toMatchObject({ rowCount: 3, newRowCount: 0, duplicateRowCount: 3, allDuplicate: true });
     expect(await db.transaction.count({ where: { orgId } })).toBe(3);
 
-    expect(await uploadedFileService.deleteBlob(orgId, again.id)).toEqual({ id: again.id, blobDeleted: true });
-    await expect(uploadedFileService.deleteBlob(orgId, first.id)).rejects.toBeInstanceOf(ServiceError);
+    expect(await uploadedFileService.deleteBlob(orgId, again.id, AUDIT)).toEqual({ id: again.id, blobDeleted: true });
+    await expect(uploadedFileService.deleteBlob(orgId, first.id, AUDIT)).rejects.toBeInstanceOf(ServiceError);
   });
 
   it("file listing never selects the blob", async () => {
