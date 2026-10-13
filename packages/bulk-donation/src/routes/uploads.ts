@@ -1,4 +1,5 @@
 /** Benevity uploads: list, import, the stored-CSV download, and dropping an all-duplicate blob. */
+import { readCapped } from "@inventory/utils";
 import { db } from "../db";
 import { CsvValidationError, parseBenevityCsv } from "../lib/csv-parser";
 import { recordDonorDataRead } from "../repositories/audit";
@@ -15,35 +16,12 @@ const CSV_MIME_TYPES = new Set(["text/csv", "application/csv", "text/plain", "ap
 
 const tooLarge = () => donationError(413, "File is larger than 10 MB");
 
-/**
- * Reads at most `cap` bytes: an over-cap Content-Length is refused before any read, otherwise
- * reading stops as soon as the total passes the cap. Duplicated from checkin's receipt glue
- * (`readCapped`, #1973) because a library does not import from the host or another library.
- */
-async function readCapped(req: Request, cap: number): Promise<Uint8Array<ArrayBuffer>[]> {
-  const declared = req.headers.get("content-length");
-  if (declared !== null && Number(declared) > cap) throw tooLarge();
-  const chunks: Uint8Array<ArrayBuffer>[] = [];
-  if (!req.body) return chunks;
-  const reader = req.body.getReader();
-  let total = 0;
-  for (let r = await reader.read(); !r.done; r = await reader.read()) {
-    total += r.value.byteLength;
-    if (total > cap) {
-      await reader.cancel();
-      throw tooLarge();
-    }
-    chunks.push(new Uint8Array(r.value));
-  }
-  return chunks;
-}
-
 export const list: DonationRouteHandler = async ({ req }) => ({
   UploadedFile: await uploadedFileService.listFiles(await getOrgId(), pageArgs(req)),
 });
 
 export const upload: DonationRouteHandler = async ({ req }) => {
-  const chunks = await readCapped(req, MAX_UPLOAD_BYTES + FORM_OVERHEAD_BYTES);
+  const chunks = await readCapped(req.body, req.headers.get("content-length"), MAX_UPLOAD_BYTES + FORM_OVERHEAD_BYTES, tooLarge);
   let form: FormData;
   try {
     form = await new Response(new Blob(chunks), {

@@ -4,6 +4,7 @@
  * throws ServiceError for every expected failure.
  */
 import type { Access } from "@inventory/receipt";
+import { readCapped } from "@inventory/utils";
 import type { Role } from "@/security/core";
 import { ApiResponseError, badRequest, unauthorized, type HandlerContext, type HandlerFn } from "@/security/handler";
 
@@ -78,31 +79,9 @@ export const FORM_OVERHEAD_BYTES = 512 * 1024;
 
 const tooLarge = (message = "Receipt upload is too large") => new ApiResponseError(413, message);
 
-/**
- * Reads a body of at most `cap` bytes. An over-cap declared length is refused before any read;
- * otherwise reading stops (and the stream is cancelled) as soon as the total passes the cap.
- */
-export async function readCapped(
-  body: AsyncIterable<Uint8Array> | null,
-  declaredLength: string | null,
-  cap: number,
-  tooLargeMessage?: string,
-): Promise<Uint8Array<ArrayBuffer>[]> {
-  const declared = Number(declaredLength);
-  if (declaredLength !== null && Number.isFinite(declared) && declared > cap) throw tooLarge(tooLargeMessage);
-  const chunks: Uint8Array<ArrayBuffer>[] = [];
-  let total = 0;
-  for await (const value of body ?? []) {
-    total += value.byteLength;
-    if (total > cap) throw tooLarge(tooLargeMessage);
-    chunks.push(new Uint8Array(value));
-  }
-  return chunks;
-}
-
 /** The upload's multipart form, read under the file cap plus the form overhead. */
 export async function readUploadForm(req: Request, maxFileBytes: number): Promise<FormData> {
-  const chunks = await readCapped(req.body, req.headers.get("content-length"), maxFileBytes + FORM_OVERHEAD_BYTES);
+  const chunks = await readCapped(req.body, req.headers.get("content-length"), maxFileBytes + FORM_OVERHEAD_BYTES, () => tooLarge());
   try {
     return await new Response(new Blob(chunks), { headers: { "content-type": req.headers.get("content-type") ?? "" } }).formData();
   } catch {
@@ -123,7 +102,7 @@ export async function readJsonCapped(
   cap: number,
   tooLargeMessage: string,
 ): Promise<unknown> {
-  const chunks = await readCapped(body, declaredLength, cap, tooLargeMessage);
+  const chunks = await readCapped(body, declaredLength, cap, () => tooLarge(tooLargeMessage));
   try {
     return JSON.parse(await new Blob(chunks).text());
   } catch {

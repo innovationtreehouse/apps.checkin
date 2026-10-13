@@ -78,6 +78,7 @@ const customJestConfig = {
         '^@/(.*)$': '<rootDir>/src/$1',
         // Workspace TS package — point jest at its source so it transforms it.
         '^@inventory/money$': '<rootDir>/../packages/money/src/index.ts',
+        '^@inventory/utils$': '<rootDir>/../packages/utils/src/index.ts',
         // Checkin-hosted libraries (#1286, #1287, #1272): jest's resolver doesn't honor
         // a package's `exports` subpaths, so map them to source. Subpath rule first (more
         // specific), then the bare entry.
