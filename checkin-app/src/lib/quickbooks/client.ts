@@ -16,7 +16,7 @@ import {
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 
-/** Re-ask the refresher this long before the token it handed out expires. */
+/** Re-ask the refresher this long before the token it handed out expires. Must stay below the refresher's own 10-min refresh margin, or every call re-invokes it. */
 const TOKEN_MARGIN_MS = 5 * 60_000;
 /** How long a built client (and the Board's realm setting behind it) is reused. */
 const CLIENT_TTL_MS = 60_000;
