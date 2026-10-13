@@ -12,6 +12,7 @@ import {
     ALL_STATUSES as MEMB_STATES,
     fromWhere as membFromWhere,
     personBgOpen,
+    awaitingBgReview,
     type ProcessStatus,
 } from '../../membership/lifecycle';
 import {
@@ -81,6 +82,9 @@ const GUARDS: GuardSite[] = [
     { file: 'lib/membership/mergeBgAdvance.ts', machine: 'membership', from: 'PENDING_PAYMENT', mode: 'spread' },
     { file: 'lib/membership/mergeBgAdvance.ts', machine: 'membership', from: 'PENDING_BG_REVIEW', edge: ['PENDING_BG_REVIEW', 'PENDING_PAYMENT'], mode: 'spread' },
     { file: 'lib/membership/mergeBgAdvance.ts', machine: 'membership', from: 'PENDING_BG_CLEARANCE', edge: ['PENDING_BG_CLEARANCE', 'ACTIVE'], mode: 'spread' },
+    // board override on a BLOCKED review: approve converges it, reset returns it to review.
+    { file: 'lib/membership/review.ts', machine: 'membership', from: 'BLOCKED', edge: ['BLOCKED', 'ACTIVE'], mode: 'spread' },
+    { file: 'lib/membership/review.ts', machine: 'membership', from: 'BLOCKED', edge: ['BLOCKED', 'PENDING_PAYMENT'], mode: 'spread' },
 
     // ── household (OrgMembership.status) — every write goes through setHouseholdStatus ──
     { file: 'app/api/membership-ops/households/route.ts', machine: 'household', from: 'NONE', edge: ['NONE', 'DENIED'], mode: 'helper' },
@@ -88,6 +92,9 @@ const GUARDS: GuardSite[] = [
     { file: 'app/api/membership-ops/households/route.ts', machine: 'household', from: 'REVOKED', edge: ['REVOKED', 'DENIED'], mode: 'helper' },
     { file: 'app/api/membership-ops/households/route.ts', machine: 'household', from: 'DENIED', edge: ['DENIED', 'NONE'], mode: 'helper' },
     { file: 'app/api/membership-ops/households/route.ts', machine: 'household', from: 'ACTIVE', edge: ['ACTIVE', 'REVOKED'], mode: 'helper' },
+    // a paid application's check clears: the household converges to ACTIVE.
+    { file: 'lib/membership/review.ts', machine: 'household', from: 'NONE', edge: ['NONE', 'ACTIVE'], mode: 'helper' },
+    { file: 'lib/membership/review.ts', machine: 'household', from: 'REVOKED', edge: ['REVOKED', 'ACTIVE'], mode: 'helper' },
 
     // ── left literal on purpose (documented) ──
     // personBgTriggers is an idempotency EXISTENCE set (∅→PENDING_BG_REVIEW is the edge;
@@ -152,6 +159,19 @@ describe('CAS guard ↔ TRANSITIONS from-state parity (#1080)', () => {
             const hit = calls.some(([, from, to]) => new RegExp(`["']${g.from}["']`).test(from) && to === g.edge![1]);
             expect({ site: g.file, edge: g.edge, hit }).toEqual({ site: g.file, edge: g.edge, hit: true });
         }
+    });
+
+    it('review writes leaving the awaiting-review states CAS on the awaitingBgReview set', () => {
+        // Reject, the reviewer clearance and the in-review reset start from any
+        // awaiting-review state, so their guard is the set, not one fromWhere.
+        const src = read('lib/membership/review.ts');
+        const sites = {
+            reject: /updateMany\(\{\s*where: \{ id: processId, \.\.\.awaitingBgReview\.where \}, data: \{ status: "BLOCKED"/.test(src),
+            clearance: /clearBackgroundCheck\(tx, processId, reviewerId, awaitingBgReview\)/.test(src),
+            reset: /\.\.\.\(blocked \? fromWhere\("BLOCKED"\) : awaitingBgReview\.where\)/.test(src),
+        };
+        expect(sites).toEqual({ reject: true, clearance: true, reset: true });
+        for (const s of awaitingBgReview.statuses) expect(MEMB_STATES).toContain(s);
     });
 
     it('the personBg existence set lives in the definition, and both consumers spread it', () => {
