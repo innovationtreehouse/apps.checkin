@@ -753,6 +753,33 @@ describe('Program Participants API Integration Tests', () => {
              });
              expect(count).toBe(1);
         });
+
+        it('lets a family with a PENDING claim back to checkout (409) even once the program is full, closed and finished', async () => {
+             const program = await prisma.program.create({
+                 data: {
+                     startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Pending Claim Partic API Test',
+                     phase: 'FINISHED', enrollmentStatus: 'CLOSED', maxParticipants: 1,
+                     orgMemberPriceCents: 1000, nonOrgMemberPriceCents: 1500, shopifyVariantId: 'dev-mock-variant-pending-claim',
+                     participants: { create: { personId: commonId, status: 'PENDING' } },
+                 },
+             });
+             try {
+                 (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } });
+                 const res = await POST(
+                     new Request(`http://localhost:4000/api/programs/${program.id}/participants`, {
+                         method: 'POST',
+                         body: JSON.stringify({ participantId: commonId })
+                     }) as unknown as import("next/server").NextRequest,
+                     createParams(program.id) as unknown as never
+                 );
+                 expect(res.status).toBe(409);
+                 expect((await res.json()).error).toMatch(/already enrolled/i);
+                 expect(await prisma.programParticipant.count({ where: { programId: program.id } })).toBe(1);
+             } finally {
+                 await prisma.programParticipant.deleteMany({ where: { programId: program.id } });
+                 await prisma.program.delete({ where: { id: program.id } });
+             }
+        });
     });
 
     describe('DELETE /api/programs/[id]/participants', () => {

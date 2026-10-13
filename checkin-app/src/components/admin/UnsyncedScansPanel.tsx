@@ -28,9 +28,11 @@ const who = (s: UnsyncedScan) =>
 const lateness = (when: string) => relTime(when).replace(/ ago$/, " late");
 
 const REASON_COPY: Record<string, string> = {
-  stale_replay: "queued scan arrived after the freshness window",
-  out_of_order: "state had already moved past this scan",
-  force_close_review: "force-close replay without a valid confirm token",
+  stale_replay: "queued scan arrived after the freshness window — applied at its scan time; check the visit",
+  out_of_order: "arrived behind later activity — applied only to the visit it fell in, else held; check the visit",
+  clock_suspect: "kiosk clock looked wrong — applied; check the times",
+  closed_before_delivery: "check-in scanned before a close that reached the server first — recorded as departing at that close; check the visit",
+  force_close_review: "keyholder left without confirming a close while others were recorded inside — check who is still in",
   facility_closed: "badge scanned while no keyholder was present",
   "client_dead:unresolvable": "badge number matches no one on record — often two badges read as one",
   conflict_double_in: "check-in while already checked in — they may have been leaving; fix the visit in the manual visits tool",
@@ -147,9 +149,10 @@ export function UnsyncedScansPanel() {
     <Card withBorder radius="md" padding="lg">
       <Title order={4} mb="md">Scans Awaiting Review</Title>
       <Text c="dimmed" size="sm" mb="md">
-        These kiosk scans were recorded but never applied to attendance — the queued scan reached
-        the server too late, or after the person&apos;s record had already moved on. Record the
-        visit by hand, or dismiss the row once you have looked. Up to 100 shown, newest first.
+        These kiosk scans need a look. Most were applied to attendance at their scan time but
+        arrived late, out of order, or from a kiosk with a doubtful clock; some could not be
+        applied without rewriting the person&apos;s later record. Fix a visit in the manual visits
+        tool or record one here, then dismiss the row. Up to 100 shown, newest first.
       </Text>
       {actionError && <Text c="red" size="sm" mb="sm">{actionError}</Text>}
       <Table.ScrollContainer minWidth={600}>

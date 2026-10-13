@@ -14,6 +14,12 @@ import {
     personBgOpen,
     type ProcessStatus,
 } from '../../membership/lifecycle';
+import {
+    TRANSITIONS as HOUSEHOLD_TX,
+    STATES as HOUSEHOLD_STATES,
+    fromWhere as householdFromWhere,
+    type HouseholdStatus,
+} from '../../membership/householdStatus';
 
 /**
  * CAS guard ↔ TRANSITIONS from-state parity (#1080) — the real drift-closer.
@@ -43,14 +49,15 @@ const SRC = join(__dirname, '../../..'); // .../src
 type GuardSite = {
     /** Source file, relative to src/. */
     file: string;
-    machine: 'enrollment' | 'membership';
+    machine: 'enrollment' | 'membership' | 'household';
     /** The from-state the guard's CAS names (a state in that machine). */
     from: string;
     /** Transition the guard drives, as [from, to]; omit for a guard that changes no
      *  status at all (e.g. a flag-only deny). */
     edge?: [string, string];
-    /** 'spread' = migrated onto fromWhere; 'literal' = intentionally kept literal. */
-    mode: 'spread' | 'literal';
+    /** 'spread' = migrated onto fromWhere; 'literal' = intentionally kept literal;
+     *  'helper' = a setHouseholdStatus call naming `from` in its from-list and edge[1] as `to`. */
+    mode: 'spread' | 'literal' | 'helper';
 };
 
 const GUARDS: GuardSite[] = [
@@ -75,6 +82,13 @@ const GUARDS: GuardSite[] = [
     { file: 'lib/membership/mergeBgAdvance.ts', machine: 'membership', from: 'PENDING_BG_REVIEW', edge: ['PENDING_BG_REVIEW', 'PENDING_PAYMENT'], mode: 'spread' },
     { file: 'lib/membership/mergeBgAdvance.ts', machine: 'membership', from: 'PENDING_BG_CLEARANCE', edge: ['PENDING_BG_CLEARANCE', 'ACTIVE'], mode: 'spread' },
 
+    // ── household (OrgMembership.status) — every write goes through setHouseholdStatus ──
+    { file: 'app/api/membership-ops/households/route.ts', machine: 'household', from: 'NONE', edge: ['NONE', 'DENIED'], mode: 'helper' },
+    { file: 'app/api/membership-ops/households/route.ts', machine: 'household', from: 'ACTIVE', edge: ['ACTIVE', 'DENIED'], mode: 'helper' },
+    { file: 'app/api/membership-ops/households/route.ts', machine: 'household', from: 'REVOKED', edge: ['REVOKED', 'DENIED'], mode: 'helper' },
+    { file: 'app/api/membership-ops/households/route.ts', machine: 'household', from: 'DENIED', edge: ['DENIED', 'NONE'], mode: 'helper' },
+    { file: 'app/api/membership-ops/households/route.ts', machine: 'household', from: 'ACTIVE', edge: ['ACTIVE', 'REVOKED'], mode: 'helper' },
+
     // ── left literal on purpose (documented) ──
     // personBgTriggers is an idempotency EXISTENCE set (∅→PENDING_BG_REVIEW is the edge;
     // the guard's {in:[PENDING_BG_REVIEW,BLOCKED]} is broader than any from-state).
@@ -83,8 +97,13 @@ const GUARDS: GuardSite[] = [
 const read = (file: string) => readFileSync(join(SRC, file), 'utf8');
 
 function fromWhereOf(g: GuardSite) {
+    if (g.machine === 'household') return householdFromWhere(g.from as HouseholdStatus);
     return g.machine === 'enrollment' ? enrollFromWhere(g.from as EnrollFrom) : membFromWhere(g.from as ProcessStatus);
 }
+
+const statesOf = (g: GuardSite): readonly string[] =>
+    g.machine === 'enrollment' ? Object.keys(ENROLL_STATES) : g.machine === 'household' ? HOUSEHOLD_STATES : MEMB_STATES;
+const txOf = (g: GuardSite) => (g.machine === 'enrollment' ? ENROLL_TX : g.machine === 'household' ? HOUSEHOLD_TX : MEMB_TX);
 
 /** Recompute the expected identifying status clause independently of fromWhere, so a
  *  bug in fromWhere itself can't make the test tautological. Enrollment maps a
@@ -103,17 +122,15 @@ describe('CAS guard ↔ TRANSITIONS from-state parity (#1080)', () => {
 
     it('every guard from-state is a real node in its machine', () => {
         for (const g of GUARDS) {
-            const states: readonly string[] = g.machine === 'enrollment' ? Object.keys(ENROLL_STATES) : MEMB_STATES;
-            expect(states).toContain(g.from);
+            expect(statesOf(g)).toContain(g.from);
         }
     });
 
     it('every declared forward edge exists in the machine TRANSITIONS table', () => {
         for (const g of GUARDS) {
             if (!g.edge) continue;
-            const tx = g.machine === 'enrollment' ? ENROLL_TX : MEMB_TX;
             const [from, to] = g.edge;
-            const found = tx.some((t) => t.from === from && t.to === to);
+            const found = txOf(g).some((t) => t.from === from && t.to === to);
             expect({ site: g.file, edge: g.edge, found }).toEqual({ site: g.file, edge: g.edge, found: true });
         }
     });
@@ -124,6 +141,16 @@ describe('CAS guard ↔ TRANSITIONS from-state parity (#1080)', () => {
             const src = read(g.file);
             const re = new RegExp(`fromWhere\\(\\s*['"]${g.from}['"]\\s*\\)`);
             expect({ site: g.file, from: g.from, spreads: re.test(src) }).toEqual({ site: g.file, from: g.from, spreads: true });
+        }
+    });
+
+    it('helper guards call setHouseholdStatus with their from-state and target', () => {
+        for (const g of GUARDS) {
+            if (g.mode !== 'helper') continue;
+            // Each setHouseholdStatus options object: `from: [...]` then `to: "X"`.
+            const calls = [...read(g.file).matchAll(/from:\s*\[([^\]]*)\],\s*to:\s*["'](\w+)["']/g)];
+            const hit = calls.some(([, from, to]) => new RegExp(`["']${g.from}["']`).test(from) && to === g.edge![1]);
+            expect({ site: g.file, edge: g.edge, hit }).toEqual({ site: g.file, edge: g.edge, hit: true });
         }
     });
 

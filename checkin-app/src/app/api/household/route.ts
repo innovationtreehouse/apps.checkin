@@ -14,6 +14,7 @@ import { mintPersonId } from "@/lib/person/mintId";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { getEmailSenderIdentity } from "@/lib/emailIdentity";
+import { membershipValidThrough } from "@/lib/orgMembership";
 
 export const GET = withAuth(
     {},
@@ -58,7 +59,12 @@ export const GET = withAuth(
             // Where the locked-email help text points members to change it.
             const { replyTo } = await getEmailSenderIdentity();
 
-            return NextResponse.json({ household, boardReplyTo: replyTo?.[0] ?? null }, { status: 200 });
+            // Same valid-until households-ops shows, so the family sees the lapse the board sees.
+            const validUntil = household?.orgMembership?.status === "ACTIVE"
+                ? await membershipValidThrough(household.id)
+                : null;
+
+            return NextResponse.json({ household, boardReplyTo: replyTo?.[0] ?? null, validUntil }, { status: 200 });
         } catch (error: unknown) {
             logger.error("Household GET Error:", error);
             return apiError("Internal Server Error", 500);

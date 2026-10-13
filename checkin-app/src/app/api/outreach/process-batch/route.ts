@@ -22,7 +22,7 @@ const BATCH_SIZE = 40; // within the spec's ~25-50/round
  * another in-flight process-batch call for the same item) is simply skipped.
  *
  * ponytail: the claim writes a transient "sending" status — not one of the four the design
- * doc names (queued/sent/failed/skipped_unsubscribed) — as the atomic marker, since Prisma's
+ * doc names (queued/sent/failed/skipped_unsubscribed/skipped_denied) — as the atomic marker, since Prisma's
  * updateMany can't return which rows it touched. A crash in the narrow window between claim
  * and finalize could strand a single item in "sending" (not resumable by count-of-queued or
  * retry-failed); add a stale-"sending" reaper if that's ever observed in practice.
@@ -60,7 +60,15 @@ export const POST = withAuth({ roles: ROLES }, async (req) => {
         const claim = await prisma.bulkSendItem.updateMany({ where: { id: item.id, status: "queued" }, data: { status: "sending" } });
         if (claim.count === 0) continue; // already claimed elsewhere — skip, don't send
 
-        const person = await prisma.person.findUnique({ where: { id: item.personId }, select: { name: true, emailSuppressed: true } });
+        const person = await prisma.person.findUnique({
+            where: { id: item.personId },
+            select: { name: true, emailSuppressed: true, household: { select: { orgMembership: { select: { status: true } } } } },
+        });
+        // A household denied after the snapshot was frozen gets nothing either.
+        if (person?.household?.orgMembership?.status === "DENIED") {
+            await prisma.bulkSendItem.update({ where: { id: item.id }, data: { status: "skipped_denied" } });
+            continue;
+        }
         // Honor an unsubscribe that landed AFTER the snapshot was frozen: the drain resumes
         // arbitrarily later (survives deploys), so re-check suppression at send time. Join-only,
         // recorded (not dropped) as the same status the snapshot path uses — spec §2.4.

@@ -217,6 +217,13 @@ export async function processCheckout(
                         ? `, and others are still recorded inside: ${presentLabels(others).join(", ")}.`
                         : ".";
                     closePrompt = `No other keyholder is checked in${inside} Badge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to close the building and check everyone out.`;
+                } else {
+                    // Nobody confirmed a close: the leave applies, and a human
+                    // checks who the server still records inside.
+                    await db.rawBadgeLog.update({
+                        where: { clientEventId: replayEventId },
+                        data: { reviewReason: "force_close_review" },
+                    });
                 }
             }
         } else if (offlineConfirmed) {
