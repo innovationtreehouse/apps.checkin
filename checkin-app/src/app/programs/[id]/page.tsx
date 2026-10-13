@@ -318,8 +318,13 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
       // Re-read the roster first: a child may have been paid since this page
       // loaded, and the participants POST answers that with a 409 like any re-run.
       if (isPayingOnShopify && !confirmedRepeat) {
-        const freshRes = await fetch(`/api/programs/${id}`);
-        const fresh: ProgramDetail | null = freshRes.ok ? await freshRes.json() : null;
+        // The warning is advisory: a failed re-read checks the page's roster instead.
+        const fresh: ProgramDetail | null = await fetch(`/api/programs/${id}`)
+          .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+          .catch((err: unknown) => {
+            console.warn("[programs] roster re-read failed; checking repeat payments against the loaded roster", err);
+            return null;
+          });
         if (fresh) setProgram(fresh);
         const repeats = findRepeatPayments(
           selectedParticipantIds,
