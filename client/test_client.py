@@ -922,6 +922,30 @@ class TestRepeatReadFilter(unittest.TestCase):
         self.assertIsNone(self.state.slide_close(5))
         self.assertEqual(self.state.confirm_deadline, 1015.0)
 
+    def test_held_badge_reshows_only_its_own_banner(self):
+        self.state.arm_confirm(9, "tok-1", 15, "<div>nine</div>")
+        self.state.arm_local_close(4, 15, "<div>four</div>")
+        self.now += 1
+        self.assertEqual(self.state.slide_close(9)["html"], "<div>nine</div>")
+        self.assertEqual(self.state.slide_close(4)["html"], "<div>four</div>")
+
+    def test_banner_cleared_after_close_completes(self):
+        self.state.arm_confirm(9, "tok-1", 15, "<div>nine</div>")
+        self.state.arm_local_close(4, 15, "<div>four</div>")
+        self.assertEqual(self.state.take_confirm(9), "tok-1")
+        self.assertTrue(self.state.take_local_close(4))
+        self.assertIsNone(self.state.confirm_banner)
+        self.assertIsNone(self.state.local_close_banner)
+        self.assertIsNone(self.state.slide_close(9))
+
+    def test_banner_cleared_after_expiry(self):
+        self.state.arm_confirm(9, "tok-1", 15, "<div>nine</div>")
+        self.state.arm_local_close(4, 15, "<div>four</div>")
+        self.now += 16
+        self.assertIsNone(self.state.slide_close(9))
+        self.assertIsNone(self.state.confirm_banner)
+        self.assertIsNone(self.state.local_close_banner)
+
 
 class TestOfflineForceClose(unittest.TestCase):
     """Offline the server mints no token, so the kiosk runs the last-keyholder
