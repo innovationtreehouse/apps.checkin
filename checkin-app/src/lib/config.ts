@@ -336,6 +336,9 @@ export const config = {
     // unset/unrecognized value; cloud-dev pages are additionally behind the
     // org-member login gate.
     devToolsActive: (): boolean => readCheckinEnv() !== 'prod',
+    // Optional CSV participant import module (page + API). Off unless CSV_IMPORT_ENABLED=true;
+    // when off the page and its routes 404.
+    csvImportEnabled: (): boolean => process.env.CSV_IMPORT_ENABLED === 'true',
     // True only on a developer laptop. Gates offline credential login + keyless kiosk.
     isLocal: (): boolean => readCheckinEnv() === 'local',
     // True on ops-stg (CHECKIN_ENV=stg; see isStagingEnv) — gates the access
