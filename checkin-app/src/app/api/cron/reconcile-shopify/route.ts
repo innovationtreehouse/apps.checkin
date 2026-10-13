@@ -5,6 +5,7 @@ import { runReconcile } from "@/lib/finance/reconcile";
 import { runSaleSweep } from "@/lib/programs/saleSweep";
 import { runReconcile as runIncomeReconcile } from "@inventory/income";
 import { getOrg } from "@/lib/catalog/configure";
+import { runExpenseCatchUp } from "@inventory/expense";
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
@@ -35,6 +36,9 @@ import { getOrg } from "@/lib/catalog/configure";
  * Then matches paid payouts to QuickBooks deposits (the income library) on the
  * same fresh mirror. That step is isolated: its failure never fails checkin's
  * reconcile, and the response carries its counts only, no payout ids or amounts.
+ *
+ * Then runs the expense library's catch-up (intake replay, stranded QB recovery, catalog
+ * events, the QuickBooks outbox drain). Its failure never fails checkin's reconcile; counts only.
  */
 export const GET = withCron(async () => {
     const result = await runReconcile();
@@ -49,5 +53,13 @@ export const GET = withCron(async () => {
         income = { status: "error" };
     }
     logger.info(`[reconcile] income ${JSON.stringify(income)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep, income });
+    let expense: Awaited<ReturnType<typeof runExpenseCatchUp>> | { status: "error" };
+    try {
+        expense = await runExpenseCatchUp();
+    } catch (err) {
+        logger.error("[reconcile] expense catch-up failed:", err);
+        expense = { status: "error" };
+    }
+    logger.info(`[reconcile] expense ${JSON.stringify(expense)}`);
+    return NextResponse.json({ success: true, ...result, saleSweep, income, expense });
 });

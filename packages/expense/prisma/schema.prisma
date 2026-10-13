@@ -132,6 +132,15 @@ model Expense {
   // A signed note stands in for the receipt (F2 exception; changes who fills the program-approver seat).
   /// @sensitivity:internal
   noteInLieuOfReceipt Boolean  @default(false) @map("note_in_lieu_of_receipt")
+  // QuickBooks match state of the whole expense (one QB entry per expense):
+  // UNMATCHED | MATCHED | CREATED | AMBIGUOUS | BEFORE_LINE | POST_FAILED. qb_txn_id is the
+  // claimed entry, unique so an entry is claimed once; qb_vendor_id is the Vendor a Bill was posted to.
+  /// @sensitivity:internal
+  qbMatchState       String    @default("UNMATCHED") @map("qb_match_state")
+  /// @sensitivity:internal
+  qbTxnId            String?   @unique @map("qb_txn_id")
+  /// @sensitivity:internal
+  qbVendorId         String?   @map("qb_vendor_id")
 
   lineItems          ExpenseLineItem[]
   approvals          LineItemOwnerApproval[]
@@ -190,6 +199,9 @@ model ExpenseLineItem {
   // QuickBooks entity type of qb_txn_id (Bill | Purchase); QuickBooks ids are unique per entity type only.
   /// @sensitivity:internal
   qbTxnEntity       String?  @map("qb_txn_entity")
+  // The QBO account this line was posted to on an entry the app created.
+  /// @sensitivity:internal
+  qbAccountId       String?  @map("qb_account_id")
 
   expense           Expense                 @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   approvals         LineItemOwnerApproval[]
@@ -492,6 +504,23 @@ model ExpenseQbMatchExclusion {
 
   @@unique([orgId, qbTxnId])
   @@map("qb_match_exclusion")
+}
+
+// The QuickBooks Vendor a reimbursee's Bills are posted to (checkin Person.id, no FK).
+model ExpenseReimburseeVendor {
+  /// @sensitivity:internal
+  id         Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId      String   @map("org_id")
+  /// @sensitivity:pii
+  personId   Int      @map("person_id")
+  /// @sensitivity:internal
+  qbVendorId String   @map("qb_vendor_id")
+  /// @sensitivity:internal
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([orgId, personId])
+  @@map("reimbursee_vendor")
 }
 
 // One filled sign-off seat on a reimbursement or card-charge line (Financial Policy F2 / F2-COI).

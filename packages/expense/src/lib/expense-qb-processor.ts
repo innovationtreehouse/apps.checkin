@@ -8,6 +8,7 @@ import { lookupItems, getItem, listCategories, listSubcategories } from "./catal
 import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost } from "./workflow-engine";
 import { unsignedLines } from "./signoff-facts";
 import { reimburseeUnknown } from "./signoff";
+import { postExpenseToQb } from "./expense-qb-poster";
 import type { Expense } from "../generated/prisma/client";
 
 // ── Allocation helpers ────────────────────────────────────────────────────────
@@ -436,6 +437,9 @@ async function processExpenseForQb(
     if (!isUniqueConstraintError(err)) throw err;
     // Unique constraint on expenseEvents → concurrent run already committed; safe to ignore
   }
+
+  // Post right after the outbox commit; anything left is the catch-up drain's.
+  await postExpenseToQb(orgId, expenseId).catch((err) => logError("qb_post_failed", { expenseId, orgId }, err));
 }
 
 // ── Stranded recovery (catch-up sweep) ────────────────────────────────────────
