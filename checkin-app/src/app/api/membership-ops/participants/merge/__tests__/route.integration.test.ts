@@ -673,6 +673,7 @@ describe("Merge Participants API", () => {
             // Refused before the transaction — nothing moved.
             expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
             expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.email).toBe("merge@example.com");
+            expect(await prisma.auditLog.count({ where: { actorId, tableName: "SelfGrantRefusal" } })).toBe(1);
         });
 
         it("403s when the actor shares a household with the merged-away record only", async () => {

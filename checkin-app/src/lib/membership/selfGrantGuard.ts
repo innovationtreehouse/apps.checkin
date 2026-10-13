@@ -30,6 +30,9 @@ export const SELF_GRANT_REFUSAL_TABLE = "SelfGrantRefusal";
 export const SELF_GRANT_REFUSAL_MESSAGE =
     "You cannot grant this to yourself or your own household — someone outside your household must.";
 
+/** A refused grant, as its audit row records it. */
+export type SelfGrantRefusal = { actorId: number; affectedEntityId: number; newData: Prisma.InputJsonObject };
+
 /**
  * Whether the grant is refused. Writes the refusal's audit row when it is; the
  * caller returns 403 and writes nothing else.
@@ -40,6 +43,21 @@ export async function refuseSelfGrant(
     subject: GrantSubject,
     attempt: GrantAttempt,
 ): Promise<boolean> {
+    const refusal = await findSelfGrantRefusal(db, actorId, subject, attempt);
+    if (refusal) await recordSelfGrantRefusal(db, refusal);
+    return refusal !== null;
+}
+
+/**
+ * The refusal for this grant, or null when it may proceed. Writes nothing, so a
+ * caller inside a transaction can throw it out and record it after the rollback.
+ */
+export async function findSelfGrantRefusal(
+    db: DbClient,
+    actorId: number,
+    subject: GrantSubject,
+    attempt: GrantAttempt,
+): Promise<SelfGrantRefusal | null> {
     const actorHouseholdId = await resolveActorHouseholdId(db, actorId);
 
     let reason: "actor_household_unresolved" | "own_household" | null = null;
@@ -60,18 +78,13 @@ export async function refuseSelfGrant(
         if (sharesHousehold(actorHouseholdId, subject.householdId)) reason = "own_household";
     }
 
-    if (reason === null) return false;
+    if (reason === null) return null;
+    return { actorId, affectedEntityId, newData: { reason, table: attempt.table, subject, attempted: attempt.attempted } };
+}
 
-    await db.auditLog.create({
-        data: {
-            actorId,
-            action: "EDIT",
-            tableName: SELF_GRANT_REFUSAL_TABLE,
-            affectedEntityId,
-            newData: { reason, table: attempt.table, subject, attempted: attempt.attempted },
-        },
-    });
-    return true;
+/** Writes a refusal's audit row under `SELF_GRANT_REFUSAL_TABLE`. */
+export async function recordSelfGrantRefusal(db: DbClient, refusal: SelfGrantRefusal): Promise<void> {
+    await db.auditLog.create({ data: { ...refusal, action: "EDIT", tableName: SELF_GRANT_REFUSAL_TABLE } });
 }
 
 /** The id of the person in the actor's household whose email is `email` (canonical), or null. */

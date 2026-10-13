@@ -4,9 +4,9 @@ import type { Person, PersonRoleKind } from "@/generated/prisma/client";
 import { withAuth } from "@/lib/auth";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
-import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 import { personBgOpen } from "@/lib/membership/lifecycle";
 import { advanceHouseholdBgAfterMerge, householdBgFresh } from "@/lib/membership/mergeBgAdvance";
+import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import type { TxClient } from "@/lib/db-client";
@@ -303,11 +303,10 @@ export const POST = withAuth(
             // two need not be the same household. No role bypasses this, and an actor
             // whose household can't be resolved is refused (fail closed).
             if (auth.type === 'session') {
-                const actorHouseholdId = await resolveActorHouseholdId(prisma, auth.user.id);
+                const attempt = { table: "Person" as const, attempted: { keepId: keepParticipant.id, mergeId: mergeParticipant.id } };
                 if (
-                    actorHouseholdId === null
-                    || sharesHousehold(actorHouseholdId, keepParticipant.householdId)
-                    || sharesHousehold(actorHouseholdId, mergeParticipant.householdId)
+                    await refuseSelfGrant(prisma, auth.user.id, { personId: keepParticipant.id, householdId: keepParticipant.householdId }, attempt)
+                    || await refuseSelfGrant(prisma, auth.user.id, { personId: mergeParticipant.id, householdId: mergeParticipant.householdId }, attempt)
                 ) {
                     return apiError("You cannot merge a record in your own household — someone outside your household must.", 403);
                 }

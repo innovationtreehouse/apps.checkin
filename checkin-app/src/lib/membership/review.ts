@@ -10,13 +10,13 @@ import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { openPersonBgForNewMember } from "@/lib/membership/personBgTriggers";
 import { openPersonAgreementForNewMember } from "@/lib/membership/personAgreementTriggers";
 import { personActor, type AuditActor } from "@/lib/auditActor";
-import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest";
+import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { type DbClient, type TxClient } from "@/lib/db-client";
 import { awaitingBgReview, fromWhere } from "@/lib/membership/lifecycle";
 import { raiseDeniedHouseholdActivity, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { approvalsForSubject, establishedSubject } from "@/lib/membership/approvals";
-import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject } from "@/lib/membership/selfGrantGuard";
+import { findSelfGrantRefusal, recordSelfGrantRefusal, refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 
 /**
  * Background-check review — now a PARALLEL track, not a blocking phase.
@@ -66,6 +66,23 @@ export class ReviewError extends Error {
     ) {
         super(message);
         this.name = "ReviewError";
+    }
+}
+
+/** A self-grant refused inside a review transaction; `reviewTransaction` records it after the rollback. */
+export class SelfGrantRefusedError extends ReviewError {
+    constructor(public readonly refusal: SelfGrantRefusal, message: string) {
+        super("same_household_applicant", message);
+    }
+}
+
+/** A review transaction whose self-grant refusal is recorded outside it, so the audit row outlives the rollback. */
+export async function reviewTransaction<T>(fn: (tx: TxClient) => Promise<T>): Promise<T> {
+    try {
+        return await prisma.$transaction(fn);
+    } catch (e) {
+        if (e instanceof SelfGrantRefusedError) await recordSelfGrantRefusal(prisma, e.refusal);
+        throw e;
     }
 }
 
@@ -127,7 +144,7 @@ async function loadReviewer(reviewerId: number) {
  * caller then applies no exclusion.
  *
  * Exported for the EXTERNAL-phase route guard, which holds the same process shape
- * and needs the same subject household to feed hasHouseholdConflict.
+ * and needs the same subject household to feed its conflict check.
  */
 export async function applicantHousehold(db: DbClient, process: { orgMembershipId: number | null; subjectPersonId: number | null }): Promise<number | null> {
     if (process.subjectPersonId) {
@@ -278,7 +295,7 @@ export async function attest(
         | { status: "BLOCKED"; notifyPaidReject: boolean }
         | ClearanceOutcome
         | { status: OrgMembershipProcessStatus; approvals: number };
-    const result = await prisma.$transaction<AttestOutcome>(async (tx) => {
+    const result = await reviewTransaction<AttestOutcome>(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
 
         const process = await tx.orgMembershipProcess.findUnique({
@@ -288,8 +305,10 @@ export async function attest(
         if (!process) throw new ReviewError("not_found", "Application not found.");
         if (!awaitingBgReview.has({ status: process.status, bgConsentAt: !!process.bgConsentAt, bgClearedAt: !!process.bgClearedAt })) throw new ReviewError("wrong_phase", "This application is not awaiting background-check review.");
         const applicantHouseholdId = await applicantHousehold(tx, process);
-        // A reviewer never attests a check naming themselves, whatever the household lookup returns.
-        if (process.subjectPersonId === reviewerId || sharesHousehold(reviewer.householdId, applicantHouseholdId)) throw new ReviewError("same_household_applicant", "You cannot review an applicant in your own household.");
+        const applicant: GrantSubject | null = process.subjectPersonId
+            ? { personId: process.subjectPersonId, householdId: applicantHouseholdId }
+            : applicantHouseholdId === null ? null : { householdId: applicantHouseholdId };
+        if (applicant) await throwIfOwnHousehold(tx, reviewerId, applicant, { attestation: input.result }, "You cannot review an applicant in your own household.");
         if (process.attestations.some((a) => a.reviewerId === reviewerId)) throw new ReviewError("already_attested", "You have already reviewed this application.");
         if (process.attestations.some((a) => sharesHousehold(reviewer.householdId, a.reviewer.householdId))) throw new ReviewError("same_household_reviewer", "Another reviewer from your household has already reviewed this application.");
 
@@ -386,7 +405,7 @@ export async function clearBackgroundCheck(
     // the household path below, whose lead-stamp change is Phase 5).
     if (process.subjectPersonId) {
         const subject = { personId: process.subjectPersonId, householdId: await applicantHousehold(tx, process) };
-        await refuseClearingOwnHousehold(tx, actorId, subject, { lastBackgroundCheck: now.toISOString() });
+        await throwIfOwnHousehold(tx, actorId, subject, { lastBackgroundCheck: now.toISOString() });
         await tx.person.update({ where: { id: process.subjectPersonId }, data: { lastBackgroundCheck: now } });
         const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...expected.where }, data: { bgClearedAt: now, status: "ACTIVE", stageEnteredAt: now } });
         if (!count) throw movedOn();
@@ -413,7 +432,7 @@ export async function clearBackgroundCheck(
     // Expiry is derived from this plus BoardSettings.bgRecheckMonths at read time (see
     // householdBgIsFresh) — not stored.
     const cleared = opts.subjectOverride ?? subjectsWithTwoApprovals(process.attestations);
-    await refuseClearingOwnHousehold(tx, actorId, { householdId }, { lastBackgroundCheck: now.toISOString(), clearedPersonIds: cleared });
+    await throwIfOwnHousehold(tx, actorId, { householdId }, { lastBackgroundCheck: now.toISOString(), clearedPersonIds: cleared });
     if (cleared.length) {
         await tx.person.updateMany({ where: { id: { in: cleared } }, data: { lastBackgroundCheck: now } });
     }
@@ -436,15 +455,10 @@ function movedOn() {
     return new ReviewError("wrong_phase", "This application changed while it was being reviewed. Reload and try again.");
 }
 
-/**
- * Throws when the actor would clear their own household. A backstop: every caller
- * refuses an own-household actor before its transaction, so the guard's audit row,
- * which rolls back with the throw, records nothing a caller hasn't already refused.
- */
-async function refuseClearingOwnHousehold(tx: TxClient, actorId: number, subject: GrantSubject, attempted: Prisma.InputJsonObject) {
-    if (await refuseSelfGrant(tx, actorId, subject, { table: "Person", attempted })) {
-        throw new ReviewError("same_household_applicant", SELF_GRANT_REFUSAL_MESSAGE);
-    }
+/** Throws a SelfGrantRefusedError when the actor is the subject or shares its household; run it inside `reviewTransaction`. */
+async function throwIfOwnHousehold(tx: TxClient, actorId: number, subject: GrantSubject, attempted: Prisma.InputJsonObject, message = SELF_GRANT_REFUSAL_MESSAGE) {
+    const refusal = await findSelfGrantRefusal(tx, actorId, subject, { table: "Person", attempted });
+    if (refusal) throw new SelfGrantRefusedError(refusal, message);
 }
 
 /** What a clearance settled to, for the sends that run after the transaction commits. */
@@ -547,7 +561,7 @@ export async function overrideBlocked(processId: number, actorId: number, action
     // application — else they could force-clear their family's failed background check, the
     // very thing attest()'s same-household gate forbids. No role bypasses this.
     const applicantHouseholdId = await applicantHousehold(prisma, process);
-    if (await hasHouseholdConflict(prisma, actorId, applicantHouseholdId)) {
+    if (applicantHouseholdId !== null && await refuseSelfGrant(prisma, actorId, { householdId: applicantHouseholdId }, { table: "Person", attempted: { override: action } })) {
         throw new ReviewError("same_household_applicant", "You cannot override your own household's application — someone outside your household must.");
     }
 
@@ -594,7 +608,7 @@ export async function overrideBlocked(processId: number, actorId: number, action
     // against a late payment webhook (activate also locks), a second approve, an
     // archive or a reset, so the override converges only a row still BLOCKED, with a
     // fresh paidAt.
-    const cleared = await prisma.$transaction(async (tx) => {
+    const cleared = await reviewTransaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
         return clearBackgroundCheck(tx, processId, actorId, { where: fromWhere("BLOCKED") }, { subjectOverride });
     });

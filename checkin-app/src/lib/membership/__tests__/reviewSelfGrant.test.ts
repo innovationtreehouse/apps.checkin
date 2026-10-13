@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import type { TxClient } from "@/lib/db-client";
-import { attest, clearBackgroundCheck, ReviewError } from "@/lib/membership/review";
+import { attest, clearBackgroundCheck, SelfGrantRefusedError } from "@/lib/membership/review";
 import { SELF_GRANT_REFUSAL_TABLE } from "@/lib/membership/selfGrantGuard";
 
 jest.mock("@/lib/prisma", () => ({
@@ -53,17 +53,19 @@ describe("clearBackgroundCheck self-grant guard", () => {
     it.each([
         ["a household member's PERSON_BG", { subjectPersonId: 2, householdId: 10 }],
         ["the actor's own household", { subjectPersonId: null, householdId: 10 }],
-    ])("refuses %s, stamps nothing, and audits the refusal", async (_label, process) => {
+    ])("refuses %s, stamps nothing, and carries the refusal out of the transaction", async (_label, process) => {
         const tx = fakeTx(process);
-        await expect(clearBackgroundCheck(tx as unknown as TxClient, 7, 1, anyState)).rejects.toBeInstanceOf(ReviewError);
+        const err = await clearBackgroundCheck(tx as unknown as TxClient, 7, 1, anyState).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(SelfGrantRefusedError);
+        expect((err as SelfGrantRefusedError).refusal).toMatchObject({ actorId: 1, newData: { reason: "own_household" } });
         expect(tx.person.update).not.toHaveBeenCalled();
         expect(tx.person.updateMany).not.toHaveBeenCalled();
-        expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ tableName: SELF_GRANT_REFUSAL_TABLE }) });
+        expect(tx.auditLog.create).not.toHaveBeenCalledWith({ data: expect.objectContaining({ tableName: SELF_GRANT_REFUSAL_TABLE }) });
     });
 
     it("refuses an actor whose household can't be resolved", async () => {
         const tx = fakeTx({ subjectPersonId: 3, householdId: 20 });
-        await expect(clearBackgroundCheck(tx as unknown as TxClient, 7, 999, anyState)).rejects.toBeInstanceOf(ReviewError);
+        await expect(clearBackgroundCheck(tx as unknown as TxClient, 7, 999, anyState)).rejects.toBeInstanceOf(SelfGrantRefusedError);
         expect(tx.person.update).not.toHaveBeenCalled();
     });
 
@@ -96,17 +98,18 @@ describe("attest on a PERSON_BG", () => {
     }
 
     it.each([
-        ["their own check, with no household", 4, 4],
+        ["a check while their household can't be resolved", 4, 3],
         ["their own check", 1, 1],
         ["a household member's check", 1, 2],
-    ])("refuses a reviewer attesting %s", async (_label, reviewerId, subjectPersonId) => {
+    ])("refuses a reviewer attesting %s and records the refusal outside the transaction", async (_label, reviewerId, subjectPersonId) => {
         const { result, attestation } = attestAs(reviewerId, subjectPersonId);
         await expect(result).rejects.toMatchObject({ code: "same_household_applicant" });
         expect(attestation).not.toHaveBeenCalled();
+        expect(db.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ actorId: reviewerId, tableName: SELF_GRANT_REFUSAL_TABLE }) });
     });
 
     it("records an attestation on another household's check", async () => {
-        const { result, attestation } = attestAs(4, 3);
+        const { result, attestation } = attestAs(1, 3);
         await expect(result).resolves.toMatchObject({ approvals: 1 });
         expect(attestation).toHaveBeenCalled();
     });
