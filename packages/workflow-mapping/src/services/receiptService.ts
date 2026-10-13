@@ -150,7 +150,9 @@ export const receiptService = {
     const parsed = parseStoredReceipt(received.receiptJson);
     if (!parsed.ok) throw httpError(422, parsed.error);
 
-    return executePushAndSettle(receiptId, received, actor.id, actor.name);
+    const result = await executePushAndSettle(receiptId, received, actor.id, actor.name);
+    if (!result) throw httpError(409, "Receipt is already being applied");
+    return result;
   },
 
   async retryApply(receiptId: number): Promise<{ state: ReceivedReceiptState }> {
@@ -162,6 +164,13 @@ export const receiptService = {
     }
     const nextState = assertWorkflowMappingTransition(received.state as ReceivedReceiptState, "RETRY");
 
+    // Compare-and-set on the row version, as proceed and apply do.
+    const { count } = await db.receivedReceipt.updateMany({
+      where: { id: receiptId, state: received.state, updatedAt: received.updatedAt },
+      data: { state: nextState },
+    });
+    if (count !== 1) throw httpError(409, "Receipt was already retried");
+
     await insertAuditEvent(db, {
       orgId: received.orgId,
       actorUserId: actor.id,
@@ -171,8 +180,6 @@ export const receiptService = {
       fromState: received.state,
       toState: nextState,
     });
-
-    await db.receivedReceipt.update({ where: { id: receiptId }, data: { state: nextState } });
 
     return { state: nextState };
   },

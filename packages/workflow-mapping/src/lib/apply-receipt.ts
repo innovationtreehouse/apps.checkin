@@ -45,8 +45,32 @@ export function buildExpenseReceipt(
  *
  * Does NOT write the intermediate "applying" state — callers are responsible
  * for that transition before invoking this function.
+ *
+ * Holds a per-receipt advisory lock for the whole push and re-reads the state
+ * under it, so of concurrent callers only one pushes. Returns null when another
+ * push holds the receipt or it is no longer `applying`.
  */
 export async function executePushAndSettle(
+  receiptId: number,
+  received: Pick<ReceivedReceipt, "id" | "orgId" | "receiptJson">,
+  actorUserId?: number | null,
+  actorUsername?: string | null,
+): Promise<ApplyResult | null> {
+  return db.$transaction(
+    async (tx) => {
+      const [{ locked }] = await tx.$queryRaw<Array<{ locked: boolean }>>`
+        SELECT pg_try_advisory_xact_lock(${receiptId}::bigint) AS locked`;
+      if (!locked) return null;
+      const current = await tx.receivedReceipt.findUnique({ where: { id: receiptId }, select: { state: true } });
+      if (current?.state !== "applying") return null;
+      return pushAndSettle(receiptId, received, actorUserId, actorUsername);
+    },
+    // ponytail: the lock's connection stays open for the whole push; split claim/settle if pushes get slow.
+    { timeout: 120_000 },
+  );
+}
+
+async function pushAndSettle(
   receiptId: number,
   received: Pick<ReceivedReceipt, "id" | "orgId" | "receiptJson">,
   actorUserId?: number | null,

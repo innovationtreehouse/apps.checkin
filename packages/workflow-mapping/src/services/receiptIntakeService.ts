@@ -111,7 +111,7 @@ export async function ingestReceipt(input: z.input<typeof CompletedReceiptSchema
 
   if (initialState === "applying") {
     const result = await executePushAndSettle(inserted.id, inserted, null);
-    return { id: inserted.id, state: result.state, created: true };
+    return { id: inserted.id, state: result?.state ?? "applying", created: true };
   }
 
   return { id: inserted.id, state: initialState, created: true };
