@@ -188,6 +188,27 @@ describe('Nav todo-counts API', () => {
         );
     });
 
+    // Unpaid enrollments are payment status: only the adult household lead (per
+    // the DB, whatever the session claims) gets those items.
+    it('gives a non-lead adult member no payment items, even with a stale lead claim', async () => {
+        const data = await (await callAs({ id: secondMemberId, householdId: householdAId, householdLead: true, ageBand: 'adult' })).json();
+        expect(data.member.programs).toHaveLength(0);
+        expect(data.member.programsAwaitingFinance).toBe(0);
+    });
+
+    it('gives a youth household member no payment items', async () => {
+        const youth = await prisma.person.create({
+            data: { email: `youth-${TAG}@example.com`, name: 'Youth A3', dateOfBirth: new Date('2014-01-01'), householdId: householdAId },
+        });
+        try {
+            const data = await (await callAs({ id: youth.id, householdId: householdAId, ageBand: 'youth' })).json();
+            expect(data.member.programs).toHaveLength(0);
+            expect(data.member.programsAwaitingFinance).toBe(0);
+        } finally {
+            await prisma.person.delete({ where: { id: youth.id } });
+        }
+    });
+
     // Regression (#1618): a household that renewed a trusted adult early carries a stale
     // in-window approval PLUS a live renewal that outlives it. "Expiring" is per adult on
     // the current authorization, so this adds NO "Renew an expiring trusted adult" todo —

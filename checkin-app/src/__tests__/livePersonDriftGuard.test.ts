@@ -144,7 +144,6 @@ const ALLOWLIST: Record<string, string> = {
 
     // ── id-scoped findFirst (one-row shape, same boundary as findUnique-by-id) ─
     'lib/orgMembership.ts': 'isActiveOrgMember ANDs an explicit `id: personId` into the where — at most one row, same shape as findUnique-by-id.',
-    'app/api/nav/todo-counts/route.ts': 'isLead check ANDs `id: user.id` (the caller\'s own session id) into the where — at most one row, same shape as findUnique-by-id.',
     'app/api/programs/[id]/participants/route.ts': 'leadRecord check ANDs `id: currentUserId` (the caller\'s own session id) into the where — at most one row, same shape as findUnique-by-id.',
     'app/api/programs/[id]/request-payment-plan/route.ts': 'leadRecord check ANDs `id: currentUserId` (the caller\'s own session id) into the where — at most one row, same shape as findUnique-by-id. (This file also nests `person: true` off a programParticipant `findUnique` by compound key — same excluded shape as a bare findUnique-by-id.)',
     'lib/trusted-adult/service.ts': 'assertHouseholdLead ANDs an explicit `id: actorId` into the where — at most one row, same shape as findUnique-by-id.',
