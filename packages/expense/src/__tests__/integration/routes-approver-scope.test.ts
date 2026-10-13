@@ -134,6 +134,19 @@ describeDb("nav badge counts", () => {
     expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(SIGNOFF_BADGE_EXPENSE_CAP);
   });
 
+  it("older expenses already past the caller's seat do not crowd out a newer one awaiting it", async () => {
+    as(APPROVER);
+    const old = new Date("2026-01-01");
+    for (let i = 0; i <= SIGNOFF_BADGE_EXPENSE_CAP; i++) {
+      const id = await seedExpense({ state: "qb_pending", submitterId: 1 });
+      const line = await seedLineItem(id);
+      await seedApproval(id, line, { ownerId: OWN_BUCKET, status: "approved" });
+      await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: line, seat: "PROGRAM_APPROVER", signerUserId: 9 } });
+      await db.expense.update({ where: { id }, data: { submittedAt: old } });
+    }
+    expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(1);
+  });
+
   it("counts held expenses plus open flags for FINANCE, and nothing for an approver", async () => {
     as(APPROVER);
     await db.expenseHold.create({ data: { orgId: ORG, expenseId, lineItemId, reason: "NO_MATCH", matchedRows: "[]" } });

@@ -23,7 +23,9 @@ export const SIGNOFF_BADGE_EXPENSE_CAP = 25;
 
 /**
  * Lines in the caller's buckets with an open program-approver seat the caller may sign, across at
- * most SIGNOFF_BADGE_EXPENSE_CAP open expenses (oldest first); past the cap it is a lower bound.
+ * most SIGNOFF_BADGE_EXPENSE_CAP candidate expenses (newest first); past the cap it is a lower bound.
+ * The query keeps only expenses with a line in the caller's buckets whose program-approver seat is
+ * open and which the caller has not signed; conflicts and Board substitution are checked per line.
  */
 export async function signoffsAwaitingCount(principal: ExpensePrincipal): Promise<number> {
   const me = callerId(principal);
@@ -36,9 +38,15 @@ export async function signoffsAwaitingCount(principal: ExpensePrincipal): Promis
       state: { notIn: [...CLOSED_STATES] },
       // A reimbursement with no reimbursee takes no sign-off (reimburseeUnknown).
       NOT: { needsReimbursement: true, reimburseePersonId: null },
-      approvals: { some: { ownerId: { in: buckets } } },
+      submitterId: { not: me },
+      approvals: {
+        some: {
+          ownerId: { in: buckets },
+          lineItem: { signoffs: { none: { OR: [{ seat: "PROGRAM_APPROVER" }, { signerUserId: me }] } } },
+        },
+      },
     },
-    orderBy: { submittedAt: "asc" },
+    orderBy: { submittedAt: "desc" },
     take: SIGNOFF_BADGE_EXPENSE_CAP,
   });
   let count = 0;
