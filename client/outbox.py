@@ -33,10 +33,8 @@ MAX_5XX_ATTEMPTS = 50
 def counts_toward_poison(status):
     return 500 <= status < 600 and status not in (502, 503, 504)
 
-# docs/rules/attendance-checkin.md (kiosk resilience): the drain never sends
-# during the closed window -- a queued POST is non-GET and wakes the curfewed
-# service.
-# The window is 23:00-06:00 local.
+# Overnight, 23:00-06:00 local: the health monitor's recovery ladder stays
+# quiet. Server traffic (roster, scans, the drain) is not gated on it.
 CLOSED_WINDOW_START_HOUR = 23  # local time, inclusive
 CLOSED_WINDOW_END_HOUR = 6     # local time, exclusive
 
@@ -370,8 +368,7 @@ def _send_dead_row(outbox, send_fn, push_fn=None, backoff=MIN_BACKOFF_SECONDS):
     return _backoff_seconds(retry_after, backoff), min(backoff * 2, MAX_BACKOFF_SECONDS)
 
 
-def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, in_closed_window_fn=in_closed_window,
-                 protocol_ok_fn=lambda: True):
+def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok_fn=lambda: True):
     """Single drain thread: pulls pending rows in scanned_at order,
     resubmits each one (send_fn re-signs per call), and applies the
     ack/retry/dead outcome. Runs forever; call in a background thread."""
@@ -379,13 +376,6 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, in_closed_w
     dead_backoff = MIN_BACKOFF_SECONDS
     protocol_hold_logged = False
     while True:
-        # D4: never send during the closed window -- a queued POST is
-        # non-GET and would wake the curfewed service. Covers the dead
-        # pass too, since it's gated behind this same check.
-        if in_closed_window_fn():
-            sleep_fn(DRAIN_PACE_SECONDS)
-            continue
-
         # Deploy-order race: a server that hasn't advertised the replay
         # generation would misread these rows as live toggles. Hold the
         # queue (rows keep) until kiosk-version says it's safe. Logged on

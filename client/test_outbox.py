@@ -5,7 +5,7 @@ banner (#1257)."""
 import os
 import tempfile
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from outbox import (Outbox, classify_response, replay_drain, new_event_id, now_iso,
                     in_closed_window, MIN_BACKOFF_SECONDS, DRAIN_PACE_SECONDS, MAX_5XX_ATTEMPTS)
@@ -206,13 +206,8 @@ class TestReplayDrain(unittest.TestCase):
                 if calls["n"] >= len(responses):
                     raise _StopLoop()
 
-            # Pin the window open: these cases test send/classify, not F3, and
-            # the real clock would park the drain (and hang the test) whenever
-            # the suite runs between 23:00 and 06:00 local. The window has its
-            # own test.
             with self.assertRaises(_StopLoop):
-                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                             in_closed_window_fn=lambda: False)
+                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep)
             return ob
 
     def test_a_426_version_bounce_is_a_retry_not_a_dead_letter(self):
@@ -240,7 +235,6 @@ class TestReplayDrain(unittest.TestCase):
 
             with self.assertRaises(_StopLoop):
                 replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                             in_closed_window_fn=lambda: False,
                              protocol_ok_fn=lambda: False)
             # Nothing sent, nothing lost: the row is held, not dropped.
             self.assertEqual(sent, [])
@@ -250,7 +244,6 @@ class TestReplayDrain(unittest.TestCase):
             ticks["n"] = -10
             with self.assertRaises(_StopLoop):
                 replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                             in_closed_window_fn=lambda: False,
                              protocol_ok_fn=lambda: True)
             self.assertEqual(len(sent), 1)
             self.assertEqual(ob.pending_rows(), [])
@@ -274,7 +267,7 @@ class TestReplayDrain(unittest.TestCase):
                     raise _StopLoop()
 
             with self.assertRaises(_StopLoop):
-                replay_drain(ob, send_fn, sleep_fn=fake_sleep, in_closed_window_fn=lambda: False)
+                replay_drain(ob, send_fn, sleep_fn=fake_sleep)
             self.assertEqual(sent.count("poison"), MAX_5XX_ATTEMPTS)
             self.assertEqual(ob.pending_rows(), [])
             self.assertEqual(ob.dead_count(), 1)
@@ -301,7 +294,7 @@ class TestReplayDrain(unittest.TestCase):
                     raise _StopLoop()
 
             with self.assertRaises(_StopLoop):
-                replay_drain(ob, send_fn, sleep_fn=fake_sleep, in_closed_window_fn=lambda: False)
+                replay_drain(ob, send_fn, sleep_fn=fake_sleep)
             self.assertEqual(ob.dead_count(), 0)
             self.assertEqual(ob.pending_rows(), [])  # delivered, not dead-lettered
 
@@ -322,7 +315,7 @@ class TestReplayDrain(unittest.TestCase):
                         raise _StopLoop()
 
                 with self.assertRaises(_StopLoop):
-                    replay_drain(ob, send_fn, sleep_fn=fake_sleep, in_closed_window_fn=lambda: False)
+                    replay_drain(ob, send_fn, sleep_fn=fake_sleep)
                 self.assertEqual(ob.dead_count(), 0)
                 self.assertEqual(len(ob.pending_rows()), 1)
 
@@ -341,7 +334,7 @@ class TestReplayDrain(unittest.TestCase):
                     raise _StopLoop()
 
             with self.assertRaises(_StopLoop):
-                replay_drain(ob, send_fn, sleep_fn=fake_sleep, in_closed_window_fn=lambda: False)
+                replay_drain(ob, send_fn, sleep_fn=fake_sleep)
             self.assertEqual(len(ob.pending_rows()), 1)
             self.assertEqual(ob.dead_count(), 0)
 
@@ -367,15 +360,14 @@ class TestReplayDrain(unittest.TestCase):
         self.assertEqual(len(ob.pending_rows()), 1)
         self.assertEqual(ob.pending_rows()[0][3], 1)  # attempts bumped
 
-    def test_does_not_send_during_the_closed_window(self):
-        # F3 / D4: a queued POST is non-GET and would wake the curfewed
-        # service -- the drain must sleep through the closed window instead
-        # of sending.
+    def test_sends_overnight(self):
+        # The server's roster must stay accurate around the clock: a queued
+        # scan is delivered at 23:30 like at noon.
         with tempfile.TemporaryDirectory() as d:
             ob = Outbox(os.path.join(d, "outbox.db"))
             ob.enqueue("evt-1", "1", now_iso())
 
-            send_fn = MagicMock()
+            send_fn = MagicMock(return_value=({"type": "checkin"}, 200, None))
             sleeps = {"n": 0}
 
             def fake_sleep(secs):
@@ -383,14 +375,12 @@ class TestReplayDrain(unittest.TestCase):
                 if sleeps["n"] >= 3:
                     raise _StopLoop()
 
-            with self.assertRaises(_StopLoop):
-                replay_drain(
-                    ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                    in_closed_window_fn=lambda: True,
-                )
+            with patch("outbox.in_closed_window", return_value=True):
+                with self.assertRaises(_StopLoop):
+                    replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep)
 
-            send_fn.assert_not_called()
-            self.assertEqual(ob.pending_count(), 1)
+            send_fn.assert_called()
+            self.assertEqual(ob.pending_count(), 0)
 
     def test_same_client_event_id_reused_across_retries_until_acked(self):
         # The idempotency key must not change between attempts -- a retried
@@ -414,8 +404,7 @@ class TestReplayDrain(unittest.TestCase):
                     raise _StopLoop()
 
             with self.assertRaises(_StopLoop):
-                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                             in_closed_window_fn=lambda: False)
+                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep)
 
             self.assertEqual(seen_ids, ["evt-fixed", "evt-fixed", "evt-fixed"])
             self.assertEqual(ob.pending_rows(), [])
@@ -441,8 +430,7 @@ class TestReplayDrain(unittest.TestCase):
                     raise _StopLoop()
 
             with self.assertRaises(_StopLoop):
-                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                             in_closed_window_fn=lambda: False)
+                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep)
 
             self.assertEqual(seen, [True])
 
@@ -467,8 +455,7 @@ class TestReplayDrain(unittest.TestCase):
                     raise _StopLoop()
 
             with self.assertRaises(_StopLoop):
-                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                             in_closed_window_fn=lambda: False)
+                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep)
 
             self.assertEqual(seen, [("evt-tok", "tok-1"), ("evt-none", None)])
 
@@ -490,8 +477,7 @@ class TestReplayDrain(unittest.TestCase):
                     raise _StopLoop()
 
             with self.assertRaises(_StopLoop):
-                replay_drain(ob, send_fn, push_fn=pushed.append, sleep_fn=fake_sleep,
-                             in_closed_window_fn=lambda: False)
+                replay_drain(ob, send_fn, push_fn=pushed.append, sleep_fn=fake_sleep)
 
             self.assertEqual(pushed[0]["queued"], 0)
 
@@ -518,8 +504,7 @@ class TestDeadLetterDrainPass(unittest.TestCase):
                     raise _StopLoop()
 
             with self.assertRaises(_StopLoop):
-                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                             in_closed_window_fn=lambda: False)
+                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep)
 
             self.assertEqual(seen, [("evt-1", True, 404)])
             self.assertEqual(ob.dead_count(), 0)  # deleted, not merely re-marked
@@ -542,8 +527,7 @@ class TestDeadLetterDrainPass(unittest.TestCase):
                     raise _StopLoop()
 
             with self.assertRaises(_StopLoop):
-                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                             in_closed_window_fn=lambda: False)
+                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep)
 
             self.assertEqual(ob.dead_count(), 1)  # still there for next cycle
 
@@ -570,8 +554,7 @@ class TestDeadLetterDrainPass(unittest.TestCase):
 
             with self.assertLogs("kiosk", level="WARNING") as captured:
                 with self.assertRaises(_StopLoop):
-                    replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                                 in_closed_window_fn=lambda: False)
+                    replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep)
 
             self.assertTrue(any("evt-1" in m and "404" in m for m in captured.output))
             # Both waits are backoff-scale, not the 1s pace; the second grew.
@@ -602,8 +585,7 @@ class TestDeadLetterDrainPass(unittest.TestCase):
 
             with self.assertLogs("kiosk", level="WARNING"):
                 with self.assertRaises(_StopLoop):
-                    replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                                 in_closed_window_fn=lambda: False)
+                    replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep)
 
             # fail (backoff wait), success (pace), success (pace) -- and both
             # rows retired despite the first attempt failing.
@@ -636,8 +618,7 @@ class TestDeadLetterDrainPass(unittest.TestCase):
 
             with self.assertLogs("kiosk", level="WARNING"):
                 with self.assertRaises(_StopLoop):
-                    replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                                 in_closed_window_fn=lambda: False)
+                    replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep)
 
             # oldest-first for the never-tried, then alternating — not
             # evt-stuck four times.
@@ -668,8 +649,7 @@ class TestDeadLetterDrainPass(unittest.TestCase):
 
             with self.assertLogs("kiosk", level="WARNING"):
                 with self.assertRaises(_StopLoop):
-                    replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                                 in_closed_window_fn=lambda: False)
+                    replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep)
 
             # evt-ok retired via rotation even though evt-stuck keeps failing
             self.assertEqual(ob.dead_count(), 1)
@@ -693,33 +673,11 @@ class TestDeadLetterDrainPass(unittest.TestCase):
                     raise _StopLoop()
 
             with self.assertRaises(_StopLoop):
-                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                             in_closed_window_fn=lambda: False)
+                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep)
 
             # Only the pending row goes out this cycle -- the dead pass never
             # competes with it for the one-send-per-cycle pace.
             self.assertEqual(seen, [("evt-pending", False)])
-
-    def test_dead_pass_is_silent_in_the_closed_window(self):
-        with tempfile.TemporaryDirectory() as d:
-            ob = Outbox(os.path.join(d, "outbox.db"))
-            ob.enqueue("evt-1", "1", now_iso())
-            ob.mark_dead("evt-1", 404)
-
-            send_fn = MagicMock()
-            sleeps = {"n": 0}
-
-            def fake_sleep(secs):
-                sleeps["n"] += 1
-                if sleeps["n"] >= 3:
-                    raise _StopLoop()
-
-            with self.assertRaises(_StopLoop):
-                replay_drain(ob, send_fn, push_fn=None, sleep_fn=fake_sleep,
-                             in_closed_window_fn=lambda: True)
-
-            send_fn.assert_not_called()
-            self.assertEqual(ob.dead_count(), 1)
 
 
 class TestHandleScanQueuesOnFailure(unittest.TestCase):
@@ -837,7 +795,7 @@ class TestEnqueueBeforeSend(unittest.TestCase):
         def stop(_secs):
             raise _StopLoop()
         with self.assertRaises(_StopLoop):
-            replay_drain(ob, send_fn, sleep_fn=stop, in_closed_window_fn=lambda: False)
+            replay_drain(ob, send_fn, sleep_fn=stop)
 
     def test_a_kill_during_the_live_post_leaves_the_row_and_the_drain_delivers_it_once(self):
         with tempfile.TemporaryDirectory() as d:

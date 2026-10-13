@@ -334,10 +334,16 @@ hours at a time — is a normal operating mode here, not an incident.
   whether it is two deep — as fact only while the server has heard from the
   kiosk within the last five minutes. Otherwise it says it can't confirm the
   building's state and when the kiosk was last heard from, and what it lists is
-  the visit record, not presence. Overnight the kiosk stops checking in on
-  purpose, so that is the expected reading then. The kiosk's own screen shows
-  what the kiosk holds regardless, and checking in or out decides from the
-  visit record either way.  [Decision — *Principle: fail closed*]
+  the visit record, not presence. The kiosk's own screen shows what the kiosk
+  holds regardless, and checking in or out decides from the visit record
+  either way.  [Decision — *Principle: fail closed*]
+
+- The kiosk keeps the server's roster current around the clock: it fetches
+  the roster and delivers queued scans at night and in an empty building the
+  same as by day. An accurate roster outweighs the hosting cost of keeping the
+  service awake overnight, and a wrong kiosk clock must not be able to stop
+  it. The kiosk never answers its own screen with a roster the server did not
+  send.  [Decision — *Principle: fail closed*]
 
 - Youth and two-deep math stay server-side, never computed on the kiosk. Resolving
   a parked scan runs the same fail-closed safety math the live path does.  [Decision — *Principle: fail closed*]
