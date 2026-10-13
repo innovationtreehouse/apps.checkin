@@ -22,6 +22,15 @@ generator client {
   moduleFormat = "esm"
 }
 
+// Brings the mirror schema under checkin's security regime, like the Inventory packages: the
+// same generator emits a classifications map, merged in checkin-app/src/security/core.ts.
+// Paths are relative to this schema file. Run only by `db:generate:security` (checkin's build);
+// `db:generate` selects the client alone, so the s-read images need no checkin-app checkout.
+generator security {
+  provider = "node ../../checkin-app/scripts/security-generator.js"
+  output   = "../../../checkin-app/src/security/generated/shopify-read-classifications.ts"
+}
+
 enum ObjectType {
   ORDER
   PAYOUT
@@ -52,16 +61,27 @@ enum SyncStatus {
 /// Append-only log of every node we ingest, however it arrived.
 /// `source` keeps hand/test-loaded rows permanently distinguishable from API data.
 model ShopifyRawEvent {
+  /// @sensitivity:internal
   id              BigInt      @id @default(autoincrement())
+  /// @sensitivity:internal
   storeId         String      @map("store_id")
+  /// @sensitivity:internal
   objectType      ObjectType  @map("object_type")
+  /// @sensitivity:internal
   shopifyGid      String      @map("shopify_gid")
+  /// @sensitivity:internal
   shopifyLegacyId String?     @map("shopify_legacy_id")
+  /// @sensitivity:internal
   occurredAt      DateTime?   @map("occurred_at")
+  /// @sensitivity:internal
   fetchedAt       DateTime    @default(now()) @map("fetched_at")
+  /// @sensitivity:internal
   source          EventSource
+  /// @sensitivity:internal
   syncRunId       BigInt?     @map("sync_run_id")
+  /// @sensitivity:secret
   payload         Json
+  /// @sensitivity:internal
   payloadHash     String      @map("payload_hash")
 
   @@index([objectType, shopifyGid])
@@ -77,15 +97,24 @@ model ShopifyRawEvent {
 /// NOTE: the JSONL contains the same customer PII as shop_order — covered by the same
 /// retention/erasure policy decision.
 model ShopifyBulkExport {
+  /// @sensitivity:internal
   id              BigInt      @id @default(autoincrement())
+  /// @sensitivity:internal
   storeId         String      @map("store_id")
+  /// @sensitivity:internal
   objectType      ObjectType  @map("object_type")
+  /// @sensitivity:internal
   bulkOperationId String      @map("bulk_operation_id")
+  /// @sensitivity:internal
   source          EventSource
+  /// @sensitivity:internal
   syncRunId       BigInt?     @map("sync_run_id")
+  /// @sensitivity:internal
   recordCount     Int         @map("record_count")
   /// The raw JSONL body, verbatim. One JSON record per line (orders + flattened children).
+  /// @sensitivity:secret
   jsonl           String
+  /// @sensitivity:internal
   fetchedAt       DateTime    @default(now()) @map("fetched_at")
 
   @@index([storeId, objectType, fetchedAt])
@@ -94,20 +123,33 @@ model ShopifyBulkExport {
 
 /// One row per orchestrated sync run, for observability and watermark auditing.
 model SyncRun {
+  /// @sensitivity:internal
   id           BigInt     @id @default(autoincrement())
+  /// @sensitivity:internal
   storeId      String     @map("store_id")
+  /// @sensitivity:internal
   kind         SyncKind
+  /// @sensitivity:internal
   objectScope  String     @map("object_scope")
+  /// @sensitivity:internal
   startedAt    DateTime   @default(now()) @map("started_at")
+  /// @sensitivity:internal
   finishedAt   DateTime?  @map("finished_at")
+  /// @sensitivity:internal
   status       SyncStatus @default(RUNNING)
+  /// @sensitivity:internal
   cursorBefore String?    @map("cursor_before")
+  /// @sensitivity:internal
   cursorAfter  String?    @map("cursor_after")
+  /// @sensitivity:internal
   counts       Json?
+  /// @sensitivity:internal
   error        String?
   /// Who triggered this run and why. System runs (incremental/backfill) leave these null;
   /// operator ADMIN runs (replay / reset-watermark) MUST set them for auditability.
+  /// @sensitivity:internal
   actor        String?
+  /// @sensitivity:internal
   reason       String?
 
   @@index([storeId, kind, startedAt])
@@ -119,11 +161,17 @@ model SyncRun {
 /// resolved from the Shopify API at sync start — never trusted from config. The GID
 /// and numeric id are Shopify's canonical identifiers, recorded here for reference.
 model Store {
+  /// @sensitivity:internal
   myshopifyDomain String   @id @map("myshopify_domain")
+  /// @sensitivity:internal
   shopGid         String   @unique @map("shop_gid")
+  /// @sensitivity:internal
   numericId       String   @map("numeric_id")
+  /// @sensitivity:internal
   name            String?
+  /// @sensitivity:internal
   firstSeenAt     DateTime @default(now()) @map("first_seen_at")
+  /// @sensitivity:internal
   lastSeenAt      DateTime @updatedAt @map("last_seen_at")
 
   @@map("store")
@@ -131,11 +179,17 @@ model Store {
 
 /// Per (store, objectType) high-water mark + in-flight bulk operation state.
 model SyncState {
+  /// @sensitivity:internal
   storeId                 String     @map("store_id")
+  /// @sensitivity:internal
   objectType              ObjectType @map("object_type")
+  /// @sensitivity:internal
   lastUpdatedAtProcessed  DateTime?  @map("last_updated_at_processed")
+  /// @sensitivity:internal
   bulkOperationId         String?    @map("bulk_operation_id")
+  /// @sensitivity:internal
   bulkStatus              String?    @map("bulk_status")
+  /// @sensitivity:internal
   updatedAt               DateTime   @updatedAt @map("updated_at")
 
   @@id([storeId, objectType])
@@ -143,36 +197,60 @@ model SyncState {
 }
 
 model ShopOrder {
+  /// @sensitivity:internal
   shopifyGid         String    @map("shopify_gid")
+  /// @sensitivity:internal
   storeId            String    @map("store_id")
+  /// @sensitivity:internal
   legacyId           String?   @map("legacy_id")
+  /// @sensitivity:internal
   name               String?
+  /// @sensitivity:personal
   customerEmail      String?   @map("customer_email")
+  /// @sensitivity:personal
   customerName       String?   @map("customer_name")
+  /// @sensitivity:internal
   financialStatus    String?   @map("financial_status")
+  /// @sensitivity:internal
   fulfillmentStatus  String?   @map("fulfillment_status")
+  /// @sensitivity:internal
   createdAt          DateTime? @map("created_at")
+  /// @sensitivity:internal
   processedAt        DateTime? @map("processed_at")
+  /// @sensitivity:internal
   updatedAt          DateTime? @map("updated_at")
+  /// @sensitivity:internal
   cancelledAt        DateTime? @map("cancelled_at")
+  /// @sensitivity:internal
   currency           String?
+  /// @sensitivity:internal
   subtotalCents      Int       @default(0) @map("subtotal_cents")
+  /// @sensitivity:internal
   shippingCents      Int       @default(0) @map("shipping_cents")
+  /// @sensitivity:internal
   taxCents           Int       @default(0) @map("tax_cents")
+  /// @sensitivity:internal
   discountCents      Int       @default(0) @map("discount_cents")
+  /// @sensitivity:internal
   totalCents         Int       @default(0) @map("total_cents")
+  /// @sensitivity:internal
   totalRefundedCents Int       @default(0) @map("total_refunded_cents")
+  /// @sensitivity:internal
   test               Boolean   @default(false)
+  /// @sensitivity:internal
   noteAttributes     Json?     @map("note_attributes")
   /// Coupon codes applied at checkout, verbatim. Empty [] means "no codes" for rows
   /// written after this shipped AND for pre-existing rows until a backfill re-pulls
   /// them (scalar lists can't be null in Prisma, so absence isn't distinguishable —
   /// the same backfill that fills variant ids fixes these).
+  /// @sensitivity:internal
   discountCodes      String[]  @default([]) @map("discount_codes")
   /// Provenance of the node that last wrote this row: an API sync (BACKFILL/INCREMENTAL)
   /// or an operator inject (HAND_LOADED/TEST_LOADED). Every write restamps it. Inject
   /// refuses GIDs whose row is API-owned. Null only on rows written by pre-column code.
+  /// @sensitivity:internal
   source             EventSource?
+  /// @sensitivity:internal
   lastSyncedAt       DateTime  @default(now()) @map("last_synced_at")
 
   @@id([storeId, shopifyGid])
@@ -182,21 +260,33 @@ model ShopOrder {
 }
 
 model ShopOrderLine {
+  /// @sensitivity:internal
   lineGid           String  @map("line_gid")
+  /// @sensitivity:internal
   orderGid          String  @map("order_gid")
+  /// @sensitivity:internal
   storeId           String  @map("store_id")
+  /// @sensitivity:internal
   sku               String?
+  /// @sensitivity:internal
   title             String?
+  /// @sensitivity:internal
   quantity          Int     @default(1)
   /// ProductVariant GID. Null for custom/deleted-product lines, and for rows synced
   /// before the variant columns shipped — a backfill run repopulates those.
+  /// @sensitivity:internal
   variantGid        String? @map("variant_gid")
   /// Numeric variant id — checkin's BoardSettings/Program shopify*VariantId join key,
   /// which is what makes an order line attributable to a membership or program.
+  /// @sensitivity:internal
   variantLegacyId   String? @map("variant_legacy_id")
+  /// @sensitivity:internal
   priceCents        Int     @default(0) @map("price_cents")
+  /// @sensitivity:internal
   discountCents     Int     @default(0) @map("discount_cents")
+  /// @sensitivity:internal
   fulfillmentStatus String? @map("fulfillment_status")
+  /// @sensitivity:internal
   removed           Boolean @default(false)
 
   @@id([storeId, lineGid])
@@ -206,11 +296,17 @@ model ShopOrderLine {
 }
 
 model ShopRefund {
+  /// @sensitivity:internal
   refundGid          String    @map("refund_gid")
+  /// @sensitivity:internal
   orderGid           String    @map("order_gid")
+  /// @sensitivity:internal
   storeId            String    @map("store_id")
+  /// @sensitivity:internal
   createdAt          DateTime? @map("created_at")
+  /// @sensitivity:internal
   totalRefundedCents Int       @default(0) @map("total_refunded_cents")
+  /// @sensitivity:personal
   note               String?
 
   @@id([storeId, refundGid])
@@ -219,23 +315,40 @@ model ShopRefund {
 }
 
 model ShopPayout {
+  /// @sensitivity:internal
   payoutGid            String    @map("payout_gid")
+  /// @sensitivity:internal
   storeId              String    @map("store_id")
+  /// @sensitivity:internal
   legacyId             String?   @map("legacy_id")
+  /// @sensitivity:internal
   issuedAt             DateTime? @map("issued_at")
+  /// @sensitivity:internal
   status               String?
+  /// @sensitivity:internal
   currency             String?
+  /// @sensitivity:internal
   netCents             Int       @default(0) @map("net_cents")
+  /// @sensitivity:internal
   chargesGrossCents    Int       @default(0) @map("charges_gross_cents")
+  /// @sensitivity:internal
   chargesFeeCents      Int       @default(0) @map("charges_fee_cents")
+  /// @sensitivity:internal
   refundsGrossCents    Int       @default(0) @map("refunds_gross_cents")
+  /// @sensitivity:internal
   refundsFeeCents      Int       @default(0) @map("refunds_fee_cents")
+  /// @sensitivity:internal
   adjustmentsGrossCents Int      @default(0) @map("adjustments_gross_cents")
+  /// @sensitivity:internal
   adjustmentsFeeCents  Int       @default(0) @map("adjustments_fee_cents")
+  /// @sensitivity:internal
   reservedFundsCents   Int       @default(0) @map("reserved_funds_cents")
+  /// @sensitivity:internal
   retriedCents         Int       @default(0) @map("retried_cents")
   /// Provenance of the last write — see ShopOrder.source.
+  /// @sensitivity:internal
   source               EventSource?
+  /// @sensitivity:internal
   lastSyncedAt         DateTime  @default(now()) @map("last_synced_at")
 
   @@id([storeId, payoutGid])
@@ -247,18 +360,30 @@ model ShopPayout {
 /// The key table: each balance transaction carries both its payout and its order.
 /// All cents are SIGNED — refunds/adjustments within a payout are negative.
 model ShopBalanceTransaction {
+  /// @sensitivity:internal
   txnGid                  String    @map("txn_gid")
+  /// @sensitivity:internal
   storeId                 String    @map("store_id")
+  /// @sensitivity:internal
   payoutGid               String?   @map("payout_gid")
+  /// @sensitivity:internal
   orderGid                String?   @map("order_gid")
+  /// @sensitivity:internal
   type                    String
+  /// @sensitivity:internal
   amountCents             Int       @map("amount_cents")
+  /// @sensitivity:internal
   feeCents                Int       @map("fee_cents")
+  /// @sensitivity:internal
   netCents                Int       @map("net_cents")
+  /// @sensitivity:internal
   currency                String?
+  /// @sensitivity:internal
   transactionDate         DateTime? @map("transaction_date")
+  /// @sensitivity:internal
   sourceOrderTransactionId String?  @map("source_order_transaction_id")
   /// Provenance of the last write — see ShopOrder.source.
+  /// @sensitivity:internal
   source                  EventSource?
 
   @@id([storeId, txnGid])

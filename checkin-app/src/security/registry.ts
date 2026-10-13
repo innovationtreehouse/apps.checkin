@@ -27,6 +27,7 @@ import './registry/donation';
 import './registry/workflow';
 import './registry/receipt';
 import './registry/budgetOwner';
+import './registry/shopifyRead';
 
 // ─── Routes ────────────────────────────────────────────────────────────────
 
