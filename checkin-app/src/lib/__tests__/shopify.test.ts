@@ -54,7 +54,7 @@ describe('adjustProgramInventory', () => {
 
     it('resolves the variant inventory_item_id and adjusts it by delta at the store location', async () => {
         mockTokenResponse(fetchMock);
-        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ locations: [{ id: 555 }] }) });
+        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ locations: [{ id: 555, active: true }] }) });
         fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ variant: { inventory_item_id: 111 } }) });
         fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) }); // adjust
 
@@ -82,7 +82,7 @@ describe('adjustProgramInventory', () => {
 
     it('returns false and emails admins (non-fatal) when the adjust call fails', async () => {
         mockTokenResponse(fetchMock);
-        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ locations: [{ id: 555 }] }) });
+        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ locations: [{ id: 555, active: true }] }) });
         fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ variant: { inventory_item_id: 111 } }) });
         fetchMock.mockResolvedValueOnce({ ok: false, status: 422, text: async () => '{"errors":"bad adjustment"}' });
 
@@ -108,6 +108,26 @@ describe('adjustProgramInventory', () => {
 
         expect(result).toBe(true);
         expect(JSON.parse((fetchMock.mock.calls[3][1] as RequestInit).body as string).location_id).toBe(222);
+    });
+
+    it.each([
+        ['every location is inactive', [{ id: 111, active: false }, { id: 222, active: false }]],
+        ['no location reports an active field', [{ id: 111 }]],
+    ])('fails closed with "no active Shopify location" when %s (no adjust call)', async (_label, locations) => {
+        mockTokenResponse(fetchMock);
+        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ locations }) });
+        (prisma.person.findMany as jest.Mock).mockResolvedValueOnce([{ email: 'admin@test.com' }]);
+
+        const result = await adjustProgramInventory(program, 5);
+
+        expect(result).toBe(false);
+        expect(fetchMock).toHaveBeenCalledTimes(2); // token + locations; never variant/adjust
+        expect(logIntegrationError).toHaveBeenCalledWith(
+            'shopify',
+            expect.objectContaining({ message: 'no active Shopify location' }),
+            expect.objectContaining({ operation: 'adjustProgramInventory' }),
+        );
+        expect(sendEmail).toHaveBeenCalledWith('admin@test.com', 'Shopify Integration Error', expect.stringContaining('no active Shopify location'));
     });
 
     it('returns false and emails admins without calling fetch when credentials are missing', async () => {
@@ -252,7 +272,7 @@ describe('createShopifySingleVariantProgram', () => {
     it('creates the product with its ONE variant inline (non-physical, base price) and sets inventory', async () => {
         mockTokenResponse(fetchMock);
         fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ product: { id: 700, variants: [{ id: 800, inventory_item_id: 900 }] } }) });
-        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ locations: [{ id: 950 }] }) });
+        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ locations: [{ id: 950, active: true }] }) });
         fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) }); // inventory_levels/connect
         fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) }); // inventory_levels/set
 
@@ -398,7 +418,7 @@ describe('createShopifySingleVariantProgram', () => {
             expect(fetchMock).toHaveBeenCalledTimes(3);
             expect(logIntegrationError).toHaveBeenCalledWith(
                 'shopify',
-                expect.objectContaining({ message: expect.stringContaining('no Shopify location') }),
+                expect.objectContaining({ message: expect.stringContaining('no active Shopify location') }),
                 expect.objectContaining({ operation: 'setInitialShopifyInventory' }),
             );
         });
