@@ -7,6 +7,7 @@ import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
 import { fromWhere } from "@/lib/programs/enrollmentState";
 import { programVariantIds } from "@/lib/programs/variants";
+import { adjustProgramInventory } from "@/lib/shopify";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
 
@@ -503,19 +504,18 @@ export interface RestockedLine {
     quantity: number;
     /** Seats the order line bought. */
     lineQuantity: number;
+    /** Children the line names in its CheckMeIn_Account_ID line property; empty when it names none. */
+    personIds?: number[];
 }
 
 /**
  * Fast-path entry for the reversal webhooks (refunds/create, orders/cancelled,
  * disputes/*): map a Shopify order id to the membership process and/or program
  * enrollment it activated and raise the given problem. Returns true if anything
- * matched. Shares the same idempotent raise as the daily reconciler.
- *
- * A REFUND that restocked every seat the order bought for a program has already put
- * them back on sale in Shopify, so the enrollments on that order are removed here
- * (still flagged for the money side). The app sends no +1 of its own: that would
- * count the seat twice. Only the refunds/create payload says whether a refund
- * restocked; the daily pass can't see it and only flags.
+ * matched. Shares the same idempotent raise as the daily reconciler. Only the
+ * refunds/create payload says whether a refund restocked; the daily pass can't
+ * see it and only flags. A REFUND that restocked public seats is settled per
+ * program by settleRestockedSeats.
  */
 export async function raiseReversalByOrderId(orderLegacyId: string, kind: PaymentExceptionKind, restocked: RestockedLine[] = []): Promise<boolean> {
     let matched = false;
@@ -526,7 +526,7 @@ export async function raiseReversalByOrderId(orderLegacyId: string, kind: Paymen
     }
     const enrolls = await prisma.programParticipant.findMany({
         where: { shopifyOrderId: orderLegacyId },
-        select: { programId: true, personId: true, program: { select: { shopifyVariantId: true } } },
+        select: { programId: true, personId: true, program: { select: { shopifyVariantId: true, claimantShopifyVariantId: true } } },
     });
     for (const e of enrolls) {
         await raisePaymentException(kind, { shopifyOrderId: orderLegacyId, programId: e.programId, personId: e.personId });
@@ -535,16 +535,55 @@ export async function raiseReversalByOrderId(orderLegacyId: string, kind: Paymen
     if (kind === "REFUND") {
         for (const programId of new Set(enrolls.map((e) => e.programId))) {
             const onProgram = enrolls.filter((e) => e.programId === programId);
-            const variantId = onProgram[0].program.shopifyVariantId;
-            const lines = restocked.filter((l) => variantId && l.variantId === variantId);
-            // ponytail: only a refund that restocks the whole line removes anyone. A partial
-            // restock can't say which child's seat went back, and the payload doesn't carry
-            // earlier refunds, so successive partial restocks stay with the board's flags.
-            if (lines.length === 0 || lines.some((l) => l.quantity < l.lineQuantity)) continue;
-            for (const e of onProgram) await removeRefundedEnrollment(e.programId, e.personId, orderLegacyId);
+            await settleRestockedSeats(orderLegacyId, programId, onProgram[0].program, onProgram.map((e) => e.personId), restocked);
         }
     }
     return matched;
+}
+
+/**
+ * Keep public stock equal to the seats children hold after a restocking refund.
+ * Only public-variant lines count: the claimant variant tracks no stock, so its
+ * restock puts nothing back on sale and stays flag-only. Of the k public seats
+ * Shopify restocked, a child is removed only when the order says which: every
+ * seat the order bought for the program came back, or a fully restocked line
+ * names its children. Seats nobody can be matched to are taken back off sale
+ * with -k, and the children stay enrolled under their REFUND flags for the board.
+ */
+async function settleRestockedSeats(
+    orderLegacyId: string,
+    programId: number,
+    program: { shopifyVariantId: string | null; claimantShopifyVariantId: string | null },
+    personIds: number[],
+    restocked: RestockedLine[],
+): Promise<void> {
+    const lines = restocked.filter((l) => program.shopifyVariantId && l.variantId === program.shopifyVariantId);
+    const k = lines.reduce((n, l) => n + l.quantity, 0);
+    if (k === 0) return;
+
+    // ponytail: the payload doesn't carry earlier refunds, so "every seat" compares
+    // against what the order bought, not what is still unrefunded.
+    const variantIds = new Set(programVariantIds(program));
+    const seats = (await mirror.orderLines(`gid://shopify/Order/${orderLegacyId}`))
+        .filter((l) => variantIds.has(l.variantId))
+        .reduce((n, l) => n + l.quantity, 0);
+    if (seats > 0 && k >= seats && personIds.length <= k) {
+        for (const personId of personIds) await removeRefundedEnrollment(programId, personId, orderLegacyId);
+        return;
+    }
+
+    let unmatched = 0;
+    for (const l of lines) {
+        const named = [...new Set(l.personIds ?? [])].filter((id) => personIds.includes(id));
+        if (l.quantity === l.lineQuantity && named.length === l.quantity) {
+            for (const personId of named) await removeRefundedEnrollment(programId, personId, orderLegacyId);
+        } else {
+            unmatched += l.quantity;
+        }
+    }
+    if (unmatched === 0) return;
+    logger.warn(`[reconcile] refund on order ${orderLegacyId} restocked ${unmatched} seat(s) of program ${programId} that no child can be matched to: taking them back off sale, the board decides who leaves`);
+    await adjustProgramInventory(program, -unmatched);
 }
 
 /**

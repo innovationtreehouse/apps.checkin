@@ -27,13 +27,29 @@ interface ReversalPayload {
     id?: number | string;
     order_id?: number | string;
     // refunds/create only.
-    refund_line_items?: { quantity?: number; restock_type?: string; line_item?: { variant_id?: number | string | null; quantity?: number } }[];
+    refund_line_items?: {
+        quantity?: number;
+        restock_type?: string;
+        line_item?: { variant_id?: number | string | null; quantity?: number; properties?: { name?: string; value?: unknown }[] };
+    }[];
+}
+
+/** Children a line names in its CheckMeIn_Account_ID property (comma-joined ids, like the cart attribute). */
+function linePersonIds(properties: { name?: string; value?: unknown }[] = []): number[] {
+    const value = properties.find((p) => p.name === "CheckMeIn_Account_ID")?.value;
+    if (value == null) return [];
+    return String(value).split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
 }
 
 function restockedLines(payload: ReversalPayload): RestockedLine[] {
     return (payload.refund_line_items ?? [])
         .filter((l) => l.restock_type && l.restock_type !== "no_restock" && l.line_item?.variant_id != null)
-        .map((l) => ({ variantId: String(l.line_item?.variant_id), quantity: l.quantity ?? 1, lineQuantity: l.line_item?.quantity ?? 1 }));
+        .map((l) => ({
+            variantId: String(l.line_item?.variant_id),
+            quantity: l.quantity ?? 1,
+            lineQuantity: l.line_item?.quantity ?? 1,
+            personIds: linePersonIds(l.line_item?.properties),
+        }));
 }
 
 function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: false; status: number; error: string } {
