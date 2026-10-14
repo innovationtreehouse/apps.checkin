@@ -47,6 +47,9 @@ model ReceivedReceipt {
   expenseAppliedAt   DateTime? @map("expense_applied_at")
   /// @sensitivity:public
   donationAppliedAt  DateTime? @map("donation_applied_at")
+  // Lease held while one caller pushes; cleared when the push settles, reclaimable once stale.
+  /// @sensitivity:public
+  applyClaimedAt     DateTime? @map("apply_claimed_at")
   /// @sensitivity:public
   createdAt       DateTime @default(now()) @map("created_at")
   /// @sensitivity:public
