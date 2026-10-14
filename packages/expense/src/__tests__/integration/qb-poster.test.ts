@@ -73,7 +73,7 @@ function bindQbo(takeoverDate?: string | null, prod?: boolean) {
 /** A hand-booked match dated `day`: sets the takeover line there. */
 async function handMatched(day: string) {
   const id = await seedExpense({ state: "qb_complete" });
-  await db.expense.update({ where: { id }, data: { receiptDate: day, qbMatchState: "MATCHED", qbTxnId: `hand-${day}` } });
+  await db.expense.update({ where: { id }, data: { receiptDate: day, qbMatchState: "MATCHED", qbTxnId: `hand-${day}`, qbTxnEntity: "Purchase" } });
 }
 
 /** An expense already in the outbox: lines on accounts 60 and 61, receipt dated `day`; test data from a TEST- vendor unless told otherwise. */
@@ -132,7 +132,7 @@ describeDb("QB-2 posting — create", () => {
     expect(body.Line.map((l) => [l.Amount, l.AccountBasedExpenseLineDetail.AccountRef.value])).toEqual([[7, "60"], [3, "61"]]);
 
     const row = await expenseRow(id);
-    expect(row).toMatchObject({ qbMatchState: "CREATED", qbTxnId: qbo.purchases[0].Id, qbVendorId: null });
+    expect(row).toMatchObject({ qbMatchState: "CREATED", qbTxnId: qbo.purchases[0].Id, qbTxnEntity: "Purchase", qbVendorId: null });
     const posted = await db.expenseLineItem.findMany({ where: { id: { in: lines } }, orderBy: { id: "asc" } });
     expect(posted.map((l) => l.qbAccountId)).toEqual(["60", "61"]);
   });
@@ -145,7 +145,7 @@ describeDb("QB-2 posting — create", () => {
     expect(await postExpenseToQb(ORG, id)).toBe("posted");
     expect(qbo.posts[0].entity).toBe("Bill");
     expect(qbo.posts[0].body.VendorRef).toEqual({ value: VENDOR });
-    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbVendorId: VENDOR });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnEntity: "Bill", qbVendorId: VENDOR });
   });
 
   it("queues a reimbursee with no Vendor as AMBIGUOUS and posts nothing", async () => {
@@ -315,5 +315,17 @@ describeDb("QB-2 posting — test-data gate", () => {
     const { id } = await outboxed("2026-09-10", { isTestData: false, vendorName: "Home Depot" });
 
     expect(await postExpenseToQb(ORG, id)).toBe("posted");
+  });
+});
+
+describeDb("QB-2 posting — ids are unique per entity type", () => {
+  it("a Bill and a Purchase with the same QuickBooks id are both recorded", async () => {
+    const purchase = await outboxed("2026-09-10");
+    await db.expense.update({ where: { id: purchase.id }, data: { qbMatchState: "CREATED", qbTxnId: "5000", qbTxnEntity: "Purchase" } });
+    await db.expenseReimburseeVendor.create({ data: { orgId: ORG, reimburseePersonId: 42, qbVendorId: VENDOR } });
+    const { id } = await outboxed("2026-09-11", { reimburseePersonId: 42 });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(await expenseRow(id)).toMatchObject({ qbTxnId: "5000", qbTxnEntity: "Bill" });
   });
 });

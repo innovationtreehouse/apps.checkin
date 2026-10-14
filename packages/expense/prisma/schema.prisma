@@ -135,11 +135,14 @@ model Expense {
   // QuickBooks match state of the whole expense (one QB entry per expense):
   // UNMATCHED | MATCHED | CREATED | AMBIGUOUS | BEFORE_LINE | POST_FAILED, or not sent:
   // NOT_TEST_DATA (outside prod) | TEST_DATA_REFUSED (prod). qb_txn_id is the
-  // claimed entry, unique so an entry is claimed once; qb_vendor_id is the Vendor a Bill was posted to.
+  // claimed entry of type qb_txn_entity (Bill | Purchase), unique per type so an entry is claimed
+  // once; qb_vendor_id is the Vendor a Bill was posted to.
   /// @sensitivity:internal
   qbMatchState       String    @default("UNMATCHED") @map("qb_match_state")
   /// @sensitivity:internal
-  qbTxnId            String?   @unique @map("qb_txn_id")
+  qbTxnId            String?   @map("qb_txn_id")
+  /// @sensitivity:internal
+  qbTxnEntity        String?   @map("qb_txn_entity")
   /// @sensitivity:internal
   qbVendorId         String?   @map("qb_vendor_id")
   // Set only outside prod (seed, FINANCE toggle). Outside prod only test data posts to QuickBooks; prod never posts it.
@@ -152,6 +155,7 @@ model Expense {
   auditLog           ExpenseAuditLog[]
   flags              ExpenseFlag[]
 
+  @@unique([qbTxnEntity, qbTxnId])
   @@map("expenses")
 }
 

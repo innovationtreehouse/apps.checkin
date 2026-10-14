@@ -56,10 +56,14 @@ async function expenseTakeoverLine(orgId: string, takeoverDate: string): Promise
   return takeoverLine([takeoverDate, ...rows.map((r) => r.receiptDate!)].map((date) => ({ date, qbOrigin: "hand" as const }))) ?? takeoverDate;
 }
 
-async function claimedAndExcluded(orgId: string, expenseId: string) {
+/** QuickBooks ids are unique per entity type only, so claims are read for the entity being posted. */
+async function claimedAndExcluded(orgId: string, expenseId: string, entity: "Purchase" | "Bill") {
   const [expenses, lines, excluded] = await Promise.all([
-    db.expense.findMany({ where: { orgId, qbTxnId: { not: null }, id: { not: expenseId } }, select: { qbTxnId: true } }),
-    db.expenseLineItem.findMany({ where: { qbTxnId: { not: null }, expense: { orgId } }, select: { qbTxnId: true } }),
+    db.expense.findMany({ where: { orgId, qbTxnId: { not: null }, qbTxnEntity: entity, id: { not: expenseId } }, select: { qbTxnId: true } }),
+    db.expenseLineItem.findMany({
+      where: { qbTxnId: { not: null }, OR: [{ qbTxnEntity: entity }, { qbTxnEntity: null }], expense: { orgId } },
+      select: { qbTxnId: true },
+    }),
     db.expenseQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
   ]);
   return {
@@ -116,13 +120,15 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
   if (!event) return "waiting";
 
   const line = await expenseTakeoverLine(orgId, posting.takeoverDate);
-  const { claimedIds, excludedIds } = await claimedAndExcluded(orgId, expenseId);
   let built: Built;
   try {
     built = await buildWrite(orgId, event.payload, posting);
   } catch (e) {
     built = { error: e instanceof Error ? e.message : String(e) };
   }
+  const { claimedIds, excludedIds } = "write" in built
+    ? await claimedAndExcluded(orgId, expenseId, built.write.entity === "Bill" ? "Bill" : "Purchase")
+    : { claimedIds: new Set<string>(), excludedIds: new Set<string>() };
 
   return db.$transaction(
     async (tx) => {
@@ -130,7 +136,11 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
       const current = await tx.expense.findFirstOrThrow({ where: { id: expenseId, orgId } });
       if (current.backfill || current.qbTxnId || !POSTABLE_QB_STATES.includes(current.qbMatchState)) return "waiting";
 
-      const settle = async (outcome: PostOutcome, data: { qbMatchState: string; qbTxnId?: string; qbVendorId?: string }, notes?: string) => {
+      const settle = async (
+        outcome: PostOutcome,
+        data: { qbMatchState: string; qbTxnId?: string; qbTxnEntity?: string; qbVendorId?: string },
+        notes?: string,
+      ) => {
         if (current.qbMatchState === data.qbMatchState && !data.qbTxnId) return outcome;
         await tx.expense.update({ where: { id: expenseId }, data });
         await writeAudit(tx, SYSTEM_ACTOR, {
@@ -167,13 +177,13 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
         case "created":
         case "found": {
           if (result.kind === "found" && result.via === "amount") {
-            return settle("matched", { qbMatchState: "MATCHED", qbTxnId: result.id });
+            return settle("matched", { qbMatchState: "MATCHED", qbTxnId: result.id, qbTxnEntity: write.entity });
           }
           for (const [id, accountId] of lineAccounts) {
             await tx.expenseLineItem.update({ where: { id }, data: { qbAccountId: accountId } });
           }
           const qbVendorId = write.entity === "Bill" ? write.fields.vendorId : undefined;
-          return settle("posted", { qbMatchState: "CREATED", qbTxnId: result.id, qbVendorId });
+          return settle("posted", { qbMatchState: "CREATED", qbTxnId: result.id, qbTxnEntity: write.entity, qbVendorId });
         }
         case "ambiguous":
           return settle("queued", { qbMatchState: "AMBIGUOUS" }, `candidates: ${result.ids.join(", ")}`);

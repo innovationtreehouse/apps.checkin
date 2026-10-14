@@ -1,6 +1,7 @@
 -- AlterTable
 ALTER TABLE "expenses" ADD COLUMN "qb_match_state" TEXT NOT NULL DEFAULT 'UNMATCHED',
 ADD COLUMN "qb_txn_id" TEXT,
+ADD COLUMN "qb_txn_entity" TEXT,
 ADD COLUMN "qb_vendor_id" TEXT,
 ADD COLUMN "is_test_data" BOOLEAN NOT NULL DEFAULT false;
 
@@ -19,7 +20,7 @@ CREATE TABLE "reimbursee_vendor" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "expenses_qb_txn_id_key" ON "expenses"("qb_txn_id");
+CREATE UNIQUE INDEX "expenses_qb_txn_entity_qb_txn_id_key" ON "expenses"("qb_txn_entity", "qb_txn_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "reimbursee_vendor_org_id_reimbursee_person_id_key" ON "reimbursee_vendor"("org_id", "reimbursee_person_id");
