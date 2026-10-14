@@ -1053,7 +1053,7 @@ describe('Program Participants API Integration Tests', () => {
             const shopifyProgram = await prisma.program.create({
                 data: {
                     startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Comp Return Partic API Test',
-                    enrollmentStatus: 'OPEN', maxParticipants: 5, shopifyVariantId: 'dev-mock-variant-comp-return',
+                    enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, shopifyVariantId: 'dev-mock-variant-comp-return',
                     orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000,
                 },
             });
