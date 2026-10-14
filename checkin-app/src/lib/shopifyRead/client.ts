@@ -453,79 +453,92 @@ export interface IncomeMirrorItemRow {
     sku: string | null;
 }
 
-const NOT_TEST_LOADED = `source IS DISTINCT FROM 'TEST_LOADED'`;
+// `source IS DISTINCT FROM 'TEST_LOADED'`: a null source (a row written before the
+// column existed) counts as real.
+function notTestLoaded() {
+    return { OR: [{ source: null }, { source: { not: "TEST_LOADED" as const } }] };
+}
 
-const PAYOUT_COLS = `payout_gid AS "payoutGid", issued_at AT TIME ZONE 'UTC' AS "issuedAt",
-    status, net_cents AS "netCents", currency, source::text AS source`;
+const PAYOUT_SELECT = {
+    payoutGid: true,
+    issuedAt: true,
+    status: true,
+    netCents: true,
+    currency: true,
+    source: true,
+} as const;
+
+type PayoutRow = Prisma.ShopPayoutGetPayload<{ select: typeof PAYOUT_SELECT }>;
+
+// The reads filter `issuedAt: { not: null }`, so the guard only narrows the type.
+function toIncomePayout(p: PayoutRow): IncomeMirrorPayoutRow[] {
+    return p.issuedAt === null
+        ? []
+        : [{ payoutGid: p.payoutGid, issuedAt: p.issuedAt, status: p.status ?? "", netCents: p.netCents, currency: p.currency, source: p.source }];
+}
 
 /** Paid payouts issued on or after `from`, oldest first. */
 export async function incomePaidPayoutsSince(from: Date): Promise<IncomeMirrorPayoutRow[]> {
-    const p = getPool();
-    if (!p) return [];
-    const rows = await p.query<IncomeMirrorPayoutRow>(
-        `SELECT ${PAYOUT_COLS} FROM shop_payout
-         WHERE upper(status) = 'PAID' AND issued_at IS NOT NULL
-           AND issued_at >= ($1::timestamptz AT TIME ZONE 'UTC') AND ${NOT_TEST_LOADED}
-         ORDER BY issued_at ASC, payout_gid ASC`,
-        [from],
-    );
-    return rows.rows;
+    const db = await getClient();
+    if (!db) return [];
+    const rows = await db.shopPayout.findMany({
+        where: { status: { equals: "PAID", mode: "insensitive" }, issuedAt: { not: null, gte: from }, ...notTestLoaded() },
+        orderBy: [{ issuedAt: "asc" }, { payoutGid: "asc" }],
+        select: PAYOUT_SELECT,
+    });
+    return rows.flatMap(toIncomePayout);
 }
 
 /** One payout in any status, or null when absent, undated or test-loaded. */
 export async function incomePayout(gid: string): Promise<IncomeMirrorPayoutRow | null> {
-    const p = getPool();
-    if (!p) return null;
-    const rows = await p.query<IncomeMirrorPayoutRow>(
-        `SELECT ${PAYOUT_COLS} FROM shop_payout
-         WHERE payout_gid = $1 AND issued_at IS NOT NULL AND ${NOT_TEST_LOADED}`,
-        [gid],
-    );
-    return rows.rows[0] ?? null;
+    const db = await getClient();
+    if (!db) return null;
+    const row = await db.shopPayout.findFirst({
+        where: { payoutGid: gid, issuedAt: { not: null }, ...notTestLoaded() },
+        select: PAYOUT_SELECT,
+    });
+    return row ? (toIncomePayout(row)[0] ?? null) : null;
 }
 
 /** A payout's balance transactions, with each one's order name. */
 export async function incomePayoutTransactions(payoutGid: string): Promise<IncomeMirrorTxnRow[]> {
-    const p = getPool();
-    if (!p) return [];
-    const rows = await p.query<IncomeMirrorTxnRow>(
-        `SELECT bt.txn_gid AS "txnGid", bt.type, bt.order_gid AS "orderGid", o.name AS "orderName",
-                bt.amount_cents AS "amountCents", bt.fee_cents AS "feeCents", bt.net_cents AS "netCents",
-                bt.source::text AS source
-         FROM shop_balance_transaction bt
-         LEFT JOIN shop_order o ON o.shopify_gid = bt.order_gid
-         WHERE bt.payout_gid = $1 AND bt.source IS DISTINCT FROM 'TEST_LOADED'
-         ORDER BY bt.transaction_date ASC NULLS LAST, bt.txn_gid ASC`,
-        [payoutGid],
-    );
-    return rows.rows;
+    const db = await getClient();
+    if (!db) return [];
+    const txns = await db.shopBalanceTransaction.findMany({
+        where: { payoutGid, ...notTestLoaded() },
+        orderBy: [{ transactionDate: { sort: "asc", nulls: "last" } }, { txnGid: "asc" }],
+        select: { txnGid: true, type: true, orderGid: true, amountCents: true, feeCents: true, netCents: true, source: true },
+    });
+    const orderGids = [...new Set(txns.flatMap((t) => (t.orderGid === null ? [] : [t.orderGid])))];
+    const orders = orderGids.length
+        ? await db.shopOrder.findMany({ where: { shopifyGid: { in: orderGids } }, select: { shopifyGid: true, name: true } })
+        : [];
+    const nameOf = new Map(orders.map((o) => [o.shopifyGid, o.name]));
+    return txns.map((t) => ({ ...t, orderName: t.orderGid === null ? null : (nameOf.get(t.orderGid) ?? null) }));
 }
 
 /** The given orders' non-removed lines. */
 export async function incomeOrderLines(orderGids: string[]): Promise<IncomeMirrorLineRow[]> {
-    const p = getPool();
-    if (!p || orderGids.length === 0) return [];
-    const rows = await p.query<IncomeMirrorLineRow>(
-        `SELECT order_gid AS "orderGid", variant_legacy_id AS "variantId", title, sku, quantity,
-                price_cents AS "priceCents", discount_cents AS "discountCents"
-         FROM shop_order_line
-         WHERE order_gid = ANY($1::text[]) AND removed = false
-         ORDER BY order_gid, line_gid`,
-        [orderGids],
-    );
-    return rows.rows;
+    if (orderGids.length === 0) return [];
+    const db = await getClient();
+    if (!db) return [];
+    const rows = await db.shopOrderLine.findMany({
+        where: { orderGid: { in: orderGids }, removed: false },
+        orderBy: [{ orderGid: "asc" }, { lineGid: "asc" }],
+        select: { orderGid: true, variantLegacyId: true, title: true, sku: true, quantity: true, priceCents: true, discountCents: true },
+    });
+    return rows.map(({ variantLegacyId, ...l }) => ({ ...l, variantId: variantLegacyId }));
 }
 
 /** Every variant on a real order's line, with the title and SKU of its newest order. */
 export async function incomeItemsSeen(): Promise<IncomeMirrorItemRow[]> {
-    const p = getPool();
-    if (!p) return [];
-    const rows = await p.query<IncomeMirrorItemRow>(
-        `SELECT DISTINCT ON (l.variant_legacy_id) l.variant_legacy_id AS "variantId", l.title, l.sku
-         FROM shop_order_line l
-         JOIN shop_order o ON o.shopify_gid = l.order_gid
-         WHERE l.variant_legacy_id IS NOT NULL AND o.test = false AND o.${NOT_TEST_LOADED}
-         ORDER BY l.variant_legacy_id, o.updated_at DESC NULLS LAST`,
-    );
-    return rows.rows;
+    const db = await getClient();
+    if (!db) return [];
+    // DISTINCT ON across the join has no Prisma query form.
+    return db.$queryRaw<IncomeMirrorItemRow[]>`
+        SELECT DISTINCT ON (l.variant_legacy_id) l.variant_legacy_id AS "variantId", l.title, l.sku
+        FROM shop_order_line l
+        JOIN shop_order o ON o.shopify_gid = l.order_gid
+        WHERE l.variant_legacy_id IS NOT NULL AND o.test = false AND o.source IS DISTINCT FROM 'TEST_LOADED'
+        ORDER BY l.variant_legacy_id, o.updated_at DESC NULLS LAST`;
 }

@@ -20,6 +20,7 @@ const db = {
     shopOrder: { findMany: jest.fn() },
     shopOrderLine: { findMany: jest.fn() },
     shopBalanceTransaction: { findMany: jest.fn() },
+    shopPayout: { findMany: jest.fn(), findFirst: jest.fn() },
     syncRun: { findFirst: jest.fn() },
     $queryRaw: jest.fn(),
 };
@@ -73,6 +74,8 @@ beforeEach(() => {
     db.shopOrder.findMany.mockResolvedValue([]);
     db.shopOrderLine.findMany.mockResolvedValue([]);
     db.shopBalanceTransaction.findMany.mockResolvedValue([]);
+    db.shopPayout.findMany.mockResolvedValue([]);
+    db.shopPayout.findFirst.mockResolvedValue(null);
     db.syncRun.findFirst.mockResolvedValue(null);
 });
 
@@ -293,5 +296,70 @@ describe('match-audit reads', () => {
     it('minRealOrderLegacyId returns null for an empty mirror', async () => {
         db.$queryRaw.mockResolvedValue([{ minLegacyId: null }]);
         expect(await freshClient().minRealOrderLegacyId()).toBeNull();
+    });
+});
+
+describe('income reads', () => {
+    const NOT_TEST_LOADED = { OR: [{ source: null }, { source: { not: 'TEST_LOADED' } }] };
+    const issuedAt = new Date('2026-07-01T00:00:00Z');
+    const payout = { payoutGid: 'p1', issuedAt, status: 'PAID', netCents: 900, currency: 'USD', source: 'INCREMENTAL' };
+
+    it('incomePaidPayoutsSince reads dated paid payouts that are not test-loaded, oldest first', async () => {
+        db.shopPayout.findMany.mockResolvedValue([payout]);
+        expect(await freshClient().incomePaidPayoutsSince(issuedAt)).toEqual([payout]);
+        const args = db.shopPayout.findMany.mock.calls[0][0];
+        expect(args.where).toEqual({ status: { equals: 'PAID', mode: 'insensitive' }, issuedAt: { not: null, gte: issuedAt }, ...NOT_TEST_LOADED });
+        expect(args.orderBy).toEqual([{ issuedAt: 'asc' }, { payoutGid: 'asc' }]);
+    });
+
+    it('incomePayout returns the payout, or null when absent', async () => {
+        const client = freshClient();
+        expect(await client.incomePayout('p1')).toBeNull();
+        db.shopPayout.findFirst.mockResolvedValue(payout);
+        expect(await client.incomePayout('p1')).toEqual(payout);
+        expect(whereOf(db.shopPayout.findFirst)).toEqual({ payoutGid: 'p1', issuedAt: { not: null }, ...NOT_TEST_LOADED });
+    });
+
+    it('incomePayoutTransactions attaches each order name and keeps orderless rows', async () => {
+        db.shopBalanceTransaction.findMany.mockResolvedValue([
+            { txnGid: 't1', type: 'CHARGE', orderGid: 'g1', amountCents: 1000, feeCents: 100, netCents: 900, source: null },
+            { txnGid: 't2', type: 'PAYOUT_FEE', orderGid: null, amountCents: -5, feeCents: 0, netCents: -5, source: null },
+        ]);
+        db.shopOrder.findMany.mockResolvedValue([{ shopifyGid: 'g1', name: '#1001' }]);
+
+        const rows = await freshClient().incomePayoutTransactions('p1');
+        expect(rows.map((r) => [r.txnGid, r.orderName])).toEqual([['t1', '#1001'], ['t2', null]]);
+        const args = db.shopBalanceTransaction.findMany.mock.calls[0][0];
+        expect(args.where).toEqual({ payoutGid: 'p1', ...NOT_TEST_LOADED });
+        expect(args.orderBy).toEqual([{ transactionDate: { sort: 'asc', nulls: 'last' } }, { txnGid: 'asc' }]);
+    });
+
+    it('incomeOrderLines reads live lines in order and names the variant id', async () => {
+        db.shopOrderLine.findMany.mockResolvedValue([
+            { orderGid: 'g1', variantLegacyId: '111', title: 'Dues', sku: null, quantity: 1, priceCents: 5000, discountCents: 0 },
+        ]);
+        expect(await freshClient().incomeOrderLines(['g1'])).toEqual([
+            { orderGid: 'g1', variantId: '111', title: 'Dues', sku: null, quantity: 1, priceCents: 5000, discountCents: 0 },
+        ]);
+        const args = db.shopOrderLine.findMany.mock.calls[0][0];
+        expect(args.where).toEqual({ orderGid: { in: ['g1'] }, removed: false });
+        expect(args.orderBy).toEqual([{ orderGid: 'asc' }, { lineGid: 'asc' }]);
+    });
+
+    it('incomeItemsSeen skips test orders and test-loaded rows', async () => {
+        db.$queryRaw.mockResolvedValue([]);
+        await freshClient().incomeItemsSeen();
+        const sql = (db.$queryRaw.mock.calls[0][0] as string[]).join('?');
+        expect(sql).toContain('o.test = false');
+        expect(sql).toContain(`o.source IS DISTINCT FROM 'TEST_LOADED'`);
+    });
+
+    it('no income read opens anything when the mirror is unwired', async () => {
+        delete process.env.SHOPIFY_READ_DATABASE_URL;
+        const client = freshClient();
+        expect(await client.incomePaidPayoutsSince(issuedAt)).toEqual([]);
+        expect(await client.incomePayout('p1')).toBeNull();
+        expect(await client.incomeOrderLines(['g1'])).toEqual([]);
+        expect(poolCtor).not.toHaveBeenCalled();
     });
 });
