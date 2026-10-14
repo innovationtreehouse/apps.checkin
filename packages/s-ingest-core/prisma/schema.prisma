@@ -24,8 +24,10 @@ generator client {
 
 // Brings the mirror schema under checkin's security regime, like the Inventory packages: the
 // same generator emits a classifications map, merged in checkin-app/src/security/core.ts.
-// Paths are relative to this schema file. Run only by `db:generate:security` (checkin's build);
-// `db:generate` selects the client alone, so the s-read images need no checkin-app checkout.
+// Paths are relative to this schema file. Run by `db:generate:security`; checkin's
+// shopify-read-classifications-drift test fails when the committed map no longer matches
+// this schema. `db:generate` selects the client alone, so the s-read images need no
+// checkin-app checkout.
 generator security {
   provider = "node ../../checkin-app/scripts/security-generator.js"
   output   = "../../../checkin-app/src/security/generated/shopify-read-classifications.ts"
