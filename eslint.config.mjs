@@ -62,7 +62,16 @@ const eslintConfig = defineConfig([
     "**/next-env.d.ts",
     // Generated Prisma client — emitted by `prisma generate`, never linted.
     "**/src/generated/**",
+    // Package/function build output (tsc/esbuild) and test coverage reports.
+    "**/dist/**",
+    "**/coverage/**",
   ]),
+  // A rest sibling (`const { id: _id, ...rest } = row`) is how an object omits keys.
+  {
+    rules: {
+      "@typescript-eslint/no-unused-vars": ["warn", { ignoreRestSiblings: true }],
+    },
+  },
   {
     files: ["**/src/**/*.{ts,tsx}"],
     rules: {

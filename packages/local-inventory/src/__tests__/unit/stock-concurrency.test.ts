@@ -14,10 +14,10 @@ import { createInventoryService } from "../../lib/services/inventoryService";
 import { createProvisionalItemService } from "../../lib/services/provisionalItemService";
 import { createReceiptService } from "../../lib/services/receiptService";
 import { createReceiveQueueService } from "../../lib/services/receiveQueueService";
-import { useIntegrationSetup } from "../helpers/setup";
+import { setupIntegrationDb } from "../helpers/setup";
 import { TEST_ORG_ID } from "../helpers/seed";
 
-useIntegrationSetup();
+setupIntegrationDb();
 
 const GTIN = "0000000000031";
 const PROVISIONAL = "0200002700018";
