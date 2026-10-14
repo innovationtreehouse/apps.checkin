@@ -644,11 +644,15 @@ async function executeClose(id: number): Promise<boolean> {
         // A superset of sweepForClose's rows: a check-in that lands after this read
         // arrives after the close and is not swept.
         const people = await tx.$queryRaw<{ personId: number }[]>`
-            SELECT DISTINCT v."personId" FROM "Visit" v
+            WITH t AS (
+                SELECT (${closeAt}::timestamptz AT TIME ZONE 'UTC') AS close_at
+            )
+            SELECT DISTINCT v."personId" FROM "Visit" v, t
             WHERE v."deletedAt" IS NULL
-              AND v."arrivedAt" <= (${closeAt}::timestamptz AT TIME ZONE 'UTC') + ${LATE_CLOSE_SKEW_MS}::double precision * interval '1 millisecond'
+              AND v."arrivedAt" <= t.close_at + ${LATE_CLOSE_SKEW_MS}::double precision * interval '1 millisecond'
               AND (v."departedAt" IS NULL
-                   OR v."departedVia" IN ('AUTO_CLOSE'::"VisitSource", 'FACILITY_CLOSE'::"VisitSource"))
+                   OR (v."departedVia" IN ('AUTO_CLOSE'::"VisitSource", 'FACILITY_CLOSE'::"VisitSource")
+                       AND v."departedAt" > t.close_at))
             ORDER BY v."personId"`;
         for (const { personId } of people) await tx.$executeRaw`SELECT pg_advisory_xact_lock(${personId})`;
         await lockFacility(tx);

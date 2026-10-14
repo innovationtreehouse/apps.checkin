@@ -175,6 +175,31 @@ describe('close as one recorded event (real DB)', () => {
         expect(await prisma.auditLog.count({ where: { tableName: 'FacilityClose', affectedEntityId: close.id } })).toBe(1);
     });
 
+    it('a close does not lock someone whose machine-ended visit ended before it', async () => {
+        await open(m, at(30 * HOUR), { departedAt: at(28 * HOUR), departedVia: 'AUTO_CLOSE' });
+        const inside = await open(k2, at(2 * HOUR));
+        const close = await prisma.facilityClose.create({ data: { closedAt: at(HOUR), closedById: k.id, via: 'KIOSK', executedAt: null } });
+        // m's person lock is held by an unrelated in-flight transaction for the whole close.
+        let release!: () => void;
+        let held!: () => void;
+        const lockHeld = new Promise<void>(r => { held = r; });
+        const holder = prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(${m.id})`;
+            held();
+            await new Promise<void>(r => { release = r; });
+        }, { timeout: 30_000 });
+        await lockHeld;
+
+        try {
+            await executePendingCloses();
+            expect((await prisma.facilityClose.findUniqueOrThrow({ where: { id: close.id } })).executedAt).not.toBeNull();
+            expect((await reload(inside)).departedVia).toBe('FACILITY_CLOSE');
+        } finally {
+            release();
+            await holder;
+        }
+    });
+
     it('MC-C1: a web dialog token minted on the keyholder\'s visit does not touch a kiosk close', async () => {
         await open(k, at(HOUR), { forceCloseToken: 'web-dialog', forceCloseWarnedAt: new Date(), forceCloseActorId: k2.id });
         const mv = await open(m, at(HOUR));
