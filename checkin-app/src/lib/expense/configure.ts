@@ -12,7 +12,6 @@ import type { QboBill, QboPurchase } from "@inventory/quickbooks";
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { getOrg, sessionUser } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
-import { getQuickBooks } from "@/lib/quickbooks/client";
 
 async function db() {
   return (await import("@/lib/prisma")).default;
@@ -118,17 +117,22 @@ function qbTxn(t: QboPurchase | QboBill): QbTxn {
   };
 }
 
+/** Loaded on first use, so binding at boot pulls in no AWS SDK. */
+async function quickBooks() {
+  return (await import("@/lib/quickbooks/client")).getQuickBooks();
+}
+
 const qbReader: QbReader = {
   async purchasesBetween(from, to) {
-    const qb = await getQuickBooks();
+    const qb = await quickBooks();
     return qb ? (await qb.purchasesBetween(from, to)).map(qbTxn) : [];
   },
   async billsBetween(from, to) {
-    const qb = await getQuickBooks();
+    const qb = await quickBooks();
     return qb ? (await qb.billsBetween(from, to)).map(qbTxn) : [];
   },
   async billPaymentsBetween(from, to) {
-    const qb = await getQuickBooks();
+    const qb = await quickBooks();
     if (!qb) return [];
     return (await qb.billPaymentsBetween(from, to)).map((p) => ({
       id: p.Id,

@@ -31,7 +31,6 @@ import {
   type QbDepositSource,
 } from "@inventory/income";
 import { getOrg, getPrincipal } from "@/lib/catalog/configure";
-import { getQuickBooks } from "@/lib/quickbooks/client";
 import {
   incomeItemsSeen,
   incomeOrderLines,
@@ -90,11 +89,16 @@ const alerts: IncomeAlerts = {
   },
 };
 
+/** Loaded on first use, so binding at boot pulls in no AWS SDK. */
+async function quickBooks() {
+  return (await import("@/lib/quickbooks/client")).getQuickBooks();
+}
+
 function depositSource(): QbDepositSource | undefined {
   if (!process.env.QBO_REALM_ID) return undefined;
   return {
     async depositsBetween(from, to) {
-      const qb = await getQuickBooks();
+      const qb = await quickBooks();
       if (!qb) throw new Error("QuickBooks is off");
       return (await qb.depositsBetween(from, to)).map(toQbDeposit);
     },
