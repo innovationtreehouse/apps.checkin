@@ -18,7 +18,7 @@ async function assertNoConflict(process: OrgMembershipProcess, actorId: number, 
 /** Why a status can't be closed, or null when it can. Close is for long-idle, unpaid applications. */
 function closeRefusal(process: OrgMembershipProcess): string | null {
     if (process.status === "ACTIVE") return "A completed membership cannot be closed.";
-    if (process.status === "BLOCKED") return "A blocked application cannot be closed. Reset it for re-review, or deny the household.";
+    if (process.status === "BLOCKED") return "A blocked application cannot be closed. Reset it for re-review, or clear it with a board override.";
     if (process.paidAt) return "This application has a payment recorded. Refund it in Shopify and record the refund first, then close it.";
     if (!(ARCHIVABLE_STATUSES as readonly string[]).includes(process.status)) return "This application cannot be closed from its current step.";
     return null;

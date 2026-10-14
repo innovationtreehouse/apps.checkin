@@ -32,11 +32,7 @@ const EXEMPT = new Set([
     'lib/dev/seed-helpers.ts', // dev seed macros
 ]);
 
-const ALLOWLIST: Entry[] = [
-    // Intake's NONE upsert and the INTAKE to PENDING_EXTERNAL_ACTION submit: chip 5.
-    { file: 'lib/membership/intake.ts', table: 'OrgMembership', count: 1, chip: 'chip 5' },
-    { file: 'lib/membership/intake.ts', table: 'OrgMembershipProcess', count: 1, chip: 'chip 5' },
-];
+const ALLOWLIST: Entry[] = [];
 
 const CALL = /\b(orgMembership|orgMembershipProcess)\.(update|updateMany|upsert|create|createMany)\s*\(/g;
 const NESTED = /\b(orgMembership|orgMembershipProcess|processes)\s*:\s*\{\s*(create|createMany|upsert|update|updateMany|connectOrCreate)\s*:/g;

@@ -4,9 +4,9 @@
  * the running dev server and the seeded workflow-mapping DB (see
  * docker-compose.flow.yml + packages/workflow-mapping/prisma/seed.ts).
  *
- * Only X4 is bound: the expense leg (X5) is inert, so every push lands in
- * apply_failed after the inventory leg applies, and the catalog ports (X3)
- * answer 502 on associate/propose.
+ * X3 (catalog reads) and X4 are bound: the expense leg (X5) is inert, so every
+ * push lands in apply_failed after the inventory leg applies, and the catalog
+ * submissions port is inert, so propose answers 502.
  */
 import { loginAs, api, type Session } from "./helpers";
 
@@ -148,8 +148,7 @@ describe("workflow mapping — manager journey", () => {
     const before = await stock(m);
     const line = `/api/workflow-mapping/receipts/${receipt.id}/lines/${open.id}`;
 
-    // The catalog ports are not bound yet, so associate and propose fail loudly.
-    expect((await post(m, `${line}/associate`, { gtin13: GTIN })).status).toBe(502);
+    // Catalog submissions are not bound yet, so propose fails loudly.
     expect((await post(m, `${line}/propose`, {
       proposedName: "Towels", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Consumable",
     })).status).toBe(502);
