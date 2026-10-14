@@ -28,8 +28,19 @@ describe("flow: the last keyholder at the kiosk", () => {
         const res = await api(board, "/api/attendance", { method: "POST", body: JSON.stringify({ type: "MANUAL_CHECKIN", participantId: personId }) });
         expect(res.status).toBe(200);
     };
+    /** A badge in at the door: the only way to open the building. Sent as a
+     *  current kiosk (it filters repeat reads itself), so the server's 3 s
+     *  debounce for older kiosks never drops it. */
+    const badgeIn = async (personId: number) => {
+        const res = await api<{ type?: string }>(null, "/api/scan", {
+            method: "POST",
+            body: JSON.stringify({ participantId: personId, intent: "IN", protocolVersion: 5 }),
+        });
+        expect(res.status).toBe(200);
+        expect(res.json.type).toBe("checkin");
+    };
     const badge = (extra: Record<string, unknown> = {}) =>
-        api<Offer>(null, "/api/scan", { method: "POST", body: JSON.stringify({ participantId: keyholderId, intent: "OUT", ...extra }) });
+        api<Offer>(null, "/api/scan", { method: "POST", body: JSON.stringify({ participantId: keyholderId, intent: "OUT", protocolVersion: 5, ...extra }) });
 
     /** The board closes whatever is open, leaving an empty building. */
     async function emptyBuilding() {
@@ -52,7 +63,7 @@ describe("flow: the last keyholder at the kiosk", () => {
     afterAll(emptyBuilding);
 
     it("one badge checks the keyholder out and offers the close; a second closes", async () => {
-        await checkIn(keyholderId);
+        await badgeIn(keyholderId);
         await checkIn(otherId);
 
         const offer = await badge();
