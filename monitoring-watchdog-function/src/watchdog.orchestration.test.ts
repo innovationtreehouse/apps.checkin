@@ -296,25 +296,4 @@ describe("runWatchdog — edge cases", () => {
     // ...while the structured detail retains the full error for forensics.
     expect(input.detail.error).toBe(longError);
   });
-
-  it("invokes the lock-release error callback (logs a warning, doesn't fail the run)", async () => {
-    // Drive the 4th arg to withAdvisoryLock — the onUnlockError callback that runWatchdog
-    // passes for a best-effort release failure — so its logging path is exercised.
-    m.withAdvisoryLock.mockImplementation(
-      async (_p: unknown, _k: string, fn: () => Promise<unknown>, onUnlockError: (e: unknown) => void) => {
-        const out = await fn();
-        onUnlockError(new Error("release failed"));
-        return out;
-      },
-    );
-    m.readServiceHeartbeats.mockResolvedValue(heartbeats({ "shopify-read": fresh }));
-
-    const result = await runWatchdog(cfg([entry("shopify-read")]));
-
-    expect(result).toEqual({ checked: 1, incidents: 0 });
-    expect(m.logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("failed to release lock"),
-      expect.objectContaining({ err: expect.any(Error) }),
-    );
-  });
 });

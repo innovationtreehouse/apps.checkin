@@ -1,5 +1,5 @@
 /**
- * Cross-process mutual exclusion via Postgres session-scoped advisory locks.
+ * Cross-process mutual exclusion via a Postgres transaction-scoped advisory lock.
  *
  * F19 defense-in-depth. The ingestion fleet is *intended* to run at Lambda reserved
  * concurrency = 1, but the correctness of raw-log dedup, watermark advance, and the bulk
@@ -9,23 +9,15 @@
  * invocations for the same key cannot run concurrently: a second caller that can't take
  * the lock fails fast with {@link ConcurrentRunError} instead of corrupting state.
  *
- * Session vs. transaction scope: a run spans many short transactions, so the lock must
- * outlive any single one. We therefore use the SESSION-scoped `pg_try_advisory_lock` /
- * `pg_advisory_unlock` pair — not the transaction-scoped `pg_advisory_xact_lock` used for
- * the single-statement dedup in `rawLog.ts` (F6). Session locks auto-release when the DB
- * session ends, so a crashed process never leaks the lock permanently.
- *
- * Deployment contract (the explicit, checked half of the fix): acquire and release must
- * land on the SAME pooled connection. Under the documented prod config — `connection_limit=1`
- * with RDS Proxy / pgBouncer session pinning (see `db/client.ts`) — the Prisma pool holds a
- * single connection, so this holds. Cross-PROCESS exclusion, which is the real concurrency
- * hazard (two Lambda execution environments → two distinct sessions), works regardless. The
- * worst case if a release is delayed (a stray extra pooled connection) is brief
- * over-serialization bounded by the session lifetime — never data corruption, and never
- * worse than the comment-only assumption it replaces.
+ * The lock is `pg_try_advisory_xact_lock`, taken inside an interactive transaction that
+ * stays open while `fn` runs and ends when it settles — so acquire and release are bound to
+ * that transaction's single connection. A session lock/unlock pair is not safe here: the pg
+ * adapter's pool can run the two statements on different connections (the
+ * `connection_limit` URL param does not size it), leaving the unlock a no-op and the lock
+ * stranded on an idle pooled session. `fn` runs on the client's other pooled connections,
+ * so the pool needs at least two. The lock transaction writes nothing; it only holds the key.
  */
 import type { PrismaClient } from "../db/client.js";
-import { logger } from "../logger.js";
 
 /** Thrown when an advisory lock is already held — the caller should treat it as a benign skip. */
 export class ConcurrentRunError extends Error {
@@ -35,35 +27,26 @@ export class ConcurrentRunError extends Error {
   }
 }
 
-/** Non-blocking acquire. Returns false (does not wait) when another session holds the key. */
-async function tryAdvisoryLock(prisma: PrismaClient, key: string): Promise<boolean> {
-  const rows = await prisma.$queryRaw<Array<{ locked: boolean }>>`
-    SELECT pg_try_advisory_lock(hashtextextended(${key}, 0)) AS locked`;
-  return rows[0]?.locked === true;
-}
-
-async function advisoryUnlock(prisma: PrismaClient, key: string): Promise<void> {
-  await prisma.$queryRaw`SELECT pg_advisory_unlock(hashtextextended(${key}, 0))`;
-}
+/** Longest a locked run may take before the lock transaction is rolled back: the Lambda maximum. */
+const LOCK_HOLD_MS = 15 * 60 * 1000;
 
 /**
  * Run `fn` while holding the advisory lock for `key`; throw {@link ConcurrentRunError}
- * immediately if another holder owns it. The lock is released in `finally`; a failed
- * release is logged but non-fatal, since the lock auto-releases when the session ends.
+ * immediately if another holder owns it. The lock is released when the holding
+ * transaction ends, whether `fn` resolves or throws.
  */
 export async function withAdvisoryLock<T>(
   prisma: PrismaClient,
   key: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  if (!(await tryAdvisoryLock(prisma, key))) throw new ConcurrentRunError(key);
-  try {
-    return await fn();
-  } finally {
-    try {
-      await advisoryUnlock(prisma, key);
-    } catch (err) {
-      logger.warn("failed to release advisory lock (auto-releases on session end)", { key, err });
-    }
-  }
+  return prisma.$transaction(
+    async (tx) => {
+      const rows = await tx.$queryRaw<Array<{ locked: boolean }>>`
+        SELECT pg_try_advisory_xact_lock(hashtextextended(${key}, 0)) AS locked`;
+      if (rows[0]?.locked !== true) throw new ConcurrentRunError(key);
+      return fn();
+    },
+    { timeout: LOCK_HOLD_MS },
+  );
 }
