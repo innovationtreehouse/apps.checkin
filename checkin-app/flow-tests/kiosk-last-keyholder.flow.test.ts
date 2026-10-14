@@ -86,7 +86,7 @@ describe("flow: the last keyholder at the kiosk", () => {
     });
 
     it("a kiosk that sends close requests closes on one badge when it showed nobody else", async () => {
-        await checkIn(keyholderId);
+        await badgeIn(keyholderId);
         await checkIn(otherId);
 
         const close = await badge({ protocolVersion: 6, close: "alone" });
