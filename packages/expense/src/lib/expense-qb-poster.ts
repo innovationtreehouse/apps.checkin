@@ -9,7 +9,7 @@ import { QbExpenseEventSchema } from "../workflows/expense-event-schema";
 import { writeAudit } from "./audit";
 import { logError, logWarn } from "./logger";
 import { SYSTEM_ACTOR } from "./system-actor";
-import { FLAG_AUDIENCE } from "./flags";
+import { raiseFlag } from "../services/flagService";
 
 /**
  * Expense match states the drain still tries; the test-data states are re-checked each run.
@@ -173,10 +173,7 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
           notes: `attempt ${attempts} of ${MAX_POST_ATTEMPTS}: ${error}`,
         });
         if (!exhausted) return "failed" as const;
-        await tx.expenseFlag.createMany({
-          data: [{ orgId, expenseId, kind: "QB_POST_FAILED", audience: FLAG_AUDIENCE.QB_POST_FAILED, detail: error.slice(0, 500) }],
-          skipDuplicates: true,
-        });
+        await raiseFlag(expenseId, "QB_POST_FAILED", error.slice(0, 500), tx);
         return "needs_finance" as const;
       };
 
@@ -267,10 +264,7 @@ export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound" | "n
       if (alone && outcome === "posted") {
         counts.overCap++;
         logWarn("qb_drain_over_cap", { expenseId: e.id, orgId: e.orgId });
-        await db.expenseFlag.createMany({
-          data: [{ orgId: e.orgId, expenseId: e.id, kind: "QB_OVER_CAP", audience: FLAG_AUDIENCE.QB_OVER_CAP, detail: "posted alone: over the per-run cap" }],
-          skipDuplicates: true,
-        });
+        await raiseFlag(e.id, "QB_OVER_CAP", "posted alone: over the per-run cap");
         counts.capped = "cents";
         break;
       }

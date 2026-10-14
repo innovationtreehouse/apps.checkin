@@ -250,6 +250,19 @@ function buildQbPayload(
   return QbExpenseEventSchema.parse(payload);
 }
 
+/** Allocates tax, shipping and discount over the lines and builds the outbound payload with each line's bucket. */
+async function qbPayloadFor(expense: Expense, resolved: ResolvedItem[], lineItems: ExpenseLineItem[]) {
+  const allocItems = lineItems.map((li) => ({ id: li.id, totalPriceCents: li.totalPriceCents }));
+  const taxAlloc      = allocateAmount(allocItems, expense.taxCents);
+  const shippingAlloc = allocateAmount(allocItems, expense.shippingCents);
+  const discountAlloc = allocateAmount(allocItems, expense.discountCents);
+
+  const approvals = await db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true } });
+  const bucketByLine = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
+  const payload = buildQbPayload(expense, resolved, lineItems, taxAlloc, shippingAlloc, discountAlloc, bucketByLine);
+  return { payload, taxAlloc, shippingAlloc, discountAlloc };
+}
+
 // ── Stage 4 (atomic): commit QB processing ───────────────────────────────────
 // All domain writes (holds, allocations, event) and the state transition are
 // committed in a single interactive transaction so the expense can never be
@@ -417,14 +430,7 @@ async function processExpenseForQb(
     });
   }
 
-  const allocItems = lineItems.map((li) => ({ id: li.id, totalPriceCents: li.totalPriceCents }));
-  const taxAlloc      = allocateAmount(allocItems, expense.taxCents);
-  const shippingAlloc = allocateAmount(allocItems, expense.shippingCents);
-  const discountAlloc = allocateAmount(allocItems, expense.discountCents);
-
-  const approvals = await db.lineItemOwnerApproval.findMany({ where: { expenseId }, select: { lineItemId: true, ownerId: true } });
-  const bucketByLine = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
-  const payload = buildQbPayload(expense, resolved, lineItems, taxAlloc, shippingAlloc, discountAlloc, bucketByLine);
+  const { payload, taxAlloc, shippingAlloc, discountAlloc } = await qbPayloadFor(expense, resolved, lineItems);
 
   try {
     await commitQbProcessing(
@@ -490,13 +496,7 @@ export async function retryQbPost(orgId: string, expenseId: string): Promise<boo
   const { resolved, conflicts } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "");
   if (conflicts.length > 0) return false;
 
-  const allocItems = lineItems.map((li) => ({ id: li.id, totalPriceCents: li.totalPriceCents }));
-  const payload = buildQbPayload(
-    expense, resolved, lineItems,
-    allocateAmount(allocItems, expense.taxCents),
-    allocateAmount(allocItems, expense.shippingCents),
-    allocateAmount(allocItems, expense.discountCents),
-  );
+  const { payload } = await qbPayloadFor(expense, resolved, lineItems);
   await db.$transaction(async (tx) => {
     await tx.expenseEvent.update({ where: { expense_events_org_expense_unique: { orgId, expenseId } }, data: { payload: JSON.stringify(payload) } });
     await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED", qbPostAttempts: 0 } });

@@ -1,5 +1,5 @@
 // GC-FIN-CONTROL flags: raised for awareness, checked off by the audience they route to, audited.
-import { db } from "../db";
+import { db, type Db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
@@ -10,12 +10,12 @@ import { conflictedParties } from "../lib/signoff-facts";
 import { ServiceError } from "./serviceError";
 
 /** Raises a flag; one row per expense and kind, so raising a checked-off flag reopens it. */
-export async function raiseFlag(expenseId: string, kind: FlagKind, detail: string | null = null): Promise<void> {
+export async function raiseFlag(expenseId: string, kind: FlagKind, detail: string | null = null, client: Db = db): Promise<void> {
   const raised = { audience: FLAG_AUDIENCE[kind], detail, raisedAt: new Date() };
   const reopened = { ...raised, checkedOffAt: null, checkedOffByUserId: null, checkedOffByUsername: null, notes: null };
-  const reopen = await db.expenseFlag.updateMany({ where: { expenseId, kind, checkedOffAt: { not: null } }, data: reopened });
+  const reopen = await client.expenseFlag.updateMany({ where: { expenseId, kind, checkedOffAt: { not: null } }, data: reopened });
   if (reopen.count > 0) return;
-  await db.expenseFlag.createMany({ data: [{ orgId: await getOrgId(), expenseId, kind, ...raised }], skipDuplicates: true });
+  await client.expenseFlag.createMany({ data: [{ orgId: await getOrgId(), expenseId, kind, ...raised }], skipDuplicates: true });
 }
 
 function audiencesOf(principal: ExpensePrincipal): FlagAudience[] {

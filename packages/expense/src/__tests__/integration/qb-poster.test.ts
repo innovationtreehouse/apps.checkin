@@ -373,6 +373,19 @@ describeDb("QB-2 posting — bounded retry", () => {
     expect(qbo.posts).toHaveLength(1);
     expect(qbo.posts[0].body.Line[0].AccountBasedExpenseLineDetail.AccountRef).toEqual({ value: "60" });
   });
+
+  it("exhausting again after a retry reopens the checked-off QB_POST_FAILED flag", async () => {
+    const { id } = await outboxedManual("not-an-account");
+    for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
+    await db.expenseFlag.updateMany({ where: { expenseId: id }, data: { checkedOffAt: new Date(), checkedOffByUserId: 500 } });
+
+    await resubmitHeldExpense(principal(500, { isFinance: true }), id);
+    for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
+
+    expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
+    const [flag] = await db.expenseFlag.findMany({ where: { expenseId: id } });
+    expect(flag).toMatchObject({ kind: "QB_POST_FAILED", checkedOffAt: null });
+  });
 });
 
 describeDb("QB-2 posting — per-run cents cap", () => {
