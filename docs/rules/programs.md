@@ -163,13 +163,22 @@ Things the app takes as true because they are handled outside it.
 
 - A request for a payment plan is never swept away for sitting too long.  [Decision]
 
+- Moving a program's start date or changing its age limits never removes or
+  changes an enrollment. Anyone enrolled who fitted the program's ages before the
+  edit and no longer does is named to the board, which decides what happens.  [Decision — *Principle: people decide about people*]
+
 ### What a youth sees of money
 
 - A youth is never shown a payment obligation, a payment action, or a payment
   status, whether their own or their household's. It is not disabled and not
-  explained; it is absent. Their own enrollment awaiting payment reads as
-  awaiting confirmation, which names no money, stays true if the household never
-  pays, and puts the next action with somebody else.  [Decision]
+  explained; it is absent, and the server never sends it: their own enrollment
+  reads as enrolled, paid or not.  [Decision]
+
+- Payment status — whether an enrollment is paid or not paid yet — goes to the
+  people running the program and to a household lead for their own household,
+  with a way to pay what is not paid yet. Nobody else receives it: not a youth,
+  not a household member who is not a lead, and no family for another family's
+  children.  [Decision — *Principle: least privilege*]
 
 - A youth may not settle a payment their household lead started, on their own
   enrollment or any other. There is no finish-the-checkout allowance for an

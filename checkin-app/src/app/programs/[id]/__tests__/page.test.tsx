@@ -119,7 +119,7 @@ describe("ProgramEnrollmentPage", () => {
         expect(cta).toBeDisabled();
         // Never the payment-pending wording, and never the resume affordance.
         expect(screen.queryByRole("button", { name: "Continue enrollment" })).not.toBeInTheDocument();
-        expect(screen.queryByText(/payment pending/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/not paid|payment pending/i)).not.toBeInTheDocument();
         expect(screen.queryByText("Already enrolled from your household:")).not.toBeInTheDocument();
         // Price stays public — it is program information, not a payment situation.
         expect(screen.getByText("$50.00")).toBeInTheDocument();
@@ -235,9 +235,28 @@ describe("ProgramEnrollmentPage", () => {
         });
         renderPage();
         await screen.findByText("Robotics Club");
-        expect(screen.getByText(/Kid One — Enrolled, payment pending/)).toBeInTheDocument();
+        expect(screen.getByText(/Kid One — Enrolled, not paid yet/)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Pay now" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Continue enrollment" })).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Enroll" })).not.toBeInTheDocument();
+    });
+
+    // The API sends no status to a non-lead household member, so the row reads
+    // as plain enrolled and nothing offers checkout.
+    it("shows a household row without status as enrolled, with no pay affordance", async () => {
+        setSession({ id: 101, ageBand: 'adult', householdId: 7 });
+        mockFetchJson({
+            "/api/household": household,
+            "/api/programs/10": baseProgram({
+                participants: [{ personId: 101, person: { name: "Kid One", householdId: 7 } }],
+            }),
+        });
+        renderPage();
+        await screen.findByText("Robotics Club");
+        expect(screen.getByText(/Kid One — Enrolled$/)).toBeInTheDocument();
+        expect(screen.queryByText(/not paid/i)).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Pay now" })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Enroll" })).toBeInTheDocument();
     });
 
     it("keeps the plain 'Enroll' label when household enrollments are all paid", async () => {
@@ -279,7 +298,7 @@ describe("ProgramEnrollmentPage", () => {
         // payment-pending and selectable, with the enroll button available — NOT
         // the misleading household-setup affordance. Resuming payment is still an
         // explicit click, so the row is not pre-checked.
-        expect(screen.getByText("(Payment pending — select to finish payment)")).toBeInTheDocument();
+        expect(screen.getByText("(Not paid yet — select to pay now)")).toBeInTheDocument();
         expect(screen.getByLabelText("Only Kid")).not.toBeChecked();
         expect(screen.getByLabelText("Only Kid")).toBeEnabled();
         expect(screen.queryByRole("button", { name: "Finish setting up your household to enroll" })).not.toBeInTheDocument();
@@ -647,7 +666,7 @@ describe("ProgramEnrollmentPage", () => {
         // Selectable and not disabled — but unchecked, so resuming the checkout
         // is a deliberate click like any other enrollment.
         expect(await screen.findByLabelText("Jamie Guardian")).not.toBeChecked();
-        expect(screen.getByText("(Payment pending — select to finish payment)")).toBeInTheDocument();
+        expect(screen.getByText("(Not paid yet — select to pay now)")).toBeInTheDocument();
 
         await selectMember("Jamie Guardian");
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));

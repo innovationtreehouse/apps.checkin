@@ -3,7 +3,7 @@
 import { use, useState, useEffect, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Alert, Button, Card, Center, Checkbox, Container, Divider, Group, Loader, Modal, Radio, Stack, Text, Title } from '@mantine/core';
+import { Alert, Anchor, Button, Card, Center, Checkbox, Container, Divider, Group, Loader, Modal, Radio, Stack, Text, Title } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useDisclosure } from '@mantine/hooks';
 import { SCHOLARSHIP_REQUEST_KIND_OPTIONS } from '@/lib/scholarshipRequestKind';
@@ -103,27 +103,21 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
   // Why a member can't be enrolled. Shared by the default selection and the row
   // render so an ineligible member is never auto-selected and then POSTed (which
   // returned a confusing "Date of Birth is missing" for over-25 adults).
-  const enrollBlock = (member: { id: number; dateOfBirth: string | null; isDeclaredAdult?: boolean }): { reason: 'enrolled' | 'pending' | 'awaiting' | 'age' | 'dob' | 'lead' | null; label: string } => {
+  const enrollBlock = (member: { id: number; dateOfBirth: string | null; isDeclaredAdult?: boolean }): { reason: 'enrolled' | 'pending' | 'age' | 'dob' | 'lead' | null; label: string } => {
     // Only a known adult may commit THEMSELVES to a program and its charge — the
     // enroll route refuses the rest, so the viewer's own row must never offer it.
     const viewer = session?.user;
     const selfBlocked = member.id === viewer?.id && viewer?.ageBand !== 'adult';
     const enrolledRow = (program?.participants ?? []).find(p => p.personId === member.id);
-    // ACTIVE = paid/free/override (truly done) — locked. PENDING = payment still
-    // owed: SELECTABLE, so the household can re-run checkout to finish paying
-    // (the participants POST 409s and aggregateEnrollOutcomes folds a 409 back
-    // into the checkout set — the same idempotent path as a double-click).
+    // PENDING = payment still owed: SELECTABLE, so the household can re-run
+    // checkout to finish paying (the participants POST 409s and
+    // aggregateEnrollOutcomes folds a 409 back into the checkout set — the same
+    // idempotent path as a double-click). Anything else is locked: ACTIVE, or no
+    // status at all because this viewer may not see payment status.
     if (enrolledRow) {
-        if (enrolledRow.status === 'ACTIVE') return { reason: 'enrolled', label: 'Enrolled' };
-        // A youth is never shown the payment behind a pending row — the resume
-        // affordance is a checkout they may not reach. "Awaiting confirmation"
-        // stays true whether or not the household ever pays.
-        if (selfBlocked) {
-            return viewer?.ageBand === 'youth'
-                ? { reason: 'awaiting', label: 'Awaiting confirmation' }
-                : { reason: 'dob', label: 'DOB missing' };
-        }
-        return { reason: 'pending', label: 'Payment pending — select to finish payment' };
+        if (enrolledRow.status !== 'PENDING') return { reason: 'enrolled', label: 'Enrolled' };
+        if (selfBlocked) return { reason: 'dob', label: 'DOB missing' };
+        return { reason: 'pending', label: 'Not paid yet — select to pay now' };
     }
     if (!program) return { reason: null, label: '' };
     // Same eligibility rule as the enroll route: a declared over-25 adult clears
@@ -439,7 +433,8 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
     .filter(p => p.person && (p.personId === user?.id || (user?.householdId != null && p.person.householdId === user.householdId)))
     .map(p => ({
       name: p.personId === user?.id ? (p.person?.name || 'You') : (p.person?.name || 'Household member'),
-      active: p.status === 'ACTIVE',
+      // Only a household lead receives status (lib/programs/paymentVisibility).
+      unpaid: p.status === 'PENDING',
     }));
   const isClosed = program.enrollmentStatus === 'CLOSED';
   const hasPrice = !!(program.orgMemberPriceCents || program.nonOrgMemberPriceCents);
@@ -512,8 +507,11 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
                 <Divider />
                 <Text><strong>Already enrolled from your household:</strong></Text>
                 {myEnrolled.map((m, i) => (
-                  <Text key={i} size="sm" c={m.active ? 'green' : 'yellow'} ml="sm">
-                    {m.name} — {m.active ? 'Enrolled' : 'Enrolled, payment pending'}
+                  <Text key={i} size="sm" c={m.unpaid ? 'yellow' : 'green'} ml="sm">
+                    {m.name} — {m.unpaid ? 'Enrolled, not paid yet' : 'Enrolled'}
+                    {m.unpaid && !isClosed && (
+                      <>{' '}<Anchor component="button" size="sm" onClick={startEnrollmentProcess}>Pay now</Anchor></>
+                    )}
                   </Text>
                 ))}
               </>
@@ -552,7 +550,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
                       instead, which holds whether or not the program is priced. */}
                   {isClosed ? <>Enrollment Closed{closedSuffix}</>
                     : viewerIsYouth ? "A household lead must enroll you"
-                    : myEnrolled.some((m) => !m.active) ? "Continue enrollment" : "Enroll"}
+                    : myEnrolled.some((m) => m.unpaid) ? "Continue enrollment" : "Enroll"}
                 </Button>
               ) : (
                 // Auth-first: route through /signin (which picks Google vs. the
@@ -598,8 +596,8 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
                               label={member.name || 'Unnamed Participant'}
                             />
                             {reason === 'enrolled' && <Text size="sm" c="green">({label})</Text>}
-                            {(reason === 'pending' || reason === 'awaiting') && <Text size="sm" c="yellow">({label})</Text>}
-                            {disabled && reason !== 'enrolled' && reason !== 'awaiting' && <Text size="sm" c="red">({label})</Text>}
+                            {reason === 'pending' && <Text size="sm" c="yellow">({label})</Text>}
+                            {disabled && reason !== 'enrolled' && <Text size="sm" c="red">({label})</Text>}
                           </Group>
                         </Card>
                       );
