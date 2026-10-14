@@ -1,5 +1,5 @@
 /**
- * Cross-process mutual exclusion via a Postgres transaction-scoped advisory lock.
+ * Cross-process mutual exclusion via a Postgres session-scoped advisory lock.
  *
  * F19 defense-in-depth. The ingestion fleet is *intended* to run at Lambda reserved
  * concurrency = 1, but the correctness of raw-log dedup, watermark advance, and the bulk
@@ -9,15 +9,11 @@
  * invocations for the same key cannot run concurrently: a second caller that can't take
  * the lock fails fast with {@link ConcurrentRunError} instead of corrupting state.
  *
- * The lock is `pg_try_advisory_xact_lock`, taken inside an interactive transaction that
- * stays open while `fn` runs and ends when it settles — so acquire and release are bound to
- * that transaction's single connection. A session lock/unlock pair is not safe here: the pg
- * adapter's pool can run the two statements on different connections (the
- * `connection_limit` URL param does not size it), leaving the unlock a no-op and the lock
- * stranded on an idle pooled session. `fn` runs on the client's other pooled connections,
- * so the pool needs at least two. The lock transaction writes nothing; it only holds the key.
+ * A run spans many short transactions over minutes, so the lock is session-scoped and held
+ * on a dedicated pg connection: not the Prisma client's pool, where the lock and unlock
+ * could land on different connections, and not a transaction left open for the whole run.
  */
-import type { PrismaClient } from "../db/client.js";
+import pg from "pg";
 
 /** Thrown when an advisory lock is already held — the caller should treat it as a benign skip. */
 export class ConcurrentRunError extends Error {
@@ -27,26 +23,28 @@ export class ConcurrentRunError extends Error {
   }
 }
 
-/** Longest a locked run may take before the lock transaction is rolled back: the Lambda maximum. */
-const LOCK_HOLD_MS = 15 * 60 * 1000;
-
 /**
  * Run `fn` while holding the advisory lock for `key`; throw {@link ConcurrentRunError}
- * immediately if another holder owns it. The lock is released when the holding
- * transaction ends, whether `fn` resolves or throws.
+ * immediately if another holder owns it. The lock lives on its own connection, opened for
+ * this call and closed in `finally`, which releases it.
  */
 export async function withAdvisoryLock<T>(
-  prisma: PrismaClient,
   key: string,
   fn: () => Promise<T>,
+  connectionString: string | undefined = process.env.SHOPIFY_READ_DATABASE_URL,
 ): Promise<T> {
-  return prisma.$transaction(
-    async (tx) => {
-      const rows = await tx.$queryRaw<Array<{ locked: boolean }>>`
-        SELECT pg_try_advisory_xact_lock(hashtextextended(${key}, 0)) AS locked`;
-      if (rows[0]?.locked !== true) throw new ConcurrentRunError(key);
-      return fn();
-    },
-    { timeout: LOCK_HOLD_MS },
-  );
+  if (!connectionString) throw new Error("SHOPIFY_READ_DATABASE_URL is not set; cannot open the advisory-lock connection.");
+  const client = new pg.Client({ connectionString });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS locked",
+      [key],
+    );
+    if (rows[0]?.locked !== true) throw new ConcurrentRunError(key);
+    return await fn();
+  } finally {
+    // Ending the session releases the lock; a failed end means the session is already gone.
+    await client.end().catch(() => undefined);
+  }
 }

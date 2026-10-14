@@ -21,11 +21,13 @@
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
-    "@prisma/client": "^7.8.0"
+    "@prisma/client": "^7.8.0",
+    "pg": "^8.18.0"
   },
   "devDependencies": {
     "@inventory/pg-test-harness": "*",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.16.0",
     "@vitest/coverage-v8": "^4.1.8",
     "dotenv": "^17.0.0",
     "prisma": "^7.8.0",

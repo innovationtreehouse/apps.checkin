@@ -78,7 +78,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Default: lock is acquired, run the protected work; read returns no rows; write succeeds.
   m.withAdvisoryLock.mockImplementation(
-    async (_prisma: unknown, _key: string, fn: () => Promise<unknown>) => fn(),
+    async (_key: string, fn: () => Promise<unknown>) => fn(),
   );
   m.readServiceHeartbeats.mockResolvedValue(new Map());
   m.recordIncident.mockResolvedValue({ healthEventId: 1n, outboxId: 2n, suppressed: false });

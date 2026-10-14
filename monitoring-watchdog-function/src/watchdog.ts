@@ -220,7 +220,7 @@ export async function runWatchdog(
   // concurrency = 1 alone.
   let result: { checked: number; incidents: number };
   try {
-    result = await withAdvisoryLock(prisma, `watchdog:${cfg.env}`, () => check(cfg));
+    result = await withAdvisoryLock(`watchdog:${cfg.env}`, () => check(cfg));
   } catch (err) {
     if (err instanceof ConcurrentRunError) {
       // Another invocation owns the run — skip WITHOUT emitting a heartbeat. The lock-holder
