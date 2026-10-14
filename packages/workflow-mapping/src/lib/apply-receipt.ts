@@ -16,8 +16,8 @@ export type ApplyResult =
   // Inventory committed but its stamp failed: the receipt stays applying (lines locked) until a retry stamps it.
   | { state: "applying"; error: string };
 
-/** Advisory-lock class for a receipt's push; the receipt id is the second key. */
-const WORKFLOW_APPLY_LOCK_CLASS = 1289;
+/** How long a push's claim holds before another caller may take it over (a crashed push). */
+export const APPLY_CLAIM_TTL_MS = 5 * 60_000;
 
 interface ResolvedGtin13 {
   gtin13: string;
@@ -51,9 +51,10 @@ export function buildExpenseReceipt(
  * Does NOT write the intermediate "applying" state — callers are responsible
  * for that transition before invoking this function.
  *
- * Holds a per-receipt advisory lock for the whole push and re-reads the state
- * under it, so of concurrent callers only one pushes. Returns null when another
- * push holds the receipt or it is no longer `applying`.
+ * Claims the receipt with a lease (`applyClaimedAt`) by conditional update, so
+ * of concurrent callers only one pushes, and no transaction stays open across
+ * the sinks. Returns null when another push holds a live claim or the receipt
+ * is no longer `applying`. The claim is released when the push settles.
  */
 export async function executePushAndSettle(
   receiptId: number,
@@ -61,18 +62,25 @@ export async function executePushAndSettle(
   actorUserId?: number | null,
   actorUsername?: string | null,
 ): Promise<ApplyResult | null> {
-  return db.$transaction(
-    async (tx) => {
-      const [{ locked }] = await tx.$queryRaw<Array<{ locked: boolean }>>`
-        SELECT pg_try_advisory_xact_lock(${WORKFLOW_APPLY_LOCK_CLASS}::int, ${receiptId}::int) AS locked`;
-      if (!locked) return null;
-      const current = await tx.receivedReceipt.findUnique({ where: { id: receiptId }, select: { state: true } });
-      if (current?.state !== "applying") return null;
-      return pushAndSettle(receiptId, received, actorUserId, actorUsername);
+  const claimedAt = new Date();
+  const { count } = await db.receivedReceipt.updateMany({
+    where: {
+      id: receiptId,
+      state: "applying",
+      OR: [{ applyClaimedAt: null }, { applyClaimedAt: { lt: new Date(claimedAt.getTime() - APPLY_CLAIM_TTL_MS) } }],
     },
-    // ponytail: the lock's connection stays open for the whole push; split claim/settle if pushes get slow.
-    { timeout: 120_000 },
-  );
+    data: { applyClaimedAt: claimedAt },
+  });
+  if (count !== 1) return null;
+  try {
+    return await pushAndSettle(receiptId, received, actorUserId, actorUsername);
+  } finally {
+    // Only our own claim: a caller that took over a stale one keeps its lease.
+    await db.receivedReceipt.updateMany({
+      where: { id: receiptId, applyClaimedAt: claimedAt },
+      data: { applyClaimedAt: null },
+    });
+  }
 }
 
 async function pushAndSettle(
