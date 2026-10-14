@@ -28,8 +28,10 @@ export const GET = withCron(async () => {
             }
         });
 
-        let checkedOutCount = 0;
         let failed = 0;
+        const forceClosed: typeof abandonedVisits = [];
+        const stillOpen: typeof abandonedVisits = [];
+        // "Notified" means a SYSTEM_NOTIFY audit row + log line; nothing emails the board.
         let boardNotified = false;
 
         if (abandonedVisits.length > 0) {
@@ -43,7 +45,6 @@ export const GET = withCron(async () => {
             // then the facility lock (the order every check-in path uses), so a
             // racing departure or close is serialized, not overwritten. Sequential:
             // concurrent transactions would only queue on the facility lock.
-            const forceClosed: typeof abandonedVisits = [];
             for (const visit of abandonedVisits) {
                 // AUTO_CLOSE: stamped at cron-run time, so the member's real leave
                 // may be hours earlier. Correcting one of these is expected by
@@ -67,10 +68,10 @@ export const GET = withCron(async () => {
                         await logCloseDepartures(tx, close.id, systemActor("cron:nightly"), departures, "NIGHTLY_SWEEP");
                         return segments;
                     });
-                    checkedOutCount += 1;
                     if (segments.length > 0) forceClosed.push(visit);
                 } catch (err) {
                     failed += 1;
+                    stillOpen.push(visit);
                     logger.error(`Failed to check out visit ${visit.id} (person ${visit.person.email}):`, err);
                 }
             }
@@ -81,9 +82,10 @@ export const GET = withCron(async () => {
 
             // Every visit the sweep closed is a missed badge-out the board should see.
             // An abandoned keyholder means the facility was left open, so it is
-            // reported even when its own checkout failed.
+            // reported even when its own checkout failed — but not when someone
+            // else departed the visit before the sweep took the lock.
             const nameOf = (v: (typeof abandonedVisits)[number]) => v.person.name || v.person.email;
-            const keyholderNames = abandonedVisits.filter(v => v.person.isKeyholder).map(nameOf).join(', ');
+            const keyholderNames = [...forceClosed, ...stillOpen].filter(v => v.person.isKeyholder).map(nameOf).join(', ');
             const closedNames = forceClosed.map(nameOf).join(', ');
 
             if (closedNames || keyholderNames) {
@@ -157,7 +159,7 @@ export const GET = withCron(async () => {
             // a green sweep, and is also not a sweep that failed to run.
             failed,
             facilityClose: {
-                checkedOutCount,
+                checkedOutCount: forceClosed.length,
                 boardNotified
             },
             postEvents: emailResult,

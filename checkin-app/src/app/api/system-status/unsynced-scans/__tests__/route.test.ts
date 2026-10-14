@@ -38,7 +38,6 @@ jest.mock("@/lib/prisma", () => ({
 }));
 jest.mock("@/lib/attendanceTransitions", () => ({
     findAssociatedEventAt: jest.fn().mockResolvedValue(null),
-    processVisitCheckout: jest.fn().mockResolvedValue([]),
 }));
 jest.mock("@/lib/facilityLock", () => ({ lockFacility: jest.fn() }));
 
@@ -339,8 +338,7 @@ describe("POST /api/system-status/unsynced-scans/[id] (record — ruled branches
         expect(lockFacility).toHaveBeenCalled();
     });
 
-    it("appends the departure presence event and processes checkout on a closed mint", async () => {
-        const { processVisitCheckout } = jest.requireMock("@/lib/attendanceTransitions");
+    it("appends the departure presence event on a closed mint", async () => {
         const res = await POST(
             recordReq({ action: "record", departedAt: "2026-08-20T21:00:00.000Z" }),
             dismissCtx(),
@@ -349,7 +347,6 @@ describe("POST /api/system-status/unsynced-scans/[id] (record — ruled branches
         // No parked event linked (default mock) → an IN is appended for the log,
         // plus the OUT for the supplied departure.
         expect(db.presenceEvent.create).toHaveBeenCalledTimes(2);
-        expect(processVisitCheckout).toHaveBeenCalledWith(900, new Date("2026-08-20T21:00:00.000Z"), undefined, "TYPED");
         expect(db.auditLog.create).toHaveBeenCalled();
     });
 });

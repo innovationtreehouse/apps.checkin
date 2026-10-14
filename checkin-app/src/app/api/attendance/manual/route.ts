@@ -2,12 +2,13 @@ import { withAuth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
-import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
+import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { logBackendError, logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { withinMaxDuration } from "@/lib/visitTimes";
+import { orgCalendarDay } from "@/lib/time";
 import { LIVE_VISIT } from "@/lib/visit/filters";
 import { visitSubject } from "@/lib/visit/scope";
 import { lockFacility } from "@/lib/facilityLock";
@@ -85,7 +86,7 @@ export const POST = withAuth({}, async (req, auth) => {
         // scanned out of, so require a departure for it.
         if (!departureTime) {
             const withinSixHours = now.getTime() - arrivalTime.getTime() <= 6 * 60 * 60 * 1000;
-            const sameDay = arrivalTime.toDateString() === now.toDateString();
+            const sameDay = orgCalendarDay(arrivalTime).getTime() === orgCalendarDay(now).getTime();
             if (!withinSixHours && !sameDay) {
                 return apiError("Departure time is required for past arrivals.", 400);
             }
@@ -168,12 +169,6 @@ export const POST = withAuth({}, async (req, auth) => {
             return apiError("Facility is closed. A keyholder must badge in at the door first.", 403);
         }
         const { visit, freshCheckin } = result;
-
-        // If a departure time was provided, we process the checkout logic directly
-        // to handle any back-to-back event transitions.
-        if (departureTime) {
-             await processVisitCheckout(visit.id, departureTime, undefined, "TYPED");
-        }
 
         // Fire-and-forget: notify only on a fresh active check-in (mirrors /api/scan).
         // A backfilled closed visit is a historical record, not a live arrival.

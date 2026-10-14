@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { handler, badRequest, notFound, unauthorized, ApiResponseError } from "@/security/handler";
 import { appendPresenceEvent, classifyPresenceEvent, PresenceClass } from "@/lib/presence/events";
-import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
+import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
 import { withinMaxDuration } from "@/lib/visitTimes";
 import { lockFacility } from "@/lib/facilityLock";
 import { LIVE_PERSON } from "@/lib/person/filters";
@@ -189,10 +189,6 @@ export const POST = handler<{ id: string }>(
             timeout: 15000,
         });
 
-        // Same back-to-back transition handling a manual closed backfill gets.
-        if (parsedDeparted) {
-            await processVisitCheckout(visitId, parsedDeparted, undefined, "TYPED");
-        }
         invalidateAttendanceCache();
 
         await prisma.auditLog.create({
