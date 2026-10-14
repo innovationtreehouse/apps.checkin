@@ -20,7 +20,7 @@ import { TEST_ORG_ID } from "../helpers/seed";
 useIntegrationSetup();
 
 const GTIN = "0000000000031";
-const PROVISIONAL = "2000000000015";
+const PROVISIONAL = "0200002700018";
 const REAL = "0000000000048";
 
 function services() {
