@@ -2,6 +2,7 @@ import { isRecordNotFoundError, isUniqueConstraintError, type Db } from "../db/i
 import type { InventoryProvisionalItem, OrgItem } from "../db/schema";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
 import type { ReceiveQueueRepository } from "../repositories/receiveQueueRepository";
+import { isProvisionalGtin13 } from "../gtin";
 import { applyQtyChangeIn } from "./inventoryService";
 import type { ProvisionalItemService } from "./provisionalItemService";
 import { ServiceError } from "./serviceError";
@@ -30,6 +31,11 @@ export type ApplyResult = {
   replayed: boolean;
   updatedItems: Array<{ gtin13: string; newQuantity: number }>;
 };
+
+/** Stock is held under a provisional GTIN only when the GTIN is in the provisional range. */
+function assertProvisionalGtin(gtin13: string): void {
+  if (!isProvisionalGtin13(gtin13)) throw new ServiceError(400, `Not a provisional GTIN: ${gtin13}`);
+}
 
 function sourceKey(source: ApplySource): string {
   return source.kind === "receipt" ? `receipt:${source.receiptId}` : `donation:${source.donationId}`;
@@ -130,6 +136,7 @@ export function createReceiptService({
           if (!li.gtin13) continue;
 
           if (li.isProvisional) {
+            assertProvisionalGtin(li.gtin13);
             const existing = await tx.inventoryProvisionalItem.findFirst({
               where: { provisionalGtin13: li.gtin13, orgId },
             });
@@ -230,6 +237,7 @@ export function createReceiptService({
         conversionFactor?: number;
       },
     ): Promise<{ provisionalItem: InventoryProvisionalItem; orgItem: OrgItem }> {
+      assertProvisionalGtin(data.provisionalGtin13);
       const now = new Date();
 
       const result = await db.$transaction(async (tx) => {
