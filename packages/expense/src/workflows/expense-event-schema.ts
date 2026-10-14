@@ -19,6 +19,8 @@ export const QbLineItemSchema = z.object({
   capitalOwnerId: z.number().int().positive().nullable(),
   depreciationYears: z.number().int().positive().nullable(),
   account: z.string(),
+  /** The line's budget bucket (its QuickBooks Class); absent on older v1 events. */
+  bucketId: z.number().int().positive().nullable().optional(),
 });
 
 export const QbExpenseEventSchema = z

@@ -3,12 +3,27 @@ import { resolveNextState } from "../workflows/expense.invariants";
 import type { ExpenseEvent } from "../workflows/expense.events";
 import type { ExpenseMachineContext } from "../workflows/expense.guards";
 import { NEUTRAL_CONTEXT } from "../workflows/expense.guards";
+import { ServiceError } from "../services/serviceError";
 
 type Db = PrismaClient;
 
 // Structural type satisfied by both PrismaClient and Prisma interactive-transaction
 // clients (which omit $connect/$disconnect/$on/$transaction/$use/$extends).
 type DbLike = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
+
+/** The expense left `currentState` before this transition committed: a concurrent call won. */
+export class StaleStateError extends ServiceError {
+  constructor(expenseId: string, expected: string) {
+    super(409, `Expense ${expenseId} is no longer ${expected}; reload and retry`);
+    this.name = "StaleStateError";
+  }
+}
+
+/** Swallows a lost transition race (the winner carries the flow on); null when lost. */
+export function unlessRaceLost(err: unknown): null {
+  if (err instanceof StaleStateError) return null;
+  throw err;
+}
 
 export interface Actor {
   userId: number;
@@ -52,7 +67,8 @@ export async function advanceWorkflowInTx(
 
   const nextState = resolveNextState(currentState, event, context);
 
-  await tx.expense.update({ where: { id: expenseId }, data: { state: nextState } });
+  const moved = await tx.expense.updateMany({ where: { id: expenseId, state: currentState }, data: { state: nextState } });
+  if (moved.count === 0) throw new StaleStateError(expenseId, currentState);
   await tx.expenseAuditLog.create({
     data: {
       expenseId,

@@ -9,7 +9,7 @@
 import { it, expect, vi, beforeEach } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { seedExpense, seedLineItem, seedAccountMapping, signAllLines, bindPorts, ORG } from "../helpers/seed";
+import { seedApproval, seedExpense, seedLineItem, seedAccountMapping, signAllLines, bindPorts, ORG } from "../helpers/seed";
 
 const inv = vi.hoisted(() => ({
   listCategories: vi.fn(),
@@ -75,6 +75,22 @@ describeDb("checkAndProcessExpense — happy path", () => {
     const lis = await db.expenseLineItem.findMany({ where: { expenseId: id } });
     expect(lis.find((l) => l.id === li1)!.allocatedTaxCents).toBe(8);
     expect(lis.find((l) => l.id === li2)!.allocatedTaxCents).toBe(2);
+  });
+
+  it("carries each line's budget bucket on the event; a line with no bucket carries null", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    const li1 = await seedLineItem(id, { partNumber: "PN-1" });
+    const li2 = await seedLineItem(id, { partNumber: "PN-2" });
+    await seedApproval(id, li1, { ownerId: 100, status: "approved" });
+    catalogResolvesAll({ [li1]: "0000000000017", [li2]: "0000000000024" });
+    await seedAccountMapping({ qbAccount: "4000" });
+
+    await signAllLines(id);
+    await checkAndProcessExpense(ORG, id);
+
+    const [event] = await eventsFor(id);
+    const payload = JSON.parse(event.payload) as { items: Array<{ lineItemId: number; bucketId: number | null }> };
+    expect(Object.fromEntries(payload.items.map((i) => [i.lineItemId, i.bucketId]))).toEqual({ [li1]: 100, [li2]: null });
   });
 });
 
@@ -148,6 +164,24 @@ describeDb("checkAndProcessExpense — idempotency & resolution", () => {
     expect(await stateOf(id)).toBe("qb_complete");
     const holds = await holdsFor(id);
     expect(holds.every((h) => h.status === "RESOLVED")).toBe(true);
+  });
+
+  it("two concurrent drains of a qb_on_hold expense complete it once; the loser is not a QB failure", async () => {
+    const id = await seedExpense({ state: "qb_on_hold" });
+    const li = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    await db.expenseHold.create({
+      data: { orgId: ORG, expenseId: id, lineItemId: li, reason: "NO_MATCH", matchedRows: "[]", status: "PENDING" },
+    });
+    catalogResolvesAll({ [li]: "0000000000017" });
+    await seedAccountMapping({ qbAccount: "4000" });
+    await signAllLines(id);
+
+    await Promise.all([checkAndProcessExpense(ORG, id), checkAndProcessExpense(ORG, id)]);
+
+    expect(await stateOf(id)).toBe("qb_complete");
+    expect(await eventsFor(id)).toHaveLength(1);
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_processing_failed" } })).toBe(0);
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_holds_resolved" } })).toBe(1);
   });
 });
 

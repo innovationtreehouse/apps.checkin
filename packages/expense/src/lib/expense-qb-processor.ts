@@ -5,7 +5,7 @@ import { SYSTEM_ACTOR } from "./system-actor";
 import { logError } from "./logger";
 import { QbExpenseEventSchema, type QbExpenseEvent } from "../workflows/expense-event-schema";
 import { lookupItems, getItem, listCategories, listSubcategories } from "./catalog";
-import { advanceWorkflow, advanceWorkflowInTx } from "./workflow-engine";
+import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost } from "./workflow-engine";
 import { unsignedLines } from "./signoff-facts";
 import { reimburseeUnknown } from "./signoff";
 import type { Expense } from "../generated/prisma/client";
@@ -213,6 +213,7 @@ function buildQbPayload(
   taxAlloc: Map<number, number>,
   shippingAlloc: Map<number, number>,
   discountAlloc: Map<number, number>,
+  bucketByLine: Map<number, number | null>,
 ): QbExpenseEvent {
   const payload = {
     schemaVersion: 1 as const,
@@ -240,6 +241,7 @@ function buildQbPayload(
         capitalOwnerId: full.capitalOwnerId ?? null,
         depreciationYears: full.depreciationYears ?? null,
         account: li.account,
+        bucketId: bucketByLine.get(li.id) ?? null,
       };
     }),
   };
@@ -318,7 +320,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
       event: { type: "RESUBMIT" },
       actor: SYSTEM_ACTOR,
       action: "qb_resubmitted",
-    });
+    }).catch(unlessRaceLost);
     expense = await db.expense.findFirst({ where: { id: expenseId } });
     if (!expense) return;
   }
@@ -333,7 +335,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
       event: { type: "QB_SKIPPED" },
       actor: SYSTEM_ACTOR,
       action: "qb_skipped_backfill",
-    });
+    }).catch(unlessRaceLost);
     return;
   }
 
@@ -351,6 +353,8 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
   try {
     await processExpenseForQb(orgId, expenseId, expense);
   } catch (err) {
+    // A concurrent drain moved the expense first and carries it on; this is not a QB failure.
+    if (err instanceof StaleStateError) return;
     logError("qb_processing_failed", { expenseId, orgId, state: expense.state }, err);
 
     const current = await db.expense.findFirst({ where: { id: expenseId } });
@@ -364,7 +368,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
       actor: SYSTEM_ACTOR,
       action: "qb_processing_failed",
       auditNotes: err instanceof Error ? err.message : String(err),
-    });
+    }).catch(unlessRaceLost);
   }
 }
 
@@ -417,7 +421,9 @@ async function processExpenseForQb(
   const shippingAlloc = allocateAmount(allocItems, expense.shippingCents);
   const discountAlloc = allocateAmount(allocItems, expense.discountCents);
 
-  const payload = buildQbPayload(expense, resolved, lineItems, taxAlloc, shippingAlloc, discountAlloc);
+  const approvals = await db.lineItemOwnerApproval.findMany({ where: { expenseId }, select: { lineItemId: true, ownerId: true } });
+  const bucketByLine = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
+  const payload = buildQbPayload(expense, resolved, lineItems, taxAlloc, shippingAlloc, discountAlloc, bucketByLine);
 
   try {
     await commitQbProcessing(

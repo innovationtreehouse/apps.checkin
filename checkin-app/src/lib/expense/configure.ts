@@ -6,7 +6,7 @@
  */
 import { configureExpense } from "@inventory/expense";
 import type { ExpensePrincipal, OwnerDirectory, SignoffDirectory } from "@inventory/expense";
-import type { PersonRoleKind } from "@/generated/prisma/client";
+import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { getOrg, sessionUser } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
 
@@ -27,24 +27,29 @@ const budgetOwners: OwnerDirectory = {
   },
 };
 
-async function roleHolders(role: PersonRoleKind): Promise<number[]> {
+/** A live person whose household is not DENIED: a denied household's roles grant nothing (assignParticipantClaims). */
+async function eligibleSigner(): Promise<Prisma.PersonWhereInput> {
   const { LIVE_PERSON } = await import("@/lib/person/filters");
-  const rows = await (await db()).personRole.findMany({ where: { role, person: LIVE_PERSON }, select: { personId: true } });
+  return { ...LIVE_PERSON, NOT: { household: { orgMembership: { status: "DENIED" } } } };
+}
+
+async function roleHolders(role: PersonRoleKind): Promise<number[]> {
+  const rows = await (await db()).personRole.findMany({ where: { role, person: await eligibleSigner() }, select: { personId: true } });
   return rows.map((r) => r.personId);
 }
 
 /** Approvers are derived, never stored: a program bucket's lead mentor and its program treasurers. */
 const signoff: SignoffDirectory = {
   async bucketApprovers(bucketId) {
-    const { LIVE_PERSON } = await import("@/lib/person/filters");
+    const { orgMembershipStatusBlocksLogin } = await import("@/lib/orgMembership");
     const bucket = await (await db()).budgetOwner.findUnique({
       where: { id: bucketId },
       select: {
         programId: true,
         program: {
           select: {
-            leadMentor: { select: { id: true, mergedIntoId: true } },
-            volunteers: { where: { isTreasurer: true, person: LIVE_PERSON }, select: { personId: true } },
+            leadMentor: { select: { id: true, mergedIntoId: true, household: { select: { orgMembership: { select: { status: true } } } } } },
+            volunteers: { where: { isTreasurer: true, person: await eligibleSigner() }, select: { personId: true } },
           },
         },
       },
@@ -52,17 +57,19 @@ const signoff: SignoffDirectory = {
     if (!bucket) return { orgLevel: false, approvers: [] };
     if (bucket.programId === null || !bucket.program) return { orgLevel: true, approvers: [] };
     const lead = bucket.program.leadMentor;
-    const approvers = [...(lead && lead.mergedIntoId === null ? [lead.id] : []), ...bucket.program.volunteers.map((v) => v.personId)];
+    const leadEligible = lead && lead.mergedIntoId === null && !orgMembershipStatusBlocksLogin(lead.household?.orgMembership?.status);
+    const approvers = [...(leadEligible ? [lead.id] : []), ...bucket.program.volunteers.map((v) => v.personId)];
     return { orgLevel: false, approvers: [...new Set(approvers)] };
   },
 
   async bucketsApprovedBy(personId) {
+    const signer = await eligibleSigner();
     const rows = await (await db()).budgetOwner.findMany({
       where: {
         program: {
           OR: [
-            { leadMentorId: personId, leadMentor: { mergedIntoId: null } },
-            { volunteers: { some: { personId, isTreasurer: true, person: { mergedIntoId: null } } } },
+            { leadMentorId: personId, leadMentor: signer },
+            { volunteers: { some: { personId, isTreasurer: true, person: signer } } },
           ],
         },
       },
