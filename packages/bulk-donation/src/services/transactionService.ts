@@ -153,7 +153,7 @@ export const transactionService = {
         }
       }
 
-      for (const disbId of affectedDisbursementIds) {
+      for (const disbId of [...affectedDisbursementIds].sort()) {
         await runOwnerAssignedCycleTx(tx, orgId, disbId, audit);
       }
 

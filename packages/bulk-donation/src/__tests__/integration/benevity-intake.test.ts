@@ -154,6 +154,34 @@ describeDb("gifts for an already-completed disbursement", () => {
     expect(await db.transaction.count({ where: { orgId, transactionId: { in: ["T-9", "T-10"] } } })).toBe(0);
     expect(await db.uploadedFile.count({ where: { orgId } })).toBe(filesBefore);
   });
+
+  it("an upload racing the completing assignment never stores a gift the completion missed", async () => {
+    await makeAccountMapRule(orgId);
+    await db.transactionCommentRule.create({ data: { orgId, comment: "Robotics team", ownerId: 201, createdByUserId: 1 } });
+    for (let i = 0; i < 5; i++) {
+      const d = `D-R${i}`;
+      await upload([
+        `${d},2026-09-01,Acme Corp,T-R${i}a,10.00,0,0,check,standard,Jane,Doe,Robotics team`,
+        `${d},2026-09-01,Acme Corp,T-R${i}b,10.00,0,0,check,standard,John,Smith,Chess club`,
+      ]);
+      const open = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: `T-R${i}b` } });
+
+      const [assigned, late] = await Promise.allSettled([
+        transactionService.assignOwner(orgId, open.id, 202, false, AUDIT),
+        upload([`${d},2026-09-01,Acme Corp,T-R${i}c,5.00,0,0,check,standard,Bo,Kim,Debate club`]),
+      ]);
+      expect(assigned.status).toBe("fulfilled");
+
+      const completed = (await db.disbursementEvent.count({ where: { orgId, disbursementId: d } })) === 1;
+      const stored = (await db.transaction.count({ where: { orgId, transactionId: `T-R${i}c` } })) === 1;
+      if (late.status === "rejected") {
+        expect(late.reason).toMatchObject({ statusCode: 409 });
+        expect(completed && !stored).toBe(true);
+      } else {
+        expect(stored && !completed).toBe(true);
+      }
+    }
+  });
 });
 
 describeDb("comment rules apply at upload", () => {

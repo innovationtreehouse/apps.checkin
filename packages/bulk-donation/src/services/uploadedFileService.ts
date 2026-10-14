@@ -5,7 +5,7 @@ import { isAutoOrganizationalLevel } from "../lib/domain-rules";
 import type { BenevityRow } from "../lib/csv-parser";
 import { ServiceError } from "./serviceError";
 import { getOwnerDirectory } from "../runtime";
-import { runOwnerAssignedCycleTx, type AuditContext } from "../workflows/disbursement.actor";
+import { lockDisbursementTx, runOwnerAssignedCycleTx, type AuditContext } from "../workflows/disbursement.actor";
 
 const SELECT_FILE_FIELDS = {
   id: true,
@@ -136,7 +136,8 @@ export const uploadedFileService = {
       }
 
       // A completed disbursement's payload is final, so a late gift for it would never be booked.
-      const newDisbursementIds = [...new Set(toInsert.flatMap((t) => (t.disbursementId ? [t.disbursementId] : [])))];
+      const newDisbursementIds = [...new Set(toInsert.flatMap((t) => (t.disbursementId ? [t.disbursementId] : [])))].sort();
+      for (const disbursementId of newDisbursementIds) await lockDisbursementTx(tx, orgId, disbursementId);
       const completed =
         newDisbursementIds.length > 0
           ? await tx.disbursementEvent.findMany({
