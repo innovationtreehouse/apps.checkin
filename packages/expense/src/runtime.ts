@@ -3,6 +3,7 @@ import {
   inertCatalogReader,
   inertOwnerDirectory,
   inertQbReader,
+  inertQbRefs,
   inertQbWriter,
   inertSignoffDirectory,
   type CatalogEventSource,
@@ -12,6 +13,7 @@ import {
   type OrgIdentity,
   type OwnerDirectory,
   type QbReader,
+  type QbRefs,
   type QbWriter,
   type SignoffDirectory,
 } from "./contract";
@@ -19,6 +21,7 @@ import {
 export interface QuickBooksPorts {
   reader: QbReader;
   writer: QbWriter;
+  refs: QbRefs;
 }
 
 export interface ExpenseConfig {
@@ -60,6 +63,7 @@ export function configureExpense(config: ExpenseConfig): void {
     quickbooks: {
       reader: config.quickbooks?.reader ?? inertQbReader,
       writer: config.quickbooks?.writer ?? inertQbWriter,
+      refs: config.quickbooks?.refs ?? inertQbRefs,
     },
   };
 }

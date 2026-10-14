@@ -158,6 +158,21 @@ export const inertQbReader: QbReader = {
   billPaymentsBetween: async () => [],
 };
 
+/**
+ * The QuickBooks ids an expense entry is booked against: the payment account of a Purchase and
+ * the reimbursee's vendor on a Bill. A candidate must carry the same id; null means unknown, and
+ * then nothing matches.
+ */
+export interface QbRefs {
+  paymentAccountId(): Promise<string | null>;
+  vendorIdFor(personId: number): Promise<string | null>;
+}
+
+export const inertQbRefs: QbRefs = {
+  paymentAccountId: async () => null,
+  vendorIdFor: async () => null,
+};
+
 /** The entities expense creates. Never a BillPayment, Check or Payment. */
 export type QbCreateEntity = "Purchase" | "Bill" | "Vendor";
 

@@ -187,6 +187,9 @@ model ExpenseLineItem {
   qbMatchState      String   @default("UNMATCHED") @map("qb_match_state")
   /// @sensitivity:internal
   qbTxnId           String?  @unique @map("qb_txn_id")
+  // QuickBooks entity type of qb_txn_id (Bill | Purchase); QuickBooks ids are unique per entity type only.
+  /// @sensitivity:internal
+  qbTxnEntity       String?  @map("qb_txn_entity")
 
   expense           Expense                 @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   approvals         LineItemOwnerApproval[]
