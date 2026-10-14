@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import { MAX_VISIT_MS } from "@/lib/visitTimes";
+import { LIVE_VISIT } from "@/lib/visit/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 /**
@@ -116,10 +117,9 @@ export async function processVisitCheckout(
 
     // Every write below applies only while the visit is still open, so a caller
     // that lost a race to another departure changes nothing and gets [].
-    const stillOpen = { id: visitId, departedAt: null, deletedAt: null };
     const closeOpenVisit = async () => {
         const { count } = await db.visit.updateMany({
-            where: stillOpen,
+            where: { id: visitId, departedAt: null, ...LIVE_VISIT },
             data: { departedAt: departure, departedVia: source, facilityCloseId },
         });
         if (count === 0) return [];
@@ -154,7 +154,7 @@ export async function processVisitCheckout(
     // original open visit and recreating the chunks atomically.
     const chunk = async (tx: TxClient) => {
         // First, delete the original open visit
-        const { count } = await tx.visit.deleteMany({ where: stillOpen });
+        const { count } = await tx.visit.deleteMany({ where: { id: visitId, departedAt: null, ...LIVE_VISIT } });
         if (count === 0) return [];
 
         const createdVisits = [];
