@@ -47,13 +47,14 @@ import type { MirrorOrder } from "@/lib/shopifyRead/client";
  * DISCOUNT_UNAUTHORIZED instead of activating (see usesVolunteerCodeUnentitled).
  *
  * The program side carries the parallel check, judged AT THE MONEY EVENT: a minted
- * `PRG{programId}-XXXXXXXX` member-discount code redeemed by a household that isn't
- * dues-settled through the program's coverage date raises the same
- * DISCOUNT_UNAUTHORIZED instead of activating. The orders/paid webhook asks it for a
- * live checkout; this forward pass asks it when recovering a missed webhook. The
- * reversal pass deliberately does NOT re-ask it: entitlement is a fact about the
- * moment money moved, so a household deactivated later never retro-flags orders that
- * were honest when they were paid (see unentitledMemberCodeUse).
+ * `PRG{programId}-H{householdId}-XXXXXXXX` member-discount code redeemed on another
+ * household's order, or by a household that isn't dues-settled through the program's
+ * coverage date, raises the same DISCOUNT_UNAUTHORIZED instead of activating. The
+ * orders/paid webhook asks it for a live checkout; this forward pass asks it when
+ * recovering a missed webhook. The reversal pass deliberately does NOT re-ask it:
+ * entitlement is a fact about the moment money moved, so a household deactivated
+ * later never retro-flags orders that were honest when they were paid (see
+ * unentitledMemberCodeUse).
  */
 
 export type PaymentExceptionKind =
@@ -70,7 +71,8 @@ export type PaymentExceptionKind =
     | "PAYMENT_UNVERIFIABLE"
     | "DENIED_HOUSEHOLD_ACTIVITY"
     | "DUPLICATE_PAYMENT"
-    | "UNCLAIMED_SEATS";
+    | "UNCLAIMED_SEATS"
+    | "MIXED_HOUSEHOLDS";
 
 type Severity = "WARN" | "CRITICAL";
 
@@ -232,10 +234,10 @@ export type Entitlement =
 
 /**
  * Does this order pay for activating these people in this program? Paid and not
- * reversed, carries one of the program's variants (public or claimant), and
- * buys at least one seat per person still awaiting payment. A seat shortfall
- * activates nobody: the order cannot say which of the household it was meant
- * for, so the board decides.
+ * reversed, names people from one household only (else MIXED_HOUSEHOLDS), carries
+ * one of the program's variants (public or claimant), and buys at least one seat
+ * per person still awaiting payment. A seat shortfall activates nobody: the order
+ * cannot say which of the household it was meant for, so the board decides.
  *
  * Seats beyond those awaiting payment, and not already activated by this same
  * order (a redelivery, or a child it activated whom the board later withdrew),
@@ -249,6 +251,7 @@ export async function orderEntitlesEnrollment(order: EntitlementOrder, programId
     if (awaiting === 0 && !isPaid(order)) return { ok: false, kind: null, nothingAwaiting: true };
     if (isReversed(order)) return { ok: false, kind: "REVERSED_BEFORE_ACTIVATION" };
     if (!isPaid(order)) return { ok: false, kind: null };
+    if (await spansHouseholds(personIds)) return { ok: false, kind: "MIXED_HOUSEHOLDS" };
 
     const program = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyVariantId: true, claimantShopifyVariantId: true } });
     const variantIds = new Set(program ? programVariantIds(program) : []);
@@ -260,6 +263,17 @@ export async function orderEntitlesEnrollment(order: EntitlementOrder, programId
     if (seats === 0) return { ok: false, kind: "NO_ITEM" };
     if (seats < awaiting) return { ok: false, kind: "AMOUNT_MISMATCH" };
     return { ok: true, surplus: await surplusSeats(order, programId, personIds, seats - awaiting) };
+}
+
+/** One order pays for one household: do the people it names live in more than one? */
+async function spansHouseholds(personIds: number[]): Promise<boolean> {
+    if (new Set(personIds).size < 2) return false;
+    const households = await prisma.person.findMany({
+        where: { id: { in: personIds } },
+        select: { householdId: true },
+        distinct: ["householdId"],
+    });
+    return households.length > 1;
 }
 
 async function surplusSeats(order: EntitlementOrder, programId: number, personIds: number[], unspent: number): Promise<Surplus | undefined> {
@@ -511,7 +525,7 @@ async function activateProgramFromOrder(order: MirrorOrder, programId: number, p
 
     // Coupon entitlement, parity with the membership forward branch above: the order
     // may well contain the program's product, but the member code on it is only honest
-    // if some enrollee's household is dues-settled through the program's coverage date.
+    // on the household it was minted for, settled through the program's coverage date.
     // This IS the money event for a missed webhook — same judgement the webhook makes,
     // asked once. None entitled → tell the board, do NOT activate.
     if (await unentitledMemberCodeUse(programId, personIds, order.discountCodes, order.legacyId ?? null)) {

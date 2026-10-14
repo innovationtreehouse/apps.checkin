@@ -22,7 +22,7 @@ jest.mock("@/lib/orgMembership", () => ({
 
 import prisma from "@/lib/prisma";
 import { isDuesSettledThrough } from "@/lib/orgMembership";
-import { usesProgramMemberCode, unentitledMemberCodeUse } from "../memberDiscountCode";
+import { usesProgramMemberCode, unentitledMemberCodeUse, memberCodeHousehold } from "../memberDiscountCode";
 
 const findUnique = prisma.program.findUnique as jest.Mock;
 const participants = prisma.programParticipant.findMany as jest.Mock;
@@ -34,7 +34,7 @@ beforeEach(() => {
     // Default: every id asked about really is enrolled in the program. The
     // stuffed-id test below overrides this with the DB's narrower answer.
     participants.mockImplementation(({ where }: { where: { personId: { in: number[] } } }) =>
-        Promise.resolve(where.personId.in.map((personId) => ({ personId }))),
+        Promise.resolve(where.personId.in.map((personId) => ({ personId, person: { householdId: 5 } }))),
     );
 });
 
@@ -158,5 +158,52 @@ describe("unentitledMemberCodeUse", () => {
         settledThrough.mockResolvedValue(false);
         expect(await unentitledMemberCodeUse(42, [1], ["PRG42-ABCD1234"], "ord-1")).toBe(true);
         expect(settledThrough).toHaveBeenCalledWith(1, null);
+    });
+});
+
+describe("memberCodeHousehold", () => {
+    it("reads the household a code was minted for", () => {
+        expect(memberCodeHousehold(["PRG42-H5-ABCD1234"], 42)).toBe(5);
+        expect(memberCodeHousehold([" prg42-h5-abcd1234 "], 42)).toBe(5);
+    });
+
+    it("is null for an unbound code, another program's code, or no code", () => {
+        expect(memberCodeHousehold(["PRG42-ABCD1234"], 42)).toBeNull();
+        expect(memberCodeHousehold(["PRG4-H5-ABCD1234"], 42)).toBeNull();
+        expect(memberCodeHousehold([], 42)).toBeNull();
+    });
+});
+
+describe("unentitledMemberCodeUse with a household-bound code", () => {
+    it("does not flag the household it was minted for, settled through the program", async () => {
+        settledThrough.mockResolvedValue(true);
+        expect(await unentitledMemberCodeUse(42, [1, 2], ["PRG42-H5-ABCD1234"], "ord-1")).toBe(false);
+        expect(settledThrough).toHaveBeenCalledWith(1, new Date("2026-08-01"));
+    });
+
+    it("flags a code used on another household's children", async () => {
+        settledThrough.mockResolvedValue(true);
+        expect(await unentitledMemberCodeUse(42, [1], ["PRG42-H6-ABCD1234"], "ord-1")).toBe(true);
+        expect(settledThrough).not.toHaveBeenCalled();
+    });
+
+    it("flags when one enrollee is outside the code's household", async () => {
+        participants.mockResolvedValue([
+            { personId: 1, person: { householdId: 5 } },
+            { personId: 2, person: { householdId: 6 } },
+        ]);
+        settledThrough.mockResolvedValue(true);
+        expect(await unentitledMemberCodeUse(42, [1, 2], ["PRG42-H5-ABCD1234"], "ord-1")).toBe(true);
+    });
+
+    it("flags the right household once its dues no longer cover the program", async () => {
+        settledThrough.mockResolvedValue(false);
+        expect(await unentitledMemberCodeUse(42, [1], ["PRG42-H5-ABCD1234"], "ord-1")).toBe(true);
+    });
+
+    it("flags when nobody named is enrolled", async () => {
+        participants.mockResolvedValue([]);
+        settledThrough.mockResolvedValue(true);
+        expect(await unentitledMemberCodeUse(42, [1], ["PRG42-H5-ABCD1234"], "ord-1")).toBe(true);
     });
 });

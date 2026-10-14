@@ -1142,8 +1142,8 @@ model ProgramParticipant {
   /// scholarship application takes a seat out of Shopify's pool (-1). Cleared
   /// back to null exactly once, by whichever fires first: withdrawal, a
   /// normal payment (webhook compensates the sale's auto-decrement), or
-  /// grace-period expiry (cron) — or consumed permanently by approval (no
-  /// +1). NOT NULL is the transactional guard every release path checks
+  /// grace-period expiry (cron) — or consumed by approval, which moves it to
+  /// seatTakenWithoutSaleAt. NOT NULL is the transactional guard every release path checks
   /// before adjusting Shopify.
   /// @sensitivity:internal
   inventoryHeldAt      DateTime?
@@ -1159,6 +1159,11 @@ model ProgramParticipant {
   /// on that order back to the enrollment (mirror shop_order.legacyId ↔ this).
   /// @sensitivity:internal
   shopifyOrderId       String?
+  /// Stamped when this place took its seat out of Shopify without a sale: a
+  /// confirmed admin comp whose -1 succeeded, or approval of a request whose
+  /// hold was really taken. Withdrawal returns the seat (+1) only when set.
+  /// @sensitivity:internal
+  seatTakenWithoutSaleAt DateTime?
 
   program Program     @relation(fields: [programId], references: [id])
   person  Person @relation(fields: [personId], references: [id])
@@ -1685,6 +1690,9 @@ enum PaymentExceptionKind {
   // A paid program order buys seats no pending enrollment uses (withdrawn,
   // expired, or extra quantity). Inventory is left for the board to settle.
   UNCLAIMED_SEATS
+  // A paid program order names children from more than one household. One order
+  // pays for one household, so nobody is activated; the board decides.
+  MIXED_HOUSEHOLDS
 }
 
 enum PaymentExceptionSeverity {

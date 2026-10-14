@@ -357,6 +357,29 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
 
       if (enrolledIds.length > 0) {
         notifyNavRefresh();
+        // Every checkout starts at the server: it refuses (400) a checkout naming
+        // someone outside the household, and mints the member discount code for
+        // single-pool programs when the household's dues cover the program. A
+        // mint or network failure is non-fatal: an undiscounted link is always a
+        // safe fallback, per lib/shopify.ts's mintMemberDiscountCode contract.
+        let discountCode: string | null = null;
+        if (isPayingOnShopify) {
+          let refusal: string | null = null;
+          try {
+            const discRes = await fetch(`/api/programs/${id}/discount-code`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ participantIds: enrolledIds }),
+            });
+            if (discRes.ok) discountCode = pricingEligible ? (await discRes.json()).code ?? null : null;
+            else if (discRes.status === 400) refusal = (await discRes.json()).error ?? "This checkout can't go ahead.";
+          } catch { /* undiscounted link is an acceptable fallback */ }
+          if (refusal) {
+            setMessage(refusal);
+            fetchProgram();
+            return;
+          }
+        }
         if (isPayingOnShopify && program && variantId && mockPay) {
           // Local mock: fire the Debug section's orders/paid webhook to activate the
           // PENDING enrollments, exactly as the dev Shopify tool's button does — no redirect.
@@ -374,20 +397,6 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
         } else if (isPayingOnShopify && program && variantId && storeDomain) {
           setSuccessMessage("Redirecting to Shopify for secure payment...");
           navigating = true;
-          // Single-pool model only: a member checking out gets a per-enrollee,
-          // single-use discount code minted server-side (the browser never has
-          // Shopify credentials to do this itself). Legacy two-variant programs
-          // already charged the right tier via the variant pick above — no code
-          // needed. Failure here is non-fatal: an undiscounted link is always a
-          // safe fallback (never blocks checkout), per lib/shopify.ts's
-          // mintMemberDiscountCode contract.
-          let discountCode: string | null = null;
-          if (pricingEligible) {
-            try {
-              const discRes = await fetch(`/api/programs/${id}/discount-code`, { method: 'POST' });
-              if (discRes.ok) discountCode = (await discRes.json()).code ?? null;
-            } catch { /* undiscounted link is an acceptable fallback */ }
-          }
           // qty=N single variant + comma-joined account ids — see buildShopifyCheckoutUrl.
           window.location.href = buildShopifyCheckoutUrl(storeDomain, variantId, enrolledIds, id, discountCode);
           return; // spinner stays; page unloads on redirect

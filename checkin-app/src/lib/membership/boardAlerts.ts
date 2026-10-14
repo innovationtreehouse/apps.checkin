@@ -34,12 +34,13 @@ const EXCEPTION_BLURB: Record<string, string> = {
     CANCELLED: "an active membership/enrollment's order was cancelled",
     REVERSED_BEFORE_ACTIVATION: "a payment was refunded/cancelled before the family was activated",
     AMOUNT_MISMATCH: "a payment does not cover the expected dues/price",
-    DISCOUNT_UNAUTHORIZED: "a non-volunteer household's membership order used the volunteer discount code",
+    DISCOUNT_UNAUTHORIZED: "an order used a discount its household isn't entitled to (the volunteer code on a non-volunteer membership, or a program member code from another household or an unsettled one)",
     ACTIVE_WITHOUT_PAYMENT: "a membership/enrollment is active with no matching payment on file",
     DENIED_HOUSEHOLD_ACTIVITY: "something happened to a household the board denied (a payment, an approval or an application) — its status was not changed",
     PAYMENT_UNVERIFIABLE: "an active membership/enrollment records a Shopify order that isn't in the mirror — its payment can't be verified",
     DUPLICATE_PAYMENT: "a paid program order bought a seat for someone already enrolled (paid, comped or approved) — a refund may be needed",
     UNCLAIMED_SEATS: "a paid program order bought seats no pending enrollment uses (withdrawn, expired or extra) — money taken, seat unused",
+    MIXED_HOUSEHOLDS: "a paid program order names children from more than one household — nobody was activated",
 };
 
 /**

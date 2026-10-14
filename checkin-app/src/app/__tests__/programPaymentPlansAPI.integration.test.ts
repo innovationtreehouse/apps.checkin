@@ -266,15 +266,18 @@ describe('Program payment-plan routes', () => {
             expect(data.warning).toBeUndefined();
         });
 
-        // Hold-ledger (product decision 2026-07-06): the seat is decremented at
-        // APPLICATION time (request-payment-plan), NOT at approval — approval
-        // only stops billing the applicant and CONSUMES the hold (clears
-        // inventoryHeldAt with no +1), so a later removal of this now-ACTIVE
-        // comped participant must not release a seat that was never given back
-        // to Shopify. Proven here by NO fetch firing at either step even though
-        // the program has a variant configured.
-        it('does NOT touch Shopify on approval (hold consumed, not released), and a later removal fires no +1', async () => {
-            const fetchSpy = jest.spyOn(global, 'fetch');
+        // The seat is taken at APPLICATION time, so approval touches no Shopify
+        // stock: it consumes the hold and records the seat as taken without a
+        // sale. Removing the approved place later returns that seat (+1). A
+        // request whose hold failed is approved with no seat taken, records none,
+        // and returns none.
+        it.each([
+            ['held', true],
+            ['failed', false],
+        ])('approval with a %s hold touches no stock; a later removal returns +1 only when a seat was held', async (_label, held) => {
+            const prevCheckinEnv = process.env.CHECKIN_ENV;
+            process.env.CHECKIN_ENV = 'local'; // arms the adjustProgramInventory mock (logs the delta)
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
             const shopifyProgram = await prisma.program.create({
                 data: {
                     startAt: new Date('2026-01-01'),
@@ -285,44 +288,46 @@ describe('Program payment-plan routes', () => {
                     shopifyVariantId: 'dev-mock-variant-pp',
                 },
             });
+            const inventoryHeldAt = held ? new Date() : null;
             try {
                 await prisma.programParticipant.upsert({
                     where: { programId_personId: { programId: shopifyProgram.id, personId: selfId } },
-                    update: { status: 'PENDING', isPaymentPlanRequested: true, pendingSince: new Date(), inventoryHeldAt: new Date() },
-                    create: { programId: shopifyProgram.id, personId: selfId, status: 'PENDING', isPaymentPlanRequested: true, pendingSince: new Date(), inventoryHeldAt: new Date() },
+                    update: { status: 'PENDING', isPaymentPlanRequested: true, pendingSince: new Date(), inventoryHeldAt },
+                    create: { programId: shopifyProgram.id, personId: selfId, status: 'PENDING', isPaymentPlanRequested: true, pendingSince: new Date(), inventoryHeldAt },
                 });
                 mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
 
                 const res = await PlansPost(nextReq('http://localhost', {
                     method: 'POST',
+                    headers: { cookie: 'session=test' },
                     body: JSON.stringify({ programId: shopifyProgram.id, participantId: selfId }),
                 }));
                 expect(res.status).toBe(200);
-                const data = await res.json();
-                expect(data.warning).toBeUndefined();
+                expect((await res.json()).warning).toBeUndefined();
 
                 const row = await prisma.programParticipant.findUnique({
                     where: { programId_personId: { programId: shopifyProgram.id, personId: selfId } },
                 });
                 expect(row?.status).toBe('ACTIVE');
                 expect(row?.inventoryHeldAt).toBeNull(); // hold consumed
-                expect(fetchSpy).not.toHaveBeenCalled();
+                expect(row?.seatTakenWithoutSaleAt === null).toBe(!held);
+                expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory'));
 
-                // Later removal of the now-ACTIVE comped participant: no hold left
-                // to release, so no +1 fires.
-                mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
                 const delRes = await ParticipantsDelete(
                     new Request(`http://localhost/api/programs/${shopifyProgram.id}/participants`, {
                         method: 'DELETE',
+                        headers: { cookie: 'session=test' },
                         body: JSON.stringify({ participantId: selfId }),
                     }) as unknown as import('next/server').NextRequest,
                     { params: Promise.resolve({ id: String(shopifyProgram.id) }) },
                 );
                 expect(delRes.status).toBe(200);
                 expect((await delRes.json()).warning).toBeUndefined();
-                expect(fetchSpy).not.toHaveBeenCalled();
+                const plusOnes = logSpy.mock.calls.filter(([m]) => String(m).includes('Would adjust inventory by 1 ')).length;
+                expect(plusOnes).toBe(held ? 1 : 0);
             } finally {
-                fetchSpy.mockRestore();
+                logSpy.mockRestore();
+                process.env.CHECKIN_ENV = prevCheckinEnv;
                 await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
                 await prisma.program.delete({ where: { id: shopifyProgram.id } });
             }

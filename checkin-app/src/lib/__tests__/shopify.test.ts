@@ -505,7 +505,7 @@ describe('mintMemberDiscountCode', () => {
     });
 
     it('returns null for a zero/negative discount without calling fetch', async () => {
-        const result = await mintMemberDiscountCode(1, 'variant-1', 0);
+        const result = await mintMemberDiscountCode(1, 7, 'variant-1', 0);
         expect(result).toBeNull();
         expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -516,8 +516,8 @@ describe('mintMemberDiscountCode', () => {
         delete process.env.SHOPIFY_CLIENT_ID;
         delete process.env.SHOPIFY_CLIENT_SECRET;
 
-        const result = await mintMemberDiscountCode(42, '999888', 1000);
-        expect(result).toMatch(/^PRG42-/);
+        const result = await mintMemberDiscountCode(42, 7, '999888', 1000);
+        expect(result).toMatch(/^PRG42-H7-[0-9A-F]{8}$/);
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -528,9 +528,9 @@ describe('mintMemberDiscountCode', () => {
             json: async () => ({ data: { discountCodeBasicCreate: { codeDiscountNode: { id: 'gid://shopify/DiscountCodeNode/1' }, userErrors: [] } } }),
         });
 
-        const result = await mintMemberDiscountCode(42, '999888', 1000);
+        const result = await mintMemberDiscountCode(42, 7, '999888', 1000);
 
-        expect(result).toMatch(/^PRG42-/);
+        expect(result).toMatch(/^PRG42-H7-[0-9A-F]{8}$/);
         expect(fetchMock).toHaveBeenCalledTimes(2); // token + one GraphQL mutation
         const gqlCall = fetchMock.mock.calls[1];
         expect(String(gqlCall[0])).toContain('/graphql.json');
@@ -554,7 +554,7 @@ describe('mintMemberDiscountCode', () => {
         mockTokenResponse(fetchMock);
         fetchMock.mockResolvedValueOnce({ ok: false, status: 422, text: async () => '{"errors":"bad request"}' });
 
-        const result = await mintMemberDiscountCode(42, '999888', 1000);
+        const result = await mintMemberDiscountCode(42, 7, '999888', 1000);
 
         expect(result).toBeNull();
         expect(sendEmail).not.toHaveBeenCalled();
@@ -567,7 +567,7 @@ describe('mintMemberDiscountCode', () => {
             json: async () => ({ data: { discountCodeBasicCreate: { codeDiscountNode: null, userErrors: [{ field: ['basicCodeDiscount'], message: 'nope' }] } } }),
         });
 
-        const result = await mintMemberDiscountCode(42, '999888', 1000);
+        const result = await mintMemberDiscountCode(42, 7, '999888', 1000);
 
         expect(result).toBeNull();
         expect(sendEmail).not.toHaveBeenCalled();
@@ -579,7 +579,7 @@ describe('mintMemberDiscountCode', () => {
         delete process.env.SHOPIFY_CLIENT_ID;
         delete process.env.SHOPIFY_CLIENT_SECRET;
 
-        const result = await mintMemberDiscountCode(42, '999888', 1000);
+        const result = await mintMemberDiscountCode(42, 7, '999888', 1000);
         expect(result).toBeNull();
         expect(fetchMock).not.toHaveBeenCalled();
     });
