@@ -75,6 +75,7 @@ const GUARDS: GuardSite[] = [
     { file: 'lib/membership/external.ts', machine: 'membership', from: 'PENDING_EXTERNAL_ACTION', edge: ['PENDING_EXTERNAL_ACTION', 'PENDING_PAYMENT'], mode: 'spread' },
     { file: 'lib/membership/external.ts', machine: 'membership', from: 'PENDING_EXTERNAL_ACTION', edge: ['PENDING_EXTERNAL_ACTION', 'ACTIVE'], mode: 'spread' },
     { file: 'lib/membership/renewal.ts', machine: 'membership', from: 'PENDING_RENEWAL', edge: ['PENDING_RENEWAL', 'PENDING_EXTERNAL_ACTION'], mode: 'spread' },
+    { file: 'lib/membership/intake.ts', machine: 'membership', from: 'INTAKE', edge: ['INTAKE', 'PENDING_EXTERNAL_ACTION'], mode: 'spread' },
     { file: 'lib/membership/archive.ts', machine: 'membership', from: 'ARCHIVED', edge: ['ARCHIVED', 'PENDING_PAYMENT'], mode: 'spread' }, // unarchive: reverse of #13 (one representative target)
     // close: CAS on the status it read (one representative closable step)
     { file: 'lib/membership/archive.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'ARCHIVED'], mode: 'read' },
