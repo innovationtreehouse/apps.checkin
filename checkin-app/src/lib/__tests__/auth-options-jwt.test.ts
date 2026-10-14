@@ -66,7 +66,7 @@ jest.mock('@/lib/roles', () => ({
 // jest.setup.js globally mocks @/lib/auth-options to `{}`; unmock to get the real callbacks.
 jest.unmock('@/lib/auth-options');
 
-import { authOptions, PERSONA_MINT_PROVIDER_ID, SESSION_MAX_AGE_SECONDS } from '@/lib/auth-options';
+import { authOptions, PERSONA_MINT_PROVIDER_ID, SESSION_EXPIRED, SESSION_MAX_AGE_SECONDS } from '@/lib/auth-options';
 import { FLAG_TO_KIND, type RoleFlag } from '@/lib/roles';
 
 const mockFindUnique = (prisma as unknown as { person: { findUnique: jest.Mock } })
@@ -238,12 +238,24 @@ describe('jwt() callback — absolute session lifetime', () => {
     it('ends a session once the limit passes, however recently it refreshed', async () => {
         mockFindUnique.mockResolvedValue(dbParticipant());
 
-        const result = await callRefresh({
+        // NextAuth clears the session cookie when the jwt callback throws.
+        await expect(callRefresh({
             id: 7, isSysadmin: true, signedInAt: nowSeconds() - SESSION_MAX_AGE_SECONDS,
-        });
-
-        expect(result).toEqual({});
+        })).rejects.toThrow(SESSION_EXPIRED);
         expect(mockFindUnique).not.toHaveBeenCalled();
+    });
+
+    it('a persona mint inherits the caller sign-in time instead of restarting it', async () => {
+        const signedInAt = nowSeconds() - SESSION_MAX_AGE_SECONDS + 60;
+
+        const result = (await jwt({
+            token: {},
+            user: { impersonatedBy: 'real@innovationtreehouse.org', signedInAt },
+            account: { provider: PERSONA_MINT_PROVIDER_ID },
+            profile: undefined,
+        } as unknown as Parameters<JwtCallback>[0])) as Record<string, unknown>;
+
+        expect(result.signedInAt).toBe(signedInAt);
     });
 
     it('starts the clock on a token that predates signedInAt', async () => {

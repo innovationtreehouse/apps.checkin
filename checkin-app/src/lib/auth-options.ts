@@ -186,6 +186,7 @@ async function isBootstrapOpen(personId: number): Promise<boolean> {
 
 /** Absolute session lifetime from sign-in; the 15-minute refresh never extends past it. */
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
+export const SESSION_EXPIRED = "Session expired";
 
 export const authOptions: NextAuthOptions = {
     debug: config.isDevInstance(),
@@ -265,6 +266,8 @@ export const authOptions: NextAuthOptions = {
                             : null,
                     });
                     if (!decision.allowed) return null;
+                    // The minted session inherits the caller's sign-in time (see the jwt callback).
+                    const signedInAt = callerToken?.signedInAt ?? null;
 
                     // Logged-out preview: mint a synthetic guest session with NO participant. authz
                     // sees a logged-out visitor (no id/roles via the jwt callback's email guard); the
@@ -280,6 +283,7 @@ export const authOptions: NextAuthOptions = {
                             email: null,
                             name: "Logged out",
                             impersonatedBy: decision.impersonatedBy,
+                            signedInAt,
                         };
                     }
 
@@ -316,6 +320,7 @@ export const authOptions: NextAuthOptions = {
                         email: dbParticipant.email,
                         name: dbParticipant.name,
                         impersonatedBy: decision.impersonatedBy,
+                        signedInAt,
                     };
                 }
             })
@@ -356,14 +361,15 @@ export const authOptions: NextAuthOptions = {
         async jwt({ token, user, account, profile }) {
             const now = Math.floor(Date.now() / 1000);
             if (user) {
-                token.signedInAt = now;
+                // A persona mint carries the caller's clock, so minting never extends a session.
+                token.signedInAt = user.signedInAt ?? now;
             } else {
                 // A token from before this claim existed starts its clock now.
                 token.signedInAt ??= now;
                 if (now - token.signedInAt >= SESSION_MAX_AGE_SECONDS) {
-                    // Expired: an empty token fails every authorization check closed. JWT
-                    // requires `id`, and omitting it is the point.
-                    return {} as JWT;
+                    // NextAuth's session route catches a jwt-callback error and clears the session
+                    // cookie, so the person is signed out cleanly and lands on /signin.
+                    throw new Error(SESSION_EXPIRED);
                 }
             }
             // Capture Google's hosted-domain + email_verified claims on sign-in so the dev-instance

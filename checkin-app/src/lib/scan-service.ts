@@ -87,8 +87,9 @@ export async function processCheckin(participant: Person, authType: string, db: 
     // A badge at the kiosk always checks in — someone scanning inside the
     // building got in somehow, and the screen must show them. With no keyholder
     // present the visit reads as "no keyholder" (derived in getFullAttendance).
-    // Every other surface still needs a keyholder present to open the building.
-    if (!participant.isKeyholder && authType !== "kiosk") {
+    // Every other surface needs a keyholder already present, a keyholder's own
+    // check-in included: only a badge at the door opens the building.
+    if (authType !== "kiosk") {
         const activeKeyholders = await tx.visit.count({
             where: {
                 departedAt: null,
@@ -97,7 +98,7 @@ export async function processCheckin(participant: Person, authType: string, db: 
             }
         });
         if (activeKeyholders === 0) {
-            return apiError("Facility is closed. A Keyholder must check in first.", 403);
+            return apiError("Facility is closed. A keyholder must badge in at the door first.", 403);
         }
     }
 

@@ -2,13 +2,16 @@
  * @jest-environment node
  */
 /**
- * Integration tests for the go-live "open renewals for all active members" action.
+ * Integration tests for the board's yearly "Open renewals" button: inside the
+ * renewal window it opens a renewal for every ACTIVE household not already handled
+ * this cycle (F-34), and refuses outside the window.
  */
 
 import { POST as BULK } from '@/app/api/settings/membership/bulk-open-renewals/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { sendEmail } from '@/lib/email';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
@@ -30,7 +33,19 @@ function jsonReq(body?: unknown) {
 
 describe('Bulk renewal migration', () => {
     let sysId: number, boardId: number, plainId: number;
-    let mA: number, mB: number;
+    let mA: number, mB: number, mHandled: number;
+    let restoreBoardSettings: () => Promise<void>;
+
+    /** A boundary `daysAhead` from today (the window opens two months before it). */
+    async function setBoundaryDaysAhead(daysAhead: number) {
+        const d = new Date(Date.now() + daysAhead * 86_400_000);
+        const boundary = new Date(Date.UTC(2000, d.getUTCMonth(), d.getUTCDate()));
+        await prisma.boardSettings.upsert({
+            where: { id: 1 },
+            create: { id: 1, standardMembershipFeeCents: 0, volunteerMembershipFeeCents: 0, orgMembershipYearBoundary: boundary },
+            update: { orgMembershipYearBoundary: boundary },
+        });
+    }
     let preMaxProcessId = 0;
 
     async function makeActive(label: string) {
@@ -54,17 +69,23 @@ describe('Bulk renewal migration', () => {
     beforeAll(async () => {
         const maxRow = await prisma.orgMembershipProcess.findFirst({ orderBy: { id: 'desc' }, select: { id: true } });
         preMaxProcessId = maxRow?.id ?? 0;
+        restoreBoardSettings = await snapshotBoardSettings();
         await wipe();
         sysId = (await prisma.person.create({ data: { email: `sys-${TAG}@example.com`, name: 'Sys', isSysadmin: true, household: { create: { name: `Sys HH ${TAG}` } } } })).id;
         boardId = (await prisma.person.create({ data: { email: `board-${TAG}@example.com`, name: 'Board', isBoardMember: true, household: { create: { name: `Board HH ${TAG}` } } } })).id;
         plainId = (await prisma.person.create({ data: { email: `plain-${TAG}@example.com`, name: 'Plain', household: { create: { name: `Plain HH ${TAG}` } } } })).id;
         mA = await makeActive('A');
         mB = await makeActive('B');
+        // Already renewed for the coming year inside this window: must not be billed again.
+        mHandled = await makeActive('Handled');
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: mHandled, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date() } });
+        await setBoundaryDaysAhead(30);
     });
 
     afterAll(async () => {
         await prisma.orgMembershipProcess.deleteMany({ where: { id: { gt: preMaxProcessId } } });
         await wipe();
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 
@@ -95,6 +116,21 @@ describe('Bulk renewal migration', () => {
         expect((await second.json()).opened).toBe(0);
         const count = await prisma.orgMembershipProcess.count({ where: { orgMembershipId: mA } });
         expect(count).toBe(1);
+    });
+
+    it('skips a household already handled this cycle (no second renewal, no double billing)', async () => {
+        asBoard(boardId);
+        await BULK(jsonReq());
+        const rows = await prisma.orgMembershipProcess.findMany({ where: { orgMembershipId: mHandled }, select: { status: true } });
+        expect(rows).toEqual([{ status: 'ACTIVE' }]);
+    });
+
+    it('refuses outside the renewal window', async () => {
+        asBoard(boardId);
+        await setBoundaryDaysAhead(180);
+        const res = await BULK(jsonReq());
+        expect(res.status).toBe(409);
+        await setBoundaryDaysAhead(30);
     });
 
     it('a isSysadmin may also trigger it', async () => {

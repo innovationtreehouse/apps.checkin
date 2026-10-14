@@ -61,6 +61,8 @@ declare module "next-auth" {
     toolStatuses?: { toolId: number; level: string }[];
     // Set by the persona-mint provider; carried into the JWT by the jwt callback.
     impersonatedBy?: string | null;
+    // Set by the persona-mint provider: the caller's sign-in time, carried onto the minted token.
+    signedInAt?: number | null;
   }
 }
 

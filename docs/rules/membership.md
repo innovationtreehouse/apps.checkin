@@ -196,6 +196,18 @@ Procedure below is built on them.
 
 - A single rejection blocks the application; approvals do not outweigh it.  [Decision]
 
+- A household has one open application at a time, joining or renewing. An
+  active household only renews; a revoked one continues the renewal it already
+  has open, or else starts a new joining application.  [Decision]
+
+- A household with a blocked application cannot start another one. Only the
+  board moves the application on: "Reset for re-review" sends it back for two
+  new approvals, or a board override clears it. Denying the household is a
+  household action and leaves the application blocked.  [Decision — *Principle: people decide about people*]
+
+- Applications already blocked when this rule took effect are not backfilled.
+  Each one blocks a new start until the board resets or overrides it.  [Decision]
+
 - The background-check result is never stored. The record is that reviewers saw
   it and what they judged — stricter than the policy, which permits the board to
   hold it.  [Decision — *Policy: Membership Policy, Art. VI §VI.2*]
@@ -327,6 +339,11 @@ Procedure below is built on them.
   the compliance view reports nothing stale.  [Decision — *Policy: Membership Policy, Art. VI §VI.1*; *Principle: fail closed*]
 
 - A membership stays active while its renewal is in progress.  [Decision]
+
+- Renewals open when the board presses its yearly "open renewals" button, and
+  only inside the renewal window. The button skips every household already
+  handled this cycle — renewed, granted the coming year, joined in-window, or
+  closed by the board — so no family is billed twice.  [Decision]
 
 - Coverage is what was bought, not what the calendar says. A household settled
   for the membership year now in effect — by joining, renewing, or a granted
