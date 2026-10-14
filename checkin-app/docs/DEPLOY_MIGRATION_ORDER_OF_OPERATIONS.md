@@ -139,6 +139,13 @@ Postgres runs `prod-initdb` only on a fresh data volume. **On an existing volume
 
 Rollback: point web's `DATABASE_URL` back at the bootstrap user and `up -d web`. The roles and grants are additive and can stay. Never switch the URL first: until step 3 the role does not exist, and every request fails to connect.
 
+**Baseline before the first `migrate` run on a volume built by `prisma db push`.** Such a database has checkin's tables but no `_prisma_migrations` ledger, so `prisma migrate deploy` refuses it with `P3005` ("the database schema is not empty"). Once, before the first `docker compose -f deploy/docker-compose.prod.yml --profile migrate run --rm migrate`, using the image of the release the volume was last pushed from:
+1. Confirm the database matches that release's schema; this must print no diff: `docker compose -f deploy/docker-compose.prod.yml --profile migrate run --rm migrate sh -c 'cd checkin-app && npx --no-install prisma migrate diff --from-config-datasource --to-schema=prisma/schema.prisma --exit-code'`. Any diff means the volume is not at that release; stop and reconcile by hand.
+2. `db push` cannot create the partial unique indexes that migrations add in raw SQL. Copy each `CREATE UNIQUE INDEX ... WHERE` statement from `checkin-app/prisma/migrations/*/migration.sql` that is missing from `pg_indexes`, and run it as the bootstrap user.
+3. Record every migration as applied: `docker compose -f deploy/docker-compose.prod.yml --profile migrate run --rm migrate sh -c 'cd checkin-app && for m in prisma/migrations/*/; do npx --no-install prisma migrate resolve --applied "$(basename "$m")" || exit 1; done'`.
+
+After that, `migrate` runs normally on every deploy. A fresh volume needs none of this.
+
 ## How to verify
 
 - **`migration-safety.yml`** (added in #794, after the 2026-07-02 incident) applies the PR's new migrations on top of a **seeded, populated** database — not the always-empty DB that local dev and CI's own drift check use. It catches "this migration fails/loses data on a populated table" (the class of bug rules 4–5 exist for). It does **not** and cannot catch deploy-*sequencing* hazards — whether the migration is compatible with the code currently running in prod during the drain window (rules 1–3). A green check here is necessary, not sufficient; the #917 critical finding shipped with this check fully green.
