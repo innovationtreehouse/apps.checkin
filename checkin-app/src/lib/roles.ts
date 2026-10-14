@@ -1,5 +1,5 @@
 import type { PersonRoleKind } from "@/generated/prisma/client";
-import { type DbClient, withTx } from "@/lib/db-client";
+import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import { personActor, systemActor, type SystemActorName } from "@/lib/auditActor";
 import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 
@@ -112,6 +112,16 @@ export async function assertNotOwnHousehold(db: DbClient, actorId: number, targe
 }
 
 /**
+ * Locks the BOARD role rows FOR UPDATE. `setRoleFlag` takes it before any role
+ * write, and a household deny takes it before its board-member probe, so a BOARD
+ * grant and a deny of the grantee's household serialize: whichever runs second
+ * sees the other's committed write.
+ */
+export async function lockBoardRoles(tx: TxClient): Promise<void> {
+    await tx.$queryRaw`SELECT "personId" FROM "PersonRole" WHERE "role" = 'BOARD' FOR UPDATE`;
+}
+
+/**
  * A logged-in actor's authority, for the matrix check below — or a named system
  * actor that bypasses the matrix and the own-household rule. The system form is
  * for callers that have no requesting user to check authority against because
@@ -172,7 +182,7 @@ export async function setRoleFlag(
         // so the no-op short-circuit and the returned before/after are consistent with
         // the write (thpr C: no pre-lock snapshot). ponytail: a no-op now takes the lock
         // before returning — fine, the board table is a handful of rows.
-        await tx.$queryRaw`SELECT "personId" FROM "PersonRole" WHERE "role" = 'BOARD' FOR UPDATE`;
+        await lockBoardRoles(tx);
 
         const rows = await tx.personRole.findMany({ where: { personId }, select: { role: true } });
         const before = rolesToFlags(rows)[flag];

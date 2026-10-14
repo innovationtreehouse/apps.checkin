@@ -135,7 +135,7 @@ export const openProcess = defineStateSet<Where>()({
 });
 
 // ── awaiting BG review (fix #1) ────────────────────────────────────────────────
-// Encodes review.ts:75 / AWAITING_BG_WHERE:97 EXACTLY, from one source. Not a
+// The review queue's "awaiting a background check" rule, from one source. Not a
 // single defineStateSet: it's an OR of two sub-rules, both requiring
 // bgClearedAt=null. The two status arrays below are that one source; `has` and
 // `where` both derive from them, and lifecycle.test asserts them equal on a
@@ -356,35 +356,35 @@ export const LEGACY_REOPEN_STATUSES = ["PENDING_BG_CLEARANCE", "BLOCKED"] as con
  */
 export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     // Entry (§5 #1,#2 + §4.4 PERSON_BG)
-    { from: "∅", to: "INTAKE", event: "startIntake", actor: "applicant", guardSite: "intake.ts:154 FOR UPDATE + membership_one_inflight_initial + P2002", kind: "INITIAL" },
-    { from: "∅", to: "PENDING_RENEWAL", event: "createRenewalProcess", actor: "cron/board", guardSite: "renewal.ts:243 FOR UPDATE + membership_one_inflight_renewal + P2002", kind: "RENEWAL" },
-    { from: "∅", to: "PENDING_BG_REVIEW", event: "personBgTriggers", actor: "system", guardSite: "personBgTriggers", kind: "PERSON_BG" },
-    { from: "∅", to: "PENDING_EXTERNAL_ACTION", event: "personAgreementTriggers", actor: "system/board", guardSite: "personAgreementTriggers FOR UPDATE + handled-this-cycle guard", kind: "PERSON_AGREEMENT" },
+    { from: "∅", to: "INTAKE", event: "startIntake", actor: "applicant", guardSite: "intake.ts startIntake: OrgMembership FOR UPDATE (refuses DENIED/ACTIVE/BLOCKED/open renewal) + membership_one_inflight_initial + P2002", kind: "INITIAL" },
+    { from: "∅", to: "PENDING_RENEWAL", event: "createRenewalProcess", actor: "cron/board", guardSite: "renewal.ts createRenewalProcess: OrgMembership FOR UPDATE + membership_one_inflight_renewal + P2002", kind: "RENEWAL" },
+    { from: "∅", to: "PENDING_BG_REVIEW", event: "personBgTriggers", actor: "system", guardSite: "personBgTriggers.ts openPersonBg: Person FOR UPDATE", kind: "PERSON_BG" },
+    { from: "∅", to: "PENDING_EXTERNAL_ACTION", event: "personAgreementTriggers", actor: "system/board", guardSite: "personAgreementTriggers.ts openPersonAgreement: Person FOR UPDATE + handled-this-cycle guard", kind: "PERSON_AGREEMENT" },
     // External step (§5 #3,#4)
-    { from: "INTAKE", to: "PENDING_EXTERNAL_ACTION", event: "submitIntake", actor: "applicant", guardSite: "intake.ts:392", kind: "INITIAL" },
-    { from: "PENDING_RENEWAL", to: "PENDING_EXTERNAL_ACTION", event: "beginRenewal", actor: "member", guardSite: "renewal.ts:219 updateMany where status=PENDING_RENEWAL", kind: "RENEWAL" },
+    { from: "INTAKE", to: "PENDING_EXTERNAL_ACTION", event: "submitIntake", actor: "applicant", guardSite: "intake.ts submitIntake: updateMany CAS from INTAKE", kind: "INITIAL" },
+    { from: "PENDING_RENEWAL", to: "PENDING_EXTERNAL_ACTION", event: "beginRenewal", actor: "member", guardSite: "renewal.ts beginRenewal: OrgMembership FOR UPDATE (refuses DENIED/BLOCKED) + updateMany CAS from PENDING_RENEWAL", kind: "RENEWAL" },
     // Advance (§5 #7)
-    { from: "PENDING_EXTERNAL_ACTION", to: "PENDING_PAYMENT", event: "advanceExternalIfComplete", actor: "system", guardSite: "external.ts:113 updateMany" },
+    { from: "PENDING_EXTERNAL_ACTION", to: "PENDING_PAYMENT", event: "advanceExternalIfComplete", actor: "system", guardSite: "external.ts advanceExternalIfComplete: updateMany CAS (signed + consent or cleared)" },
     // Signature completes a person-scoped agreement outright — no payment, no BG gate
-    { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject", guardSite: "external.ts updateMany where contractSignedAt=null + fromWhere", kind: "PERSON_AGREEMENT" },
+    { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject", guardSite: "external.ts markContractSigned: updateMany where contractSignedAt=null + fromWhere", kind: "PERSON_AGREEMENT" },
     // Payment convergence (§5 #8, #12)
-    { from: "PENDING_PAYMENT", to: "ACTIVE", event: "activate", actor: "shopify/board", guardSite: "payment.ts:204 FOR UPDATE (bgClearedAt set)" },
-    { from: "PENDING_PAYMENT", to: "PENDING_BG_CLEARANCE", event: "activate", actor: "shopify/board", guardSite: "payment.ts:204 FOR UPDATE (not cleared)" },
-    { from: "PENDING_PAYMENT", to: "ACTIVE", event: "grantRenewalPayment", actor: "board/sysadmin", guardSite: "renewal.ts:339 → certifyPaymentPlan (COI) → activate", kind: "RENEWAL" },
+    { from: "PENDING_PAYMENT", to: "ACTIVE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (bgClearedAt set)" },
+    { from: "PENDING_PAYMENT", to: "PENDING_BG_CLEARANCE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (not cleared)" },
+    { from: "PENDING_PAYMENT", to: "ACTIVE", event: "grantRenewalPayment", actor: "board/sysadmin", guardSite: "renewal.ts grantRenewalPayment → certifyPaymentPlan (COI) → activate", kind: "RENEWAL" },
     // Clearance convergence (§5 #10, #14)
-    { from: "PENDING_BG_REVIEW", to: "PENDING_PAYMENT", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts:256 FOR UPDATE (2nd APPROVE, unpaid legacy household row)", legacy: true },
-    { from: "PENDING_BG_REVIEW", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts:256/304 FOR UPDATE (2nd APPROVE, paid / PERSON_BG subject)" },
-    { from: "PENDING_BG_CLEARANCE", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts:326 FOR UPDATE (2nd APPROVE)" },
+    { from: "PENDING_BG_REVIEW", to: "PENDING_PAYMENT", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: OrgMembership FOR UPDATE (2nd APPROVE, unpaid legacy household row)", legacy: true },
+    { from: "PENDING_BG_REVIEW", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: process FOR UPDATE (2nd APPROVE, paid / PERSON_BG subject)" },
+    { from: "PENDING_BG_CLEARANCE", to: "ACTIVE", event: "clearBackgroundCheck", actor: "reviewer", guardSite: "review.ts attest → clearBackgroundCheck: process FOR UPDATE (2nd APPROVE)" },
     // Reject → BLOCKED (§5 #9)
-    { from: "PENDING_BG_REVIEW", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts:247 FOR UPDATE" },
-    { from: "PENDING_PAYMENT", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts:247 FOR UPDATE (parallel review)" },
-    { from: "PENDING_BG_CLEARANCE", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts:247 FOR UPDATE" },
+    { from: "PENDING_BG_REVIEW", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE" },
+    { from: "PENDING_PAYMENT", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE (parallel review)" },
+    { from: "PENDING_BG_CLEARANCE", to: "BLOCKED", event: "attest REJECT", actor: "reviewer", guardSite: "review.ts attest REJECT: process FOR UPDATE" },
     // overrideBlocked reset/approve (§5 #11)
-    { from: "BLOCKED", to: "PENDING_PAYMENT", event: "overrideBlocked reset", actor: "board/sysadmin", guardSite: "review.ts:368 (unpaid)" },
-    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "overrideBlocked reset", actor: "board/sysadmin", guardSite: "review.ts:368 (paid)" },
-    { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "overrideBlocked reset", actor: "board/sysadmin", guardSite: "review.ts:368 (PERSON_BG)", kind: "PERSON_BG" },
-    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "overrideBlocked reset", actor: "board/sysadmin", guardSite: "review.ts:368 (RENEWAL, no consent)", kind: "RENEWAL", legacy: true },
-    { from: "BLOCKED", to: "ACTIVE", event: "overrideBlocked approve", actor: "board/sysadmin", guardSite: "review.ts:411 FOR UPDATE (paid)" },
+    { from: "BLOCKED", to: "PENDING_PAYMENT", event: "overrideBlocked reset", actor: "board/sysadmin", guardSite: "review.ts overrideBlocked reset: process FOR UPDATE + COI (unpaid)" },
+    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "overrideBlocked reset", actor: "board/sysadmin", guardSite: "review.ts overrideBlocked reset: process FOR UPDATE + COI (paid)" },
+    { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "overrideBlocked reset", actor: "board/sysadmin", guardSite: "review.ts overrideBlocked reset: process FOR UPDATE + COI (PERSON_BG)", kind: "PERSON_BG" },
+    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "overrideBlocked reset", actor: "board/sysadmin", guardSite: "review.ts overrideBlocked reset: process FOR UPDATE + COI (RENEWAL, no consent)", kind: "RENEWAL", legacy: true },
+    { from: "BLOCKED", to: "ACTIVE", event: "overrideBlocked approve", actor: "board/sysadmin", guardSite: "review.ts overrideBlocked approve → clearBackgroundCheck: process FOR UPDATE + COI (paid)" },
     // Refund recorded by the board: money undone, background check untouched. On a
     // paid BLOCKED row it only clears paidAt (flag-only, no status edge).
     { from: "PENDING_BG_CLEARANCE", to: "PENDING_PAYMENT", event: "recordRefund", actor: "board/sysadmin", guardSite: "refund.ts updateMany CAS (paidAt set) + COI" },
