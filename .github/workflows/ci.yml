@@ -697,6 +697,7 @@ jobs:
           npm run typecheck -w s-replay-function
           npm run typecheck -w monitoring-relay-function
           npm run typecheck -w monitoring-watchdog-function
+          npm run typecheck -w qbo-refresher-function
 
       - name: Library boundary check
         if: needs.changes.outputs.packages == 'true'
