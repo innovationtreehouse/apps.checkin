@@ -92,6 +92,9 @@ null while off). Its token comes from the refresher Lambda (`QBO_REFRESHER_FN`):
 - [ ] Prod: the Board sets the realm on Settings → QuickBooks after consent.
 - Binding a posting port (QB-2): set its `prod` flag from `CHECKIN_ENV === "prod"`, the same raw
   check the guard uses.
+- Binding expense posting: `QbRefs` (`refs.paymentAccountId`, `refs.vendorIdFor`) and the posting
+  port's `paymentAccountId` and reimbursee vendor table name the same QuickBooks ids; bind both
+  from the same source so they cannot disagree.
 
 ## One-time setup (you do this — OAuth consent can't be automated)
 
