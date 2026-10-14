@@ -21,6 +21,7 @@ MALFORMED_JSON_PROBES=(
   /api/donations/account-map
   /api/expense/qb-accounts
   /api/workflow-mapping/receipts/1/lines/1/associate
+  /api/income/qb-exclusions
 )
 
 # Duplicate create: the first POST must succeed, the second must answer 409.
