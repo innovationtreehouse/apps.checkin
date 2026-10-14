@@ -8,7 +8,7 @@ import { config } from "@/lib/config";
 import { activateProgramEnrollment } from "@/lib/programs/activateEnrollment";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
 import { isPaid, membershipVariantIdSet, orderEntitlesEnrollment, raiseMembershipPaymentOutcome, raisePaymentException, type EntitlementOrder } from "@/lib/finance/reconcile";
-import { isShopifyTestNotification, recordShopifyWebhookReceipt, tryParseJson } from "@/lib/shopifyWebhookReceipt";
+import { isShopifyTestNotification, logRejectedShopifyWebhook, recordShopifyWebhookReceipt } from "@/lib/shopifyWebhookReceipt";
 
 interface ShopifyOrder {
     id?: number | string;
@@ -25,25 +25,18 @@ interface ShopifyOrder {
  * error (500); missing/wrong signature is unauthorized (401). Must run on the raw
  * body before it is parsed — re-serializing JSON would change the bytes.
  *
- * Every rejected delivery is also recorded to the receipt log (settings →
- * Shopify Webhook): a delivery that arrives but fails the signature IS the
- * secret-mismatch diagnostic the tab exists to surface. Recording is
- * fire-and-forget (`void`) because verify is synchronous by contract, and the
- * helper never throws — the rejection below is returned exactly as before.
- * This hook lives here in the Shopify route's own verify, NOT in withWebhook,
- * so other providers' webhooks are untouched.
+ * A rejected delivery writes nothing: it gets a rate-limited log line only.
  */
 function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: false; status: number; error: string } {
     const secret = config.shopifyWebhookSecret();
     if (!secret) {
         logger.error("Shopify webhook received but SHOPIFY_WEBHOOK_SECRET is not configured.");
-        void recordShopifyWebhookReceipt(req, tryParseJson(rawBody), { hmacValid: false, outcome: "rejected: webhook secret not configured" });
         return { ok: false, status: 500, error: "Configuration Error" };
     }
 
     const headerSignature = req.headers.get("x-shopify-hmac-sha256");
     if (!headerSignature) {
-        void recordShopifyWebhookReceipt(req, tryParseJson(rawBody), { hmacValid: false, outcome: "rejected: missing signature" });
+        logRejectedShopifyWebhook("missing signature");
         return { ok: false, status: 401, error: "Missing signature" };
     }
 
@@ -58,8 +51,7 @@ function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: 
     const headerBuffer = crypto.createHash('sha256').update(headerSignature).digest();
 
     if (!crypto.timingSafeEqual(generatedBuffer, headerBuffer)) {
-        logger.error("Shopify webhook signature mismatch.");
-        void recordShopifyWebhookReceipt(req, tryParseJson(rawBody), { hmacValid: false, outcome: "rejected: bad hmac" });
+        logRejectedShopifyWebhook("signature mismatch");
         return { ok: false, status: 401, error: "Invalid signature" };
     }
 

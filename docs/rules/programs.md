@@ -150,15 +150,35 @@ Things the app takes as true because they are handled outside it.
 - Removing a paid enrollment returns nothing to sale. A person decides whether
   the freed seat goes back, and does it at the store.  [Decision — deliberate limit; *Principle: people decide about people*]
 
+- Removing a comped or approved enrollment puts its seat back on sale, the same
+  as returning any seat taken off sale without a payment. Every removal does it:
+  a family's withdrawal, the board's removal, and the expiry sweeps. A seat goes
+  back only when the app recorded taking it; a place that never took one (its
+  hold failed, or it joined while the program was free) returns nothing, so a
+  return can never sell a seat beyond capacity.  [Decision — *Principle: fail closed*]
+
+- One order pays for one household. A checkout naming someone from another
+  household is refused before it reaches the store, and a paid order that names
+  more than one household activates nobody and goes to the board.  [Decision]
+
 - A request for a payment plan is never swept away for sitting too long.  [Decision]
+
+- Moving a program's start date or changing its age limits never removes or
+  changes an enrollment. Anyone enrolled who fitted the program's ages before the
+  edit and no longer does is named to the board, which decides what happens.  [Decision — *Principle: people decide about people*]
 
 ### What a youth sees of money
 
 - A youth is never shown a payment obligation, a payment action, or a payment
   status, whether their own or their household's. It is not disabled and not
-  explained; it is absent. Their own enrollment awaiting payment reads as
-  awaiting confirmation, which names no money, stays true if the household never
-  pays, and puts the next action with somebody else.  [Decision]
+  explained; it is absent, and the server never sends it: their own enrollment
+  reads as enrolled, paid or not.  [Decision]
+
+- Payment status — whether an enrollment is paid or not paid yet — goes to the
+  people running the program and to a household lead for their own household,
+  with a way to pay what is not paid yet. Nobody else receives it: not a youth,
+  not a household member who is not a lead, and no family for another family's
+  children.  [Decision — *Principle: least privilege*]
 
 - A youth may not settle a payment their household lead started, on their own
   enrollment or any other. There is no finish-the-checkout allowance for an
@@ -175,6 +195,11 @@ Things the app takes as true because they are handled outside it.
 ### Pricing
 
 - A failed discount degrades to undiscounted checkout, never an error.  [Decision — deliberate limit]
+
+- A member discount code is minted for one household's unpaid claims, names that
+  household, and is good for one order. On anyone else's order, or once that
+  household's membership no longer covers the program, it activates nobody and
+  goes to the board.  [Decision]
 
 - A program priced on a tier with nothing wired to sell it is broken and is
   reported as such. A free tier has nothing to wire and is never reported, and a
@@ -258,8 +283,9 @@ Things the app takes as true because they are handled outside it.
   approved.  [Decision]
 
 - A held seat is returned exactly once — by withdrawal, payment, or grace expiry
-  — or consumed permanently by approval, and an approved seat is never credited
-  back. This holds against a failed store call, not a crash mid-transition.  [Decision]
+  — or consumed by approval, which makes it a comped place; that seat comes back
+  when the place is removed. This holds against a failed store call, not a crash
+  mid-transition.  [Decision]
 
 - A place granted while its seat is still held is the one drift repaired without
   a person: a sweep releases the seat and leaves the place. Every other

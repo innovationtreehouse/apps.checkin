@@ -12,6 +12,7 @@ import { PROGRAM_CHECKOUT_BROKEN_WHERE } from "@/lib/programCheckout";
 import { apiError } from "@/lib/api-response";
 import { BROKEN_HOUSEHOLD_WHERE, UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { seesHouseholdPaymentStatus } from "@/lib/programs/paymentVisibility";
 import { expiringApprovals } from "@/lib/trusted-adult/filters";
 import { buildingLink } from "@/lib/kioskSeen";
 import { collectLibraryCounts, type LibraryCounts } from "@/lib/navLibraryCounts";
@@ -163,12 +164,14 @@ export const GET = withAuth({}, async (_req, auth) => {
         });
         const memberIds = members.map((m) => m.id);
 
-        const isLead =
-            user.householdLead ??
-            (await prisma.person.findFirst({
-                where: { id: user.id, householdId, isHouseholdLead: true },
+        // From the DB, not the session claim, so a lead change applies at once.
+        const [isLead, seesPayments] = await Promise.all([
+            prisma.person.findFirst({
+                where: { id: user.id, householdId, isHouseholdLead: true, ...LIVE_PERSON },
                 select: { id: true },
-            })) !== null;
+            }).then((p) => p !== null),
+            seesHouseholdPaymentStatus(user.id),
+        ]);
 
         const [hh, leadsMissingPhone, membersMissingAge, membershipProcs, trustedAdultAction, trustedAdultApprovals, pendingPrograms] = await Promise.all([
             isLead
@@ -224,10 +227,13 @@ export const GET = withAuth({}, async (_req, auth) => {
                 select: { trustedAdultId: true, reviewBy: true, id: true },
                 orderBy: { id: "asc" },
             }),
-            prisma.programParticipant.findMany({
-                where: { personId: { in: memberIds }, status: "PENDING", person: LIVE_PERSON },
-                select: { programId: true, isPaymentPlanRequested: true, program: { select: { name: true } } },
-            }),
+            // Unpaid enrollments are payment status: the household lead's alone.
+            seesPayments
+                ? prisma.programParticipant.findMany({
+                      where: { personId: { in: memberIds }, status: "PENDING", person: LIVE_PERSON },
+                      select: { programId: true, isPaymentPlanRequested: true, program: { select: { name: true } } },
+                  })
+                : Promise.resolve([]),
         ]);
 
         if (!!hh && hh.emergencyContacts.length === 0) {

@@ -2,7 +2,7 @@ import { beforeAll, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
 import { initDb, prisma } from "../../db";
 import { resetDb } from "../helpers/db";
-import { resolveItemContext, createItem, allocateAndInsertItem } from "../../services/itemService";
+import { resolveItemContext, createItem } from "../../services/itemService";
 
 beforeAll(async () => { await initDb(); });
 

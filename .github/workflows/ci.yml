@@ -144,8 +144,10 @@ jobs:
           # package-lock.json is included: a shared dep bump (vitest, prisma,
           # testcontainers) can break these suites without touching a workspace.
           # The library boundary check also reads its own script and checkin's
-          # schema (a new checkin model can collide with a library's).
-          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|\.github/workflows/ci\.yml$|scripts/(test-)?check-library-boundaries\.(mjs|sh)$|checkin-app/prisma/schema\.prisma$)'; then
+          # schema (a new checkin model can collide with a library's). Package
+          # lint reads the root eslint.config.mjs; its plugins resolve through
+          # package-lock.json, already listed.
+          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|eslint\.config\.mjs$|\.github/workflows/ci\.yml$|scripts/(test-)?check-library-boundaries\.(mjs|sh)$|checkin-app/prisma/schema\.prisma$)'; then
             echo "A package/function workspace (or this workflow) changed — running the Vitest tier."
             echo "packages=true" >> "$GITHUB_OUTPUT"
           else
@@ -697,6 +699,12 @@ jobs:
           npm run typecheck -w s-replay-function
           npm run typecheck -w monitoring-relay-function
           npm run typecheck -w monitoring-watchdog-function
+          npm run typecheck -w qbo-refresher-function
+
+      # Packages share checkin-app's root eslint.config.mjs (one rule set).
+      - name: Lint packages
+        if: needs.changes.outputs.packages == 'true'
+        run: npm run lint:packages
 
       - name: Library boundary check
         if: needs.changes.outputs.packages == 'true'

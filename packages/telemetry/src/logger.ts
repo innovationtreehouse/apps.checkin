@@ -19,9 +19,8 @@ function emit(level: "info" | "warn" | "error", msg: string, fields?: Fields) {
   const out = JSON.stringify(line, (_k, v) =>
     v instanceof Error ? { name: v.name, message: v.message, stack: v.stack } : v,
   );
-  if (level === "error") console.error(out);
-  else if (level === "warn") console.warn(out);
-  else console.log(out);
+  const sink = level === "error" ? console.error : level === "warn" ? console.warn : console.log;
+  sink(out);
 }
 
 export const logger = {

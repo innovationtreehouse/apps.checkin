@@ -621,6 +621,22 @@ describe("program order entitlement (same check as the webhook)", () => {
         expect(await kinds(oid)).toEqual(["AMOUNT_MISMATCH"]);
     });
 
+    it("activates nobody and raises MIXED_HOUSEHOLDS when the order names children of two households", async () => {
+        const oid = `${TAG}-698`;
+        const email = `ent-mixed-${TAG}@ex.com`;
+        const { personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
+        const otherHh = await prisma.household.create({ data: { name: `HH ${TAG} other-${email}` } });
+        const other = await prisma.person.create({ data: { email: `other-${email}`, name: `Other ${email}`, householdId: otherHh.id } });
+        await prisma.programParticipant.create({ data: { programId, personId: other.id, status: "PENDING" } });
+        orderLines.mockResolvedValue([{ variantId, quantity: 2 }]);
+        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: `${personId},${other.id}` }) })]);
+
+        await runReconcile();
+        expect(await statusOf(programId, personId)).toBe("PENDING");
+        expect(await statusOf(programId, other.id)).toBe("PENDING");
+        expect(await kinds(oid)).toEqual(["MIXED_HOUSEHOLDS"]);
+    });
+
     it("activates everyone when the order buys a seat per person", async () => {
         const oid = `${TAG}-602`;
         const email = `ent-full-${TAG}@ex.com`;

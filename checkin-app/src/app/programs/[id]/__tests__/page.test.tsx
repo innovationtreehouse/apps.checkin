@@ -119,7 +119,7 @@ describe("ProgramEnrollmentPage", () => {
         expect(cta).toBeDisabled();
         // Never the payment-pending wording, and never the resume affordance.
         expect(screen.queryByRole("button", { name: "Continue enrollment" })).not.toBeInTheDocument();
-        expect(screen.queryByText(/payment pending/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/not paid|payment pending/i)).not.toBeInTheDocument();
         expect(screen.queryByText("Already enrolled from your household:")).not.toBeInTheDocument();
         // Price stays public — it is program information, not a payment situation.
         expect(screen.getByText("$50.00")).toBeInTheDocument();
@@ -235,9 +235,28 @@ describe("ProgramEnrollmentPage", () => {
         });
         renderPage();
         await screen.findByText("Robotics Club");
-        expect(screen.getByText(/Kid One — Enrolled, payment pending/)).toBeInTheDocument();
+        expect(screen.getByText(/Kid One — Enrolled, not paid yet/)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Pay now" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Continue enrollment" })).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Enroll" })).not.toBeInTheDocument();
+    });
+
+    // The API sends no status to a non-lead household member, so the row reads
+    // as plain enrolled and nothing offers checkout.
+    it("shows a household row without status as enrolled, with no pay affordance", async () => {
+        setSession({ id: 101, ageBand: 'adult', householdId: 7 });
+        mockFetchJson({
+            "/api/household": household,
+            "/api/programs/10": baseProgram({
+                participants: [{ personId: 101, person: { name: "Kid One", householdId: 7 } }],
+            }),
+        });
+        renderPage();
+        await screen.findByText("Robotics Club");
+        expect(screen.getByText(/Kid One — Enrolled$/)).toBeInTheDocument();
+        expect(screen.queryByText(/not paid/i)).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Pay now" })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Enroll" })).toBeInTheDocument();
     });
 
     it("keeps the plain 'Enroll' label when household enrollments are all paid", async () => {
@@ -279,7 +298,7 @@ describe("ProgramEnrollmentPage", () => {
         // payment-pending and selectable, with the enroll button available — NOT
         // the misleading household-setup affordance. Resuming payment is still an
         // explicit click, so the row is not pre-checked.
-        expect(screen.getByText("(Payment pending — select to finish payment)")).toBeInTheDocument();
+        expect(screen.getByText("(Not paid yet — select to pay now)")).toBeInTheDocument();
         expect(screen.getByLabelText("Only Kid")).not.toBeChecked();
         expect(screen.getByLabelText("Only Kid")).toBeEnabled();
         expect(screen.queryByRole("button", { name: "Finish setting up your household to enroll" })).not.toBeInTheDocument();
@@ -573,6 +592,40 @@ describe("ProgramEnrollmentPage", () => {
         );
     });
 
+    // One order pays for one household: the server refuses a mixed checkout and the
+    // page shows its message instead of redirecting.
+    it("sends the checkout's children for the discount code and stops on a refusal", async () => {
+        setSession({ id: 101 });
+        setShopifyStoreDomain("shop.example.com");
+        const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
+        const routes = mockFetchJson({
+            "/api/household": memberHousehold,
+            "/api/programs/10": baseProgram({
+                orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null,
+                shopifyVariantId: "gid://single-pool",
+            }),
+            "/api/programs/10/participants": { ok: true },
+        });
+        const refusal = "Everyone in one checkout must be from your household. Pay for each household separately.";
+        const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+            String(input).includes("/discount-code")
+                ? ({ ok: false, status: 400, json: async () => ({ error: refusal }) } as Response)
+                : routes(input, init),
+        );
+        global.fetch = fetchMock as unknown as typeof fetch;
+        renderPage();
+        await screen.findByText("Robotics Club");
+        fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+        await screen.findByText("Which of your household wants to enroll?");
+        await selectMember("Kid One");
+        fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
+
+        expect(await screen.findByText(refusal)).toBeInTheDocument();
+        expect(screen.queryByText("Redirecting to Shopify for secure payment...")).not.toBeInTheDocument();
+        const discountCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/discount-code"));
+        expect(JSON.parse(String(discountCall?.[1]?.body)).participantIds).toHaveLength(1);
+    });
+
     // The payment-pending resume path: an already-enrolled-but-unpaid household
     // must be able to re-run checkout (participants POST 409s -> folded back in;
     // a FRESH single-use discount code is minted — the old one is 48h/one-use).
@@ -613,7 +666,7 @@ describe("ProgramEnrollmentPage", () => {
         // Selectable and not disabled — but unchecked, so resuming the checkout
         // is a deliberate click like any other enrollment.
         expect(await screen.findByLabelText("Jamie Guardian")).not.toBeChecked();
-        expect(screen.getByText("(Payment pending — select to finish payment)")).toBeInTheDocument();
+        expect(screen.getByText("(Not paid yet — select to pay now)")).toBeInTheDocument();
 
         await selectMember("Jamie Guardian");
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
@@ -723,7 +776,7 @@ describe("ProgramEnrollmentPage", () => {
     // viewerMemberPricingEligible flag over the household-status-derived isMember,
     // so a current member not covered through the program's end doesn't get the
     // discount even though /api/household still reports an ACTIVE membership.
-    it("does NOT fetch a member discount code when the server flag says pricing-ineligible, despite an ACTIVE household membership", async () => {
+    it("still checks the checkout's household when the server flag says pricing-ineligible", async () => {
         setSession({ id: 101 });
         setShopifyStoreDomain("shop.example.com");
         const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
@@ -748,7 +801,8 @@ describe("ProgramEnrollmentPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
 
         await screen.findByText("Redirecting to Shopify for secure payment...");
-        expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/discount-code"))).toBe(false);
+        const discountCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/discount-code"));
+        expect(JSON.parse(String(discountCall?.[1]?.body)).participantIds).toHaveLength(1);
     });
 
     it("shows the renew notice when the viewer is a member but not eligible for member pricing on this program", async () => {

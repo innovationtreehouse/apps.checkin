@@ -41,8 +41,8 @@ describe("live: member discount price-rule contract", () => {
 
     it("mints a code whose stored discount is fixed-amount, per-unit, scoped to the variant, single-use", async () => {
         // programId from the janitor-recognizable reserved range (PRG9999999xx-…).
-        const code = await mintMemberDiscountCode(CITEST_PROGRAM_ID_BASE + 1, variantId, 1000);
-        expect(code).toMatch(new RegExp(`^PRG${CITEST_PROGRAM_ID_BASE + 1}-[0-9A-F]{8}$`));
+        const code = await mintMemberDiscountCode(CITEST_PROGRAM_ID_BASE + 1, 1, variantId, 1000);
+        expect(code).toMatch(new RegExp(`^PRG${CITEST_PROGRAM_ID_BASE + 1}-H1-[0-9A-F]{8}$`));
 
         const discount = await findDiscountByCode(code!);
         expect(discount).not.toBeNull();
@@ -64,6 +64,6 @@ describe("live: member discount price-rule contract", () => {
     });
 
     it("returns null (no discount) for a zero discount", async () => {
-        expect(await mintMemberDiscountCode(CITEST_PROGRAM_ID_BASE + 2, variantId, 0)).toBeNull();
+        expect(await mintMemberDiscountCode(CITEST_PROGRAM_ID_BASE + 2, 1, variantId, 0)).toBeNull();
     });
 });

@@ -79,6 +79,8 @@ describe('enrollment state — validator oracle over real transitions', () => {
                 inventoryHeldAt: fields.held ? now : null,
                 paymentPlanDeniedAt: fields.den ? now : null,
                 pendingSince: fields.pendingSince ?? now,
+                shopifyOrderId: null,
+                seatTakenWithoutSaleAt: null,
             },
             create: {
                 programId, personId: selfId,
@@ -211,6 +213,37 @@ describe('enrollment state — validator oracle over real transitions', () => {
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
         const { released } = await withdrawAndReleaseHold(programId, selfId, program);
         expect(released).toBe(true);
+        await assertGone();
+    });
+
+    const stampOf = async () =>
+        (await prisma.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId: selfId } } })).seatTakenWithoutSaleAt;
+
+    it('T5 then T11: an approved held seat is recorded, and withdrawal returns it (+1)', async () => {
+        await seed({ req: true, held: true, den: false }); // PENDING_HELD
+        mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        expect((await PlansPost(financeReq('http://localhost/api/finance-ops/payment-plans'))).status).toBe(200);
+        expect(await stampOf()).not.toBeNull();
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(true);
+        await assertGone();
+    });
+
+    it('T11 after approving a request whose hold failed: nothing recorded, nothing returned', async () => {
+        await seed({ req: true, held: false, den: false }); // PENDING_HOLD_FAILED
+        mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        expect((await PlansPost(financeReq('http://localhost/api/finance-ops/payment-plans'))).status).toBe(200);
+        await assertState('ACTIVE');
+        expect(await stampOf()).toBeNull();
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(false);
+        await assertGone();
+    });
+
+    it('T11 on an ACTIVE place with no record (paid, or enrolled while free) returns nothing', async () => {
+        await seed({ req: false, held: false, den: false, status: 'ACTIVE' });
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(false);
         await assertGone();
     });
 

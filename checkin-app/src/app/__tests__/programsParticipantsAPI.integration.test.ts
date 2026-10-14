@@ -520,6 +520,7 @@ describe('Program Participants API Integration Tests', () => {
                     where: { programId_personId: { programId: shopifyProgram.id, personId: otherId } },
                 });
                 expect(row?.inventoryHeldAt).toBeNull();
+                expect(row?.seatTakenWithoutSaleAt).not.toBeNull(); // the -1 is on record
             } finally {
                 logSpy.mockRestore();
                 process.env.CHECKIN_ENV = prevCheckinEnv;
@@ -561,6 +562,7 @@ describe('Program Participants API Integration Tests', () => {
                     where: { programId_personId: { programId: shopifyProgram.id, personId: otherId } },
                 });
                 expect(row?.status).toBe('ACTIVE');
+                expect(row?.seatTakenWithoutSaleAt).toBeNull(); // no -1 taken, nothing to return
             } finally {
                 process.env.CHECKIN_ENV = prevCheckinEnv;
                 if (prevDomain === undefined) delete process.env.SHOPIFY_STORE_DOMAIN;
@@ -1029,6 +1031,52 @@ describe('Program Participants API Integration Tests', () => {
                 const data = await res.json();
                 expect(data.notice).toBeUndefined();
                 expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory'));
+            } finally {
+                logSpy.mockRestore();
+                process.env.CHECKIN_ENV = prevCheckinEnv;
+                await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
+                await prisma.program.delete({ where: { id: shopifyProgram.id } });
+            }
+        });
+
+        // Removing a place returns its seat (+1) only when the app recorded taking it
+        // without a sale. A comp or approval with no record (its -1 failed, or it
+        // joined while the program was free) and a paid place (B8) return nothing.
+        it.each([
+            ['comped/approved with its -1 recorded', null, new Date(), true],
+            ['comped/approved with no -1 recorded', null, null, false],
+            ['paid', 'order-paid-1', null, false],
+        ])('board removal of a %s place', async (_label, shopifyOrderId, seatTakenWithoutSaleAt, returnsSeat) => {
+            const prevCheckinEnv = process.env.CHECKIN_ENV;
+            process.env.CHECKIN_ENV = 'local';
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            const shopifyProgram = await prisma.program.create({
+                data: {
+                    startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Comp Return Partic API Test',
+                    enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, shopifyVariantId: 'dev-mock-variant-comp-return',
+                    orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000,
+                },
+            });
+            try {
+                await prisma.programParticipant.create({
+                    data: { programId: shopifyProgram.id, personId: commonId, status: 'ACTIVE', shopifyOrderId, seatTakenWithoutSaleAt },
+                });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
+                        method: 'DELETE',
+                        headers: { cookie: 'session=test' },
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(shopifyProgram.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                const data = await res.json();
+                const plusOnes = logSpy.mock.calls.filter(([m]) => String(m).includes('Would adjust inventory by 1 ')).length;
+                expect(plusOnes).toBe(returnsSeat ? 1 : 0);
+                if (returnsSeat) expect(data.notice).toBeUndefined();
+                else expect(data.notice).toMatch(/NOT put back on sale automatically/i);
             } finally {
                 logSpy.mockRestore();
                 process.env.CHECKIN_ENV = prevCheckinEnv;

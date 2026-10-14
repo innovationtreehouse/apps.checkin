@@ -29,9 +29,10 @@ jest.mock('@/lib/shopify', () => {
 const TAG = 'discount-code-duration-test';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-async function post(programId: number) {
+async function post(programId: number, participantIds: number[]) {
     const req = new Request(`http://localhost:4000/api/programs/${programId}/discount-code`, {
         method: 'POST',
+        body: JSON.stringify({ participantIds }),
         // CHECKIN_ENV=local also arms the keyless-kiosk fallback in
         // authenticateRequest, which hijacks any cookie-less request as kiosk
         // (403) before the session gate runs — see programsIdAPI's Shopify block.
@@ -51,6 +52,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
     const uncoveredEndAt = new Date(boundary.getTime() + 10 * DAY_MS); // after the boundary, within +1y
 
     let unsettledPersonId: number;
+    let unsettledHouseholdId: number;
     let settledPersonId: number;
     let settledHouseholdId: number;
     let nonMemberPersonId: number;
@@ -65,6 +67,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
             await prisma.orgMembershipProcess.deleteMany({ where: { orgMembershipId: { in: memberships.map((m) => m.id) } } });
             await prisma.orgMembership.deleteMany({ where: { householdId: { in: householdIds } } });
         }
+        await prisma.programParticipant.deleteMany({ where: { program: { name: { contains: TAG } } } });
         await prisma.person.deleteMany({ where: { email: { contains: TAG } } });
         await prisma.household.deleteMany({ where: { name: { contains: TAG } } });
         await prisma.program.deleteMany({ where: { name: { contains: TAG } } });
@@ -93,6 +96,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
             select: { id: true, householdId: true },
         });
         unsettledPersonId = unsettled.id;
+        unsettledHouseholdId = unsettled.householdId;
 
         // Settled member: ACTIVE membership + a terminal ACTIVE process stamped
         // inside the current renewal window — valid one boundary further.
@@ -137,6 +141,14 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
             },
         });
         uncoveredProgramId = uncovered.id;
+
+        // Every checkout below pays for real unpaid claims.
+        await prisma.programParticipant.createMany({
+            data: [unsettledPersonId, settledPersonId, nonMemberPersonId].flatMap((personId) => [
+                { programId: coveredProgramId, personId, status: 'PENDING' as const },
+                { programId: uncoveredProgramId, personId, status: 'PENDING' as const },
+            ]),
+        });
     });
 
     afterAll(async () => {
@@ -155,19 +167,19 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
 
     it('mints a code when the member\'s validity covers the program\'s endAt', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: unsettledPersonId } });
-        const res = await post(coveredProgramId);
+        const res = await post(coveredProgramId, [unsettledPersonId]);
         expect(res.status).toBe(200);
         const data = await res.json();
-        expect(data.code).toEqual(expect.stringContaining(`PRG${coveredProgramId}-`));
+        expect(data.code).toMatch(new RegExp(`^PRG${coveredProgramId}-H${unsettledHouseholdId}-`));
         expect(data.reason).toBeUndefined();
         // 5000 (non-member) - 4000 (member) = 1000: the amount actually
         // reaches the minting call, not just the response shape.
-        expect(mintSpy).toHaveBeenCalledWith(coveredProgramId, 'dev-mock-variant-discount-code-covered', 1000);
+        expect(mintSpy).toHaveBeenCalledWith(coveredProgramId, unsettledHouseholdId, 'dev-mock-variant-discount-code-covered', 1000);
     });
 
     it('returns { code: null, reason } when the program ends after an unsettled member\'s boundary', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: unsettledPersonId } });
-        const res = await post(uncoveredProgramId);
+        const res = await post(uncoveredProgramId, [unsettledPersonId]);
         expect(res.status).toBe(200);
         const data = await res.json();
         expect(data.code).toBeNull();
@@ -177,21 +189,48 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
 
     it('mints a code for the same past-boundary program once the household is settled for the coming year', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: settledPersonId } });
-        const res = await post(uncoveredProgramId);
+        const res = await post(uncoveredProgramId, [settledPersonId]);
         expect(res.status).toBe(200);
         const data = await res.json();
-        expect(data.code).toEqual(expect.stringContaining(`PRG${uncoveredProgramId}-`));
+        expect(data.code).toMatch(new RegExp(`^PRG${uncoveredProgramId}-H${settledHouseholdId}-`));
         expect(data.reason).toBeUndefined();
-        expect(mintSpy).toHaveBeenCalledWith(uncoveredProgramId, 'dev-mock-variant-discount-code-uncovered', 1000);
+        expect(mintSpy).toHaveBeenCalledWith(uncoveredProgramId, settledHouseholdId, 'dev-mock-variant-discount-code-uncovered', 1000);
     });
 
     it('a non-member still gets { code: null } with no reason (unchanged behavior)', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: nonMemberPersonId } });
-        const res = await post(coveredProgramId);
+        const res = await post(coveredProgramId, [nonMemberPersonId]);
         expect(res.status).toBe(200);
         const data = await res.json();
         expect(data.code).toBeNull();
         expect(data.reason).toBeUndefined();
+        expect(mintSpy).not.toHaveBeenCalled();
+    });
+
+    it('refuses a checkout that names someone from another household', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: settledPersonId } });
+        const res = await post(coveredProgramId, [settledPersonId, nonMemberPersonId]);
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toMatch(/must be from your household/);
+        expect(mintSpy).not.toHaveBeenCalled();
+    });
+
+    it('refuses a checkout without participantIds', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: settledPersonId } });
+        const res = await post(coveredProgramId, []);
+        expect(res.status).toBe(400);
+        expect(mintSpy).not.toHaveBeenCalled();
+    });
+
+    it('mints nothing for a member with no unpaid claim in the program', async () => {
+        await prisma.programParticipant.update({
+            where: { programId_personId: { programId: coveredProgramId, personId: settledPersonId } },
+            data: { status: 'ACTIVE' },
+        });
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: settledPersonId } });
+        const res = await post(coveredProgramId, [settledPersonId]);
+        expect(res.status).toBe(200);
+        expect((await res.json()).code).toBeNull();
         expect(mintSpy).not.toHaveBeenCalled();
     });
 });

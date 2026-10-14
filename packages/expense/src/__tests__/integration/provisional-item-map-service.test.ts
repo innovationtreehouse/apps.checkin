@@ -5,7 +5,7 @@
  * tests). Covers approve, map-to-existing, reject, and the linkRealGtin
  * owner-carry-forward logic.
  */
-import { it, expect, vi } from "vitest";
+import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { createProvisionalItemMapRepository } from "../../repositories/provisionalItemMap";

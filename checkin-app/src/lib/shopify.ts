@@ -6,9 +6,10 @@ import prisma from "@/lib/prisma";
 import { sendEmail } from "@/lib/email";
 import { escapeHtml } from "@/lib/email-templates/base";
 import { logIntegrationError } from "@/lib/logger";
+import { redactSecrets } from "@/lib/redact";
 import { config } from "@/lib/config";
 import { LIVE_PERSON } from "@/lib/person/filters";
-import { programMemberCodePrefix } from "@/lib/programs/memberDiscountCode";
+import { householdMemberCodePrefix } from "@/lib/programs/memberDiscountCode";
 import { programVariantIds } from "@/lib/programs/variants";
 
 let cachedToken: string | null = null;
@@ -201,7 +202,8 @@ export async function fetchStorefrontProductVariants(productUrl: string): Promis
 
 /**
  * Shared failure path for Shopify write operations: log to IntegrationErrorLog
- * (System Status > Link Status) and best-effort email admins/board. Never
+ * (System Status > Link Status) and best-effort email admins/board, with the
+ * error text redacted (lib/redact) since it leaves the app. Never
  * throws — callers return false/null regardless of whether this succeeds.
  */
 export async function reportShopifyFailure(
@@ -229,7 +231,7 @@ export async function reportShopifyFailure(
                 sendEmail(
                     email,
                     "Shopify Integration Error",
-                    `<p>${emailIntroHtml}</p><p>Error details:</p><pre>${escapeHtml(error instanceof Error ? error.message : String(error))}</pre>`
+                    `<p>${emailIntroHtml}</p><p>Error details:</p><pre>${escapeHtml(redactSecrets(error instanceof Error ? error.message : String(error)))}</pre>`
                 )
             );
 
@@ -840,7 +842,8 @@ export async function setProgramProductOffSale(
 
 /**
  * Mints a server-side, single-use fixed-amount discount code for one
- * enrollee's checkout. Single-pool programs ({@link Program.shopifyVariantId})
+ * household's checkout. The code names the household it was minted for, and the
+ * payment side refuses it on anyone else's order (unentitledMemberCodeUse). Single-pool programs ({@link Program.shopifyVariantId})
  * sell at the base/non-member price; an ACTIVE org member gets this code
  * appended to their cart link (`?discount=<code>`) to bring the price down to
  * the member rate. Interim mechanism —
@@ -856,7 +859,7 @@ export async function setProgramProductOffSale(
  * member household enrolling N kids buys quantity N of the variant and every
  * seat gets the member price (amount-off-once would overcharge N-1 seats).
  *
- * ponytail: one discount code per enrollee/checkout — fine at Treehouse's
+ * ponytail: one discount code per checkout — fine at Treehouse's
  * program-enrollment volume. Upgrade to the segment design above if that
  * stops being true.
  *
@@ -866,12 +869,13 @@ export async function setProgramProductOffSale(
  */
 export async function mintMemberDiscountCode(
     programId: number,
+    householdId: number,
     variantId: string,
     amountOffCents: number,
 ): Promise<string | null> {
     if (amountOffCents <= 0) return null;
 
-    const code = `${programMemberCodePrefix(programId)}${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const code = `${householdMemberCodePrefix(programId, householdId)}${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 
     // See createShopifySingleVariantProgram for why this branch exists (CHECKIN_ENV=local mock).
     if (config.shopifyMockActive()) {

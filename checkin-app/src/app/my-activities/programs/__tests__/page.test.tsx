@@ -20,7 +20,8 @@ describe("MyProgramsDashboard", () => {
         expect(await screen.findByText("Robotics Club")).toBeInTheDocument();
         expect(screen.getByText("Kid One")).toBeInTheDocument();
         // ACTIVE (paid) shows no payment pill.
-        expect(screen.queryByText("Payment due")).not.toBeInTheDocument();
+        expect(screen.queryByText("Not paid yet")).not.toBeInTheDocument();
+        expect(screen.queryByText("Pay now")).not.toBeInTheDocument();
         expect(screen.queryByText("Awaiting finance approval")).not.toBeInTheDocument();
     });
 
@@ -34,8 +35,27 @@ describe("MyProgramsDashboard", () => {
         });
         renderWithProviders(<MyProgramsDashboard />);
 
-        expect(await screen.findByText("Payment due")).toBeInTheDocument();
+        expect(await screen.findByText("Not paid yet")).toBeInTheDocument();
         expect(screen.getByText("Awaiting finance approval")).toBeInTheDocument();
+        // Only the household-pays row offers checkout, and it goes to the program page.
+        const payNow = screen.getAllByText("Pay now");
+        expect(payNow).toHaveLength(1);
+        expect(payNow[0].closest("a")).toHaveAttribute("href", "/programs/5");
+    });
+
+    it("shows no payment state when the API sends none (youth, non-lead member)", async () => {
+        setSession({ id: 100, ageBand: "youth" });
+        mockFetchJson({
+            "/api/programs/mine": [
+                { programId: 5, personId: 100, person: { id: 100, name: "Kid One" }, program: { id: 5, name: "Robotics Club", startAt: null, endAt: null } },
+            ],
+        });
+        renderWithProviders(<MyProgramsDashboard />);
+
+        expect(await screen.findByText("Robotics Club")).toBeInTheDocument();
+        expect(screen.queryByText("Not paid yet")).not.toBeInTheDocument();
+        expect(screen.queryByText("Pay now")).not.toBeInTheDocument();
+        expect(screen.queryByText(/confirmation|finance/i)).not.toBeInTheDocument();
     });
 
     it("shows an empty state with no enrollments", async () => {
