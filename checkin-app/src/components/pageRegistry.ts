@@ -7,7 +7,7 @@
 
 import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
 import type { NavRole } from '@/types/auth';
-import { leadsAnyProgram } from '@/components/navBadges';
+import { leadsAnyProgram, libraryCount } from '@/components/navBadges';
 import { shopRoles } from '@/lib/shopNav';
 import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
 import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
@@ -31,6 +31,9 @@ const SIGNED_IN: Visible = (_u, signedIn) => signedIn;
 const HOUSEHOLD_LEAD: Visible = (u, signedIn) => signedIn && !!u?.householdLead;
 // Program lead mentors only — mirrors the staff "My Programs" nav gate.
 const LEADS_PROGRAM: Visible = (_u, signedIn, counts) => signedIn && leadsAnyProgram(counts);
+// Program leads and treasurers; the expense nav counts carry the treasurer signal.
+const EXPENSE_APPROVER: Visible = (u, signedIn, counts) =>
+  LEADS_PROGRAM(u, signedIn, counts) || (signedIn && libraryCount(counts, 'expense', 'approver') > 0);
 const BOARD: Visible = (u) => !!u?.isSysadmin || !!u?.isBoardMember;
 // Participants is the one Membership Ops page operations can also reach (read-only
 // directory + add-contact) — see membership-ops/layout.tsx's nav gate. Outreach is
@@ -82,7 +85,7 @@ export const PAGES: PageEntry[] = [
   // payload (leadsAnyProgram), matching the nav gate. Distinct from the attendee
   // "My Programs" tab above.
   { href: '/my-programs/attendance', label: 'My Programs (as Volunteer)', section: 'Personal', keywords: 'lead mentor program volunteer attendance', visible: LEADS_PROGRAM },
-  { href: '/my-programs/expense-approvals', label: 'Expense approvals', section: 'Personal', keywords: 'budget bucket sign-off approve expense reimbursement', visible: released('expense', LEADS_PROGRAM) },
+  { href: '/my-programs/expense-approvals', label: 'Expense approvals', section: 'Personal', keywords: 'budget bucket sign-off approve expense reimbursement', visible: released('expense', EXPENSE_APPROVER) },
   { href: '/my-programs/conflicts', label: 'Attendance Conflicts', section: 'Personal', keywords: 'lead mentor duplicate overlapping visit attendance', visible: LEADS_PROGRAM },
   // Stays visible to all members: also the Join/renewal entry for new applicants
   // who aren't a household lead yet (gating it on lead would break joining).

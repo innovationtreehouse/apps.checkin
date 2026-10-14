@@ -80,6 +80,8 @@ export function countsFor(user: AuthenticatedUser): TodoCounts {
         buildingReachable: true,
         activePrograms: 0,
         releasedLibraries: [...LIBRARY_KEYS],
+        // The expense provider's approver signal, with the treasurer lookup stubbed like the server's.
+        libraries: { expense: { approver: user.programsLed?.length || TREASURER_IDS.has(user.id) ? 1 : 0 } },
         lead: user.programsLed?.length
             ? { programs: user.programsLed.map((id) => ({ id, name: `p${id}`, totalEnrolled: 0, pending: [], upcoming: [] })) }
             : undefined,
@@ -124,10 +126,9 @@ export const GATE_PAIRS: GatePair[] = [
         name: 'page /my-programs/expense-approvals',
         client: page('/my-programs/expense-approvals'),
         token: 'expense-approver',
-        // FINANCE and BOARD approve from Expense Ops, not My Programs. A treasurer
-        // who leads no program has no session claim for the client to read.
-        differsFor: ['board', 'finance', 'treasurer'],
+        // FINANCE and BOARD approve from Expense Ops, not My Programs.
+        differsFor: ['board', 'finance'],
     },
-    // A treasurer who leads no program has no session claim for the provider to read.
-    { name: 'counts:expense', client: counts('expense'), token: 'expense-approver', differsFor: ['treasurer'] },
+    // The provider runs for every signed-in viewer; the approver rule it reports is paired on the page above.
+    { name: 'counts:expense', client: counts('expense'), token: 'authenticated' },
 ];

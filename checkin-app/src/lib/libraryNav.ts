@@ -26,7 +26,7 @@ export type NavTab = {
 /** A tab a library registers. `visible` mirrors the tab's route gate for this viewer. */
 export type LibraryTab = NavTab & {
   library: LibraryKey;
-  visible: (user: SessionUser | undefined) => boolean;
+  visible: (user: SessionUser | undefined, counts: TodoCounts | null) => boolean;
 };
 
 /** The slot's tabs this viewer may see: released library AND the tab's own gate. */
@@ -37,7 +37,7 @@ export function visibleLibraryTabs(
 ): NavTab[] {
   const viewer = { isBoardMember: user?.isBoardMember, releasedLibraries: counts?.releasedLibraries };
   return slot
-    .filter((t) => isLibraryVisible(t.library, viewer) && t.visible(user))
+    .filter((t) => isLibraryVisible(t.library, viewer) && t.visible(user, counts))
     .map(({ name, href, icon, badge }) => ({ name, href, icon, badge }));
 }
 
@@ -78,8 +78,8 @@ export const MY_PROGRAMS_LIBRARY_TABS: LibraryTab[] = [
   {
     ...EXPENSE_TABS.approvals,
     library: "expense",
-    // Program leads. A treasurer who leads no program has no session flag yet.
-    visible: (u) => (u?.programsLed?.length ?? 0) > 0,
+    // Bucket approvers: program leads, and treasurers via the expense nav counts.
+    visible: (u, c) => (u?.programsLed?.length ?? 0) > 0 || libraryCount(c, "expense", "approver") > 0,
     badge: (c) => {
       const n = libraryCount(c, "expense", "awaitingMySignoff");
       return n > 0 ? { count: n, color: "treehouseGreen", label: `${n} expense lines awaiting your sign-off` } : null;
