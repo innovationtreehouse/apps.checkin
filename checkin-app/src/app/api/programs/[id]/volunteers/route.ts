@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
+import { isKnownAdult } from "@/lib/programAge";
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
@@ -34,9 +35,8 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return apiError("Forbidden: Not authorized to assign volunteers", 403);
         }
 
-        // ponytail: no eligibility gate (age/membership) on volunteers — they're
-        // volunteers/program leaders, not enrollees. ProgramVolunteer has only isCore; any
-        // participant is assignable. Add a gate here only if product asks for one.
+        // No eligibility gate (age/membership): a plain volunteer can be anyone.
+        // Being made core (PATCH) is what requires a known adult.
         const assignment = await prisma.programVolunteer.create({
             data: {
                 programId,
@@ -110,6 +110,17 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
             return apiError("Forbidden: Not authorized to remove volunteers", 403);
         }
 
+        // A treasurer is set by the board in the program's budget agreement; the lead can't undo it.
+        if (!isSysAdminOrBoard) {
+            const existing = await prisma.programVolunteer.findUnique({
+                where: { programId_personId: { programId, personId: participantId } },
+                select: { isTreasurer: true }
+            });
+            if (existing?.isTreasurer) {
+                return apiError("This volunteer is the program's treasurer. Only the board can remove them.", 403);
+            }
+        }
+
         const assignment = await prisma.programVolunteer.delete({
             where: {
                 programId_personId: {
@@ -165,6 +176,16 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
 
         if (!isLeadMentor && !isSysAdminOrBoard) {
             return apiError("Forbidden: Not authorized to modify volunteers", 403);
+        }
+
+        if (isCore === true) {
+            const person = await prisma.person.findUnique({
+                where: { id: participantId },
+                select: { dateOfBirth: true, isDeclaredAdult: true }
+            });
+            if (!person || !isKnownAdult(person)) {
+                return apiError("A core volunteer must be an adult.", 400);
+            }
         }
 
         const assignment = await prisma.programVolunteer.update({
