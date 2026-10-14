@@ -1,4 +1,4 @@
-import { db } from "../db";
+import { db, type DbOrTx } from "../db";
 import { recordDonorDataRead, recordEvent, type DonorReadContext } from "../repositories/audit";
 import { getOwnerDirectory } from "../runtime";
 import { runOwnerAssignedCycleTx, type AuditContext } from "../workflows/disbursement.actor";
@@ -34,6 +34,20 @@ const TRANSACTION_SELECT = {
   donorLastName: true,
   donorComment: true,
 } as const;
+
+/** Writes the owner decision only while the gift is still undecided; a concurrent decision gets a 409. */
+async function claimUndecided(
+  tx: DbOrTx,
+  orgId: string,
+  transactionId: number,
+  data: { ownerId: number; ownerAssignedAt: Date; ownerAssignedByUserId: number | null | undefined } | { isOrganizationalLevel: true },
+) {
+  const { count } = await tx.transaction.updateMany({
+    where: { id: transactionId, orgId, ownerId: null, isOrganizationalLevel: false },
+    data,
+  });
+  if (count === 0) throw new ServiceError(409, "Owner decision already recorded for this transaction");
+}
 
 export const transactionService = {
   async listTransactions(orgId: string, reader: DonorReadContext, assigned?: "true" | "false", page?: { skip: number; take: number }) {
@@ -86,11 +100,8 @@ export const transactionService = {
     const useCommentRule = Boolean(assignFutureMatchingComment && existing.donorComment);
 
     return db.$transaction(async (tx) => {
-      const row = await tx.transaction.update({
-        where: { id: transactionId },
-        data: { ownerId, ownerAssignedAt: now, ownerAssignedByUserId: audit.actorUserId },
-        select: DECISION_SELECT,
-      });
+      await claimUndecided(tx, orgId, transactionId, { ownerId, ownerAssignedAt: now, ownerAssignedByUserId: audit.actorUserId });
+      const row = await tx.transaction.findUniqueOrThrow({ where: { id: transactionId }, select: DECISION_SELECT });
 
       await recordEvent(tx, {
         orgId,
@@ -142,7 +153,7 @@ export const transactionService = {
         }
       }
 
-      for (const disbId of affectedDisbursementIds) {
+      for (const disbId of [...affectedDisbursementIds].sort()) {
         await runOwnerAssignedCycleTx(tx, orgId, disbId, audit);
       }
 
@@ -157,11 +168,8 @@ export const transactionService = {
     if (existing.isOrganizationalLevel) throw new ServiceError(400, "Already marked Organizational Level");
 
     return db.$transaction(async (tx) => {
-      const row = await tx.transaction.update({
-        where: { id: transactionId },
-        data: { isOrganizationalLevel: true },
-        select: DECISION_SELECT,
-      });
+      await claimUndecided(tx, orgId, transactionId, { isOrganizationalLevel: true });
+      const row = await tx.transaction.findUniqueOrThrow({ where: { id: transactionId }, select: DECISION_SELECT });
 
       await recordEvent(tx, {
         orgId,
