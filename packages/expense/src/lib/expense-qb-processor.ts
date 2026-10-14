@@ -474,3 +474,33 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
   }
   return { checked, failed };
 }
+
+// ── Finance retry of a failed QuickBooks post ─────────────────────────────────
+
+/**
+ * Re-arms an expense whose post failed: rebuilds the outbox payload from the current account
+ * mappings (so a fixed mapping takes effect), resets the attempt count and posts once.
+ * Returns false when a line no longer resolves to one account; the expense stays as it is.
+ */
+export async function retryQbPost(orgId: string, expenseId: string): Promise<boolean> {
+  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId } });
+  if (!expense || !["POST_FAILED", "NEEDS_FINANCE"].includes(expense.qbMatchState)) return false;
+  const lineItems = await db.expenseLineItem.findMany({ where: { expenseId } });
+  const rules = await db.accountMapping.findMany({ where: { orgId } });
+  const { resolved, conflicts } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "");
+  if (conflicts.length > 0) return false;
+
+  const allocItems = lineItems.map((li) => ({ id: li.id, totalPriceCents: li.totalPriceCents }));
+  const payload = buildQbPayload(
+    expense, resolved, lineItems,
+    allocateAmount(allocItems, expense.taxCents),
+    allocateAmount(allocItems, expense.shippingCents),
+    allocateAmount(allocItems, expense.discountCents),
+  );
+  await db.$transaction(async (tx) => {
+    await tx.expenseEvent.update({ where: { expense_events_org_expense_unique: { orgId, expenseId } }, data: { payload: JSON.stringify(payload) } });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED", qbPostAttempts: 0 } });
+  });
+  await postExpenseToQb(orgId, expenseId);
+  return true;
+}

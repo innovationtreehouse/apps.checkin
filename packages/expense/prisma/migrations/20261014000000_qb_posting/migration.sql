@@ -3,6 +3,7 @@ ALTER TABLE "expenses" ADD COLUMN "qb_match_state" TEXT NOT NULL DEFAULT 'UNMATC
 ADD COLUMN "qb_txn_id" TEXT,
 ADD COLUMN "qb_txn_entity" TEXT,
 ADD COLUMN "qb_vendor_id" TEXT,
+ADD COLUMN "qb_post_attempts" INTEGER NOT NULL DEFAULT 0,
 ADD COLUMN "is_test_data" BOOLEAN NOT NULL DEFAULT false;
 
 -- AlterTable

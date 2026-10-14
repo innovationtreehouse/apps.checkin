@@ -66,6 +66,7 @@ interface Bucket {
 const NOT_SENT: Record<string, string> = {
   NOT_TEST_DATA: "Not sent to QuickBooks: not test data",
   TEST_DATA_REFUSED: "Not sent to QuickBooks: test data is never posted in prod",
+  NEEDS_FINANCE: "Not sent to QuickBooks: posting kept failing; fix the account mapping and retry",
 };
 
 type Action = "approve" | "raise-exception" | "reject" | "finance-assign" | "assign-owner" | "resolve-unknown";
@@ -147,6 +148,16 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses" }
         {e.isTestData && <Badge color="grape">Test data</Badge>}
       </Group>
       {e.qbMatchState && NOT_SENT[e.qbMatchState] && <Text size="sm" c="orange">{NOT_SENT[e.qbMatchState]}</Text>}
+      {isFinance && e.qbMatchState === "NEEDS_FINANCE" && (
+        <Group>
+          <Button
+            size="xs"
+            onClick={async () => { if (await send(`/expense-holds/${encodeURIComponent(e.id)}/resubmit`, "POST", {}, "QuickBooks post retried")) reloadAll(); }}
+          >
+            Retry QuickBooks post
+          </Button>
+        </Group>
+      )}
       <Text size="sm">
         {e.receiptDate ?? "No receipt date"} · {formatCents(e.receiptTotalCents, e.currency)}
         {e.needsReimbursement && ` · Reimbursement${e.reimbursementFor ? ` for ${e.reimbursementFor}` : ""}`}

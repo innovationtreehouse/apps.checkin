@@ -9,6 +9,7 @@ import { QbExpenseEventSchema } from "../workflows/expense-event-schema";
 import { writeAudit } from "./audit";
 import { logError, logWarn } from "./logger";
 import { SYSTEM_ACTOR } from "./system-actor";
+import { FLAG_AUDIENCE } from "./flags";
 
 /**
  * Expense match states the drain still tries; the test-data states are re-checked each run.
@@ -31,8 +32,10 @@ function notSendable(posting: ExpensePosting, e: { isTestData: boolean; vendorNa
 // ponytail: fixed per-run caps; move to ExpenseOrgSettings when finance needs to tune them.
 export const MAX_CREATES_PER_RUN = 25;
 export const MAX_CREATE_CENTS_PER_RUN = 2_500_000;
+/** Failed posts before the drain stops retrying and hands the expense to finance. */
+export const MAX_POST_ATTEMPTS = 5;
 
-export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "not_sent";
+export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "not_sent" | "needs_finance";
 
 function shiftDate(isoDate: string, days: number): string {
   const d = new Date(`${isoDate}T00:00:00Z`);
@@ -105,7 +108,8 @@ async function buildWrite(orgId: string, payloadJson: string, posting: ExpensePo
 /**
  * One expense's turn through the outbox. found by key or created → CREATED; found by amount →
  * MATCHED; ambiguous or an unmapped reimbursee → AMBIGUOUS; before the takeover line →
- * BEFORE_LINE; a failure (QuickBooks down, rejected) → POST_FAILED, retried by the drain; an
+ * BEFORE_LINE; a failure (QuickBooks down, rejected) → POST_FAILED, retried by the drain until
+ * MAX_POST_ATTEMPTS, then NEEDS_FINANCE with a flag (finance's retry re-arms it); an
  * expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. With no
  * takeover date configured nothing is posted. A row lock serializes the request path and the cron drain.
  */
@@ -154,12 +158,34 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
         return outcome;
       };
 
+      // Every failure is recorded; at the limit the drain stops retrying and finance is flagged.
+      const fail = async (error: string) => {
+        const attempts = current.qbPostAttempts + 1;
+        const exhausted = attempts >= MAX_POST_ATTEMPTS;
+        const qbMatchState = exhausted ? "NEEDS_FINANCE" : "POST_FAILED";
+        await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState, qbPostAttempts: attempts } });
+        await writeAudit(tx, SYSTEM_ACTOR, {
+          expenseId,
+          action: `qb_${qbMatchState.toLowerCase()}`,
+          fieldChanged: "qbMatchState",
+          valueBefore: current.qbMatchState,
+          valueAfter: qbMatchState,
+          notes: `attempt ${attempts} of ${MAX_POST_ATTEMPTS}: ${error}`,
+        });
+        if (!exhausted) return "failed" as const;
+        await tx.expenseFlag.createMany({
+          data: [{ orgId, expenseId, kind: "QB_POST_FAILED", audience: FLAG_AUDIENCE.QB_POST_FAILED, detail: error.slice(0, 500) }],
+          skipDuplicates: true,
+        });
+        return "needs_finance" as const;
+      };
+
       const refused = notSendable(posting, current);
       if (refused) {
         if (posting.prod) logWarn("qb_post_test_data_refused", { expenseId, orgId });
         return settle("not_sent", { qbMatchState: refused.qbMatchState }, refused.note);
       }
-      if ("error" in built) return settle("failed", { qbMatchState: "POST_FAILED" }, built.error);
+      if ("error" in built) return fail(built.error);
       if ("queue" in built) return settle("queued", { qbMatchState: "AMBIGUOUS" }, built.queue);
 
       const { write, lineAccounts } = built;
@@ -190,7 +216,7 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
         case "too-old":
           return settle("queued", { qbMatchState: "BEFORE_LINE" });
         case "failed":
-          return settle("failed", { qbMatchState: "POST_FAILED" }, result.error);
+          return fail(result.error);
         case "no-line":
           return "waiting";
       }
@@ -204,8 +230,9 @@ export type DrainCounts = Record<PostOutcome, number> & { overCap: number; cappe
 
 /**
  * The catch-up drain: every outboxed expense not yet in QuickBooks, oldest receipt first. Stops
- * at the count and cents caps and logs the hit; an expense over the cents cap on its own is
- * skipped and logged. Returns counts only.
+ * at the count and cents caps and logs the hit (the alarm hook); the rest waits for the next run.
+ * An expense over the cents cap on its own is posted alone, as the first post of a run, and
+ * flagged for finance. Returns counts only.
  */
 export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound" | "no_takeover_date"> {
   const posting = getExpenseRuntime().quickbooks.posting;
@@ -223,15 +250,11 @@ export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound" | "n
     })
   ).filter((e) => outboxed.has(e.id));
 
-  const counts: DrainCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, overCap: 0, capped: null };
+  const counts: DrainCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, overCap: 0, capped: null };
   let postedCents = 0;
   for (const [i, e] of due.entries()) {
-    if (e.receiptTotalCents > MAX_CREATE_CENTS_PER_RUN) {
-      counts.overCap++;
-      logWarn("qb_drain_over_cap", { expenseId: e.id, orgId: e.orgId });
-      continue;
-    }
-    if (counts.posted >= MAX_CREATES_PER_RUN || postedCents + e.receiptTotalCents > MAX_CREATE_CENTS_PER_RUN) {
+    const alone = e.receiptTotalCents > MAX_CREATE_CENTS_PER_RUN && counts.posted === 0;
+    if (!alone && (counts.posted >= MAX_CREATES_PER_RUN || postedCents + e.receiptTotalCents > MAX_CREATE_CENTS_PER_RUN)) {
       counts.capped = counts.posted >= MAX_CREATES_PER_RUN ? "count" : "cents";
       logWarn("qb_drain_capped", { cap: counts.capped, remaining: due.length - i });
       break;
@@ -241,6 +264,16 @@ export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound" | "n
       if (outcome === "unbound" || outcome === "no_takeover_date") break;
       counts[outcome]++;
       if (outcome === "posted") postedCents += e.receiptTotalCents;
+      if (alone && outcome === "posted") {
+        counts.overCap++;
+        logWarn("qb_drain_over_cap", { expenseId: e.id, orgId: e.orgId });
+        await db.expenseFlag.createMany({
+          data: [{ orgId: e.orgId, expenseId: e.id, kind: "QB_OVER_CAP", audience: FLAG_AUDIENCE.QB_OVER_CAP, detail: "posted alone: over the per-run cap" }],
+          skipDuplicates: true,
+        });
+        counts.capped = "cents";
+        break;
+      }
     } catch (err) {
       counts.failed++;
       logError("qb_drain_failed", { expenseId: e.id, orgId: e.orgId }, err);

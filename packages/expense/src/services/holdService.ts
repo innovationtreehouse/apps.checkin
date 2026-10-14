@@ -1,9 +1,9 @@
 // Account-mapping holds (NO_MATCH / MULTIPLE_MATCHES / NO_PART_NUMBER): FINANCE sets a line's
-// account by hand and resubmits.
+// account by hand and resubmits. The same resubmit retries a failed QuickBooks post.
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getOrgId } from "../runtime";
-import { checkAndProcessExpense } from "../lib/expense-qb-processor";
+import { checkAndProcessExpense, retryQbPost } from "../lib/expense-qb-processor";
 import { writeAudit } from "../lib/audit";
 import { actorOf } from "../lib/caller";
 import { requireFinance } from "./approvalService";
@@ -37,9 +37,16 @@ export async function setHeldLineAccount(
 export async function resubmitHeldExpense(principal: ExpensePrincipal, expenseId: string): Promise<void> {
   requireFinance(principal);
   const orgId = await getOrgId();
-  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId }, select: { id: true } });
+  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId }, select: { id: true, qbMatchState: true } });
   if (!expense) throw new ServiceError(404, "Expense not found");
   // Processing runs as the system actor across its own transactions; this row records who asked.
+  if (expense.qbMatchState === "POST_FAILED" || expense.qbMatchState === "NEEDS_FINANCE") {
+    await writeAudit(db, actorOf(principal), { expenseId, action: "qb_post_retried" });
+    if (!(await retryQbPost(orgId, expenseId))) {
+      throw new ServiceError(409, "A line no longer resolves to one QuickBooks account; fix the account mapping first");
+    }
+    return;
+  }
   await writeAudit(db, actorOf(principal), { expenseId, action: "hold_resubmitted" });
   await checkAndProcessExpense(orgId, expenseId);
 }

@@ -134,7 +134,7 @@ model Expense {
   noteInLieuOfReceipt Boolean  @default(false) @map("note_in_lieu_of_receipt")
   // QuickBooks match state of the whole expense (one QB entry per expense):
   // UNMATCHED | MATCHED | CREATED | AMBIGUOUS | BEFORE_LINE | POST_FAILED, or not sent:
-  // NOT_TEST_DATA (outside prod) | TEST_DATA_REFUSED (prod). qb_txn_id is the
+  // NOT_TEST_DATA (outside prod) | TEST_DATA_REFUSED (prod) | NEEDS_FINANCE (posts kept failing). qb_txn_id is the
   // claimed entry of type qb_txn_entity (Bill | Purchase), unique per type so an entry is claimed
   // once; qb_vendor_id is the Vendor a Bill was posted to.
   /// @sensitivity:internal
@@ -145,6 +145,9 @@ model Expense {
   qbTxnEntity        String?   @map("qb_txn_entity")
   /// @sensitivity:internal
   qbVendorId         String?   @map("qb_vendor_id")
+  // Failed QuickBooks posts since the last success or finance retry; at the limit the expense stops at NEEDS_FINANCE.
+  /// @sensitivity:internal
+  qbPostAttempts     Int       @default(0) @map("qb_post_attempts")
   // Set only outside prod (seed, FINANCE toggle). Outside prod only test data posts to QuickBooks; prod never posts it.
   /// @sensitivity:internal
   isTestData         Boolean   @default(false) @map("is_test_data")

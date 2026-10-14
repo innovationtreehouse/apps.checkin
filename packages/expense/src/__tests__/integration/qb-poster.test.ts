@@ -6,9 +6,10 @@ import { it, expect, beforeEach, afterEach, vi } from "vitest";
 import { QuickBooksClient, qbKey, type QboBill, type QboPurchase } from "@inventory/quickbooks";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, catalogResolving, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
+import { bindPorts, catalogResolving, principal, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
-import { drainExpenseOutbox, postExpenseToQb } from "../../lib/expense-qb-poster";
+import { MAX_CREATE_CENTS_PER_RUN, MAX_POST_ATTEMPTS, drainExpenseOutbox, postExpenseToQb } from "../../lib/expense-qb-poster";
+import { resubmitHeldExpense, setHeldLineAccount } from "../../services/holdService";
 import { runExpenseCatchUp } from "../../services/sweeps";
 
 const PAYMENT_ACCOUNT = "41";
@@ -327,5 +328,76 @@ describeDb("QB-2 posting — ids are unique per entity type", () => {
 
     expect(await postExpenseToQb(ORG, id)).toBe("posted");
     expect(await expenseRow(id)).toMatchObject({ qbTxnId: "5000", qbTxnEntity: "Bill" });
+  });
+});
+
+describeDb("QB-2 posting — bounded retry", () => {
+  /** Outboxed through the real processor on one manual line, so a finance retry can rebuild it. */
+  async function outboxedManual(account: string) {
+    bindPorts({ catalog: catalogResolving({}), quickbooks: { posting: posting() } });
+    const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 500 });
+    await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", isTestData: true, vendorName: "TEST-Acme" } });
+    const line = await seedLineItem(id, { manualQbAccount: account, totalPriceCents: 500 });
+    await signAllLines(id);
+    await checkAndProcessExpense(ORG, id);
+    return { id, line };
+  }
+
+  it("a permanent rejection stops at NEEDS_FINANCE with a flag after the attempt limit, and the drain stops calling QuickBooks", async () => {
+    const { id } = await outboxedManual("not-an-account");
+    expect((await expenseRow(id)).qbMatchState).toBe("POST_FAILED");
+
+    for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS });
+    const flags = await db.expenseFlag.findMany({ where: { expenseId: id } });
+    expect(flags.map((f) => [f.kind, f.audience])).toEqual([["QB_POST_FAILED", "FINANCE"]]);
+    const notes = (await db.expenseAuditLog.findMany({ where: { expenseId: id, fieldChanged: "qbMatchState" }, orderBy: { id: "asc" } })).map((a) => a.notes);
+    expect(notes).toHaveLength(MAX_POST_ATTEMPTS);
+    expect(notes.at(-1)).toMatch(new RegExp(`^attempt ${MAX_POST_ATTEMPTS} of ${MAX_POST_ATTEMPTS}: `));
+
+    const fetches = vi.mocked(fetch).mock.calls.length;
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, failed: 0 });
+    expect(vi.mocked(fetch).mock.calls.length).toBe(fetches);
+  });
+
+  it("finance fixes the account and retries: the payload is rebuilt and the expense posts", async () => {
+    const { id, line } = await outboxedManual("not-an-account");
+    for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
+    expect((await expenseRow(id)).qbMatchState).toBe("NEEDS_FINANCE");
+
+    const finance = principal(500, { isFinance: true });
+    await setHeldLineAccount(finance, id, line, "60");
+    await resubmitHeldExpense(finance, id);
+
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbPostAttempts: 0 });
+    expect(qbo.posts).toHaveLength(1);
+    expect(qbo.posts[0].body.Line[0].AccountBasedExpenseLineDetail.AccountRef).toEqual({ value: "60" });
+  });
+});
+
+describeDb("QB-2 posting — per-run cents cap", () => {
+  const big = MAX_CREATE_CENTS_PER_RUN + 100;
+
+  it("an expense over the cap waits for a run of its own, posts alone, and is flagged", async () => {
+    const small = await outboxed("2026-09-01");
+    const large = await outboxed("2026-09-10", { amounts: [big - 300, 300] });
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, capped: "cents" });
+    expect((await expenseRow(small.id)).qbMatchState).toBe("CREATED");
+    expect((await expenseRow(large.id)).qbMatchState).toBe("UNMATCHED");
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, overCap: 1, capped: "cents" });
+    expect((await expenseRow(large.id)).qbMatchState).toBe("CREATED");
+    const flags = await db.expenseFlag.findMany({ where: { expenseId: large.id } });
+    expect(flags.map((f) => f.kind)).toEqual(["QB_OVER_CAP"]);
+  });
+
+  it("an over-cap expense ends its run, so nothing else posts in it", async () => {
+    const large = await outboxed("2026-09-01", { amounts: [big - 300, 300] });
+    const after = await outboxed("2026-09-10");
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, overCap: 1 });
+    expect((await expenseRow(large.id)).qbMatchState).toBe("CREATED");
+    expect((await expenseRow(after.id)).qbMatchState).toBe("UNMATCHED");
   });
 });
