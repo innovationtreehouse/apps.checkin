@@ -174,7 +174,10 @@ export const DELETE = withAuth({}, async (req, auth) => {
 
         const closeCtx = { actorId: Number(user.id), subjectId: visit.personId, visitId, via: "WEB_DASHBOARD" as const };
         // The close commits with the checkout, so a crash between them loses neither.
+        // The person lock serializes this checkout with the kiosk's: a lost race
+        // departs nothing and records no close.
         const finalVisits = await prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(${visit.personId})`;
             const departed = await processVisitCheckout(visitId, new Date(), tx, "TYPED");
             if (departed.length > 0) await recordWebClose(tx, guard, closeCtx);
             return departed;

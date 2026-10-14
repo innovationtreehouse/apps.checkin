@@ -55,6 +55,10 @@ describe('close as one recorded event (real DB)', () => {
         (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
         await prisma.visit.updateMany({ where: { departedAt: null }, data: { departedAt: new Date(0) } });
         await prisma.facilityClose.updateMany({ where: { executedAt: null }, data: { executedAt: new Date(0) } });
+        // The open fence reads the latest close facility-wide: another suite's
+        // recent close (the nightly sweep's, say) must not stand in for this one's.
+        const dayAgo = new Date(Date.now() - 24 * 3_600_000);
+        await prisma.facilityClose.updateMany({ where: { closedAt: { gt: dayAgo } }, data: { closedAt: dayAgo } });
         closeIdFloor = (await prisma.facilityClose.aggregate({ _max: { id: true } }))._max.id ?? 0;
     });
 

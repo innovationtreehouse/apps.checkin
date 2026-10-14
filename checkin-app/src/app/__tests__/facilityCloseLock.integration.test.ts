@@ -17,13 +17,17 @@
  * connections, matching production.
  */
 import { POST } from '@/app/api/scan/route';
+import { DELETE as dashboardDELETE } from '@/app/api/attendance/route';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
+import { getServerSession } from 'next-auth/next';
 import { executePendingCloses } from '@/lib/scan-service';
 
 jest.mock('@/lib/auth', () => ({
+    ...jest.requireActual('@/lib/auth'),
     authenticateRequest: jest.fn(),
 }));
+jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
 jest.mock('@/lib/notifications', () => ({
     sendCheckinNotifications: jest.fn().mockResolvedValue(undefined),
@@ -100,6 +104,42 @@ describe('POST /api/scan facility-close lock (#254)', () => {
 
         expect((await checkinRes.json()).type).toBe('checkin');
         expect(await prisma.visit.count({ where: { personId: racerId } })).toBe(1);
+    });
+
+    it('a dashboard close that loses the race to the kiosk departs nothing and records no close', async () => {
+        const kh = await prisma.person.findUniqueOrThrow({ where: { id: keyholderId } });
+        const user = { id: kh.id, email: kh.email, name: kh.name, isKeyholder: true, isBoardMember: false, isSysadmin: false, householdId: kh.householdId };
+        (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'session', user });
+        (getServerSession as jest.Mock).mockResolvedValue({ user });
+        // The guard is facility-wide: start from an empty building.
+        await prisma.visit.updateMany({ where: { departedAt: null }, data: { departedAt: new Date(0) } });
+        const kv = await prisma.visit.create({ data: { personId: keyholderId, arrivedAt: new Date(Date.now() - 3_600_000) } });
+        await prisma.visit.create({ data: { personId: otherId, arrivedAt: new Date(Date.now() - 3_600_000) } });
+        const del = (body: Record<string, unknown>) => dashboardDELETE(new Request('http://localhost:4000/api/attendance', {
+            method: 'DELETE', body: JSON.stringify({ visitId: kv.id, ...body }),
+        }) as unknown as import('next/server').NextRequest);
+        const { forceCloseToken } = await (await del({})).json();
+        const closesBefore = await prisma.facilityClose.count();
+
+        // The kiosk's checkout holds the keyholder's person lock; the dashboard
+        // close starts while it does, and the kiosk departs the visit first.
+        let dashboard!: Promise<Response>;
+        await prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(${keyholderId})`;
+            dashboard = del({ forceCloseToken, closeChoice: 'close' });
+            for (let i = 0; i < 100; i++) {
+                const [{ waiting }] = await tx.$queryRaw<{ waiting: number }[]>`
+                    SELECT count(*)::int AS waiting FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`;
+                if (waiting > 0) break;
+                await new Promise(r => setTimeout(r, 20));
+            }
+            await tx.visit.update({ where: { id: kv.id }, data: { departedAt: new Date(), departedVia: 'SCANNER' } });
+        }, { timeout: 10_000 });
+        await dashboard;
+
+        expect((await prisma.visit.findUniqueOrThrow({ where: { id: kv.id } })).departedVia).toBe('SCANNER');
+        expect(await prisma.facilityClose.count()).toBe(closesBefore);
+        expect(await prisma.visit.count({ where: { personId: otherId, departedAt: null } })).toBe(1);
     });
 
     it('a close does not wait on the person lock of someone whose machine-ended visit ended before it', async () => {

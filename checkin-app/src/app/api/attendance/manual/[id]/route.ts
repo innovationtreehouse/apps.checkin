@@ -128,8 +128,8 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
         // one-open-visit invariant is per, so a lead's edit serializes against
         // the member's own kiosk scan. When the edit CLOSES an open visit, only
         // the arrival is written here — the departure goes through
-        // processVisitCheckout below, outside this lock (as on the sibling
-        // POST); it refuses already-closed or tombstoned visits, and it owns
+        // processVisitCheckout below, in its own transaction under the same
+        // lock; it refuses already-closed or tombstoned visits, and it owns
         // the back-to-back event chunking.
         const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(${Number(visit.personId)})`;
@@ -184,8 +184,10 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
         let surviving = updated;
         if (closingOpenVisit) {
             const pending = guardResults.get(req);
-            // The close the caller chose commits with the checkout.
+            // The close the caller chose commits with the checkout, under the
+            // person lock, so a kiosk departure that won the race is kept.
             const chunks = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+                await tx.$executeRaw`SELECT pg_advisory_xact_lock(${Number(visit.personId)})`;
                 const departed = await processVisitCheckout(visitId, nextDeparted!, tx, "TYPED");
                 if (departed.length > 0 && pending?.guard.action === "proceed") {
                     pending.recorded = await recordWebClose(tx, pending.guard, { ...pending, via: "WEB_CORRECTION" });
