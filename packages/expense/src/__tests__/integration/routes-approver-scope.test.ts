@@ -9,7 +9,7 @@ import { describeDb } from "../helpers/db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { db } from "../../db";
 import { expenses } from "../../routes";
-import { expenseOpsCounts, signoffsAwaitingCount } from "../../services/badgeCounts";
+import { SIGNOFF_BADGE_EXPENSE_CAP, expenseOpsCounts, signoffsAwaitingCount } from "../../services/badgeCounts";
 import type { ExpenseRouteHandler } from "../../contract";
 
 const OWN_BUCKET = 100;
@@ -117,6 +117,34 @@ describeDb("nav badge counts", () => {
     as(APPROVER);
     expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(1);
     expect(await signoffsAwaitingCount(principal(OUTSIDER))).toBe(0);
+  });
+
+  it("skips closed expenses and reimbursements with no reimbursee, and examines a capped number of expenses", async () => {
+    as(APPROVER);
+    for (const opts of [{ state: "rejected" }, { state: "owner_approval", needsReimbursement: true }]) {
+      const id = await seedExpense({ ...opts, submitterId: 1 });
+      await seedApproval(id, await seedLineItem(id), { ownerId: OWN_BUCKET });
+    }
+    expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(1);
+
+    for (let i = 0; i < SIGNOFF_BADGE_EXPENSE_CAP; i++) {
+      const id = await seedExpense({ state: "owner_approval", submitterId: 1 });
+      await seedApproval(id, await seedLineItem(id), { ownerId: OWN_BUCKET });
+    }
+    expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(SIGNOFF_BADGE_EXPENSE_CAP);
+  });
+
+  it("older expenses already past the caller's seat do not crowd out a newer one awaiting it", async () => {
+    as(APPROVER);
+    const old = new Date("2026-01-01");
+    for (let i = 0; i <= SIGNOFF_BADGE_EXPENSE_CAP; i++) {
+      const id = await seedExpense({ state: "qb_pending", submitterId: 1 });
+      const line = await seedLineItem(id);
+      await seedApproval(id, line, { ownerId: OWN_BUCKET, status: "approved" });
+      await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: line, seat: "PROGRAM_APPROVER", signerUserId: 9 } });
+      await db.expense.update({ where: { id }, data: { submittedAt: old } });
+    }
+    expect(await signoffsAwaitingCount(principal(APPROVER))).toBe(1);
   });
 
   it("counts held expenses plus open flags for FINANCE, and nothing for an approver", async () => {

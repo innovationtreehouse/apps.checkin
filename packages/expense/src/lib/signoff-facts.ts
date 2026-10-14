@@ -2,14 +2,13 @@ import type { Expense, Prisma } from "../generated/prisma/client";
 import type { Db } from "../db";
 import { getExpenseRuntime } from "../runtime";
 import type { BucketApprovers } from "../contract";
-import { readExpenseSettings } from "../services/settingsService";
 import { lineKind, missingSeats, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
 import { writeAudit } from "./audit";
 import type { Actor } from "./workflow-engine";
 
 type SignoffExpense = Pick<
   Expense,
-  "id" | "orgId" | "submitterId" | "reimburseePersonId" | "needsReimbursement" | "receiptTotalCents" | "noteInLieuOfReceipt"
+  "id" | "orgId" | "submitterId" | "reimburseePersonId" | "needsReimbursement"
 >;
 
 /** The submitter, the reimbursee when known, and everyone in either one's household. */
@@ -33,7 +32,7 @@ export async function seatedHouseholds(db: Db, expenseId: string): Promise<numbe
 /** Sign-off facts for each line of an expense, read once through the SignoffDirectory port. */
 export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promise<Map<number, SignoffFacts>> {
   const dir = getExpenseRuntime().signoff;
-  const [lines, approvals, finance, board, conflicted, seated, purchaserIsMember, settings, setterRow] = await Promise.all([
+  const [lines, approvals, finance, board, conflicted, seated, purchaserIsMember, setterRow] = await Promise.all([
     db.expenseLineItem.findMany({ where: { expenseId: expense.id }, select: { id: true } }),
     db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true } }),
     dir.financeHolders(),
@@ -41,7 +40,6 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
     conflictedParties(expense),
     seatedHouseholds(db, expense.id),
     dir.isOrgMember(expense.submitterId),
-    readExpenseSettings(db, expense.orgId),
     db.expenseAuditLog.findFirst({ where: { expenseId: expense.id, action: "reimbursee_set" }, orderBy: { id: "desc" }, select: { userId: true } }),
   ]);
   const bucketOf = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
@@ -59,9 +57,6 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
         submitterId: expense.submitterId,
         approvers: b?.approvers ?? [],
         orgLevel: b?.orgLevel ?? false,
-        totalCents: expense.receiptTotalCents,
-        noteInLieuOfReceipt: expense.noteInLieuOfReceipt,
-        noteInLieuLimitCents: settings.noteInLieuLimitCents,
         purchaserIsMember,
         finance,
         board,

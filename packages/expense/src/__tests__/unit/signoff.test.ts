@@ -16,9 +16,6 @@ const base: SignoffFacts = {
   submitterId: 1,
   approvers: [2],
   orgLevel: false,
-  totalCents: 4000,
-  noteInLieuOfReceipt: false,
-  noteInLieuLimitCents: 5000,
   purchaserIsMember: true,
   finance: [3],
   board: [5, 6],
@@ -124,23 +121,16 @@ describe("Board substitution (F2-COI)", () => {
 });
 
 describe("boardFillsProgramSeat — F2 exceptions", () => {
-  it("a note in lieu of a receipt under $50 in a program bucket keeps the normal seats", () => {
-    const facts = { ...base, noteInLieuOfReceipt: true, totalCents: 4999 };
-    expect(boardFillsProgramSeat(facts)).toBe(false);
-    expect(signoffRefusal(facts, [], "PROGRAM_APPROVER", 2)).toBeNull();
+  it("a member purchaser in a program bucket keeps the normal seats", () => {
+    expect(boardFillsProgramSeat(base)).toBe(false);
+    expect(signoffRefusal(base, [], "PROGRAM_APPROVER", 2)).toBeNull();
   });
 
-  it("a note in lieu at $50 or more takes a Board member in the program seat; the Treasurer still signs", () => {
-    const facts = { ...base, noteInLieuOfReceipt: true, totalCents: 5000 };
-    expect(signoffRefusal(facts, [], "PROGRAM_APPROVER", 2)).toMatch(/not a Board member/);
-    expect(signoffRefusal(facts, [], "PROGRAM_APPROVER", 5)).toBeNull();
-    expect(missingSeats(facts, seats(["SUBMITTER", 1], ["PROGRAM_APPROVER", 5]))).toEqual(["TREASURER"]);
-  });
-
-  it("a non-member purchaser takes a Board member in the program seat", () => {
+  it("a non-member purchaser takes a Board member in the program seat; the Treasurer still signs", () => {
     const facts = { ...base, purchaserIsMember: false };
     expect(signoffRefusal(facts, [], "PROGRAM_APPROVER", 2)).toMatch(/not a Board member/);
     expect(signoffRefusal(facts, [], "PROGRAM_APPROVER", 5)).toBeNull();
+    expect(missingSeats(facts, seats(["SUBMITTER", 1], ["PROGRAM_APPROVER", 5]))).toEqual(["TREASURER"]);
   });
 });
 

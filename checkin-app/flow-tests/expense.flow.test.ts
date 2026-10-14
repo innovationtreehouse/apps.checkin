@@ -221,7 +221,7 @@ describe("expense — FINANCE journey", () => {
     expect((await send(f, "PUT", "/api/expense/org-settings", { boardReviewTotalCents: 250_000 })).status).toBe(403);
     const settings = await send(f, "PUT", "/api/expense/org-settings", { boardReviewTotalCents: 150_000 });
     expect(settings.status).toBe(200);
-    expect(settings.json).toMatchObject({ boardReviewTotalCents: 150_000, noteInLieuLimitCents: 5_000 });
+    expect(settings.json).toMatchObject({ boardReviewTotalCents: 150_000 });
     expect((await send(f, "PUT", "/api/expense/org-settings", { boardReviewTotalCents: -1 })).status).toBe(400);
 
     // QuickBooks accounts and an account-mapping rule: create, edit, delete.

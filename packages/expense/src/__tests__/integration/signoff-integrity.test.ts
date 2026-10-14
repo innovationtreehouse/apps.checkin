@@ -161,7 +161,7 @@ describeDb("threshold changes", () => {
     await expect(updateExpenseSettings(ORG, { capitalTotalThresholdCents: 0 }, FINANCE)).rejects.toMatchObject({ statusCode: 403 });
     await updateExpenseSettings(ORG, { capitalTotalThresholdCents: 0 }, BOARD);
 
-    await expect(updateExpenseSettings(ORG, { noteInLieuLimitCents: 100_000_001 }, BOARD)).rejects.toThrow();
+    await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 100_000_001 }, BOARD)).rejects.toThrow();
     const changes = await db.expenseOrgSettingsChange.count({ where: { orgId: ORG } });
     expect(changes).toBe(5);
   });

@@ -39,7 +39,6 @@ export async function seedExpense(opts?: {
   submitterId?: number;
   needsReimbursement?: boolean;
   backfill?: boolean;
-  noteInLieuOfReceipt?: boolean;
   reimburseePersonId?: number;
 }): Promise<string> {
   const id = opts?.id ?? randomUUID();
@@ -50,7 +49,6 @@ export async function seedExpense(opts?: {
       submitterId: opts?.submitterId ?? 1,
       needsReimbursement: opts?.needsReimbursement ?? false,
       backfill: opts?.backfill ?? false,
-      noteInLieuOfReceipt: opts?.noteInLieuOfReceipt ?? false,
       reimburseePersonId: opts?.reimburseePersonId ?? null,
       vendorName: opts?.vendorName ?? "Acme",
       currency: "USD",

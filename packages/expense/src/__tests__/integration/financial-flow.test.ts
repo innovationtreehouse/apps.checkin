@@ -42,7 +42,7 @@ describeDb("initFinancialFlow", () => {
   it("goes to owner_approval when every line item resolves an owner", async () => {
     const id = await seedExpense({ state: "pending" });
     await seedLineItem(id, { gtin13: "0000000000017" });
-    await seedPartOwner({ gtin13: "0000000000017", ownerId: 99 });
+    await seedPartOwner({ gtin13: "0000000000017", ownerId: 100 });
 
     await initFinancialFlow(id, ORG);
 
@@ -56,6 +56,18 @@ describeDb("initFinancialFlow", () => {
     await initFinancialFlow(id, ORG);
 
     expect(await stateOf(id)).toBe("assign_ownership");
+  });
+
+  it.each([999, 12345])("leaves a line mapped to bucket %i (archived or unlisted) for FINANCE to assign", async (ownerId) => {
+    const id = await seedExpense({ state: "pending" });
+    await seedLineItem(id, { gtin13: "0000000000017" });
+    await seedPartOwner({ gtin13: "0000000000017", ownerId });
+
+    await initFinancialFlow(id, ORG);
+
+    expect(await stateOf(id)).toBe("assign_ownership");
+    const [approval] = await db.lineItemOwnerApproval.findMany({ where: { expenseId: id } });
+    expect(approval).toMatchObject({ ownerId: null, status: "pending" });
   });
 
   it("pre-approves a line whose bucket is org-level", async () => {
