@@ -23,6 +23,8 @@ jest.mock('@/lib/notifications', () => ({
 describe('Manual Attendance API Integration Tests', () => {
     let testUserId: number;
     let testHouseholdId: number;
+    let anchorId: number;
+    let anchorHouseholdId: number;
 
     beforeAll(async () => {
         // Clean up any leaked state
@@ -51,21 +53,29 @@ describe('Manual Attendance API Integration Tests', () => {
         });
         testUserId = user.id;
         testHouseholdId = user.householdId;
+
+        // A keyholder inside, so an open backfill clears the facility-open guard.
+        const anchor = await prisma.person.create({
+            data: { email: 'anchor-manual-attendance-test@example.com', name: 'Anchor Keyholder', isKeyholder: true, household: { create: { name: "Test HH" } } }
+        });
+        anchorId = anchor.id;
+        anchorHouseholdId = anchor.householdId;
+        await prisma.visit.create({ data: { personId: anchorId, arrivedAt: new Date(), arrivedVia: 'WEB' } });
     });
 
     afterAll(async () => {
         // Clean up
         await prisma.visit.deleteMany({
-            where: { personId: testUserId }
+            where: { personId: { in: [testUserId, anchorId] } }
         });
         await prisma.auditLog.deleteMany({
             where: { actorId: testUserId }
         });
         await prisma.person.deleteMany({
-            where: { id: testUserId }
+            where: { id: { in: [testUserId, anchorId] } }
         });
         await prisma.household.deleteMany({
-            where: { id: testHouseholdId }
+            where: { id: { in: [testHouseholdId, anchorHouseholdId] } }
         });
     });
 
@@ -229,9 +239,8 @@ describe('Manual Attendance API Integration Tests', () => {
         });
 
         it('should successfully record a manual visit with arrivedAt only', async () => {
-            // Keyholder: an open backfill must clear the facility-open guard.
             (getServerSession as jest.Mock).mockResolvedValue({
-                user: { id: testUserId, isKeyholder: true }
+                user: { id: testUserId }
             });
 
             const arrivedAt = new Date(Date.now() - 1800000); // 30 minutes ago
@@ -252,9 +261,8 @@ describe('Manual Attendance API Integration Tests', () => {
         });
 
         it('dedups a SERIAL double-submit: second POST returns the same open visit, only one in DB', async () => {
-            // Keyholder: an open backfill must clear the facility-open guard.
             (getServerSession as jest.Mock).mockResolvedValue({
-                user: { id: testUserId, isKeyholder: true }
+                user: { id: testUserId }
             });
 
             // Isolate: drop any open visit left by earlier tests so the count is unambiguous.
@@ -340,6 +348,18 @@ describe('Manual Attendance API keyholder-first guard (open backfills)', () => {
         const res = await (POST(openReq(nkId)) as Promise<Response>);
         expect(res.status).toBe(201);
         expect(await prisma.visit.count({ where: { personId: nkId, departedAt: null } })).toBe(1);
+    });
+
+    it("a keyholder's own open backfill into an empty building → 403: only a badge at the door opens it", async () => {
+        await prisma.visit.deleteMany({ where: { personId: { in: [nkId, khId] } } });
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: khId, isKeyholder: true } });
+        const req = new Request('http://localhost:4000/api/attendance/manual', {
+            method: 'POST',
+            body: JSON.stringify({ arrivedAt: new Date(Date.now() - 600000).toISOString() }),
+        }) as unknown as import('next/server').NextRequest;
+        const res = await (POST(req) as Promise<Response>);
+        expect(res.status).toBe(403);
+        expect(await prisma.visit.count({ where: { personId: khId, departedAt: null } })).toBe(0);
     });
 
     it('non-keyholder CLOSED backfill into an empty building → 201 (historical, ungated)', async () => {
@@ -433,8 +453,8 @@ describe('Manual Attendance API — household-lead insert for a member', () => {
         expect(await prisma.visit.count({ where: { personId: leadId } })).toBe(0);
     });
 
-    // The facility-open guard follows the SUBJECT: a lead cannot open the
-    // building by backfilling an open visit for their non-keyholder child.
+    // Nobody opens the building from the web, so a keyholder lead's open
+    // backfill for their child is refused too.
     it('403s an OPEN backfill for a member into an empty building', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId, isKeyholder: true } });
         await prisma.visit.deleteMany({ where: { personId: { in: [leadId, childId, outsiderId] } } });

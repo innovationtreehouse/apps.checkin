@@ -44,6 +44,17 @@ describe("flow: web checkout by the last recorded keyholder", () => {
         const res = await api(board, "/api/attendance", { method: "POST", body: JSON.stringify({ type: "MANUAL_CHECKIN", participantId: personId }) });
         expect(res.status).toBe(200);
     };
+    /** A badge in at the door: the only way to open the building. Sent as a
+     *  current kiosk (it filters repeat reads itself), so the server's 3 s
+     *  debounce for older kiosks never drops it. */
+    const badgeIn = async (personId: number) => {
+        const res = await api<{ type?: string }>(null, "/api/scan", {
+            method: "POST",
+            body: JSON.stringify({ participantId: personId, intent: "IN", protocolVersion: 5 }),
+        });
+        expect(res.status).toBe(200);
+        expect(res.json.type).toBe("checkin");
+    };
     const signOut = (session: Session, visitId: number, extra: Record<string, unknown> = {}) =>
         api<Warning & { facilityClosed?: boolean }>(session, "/api/attendance", { method: "DELETE", body: JSON.stringify({ visitId, ...extra }) });
 
@@ -80,8 +91,21 @@ describe("flow: web checkout by the last recorded keyholder", () => {
         await api(board, "/api/roles", { method: "PATCH", body: JSON.stringify({ targetUserId: leadMemberId, isKeyholder: false }) });
     });
 
+    it("only a badge at the door opens the building; a keyholder inside can check in someone without their badge", async () => {
+        const self = await api(keyholder, "/api/attendance", { method: "POST", body: JSON.stringify({ type: "MANUAL_CHECKIN", participantId: keyholder.personaId }) });
+        expect(self.status).toBe(403);
+        const backfill = await api(keyholder, "/api/attendance/manual", { method: "POST", body: JSON.stringify({ arrivedAt: new Date(Date.now() - 60_000).toISOString() }) });
+        expect(backfill.status).toBe(403);
+        expect((await roster()).attendance).toHaveLength(0);
+
+        await badgeIn(keyholder.personaId);
+        await checkIn(otherId);
+        const inside = (await roster()).attendance.map(v => v.participant.id).sort((a, b) => a - b);
+        expect(inside).toEqual([keyholder.personaId, otherId].sort((a, b) => a - b));
+    });
+
     it("1. a keyholder alone checks out and closes, with no warning", async () => {
-        await checkIn(keyholder.personaId);
+        await badgeIn(keyholder.personaId);
         // The dashboard sign-out, not a scan: a scan here would debounce test 2's scan.
         const res = await signOut(keyholder, (await visitOf(keyholder.personaId))!.id);
 
@@ -90,11 +114,11 @@ describe("flow: web checkout by the last recorded keyholder", () => {
     });
 
     it("2 and 9. the last keyholder is offered all three choices with names, told no other keyholder is in, and close departs everyone", async () => {
-        await checkIn(keyholder.personaId);
+        await badgeIn(keyholder.personaId);
         await checkIn(otherId);
         await checkIn(childId);
 
-        const warn = await api<Warning>(keyholder, "/api/scan", { method: "POST", body: JSON.stringify({ participantId: keyholder.personaId }) });
+        const warn = await api<Warning>(keyholder, "/api/scan", { method: "POST", body: JSON.stringify({ participantId: keyholder.personaId, protocolVersion: 5 }) });
         expect(warn.status).toBe(400);
         expect(warn.json).toMatchObject({ type: "close_choice", othersInside: 2, choices: ["close", "leave", "cancel"] });
         expect(warn.json.names).toHaveLength(2);
@@ -109,7 +133,7 @@ describe("flow: web checkout by the last recorded keyholder", () => {
     });
 
     it("3. leave naming keyholder2 departs only the leaver and checks keyholder2 in nowhere", async () => {
-        await checkIn(keyholder.personaId);
+        await badgeIn(keyholder.personaId);
         await checkIn(otherId);
         const kv = (await visitOf(keyholder.personaId))!;
 
@@ -127,7 +151,7 @@ describe("flow: web checkout by the last recorded keyholder", () => {
     });
 
     it("4. a household lead checking out the last keyholder member sees a count, no names, and may only leave", async () => {
-        await checkIn(leadMemberId);
+        await badgeIn(leadMemberId);
         await checkIn(otherId);
         const mv = (await visitOf(leadMemberId))!;
 
@@ -146,7 +170,7 @@ describe("flow: web checkout by the last recorded keyholder", () => {
     });
 
     it("5. a board member who is not a keyholder signs out the last keyholder and may only leave", async () => {
-        await checkIn(keyholder.personaId);
+        await badgeIn(keyholder.personaId);
         await checkIn(otherId);
         const kv = (await visitOf(keyholder.personaId))!;
 
@@ -161,7 +185,7 @@ describe("flow: web checkout by the last recorded keyholder", () => {
     });
 
     it("7. removing the last keyholder's open visit never closes", async () => {
-        await checkIn(keyholder.personaId);
+        await badgeIn(keyholder.personaId);
         await checkIn(otherId);
         const kv = (await visitOf(keyholder.personaId))!;
 
@@ -187,13 +211,19 @@ describe("flow: web checkout by the last recorded keyholder", () => {
     };
     const correct = (session: Session, visitId: number, body: Record<string, unknown>) =>
         api<Warning>(session, `/api/attendance/manual/${visitId}`, { method: "PATCH", body: JSON.stringify(body) });
+    /** The keyholder opens the building at the door, then corrects their arrival to `minutes` ago. */
+    const keyholderArrivedAgo = async (minutes: number) => {
+        await badgeIn(keyholder.personaId);
+        const kv = (await visitOf(keyholder.personaId))!;
+        expect((await correct(keyholder, kv.id, { arrivedAt: ago(minutes) })).status).toBe(200);
+    };
     /** The departure of the visit that arrived at `arrivedAt`: earlier journeys leave newer visits. */
     const departureOf = async (session: Session, arrivedAt: string) =>
         (await api<{ visits: { arrivedAt: string; departedAt: string | null }[] }>(session, "/api/profile/visits"))
             .json.visits.find(v => v.arrivedAt === arrivedAt)?.departedAt;
 
     it("6. a correction closing the last keyholder's visit at a past time departs everyone at it, but not a later arrival", async () => {
-        await arrivedAgo(keyholder, 180);
+        await keyholderArrivedAgo(180);
         const otherArrived = await arrivedAgo(other, 180);
         await checkIn(childId);
         const kv = (await visitOf(keyholder.personaId))!;
@@ -210,7 +240,7 @@ describe("flow: web checkout by the last recorded keyholder", () => {
     });
 
     it("8. a keyholder who closes, then corrects their departure earlier, moves every departure the close set, and the log shows each", async () => {
-        await arrivedAgo(keyholder, 180);
+        await keyholderArrivedAgo(180);
         const otherArrived = await arrivedAgo(other, 180);
         const kv = (await visitOf(keyholder.personaId))!;
 
@@ -232,7 +262,7 @@ describe("flow: web checkout by the last recorded keyholder", () => {
     });
 
     it("a confirm from someone other than the person shown the choice is refused", async () => {
-        await checkIn(keyholder.personaId);
+        await badgeIn(keyholder.personaId);
         await checkIn(otherId);
         const kv = (await visitOf(keyholder.personaId))!;
 
