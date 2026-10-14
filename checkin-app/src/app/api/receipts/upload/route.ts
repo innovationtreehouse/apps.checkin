@@ -1,6 +1,6 @@
 // Mounts a receipt library call through checkin's handler(). The endpoint string MUST match
 // its src/security/registry/receipt.ts entry.
-import { MAX_FILE_BYTES, receiptService } from "@inventory/receipt";
+import { receiptService } from "@inventory/receipt";
 import { badRequest, handler } from "@/security/handler";
 import { readUploadForm, receiptRoute } from "@/lib/receipt/route";
 
@@ -11,7 +11,7 @@ import { readUploadForm, receiptRoute } from "@/lib/receipt/route";
 export const POST = handler(
   "POST /api/receipts/upload",
   receiptRoute(async (ctx) => {
-    const form = await readUploadForm(ctx.req, MAX_FILE_BYTES);
+    const form = await readUploadForm(ctx.req);
     const file = form.get("file");
     if (!(file instanceof File)) throw badRequest("A receipt file is required");
     const data = form.get("data");

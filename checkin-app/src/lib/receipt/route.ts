@@ -5,6 +5,7 @@
  */
 import type { Access } from "@inventory/receipt";
 import { readCapped } from "@inventory/utils";
+import { MAX_UPLOAD_BODY_BYTES } from "@/lib/requestBodyLimit";
 import type { Role } from "@/security/core";
 import { ApiResponseError, badRequest, unauthorized, type HandlerContext, type HandlerFn } from "@/security/handler";
 
@@ -74,14 +75,14 @@ export function ownLine<T extends object>(ctx: HandlerContext<Record<string, str
   return accessOf(ctx.role) === "submitter" ? { ...line, uploadedByUserId: sessionId(ctx) } : line;
 }
 
-/** Room over the file cap for the multipart framing and the `data` field. */
-export const FORM_OVERHEAD_BYTES = 512 * 1024;
-
 const tooLarge = (message = "Receipt upload is too large") => new ApiResponseError(413, message);
 
-/** The upload's multipart form, read under the file cap plus the form overhead. */
-export async function readUploadForm(req: Request, maxFileBytes: number): Promise<FormData> {
-  const chunks = await readCapped(req.body, req.headers.get("content-length"), maxFileBytes + FORM_OVERHEAD_BYTES, () => tooLarge());
+/**
+ * The upload's multipart form, read under the API's upload ceiling (a 10 MB file plus framing);
+ * the library then holds the file itself to its exact cap.
+ */
+export async function readUploadForm(req: Request): Promise<FormData> {
+  const chunks = await readCapped(req.body, req.headers.get("content-length"), MAX_UPLOAD_BODY_BYTES, () => tooLarge());
   try {
     return await new Response(new Blob(chunks), { headers: { "content-type": req.headers.get("content-type") ?? "" } }).formData();
   } catch {
@@ -90,10 +91,11 @@ export async function readUploadForm(req: Request, maxFileBytes: number): Promis
 }
 
 /**
- * The bulk import's whole body, as base64 rows: 50 MB. A batch may still hold up to its row
- * limit; one with large files over this total is refused and must be split.
+ * The bulk import's whole body, base64 rows included, fits the same upload ceiling, so each
+ * row's file does too (about 8 MB raw after base64). A batch over it is refused and must be
+ * split; a larger receipt goes through the upload route.
  */
-export const MAX_IMPORT_BODY_BYTES = 50 * 1024 * 1024;
+export const MAX_IMPORT_BODY_BYTES = MAX_UPLOAD_BODY_BYTES;
 
 /** A capped JSON body: 413 (with `tooLargeMessage`) past the cap, 400 when it is not JSON. */
 export async function readJsonCapped(

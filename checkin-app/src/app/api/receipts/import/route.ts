@@ -12,7 +12,7 @@ export const POST = handler(
       req.body,
       req.headers.get("content-length"),
       MAX_IMPORT_BODY_BYTES,
-      "Import batch exceeds 50 MB; split it into smaller batches",
+      "Import batch is over the upload size limit; split it into smaller batches",
     );
     return { ReceiptImportResult: (await importReceipts(batch)).results };
   }),
