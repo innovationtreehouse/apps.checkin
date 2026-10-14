@@ -5,8 +5,7 @@
  * Unit tests for the delivery-receipt recording wired into
  * POST /api/webhooks/shopify (settings → Shopify Webhook tab):
  *   - a valid delivery is recorded (hmacValid true, outcome from the branch taken),
- *   - a failed-HMAC delivery is ALSO recorded (that is the secret-mismatch
- *     diagnostic) and still rejected with 401 exactly as before,
+ *   - a failed-HMAC or unsigned delivery writes nothing and is rejected with 401,
  *   - a failed receipt insert never breaks settlement,
  *   - Shopify's "Send test notification" sample is flagged test: true.
  * Settlement/DB behavior itself is covered by webhookShopify.integration.test.ts.
@@ -103,27 +102,19 @@ describe('POST /api/webhooks/shopify — delivery receipts', () => {
         });
     });
 
-    it('records a failed-HMAC delivery (hmacValid false) and still rejects with 401', async () => {
+    it('writes nothing for a failed-HMAC delivery and rejects with 401', async () => {
         const res = await POST(webhookReq(MEMBERSHIP_BODY, 'bogus-signature'));
         expect(res.status).toBe(401);
         await flush();
-        expect(auditCreate).toHaveBeenCalledTimes(1);
-        expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({
-            hmacValid: false,
-            orderId: '999001',
-            outcome: 'rejected: bad hmac',
-        });
+        expect(auditCreate).not.toHaveBeenCalled();
         expect(activate).not.toHaveBeenCalled();
     });
 
-    it('records a missing-signature delivery and still rejects with 401', async () => {
+    it('writes nothing for a missing-signature delivery and rejects with 401', async () => {
         const res = await POST(webhookReq(MEMBERSHIP_BODY, null));
         expect(res.status).toBe(401);
         await flush();
-        expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({
-            hmacValid: false,
-            outcome: 'rejected: missing signature',
-        });
+        expect(auditCreate).not.toHaveBeenCalled();
         expect(activate).not.toHaveBeenCalled();
     });
 
