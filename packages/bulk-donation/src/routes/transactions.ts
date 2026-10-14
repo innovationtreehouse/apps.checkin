@@ -3,7 +3,7 @@ import { z } from "zod";
 import { transactionService } from "../services/transactionService";
 import { donationError, getOrgId, mapServiceErrors } from "../runtime";
 import type { DonationRouteHandler } from "../contract";
-import { auditContext, donorReader, parseBody, parseId } from "./_shared";
+import { auditContext, donorReader, pageArgs, parseBody, parseId } from "./_shared";
 
 const ownerSchema = z.object({
   ownerId: z.number().int().positive("ownerId is required"),
@@ -14,12 +14,12 @@ export const list: DonationRouteHandler = async ({ req }) => {
   const raw = new URL(req.url).searchParams.get("assigned");
   if (raw !== null && raw !== "true" && raw !== "false") throw donationError(400, "assigned must be true or false");
   const reader = await donorReader(req, "GET /api/donations/transactions");
-  return { Transaction: await transactionService.listTransactions(await getOrgId(), reader, raw ?? undefined) };
+  return { Transaction: await transactionService.listTransactions(await getOrgId(), reader, raw ?? undefined, pageArgs(req)) };
 };
 
 export const unassigned: DonationRouteHandler = async ({ req }) => {
   const reader = await donorReader(req, "GET /api/donations/transactions/unassigned");
-  return { Transaction: await transactionService.listUnassignedTransactions(await getOrgId(), reader) };
+  return { Transaction: await transactionService.listUnassignedTransactions(await getOrgId(), reader, pageArgs(req)) };
 };
 
 export const detail: DonationRouteHandler = async ({ req, params }) => {

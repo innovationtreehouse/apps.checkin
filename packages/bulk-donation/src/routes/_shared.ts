@@ -43,3 +43,11 @@ export async function auditContext(req: Request): Promise<AuditContext & { actor
 export async function donorReader(req: Request, route: string): Promise<DonorReadContext> {
   return { ...(await auditContext(req)), route };
 }
+
+/** `page` (1-based) and `limit` (1–200, default 50) as Prisma skip/take. */
+export function pageArgs(req: Request): { skip: number; take: number } {
+  const sp = new URL(req.url).searchParams;
+  const page = Math.max(1, Number.parseInt(sp.get("page") ?? "1", 10) || 1);
+  const take = Math.min(200, Math.max(1, Number.parseInt(sp.get("limit") ?? "50", 10) || 50));
+  return { skip: (page - 1) * take, take };
+}

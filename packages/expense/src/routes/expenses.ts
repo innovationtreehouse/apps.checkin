@@ -115,8 +115,9 @@ export const count: ExpenseRouteHandler = async ({ req }) => {
 };
 
 export const queue: ExpenseRouteHandler = async ({ req }) => {
-  const where = await listWhere(await getPrincipal(), parseView(query(req).get("view")));
-  return { Expense: await db.expense.findMany({ where, select: SUMMARY, orderBy: { submittedAt: "asc" } }) };
+  const sp = query(req);
+  const where = await listWhere(await getPrincipal(), parseView(sp.get("view")));
+  return { Expense: await db.expense.findMany({ where, select: SUMMARY, orderBy: [{ submittedAt: "asc" }, { id: "asc" }], ...pageArgs(sp) }) };
 };
 
 export const counts: ExpenseRouteHandler = async () => {

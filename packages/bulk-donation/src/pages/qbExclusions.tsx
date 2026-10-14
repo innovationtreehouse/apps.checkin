@@ -1,15 +1,17 @@
 "use client";
 import { useState } from "react";
 import { Button, Group, Paper, Table, TextInput, Title } from "@mantine/core";
-import { act, api, useCanWrite, useLoad, when } from "../components/api";
+import { act, api, paged, useCanWrite, useLoad, when } from "../components/api";
 import LoadError from "../components/LoadError";
+import Pager from "../components/Pager";
 
 interface ExclusionRow { id: number; qbTxnId: string; reason: string; excludedAt: string }
 
 /** /donations/qb-exclusions — QuickBooks entries finance removed from matching for good. */
 export default function QbExclusionsPage() {
   const canWrite = useCanWrite();
-  const rows = useLoad<ExclusionRow[]>("/qb-exclusions");
+  const [page, setPage] = useState(1);
+  const rows = useLoad<ExclusionRow[]>(paged("/qb-exclusions", page));
   const [qbTxnId, setQbTxnId] = useState("");
   const [reason, setReason] = useState("");
 
@@ -44,6 +46,7 @@ export default function QbExclusionsPage() {
           ))}
         </Table.Tbody>
       </Table>
+      <Pager page={page} onChange={setPage} rows={rows.data} />
     </>
   );
 }

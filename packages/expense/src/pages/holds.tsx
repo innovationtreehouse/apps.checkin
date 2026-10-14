@@ -2,8 +2,9 @@
 import { useState } from "react";
 import { Anchor, Badge, Button, Group, Paper, Select, Stack, Table, Text, Title } from "@mantine/core";
 import { formatCents } from "@inventory/money";
-import { send, useLoad, useRoles } from "../components/api";
+import { paged, send, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
+import Pager from "../components/Pager";
 import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface Hold {
@@ -23,7 +24,8 @@ interface QbAccount {
 /** /expense/holds — lines no account rule resolved; FINANCE sets an account and resubmits. */
 export default function HoldsPage() {
   const { isFinance } = useRoles();
-  const holds = useLoad<Hold[]>("/expense-holds");
+  const [page, setPage] = useState(1);
+  const holds = useLoad<Hold[]>(paged("/expense-holds", page));
   const accounts = useLoad<QbAccount[]>("/qb-accounts");
   const [picked, setPicked] = useState<Record<number, string | null>>({});
 
@@ -86,6 +88,7 @@ export default function HoldsPage() {
           </Paper>
         ))}
       </Stack>
+      <Pager page={page} onChange={setPage} rows={holds.data} />
     </>
   );
 }

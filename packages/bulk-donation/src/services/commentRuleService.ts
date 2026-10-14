@@ -4,8 +4,8 @@ import type { AuditContext } from "../workflows/disbursement.actor";
 import { ServiceError } from "./serviceError";
 
 export const commentRuleService = {
-  async listCommentRules(orgId: string, reader: DonorReadContext) {
-    const rows = await db.transactionCommentRule.findMany({ where: { orgId }, orderBy: { id: "asc" } });
+  async listCommentRules(orgId: string, reader: DonorReadContext, page?: { skip: number; take: number }) {
+    const rows = await db.transactionCommentRule.findMany({ where: { orgId }, orderBy: { id: "asc" }, ...page });
     await recordDonorDataRead(db, orgId, "comment_rule", reader, { count: rows.length });
     return rows;
   },

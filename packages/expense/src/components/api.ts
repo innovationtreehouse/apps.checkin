@@ -74,6 +74,11 @@ export function useLoad<T>(path: string | null): Loaded<T> {
 
 export const PAGE_SIZE = 50;
 
+/** `path` asking for one page of a paged list route. */
+export function paged(path: string, page: number): string {
+  return `${path}${path.includes("?") ? "&" : "?"}page=${page}&limit=${PAGE_SIZE}`;
+}
+
 export interface Bucket {
   id: number;
   name: string;

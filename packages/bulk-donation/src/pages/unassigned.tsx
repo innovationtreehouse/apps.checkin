@@ -1,14 +1,16 @@
 "use client";
 import { useState } from "react";
 import { Button, Checkbox, Group, Select, Table, Text, Title } from "@mantine/core";
-import { act, api, cents, useCanWrite, useLoad, useOwners } from "../components/api";
+import { act, api, cents, paged, useCanWrite, useLoad, useOwners } from "../components/api";
 import LoadError from "../components/LoadError";
+import Pager from "../components/Pager";
 import type { GiftRow } from "./transactions";
 
 /** /donations/unassigned — gifts that still need an owner or an organizational-level mark. */
 export default function UnassignedPage() {
   const canWrite = useCanWrite();
-  const gifts = useLoad<GiftRow[]>("/transactions/unassigned");
+  const [page, setPage] = useState(1);
+  const gifts = useLoad<GiftRow[]>(paged("/transactions/unassigned", page));
   const owners = useOwners();
   const [choice, setChoice] = useState<Record<number, string | null>>({});
   const [applyRule, setApplyRule] = useState<Record<number, boolean>>({});
@@ -64,6 +66,7 @@ export default function UnassignedPage() {
           ))}
         </Table.Tbody>
       </Table>
+      <Pager page={page} onChange={setPage} rows={gifts.data} />
     </>
   );
 }

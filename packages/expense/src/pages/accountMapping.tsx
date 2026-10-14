@@ -2,8 +2,9 @@
 import { useState } from "react";
 import { ActionIcon, Button, Group, Select, Table, Text, TextInput, Title } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
-import { send, useLoad, useRoles } from "../components/api";
+import { paged, send, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
+import Pager from "../components/Pager";
 import ExpenseSubNav from "../components/ExpenseSubNav";
 
 interface Mapping {
@@ -29,7 +30,8 @@ const EMPTY = { category: "*", subcategory: "*", partNumber: "*", isDelayed: "an
 /** /expense/account-mapping — rules mapping a resolved line to one QuickBooks account (`*` matches anything). */
 export default function AccountMappingPage() {
   const { isFinance } = useRoles();
-  const mappings = useLoad<Mapping[]>("/account-mapping");
+  const [page, setPage] = useState(1);
+  const mappings = useLoad<Mapping[]>(paged("/account-mapping", page));
   const accounts = useLoad<QbAccount[]>("/qb-accounts");
   const [form, setForm] = useState(EMPTY);
 
@@ -84,6 +86,7 @@ export default function AccountMappingPage() {
           <Button onClick={() => void add()} disabled={!form.qbAccount}>Add rule</Button>
         </Group>
       )}
+      <Pager page={page} onChange={setPage} rows={mappings.data} />
     </>
   );
 }

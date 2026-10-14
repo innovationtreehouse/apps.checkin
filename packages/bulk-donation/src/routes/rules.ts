@@ -4,7 +4,7 @@ import { accountMapService } from "../services/accountMapService";
 import { commentRuleService } from "../services/commentRuleService";
 import { getOrgId, mapServiceErrors } from "../runtime";
 import type { DonationRouteHandler } from "../contract";
-import { auditContext, donorReader, parseBody, parseId } from "./_shared";
+import { auditContext, donorReader, pageArgs, parseBody, parseId } from "./_shared";
 
 async function actor(req: Request): Promise<{ userId: number; username: string; correlationId: string | null }> {
   const audit = await auditContext(req);
@@ -26,7 +26,7 @@ const accountMapSchema = z.object({
 
 export const listCommentRules: DonationRouteHandler = async ({ req }) => {
   const reader = await donorReader(req, "GET /api/donations/comment-rules");
-  return { TransactionCommentRule: await commentRuleService.listCommentRules(await getOrgId(), reader) };
+  return { TransactionCommentRule: await commentRuleService.listCommentRules(await getOrgId(), reader, pageArgs(req)) };
 };
 
 export const deleteCommentRule: DonationRouteHandler = async ({ req, params }) => {
@@ -37,8 +37,8 @@ export const deleteCommentRule: DonationRouteHandler = async ({ req, params }) =
   return {};
 };
 
-export const listAccountMap: DonationRouteHandler = async () => ({
-  AccountMap: await accountMapService.listAccountMaps(await getOrgId()),
+export const listAccountMap: DonationRouteHandler = async ({ req }) => ({
+  AccountMap: await accountMapService.listAccountMaps(await getOrgId(), pageArgs(req)),
 });
 
 export const createAccountMap: DonationRouteHandler = async ({ req }) => {

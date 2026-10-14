@@ -1,8 +1,9 @@
 "use client";
 import { useState } from "react";
 import { Badge, Button, Group, Modal, Table, Text, Title } from "@mantine/core";
-import { act, api, cents, useCanWrite, useLoad, when } from "../components/api";
+import { act, api, cents, paged, useCanWrite, useLoad, when } from "../components/api";
 import LoadError from "../components/LoadError";
+import Pager from "../components/Pager";
 
 interface EventRow { id: number; disbursementId: string; payload: string; createdAt: string; qbMatchState: string; qbTxnId: string | null }
 interface Candidate { id: string; type: string; date: string; amountCents: number; memo: string | null }
@@ -19,7 +20,8 @@ function summary(payload: string): string {
 /** /donations/events — completed disbursements (booking batches) and their QuickBooks match state. */
 export default function EventsPage() {
   const canWrite = useCanWrite();
-  const events = useLoad<EventRow[]>("/disbursement-events");
+  const [page, setPage] = useState(1);
+  const events = useLoad<EventRow[]>(paged("/disbursement-events", page));
   const [open, setOpen] = useState<string | null>(null);
   const candidates = useLoad<Candidate[]>(open ? `/disbursement-events/${encodeURIComponent(open)}/qb-candidates` : null);
 
@@ -58,6 +60,7 @@ export default function EventsPage() {
           </Group>
         )}
       </Modal>
+      <Pager page={page} onChange={setPage} rows={events.data} />
     </>
   );
 }

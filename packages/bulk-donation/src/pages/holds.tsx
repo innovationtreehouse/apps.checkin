@@ -1,7 +1,9 @@
 "use client";
+import { useState } from "react";
 import { Button, Group, Paper, Stack, Table, Text, Title } from "@mantine/core";
-import { act, api, useCanWrite, useLoad } from "../components/api";
+import { act, api, paged, useCanWrite, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";
+import Pager from "../components/Pager";
 
 interface AccountRule { id: number; companyName: string; corporatePeerCampaign: string }
 interface HoldRow {
@@ -15,7 +17,8 @@ interface HoldRow {
 /** /donations/holds — disbursements whose gifts match zero or several account rules. */
 export default function HoldsPage() {
   const canWrite = useCanWrite();
-  const holds = useLoad<HoldRow[]>("/disbursement-holds");
+  const [page, setPage] = useState(1);
+  const holds = useLoad<HoldRow[]>(paged("/disbursement-holds", page));
   const groups = new Map<string, HoldRow[]>();
   for (const h of holds.data ?? []) groups.set(h.disbursementId, [...(groups.get(h.disbursementId) ?? []), h]);
 
@@ -56,6 +59,7 @@ export default function HoldsPage() {
           </Paper>
         ))}
       </Stack>
+      <Pager page={page} onChange={setPage} rows={holds.data} />
     </>
   );
 }

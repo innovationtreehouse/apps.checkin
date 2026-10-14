@@ -1,8 +1,9 @@
 "use client";
 import { useState } from "react";
 import { Anchor, Button, FileInput, Group, Paper, Table, Text, Title } from "@mantine/core";
-import { act, api, useCanWrite, useLoad, when } from "../components/api";
+import { act, api, paged, useCanWrite, useLoad, when } from "../components/api";
 import LoadError from "../components/LoadError";
+import Pager from "../components/Pager";
 
 interface FileRow {
   id: number;
@@ -18,7 +19,8 @@ interface FileRow {
 /** /donations/uploads — import a Benevity CSV and see every past upload. */
 export default function UploadsPage() {
   const canWrite = useCanWrite();
-  const files = useLoad<FileRow[]>("/uploaded-files");
+  const [page, setPage] = useState(1);
+  const files = useLoad<FileRow[]>(paged("/uploaded-files", page));
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -76,6 +78,7 @@ export default function UploadsPage() {
           ))}
         </Table.Tbody>
       </Table>
+      <Pager page={page} onChange={setPage} rows={files.data} />
     </>
   );
 }

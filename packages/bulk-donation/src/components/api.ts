@@ -104,3 +104,10 @@ export async function act(call: () => Promise<unknown>, ok: string, reload: () =
     return false;
   }
 }
+
+export const PAGE_SIZE = 50;
+
+/** `path` asking for one page of a paged list route. */
+export function paged(path: string, page: number): string {
+  return `${path}${path.includes("?") ? "&" : "?"}page=${page}&limit=${PAGE_SIZE}`;
+}

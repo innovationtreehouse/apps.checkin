@@ -5,7 +5,7 @@ import { recordDonorDataRead } from "../repositories/audit";
 import { uploadedFileService } from "../services/uploadedFileService";
 import { donationError, getOrgId, mapServiceErrors } from "../runtime";
 import type { DonationFileRouteHandler, DonationRouteHandler } from "../contract";
-import { auditContext, donorReader, parseId } from "./_shared";
+import { auditContext, donorReader, pageArgs, parseId } from "./_shared";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 /** Room over the file cap for the multipart framing. */
@@ -38,8 +38,8 @@ async function readCapped(req: Request, cap: number): Promise<Uint8Array<ArrayBu
   return chunks;
 }
 
-export const list: DonationRouteHandler = async () => ({
-  UploadedFile: await uploadedFileService.listFiles(await getOrgId()),
+export const list: DonationRouteHandler = async ({ req }) => ({
+  UploadedFile: await uploadedFileService.listFiles(await getOrgId(), pageArgs(req)),
 });
 
 export const upload: DonationRouteHandler = async ({ req }) => {

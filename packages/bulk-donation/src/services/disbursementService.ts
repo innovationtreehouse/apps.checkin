@@ -28,7 +28,7 @@ function parseMatchedRows(raw: string): AccountMap[] {
 
 export const disbursementService = {
   /** Pending holds as DisbursementHold rows with their transaction; matchedRows parsed from JSON. */
-  async listPendingHolds(orgId: string) {
+  async listPendingHolds(orgId: string, page?: { skip: number; take: number }) {
     const holds = await db.disbursementHold.findMany({
       where: { orgId, status: "PENDING" },
       include: {
@@ -37,12 +37,13 @@ export const disbursementService = {
         },
       },
       orderBy: [{ disbursementId: "asc" }, { id: "asc" }],
+      ...page,
     });
     return holds.map((hold) => ({ ...hold, matchedRows: parseMatchedRows(hold.matchedRows) }));
   },
 
-  async listEvents(orgId: string) {
-    return db.disbursementEvent.findMany({ where: { orgId }, orderBy: { createdAt: "desc" } });
+  async listEvents(orgId: string, page?: { skip: number; take: number }) {
+    return db.disbursementEvent.findMany({ where: { orgId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], ...page });
   },
 
   async resubmitHold(orgId: string, disbursementId: string, audit: AuditContext) {
