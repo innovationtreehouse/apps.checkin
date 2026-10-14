@@ -7,23 +7,33 @@
  *     boundary), and the `gte` threshold boundary (a background check exactly at
  *     the threshold counts as fresh).
  *   - beginRenewal: a process not in PENDING_RENEWAL → RenewalError wrong_phase;
- *     every path lands at PENDING_EXTERNAL_ACTION (a fresh agreement is signed
- *     each cycle) and only a still-valid background check with no household
- *     note pre-stamps bgClearedAt.
+ *     a DENIED household (raised) or one with a BLOCKED application is refused;
+ *     every other path lands at PENDING_EXTERNAL_ACTION (a fresh agreement is
+ *     signed each cycle), only a still-valid background check pre-stamps
+ *     bgClearedAt, and the external advance is re-run.
  */
 import { householdBgIsFresh, beginRenewal, isRenewalSeason, RenewalError, bgValidUntilBoundary, membershipYearCycle, membershipYearCycleForLabel, coveredThrough, runRenewalSweep } from '@/lib/membership/renewal';
 import { IN_FLIGHT_RENEWAL, handledThisCycleWhere } from '@/lib/membership/lifecycle';
+
+const mockTx = {
+    $queryRaw: jest.fn(),
+    orgMembershipProcess: { findFirst: jest.fn(), updateMany: jest.fn() },
+    auditLog: { create: jest.fn() },
+};
 
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {
         person: { findFirst: jest.fn() },
-        orgMembershipProcess: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), updateMany: jest.fn() },
+        orgMembershipProcess: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn() },
         orgMembership: { findUnique: jest.fn(), findMany: jest.fn() },
         boardSettings: { findUnique: jest.fn() },
-        auditLog: { create: jest.fn() },
+        $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(mockTx)),
     },
 }));
+
+jest.mock('@/lib/membership/external', () => ({ advanceExternalIfComplete: jest.fn() }));
+jest.mock('@/lib/membership/householdStatus', () => ({ raiseDeniedHouseholdActivity: jest.fn() }));
 
 jest.mock('@/lib/membership/review', () => ({
     notifyReviewers: jest.fn().mockResolvedValue(undefined),
@@ -34,6 +44,10 @@ jest.mock('@/lib/membership/review', () => ({
 const prisma = require('@/lib/prisma').default;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { notifyReviewers, applyVolunteerStatus } = require('@/lib/membership/review');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { advanceExternalIfComplete } = require('@/lib/membership/external');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { raiseDeniedHouseholdActivity } = require('@/lib/membership/householdStatus');
 
 // Mirrors the module-private monthsBefore in renewal.ts.
 function monthsBefore(date: Date, months: number): Date {
@@ -245,7 +259,10 @@ describe('beginRenewal', () => {
             prisma.orgMembershipProcess.findUnique.mockResolvedValue(pending);
             prisma.orgMembership.findUnique.mockResolvedValue({ householdId: 7 });
             prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2026, 8, 1)), bgRecheckMonths: 12 });
-            prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+            mockTx.$queryRaw.mockResolvedValue([{ status: 'ACTIVE' }]);
+            mockTx.orgMembershipProcess.findFirst.mockResolvedValue(null);
+            mockTx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+            advanceExternalIfComplete.mockResolvedValue(null);
             prisma.orgMembershipProcess.findUniqueOrThrow.mockResolvedValue({ ...pending, status: 'PENDING_PAYMENT' });
         });
 
@@ -254,7 +271,7 @@ describe('beginRenewal', () => {
 
             await beginRenewal(5, 42);
 
-            expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
+            expect(mockTx.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
                 where: { id: 5, status: 'PENDING_RENEWAL' },
                 data: expect.objectContaining({ status: 'PENDING_EXTERNAL_ACTION', bgClearedAt: expect.any(Date) }),
             });
@@ -270,11 +287,11 @@ describe('beginRenewal', () => {
 
             await beginRenewal(5, 42);
 
-            expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
+            expect(mockTx.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
                 where: { id: 5, status: 'PENDING_RENEWAL' },
                 data: expect.objectContaining({ status: 'PENDING_EXTERNAL_ACTION' }),
             });
-            expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
+            expect(mockTx.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
                 where: { id: 5, status: 'PENDING_RENEWAL' },
                 data: expect.not.objectContaining({ bgClearedAt: expect.anything() }),
             });
@@ -286,13 +303,39 @@ describe('beginRenewal', () => {
 
         it('double-submit loser (count 0) → no audit, no allowlist match, no ping', async () => {
             prisma.person.findFirst.mockResolvedValue({ id: 1 });
-            prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
+            mockTx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
 
             await beginRenewal(5, 42);
 
-            expect(prisma.auditLog.create).not.toHaveBeenCalled();
+            expect(mockTx.auditLog.create).not.toHaveBeenCalled();
             expect(applyVolunteerStatus).not.toHaveBeenCalled();
             expect(notifyReviewers).not.toHaveBeenCalled();
+        });
+
+        it('re-runs the external advance and returns its result when the gate is already met (F-26)', async () => {
+            prisma.person.findFirst.mockResolvedValue({ id: 1 });
+            advanceExternalIfComplete.mockResolvedValue({ ...pending, status: 'PENDING_PAYMENT' });
+
+            await expect(beginRenewal(5, 42)).resolves.toEqual({ ...pending, status: 'PENDING_PAYMENT' });
+            expect(advanceExternalIfComplete).toHaveBeenCalledWith(5);
+        });
+
+        it('a DENIED household is refused, nothing written, and raised to the board', async () => {
+            prisma.person.findFirst.mockResolvedValue(null);
+            mockTx.$queryRaw.mockResolvedValue([{ status: 'DENIED' }]);
+
+            await expect(beginRenewal(5, 42)).rejects.toMatchObject({ code: 'denied' });
+            expect(mockTx.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+            expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 7, processId: 5, personId: 42 }));
+        });
+
+        it('a household with a BLOCKED application is refused (F-30)', async () => {
+            prisma.person.findFirst.mockResolvedValue(null);
+            mockTx.orgMembershipProcess.findFirst.mockResolvedValue({ id: 3 });
+
+            await expect(beginRenewal(5, 42)).rejects.toMatchObject({ code: 'blocked' });
+            expect(mockTx.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+            expect(raiseDeniedHouseholdActivity).not.toHaveBeenCalled();
         });
     });
 });

@@ -1,13 +1,14 @@
 /**
  * Wire the expense library into checkin (#1272 §3/§6), called once at server boot from
  * instrumentation.ts. Binding touches no database: every port below reads lazily, inside a
- * request. The QuickBooks reader/writer, the catalog reader and the catalog event source stay
- * unbound (inert); they are later crossings.
+ * request. Bound crossings: X3 (catalog reads). The QuickBooks reader/writer and the catalog
+ * event source stay unbound (inert); they are later crossings.
  */
 import { configureExpense } from "@inventory/expense";
 import type { ExpensePrincipal, OwnerDirectory, SignoffDirectory } from "@inventory/expense";
 import type { PersonRoleKind } from "@/generated/prisma/client";
 import { getOrg, sessionUser } from "@/lib/catalog/configure";
+import { catalogReader } from "@/lib/catalog/reader";
 
 async function db() {
   return (await import("@/lib/prisma")).default;
@@ -97,5 +98,5 @@ const signoff: SignoffDirectory = {
 };
 
 export function configureRuntime(): void {
-  configureExpense({ org: getOrg, auth: { getPrincipal }, budgetOwners, signoff });
+  configureExpense({ org: getOrg, auth: { getPrincipal }, budgetOwners, signoff, catalog: catalogReader });
 }
