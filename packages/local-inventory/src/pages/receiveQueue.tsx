@@ -14,6 +14,7 @@ interface QueueRow {
   retailer: string;
   queuedAt: string;
   fulfilledAt: string | null;
+  cancelledAt: string | null;
 }
 
 /** /inventory/receive-queue — backordered lines waiting to be received into stock. */
@@ -42,7 +43,7 @@ export default function ReceiveQueuePage() {
       <Title order={3} mb="md">Receive Queue</Title>
       <Group justify="space-between" mb="md">
         <Text size="sm" c="dimmed">Backordered items waiting to be received into inventory.</Text>
-        <Checkbox label="Show fulfilled" checked={includeFulfilled} onChange={(e) => setIncludeFulfilled(e.currentTarget.checked)} />
+        <Checkbox label="Show fulfilled and cancelled" checked={includeFulfilled} onChange={(e) => setIncludeFulfilled(e.currentTarget.checked)} />
       </Group>
       {queue.error && <LoadError what="the receive queue" message={queue.error} onRetry={queue.reload} />}
       {queue.data === null ? <Text c="dimmed">Loading…</Text>
@@ -68,10 +69,10 @@ export default function ReceiveQueuePage() {
                   <Table.Td ff="monospace">{formatGtinDisplay(item.gtin13)}</Table.Td>
                   <Table.Td>{item.quantity}</Table.Td>
                   <Table.Td>{new Date(item.queuedAt).toLocaleString()}</Table.Td>
-                  <Table.Td>{item.fulfilledAt ? new Date(item.fulfilledAt).toLocaleString() : "—"}</Table.Td>
+                  <Table.Td>{item.fulfilledAt ? new Date(item.fulfilledAt).toLocaleString() : item.cancelledAt ? "Cancelled" : "—"}</Table.Td>
                   {canManage && (
                     <Table.Td>
-                      {!item.fulfilledAt && (
+                      {!item.fulfilledAt && !item.cancelledAt && (
                         <Group gap={4} wrap="nowrap">
                           <Tooltip label="Mark as received">
                             <ActionIcon variant="subtle" color="green" aria-label="Fulfill" loading={busy} onClick={() => act(`/receive-queue/${item.id}/fulfill`, "POST", "Item received into inventory")}>

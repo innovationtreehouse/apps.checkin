@@ -1,10 +1,9 @@
 # Inventory
 
 The inventory domain: the shared catalog of what the organization's parts,
-tools, and consumables *are* (reference data), and — as later work lands — the
-on-hand holdings that draw on it. Today only the global catalog has shipped, so
-every rule below is a catalog rule; local-inventory holdings add their rules to
-this same file when that work lands.
+tools, and consumables *are* (reference data), and the organization's on-hand
+holdings that draw on it (local inventory: stock counts, the receive queue for
+backordered receipt lines, and provisional items awaiting a catalog GTIN).
 
 The architecture these rules sit on — the library-isolation seam, the injected
 org identity, the own-database packaging — is described in
@@ -52,6 +51,30 @@ org identity, the own-database packaging — is described in
 - A reference conflict records the existing and proposed GTINs for a receipt
   line and is closed by resolving it (an outcome plus a resolution time), never
   by deleting the row. `[Decision]`
+
+### On-hand stock
+
+- Every change to an on-hand count, including removing an org item, writes an
+  inventory-log row in the same transaction as the change, naming the actor
+  (or none, for an automatic apply). Removing an org item logs a snapshot of
+  the removed row, so the count can be recovered. A change must not add a
+  stock write that skips the log. `[Decision]`
+
+- A receive-queue line is never deleted. Cancelling it stamps who cancelled it
+  and when, and logs it; a cancelled line can no longer be fulfilled. A line is
+  fulfilled at most once, and its stock lands in the same transaction as the
+  fulfilment. `[Decision]`
+
+- Stock adds are increments applied in the database, and any write that
+  computes a new count from a read (a provisional merge, a conflict
+  resolution) locks the rows it read first. Concurrent receipts, fulfilments,
+  merges and resolutions on one GTIN must never lose an add. `[Decision]`
+
+- A provisional item's stock merges into its real GTIN only when both counts
+  use the same conversion factor. Otherwise the merge parks a unit-mismatch
+  conflict for a person to resolve. The factor used is the one the catalog
+  event carried, including when the event arrives before the provisional row.
+  `[Decision]`
 
 ### Access
 

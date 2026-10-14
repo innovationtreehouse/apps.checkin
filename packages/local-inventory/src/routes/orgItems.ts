@@ -86,6 +86,9 @@ export const update: InventoryRouteHandler = async ({ req, params }) => {
 
 export const remove: InventoryRouteHandler = async ({ params }) => {
   const orgId = await getOrgId();
-  await mapServiceErrors(() => getServices().inventoryService.deleteItem(orgId, params.gtin13));
+  const principal = await getPrincipal();
+  await mapServiceErrors(() =>
+    getServices().inventoryService.deleteItem(orgId, params.gtin13, principal.id, principal.name ?? undefined),
+  );
   return {};
 };

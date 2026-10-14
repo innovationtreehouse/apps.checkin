@@ -1,5 +1,5 @@
 import type { Prisma } from "../../generated/prisma/client";
-import type { Db } from "../db/index";
+import { isRecordNotFoundError, type Db } from "../db/index";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
 import { ServiceError } from "./serviceError";
 
@@ -26,19 +26,12 @@ export async function applyQtyChangeIn(
   const conversionFactor = meta.conversionFactor ?? 1;
   const conversionVersion = meta.conversionVersion ?? 1;
   const derived = rawQuantity * conversionFactor;
-  const existing = await tx.orgItem.findFirst({ where: { gtin13, orgId } });
-  const newQty = (existing?.existingQuantity ?? 0) + derived;
-
-  if (existing) {
-    await tx.orgItem.update({
-      where: { orgGtin: { orgId, gtin13 } },
-      data: { existingQuantity: newQty },
-    });
-  } else {
-    await tx.orgItem.create({
-      data: { orgId, gtin13, existingQuantity: derived, desiredQuantity: 0 },
-    });
-  }
+  // One atomic upsert-increment, so concurrent writers to one GTIN never lose an add.
+  const { existingQuantity: newQty } = await tx.orgItem.upsert({
+    where: { orgGtin: { orgId, gtin13 } },
+    create: { orgId, gtin13, existingQuantity: derived, desiredQuantity: 0 },
+    update: { existingQuantity: { increment: derived } },
+  });
 
   await tx.inventoryLog.create({
     data: {
@@ -49,7 +42,7 @@ export async function applyQtyChangeIn(
       changeType: meta.changeType,
       gtin13,
       fieldChanged: "existingQuantity",
-      valueBefore: String(existing?.existingQuantity ?? 0),
+      valueBefore: String(newQty - derived),
       valueAfter: String(newQty),
       receiptId: meta.receiptId,
       rawQuantity,
@@ -178,10 +171,31 @@ export function createInventoryService({
       return inventoryRepo.findOneEnriched(orgId, gtin13);
     },
 
-    async deleteItem(orgId: string, gtin13: string) {
-      const existing = await inventoryRepo.findOne(orgId, gtin13);
-      if (!existing) throw new ServiceError(404, "Organization item not found");
-      await inventoryRepo.delete(orgId, gtin13);
+    /** Remove an org item, logging the removed row and its actor in the same transaction. */
+    async deleteItem(orgId: string, gtin13: string, userId: number, username?: string) {
+      await db.$transaction(async (tx) => {
+        let removed;
+        try {
+          removed = await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13 } } });
+        } catch (err) {
+          if (isRecordNotFoundError(err)) throw new ServiceError(404, "Organization item not found");
+          throw err;
+        }
+        await tx.inventoryLog.create({
+          data: {
+            orgId, userId, username: username ?? null, changedAt: new Date(), changeType: "manual", gtin13,
+            fieldChanged: "deleted",
+            valueBefore: JSON.stringify({
+              existingQuantity: removed.existingQuantity,
+              desiredQuantity: removed.desiredQuantity,
+              locationId: removed.locationId,
+              backstockLocationId: removed.backstockLocationId,
+            }),
+            valueAfter: null,
+            receiptId: null,
+          },
+        });
+      });
     },
 
     async applyQtyChange(orgId: string, gtin13: string, rawQuantity: number, meta: QtyChangeMeta): Promise<number> {

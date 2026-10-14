@@ -7,6 +7,7 @@ export interface ProvisionalResolutionInput {
   realGtin13?: string | null;
   rejectionReason?: string | null;
   sourceEventId?: number | null;
+  conversionFactor?: number | null;
 }
 
 export function createProvisionalResolutionRepository(db: Db) {
@@ -26,6 +27,7 @@ export function createProvisionalResolutionRepository(db: Db) {
         realGtin13: data.realGtin13 ?? null,
         rejectionReason: data.rejectionReason ?? null,
         sourceEventId: data.sourceEventId ?? null,
+        conversionFactor: data.conversionFactor ?? null,
       };
       try {
         return await db.inventoryProvisionalResolution.upsert({
