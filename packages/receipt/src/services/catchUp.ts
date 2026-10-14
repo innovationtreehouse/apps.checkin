@@ -11,7 +11,7 @@ export const CATCH_UP_CAP = 50;
 
 /** A receipt left in `auto_upload` by a process that died mid-OCR moves to `ocr_failed`. */
 export async function sweepInterruptedOcr(now = new Date()): Promise<{ swept: number }> {
-  const orgId = getOrg().id;
+  const orgId = (await getOrg()).id;
   const stuck = await db.receiptDetail.findMany({
     where: { orgId, state: "auto_upload", ocrStartedAt: { lt: new Date(now.getTime() - OCR_INTERRUPTED_AFTER_MS) } },
     select: { id: true },
@@ -34,7 +34,7 @@ export async function sweepInterruptedOcr(now = new Date()): Promise<{ swept: nu
 /** S1 re-push of finalized receipts not yet delivered. */
 export async function repushUnpushed(): Promise<{ pushed: number; failed: number }> {
   const rows = await db.receipt.findMany({
-    where: { orgId: getOrg().id, pushedAt: null, details: { state: "receipt_finalized" } },
+    where: { orgId: (await getOrg()).id, pushedAt: null, details: { state: "receipt_finalized" } },
     select: { id: true },
     orderBy: { uploadedAt: "asc" },
     take: CATCH_UP_CAP,
@@ -47,7 +47,7 @@ export async function repushUnpushed(): Promise<{ pushed: number; failed: number
 /** X13 re-send for receipts whose donor change donations has not heard. */
 export async function resendDonorSync(): Promise<{ resent: number; failed: number }> {
   const rows = await db.receipt.findMany({
-    where: { orgId: getOrg().id, donorSync: "pending" },
+    where: { orgId: (await getOrg()).id, donorSync: "pending" },
     select: { id: true },
     orderBy: { uploadedAt: "asc" },
     take: CATCH_UP_CAP,

@@ -82,6 +82,7 @@ model Receipt {
   // duplicate pathway can flag it for human review (Inventory BYDESIGN.md).
   @@index([orgId, fileHash], name: "receipts_org_id_file_hash_idx")
   @@index([orgId, uploadedByUserId])
+  @@index([orgId, uploadedAt])
   @@map("receipts")
 }
 
@@ -174,8 +175,9 @@ model ReceiptLineItem {
 model ReceiptAuditLog {
   /// @sensitivity:internal
   id           Int      @id @default(autoincrement())
+  // Null on an org-settings change, which belongs to no receipt.
   /// @sensitivity:internal
-  receiptId    String   @map("receipt_id")
+  receiptId    String?  @map("receipt_id")
   // The acting Person.id; null for a system step (catch-up sweep).
   /// @sensitivity:internal
   userId       Int?     @map("user_id")
@@ -194,10 +196,12 @@ model ReceiptAuditLog {
   /// @sensitivity:internal
   lineItemId   Int?     @map("line_item_id")
 
-  receipt  Receipt          @relation(fields: [receiptId], references: [id])
+  // Restrict, as the init migration created it: deleting a receipt never orphans its audit rows.
+  receipt  Receipt?         @relation(fields: [receiptId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   lineItem ReceiptLineItem? @relation(fields: [lineItemId], references: [id])
 
   @@index([receiptId])
+  @@index([userId, action, changedAt])
   @@map("receipt_audit_log")
 }
 

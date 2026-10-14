@@ -9,6 +9,7 @@ import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
 import { PAGES } from '@/components/pageRegistry';
 import { isCatalogViewerClient } from '@/lib/catalogNav';
 import { EXPENSE_OPS_SECTION_ROLES, hasAnyRole } from '@/lib/libraryNav';
+import { canSubmitReceipts } from '@/lib/volunteer';
 import { LIBRARY_COUNT_PROVIDERS } from '@/lib/navLibraryCounts';
 import { LIBRARY_KEYS, type LibraryKey } from '@/lib/libraryRelease';
 import { ORG_DOMAIN } from '@/lib/config';
@@ -129,6 +130,9 @@ export const GATE_PAIRS: GatePair[] = [
         // FINANCE and BOARD approve from Expense Ops, not My Programs.
         differsFor: ['board', 'finance'],
     },
+    { name: 'volunteer canSubmitReceipts', client: canSubmitReceipts, token: 'receipt-submitter' },
+    { name: 'page /receipts', client: page('/receipts'), token: 'receipt-submitter' },
+    { name: 'page /receipts/review', client: page('/receipts/review'), token: 'finance-or-board' },
     // The provider runs for every signed-in viewer; the approver rule it reports is paired on the page above.
     { name: 'counts:expense', client: counts('expense'), token: 'authenticated' },
 ];

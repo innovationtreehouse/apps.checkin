@@ -62,8 +62,8 @@ describe('Security policy contract', () => {
                     if (!persona) return; // role exercised in route-specific tests
                     // Library routes need the runtime the host injects at server
                     // boot; their responses are field-checked by each library's
-                    // strip test and flow test instead.
-                    if (LIBRARY_ROUTE_PREFIXES.some(p => routePath.startsWith(p))) return;
+                    // strip test and flow test instead. A prefix also covers its bare root.
+                    if (LIBRARY_ROUTE_PREFIXES.some(p => routePath.startsWith(p) || routePath === p.slice(0, -1))) return;
 
                     (getServerSession as jest.Mock).mockResolvedValue(
                         persona.sessionUser ? { user: persona.sessionUser } : null,

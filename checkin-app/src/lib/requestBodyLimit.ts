@@ -14,6 +14,8 @@ export const UPLOAD_ROUTES: readonly string[] = [
     '/api/donations/uploaded-files',
     '/api/membership-ops/participants/import',
     '/api/membership-ops/participants/import/preview',
+    '/api/receipts/upload',
+    '/api/receipts/import',
 ];
 
 export function bodyLimitFor(pathname: string): number {

@@ -50,3 +50,26 @@ export async function resolveUrl(raw: string): Promise<string | null> {
 
   return https ?? http ?? normalizeUrl(trimmed);
 }
+
+/**
+ * Reads a request body of at most `cap` bytes. An over-cap declared length is refused before
+ * any read; otherwise reading stops (and the stream is cancelled) as soon as the total passes
+ * the cap. `tooLarge` builds the error each caller throws.
+ */
+export async function readCapped(
+  body: AsyncIterable<Uint8Array> | null,
+  declaredLength: string | null,
+  cap: number,
+  tooLarge: () => Error,
+): Promise<Uint8Array<ArrayBuffer>[]> {
+  const declared = Number(declaredLength);
+  if (declaredLength !== null && Number.isFinite(declared) && declared > cap) throw tooLarge();
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
+  let total = 0;
+  for await (const value of body ?? []) {
+    total += value.byteLength;
+    if (total > cap) throw tooLarge();
+    chunks.push(new Uint8Array(value));
+  }
+  return chunks;
+}

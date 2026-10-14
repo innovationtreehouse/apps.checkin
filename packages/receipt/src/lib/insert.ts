@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import { audit, type Actor } from "../repositories/receipt";
+import { ServiceError } from "../services/serviceError";
+import type { ReceiptLimits } from "./limits";
 
 export interface NewLine {
   description: string;
@@ -39,6 +41,8 @@ export interface NewReceipt {
   detail: Omit<Prisma.ReceiptDetailUncheckedCreateWithoutReceiptInput, "orgId" | "duplicateSuspectReceiptId">;
   lines: NewLine[];
   auditAction: string;
+  /** Enforce the daily upload limits for this insert (every upload; the FINANCE import has its own caps). */
+  limits?: ReceiptLimits;
 }
 
 /**
@@ -51,6 +55,7 @@ export async function insertReceipt(r: NewReceipt): Promise<string> {
   const id = randomUUID();
   const fileHash = createHash("sha256").update(r.file).digest("hex");
   await db.$transaction(async (tx) => {
+    if (r.limits) await enforceUploadLimits(tx, r.orgId, r.actor.id, r.file.length, r.limits);
     await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`${r.orgId}:${fileHash}`}, 0))`;
     const suspect = await tx.receipt.findFirst({
       where: { orgId: r.orgId, fileHash },
@@ -73,4 +78,33 @@ export async function insertReceipt(r: NewReceipt): Promise<string> {
     await audit(tx, id, r.actor, { action: r.auditAction });
   });
   return id;
+}
+
+/**
+ * Refuses (429) an upload that would pass a daily limit. The org-wide lock serialises uploads
+ * so concurrent requests cannot all pass the same check; it is taken before the file-hash lock.
+ */
+async function enforceUploadLimits(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  personId: number,
+  bytes: number,
+  limits: ReceiptLimits,
+): Promise<void> {
+  await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`${orgId}:upload-limits`}, 0))`;
+  const [used] = await tx.$queryRaw<{ mineCount: number; mineBytes: number; allBytes: number }[]>`
+    SELECT count(*) FILTER (WHERE uploaded_by_user_id = ${personId})::int AS "mineCount",
+           coalesce(sum(octet_length(file_blob)) FILTER (WHERE uploaded_by_user_id = ${personId}), 0)::float8 AS "mineBytes",
+           coalesce(sum(octet_length(file_blob)), 0)::float8 AS "allBytes"
+    FROM receipts
+    WHERE org_id = ${orgId} AND uploaded_at > now() - interval '24 hours'`;
+  if (used.mineCount + 1 > limits.uploadsPerPersonPerDay) {
+    throw new ServiceError(429, "You have reached today's receipt upload limit. Try again tomorrow.");
+  }
+  if (used.mineBytes + bytes > limits.uploadBytesPerPersonPerDay) {
+    throw new ServiceError(429, "You have reached today's upload size limit. Try again tomorrow.");
+  }
+  if (used.allBytes + bytes > limits.uploadBytesPerDay) {
+    throw new ServiceError(429, "Receipt uploads have reached today's limit. Try again tomorrow.");
+  }
 }

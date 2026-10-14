@@ -49,3 +49,8 @@ export function isTreehouseVolunteer(c: VolunteerClaims | undefined): boolean {
 export function canSeeCatalog(c: VolunteerClaims | undefined): boolean {
     return isTreehouseVolunteer(c) || (!!c && volunteersAsMember(c));
 }
+
+/** An adult in an ACTIVE household membership, or a Treehouse Volunteer, may submit receipts; mirrors the server 'receipt-submitter' gate. */
+export function canSubmitReceipts(c: VolunteerClaims | undefined): boolean {
+    return (c?.isActiveOrgMember === true && c?.ageBand === "adult") || isTreehouseVolunteer(c);
+}

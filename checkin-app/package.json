@@ -39,6 +39,8 @@
     "@inventory/local-inventory": "*",
     "@inventory/money": "*",
     "@inventory/quickbooks": "*",
+    "@inventory/utils": "*",
+    "@inventory/receipt": "*",
     "@inventory/receipt-types": "*",
     "@inventory/workflow-mapping": "*",
     "@mantine/core": "^7.17.8",

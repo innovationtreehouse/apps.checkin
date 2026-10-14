@@ -78,6 +78,7 @@ const customJestConfig = {
         '^@/(.*)$': '<rootDir>/src/$1',
         // Workspace TS package — point jest at its source so it transforms it.
         '^@inventory/money$': '<rootDir>/../packages/money/src/index.ts',
+        '^@inventory/utils$': '<rootDir>/../packages/utils/src/index.ts',
         // Checkin-hosted libraries (#1286, #1287, #1272): jest's resolver doesn't honor
         // a package's `exports` subpaths, so map them to source. Subpath rule first (more
         // specific), then the bare entry.
@@ -89,6 +90,8 @@ const customJestConfig = {
         '^@inventory/bulk-donation$': '<rootDir>/../packages/bulk-donation/src/index.ts',
         '^@inventory/expense/(.*)$': '<rootDir>/../packages/expense/src/$1',
         '^@inventory/expense$': '<rootDir>/../packages/expense/src/index.ts',
+        '^@inventory/receipt/(.*)$': '<rootDir>/../packages/receipt/src/$1',
+        '^@inventory/receipt$': '<rootDir>/../packages/receipt/src/index.ts',
         // Shared packages the libraries import; their `exports` declare only `import`.
         '^@inventory/workflows/(.*)$': '<rootDir>/../packages/workflows/src/$1',
         '^@inventory/workflows$': '<rootDir>/../packages/workflows/src/index.ts',
