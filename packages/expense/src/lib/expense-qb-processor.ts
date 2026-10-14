@@ -5,7 +5,7 @@ import { SYSTEM_ACTOR } from "./system-actor";
 import { logError } from "./logger";
 import { QbExpenseEventSchema, type QbExpenseEvent } from "../workflows/expense-event-schema";
 import { lookupItems, getItem, listCategories, listSubcategories } from "./catalog";
-import { advanceWorkflow, advanceWorkflowInTx } from "./workflow-engine";
+import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost } from "./workflow-engine";
 import { unsignedLines } from "./signoff-facts";
 import { reimburseeUnknown } from "./signoff";
 import type { Expense } from "../generated/prisma/client";
@@ -320,7 +320,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
       event: { type: "RESUBMIT" },
       actor: SYSTEM_ACTOR,
       action: "qb_resubmitted",
-    });
+    }).catch(unlessRaceLost);
     expense = await db.expense.findFirst({ where: { id: expenseId } });
     if (!expense) return;
   }
@@ -335,7 +335,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
       event: { type: "QB_SKIPPED" },
       actor: SYSTEM_ACTOR,
       action: "qb_skipped_backfill",
-    });
+    }).catch(unlessRaceLost);
     return;
   }
 
@@ -353,6 +353,8 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
   try {
     await processExpenseForQb(orgId, expenseId, expense);
   } catch (err) {
+    // A concurrent drain moved the expense first and carries it on; this is not a QB failure.
+    if (err instanceof StaleStateError) return;
     logError("qb_processing_failed", { expenseId, orgId, state: expense.state }, err);
 
     const current = await db.expense.findFirst({ where: { id: expenseId } });
@@ -366,7 +368,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
       actor: SYSTEM_ACTOR,
       action: "qb_processing_failed",
       auditNotes: err instanceof Error ? err.message : String(err),
-    });
+    }).catch(unlessRaceLost);
   }
 }
 

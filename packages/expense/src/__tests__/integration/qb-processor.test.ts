@@ -165,6 +165,24 @@ describeDb("checkAndProcessExpense — idempotency & resolution", () => {
     const holds = await holdsFor(id);
     expect(holds.every((h) => h.status === "RESOLVED")).toBe(true);
   });
+
+  it("two concurrent drains of a qb_on_hold expense complete it once; the loser is not a QB failure", async () => {
+    const id = await seedExpense({ state: "qb_on_hold" });
+    const li = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    await db.expenseHold.create({
+      data: { orgId: ORG, expenseId: id, lineItemId: li, reason: "NO_MATCH", matchedRows: "[]", status: "PENDING" },
+    });
+    catalogResolvesAll({ [li]: "0000000000017" });
+    await seedAccountMapping({ qbAccount: "4000" });
+    await signAllLines(id);
+
+    await Promise.all([checkAndProcessExpense(ORG, id), checkAndProcessExpense(ORG, id)]);
+
+    expect(await stateOf(id)).toBe("qb_complete");
+    expect(await eventsFor(id)).toHaveLength(1);
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_processing_failed" } })).toBe(0);
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_holds_resolved" } })).toBe(1);
+  });
 });
 
 describeDb("checkAndProcessExpense — failure path", () => {
