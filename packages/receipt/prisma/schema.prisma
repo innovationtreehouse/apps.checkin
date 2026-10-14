@@ -196,7 +196,8 @@ model ReceiptAuditLog {
   /// @sensitivity:internal
   lineItemId   Int?     @map("line_item_id")
 
-  receipt  Receipt?         @relation(fields: [receiptId], references: [id])
+  // Restrict, as the init migration created it: deleting a receipt never orphans its audit rows.
+  receipt  Receipt?         @relation(fields: [receiptId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   lineItem ReceiptLineItem? @relation(fields: [lineItemId], references: [id])
 
   @@index([receiptId])
