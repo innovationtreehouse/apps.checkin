@@ -5,9 +5,8 @@ import type { ConversionChallenge, ConversionChallengeStatus } from "../db/schem
 
 const challengeRepo = createConversionChallengeRepository(db);
 const itemRefRepo = createItemReferenceRepository(db);
-import { ServiceError } from "./categoryService";
+import { ServiceError, reviewTransitionError } from "./categoryService";
 import { assertConversionChallengeTransition } from "../workflows/conversion-challenge.machine";
-import { WorkflowTransitionError } from "@inventory/workflows";
 import { emitOrgEvent, recordTransition } from "./orgEventService";
 
 const ALREADY_REVIEWED = "Challenge was already reviewed";
@@ -49,8 +48,7 @@ export async function acceptChallenge(challengeId: number, userId: number): Prom
   try {
     acceptedStatus = assertConversionChallengeTransition(challenge.status as ConversionChallengeStatus, "ACCEPT");
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, challenge.status !== "pending", ALREADY_REVIEWED);
   }
 
   const ref = await itemRefRepo.findById(challenge.itemReferenceId);
@@ -88,8 +86,7 @@ export async function rejectChallenge(challengeId: number, userId: number): Prom
   try {
     rejectedStatus = assertConversionChallengeTransition(challenge.status as ConversionChallengeStatus, "REJECT");
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, challenge.status !== "pending", ALREADY_REVIEWED);
   }
 
   await db.$transaction(async (tx) => {

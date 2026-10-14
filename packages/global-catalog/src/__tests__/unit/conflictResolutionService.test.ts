@@ -104,12 +104,12 @@ describeDb("resolveConflict", () => {
       .rejects.toMatchObject({ status: 404 });
   });
 
-  it("throws 400 when conflict is already resolved (invalid transition)", async () => {
+  it("throws 409 when conflict is already resolved", async () => {
     await resetDb();
     const { refId } = await seedFixtures();
     const conflictId = await createConflict(refId);
     await resolveConflict(conflictId, 1, "keep_existing");
     await expect(resolveConflict(conflictId, 1, "keep_existing"))
-      .rejects.toMatchObject({ status: 400 });
+      .rejects.toMatchObject({ status: 409 });
   });
 });

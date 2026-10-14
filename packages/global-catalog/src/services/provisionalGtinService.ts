@@ -5,13 +5,12 @@ import { nextProvisionalSequenceId } from "../db/sequence";
 import { usageBehaviorEnum } from "../db/schema";
 import type { ProvisionalItem, ProvisionalItemStatus, UsageBehavior } from "../db/schema";
 import { buildProvisionalGtin13, isProvisionalGtin13, parseProvisionalSequence } from "../lib/gtin";
-import { ServiceError } from "./categoryService";
+import { ServiceError, reviewTransitionError } from "./categoryService";
 import { allocateAndInsertItem, resolveItemContext } from "./itemService";
 import { emitOrgEvent, recordTransition } from "./orgEventService";
 import { getCanonicalConversion } from "./referenceMatchingService";
 import { assertProvisionalProposalTransition } from "../workflows/provisional-proposal.machine";
 import type { ProvisionalProposalContext } from "../workflows/provisional-proposal.machine";
-import { WorkflowTransitionError } from "@inventory/workflows";
 
 const proposalRepo = createProposalRepository(db);
 const catalogRepo = createCatalogRepository(db);
@@ -98,8 +97,7 @@ export async function approveProvisionalProposal(
   try {
     approvedStatus = assertProvisionalProposalTransition(proposal.status as ProvisionalItemStatus, "APPROVE", approvalContext);
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, proposal.status !== "pending", ALREADY_REVIEWED);
   }
 
   const finalName = overrides.name ?? proposal.proposedName;
@@ -180,8 +178,7 @@ export async function rejectProvisionalProposal(
   try {
     rejectedStatus = assertProvisionalProposalTransition(proposal.status as ProvisionalItemStatus, "REJECT");
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, proposal.status !== "pending", ALREADY_REVIEWED);
   }
 
   const now = new Date();
@@ -209,8 +206,7 @@ export async function mapProvisionalToExisting(
   try {
     mappedStatus = assertProvisionalProposalTransition(proposal.status as ProvisionalItemStatus, "MAP_TO_EXISTING");
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, proposal.status !== "pending", ALREADY_REVIEWED);
   }
 
   const item = await catalogRepo.findItemByGtin13(realGtin13);

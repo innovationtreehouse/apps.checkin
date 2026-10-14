@@ -1,3 +1,4 @@
+import { WorkflowTransitionError } from "@inventory/workflows";
 import { db } from "../db";
 import { createCatalogRepository } from "../repositories/catalog";
 
@@ -8,6 +9,16 @@ export class ServiceError extends Error {
     super(message);
     this.name = "ServiceError";
   }
+}
+
+/**
+ * Maps a refused review transition to a ServiceError. A refusal from an already
+ * reviewed (final) state means another reviewer won the race: 409, the same
+ * status a lost in-transaction claim returns.
+ */
+export function reviewTransitionError(err: unknown, alreadyReviewed: boolean, conflictMessage: string): unknown {
+  if (!(err instanceof WorkflowTransitionError)) return err;
+  return alreadyReviewed ? new ServiceError(409, conflictMessage) : new ServiceError(400, err.message);
 }
 
 export type ResolvedCategory = { id: number; letter: string };

@@ -6,9 +6,8 @@ import type { ItemReferenceProposal, ItemReferenceProposalStatus } from "../db/s
 
 const proposalRepo = createProposalRepository(db);
 const catalogRepo = createCatalogRepository(db);
-import { ServiceError } from "./categoryService";
+import { ServiceError, reviewTransitionError } from "./categoryService";
 import { assertItemReferenceProposalTransition } from "../workflows/item-reference-proposal.machine";
-import { WorkflowTransitionError } from "@inventory/workflows";
 import { normalizeDescription } from "../lib/normalizeDescription";
 import { emitOrgEvent, recordTransition } from "./orgEventService";
 
@@ -107,8 +106,7 @@ export async function approveItemReferenceProposal(proposalId: number, userId: n
   try {
     approvedStatus = assertItemReferenceProposalTransition(proposal.status as ItemReferenceProposalStatus, "APPROVE");
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, proposal.status !== "pending", "Proposal was already reviewed");
   }
 
   const matchClause = buildSupersessionMatchClause(proposal);
@@ -183,8 +181,7 @@ export async function rejectItemReferenceProposal(
   try {
     rejectedStatus = assertItemReferenceProposalTransition(proposal.status as ItemReferenceProposalStatus, "REJECT");
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, proposal.status !== "pending", "Proposal was already reviewed");
   }
 
   await db.$transaction(async (tx) => {
