@@ -12,12 +12,56 @@ mechanics it builds on.
 A program's enrollment capacity is not tracked as a separate counter in the app — it lives
 in Shopify's own inventory for the program's variant. `Program.maxParticipants` sets the
 *initial* Shopify inventory at creation time and drives `PATCH /api/programs/[id]`'s
-relative delta propagation (`adjustProgramInventory`, `lib/shopify.ts`), but from then on
-Shopify's `available` count for the variant is what's authoritative — every seat-consuming
-or seat-returning event in the app fires a corresponding relative adjustment
-(`inventory_levels/adjust`, `available_adjustment: delta`) rather than an absolute set,
-because Shopify decrements `available` itself as seats sell and the app doesn't need to
-know that running total to stay in sync.
+delta propagation, but from then on Shopify's `available` count for the variant is what's
+authoritative — every seat-consuming or seat-returning event in the app moves it by a
+delta, because Shopify decrements `available` itself as seats sell and the app doesn't
+need to know that running total to stay in sync.
+
+Every app-initiated stock change goes through ONE writer, `adjustProgramInventory`
+(`lib/shopify.ts`):
+
+- **Owed first, then pushed.** The caller's delta is added to `Program.shopifyStockCarry`
+  (what the app owes Shopify), then a push lands the whole carry.
+- **One writer per program, no transaction across Shopify.** A push holds a short lease
+  (`shopifyStockLeaseUntil`/`Token`, taken with one conditional update). Every booking is
+  fenced by the lease token, and no DB transaction or connection is held while Shopify is
+  called. A writer that finds the lease busy polls until its cap; the holder re-reads the
+  carry before letting go, so it usually lands the waiter's delta too.
+- **One keyed delta per write.** It reads `available` and sends the owed carry as one
+  delta: GraphQL `inventoryAdjustQuantities` (Admin API 2026-04) with
+  `@idempotent(key: program-<id>-<reason>-<uuid>)` and `changeFromQuantity: null`. Deltas
+  commute with store sales, so there is no compare. Each write is booked as pending (its
+  amount moved out of the carry) before it is sent, and its outcome is booked after, so a
+  crash leaves the exact write to be resent under its key. A variant not yet stocked at
+  the location is activated first (`inventoryActivate`). An absolute target (re-arm) is
+  turned into the carry `target − available` under the lease and lands the same way.
+- **Timeouts settle by key.** A timeout, 5xx, throttle or `IDEMPOTENCY_CONCURRENT_REQUEST`
+  resends the SAME request with backoff. On the dev store (2026-10-14, shopify-live run
+  38673844917) Shopify dedupes `inventoryAdjustQuantities` by key: a resend of a write that
+  landed returns its original result instead of applying it again. So a timed-out write
+  that landed is booked once, and a hard error, original or replayed, means it did not
+  apply. (`inventorySetQuantities` with compare-and-set is not used: its resend is refused
+  as stale rather than replayed, which can't tell "landed" from "didn't".) The cap covers
+  the lease wait too: about 15 s inside a user request, about 3 minutes for jobs. Webhooks
+  (`orders/paid` activation) record the delta and push in the background, staying inside
+  Shopify's 5 s webhook timeout.
+- **Only a key past its lifetime is unconfirmable.** Shopify keeps a key for 24 h. A write
+  still pending after 23 h is not resent, since it could apply twice. Its delta moves to
+  `shopifyStockUnconfirmed`, the board is emailed, and a person settles it by checking
+  Shopify (a settle screen is planned).
+- **Never below 0.** A negative delta only takes stock down to 0, so an over-capacity
+  program is held at 0 and the shortfall stays owed as a negative carry. Later positive deltas pay it
+  down before any seat goes back on sale. The board is alerted when the shortfall grows. A
+  refund that Shopify restocks itself triggers a background push (reversals webhook), so
+  the shortfall takes that seat straight back off sale.
+- **Failure is durable and loud, never thrown.** Whatever doesn't land stays owed,
+  `shopifyStockPushNeededAt` is set, the board is emailed (`reportShopifyFailure`), and the
+  writer returns false. `changeProgramStock` also says whether the delta was
+  *recorded*: once it is in the carry it lands later, so a comp's
+  `seatTakenWithoutSaleAt` and a scholarship hold stand whenever it was recorded, and
+  only an unrecorded -1 rolls a hold back (PENDING_HOLD_FAILED). The daily
+  `reconcile-shopify` job (`healProgramStock`) re-pushes every program left owing; the flag
+  clears once nothing is owed.
 
 ## 2. Single pool, single variant
 
@@ -41,7 +85,7 @@ An earlier design gave each program two variants with separate inventory pools k
 step by a sibling-adjustment on every seat-consuming event. All of that code is gone
 and the four legacy columns are `@ignore`d (pending drop):
 `shopifyVariantId` is the only variant any program has, and `adjustProgramInventory`
-adjusts exactly that one pool.
+writes exactly that one pool.
 
 ## 3. Scholarship lifecycle — the hold ledger
 

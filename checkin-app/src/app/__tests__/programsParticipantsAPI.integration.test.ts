@@ -538,11 +538,11 @@ describe('Program Participants API Integration Tests', () => {
         // SHOPIFY_STORE_DOMAIN/credentials configured, adjustProgramInventory returns
         // false at its credential guard (before any network) — the exact non-fatal
         // failure the warning branch handles.
-        it('comp-add keeps the enrollment and warns when the Shopify decrement fails', async () => {
+        it('a comp whose Shopify push fails is kept, stamped, and still gets its seat back on withdrawal', async () => {
             const prevCheckinEnv = process.env.CHECKIN_ENV;
             const prevDomain = process.env.SHOPIFY_STORE_DOMAIN;
             delete process.env.CHECKIN_ENV;       // mock off → real adjust path
-            delete process.env.SHOPIFY_STORE_DOMAIN; // no creds → returns false (no network)
+            delete process.env.SHOPIFY_STORE_DOMAIN; // no creds → the push fails after the -1 is recorded (no network)
             const shopifyProgram = await prisma.program.create({
                 data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Comp Shopify Fail Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, orgMemberPriceCents: 1000, shopifyVariantId: 'dev-mock-variant-comp-fail' },
             });
@@ -562,7 +562,20 @@ describe('Program Participants API Integration Tests', () => {
                     where: { programId_personId: { programId: shopifyProgram.id, personId: otherId } },
                 });
                 expect(row?.status).toBe('ACTIVE');
-                expect(row?.seatTakenWithoutSaleAt).toBeNull(); // no -1 taken, nothing to return
+                // The -1 is owed in the carry, so the seat counts as taken out of stock.
+                expect(row?.seatTakenWithoutSaleAt).not.toBeNull();
+                expect((await prisma.program.findUniqueOrThrow({ where: { id: shopifyProgram.id } })).shopifyStockCarry).toBe(-1);
+
+                // Withdrawing the comp puts the seat back: the +1 nets the owed -1 to 0.
+                const del = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
+                        method: 'DELETE',
+                        body: JSON.stringify({ participantId: otherId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(shopifyProgram.id) as unknown as never,
+                );
+                expect(del.status).toBe(200);
+                expect((await prisma.program.findUniqueOrThrow({ where: { id: shopifyProgram.id } })).shopifyStockCarry).toBe(0);
             } finally {
                 process.env.CHECKIN_ENV = prevCheckinEnv;
                 if (prevDomain === undefined) delete process.env.SHOPIFY_STORE_DOMAIN;

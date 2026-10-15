@@ -674,7 +674,7 @@ async function settleRestockedSeats(
     }
     if (unmatched === 0) return;
     logger.warn(`[reconcile] refund on order ${orderLegacyId} restocked ${unmatched} seat(s) of program ${programId} that no child can be matched to: taking them back off sale, the board decides who leaves`);
-    await adjustProgramInventory(program, -unmatched);
+    await adjustProgramInventory({ id: programId, shopifyVariantId: program.shopifyVariantId }, -unmatched, "refund-unmatched", { deferred: true });
 }
 
 /**

@@ -9,7 +9,7 @@ import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest"
 import { householdLeadship } from "@/lib/household/leads";
 import { isDuesSettled } from "@/lib/orgMembership";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
-import { adjustProgramInventory } from "@/lib/shopify";
+import { changeProgramStock } from "@/lib/shopify";
 import { isSaleEnded } from "@/lib/programs/saleState";
 import { apiError } from "@/lib/api-response";
 
@@ -223,25 +223,28 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // hold-ledger: invariants I1/I2/I3 (enrollmentState.ts) make a held seat
         // PENDING-and-scholarship only, and the lifecycle reconciler auto-heals
         // an ACTIVE+held row by releasing +1 — which would silently undo this
-        // decrement. A successful -1 is recorded (seatTakenWithoutSaleAt), and
+        // decrement. A recorded -1 is stamped (seatTakenWithoutSaleAt), and
         // withdrawing the comp puts that seat back on sale (+1, see
         // withdrawAndReleaseHold), unlike a paid seat. Uncapped programs track no
         // inventory (inventory_management=null), so only capped programs adjust;
-        // adjustProgramInventory additionally no-ops when no variant is wired.
+        // changeProgramStock additionally no-ops when no variant is wired.
         let warning: string | undefined;
         if (isExternalAdmin && override && currentProgram.maxParticipants !== null) {
             // Enrollment already committed above; on Shopify failure keep it and
-            // warn (adjustProgramInventory has logged + emailed sysadmins),
+            // warn (the stock writer has logged + emailed the board),
             // mirroring the cap-edit and withdraw siblings. There is no stamp to
             // roll back — deleting the just-created comp would be the worse
             // half-commit.
-            const ok = await adjustProgramInventory(currentProgram, -1);
-            if (ok) {
+            const stock = await changeProgramStock(currentProgram, -1, "comp", { inRequest: true });
+            // Recorded = owed in the carry, so it lands later even if this push failed:
+            // the seat counts as taken out of stock and its withdrawal must put it back.
+            if (stock.recorded) {
                 await prisma.programParticipant.update({
                     where: { programId_personId: { programId, personId: participantId } },
                     data: { seatTakenWithoutSaleAt: new Date() },
                 });
-            } else {
+            }
+            if (!stock.landed) {
                 warning = "Participant added, but the Shopify inventory decrement failed. Capacity may be out of sync — check System Status > Link Status.";
             }
         }
@@ -335,7 +338,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         // exactly once (see withdrawAndReleaseHold).
         let withdrawal: Awaited<ReturnType<typeof withdrawAndReleaseHold>>;
         try {
-            withdrawal = await withdrawAndReleaseHold(programId, participantId, currentProgram, isHouseholdLeadPath ? 'PENDING' : undefined);
+            withdrawal = await withdrawAndReleaseHold(programId, participantId, currentProgram, isHouseholdLeadPath ? 'PENDING' : undefined, { inRequest: true });
         } catch (error) {
             if (isHouseholdLeadPath && isPrismaError(error, 'P2025')) {
                 const row = await prisma.programParticipant.findUnique({

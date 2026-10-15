@@ -95,7 +95,7 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
     // reduction goes through, so no seat goes back on sale. Never fatal.
     const delta = program ? saleStockDelta(program, publicStockDelta(releasedHoldCount, claimantSeatCount)) : 0;
     if (delta !== 0) {
-        const ok = await adjustProgramInventory({ shopifyVariantId: program?.shopifyVariantId ?? null }, delta);
+        const ok = await adjustProgramInventory({ id: programId, shopifyVariantId: program?.shopifyVariantId ?? null }, delta, "activation", { deferred: true });
         if (!ok) logger.error(`[enroll] Failed to adjust public stock by ${delta} for program ${programId} (${releasedHoldCount} hold(s) released, ${claimantSeatCount} claimant seat(s)) — capacity may be out of sync.`);
     }
 

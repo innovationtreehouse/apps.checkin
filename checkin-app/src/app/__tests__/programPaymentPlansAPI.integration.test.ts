@@ -17,6 +17,14 @@ import { POST as ManualHoldPost } from '@/app/api/finance-ops/payment-plans/manu
 import { POST as RequestPost } from '@/app/api/programs/[id]/request-payment-plan/route';
 import { POST as ParticipantsPost, DELETE as ParticipantsDelete } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
+import * as shopify from '@/lib/shopify';
+
+// Wrap only changeProgramStock (call-through) so one test can force a −1 that
+// could not be recorded; SWC exports are non-configurable getters, so no spyOn.
+jest.mock('@/lib/shopify', () => {
+    const actual = jest.requireActual('@/lib/shopify');
+    return { ...actual, changeProgramStock: jest.fn(actual.changeProgramStock) };
+});
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_PROGRAM_BODY, renderAckBody } from '@/lib/scholarshipEmails';
 
@@ -866,9 +874,9 @@ describe('Program payment-plan routes', () => {
             expect(delBody.enrollment).toBeUndefined();
         });
 
-        it('a failed Shopify -1 leaves a clean PENDING_HOLD_FAILED row and reassures the applicant', async () => {
+        it('a Shopify -1 that fails to push still holds the seat: the -1 stays owed in the stock carry', async () => {
             // Default env: shopifyMockActive() is false and no credentials are
-            // configured, so adjustProgramInventory returns false without throwing.
+            // configured, so the push fails after the -1 is recorded.
             const p = await prisma.program.create({
                 data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-rollback-pp' },
             });
@@ -886,27 +894,18 @@ describe('Program payment-plan routes', () => {
                     params(p.id),
                 );
                 expect(res.status).toBe(200);
-                // No "re-submit to retry": the request stands, the board finalizes it.
-                const body = await res.json();
-                expect(body.warning).toMatch(/board/i);
-                expect(body.warning).not.toMatch(/re-submit|retry|rolled back/i);
+                expect((await res.json()).warning).toBeUndefined(); // nothing for the applicant to do
 
-                // Shopify-failure branch: the ack still fires, carrying the warning
-                // copy instead of the normal ack body, and the review-team notify
-                // still fires (a request was still recorded, board still needs it).
-                const sent = __getSentEmails();
-                const ack = sent.find((e) => e.to === `self-${TAG}@example.com`);
-                expect(ack?.html).toContain(body.warning);
-                expect(sent.some((e) => e.subject.startsWith('New scholarship / payment-plan request'))).toBe(true);
-
-                // The exact PENDING_HOLD_FAILED tuple: PENDING, held=null, req=true, den=null.
+                // The hold stands (PENDING_HELD), and the program owes Shopify the -1.
                 const row = await prisma.programParticipant.findUniqueOrThrow({
                     where: { programId_personId: { programId: p.id, personId: selfId } },
                 });
                 expect(row.status).toBe('PENDING');
-                expect(row.inventoryHeldAt).toBeNull(); // no phantom hold
-                expect(row.isPaymentPlanRequested).toBe(true); // request still stands
-                expect(row.paymentPlanDeniedAt).toBeNull();
+                expect(row.inventoryHeldAt).not.toBeNull();
+                expect(row.isPaymentPlanRequested).toBe(true);
+                const program = await prisma.program.findUniqueOrThrow({ where: { id: p.id } });
+                expect(program.shopifyStockCarry).toBe(-1);
+                expect(program.shopifyStockPushNeededAt).not.toBeNull();
             } finally {
                 await prisma.programParticipant.deleteMany({ where: { programId: p.id } });
                 await prisma.program.delete({ where: { id: p.id } });
@@ -1250,6 +1249,8 @@ describe('Program payment-plan routes', () => {
             const p = await prisma.program.create({
                 data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Ack Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-ack-rollback-pp' },
             });
+            // Only a −1 the stock writer could not even record takes the failure branch.
+            jest.mocked(shopify.changeProgramStock).mockResolvedValueOnce({ recorded: false, landed: false });
             try {
                 await prisma.programParticipant.create({
                     data: { programId: p.id, personId: selfId, status: 'PENDING', isPaymentPlanRequested: false, pendingSince: new Date() },

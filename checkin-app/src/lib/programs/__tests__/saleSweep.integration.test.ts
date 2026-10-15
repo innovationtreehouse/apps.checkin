@@ -159,6 +159,6 @@ describe('program sale sweep', () => {
 
         const b = await withdrawAndReleaseHold(open.id, kid.id, open);
         expect(b.released).toBe(true);
-        expect(adjust).toHaveBeenCalledWith(open, 1);
+        expect(adjust).toHaveBeenCalledWith({ id: open.id, shopifyVariantId: open.shopifyVariantId }, 1, 'hold-release', {});
     });
 });

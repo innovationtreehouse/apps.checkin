@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withAuth, getOptionalSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { sendNotification } from "@/lib/notifications";
-import { createClaimantProduct, createShopifySingleVariantProgram } from "@/lib/shopify";
+import { adjustProgramInventory, createClaimantProduct, createShopifySingleVariantProgram } from "@/lib/shopify";
 import { logBackendError, logger } from "@/lib/logger";
 import { isDuesSettled } from "@/lib/orgMembership";
 import { config } from "@/lib/config";
@@ -274,9 +274,14 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             await sendNotification(newProgram.leadMentorId, 'PROGRAM_ASSIGNMENT', { programName: newProgram.name, programId: newProgram.id });
         }
 
+        // A new capped variant starts sold out (0 available); lift it to capacity.
+        const stockOk = !shopifyData || await adjustProgramInventory(newProgram, maxPart, "initial-stock", { inRequest: true });
+
         const responseObj: Record<string, unknown> = { success: true, program: newProgram };
         if (((mPrice && mPrice > 0) || (nmPrice && nmPrice > 0)) && !shopifyData) {
             responseObj.warning = "Program created, but Shopify integration failed or is not configured. Payment links will not work.";
+        } else if (!stockOk) {
+            responseObj.warning = "Program created, but setting its Shopify stock failed, so it may show as sold out. Check System Status > Link Status.";
         }
 
         return NextResponse.json(responseObj);

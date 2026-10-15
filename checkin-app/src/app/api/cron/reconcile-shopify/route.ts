@@ -6,6 +6,7 @@ import { runSaleSweep } from "@/lib/programs/saleSweep";
 import { runReconcile as runIncomeReconcile } from "@inventory/income";
 import { getOrg } from "@/lib/catalog/configure";
 import { runExpenseCatchUp } from "@inventory/expense";
+import { healProgramStock } from "@/lib/shopify";
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
@@ -39,6 +40,9 @@ import { runExpenseCatchUp } from "@inventory/expense";
  *
  * Then runs the expense library's catch-up (intake replay, stranded QB recovery, catalog
  * events, the QuickBooks outbox drain). Its failure never fails checkin's reconcile; counts only.
+ *
+ * Then re-pushes program stock the stock writer left owing (healProgramStock),
+ * which needs no mirror. Isolated the same way.
  */
 export const GET = withCron(async () => {
     const result = await runReconcile();
@@ -61,5 +65,13 @@ export const GET = withCron(async () => {
         expense = { status: "error" };
     }
     logger.info(`[reconcile] expense ${JSON.stringify(expense)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep, income, expense });
+    let programStock: Awaited<ReturnType<typeof healProgramStock>> | { status: "error" };
+    try {
+        programStock = await healProgramStock();
+    } catch (err) {
+        logger.error("[reconcile] program stock heal failed:", err);
+        programStock = { status: "error" };
+    }
+    logger.info(`[reconcile] program stock ${JSON.stringify(programStock)}`);
+    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock });
 });

@@ -466,10 +466,9 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             actorId: auth.user.id,
         });
 
-        // Shopify is the source of truth for program capacity: cap edits propagate
-        // as relative inventory adjustments, until the sale has ended.
-        // Only fires when the program already has Shopify checkout wired up —
-        // creation and sync-shopify set inventory absolutely and are unaffected.
+        // Cap edits move public stock by the cap change, until the sale has ended.
+        // Only fires when the program already has Shopify checkout wired up;
+        // creation and sync-shopify set the initial stock themselves.
         let warning: string | undefined;
         const oldMax = currentProgram.maxParticipants;
         const newMax = updatedProgram.maxParticipants;
@@ -486,14 +485,14 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
                     OR: [ENROLLMENT_STATES.ACTIVE.where, ENROLLMENT_STATES.PENDING_HELD.where, ENROLLMENT_STATES.PENDING_HELD_DENIED.where],
                 },
             });
-            if (!(await setProgramInventory(updatedProgram, Math.max(0, newMax - taken)))) {
+            if (!(await setProgramInventory(updatedProgram, Math.max(0, newMax - taken), "re-arm"))) {
                 warning = "Program updated, but setting the Shopify inventory failed. Capacity may be out of sync — check System Status > Link Status.";
             }
         } else if (oldMax !== newMax && hasShopifyVariant) {
             if (oldMax !== null && newMax !== null) {
                 // After the sale ends a cut still goes through; a raise does not.
                 const delta = saleStockDelta(updatedProgram, newMax - oldMax);
-                if (delta !== 0 && !(await adjustProgramInventory(updatedProgram, delta))) {
+                if (delta !== 0 && !(await adjustProgramInventory(updatedProgram, delta, "capacity-edit", { inRequest: true }))) {
                     warning = "Program updated, but the Shopify inventory adjustment failed. Capacity may be out of sync — check System Status > Link Status.";
                 }
             } else if (!isSaleEnded(updatedProgram)) {

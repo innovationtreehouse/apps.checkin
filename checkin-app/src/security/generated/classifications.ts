@@ -232,6 +232,12 @@ export const classifications = {
         shopifyVariantId: 'public',
         claimantShopifyProductId: 'public',
         claimantShopifyVariantId: 'public',
+        shopifyStockPushNeededAt: 'internal',
+        shopifyStockPendingWrite: 'internal',
+        shopifyStockCarry: 'internal',
+        shopifyStockLeaseUntil: 'internal',
+        shopifyStockLeaseToken: 'internal',
+        shopifyStockUnconfirmed: 'internal',
     },
     ProgramInstance: {
         id: 'public',

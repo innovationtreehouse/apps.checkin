@@ -1,7 +1,7 @@
 import type { TxClient } from "@/lib/db-client";
 import type { ProgramParticipant, ProgramParticipantStatus } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
-import { adjustProgramInventory } from "@/lib/shopify";
+import { adjustProgramInventory, type StockWriteOptions } from "@/lib/shopify";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { isSaleEnded } from "@/lib/programs/saleState";
 
@@ -77,6 +77,7 @@ export async function withdrawAndReleaseHold(
     personId: number,
     program: { shopifyVariantId?: string | null },
     onlyStatus?: ProgramParticipantStatus,
+    stockOptions: StockWriteOptions = {},
 ): Promise<{ enrollment: ProgramParticipant; released: boolean; shopifyOk: boolean }> {
     const enrollment = await prisma.programParticipant.delete({
         where: { programId_personId: { programId, personId }, ...(onlyStatus && { status: onlyStatus }) },
@@ -96,6 +97,6 @@ export async function withdrawAndReleaseHold(
         return { enrollment, released: true, shopifyOk: true };
     }
 
-    const shopifyOk = await adjustProgramInventory(program, 1);
+    const shopifyOk = await adjustProgramInventory({ id: programId, shopifyVariantId: program.shopifyVariantId }, 1, "hold-release", stockOptions);
     return { enrollment, released: true, shopifyOk };
 }

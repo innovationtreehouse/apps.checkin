@@ -5,6 +5,8 @@ import { withWebhook } from "@/lib/webhookAuth";
 import { config } from "@/lib/config";
 import { raiseReversalByOrderId, type PaymentExceptionKind, type RestockedLine } from "@/lib/finance/reconcile";
 import { recordShopifyWebhookReceipt } from "@/lib/shopifyWebhookReceipt";
+import prisma from "@/lib/prisma";
+import { nudgeProgramStock } from "@/lib/shopify";
 
 /**
  * Fast-path Shopify reversal webhooks — the low-latency complement to the daily
@@ -71,6 +73,22 @@ function verifyShopifyHmac(req: Request, rawBody: string): { ok: true } | { ok: 
     return { ok: true };
 }
 
+/**
+ * Shopify restocks a refunded seat itself. On a program held at 0 with an
+ * over-capacity shortfall, push now (in the background) so the shortfall takes
+ * that seat back off sale instead of it selling until the daily heal.
+ */
+async function netRestockAgainstShortfall(restocked: RestockedLine[]): Promise<void> {
+    if (restocked.length === 0) return;
+    const programs = await prisma.program.findMany({
+        where: { shopifyVariantId: { in: restocked.map((l) => l.variantId) }, shopifyStockCarry: { lt: 0 } },
+        select: { id: true, shopifyVariantId: true },
+    });
+    for (const program of programs) {
+        if (program.shopifyVariantId) await nudgeProgramStock({ id: program.id, shopifyVariantId: program.shopifyVariantId });
+    }
+}
+
 const TOPIC_KIND: Record<string, PaymentExceptionKind> = {
     "refunds/create": "REFUND",
     "orders/cancelled": "CANCELLED",
@@ -93,7 +111,9 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
         logger.warn(`[SHOPIFY REVERSAL] ${outcome}`);
     } else {
         const refundId = topic === "refunds/create" && payload.id != null ? String(payload.id) : null;
-        const matched = await raiseReversalByOrderId(String(orderId), kind, restockedLines(payload), refundId);
+        const restocked = restockedLines(payload);
+        const matched = await raiseReversalByOrderId(String(orderId), kind, restocked, refundId);
+        await netRestockAgainstShortfall(restocked);
         outcome = matched
             ? `${topic}: raised ${kind} for order ${orderId}`
             : `${topic}: order ${orderId} not tied to any membership/enrollment — ignored`;

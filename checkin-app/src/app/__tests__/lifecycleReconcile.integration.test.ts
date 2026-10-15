@@ -95,8 +95,9 @@ describe('lifecycle reconciler — invariant-driven sweep over a real DB', () =>
 
         // The missed release fired: adjustProgramInventory(program, +1).
         expect(adjustSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ shopifyVariantId: VARIANT }),
+            expect.objectContaining({ id: programId, shopifyVariantId: VARIANT }),
             1,
+            'reconcile-heal',
         );
 
         // Audit trail for the heal.

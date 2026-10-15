@@ -47,7 +47,7 @@ describe("activateProgramEnrollment public stock", () => {
         seat(true);
         const res = await activateProgramEnrollment({ programId: 7, personIds: [1], shopifyOrderId: "1", lines: [{ variantId: "pub", quantity: 1 }] });
         expect(res).toEqual({ activatedCount: 1, releasedHoldCount: 1, claimantSeatCount: 0 });
-        expect(adjustProgramInventory).toHaveBeenCalledWith({ shopifyVariantId: "pub" }, 1);
+        expect(adjustProgramInventory).toHaveBeenCalledWith({ id: 7, shopifyVariantId: "pub" }, 1, "activation", { deferred: true });
     });
 
     it("held seat paid on the claimant variant: no stock change, the hold already took the seat", async () => {
@@ -62,7 +62,7 @@ describe("activateProgramEnrollment public stock", () => {
         seat(false);
         const res = await activateProgramEnrollment({ programId: 7, personIds: [1, 2], shopifyOrderId: "1", lines: [{ variantId: "claim", quantity: 2 }] });
         expect(res.claimantSeatCount).toBe(2);
-        expect(adjustProgramInventory).toHaveBeenCalledWith({ shopifyVariantId: "pub" }, -2);
+        expect(adjustProgramInventory).toHaveBeenCalledWith({ id: 7, shopifyVariantId: "pub" }, -2, "activation", { deferred: true });
     });
 
     it("unheld seat paid on the public variant: no stock change", async () => {

@@ -1039,6 +1039,28 @@ model Program {
   claimantShopifyProductId  String?
   /// @sensitivity:public
   claimantShopifyVariantId  String?
+  /// Durable "Shopify stock needs a push" flag: set when a stock write could not
+  /// be confirmed (lib/shopify.ts adjustProgramInventory).
+  /// @sensitivity:internal
+  shopifyStockPushNeededAt  DateTime?
+  /// JSON of a stock write that may still land, under its idempotency key; the
+  /// next push resends it under that key to settle it before writing.
+  /// @sensitivity:internal
+  shopifyStockPendingWrite  String?
+  /// Stock delta the app owes Shopify but has not landed. Negative = over
+  /// capacity: Shopify is held at 0 and later positive deltas pay this down first.
+  /// @sensitivity:internal
+  shopifyStockCarry         Int       @default(0)
+  /// Lease that makes one writer per program push its stock; no DB transaction is
+  /// held across a Shopify call.
+  /// @sensitivity:internal
+  shopifyStockLeaseUntil    DateTime?
+  /// @sensitivity:internal
+  shopifyStockLeaseToken    String?
+  /// Stock change Shopify could not confirm (a write still unsettled past its key's 24 h).
+  /// Never re-sent; a person checks Shopify and settles it.
+  /// @sensitivity:internal
+  shopifyStockUnconfirmed   Int       @default(0)
 
   volunteers   ProgramVolunteer[]
   participants ProgramParticipant[]
