@@ -1,10 +1,12 @@
 // In-kind crossings (FR5). The callees (X9, X13) parse their input and assert the injected org,
-// then throw NotWiredError until the in-kind domain lands; a throw tells the caller to retry.
-// The caller wrappers (X10) parse what the bound port returns.
+// then throw NotWiredError until the in-kind receipt domain lands; a throw tells the caller to retry.
+// The caller wrappers (X10) parse what the bound port returns. The no-receipt entry records a
+// donation for the current org and principal and loads its goods (X11).
 import { z } from "zod";
 import { CompletedReceiptSchema, type CompletedReceipt } from "@inventory/receipt-types";
 import { CatalogItemSummarySchema, InKindDonorSchema, type CatalogItemSummary, type InKindDonor } from "./contract";
-import { NotWiredError, getCatalogLookup, getOrg } from "./runtime";
+import { NotWiredError, getCatalogLookup, getOrg, getOrgId, getPrincipal } from "./runtime";
+import { manualInKindService, type ManualInKindInput } from "./services/manualInKindService";
 
 const receiptIdSchema = z.string().min(1);
 
@@ -48,4 +50,15 @@ export async function searchCatalog(query: string): Promise<CatalogItemSummary[]
 /** X10 caller: one catalog item by GTIN. */
 export async function getCatalogItem(gtin13: string): Promise<CatalogItemSummary | null> {
   return CatalogItemSummarySchema.nullable().parse(await getCatalogLookup().getItem(gtin13));
+}
+
+/** No-receipt entry: record an in-kind donation picked from the catalog, then load its goods. */
+export async function recordInKindWithoutReceipt(input: ManualInKindInput): Promise<{ id: number; inventoryLoaded: boolean }> {
+  const principal = await getPrincipal();
+  return manualInKindService.record(await getOrgId(), input, { actorUserId: principal.id, actorUsername: principal.name });
+}
+
+/** Retry the inventory load for a no-receipt donation whose first load failed. */
+export async function loadInKindInventory(id: number): Promise<void> {
+  await manualInKindService.loadInventory(await getOrgId(), id);
 }

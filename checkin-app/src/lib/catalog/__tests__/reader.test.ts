@@ -6,7 +6,7 @@ import { catalogReader } from '../reader';
 jest.mock('@inventory/global-catalog', () => {
     const down = () => Promise.reject(new Error('connect ECONNREFUSED'));
     return {
-        readService: { listCategories: down, listSubcategories: down, getItem: down },
+        readService: { listCategories: down, listSubcategories: down, getItem: down, searchItems: down },
         referenceMatchingService: { lookupMany: down, checkReferences: down },
     };
 });
@@ -19,8 +19,9 @@ describe('catalogReader with the catalog unreachable', () => {
         expect(await catalogReader.listCategories()).toEqual([]);
         expect(await catalogReader.listSubcategories()).toEqual([]);
         expect(await catalogReader.getItem('0022222222223')).toBeNull();
+        expect(await catalogReader.searchItems('drill')).toEqual([]);
         expect(await catalogReader.lookupItems('Hardware Co', [{ index: 0, partNumber: 'HB-1' }])).toEqual([]);
-        expect(console.warn).toHaveBeenCalledTimes(4);
+        expect(console.warn).toHaveBeenCalledTimes(5);
     });
 
     it('fails closed on the reference check, never reporting all-not-found', async () => {
