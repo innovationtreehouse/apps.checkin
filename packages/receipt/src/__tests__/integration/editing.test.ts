@@ -29,6 +29,8 @@ describeDb("editing a receipt", () => {
 
   it("refuses edits outside validation_failed / submitter_review", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    // Not yet delivered, so the state rule answers rather than the received-receipt lock.
+    await db.receipt.update({ where: { id: r.id }, data: { pushedAt: null } });
     await expect(receiptService.edit(r.id, "submitter", { retailer: "x" })).rejects.toMatchObject({ statusCode: 400 });
     await expect(receiptService.addLine(r.id, "submitter", { description: "x" })).rejects.toMatchObject({ statusCode: 400 });
     await expect(receiptService.resubmit(r.id, "submitter")).rejects.toMatchObject({ statusCode: 400 });

@@ -4,8 +4,8 @@
  * mock: an auto upload stops for its uploader to confirm, then finalizes and shows in "My
  * receipts"; an owed receipt reads "not yet
  * paid" and stays when completed ones are hidden. Real HTTP against the running dev server and
- * the empty receipt DB (docker-compose.flow.yml). The S1 push (X6) is unbound, so finalized
- * receipts wait unpushed.
+ * the empty receipt DB (docker-compose.flow.yml). The S1 push into workflow-mapping (X6) is
+ * covered by receipt-pipeline.flow.test.ts.
  */
 import { api, BASE, loginAs, type Session } from "./helpers";
 
@@ -147,13 +147,13 @@ describe("receipts — submitter journey", () => {
     expect(file.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await file.text()).toBe(`auto receipt ${stamp}`);
 
-    // Finance sees the read in the audit log; the push waits for X6.
+    // Finance sees the read in the audit log; a re-send of a delivered receipt is a replay.
     const finance = await loginAs(FINANCE);
     const audit = await api<{ action: string }[]>(finance, `/api/receipts/${auto.json.id}/audit-logs`);
     expect(audit.json.map((a) => a.action)).toContain("file_viewed");
     const push = await post(finance, `/api/receipts/${auto.json.id}/push-to-inventory`);
     expect(push.status).toBe(200);
-    expect(push.json).toEqual({ pushed: false });
+    expect(push.json).toEqual({ pushed: true });
   });
 });
 
