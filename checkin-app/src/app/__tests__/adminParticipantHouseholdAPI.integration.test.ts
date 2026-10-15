@@ -5,6 +5,7 @@ import { POST } from '@/app/api/membership-ops/participants/[id]/household/route
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { expectAuditRow, auditJson } from '@/test-helpers/expectAuditRow';
+import { SELF_GRANT_REFUSAL_TABLE } from '@/lib/membership/selfGrantGuard';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -100,6 +101,27 @@ describe('Admin Participant Household API Integration Tests', () => {
             expect(res.status).toBe(403);
             const after = await prisma.person.findUnique({ where: { id: testParticipantId }, select: { householdId: true } });
             expect(after?.householdId).toBe(before.householdId);
+        });
+
+        it("audits a refused move into the actor's household as a self-grant refusal", async () => {
+            const res = await POST(moveReq(testParticipantId, { householdId: testAdminHouseholdId }), { params: Promise.resolve({ id: String(testParticipantId) }) });
+            expect(res.status).toBe(403);
+            const row = await prisma.auditLog.findFirst({
+                where: { actorId: testAdminId, tableName: SELF_GRANT_REFUSAL_TABLE, affectedEntityId: testAdminHouseholdId },
+                orderBy: { id: 'desc' },
+            });
+            expect(auditJson(row?.newData).reason).toBe('own_household');
+        });
+
+        it('refuses moving a merged-away record -> 409, unchanged', async () => {
+            const keeper = await prisma.person.create({
+                data: { email: 'keeper-household-api-test@example.com', name: 'Subject Test', household: { create: { name: "Test HH" } } }
+            });
+            const merged = await prisma.person.update({ where: { id: testParticipantId }, data: { mergedIntoId: keeper.id } });
+            const res = await POST(moveReq(merged.id, { householdId: testHouseholdId }), { params: Promise.resolve({ id: String(merged.id) }) });
+            expect(res.status).toBe(409);
+            const after = await prisma.person.findUnique({ where: { id: merged.id }, select: { householdId: true } });
+            expect(after?.householdId).toBe(merged.householdId);
         });
 
         it('refuses moving yourself -> 403', async () => {

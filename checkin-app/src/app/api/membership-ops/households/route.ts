@@ -10,6 +10,7 @@ import { PaymentError } from "@/lib/membership/payment";
 import { grantCurrentYear, refuseGrantIfDenied } from "@/lib/membership/grant";
 import { ensureHouseholdMembership, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { personActor } from "@/lib/auditActor";
+import { lockBoardRoles } from "@/lib/roles";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 
@@ -266,26 +267,33 @@ export const POST = withAuth(
             // every member of the household (enforced in the auth layer). Restore is "undeny":
             // DENIED → NONE only.
             if (typeof deny === "boolean") {
-                if (deny) {
-                    // Two separate legal actions → two separate software actions: a household
-                    // containing a board member cannot be denied. Remove the board role first.
-                    // Enforced server-side; the UI's disabled button is only a courtesy.
-                    const boardMemberInHousehold = await prisma.person.findFirst({
-                        where: { householdId, isBoardMember: true, ...LIVE_PERSON },
-                        select: { id: true }
-                    });
-                    if (boardMemberInHousehold) {
-                        return apiError("This household includes a board member. Remove the board role before denying membership.", 409);
+                const outcome = await prisma.$transaction(async (tx) => {
+                    if (deny) {
+                        // Two separate legal actions → two separate software actions: a household
+                        // containing a board member cannot be denied. Remove the board role first.
+                        // Enforced server-side; the UI's disabled button is only a courtesy. Probed
+                        // under the board-role lock so a BOARD grant landing at the same moment is
+                        // either seen here or refused by setRoleFlag's DENIED check.
+                        await lockBoardRoles(tx);
+                        const boardMemberInHousehold = await tx.person.findFirst({
+                            where: { householdId, isBoardMember: true, ...LIVE_PERSON },
+                            select: { id: true }
+                        });
+                        if (boardMemberInHousehold) return "boardMember" as const;
                     }
+                    const membership = await ensureHouseholdMembership(tx, householdId);
+                    const applied = await setHouseholdStatus(tx, membership.id, deny
+                        ? { from: ["NONE", "ACTIVE", "REVOKED"], to: "DENIED", actor, reason: trimmedReason || "board deny" }
+                        : { from: ["DENIED"], to: "NONE", actor, reason: trimmedReason || "board restore" });
+                    return applied ? membership.id : "notApplied" as const;
+                });
+                if (outcome === "boardMember") {
+                    return apiError("This household includes a board member. Remove the board role before denying membership.", 409);
                 }
-                const membership = await ensureHouseholdMembership(prisma, householdId);
-                const applied = await setHouseholdStatus(prisma, membership.id, deny
-                    ? { from: ["NONE", "ACTIVE", "REVOKED"], to: "DENIED", actor, reason: trimmedReason || "board deny" }
-                    : { from: ["DENIED"], to: "NONE", actor, reason: trimmedReason || "board restore" });
-                if (!applied) {
+                if (outcome === "notApplied") {
                     return apiError(deny ? "This household is already denied." : "Only a denied household can be restored.", 409);
                 }
-                return NextResponse.json({ success: true, membership: await prisma.orgMembership.findUnique({ where: { id: membership.id } }) });
+                return NextResponse.json({ success: true, membership: await prisma.orgMembership.findUnique({ where: { id: outcome } }) });
             }
 
             // Grants pay an application (money only); neither sets the household's status.

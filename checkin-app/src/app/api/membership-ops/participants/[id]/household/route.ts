@@ -5,7 +5,12 @@ import { logBackendError, logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadYouthError } from "@/lib/household/leads";
-import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
+import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { LIVE_PERSON } from "@/lib/person/filters";
+
+/** The person was merged away between the pre-check and the write. */
+class MergedPersonError extends Error {}
+const MERGED_PERSON_MESSAGE = "This person has been merged into another record and cannot be moved.";
 
 export const POST = withAuth<{ params: Promise<{ id: string }> }>(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -32,6 +37,9 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
         if (!participant) {
             return apiError("Participant not found", 404);
         }
+        if (participant.mergedIntoId != null) {
+            return apiError(MERGED_PERSON_MESSAGE, 409);
+        }
 
         // Validate the destination before the write transaction below.
         const requestedHouseholdId = createNew ? null : parseInt(householdId);
@@ -48,9 +56,12 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
 
         // Moving someone out of or into the actor's own household would let a role be
         // granted around the own-household rule in lib/roles.ts, so neither end may be it.
-        const actorHouseholdId = await resolveActorHouseholdId(prisma, auth.user.id);
-        if (actorHouseholdId === null) return apiError("Forbidden", 403);
-        if (sharesHousehold(actorHouseholdId, participant.householdId) || sharesHousehold(actorHouseholdId, requestedHouseholdId)) {
+        // Each refusal is audited, and an actor whose household can't be resolved is refused.
+        const attempt = { table: "Person" as const, attempted: { householdId: requestedHouseholdId, createNew: Boolean(createNew) } };
+        if (
+            await refuseSelfGrant(prisma, auth.user.id, { personId: participantId, householdId: participant.householdId }, attempt)
+            || (requestedHouseholdId !== null && await refuseSelfGrant(prisma, auth.user.id, { householdId: requestedHouseholdId }, attempt))
+        ) {
             return apiError("You cannot move someone out of or into your own household — someone outside your household must.", 403);
         }
 
@@ -70,14 +81,17 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
                 data: { name: `${participant.name || 'User'}'s Household` },
             })).id;
 
-            const updated = await tx.person.update({
-                where: { id: participantId },
+            // Conditional on the person still being live, so a merge that lands after the
+            // pre-check can't have its tombstone moved.
+            const { count } = await tx.person.updateMany({
+                where: { id: participantId, ...LIVE_PERSON },
                 data: {
                     householdId: targetHouseholdId,
                     ...(participant.householdId !== targetHouseholdId ? { isHouseholdLead: false } : {}),
                 },
-                include: { household: true }
             });
+            if (count !== 1) throw new MergedPersonError();
+            const updated = await tx.person.findUniqueOrThrow({ where: { id: participantId }, include: { household: true } });
 
             if (!createNew) return { updatedParticipant: updated, targetHouseholdId };
 
@@ -106,6 +120,9 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
 
         return NextResponse.json({ success: true, participant: updatedParticipant });
     } catch (error) {
+        if (error instanceof MergedPersonError) {
+            return apiError(MERGED_PERSON_MESSAGE, 409);
+        }
         if (error instanceof HouseholdLeadYouthError) {
             return apiError("A youth cannot lead a household, so they cannot be given one of their own. Assign them to an existing household instead.", 400);
         }

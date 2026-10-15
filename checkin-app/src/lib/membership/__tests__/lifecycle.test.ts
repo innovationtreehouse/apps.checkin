@@ -71,7 +71,7 @@ describe('awaitingBgReview', () => {
         }
     });
 
-    test('encodes review.ts:75 exactly', () => {
+    test('encodes awaitingBgReview exactly', () => {
         // cleared ⇒ never awaiting, regardless of status
         expect(awaitingBgReview.has({ status: 'PENDING_BG_REVIEW', bgConsentAt: true, bgClearedAt: true })).toBe(false);
         // review states: awaiting whenever not cleared, consent irrelevant

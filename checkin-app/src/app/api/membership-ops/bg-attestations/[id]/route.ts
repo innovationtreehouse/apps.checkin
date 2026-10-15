@@ -49,7 +49,7 @@ export const DELETE = withAuth<{ params: Promise<{ id: string }> }>(
                 const attestation = await tx.backgroundCheckAttestation.findUnique({ where: { id } });
                 if (!attestation) throw new NotFoundError();
 
-                // FOR UPDATE per review.ts:513's contract: without it a concurrent
+                // FOR UPDATE per attest()'s contract: without it a concurrent
                 // attest()/overrideBlocked() attestation-set mutation on the same
                 // process could interleave with this delete (e.g. a second APPROVE
                 // clearing the check off a row we're mid-removing).
