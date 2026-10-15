@@ -337,4 +337,76 @@ describe('close as one recorded event (real DB)', () => {
 
         expect((await reload(later)).departedAt).toBeNull();
     });
+
+    describe('lost replies, late stamps and races', () => {
+        const v7 = { protocolVersion: 7 };
+
+        it('a held one-badge close whose reply was lost closes on the resend, flagged', async () => {
+            await open(k, at(2 * HOUR));
+            const rosterAsOf = at(5 * 60_000).toISOString();
+            const mv = await open(m, at(2 * 60_000));
+            const cid = `${TAG}-held-lost`;
+
+            const held = await scan({ participantId: k.id, intent: 'OUT', close: 'alone', rosterAsOf, clientEventId: cid, ...v7 });
+            expect(await held.json()).toMatchObject({ facilityClosed: false });
+            expect(await closesSince()).toHaveLength(0);
+
+            const resent = await scan({ participantId: k.id, intent: 'OUT', close: 'alone', rosterAsOf, clientEventId: cid, scannedAt: new Date().toISOString(), replay: true, ...v7 });
+            expect(await resent.json()).toMatchObject({ facilityClosed: true });
+            expect((await reload(mv)).departedVia).toBe('FACILITY_CLOSE');
+            const [close] = await closesSince();
+            expect(close.clientEventId).toBe(cid);
+            expect((await prisma.rawBadgeLog.findUniqueOrThrow({ where: { clientEventId: cid } })).reviewReason).toBe('close_stale_roster');
+        });
+
+        it('a queued OUT behind an arrival the server stamped later departs that visit, flagged', async () => {
+            await open(k2, at(3 * HOUR), { departedAt: at(2 * HOUR), departedVia: 'SCANNER' });
+            const outAt = at(60_000);
+            // The live IN's reply was lost; the server stamped it after the OUT's kiosk time.
+            await scan({ participantId: k2.id, intent: 'IN', clientEventId: `${TAG}-live-in`, ...v7 });
+            const kv = await prisma.visit.findFirstOrThrow({ where: { personId: k2.id, departedAt: null } });
+
+            const res = await scan({ participantId: k2.id, clientEventId: `${TAG}-late-in`, scannedAt: outAt.toISOString(), replay: true, intent: 'OUT', ...v7 });
+            expect(await res.json()).toMatchObject({ type: 'checkout' });
+
+            const v = await reload(kv);
+            expect(v.departedAt?.getTime()).toBe(kv.arrivedAt.getTime());
+            expect(v.departedVia).toBe('SCANNER');
+            expect((await prisma.rawBadgeLog.findUniqueOrThrow({ where: { clientEventId: `${TAG}-late-in` } })).reviewReason).toBe('out_of_order');
+        });
+
+        it.each([
+            ['with a displayed intent', { intent: 'IN' }],
+            ['from a kiosk that sends none', {}],
+        ])('a stalled close does not sweep a live arrival made after it was recorded, inside the skew (%s)', async (_, body) => {
+            const close = await prisma.facilityClose.create({
+                data: { closedAt: at(30_000), createdAt: at(30_000), closedById: k.id, via: 'KIOSK', executedAt: null },
+            });
+
+            await scan({ participantId: m.id, ...body });
+
+            expect((await prisma.facilityClose.findUniqueOrThrow({ where: { id: close.id } })).executedAt).not.toBeNull();
+            expect((await prisma.visit.findFirstOrThrow({ where: { personId: m.id } })).departedAt).toBeNull();
+        });
+
+        it('a stalled close still sweeps an arrival recorded before it with a kiosk stamp inside the skew', async () => {
+            const mv = await open(m, at(10_000));
+            await prisma.facilityClose.create({ data: { closedAt: at(30_000), closedById: k.id, via: 'KIOSK', executedAt: null } });
+
+            await executePendingCloses();
+
+            expect((await reload(mv)).departedVia).toBe('FACILITY_CLOSE');
+        });
+
+        it('a keyholder re-entering within the skew of their own offline close opens a visit', async () => {
+            const t = at(5 * 60_000);
+            const back = new Date(t.getTime() + 60_000);
+            await open(k, at(HOUR));
+            expect(await (await replay('own-close', t, { close: 'confirmed', ...v7 })).json()).toMatchObject({ facilityClosed: true });
+
+            const res = await scan({ participantId: k.id, clientEventId: `${TAG}-own-back`, scannedAt: back.toISOString(), replay: true, intent: 'IN', ...v7 });
+            expect(await res.json()).toMatchObject({ type: 'checkin' });
+            expect((await prisma.visit.findFirstOrThrow({ where: { personId: k.id, arrivedAt: back } })).departedAt).toBeNull();
+        });
+    });
 });

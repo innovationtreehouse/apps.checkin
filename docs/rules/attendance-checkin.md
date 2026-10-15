@@ -117,7 +117,9 @@ Things the app takes as true because they are handled outside it.
   the roster, a live one-badge close does not close: the keyholder is checked
   out, told who checked in and when, and the same badge again closes. A close
   that reaches the server late is applied as the keyholder meant, and raised for
-  review naming whoever checked in after the kiosk's roster.  [Decision]
+  review naming whoever checked in after the kiosk's roster. A held close whose
+  reply never reached the kiosk is resent from its queue, and that resend is such
+  a late close: applied and raised for review.  [Decision]
 
 - A web close is the keyholder confirming in a dialog that shows who is still
   recorded inside. It closes at the moment of the confirm; times are corrected
@@ -328,15 +330,21 @@ hours at a time — is a normal operating mode here, not an incident.
   visit that began after it. A departure ends that visit: an open one checks out
   at the scan time, and a machine departure — the nightly sweep's, or a
   facility close's — stamped after the scan is pulled back to it. A visit never
-  departs before it arrived. An arrival behind
-  later activity, or a departure against one a person recorded, would rewrite
+  departs before it arrived. A departure with no visit open at its own time ends
+  the open visit only when a live badge check-in began it: the kiosk queued the
+  departure behind that check-in, which the server stamped later (its reply was
+  lost, or the kiosk clock runs behind). It departs no earlier than the visit
+  began, and is flagged. Any other later visit, an arrival behind later
+  activity, or a departure against one a person recorded after it would rewrite
   the later record, so it is held for the reviewer.  [Decision]
 
 - A close fences what came before it. A queued check-in scanned before a close
   that reached the server first is recorded as a visit from its scan time,
   departing at that close, as the close would have departed it, and is flagged.
   A check-in scanned after the close, beyond the two-minute clock allowance,
-  opens a visit as usual. The same person's queued check-out from before the
+  opens a visit as usual; a close from the kiosk's own queue was stamped by the
+  same clock, so it gets no allowance. The fence is read at the moment the
+  check-in is written, so a close that commits while it waits still fences it. The same person's queued check-out from before the
   close then pulls that departure back to their own scan.  [Decision]
 
 - A close queued at the kiosk is applied whenever it reaches the server, however
@@ -349,7 +357,8 @@ hours at a time — is a normal operating mode here, not an incident.
   flagged as having stepped. Someone who arrived more than two minutes after the
   keyholder's scan is left as they are: they badged in after lock-up. An arrival
   within those two minutes is the kiosk's clock disagreeing with the server's,
-  and departs with everyone else. A machine departure stamped after the close —
+  and departs with everyone else, unless the server recorded the arrival after
+  it recorded the close: that arrival came after the close. A machine departure stamped after the close —
   the nightly sweep's, or a later close's — is pulled back to the keyholder's
   time, so closes apply in the order they were made, whatever order they arrive
   in; a departure a person has since corrected is not moved. A plain keyholder
