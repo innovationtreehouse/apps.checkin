@@ -22,12 +22,20 @@ jest.mock('../logger', () => ({
 }));
 
 import { sendEmail } from '../email';
-import { runPaced } from '../email';
+import { maskRecipient, runPaced } from '../email';
 
 // process.env.NODE_ENV is typed read-only; tests need to vary it at runtime
 const setNodeEnv = (value: string | undefined) => {
     Object.defineProperty(process.env, 'NODE_ENV', { value, configurable: true });
 };
+
+describe('maskRecipient', () => {
+    it('keeps the first character and domain of each address', () => {
+        expect(maskRecipient('jane@example.org')).toBe('j***@example.org');
+        expect(maskRecipient('a@x.test, bob@y.test')).toBe('a***@x.test, b***@y.test');
+        expect(maskRecipient('not-an-address')).toBe('***');
+    });
+});
 
 describe('sendEmail no-key logging + capture', () => {
     let originalConsoleLog: (...data: unknown[]) => void;
@@ -251,7 +259,7 @@ describe('sendEmail send-failure contract (Resend configured)', () => {
         const [source, error, context] = logIntegrationErrorMock.mock.calls[0];
         expect(source).toBe('email');
         expect(String(error)).toContain('No From address configured');
-        expect(context).toEqual({ to: 'to@org.test', subject: 'Subject' });
+        expect(context).toEqual({ to: 't***@org.test', subject: 'Subject' });
         expect(JSON.stringify(context)).not.toContain(html);
     });
 
@@ -280,7 +288,7 @@ describe('sendEmail send-failure contract (Resend configured)', () => {
         const [source, error, context] = logIntegrationErrorMock.mock.calls[0];
         expect(source).toBe('email');
         expect(String(error)).toContain('bad recipient');
-        expect(context).toEqual({ to: 'bounced@test.com', subject: 'Subject' });
+        expect(context).toEqual({ to: 'b***@test.com', subject: 'Subject' });
         expect(JSON.stringify(context)).not.toContain(html);
     });
 
@@ -296,7 +304,7 @@ describe('sendEmail send-failure contract (Resend configured)', () => {
         const [source, error, context] = logIntegrationErrorMock.mock.calls[0];
         expect(source).toBe('email');
         expect((error as Error).message).toBe('network down');
-        expect(context).toEqual({ to: 'bounced@test.com', subject: 'Subject' });
+        expect(context).toEqual({ to: 'b***@test.com', subject: 'Subject' });
         expect(JSON.stringify(context)).not.toContain(html);
     });
 });

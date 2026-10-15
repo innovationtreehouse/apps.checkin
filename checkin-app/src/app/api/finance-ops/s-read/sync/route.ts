@@ -4,6 +4,8 @@ import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { config } from "@/lib/config";
+import prisma from "@/lib/prisma";
+import { personActor } from "@/lib/auditActor";
 import { isConfigured, latestSyncRun } from "@/lib/shopifyRead/client";
 
 /**
@@ -33,8 +35,9 @@ import { isConfigured, latestSyncRun } from "@/lib/shopifyRead/client";
  * concurrency = 1 plus the per-store `withSyncRun` lock means a second run while one
  * is in flight is skipped, not corrupted.
  *
- * No AuditLog row: it takes a non-null tableName + affectedEntityId and this touches
- * no checkin entity. The actor is logged here, and s-read stamps its own `sync_run`.
+ * The trigger is audited before the invoke, as a SREAD_SYNC row with no entity
+ * (affectedEntityId 0), so no sync starts without an actor on record. s-read stamps
+ * its own `sync_run`.
  *
  * GET on the same path reports the latest run's status — see below.
  */
@@ -51,6 +54,15 @@ export const POST = withAuth(
         }
 
         try {
+            await prisma.auditLog.create({
+                data: {
+                    ...personActor(auth.user.id),
+                    action: "CREATE",
+                    tableName: "SREAD_SYNC",
+                    affectedEntityId: 0,
+                    newData: { mode: "incremental" },
+                },
+            });
             const client = new LambdaClient({ region: config.awsRegion() });
             await client.send(
                 new InvokeCommand({
