@@ -4,6 +4,7 @@
  * (stamped with the scan's own event time, only for a toggle that happened).
  */
 import prisma from "@/lib/prisma";
+import { Prisma } from "@/generated/prisma/client";
 import { executePendingCloses, notifyScanOutcome } from "@/lib/scan-service";
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { logBackendError } from "@/lib/logger";
@@ -38,8 +39,8 @@ describe("executePendingCloses", () => {
         const update = jest.fn(async () => ({}));
         tx.mockImplementation(async (cb: (t: unknown) => Promise<unknown>) => cb({
             $executeRaw: jest.fn(async () => 0),
-            $queryRaw: jest.fn(async (_s: TemplateStringsArray, ...values: unknown[]) => {
-                sweepTimes.push(values[0]);
+            $queryRaw: jest.fn(async (s: TemplateStringsArray, ...values: unknown[]) => {
+                sweepTimes.push(Prisma.sql(s, ...values).values[0]);
                 return [];
             }),
             facilityClose: {
@@ -96,6 +97,41 @@ describe("executePendingCloses", () => {
         await expect(executePendingCloses()).resolves.toBeUndefined();
 
         expect(logBackendError).toHaveBeenCalledWith(err, "facility-close");
+    });
+
+    it("a failing close does not hold up the closes after it, and is not retried on every scan", async () => {
+        findMany.mockResolvedValue([{ id: 11 }, { id: 12 }]);
+        const ran: number[] = [];
+        tx.mockImplementation(async (cb: (t: unknown) => Promise<unknown>) => cb({
+            $executeRaw: jest.fn(async () => 0),
+            $queryRaw: jest.fn(async () => []),
+            facilityClose: {
+                findFirst: jest.fn(async ({ where }: { where: { id: number } }) => {
+                    if (where.id === 11) throw new Error("lock timeout");
+                    ran.push(where.id);
+                    return { id: where.id, closedAt: new Date(), closedById: 1 };
+                }),
+                update: jest.fn(async () => ({})),
+            },
+        }));
+
+        await executePendingCloses();
+        expect(ran).toContain(12);
+        expect(logBackendError).toHaveBeenCalledTimes(1);
+
+        tx.mockClear();
+        findMany.mockResolvedValue([{ id: 11 }]);
+        await executePendingCloses();
+        expect(tx).not.toHaveBeenCalled();
+    });
+
+    it("gives the close transaction an explicit timeout", async () => {
+        findMany.mockResolvedValue([{ id: 13 }]);
+        tx.mockResolvedValue(false);
+
+        await executePendingCloses();
+
+        expect(tx).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ timeout: expect.any(Number) }));
     });
 });
 

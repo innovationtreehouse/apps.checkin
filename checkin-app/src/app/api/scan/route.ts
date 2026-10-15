@@ -1,9 +1,7 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { apiError, apiJson } from "@/lib/api-response";
-import { processCheckin, processCheckout, processCloseRequest, executePendingCloses, type CloseKind, type LegacyKiosk, closeActor, lastKeyholderGuard, finishCloseGuard, recordWebClose, type CloseGuardResult, notifyScanOutcome, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS, LATE_CLOSE_SKEW_MS } from "@/lib/scan-service";
-import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
-import { MAX_VISIT_MS } from "@/lib/visitTimes";
+import { processCheckin, processCheckout, processCloseRequest, executePendingCloses, type CloseKind, type LegacyKiosk, closeActor, lastKeyholderGuard, finishCloseGuard, recordWebClose, type CloseGuardResult, notifyScanOutcome, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/scan-service";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
 import { applyPresenceIntent, flagForReview } from "@/lib/presence/project";
 import { config } from "@/lib/config";
@@ -481,8 +479,12 @@ export const POST = withKiosk(
                     // never touches a visit that began after it. An OUT departs that
                     // visit: an open one checks out normally, and a machine
                     // departure (the nightly sweep, or a facility close) stamped
-                    // after the scan is pulled back to it. An IN,
-                    // or an OUT against a departure someone recorded, would
+                    // after the scan is pulled back to it. An OUT with no visit
+                    // open at its time follows the arrival the kiosk queued it
+                    // behind, which the server stamped later (a live IN whose
+                    // reply was lost, or a kiosk clock behind the server's), so it
+                    // departs the open visit, no earlier than it began. An IN, or
+                    // an OUT against a departure someone recorded after it, would
                     // contradict the later record, so it is held for the reviewer.
                     const at = await tx.visit.findFirst({
                         where: { personId: participant.id, deletedAt: null, arrivedAt: { lte: eventTime } },
@@ -494,7 +496,10 @@ export const POST = withKiosk(
                         // ponytail: pulls back only the segment holding the scan; later
                         // event-chunk segments of the same stay keep the cron stamp (flagged).
                         pullBackVisitId = at.id;
-                    } else if (!(intent === "OUT" && at?.departedAt === null)) {
+                    } else if (intent === "OUT" && at?.departedAt === null) {
+                        // Departs the visit open at its time.
+                    } else if (!(intent === "OUT" && (!at?.departedAt || at.departedAt <= eventTime)
+                        && await tx.visit.count({ where: { personId: participant.id, departedAt: null, deletedAt: null } }) > 0)) {
                         hold = true;
                     }
                 }
@@ -547,51 +552,6 @@ export const POST = withKiosk(
                 return apiJson({ type: 'checkout', message: 'Checked out successfully', facilityClosed: false });
             }
 
-            // A close fences what came before it: an arrival scanned before a close
-            // that reached the server first departs at that close, as the close's
-            // sweep would have departed it, and is flagged. One scanned after the
-            // close (beyond the clock-skew allowance) opens a visit as usual.
-            if (isReplay && trustsReplays && intent === "IN" && clientEventId) {
-                const fence = await tx.facilityClose.findFirst({
-                    where: { closedAt: { gte: new Date(eventTime.getTime() - LATE_CLOSE_SKEW_MS) } },
-                    orderBy: { closedAt: "asc" },
-                    select: { id: true, closedAt: true },
-                });
-                const open = fence && await tx.visit.count({ where: { personId: participant.id, departedAt: null, deletedAt: null } });
-                if (fence && !open) {
-                    const departedAt = new Date(Math.min(
-                        Math.max(fence.closedAt.getTime(), eventTime.getTime()),
-                        eventTime.getTime() + MAX_VISIT_MS,
-                    ));
-                    const visit = await tx.visit.create({
-                        data: {
-                            personId: participant.id,
-                            arrivedAt: eventTime,
-                            arrivedVia: "SCANNER",
-                            departedAt,
-                            departedVia: "FACILITY_CLOSE",
-                            facilityCloseId: fence.id,
-                            associatedEventId: await findAssociatedEventAt(participant.id, eventTime, tx),
-                        },
-                    });
-                    await tx.rawBadgeLog.update({
-                        where: { clientEventId },
-                        data: { reviewReason: "closed_before_delivery" },
-                    });
-                    await appendPresenceEvent(tx, {
-                        personId: participant.id,
-                        occurredAt: eventTime,
-                        direction: "IN",
-                        source: "SCANNER",
-                        clientEventId,
-                        classification: PresenceClass.PROJECTED,
-                        clockSuspect,
-                        visitId: visit.id,
-                    });
-                    return apiJson({ type: 'checkin', message: 'Checked in; departed at the close that followed', visit });
-                }
-            }
-
             // Live path. Direction: the displayed intent if the kiosk sent one,
             // else the live-state toggle (legacy callers).
             const activeVisit = await tx.visit.findFirst({
@@ -632,6 +592,8 @@ export const POST = withKiosk(
                     clockSuspect,
                     webClose: web.guard?.facilityClosed ?? false,
                     legacyKiosk,
+                    // A close fences what came before it (processCheckin).
+                    fenceClientEventId: isReplay && trustsReplays ? clientEventId : null,
                 }));
             }
 
@@ -643,11 +605,13 @@ export const POST = withKiosk(
             // toggle is PROJECTED; review parks keep their own class; warnings
             // (visit still open) stay unclassified.
             let classification: string | null = null;
+            let visitId: number | null = null;
             let parkedDoubleIn = false;
             try {
-                const body = (await res.clone().json()) as { type?: string; reason?: string };
+                const body = (await res.clone().json()) as { type?: string; reason?: string; visit?: { id?: number } };
                 if (body.type === "checkin" || body.type === "checkout") {
                     classification = PresenceClass.PROJECTED;
+                    if (body.type === "checkin" && typeof body.visit?.id === "number") visitId = body.visit.id;
                 } else if (body.type === "parked") {
                     classification = body.reason ? parkReasonToClass(body.reason) : null;
                     parkedDoubleIn = body.reason === "double_in";
@@ -665,6 +629,7 @@ export const POST = withKiosk(
                 source: "SCANNER",
                 clientEventId,
                 classification,
+                visitId,
             });
             return recordSessionClose(tx, res);
         }, {

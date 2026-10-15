@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { apiError, apiJson } from "@/lib/api-response";
-import type { FacilityCloseVia, Person } from "@/generated/prisma/client";
+import { Prisma, type FacilityCloseVia, type Person } from "@/generated/prisma/client";
 import type { DbClient, TxClient } from "@/lib/db-client";
 import { lockFacility, withFacilityLock } from "@/lib/facilityLock";
 import { KEYHOLDER_IN_BUILDING, LIVE_KEYHOLDER, LIVE_VISIT } from "@/lib/visit/filters";
@@ -72,6 +72,8 @@ export async function processCheckin(
     db: DbClient = prisma,
     /** A replay's scan time; absent for a live check-in. */
     visitTime?: Date,
+    /** A trusted replay's event id: the arrival is fenced by any close after its scan time. */
+    fenceClientEventId?: string | null,
 ) {
     // Facility lock serializes the open-state read and the create against the
     // last-keyholder sweep: a check-in lands wholly before a close (and is swept)
@@ -87,6 +89,11 @@ export async function processCheckin(
     });
     if (openVisit) {
         return apiJson({ type: "parked", reason: "double_in", message: "Recorded for review." });
+    }
+
+    if (visitTime && fenceClientEventId) {
+        const fenced = await fenceReplayedArrival(tx, participant.id, visitTime, fenceClientEventId);
+        if (fenced) return fenced;
     }
 
     // A badge at the kiosk always checks in — someone scanning inside the
@@ -136,6 +143,44 @@ export async function processCheckin(
         signedRequest: authType === "kiosk",
     });
     });
+}
+
+/**
+ * A replayed arrival scanned before a close that reached the server first
+ * departs at that close, as the close's sweep would have departed it, and is
+ * flagged. Read under the facility lock, so every close committed before this
+ * check-in is seen; a close recorded after it sweeps it instead. A close from
+ * the kiosk's own queue was stamped by the same clock as the arrival, so it
+ * gets no clock-skew allowance.
+ */
+async function fenceReplayedArrival(tx: TxClient, personId: number, arrivedAt: Date, clientEventId: string) {
+    const fence = await tx.facilityClose.findFirst({
+        where: {
+            OR: [
+                { closedAt: { gte: arrivedAt } },
+                { closedAt: { gte: new Date(arrivedAt.getTime() - LATE_CLOSE_SKEW_MS) }, via: { not: "KIOSK_OFFLINE" } },
+            ],
+        },
+        orderBy: { closedAt: "asc" },
+        select: { id: true, closedAt: true },
+    });
+    if (!fence) return null;
+    const visit = await tx.visit.create({
+        data: {
+            personId,
+            arrivedAt,
+            arrivedVia: "SCANNER",
+            departedAt: new Date(Math.min(
+                Math.max(fence.closedAt.getTime(), arrivedAt.getTime()),
+                arrivedAt.getTime() + MAX_VISIT_MS,
+            )),
+            departedVia: "FACILITY_CLOSE",
+            facilityCloseId: fence.id,
+            associatedEventId: await findAssociatedEventAt(personId, arrivedAt, tx),
+        },
+    });
+    await tx.rawBadgeLog.updateMany({ where: { clientEventId }, data: { reviewReason: "closed_before_delivery" } });
+    return apiJson({ type: "checkin" as const, message: "Checked in; departed at the close that followed", visit });
 }
 
 /** A kiosk older than the close-request generation sends no close request, so
@@ -318,6 +363,13 @@ export async function processCloseRequest(
     const visit = departed.length > 0 ? departed[departed.length - 1] : null;
 
     if (hold) {
+        if (clientEventId) {
+            // A held close is not the close, so it frees its event id: a resend
+            // (the kiosk lost this reply) applies as a late close, flagged.
+            const held = { clientEventId: `${clientEventId}:held` };
+            await db.rawBadgeLog.updateMany({ where: { clientEventId }, data: held });
+            await db.presenceEvent.updateMany({ where: { clientEventId }, data: held });
+        }
         const othersInside = await db.visit.count({ where: { departedAt: null, deletedAt: null, personId: { not: participant.id } } });
         if (visit) await auditKioskLeave(db, participant.id, visit.id, isReplay, othersInside);
         const timeZone = await resolveDisplayTimezone();
@@ -516,6 +568,36 @@ export async function logCloseDepartures(
     });
 }
 
+/** The close's moment as `t.close_at`, and when the server recorded it as
+ *  `t.recorded_at`. The columns are timestamp-without-zone holding UTC, so the
+ *  instant is converted AT TIME ZONE 'UTC' or the comparison is off by the
+ *  server's offset. */
+const closeMoment = (id: number, closedAt: Date) => Prisma.sql`t AS (
+    SELECT (${closedAt.toISOString()}::timestamptz AT TIME ZONE 'UTC') AS close_at, fc."createdAt" AS recorded_at
+    FROM "FacilityClose" fc WHERE fc.id = ${id}
+)`;
+
+/** The visits `v` a close at `t` departs: open, or machine-departed after it,
+ *  and begun by then. Tombstoned visits are excluded: closing one would rewrite
+ *  a record the member chose to erase.
+ *
+ *  An arrival up to {@link LATE_CLOSE_SKEW_MS} after the close is a kiosk clock
+ *  disagreeing with the close's, so it departs too, unless the server recorded
+ *  it after it recorded the close: that arrival was stamped by the server (a
+ *  live badge, a web check-in), or was fenced when it landed, and came after
+ *  the close. Further past the close is someone who came in after lock-up. */
+const closeSweeps = Prisma.sql`v."deletedAt" IS NULL
+    AND (v."arrivedAt" <= t.close_at
+         OR (v."arrivedAt" <= t.close_at + ${LATE_CLOSE_SKEW_MS}::double precision * interval '1 millisecond'
+             AND (v."arrivedVia" IS DISTINCT FROM 'TYPED'::"VisitSource" OR v."arrivedAt" <= t.recorded_at)
+             AND NOT EXISTS (
+                 SELECT 1 FROM "PresenceEvent" pe
+                 WHERE pe."personId" = v."personId" AND pe."visitId" = v.id
+                   AND pe.direction = 'IN'::"PresenceDirection" AND pe."createdAt" > t.recorded_at)))
+    AND (v."departedAt" IS NULL
+         OR (v."departedVia" IN ('AUTO_CLOSE'::"VisitSource", 'FACILITY_CLOSE'::"VisitSource")
+             AND v."departedAt" > t.close_at))`;
+
 /** Depart everyone who was in the building at the close's `closedAt` — the
  *  moment the keyholder closed. Live that is server now; a close replayed late
  *  carries the keyholder's own scan time.
@@ -524,10 +606,8 @@ export async function logCloseDepartures(
  *  is capped at the visit's own `arrivedAt + MAX_VISIT_MS`, and `updateMany`
  *  can only set one constant for every row it touches.
  *
- *  Someone who arrived more than {@link LATE_CLOSE_SKEW_MS} after the close
- *  badged in after lock-up and is left as they are — a close never ends a visit
- *  that began after it. An arrival inside the skew is the kiosk's clock
- *  disagreeing with the server's, so it departs too, no earlier than it arrived.
+ *  A close never ends a visit that began after it ({@link closeSweeps}); one
+ *  inside the clock-skew allowance departs no earlier than it arrived.
  *  A machine departure stamped after the close — the nightly cron's AUTO_CLOSE,
  *  or a later close's FACILITY_CLOSE — is pulled back to it: closes apply in
  *  close-time order, whatever order they reach the server. A departure a person
@@ -537,27 +617,15 @@ export async function logCloseDepartures(
  *  actually closed, so it is bounded by building hours — plausible, unlike the
  *  cron's midnight sweep. Where the cap bites the stamp is 24h after arrival
  *  instead; both are placeholders the member is meant to correct, and a
- *  placeholder inside the 24h rule beats an accurate record that breaks it.
- *
- *  The columns are timestamp-without-zone holding UTC, so the instant is
- *  converted AT TIME ZONE 'UTC' or the comparison is off by the server's offset. */
+ *  placeholder inside the 24h rule beats an accurate record that breaks it. */
 async function sweepForClose(db: DbClient, close: { id: number; closedAt: Date; closedById: number | null; via: FacilityCloseVia }) {
-    const closeAt = close.closedAt.toISOString();
-    // Tombstoned visits are excluded: closing one would rewrite a record the
-    // member chose to erase, and resurrect a machine departure if it is undone.
     // `old` locks each row before reading it, so the logged before-value is the
     // one this statement overwrites.
     const changes = await db.$queryRaw<DepartureChange[]>`
-        WITH t AS (
-            SELECT (${closeAt}::timestamptz AT TIME ZONE 'UTC') AS close_at
-        ), old AS (
+        WITH ${closeMoment(close.id, close.closedAt)}, old AS (
             SELECT v.id, v."departedAt", v."departedVia"
             FROM "Visit" v, t
-            WHERE v."deletedAt" IS NULL
-              AND v."arrivedAt" <= t.close_at + ${LATE_CLOSE_SKEW_MS}::double precision * interval '1 millisecond'
-              AND (v."departedAt" IS NULL
-                   OR (v."departedVia" IN ('AUTO_CLOSE'::"VisitSource", 'FACILITY_CLOSE'::"VisitSource")
-                       AND v."departedAt" > t.close_at))
+            WHERE ${closeSweeps}
             FOR UPDATE OF v
         )
         UPDATE "Visit" v
@@ -631,19 +699,12 @@ async function executeClose(id: number): Promise<boolean> {
     return prisma.$transaction(async (tx) => {
         const pending = await tx.facilityClose.findFirst({ where: { id, executedAt: null }, select: { closedAt: true } });
         if (!pending) return false;
-        const closeAt = pending.closedAt.toISOString();
         // A superset of sweepForClose's rows: a check-in that lands after this read
         // arrives after the close and is not swept.
         const people = await tx.$queryRaw<{ personId: number }[]>`
-            WITH t AS (
-                SELECT (${closeAt}::timestamptz AT TIME ZONE 'UTC') AS close_at
-            )
+            WITH ${closeMoment(id, pending.closedAt)}
             SELECT DISTINCT v."personId" FROM "Visit" v, t
-            WHERE v."deletedAt" IS NULL
-              AND v."arrivedAt" <= t.close_at + ${LATE_CLOSE_SKEW_MS}::double precision * interval '1 millisecond'
-              AND (v."departedAt" IS NULL
-                   OR (v."departedVia" IN ('AUTO_CLOSE'::"VisitSource", 'FACILITY_CLOSE'::"VisitSource")
-                       AND v."departedAt" > t.close_at))
+            WHERE ${closeSweeps}
             ORDER BY v."personId"`;
         for (const { personId } of people) await tx.$executeRaw`SELECT pg_advisory_xact_lock(${personId})`;
         await lockFacility(tx);
@@ -655,32 +716,48 @@ async function executeClose(id: number): Promise<boolean> {
         await sweepForClose(tx, close);
         await tx.facilityClose.update({ where: { id }, data: { executedAt: new Date() } });
         return true;
-    });
+    }, { maxWait: 5_000, timeout: 15_000 });
 }
+
+/** How long a close whose sweep failed waits before this instance retries it,
+ *  so a close that keeps failing costs a scan one attempt a minute, not one each. */
+const CLOSE_RETRY_BACKOFF_MS = 60_000;
+const closeRetryAt = new Map<number, number>();
 
 /**
  * Carry out every recorded close that has not run, oldest close time first.
  * Called after every scan, after a web close and by the nightly cron, so a close
  * whose sweep was cut off (crash, lock timeout) runs at the next of those. Never
- * throws: the close is already durable, and the next re-drive retries it.
+ * throws: the close is already durable, and a later re-drive retries it. A
+ * failing close does not hold up the ones after it: closes apply in close-time
+ * order whatever order they run in ({@link sweepForClose}).
  */
 export async function executePendingCloses(): Promise<void> {
+    let ran = false;
     try {
         const pending = await prisma.facilityClose.findMany({
             where: { executedAt: null },
             orderBy: [{ closedAt: "asc" }, { id: "asc" }],
             select: { id: true },
         });
-        let ran = false;
-        for (const { id } of pending) ran = (await executeClose(id)) || ran;
-        if (!ran) return;
-        // After the sweep commits, so a concurrent kiosk GET cannot refill the
-        // cache from still-open rows (READ COMMITTED).
-        invalidateAttendanceCache();
-        kickPostEventEmails();
+        for (const { id } of pending) {
+            if ((closeRetryAt.get(id) ?? 0) > Date.now()) continue;
+            try {
+                ran = (await executeClose(id)) || ran;
+                closeRetryAt.delete(id);
+            } catch (err) {
+                closeRetryAt.set(id, Date.now() + CLOSE_RETRY_BACKOFF_MS);
+                await logBackendError(err, "facility-close");
+            }
+        }
     } catch (err) {
         await logBackendError(err, "facility-close");
     }
+    if (!ran) return;
+    // After the sweep commits, so a concurrent kiosk GET cannot refill the
+    // cache from still-open rows (READ COMMITTED).
+    invalidateAttendanceCache();
+    kickPostEventEmails();
 }
 
 /** Timing-safe force-close token compare: hash both sides to a fixed length so
