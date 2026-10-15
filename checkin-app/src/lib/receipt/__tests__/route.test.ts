@@ -13,10 +13,15 @@ class ForeignServiceError extends Error {
 }
 
 describe("mapServiceErrors", () => {
-  it("maps a ServiceError by name and status, whatever copy of the class threw it", async () => {
-    const err = await mapServiceErrors(() => Promise.reject(new ForeignServiceError(409, "conflict"))).catch((e: unknown) => e);
+  it.each([
+    [400, "validation"],
+    [403, "forbidden"],
+    [404, "not found"],
+    [409, "conflict"],
+  ])("maps a ServiceError(%i) by name and status, whatever copy of the class threw it", async (status, message) => {
+    const err = await mapServiceErrors(() => Promise.reject(new ForeignServiceError(status, message))).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiResponseError);
-    expect(err).toMatchObject({ status: 409, message: "conflict" });
+    expect(err).toMatchObject({ status, message });
   });
 
   it("leaves any other error to become an opaque 500", async () => {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { sendNotification } from "@/lib/notifications";
 import { lockProgramAndCheckCapacity, ProgramCapacityError, withdrawAndReleaseHold } from "@/lib/program/capacity";
 import { checkProgramAge, isKnownAdult } from "@/lib/programAge";
@@ -266,13 +267,6 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         return apiError("Failed to enroll participant", 500);
     }
 });
-
-// Prisma known-request errors carry a string `code`. Duck-typed so we don't
-// pull in the generated Prisma namespace just for one check.
-function isPrismaError(error: unknown, code: string): boolean {
-    return typeof error === 'object' && error !== null && 'code' in error
-        && (error as { code: unknown }).code === code;
-}
 
 async function isLeadOfParticipant(actorId: number, participantId: number): Promise<boolean> {
     const hh = await householdLeadship(actorId);

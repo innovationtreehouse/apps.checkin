@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { computeRecipientSnapshot, type Audience } from "@/lib/outreach/recipients";
@@ -91,7 +92,7 @@ export const POST = withAuth({ roles: ROLES }, async (req, auth) => {
         );
     } catch (e) {
         if (e instanceof ConcurrentSendError) return apiError("A send is already in progress.", 409);
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2034") {
+        if (isPrismaError(e, "P2034")) {
             return apiError("A send is already in progress.", 409);
         }
         throw e;
