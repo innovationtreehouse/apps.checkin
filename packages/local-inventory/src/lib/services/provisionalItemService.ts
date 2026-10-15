@@ -58,19 +58,37 @@ export function createProvisionalItemService({
         });
 
       if (!existingRow) {
+        // The real row is unlocked because it does not exist yet, so a first receipt on the
+        // real GTIN can insert it concurrently. Upserting on the (orgId, gtin13) index folds
+        // that receipt into the same row instead of colliding with it.
+        const provisionalQty = provisionalRow?.existingQuantity ?? 0;
+        let realQty = provisionalQty;
         if (provisionalRow) {
-          await tx.orgItem.update({
-            where: { orgGtin: { orgId, gtin13: provisionalGtin13 } },
-            data: { gtin13: realGtin13 },
-          });
+          ({ existingQuantity: realQty } = await tx.orgItem.upsert({
+            where: { orgGtin: { orgId, gtin13: realGtin13 } },
+            create: {
+              orgId, gtin13: realGtin13, existingQuantity: provisionalQty,
+              desiredQuantity: provisionalRow.desiredQuantity,
+              locationId: provisionalRow.locationId,
+              backstockLocationId: provisionalRow.backstockLocationId,
+            },
+            update: { existingQuantity: { increment: provisionalQty } },
+          }));
+          await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
         }
         await markResolved();
         await tx.inventoryLog.create({
-          data: {
-            orgId, userId: null, changedAt: now, changeType: "automatic",
-            gtin13: realGtin13, fieldChanged: "gtin13",
-            valueBefore: provisionalGtin13, valueAfter: realGtin13, receiptId: null,
-          },
+          data: realQty === provisionalQty
+            ? {
+              orgId, userId: null, changedAt: now, changeType: "automatic",
+              gtin13: realGtin13, fieldChanged: "gtin13",
+              valueBefore: provisionalGtin13, valueAfter: realGtin13, receiptId: null,
+            }
+            : {
+              orgId, userId: null, changedAt: now, changeType: "automatic",
+              gtin13: realGtin13, fieldChanged: "existingQuantity",
+              valueBefore: String(realQty - provisionalQty), valueAfter: String(realQty), receiptId: null,
+            },
         });
         await tx.provisionalItemLog.create({
           data: {
