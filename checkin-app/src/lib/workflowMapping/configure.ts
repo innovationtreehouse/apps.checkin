@@ -5,11 +5,12 @@
  * ids, and boot stays DB-free.
  *
  * Bound crossings: X3 (CatalogReader → catalog reads), X4 (InventorySink →
- * local-inventory apply) and the S5 replay read (X2). Catalog submissions,
- * expense (X5) and donations (X9) keep the library's inert adapters, so a
- * receipt whose money leg cannot land waits in apply_failed.
+ * local-inventory apply), X5 (ExpenseSink → expense intake) and the S5 replay
+ * read (X2). Catalog submissions and donations (X9) keep the library's inert
+ * adapters, so a receipt whose money leg cannot land waits in apply_failed.
  */
-import { configureWorkflowMapping } from "@inventory/workflow-mapping";
+import { configureWorkflowMapping, type ExpenseSink } from "@inventory/workflow-mapping";
+import { expenseIntake } from "@inventory/expense";
 import { catalogEventsSince, getOrg, getPrincipal } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createLocalInventorySink } from "@/lib/workflowMapping/inventorySink";
@@ -35,6 +36,16 @@ export function isWorkflowMappingHttpError(err: unknown): err is WorkflowMapping
   return err instanceof Error && err.name === HTTP_ERROR_NAME && typeof (err as { status?: unknown }).status === "number";
 }
 
+/**
+ * X5 (#1289 §8b): the intake parses the receipt, asserts the org and dedupes on
+ * receiptId itself; its errors propagate so the money leg lands in apply_failed.
+ */
+export const expenseSink: ExpenseSink = {
+  async pushReceipt(receipt) {
+    await expenseIntake.receive(receipt);
+  },
+};
+
 export function configureRuntime(): void {
   configureWorkflowMapping({
     auth: { getPrincipal },
@@ -43,5 +54,6 @@ export function configureRuntime(): void {
     catalogReader,
     inventorySink: createLocalInventorySink(getOrg),
     catalogEventSource: { eventsSince: catalogEventsSince },
+    expenseSink,
   });
 }

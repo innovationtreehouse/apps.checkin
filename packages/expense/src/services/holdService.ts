@@ -4,10 +4,15 @@ import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getOrgId } from "../runtime";
 import { checkAndProcessExpense, retryQbPost } from "../lib/expense-qb-processor";
+import { POSTING } from "../lib/expense-qb-poster";
+import { lockExpense } from "../lib/signoff-facts";
 import { writeAudit } from "../lib/audit";
 import { actorOf } from "../lib/caller";
 import { requireFinance } from "./approvalService";
 import { ServiceError } from "./serviceError";
+
+/** Once the entry is (or is being) booked, a line's account is corrected in QuickBooks, not here. */
+const IN_QUICKBOOKS = new Set([POSTING, "CREATED", "MATCHED"]);
 
 export async function setHeldLineAccount(
   principal: ExpensePrincipal,
@@ -22,6 +27,9 @@ export async function setHeldLineAccount(
   });
   if (!li) throw new ServiceError(404, "Line item not found");
   await db.$transaction(async (tx) => {
+    await lockExpense(tx, expenseId);
+    const { qbMatchState } = await tx.expense.findUniqueOrThrow({ where: { id: expenseId }, select: { qbMatchState: true } });
+    if (IN_QUICKBOOKS.has(qbMatchState)) throw new ServiceError(409, "already posted to QuickBooks; correct it there");
     await tx.expenseLineItem.update({ where: { id: lineItemId }, data: { manualQbAccount: qbAccount } });
     await writeAudit(tx, actorOf(principal), {
       expenseId,

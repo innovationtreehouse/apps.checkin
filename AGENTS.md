@@ -84,6 +84,12 @@ defers to the real client for these). They import service functions directly and
 assert DB state. Excluded from the default run. Run: `npm run test:integration`
 against a live DB. Each suite self-cleans by a unique `TAG`.
 
+Each jest worker gets its own database, cloned from a freshly migrated template
+(`test/integrationGlobalSetup.js`), so workers never share rows. Files within one
+worker run in sequence and share its database, so a suite that leaves residue
+breaks whichever suite runs after it. The script runs `INTEGRATION_WORKERS`
+workers (default 1, CI 3) and recycles a worker once its heap passes 1GB.
+
 ### 3. Flow tests — `flow-tests/*.flow.test.ts`  ← read this before adding e2e
 **End-to-end user journeys driven over HTTP against a *running* dev server.** No
 app imports, no DB access, no mocks — a flow test only `fetch()`es the server and

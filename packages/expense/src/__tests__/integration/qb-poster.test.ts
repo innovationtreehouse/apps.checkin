@@ -7,8 +7,10 @@ import { QuickBooksClient, qbKey, type QboBill, type QboPurchase } from "@invent
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, catalogResolving, principal, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
-import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
-import { MAX_CREATE_CENTS_PER_RUN, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, drainExpenseOutbox, postExpenseToQb } from "../../lib/expense-qb-poster";
+import { checkAndProcessExpense, retryQbPost } from "../../lib/expense-qb-processor";
+import {
+  MAX_CONSECUTIVE_FAILURES, MAX_CREATE_CENTS_PER_RUN, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, STALE_CLAIM_MS, drainExpenseOutbox, postExpenseToQb,
+} from "../../lib/expense-qb-poster";
 import { resubmitHeldExpense, setHeldLineAccount } from "../../services/holdService";
 import { runExpenseQbPosting } from "../../services/sweeps";
 
@@ -33,9 +35,12 @@ class FakeQbo {
   bills: QboBill[] = [];
   posts: { entity: string; key: string; body: PostedTxn }[] = [];
   mode: "ok" | "down" | "accept-then-drop" = "ok";
+  /** While set, every request waits on it: a QuickBooks call still in flight. */
+  gate: Promise<void> | null = null;
   private nextId = 5000;
 
   handle = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    if (this.gate) await this.gate;
     const url = new URL(String(input));
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { intuit_tid: "tid" } });
     if (this.mode === "down") return json({ Fault: { Error: [{ code: "3100" }] } }, 503);
@@ -77,7 +82,7 @@ async function handMatched(day: string) {
   await db.expense.update({ where: { id }, data: { receiptDate: day, qbMatchState: "MATCHED", qbTxnId: `hand-${day}`, qbTxnEntity: "Purchase" } });
 }
 
-/** An expense already in the outbox: lines on accounts 60 and 61, receipt dated `day`; test data from a TEST- vendor unless told otherwise. */
+/** An expense already in the outbox, every line signed: lines on accounts 60 and 61, receipt dated `day`; test data from a TEST- vendor unless told otherwise. */
 async function outboxed(
   day: string,
   opts: { reimburseePersonId?: number; amounts?: [number, number]; isTestData?: boolean; vendorName?: string } = {},
@@ -105,6 +110,7 @@ async function outboxed(
     items: [item(l1, a, "60"), item(l2, b, "61")],
   };
   await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id, payload: JSON.stringify(payload) } });
+  await signAllLines(id);
   return { id, lines: [l1, l2] };
 }
 
@@ -538,5 +544,178 @@ describeDb("QB-2 posting — daily ceiling", () => {
 
     expect(qbo.posts).toHaveLength(0);
     expect(await expenseRow(id)).toMatchObject({ state: "qb_complete", qbMatchState: "UNMATCHED", qbPostAttempts: 0 });
+  });
+});
+
+describeDb("QB-2 posting — per-expense cap on the request path", () => {
+  const big = MAX_CREATE_CENTS_PER_RUN + 100;
+
+  it("a request-path post over the cap posts nothing, stays drain-postable and is flagged; the drain then posts it alone", async () => {
+    const { id } = await outboxed("2026-09-10", { amounts: [big - 300, 300] });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("queued");
+    expect(qbo.posts).toHaveLength(0);
+    expect((await expenseRow(id)).qbMatchState).toBe("UNMATCHED");
+    expect((await db.expenseFlag.findMany({ where: { expenseId: id } })).map((f) => f.kind)).toEqual(["QB_OVER_CAP"]);
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, overCap: 1 });
+    expect((await expenseRow(id)).qbMatchState).toBe("CREATED");
+  });
+
+  it("a finance retry of an over-cap expense leaves it for the drain", async () => {
+    bindPorts({ catalog: catalogResolving({}), quickbooks: { posting: posting() } });
+    const id = await seedExpense({ state: "qb_pending", receiptTotalCents: big });
+    await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", isTestData: true, vendorName: "TEST-Acme" } });
+    await seedLineItem(id, { manualQbAccount: "60", totalPriceCents: big });
+    await signAllLines(id);
+    await checkAndProcessExpense(ORG, id);
+    expect(qbo.posts).toHaveLength(0);
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE" } });
+
+    expect(await retryQbPost(ORG, id, { userId: 500 })).toBe(true);
+    expect(qbo.posts).toHaveLength(0);
+    expect((await expenseRow(id)).qbMatchState).toBe("POST_FAILED");
+  });
+
+  it("the cap measures the posted line sum, not the receipt total", async () => {
+    const lines = await outboxed("2026-09-10", { amounts: [big - 300, 300] });
+    await db.expense.update({ where: { id: lines.id }, data: { receiptTotalCents: 100 } });
+    expect(await postExpenseToQb(ORG, lines.id)).toBe("queued");
+
+    const receipt = await outboxed("2026-09-11");
+    await db.expense.update({ where: { id: receipt.id }, data: { receiptTotalCents: big } });
+    const other = await outboxed("2026-09-12");
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, overCap: 1, capped: "cents" });
+    expect((await expenseRow(lines.id)).qbMatchState).toBe("CREATED");
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 2, overCap: 0, capped: null });
+    expect((await expenseRow(receipt.id)).qbMatchState).toBe("CREATED");
+    expect((await expenseRow(other.id)).qbMatchState).toBe("CREATED");
+  });
+});
+
+describeDb("QB-2 posting — checks at post time", () => {
+  it("re-checks the sign-off seats under the lock: a voided seat holds the post", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+    await db.expenseLineSignoff.deleteMany({ where: { lineItemId: lines[0], seat: "TREASURER" } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, waiting: 1 });
+    expect(qbo.posts).toHaveLength(0);
+    expect((await expenseRow(id)).qbMatchState).toBe("UNMATCHED");
+  });
+
+  it("an unknown reimbursee holds the post", async () => {
+    const { id } = await outboxed("2026-09-10", { reimburseePersonId: 42 });
+    await db.expense.update({ where: { id }, data: { reimburseePersonId: null } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+    expect(qbo.posts).toHaveLength(0);
+  });
+});
+
+describeDb("QB-2 posting — claim, call, settle", () => {
+  /** Holds QuickBooks mid-call until the returned release runs. */
+  function holdQbo() {
+    let release!: () => void;
+    qbo.gate = new Promise((r) => { release = r; });
+    return () => { qbo.gate = null; release(); };
+  }
+
+  async function untilFetched() {
+    while (vi.mocked(fetch).mock.calls.length === 0) await new Promise((r) => setTimeout(r, 5));
+  }
+
+  it("holds no row lock during the QuickBooks call, and the row reads POSTING meanwhile", async () => {
+    const { id } = await outboxed("2026-09-10");
+    const release = holdQbo();
+    const post = postExpenseToQb(ORG, id);
+    await untilFetched();
+
+    const locked = await db.$transaction((tx) => tx.$queryRaw<{ id: string }[]>`SELECT id FROM expenses WHERE id = ${id} FOR UPDATE NOWAIT`);
+    expect(locked).toHaveLength(1);
+    expect((await expenseRow(id)).qbMatchState).toBe("POSTING");
+
+    release();
+    expect(await post).toBe("posted");
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbClaimedAt: null });
+  });
+
+  it("a retry cannot rewrite the payload while a post is in flight", async () => {
+    const { id } = await outboxed("2026-09-10");
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED" } });
+    const before = (await db.expenseEvent.findFirstOrThrow({ where: { expenseId: id } })).payload;
+    const release = holdQbo();
+    const post = postExpenseToQb(ORG, id);
+    await untilFetched();
+
+    expect(await retryQbPost(ORG, id, { userId: 500 })).toBe(false);
+    expect((await db.expenseEvent.findFirstOrThrow({ where: { expenseId: id } })).payload).toBe(before);
+
+    release();
+    expect(await post).toBe("posted");
+    expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("a fresh claim is left alone by the request path and the drain", async () => {
+    const { id } = await outboxed("2026-09-10");
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POSTING", qbClaimedAt: new Date() } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0 });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("a stale claim whose call did create the entry is taken over by key, never booked twice", async () => {
+    const { id } = await outboxed("2026-09-10");
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    const created = qbo.purchases[0].Id;
+    // The process died after QuickBooks created the entry and before the settle committed.
+    await db.expense.update({
+      where: { id },
+      data: { qbMatchState: "POSTING", qbClaimedAt: new Date(Date.now() - STALE_CLAIM_MS - 1000), qbTxnId: null, qbTxnEntity: null },
+    });
+    await db.expenseQbClaim.deleteMany({ where: { orgId: ORG, qbTxnId: created } });
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1 });
+    expect(qbo.posts).toHaveLength(1);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: created, qbClaimedAt: null });
+  });
+});
+
+describeDb("QB-2 posting — drain failure streak", () => {
+  it("stops after consecutive failures, leaving the rest for the next run", async () => {
+    const ids = [];
+    for (let d = 10; d < 10 + MAX_CONSECUTIVE_FAILURES + 2; d++) ids.push((await outboxed(`2026-09-${d}`)).id);
+    qbo.mode = "down";
+
+    expect(await drainExpenseOutbox()).toMatchObject({ failed: MAX_CONSECUTIVE_FAILURES, stoppedAfterFailures: true });
+    const states = await Promise.all(ids.map(async (id) => (await expenseRow(id)).qbMatchState));
+    expect(states.filter((s) => s === "POST_FAILED")).toHaveLength(MAX_CONSECUTIVE_FAILURES);
+    expect(states.filter((s) => s === "UNMATCHED")).toHaveLength(2);
+  });
+});
+
+describeDb("QB-2 posting — a line's account after posting", () => {
+  const finance = principal(500, { isFinance: true });
+
+  it.each(["POSTING", "CREATED", "MATCHED"])("refuses to set a line's account once the expense is %s", async (qbMatchState) => {
+    const { id, lines } = await outboxed("2026-09-10");
+    await db.expense.update({ where: { id }, data: { qbMatchState } });
+
+    await expect(setHeldLineAccount(finance, id, lines[0], "62")).rejects.toMatchObject({
+      statusCode: 409,
+      message: "already posted to QuickBooks; correct it there",
+    });
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: lines[0] } })).manualQbAccount).toBeNull();
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "hold_account_set" } })).toBe(0);
+  });
+
+  it("allows and audits it before the expense is in QuickBooks", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED" } });
+
+    await setHeldLineAccount(finance, id, lines[0], "62");
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: lines[0] } })).manualQbAccount).toBe("62");
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "hold_account_set" } })).toBe(1);
   });
 });
