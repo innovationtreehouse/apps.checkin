@@ -46,8 +46,6 @@ const importRow = (importSourceId: string, over: Record<string, unknown> = {}) =
   taxCents: 0,
   discountCents: 0,
   receiptTotalCents: 500,
-  needsReimbursement: true,
-  reimbursementFor: "Someone",
   mimeType: "text/plain",
   fileBase64: Buffer.from(`historical ${importSourceId}`).toString("base64"),
   lineItems: [{ lineNumber: 1, description: "Old thing", quantity: 1, unitPriceCents: 500, totalPriceCents: 500, isDelayed: false }],
@@ -59,7 +57,7 @@ describeDb("historical import", () => {
     actAs(FINANCE);
     const first = await importReceipts([importRow("u1")]);
     expect(first).toMatchObject({ processed: 1, skipped: 0, errors: 0, byState: { receipt_finalized: 1 } });
-    expect(ports.calls.pushes[0]).toMatchObject({ backfill: true, needsReimbursement: true });
+    expect(ports.calls.pushes[0]).toMatchObject({ backfill: true, needsReimbursement: false });
     expect(ports.calls.pushes[0].reimburseePersonId).toBeUndefined();
 
     const again = await importReceipts([importRow("u1")]);
@@ -71,5 +69,13 @@ describeDb("historical import", () => {
     await expect(importReceipts(Array.from({ length: 51 }, (_, i) => importRow(`b${i}`)))).rejects.toMatchObject({ statusCode: 400 });
     const res = await importReceipts([importRow("bad", { mimeType: "application/pdf" })]);
     expect(res).toMatchObject({ errors: 1, processed: 0 });
+  });
+
+  it("rejects a batch that claims reimbursement", async () => {
+    actAs(FINANCE);
+    for (const over of [{ needsReimbursement: true }, { reimbursementFor: "Someone" }]) {
+      await expect(importReceipts([importRow("r1", over)])).rejects.toMatchObject({ statusCode: 400 });
+    }
+    expect(await db.receipt.count()).toBe(0);
   });
 });
