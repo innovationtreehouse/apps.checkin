@@ -1,16 +1,16 @@
 /**
  * Wire the expense library into checkin (#1272 §3/§6), called once at server boot from
  * instrumentation.ts. Binding touches no database: every port below reads lazily, inside a
- * request. Bound crossings: X3 (catalog reads). The QuickBooks reader goes through checkin's one
- * guarded client (off = no rows). The QuickBooks writer and the catalog event source stay unbound
- * (inert); they are later crossings.
+ * request. Bound crossings: X3 (catalog reads) and the S5 replay read (X2). The QuickBooks reader
+ * goes through checkin's one guarded client (off = no rows). The QuickBooks writer stays unbound
+ * (inert); it is a later crossing.
  */
 import { configureExpense } from "@inventory/expense";
 import type { ExpensePrincipal, OwnerDirectory, QbReader, QbTxn, SignoffDirectory } from "@inventory/expense";
 import { dollarsToCents } from "@inventory/money";
 import type { QboBill, QboPurchase } from "@inventory/quickbooks";
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
-import { getOrg, sessionUser } from "@/lib/catalog/configure";
+import { catalogEventsSince, getOrg, sessionUser } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
 
 async function db() {
@@ -143,5 +143,13 @@ const qbReader: QbReader = {
 };
 
 export function configureRuntime(): void {
-  configureExpense({ org: getOrg, auth: { getPrincipal }, budgetOwners, signoff, catalog: catalogReader, quickbooks: { reader: qbReader } });
+  configureExpense({
+    org: getOrg,
+    auth: { getPrincipal },
+    budgetOwners,
+    signoff,
+    catalog: catalogReader,
+    catalogEvents: { eventsAfter: async (afterId) => catalogEventsSince((await getOrg()).id, afterId) },
+    quickbooks: { reader: qbReader },
+  });
 }

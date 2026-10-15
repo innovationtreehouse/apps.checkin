@@ -89,8 +89,21 @@ describeDb("S5 consumer — catch-up sweep", () => {
 
     expect(await catchUpCatalogEvents()).toEqual({ processed: 2, duplicate: 0, failed: 0 });
 
-    expect(askedAfter).toBe(10);
+    expect(askedAfter).toBe(0);
     expect(await db.expenseReceivedOrgEvent.count({ where: { status: "processed" } })).toBe(2);
+  });
+
+  it("consumes an event that committed after a higher id was already received", async () => {
+    // Event 21 committed and was consumed first; event 20 committed after it.
+    const late = envelope(approved, 20);
+    const early = envelope(rejected, 21);
+    await track(approved.provisionalGtin13);
+    expect(await consumeCatalogEvent(early)).toBe("processed");
+    bindPorts({ catalogEvents: { eventsAfter: async (after) => [late, early].filter((e) => e.id > after) } });
+
+    expect(await catchUpCatalogEvents()).toEqual({ processed: 1, duplicate: 0, failed: 0 });
+
+    expect(await provisional(approved.provisionalGtin13)).toMatchObject({ status: "approved", resolvedToGtin13: approved.realGtin13 });
   });
 });
 

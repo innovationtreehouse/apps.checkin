@@ -17,7 +17,8 @@ export interface ImportRowResult {
 /**
  * Bulk import of historical receipts already matched to QuickBooks (FINANCE). Each row runs
  * the same intake pipeline as an upload; its QB linkage waives only the submitter step and the
- * age gate. Idempotent per (org, importSourceId): a re-run skips rows already loaded.
+ * age gate. Records purchases only, never a reimbursement claim. Idempotent per
+ * (org, importSourceId): a re-run skips rows already loaded.
  */
 export async function importReceipts(rawBatch: unknown) {
   const actor = await requireActor();
@@ -42,7 +43,7 @@ export async function importReceipts(rawBatch: unknown) {
         actor,
         file,
         mimeType: check.mimeType,
-        core: { needsReimbursement: r.needsReimbursement, reimbursementFor: r.reimbursementFor ?? null, intakeSource: "import" },
+        core: { needsReimbursement: false, reimbursementFor: null, intakeSource: "import" },
         detail: {
           retailer: r.retailer,
           receiptNumber: r.receiptNumber ?? null,

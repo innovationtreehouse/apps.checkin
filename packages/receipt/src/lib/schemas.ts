@@ -123,7 +123,10 @@ export const ImportLineItemSchema = z.object({
   isDelayed: z.boolean(),
 });
 
-/** One historical receipt already matched to its QuickBooks transaction. Integer cents. */
+/**
+ * One historical receipt already matched to its QuickBooks transaction. Integer cents. Carries no
+ * reimbursement claim: strict mode rejects needsReimbursement, which only the submit flow sets.
+ */
 export const ImportReceiptSchema = z
   .object({
     importSourceId: z.string().min(1).max(200),
@@ -138,8 +141,6 @@ export const ImportReceiptSchema = z
     taxCents: z.number().int(),
     discountCents: z.number().int(),
     receiptTotalCents: z.number().int(),
-    needsReimbursement: z.boolean(),
-    reimbursementFor: z.string().max(200).nullable().optional(),
     mimeType: z.string().max(100),
     fileBase64: z.string().min(1).max(MAX_FILE_BASE64),
     lineItems: z.array(ImportLineItemSchema).min(1).max(MAX_LINE_ITEMS),

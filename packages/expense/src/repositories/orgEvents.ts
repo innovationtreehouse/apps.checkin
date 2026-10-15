@@ -8,6 +8,12 @@ export function createOrgEventsRepository(db: Db) {
       return result._max.id ?? 0;
     },
 
+    /** Ids already received (any status) above `afterId`. */
+    async idsAfter(afterId: number): Promise<number[]> {
+      const rows = await db.expenseReceivedOrgEvent.findMany({ where: { id: { gt: afterId } }, select: { id: true } });
+      return rows.map((r) => r.id);
+    },
+
     async findOne(id: number): Promise<ExpenseReceivedOrgEvent | null> {
       return db.expenseReceivedOrgEvent.findFirst({ where: { id } });
     },
