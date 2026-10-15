@@ -4,7 +4,7 @@
 /**
  * LIVE contract: a resend of the inventory mutations the program-stock writer
  * (#2055) sends under `@idempotent(key:)` never writes twice — Admin API 2026-04,
- * same mutation shapes. Whether the key itself was honoured is logged, not asserted. Each check logs one `[idempotency] <check>: PASS|FAIL` line plus the
+ * same mutation shapes. Whether the key itself was honoured is logged, not asserted. Each check logs one `[idempotency] <check>: PASS|FAIL|INFO` line plus the
  * raw response fields, so the result reads straight off the workflow log.
  *
  * d runs first: the item must be stocked at the location before a–c can set it.
@@ -77,10 +77,19 @@ function refusedBy(r: { errors?: unknown[]; userErrors: UserError[] }): string |
     return codes.length ? `userErrors ${codes.join(",")}` : null;
 }
 
-function report(check: string, pass: boolean, note: string, raw: unknown): void {
+const ADJUST_STOCK = `
+    mutation ProbeAdjust($input: InventoryAdjustQuantitiesInput!, $idempotencyKey: String!) {
+        inventoryAdjustQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+            inventoryAdjustmentGroup { id }
+            userErrors { code field message }
+        }
+    }`;
+
+function report(check: string, outcome: "PASS" | "FAIL" | "INFO", note: string, raw: unknown): void {
     // Straight to stdout: jest's console capture buries console.log under stack frames.
-    process.stdout.write(`\n[idempotency] ${check}: ${pass ? "PASS" : "FAIL"} — ${note}\n${JSON.stringify(raw, null, 2)}\n`);
+    process.stdout.write(`\n[idempotency] ${check}: ${outcome} — ${note}\n${JSON.stringify(raw, null, 2)}\n`);
 }
+const passFail = (pass: boolean) => (pass ? "PASS" : "FAIL");
 
 describe("live: Shopify idempotency keys on inventory mutations (#2055)", () => {
     let itemId: string;
@@ -97,11 +106,13 @@ describe("live: Shopify idempotency keys on inventory mutations (#2055)", () => 
     }
     const available = async () => (await levelsAt())[0]?.quantities[0]?.quantity ?? null;
 
-    async function set(changeFromQuantity: number, quantity: number) {
-        const r = await gql(SET_STOCK, {
-            input: { name: "available", reason: "correction", quantities: [{ inventoryItemId: itemId, locationId, quantity, changeFromQuantity }] },
-            idempotencyKey: k1,
-        });
+    const setVars = (changeFromQuantity: number, quantity: number, key: string) => ({
+        input: { name: "available", reason: "correction", quantities: [{ inventoryItemId: itemId, locationId, quantity, changeFromQuantity }] },
+        idempotencyKey: key,
+    });
+
+    async function set(changeFromQuantity: number, quantity: number, key = k1) {
+        const r = await gql(SET_STOCK, setVars(changeFromQuantity, quantity, key));
         const p = r.data?.inventorySetQuantities as { inventoryAdjustmentGroup: { id: string } | null; userErrors: UserError[] } | undefined;
         return { status: r.status, errors: r.errors, group: p?.inventoryAdjustmentGroup?.id ?? null, userErrors: p?.userErrors ?? [] };
     }
@@ -135,7 +146,7 @@ describe("live: Shopify idempotency keys on inventory mutations (#2055)", () => 
         const first = await gql(ACTIVATE_KEYED, vars);
         const firstPayload = first.data?.inventoryActivate as ActivatePayload;
         if (first.errors?.length || !firstPayload) {
-            report("d. inventoryActivate keyed x2", false, "API REJECTED @idempotent on inventoryActivate — #2055's activate call would fail", first);
+            report("d. inventoryActivate keyed x2", "FAIL", "API REJECTED @idempotent on inventoryActivate — #2055's activate call would fail", first);
             await gqlOk(ACTIVATE_PLAIN, { inventoryItemId: itemId, locationId }, "inventoryActivate");
             throw new Error("inventoryActivate rejected the idempotency key");
         }
@@ -145,7 +156,7 @@ describe("live: Shopify idempotency keys on inventory mutations (#2055)", () => 
         const quantity = levels[0]?.quantities[0]?.quantity ?? null;
         const pass = !firstPayload.userErrors.length && !second.errors?.length && !!secondPayload && !secondPayload.userErrors.length
             && secondPayload.inventoryLevel?.id === firstPayload.inventoryLevel?.id && levels.length === 1 && quantity === 0;
-        report("d. inventoryActivate keyed x2", pass, pass ? "second call accepted, same level, one level, available 0" : "see raw fields",
+        report("d. inventoryActivate keyed x2", passFail(pass), pass ? "second call accepted, same level, one level, available 0" : "see raw fields",
             { key: vars.idempotencyKey, first: { status: first.status, payload: firstPayload }, second: { status: second.status, errors: second.errors, payload: secondPayload }, levelsAtLocation: levels.length, available: quantity });
         if (levels.length === 0) await gqlOk(ACTIVATE_PLAIN, { inventoryItemId: itemId, locationId }, "inventoryActivate");
         expect(pass).toBe(true);
@@ -156,7 +167,7 @@ describe("live: Shopify idempotency keys on inventory mutations (#2055)", () => 
         firstGroup = a.group;
         const q = await available();
         const pass = !a.errors?.length && !a.userErrors.length && q === 5;
-        report("a. set 0→5 with K1", pass, `available now ${q}`, { key: k1, ...a, available: q });
+        report("a. set 0→5 with K1", passFail(pass), `available now ${q}`, { key: k1, ...a, available: q });
         expect(pass).toBe(true);
     });
 
@@ -168,7 +179,7 @@ describe("live: Shopify idempotency keys on inventory mutations (#2055)", () => 
         const q = await available();
         const deduped = !b.errors?.length && !b.userErrors.length && b.group === firstGroup;
         const pass = (deduped || refusedBy(b) !== null) && q === 5;
-        report("b. identical replay with K1", pass, `${deduped ? "key honoured: original result returned" : `key NOT honoured; refused by ${refusedBy(b)}`}, available ${q}`,
+        report("b. identical replay with K1", passFail(pass), `${deduped ? "key honoured: original result returned" : `key NOT honoured; refused by ${refusedBy(b)}`}, available ${q}`,
             { key: k1, ...b, firstGroup, available: q });
         expect(pass).toBe(true);
     });
@@ -177,8 +188,48 @@ describe("live: Shopify idempotency keys on inventory mutations (#2055)", () => 
         const c = await set(0, 7);
         const q = await available();
         const by = refusedBy(c);
-        report("c. K1 reused with quantity 7", by !== null && q === 5, by ? `refused by ${by}, available ${q}` : `ACCEPTED a different request under K1 (available ${q})`,
+        report("c. K1 reused with quantity 7", passFail(by !== null && q === 5), by ? `refused by ${by}, available ${q}` : `ACCEPTED a different request under K1 (available ${q})`,
             { key: k1, ...c, available: q });
         expect(by !== null && q === 5).toBe(true);
+    });
+
+    // e and f isolate the key: neither resend can be refused by a stale compare.
+    // INFO only — they report what the store did and never fail the suite.
+    it("e. INFO: inventoryAdjustQuantities +1 with K2, sent twice", async () => {
+        const k2 = `citest-adjust-${crypto.randomUUID()}`;
+        const variables = {
+            input: { name: "available", reason: "correction", changes: [{ inventoryItemId: itemId, locationId, delta: 1, changeFromQuantity: null }] },
+            idempotencyKey: k2,
+        };
+        try {
+            const before = await available();
+            const first = await gql(ADJUST_STOCK, variables);
+            const second = await gql(ADJUST_STOCK, variables);
+            const after = await available();
+            const change = before === null || after === null ? null : after - before;
+            const verdict = change === 1 ? "key HONOURED (+1 total)" : change === 2 ? "key IGNORED (+2 total)" : `unexpected change ${change}`;
+            report("e. adjust +1 x2 with K2", "INFO", `${verdict}; available ${before} → ${after}`,
+                { request: { query: ADJUST_STOCK, variables }, first, second, before, after });
+        } catch (err) {
+            report("e. adjust +1 x2 with K2", "INFO", "probe errored", { error: String(err) });
+        }
+    });
+
+    it("f. INFO: inventorySetQuantities current → current+1 with K3, sent twice", async () => {
+        const k3 = `citest-set-${crypto.randomUUID()}`;
+        try {
+            const before = await available();
+            if (before === null) throw new Error("no inventory level to read");
+            const variables = setVars(before, before + 1, k3);
+            const first = await set(before, before + 1, k3);
+            const second = await set(before, before + 1, k3);
+            const after = await available();
+            const deduped = !second.errors?.length && !second.userErrors.length && second.group === first.group;
+            const verdict = deduped ? "key HONOURED (first result returned)" : `key NOT honoured; second refused by ${refusedBy(second)}`;
+            report("f. set current→+1 x2 with K3", "INFO", `${verdict}; available ${before} → ${after}`,
+                { request: { query: SET_STOCK, variables }, first, second, before, after });
+        } catch (err) {
+            report("f. set current→+1 x2 with K3", "INFO", "probe errored", { error: String(err) });
+        }
     });
 });
