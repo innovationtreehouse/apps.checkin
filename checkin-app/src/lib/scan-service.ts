@@ -48,6 +48,10 @@ function presentLabels(visits: { id: number; person: Pick<Person, "name" | "nick
  *  gate — see the confirm check in processCheckout. */
 export const FORCE_CLOSE_CONFIRM_SECONDS = 15;
 
+/** How long a web close-choice dialog's answer is accepted; an older one was
+ *  shown against a building that may have changed since. */
+export const WEB_CLOSE_CHOICE_TTL_MS = 5 * 60_000;
+
 /** Countdown on the supervision confirm (#1436). #1347 PR-0 extended the
  *  route's debounce exemption to a fresh `supervisionWarnedAt` stamp, so the
  *  full window is usable -- kiosk copy says "within 15 seconds". */
@@ -841,8 +845,9 @@ async function handoverCandidates(db: DbClient, subjectId: number) {
  *   household lead, a sysadmin — gets leave or cancel and names nobody;
  * - a removal never closes, whoever makes it.
  *
- * The token is bound to the actor shown the choice, and the allowed choices are
- * worked out again on confirm, so a role revoked in between takes effect. The
+ * The token is bound to the actor shown the choice and expires after
+ * {@link WEB_CLOSE_CHOICE_TTL_MS}, and the allowed choices are worked out again
+ * on confirm, so a role revoked in between takes effect. The
  * token columns belong to this dialog alone; no kiosk path reads them.
  * A keyholder alone in the record closes with no warning when the caller may
  * close. Callers depart or remove the visit, recording the close in the same
@@ -879,13 +884,14 @@ export async function lastKeyholderGuard(
     const choices: CloseChoice[] = canClose ? ["close", "leave"] : ["leave"];
     const visit = await db.visit.findUnique({
         where: { id: visitId },
-        select: { forceCloseToken: true, forceCloseActorId: true },
+        select: { forceCloseToken: true, forceCloseActorId: true, forceCloseWarnedAt: true },
     });
     const token = typeof confirm.token === "string" ? confirm.token : null;
-    const confirmed = visit?.forceCloseActorId === actor.id && forceCloseTokenMatches(visit.forceCloseToken, token);
+    const confirmed = visit?.forceCloseActorId === actor.id && forceCloseTokenMatches(visit.forceCloseToken, token)
+        && visit.forceCloseWarnedAt != null && Date.now() - visit.forceCloseWarnedAt.getTime() <= WEB_CLOSE_CHOICE_TTL_MS;
 
     // A token that does not answer this caller's open choice — spent, replaced,
-    // or shown to someone else — is refused, never re-bound to this caller.
+    // stale, or shown to someone else — is refused, never re-bound to this caller.
     if (token != null && !confirmed) {
         return { action: "refuse", error: "That choice has expired or was already answered.", status: 409 };
     }

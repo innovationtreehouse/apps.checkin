@@ -207,7 +207,10 @@ Things the app takes as true because they are handled outside it.
   closes an open visit, and removal of an open visit. When the last recorded
   keyholder's visit ends with others inside, the caller chooses close, leave or
   cancel in one confirm dialog, answered by a token bound to the person shown the
-  choice. The dialog's state is the web's alone; no kiosk close reads it. The
+  choice; an answer more than five minutes after the dialog is refused, since the
+  building may have changed. The choice is made on the building as the checkout
+  leaves it: no check-in or close lands between the two. The dialog's state is
+  the web's alone; no kiosk close reads it. The
   keyholder checking themselves out, or a board member who holds keys, gets all
   three; anyone else — another keyholder, a household lead, a sysadmin, a board
   member without keys — gets leave or cancel. Close checks everyone out; leave
