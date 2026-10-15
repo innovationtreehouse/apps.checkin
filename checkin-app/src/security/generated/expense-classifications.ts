@@ -56,6 +56,7 @@ export const classifications = {
         qbTxnEntity: 'internal',
         qbVendorId: 'internal',
         qbPostAttempts: 'internal',
+        qbClaimedAt: 'internal',
         isTestData: 'internal',
     },
     ExpenseLineItem: {
