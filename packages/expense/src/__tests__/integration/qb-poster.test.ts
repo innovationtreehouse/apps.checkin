@@ -331,6 +331,32 @@ describeDb("QB-2 posting — ids are unique per entity type", () => {
   });
 });
 
+describeDb("QB-2 posting — one claim per QuickBooks entry", () => {
+  it("never matches an entry a line already holds, and records its own claim", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    qbo.purchases.push({ Id: "900", TxnDate: "2026-09-12", TotalAmt: 10, AccountRef: { value: PAYMENT_ACCOUNT } });
+    await db.expenseQbClaim.create({ data: { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: "900" } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    const row = await expenseRow(id);
+    expect(row.qbTxnId).not.toBe("900");
+    expect(await db.expenseQbClaim.count({ where: { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: row.qbTxnId! } })).toBe(1);
+  });
+
+  it("an entry it created that is already claimed goes to finance as AMBIGUOUS with a flag", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    // The fake company hands out 5000 next; a claim on it stands in for one written mid-post.
+    await db.expenseQbClaim.create({ data: { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: "5000" } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("queued");
+    expect(qbo.posts).toHaveLength(1);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "AMBIGUOUS", qbTxnId: null });
+    expect(await db.expenseFlag.count({ where: { expenseId: id, kind: "QB_POST_FAILED", checkedOffAt: null } })).toBe(1);
+  });
+});
+
 describeDb("QB-2 posting — bounded retry", () => {
   /** Outboxed through the real processor on one manual line, so a finance retry can rebuild it. */
   async function outboxedManual(account: string) {
