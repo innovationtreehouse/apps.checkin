@@ -13,11 +13,12 @@
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
+import crypto from 'crypto';
 import prisma from '@/lib/prisma';
 import { config, isStagingAccessAllowed } from '@/lib/config';
 import { householdLeadship } from '@/lib/household/leads';
 import type { AuthResult } from '@/types/auth';
-import type { Authorize, CtxNeeds, Role } from './core';
+import { CRON_SECRET_ENV, type Authorize, type CronSecretName, type CtxNeeds, type Role } from './core';
 import { LIVE_PERSON } from '@/lib/person/filters';
 import { LIVE_VISIT } from '@/lib/visit/filters';
 import { canSeeCatalog, isTreehouseVolunteer } from '@/lib/volunteer';
@@ -254,6 +255,21 @@ export interface ResolverContext {
     auth: AuthResult;
     params: Record<string, string>;
     callerContext: CallerContext;
+    /** The request's Authorization header; only `cronSecret` routes read it. */
+    authorization?: string | null;
+}
+
+/**
+ * `Authorization: Bearer <secret>` against the named secret's env var. Unset or
+ * empty fails closed. Both sides are hashed first so the compare is fixed-length
+ * and timing-safe without leaking the secret's length.
+ */
+function cronSecretMatches(name: CronSecretName, authorization: string | null | undefined): boolean {
+    const secret = process.env[CRON_SECRET_ENV[name]];
+    if (!secret || !authorization) return false;
+    const provided = crypto.createHash('sha256').update(authorization).digest();
+    const expected = crypto.createHash('sha256').update(`Bearer ${secret}`).digest();
+    return crypto.timingSafeEqual(provided, expected);
 }
 
 /**
@@ -279,6 +295,12 @@ export async function resolveAccess(
     ctx: ResolverContext,
 ): Promise<{ allowed: boolean }> {
     const { auth, params, callerContext } = ctx;
+
+    // A machine caller: the secret alone decides, ahead of the staging gate,
+    // which keys on human session claims a scheduled job never has.
+    if (typeof authorize === 'object' && 'cronSecret' in authorize) {
+        return { allowed: cronSecretMatches(authorize.cronSecret, ctx.authorization) };
+    }
 
     if (config.isStaging()) {
         const claims = auth.type === 'session' ? auth.user : null;

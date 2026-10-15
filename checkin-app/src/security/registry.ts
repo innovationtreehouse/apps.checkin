@@ -787,6 +787,16 @@ defineRoute({
     orderedView: [],
 });
 
+// Daily QuickBooks expense posting (stranded recovery + outbox drain), a money
+// write, so it answers only to its own secret, never the shared CRON_SECRET.
+// Admission gate only: the response carries no rows. Landed registry-first.
+defineRoute({
+    endpoint: 'GET /api/cron/qbo-posting',
+    authorize: { cronSecret: 'qbo-posting' },
+    envelope: null,
+    orderedView: [],
+});
+
 // In-memory kiosk last-seen. No DB row: the stamp
 // lives on the task, so the bag is a synthesized SystemMetricLog (metric
 // `kiosk_last_seen`, timestamp = last verified kiosk request, value = age
