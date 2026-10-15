@@ -1,7 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 import { config as appConfig, isStagingAccessAllowed, ORG_DOMAIN } from '@/lib/config';
-import { isDeclaredBodyTooLarge, isStreamedBodyTooLarge } from '@/lib/requestBodyLimit';
+import { bodyLimitFor, isDeclaredBodyTooLarge } from '@/lib/requestBodyLimit';
+
+/** True when a body sent without Content-Length runs past the route's limit. Stops reading once it does. */
+async function isStreamedBodyTooLarge(pathname: string, body: ReadableStream<Uint8Array>): Promise<boolean> {
+    const limit = bodyLimitFor(pathname);
+    const reader = body.getReader();
+    let total = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return false;
+        total += value.byteLength;
+        if (total > limit) {
+            await reader.cancel();
+            return true;
+        }
+    }
+}
 
 /**
  * Site-wide org-login gate for the cloud dev instance (docs/ops/dev-instance.md, "Running the
