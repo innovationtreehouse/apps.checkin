@@ -47,12 +47,7 @@ export async function runRelay(
   try {
     // Hold the drain lock across claim AND publish so a concurrent relay can't grab the same
     // PENDING rows. The lock query, the claim, and the publishes all run inside it.
-    result = await withAdvisoryLock(
-      prisma,
-      `relay-drain:${cfg.env}`,
-      () => drain(cfg),
-      (err) => logger.warn("relay failed to release drain lock (auto-releases on session end)", { err }),
-    );
+    result = await withAdvisoryLock(`relay-drain:${cfg.env}`, () => drain(cfg));
   } catch (err) {
     if (err instanceof ConcurrentRunError) {
       // Another invocation owns the drain — skip WITHOUT a heartbeat. The lock-holder asserts

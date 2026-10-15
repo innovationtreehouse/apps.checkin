@@ -114,7 +114,7 @@ export async function withSyncRun<T extends Record<string, unknown>>(
   // invocations — correctness no longer rests solely on reserved-concurrency = 1. A run that
   // can't take the lock throws ConcurrentRunError *before* any sync_run row is created, so a
   // skipped invocation leaves no FAILED row; the caller treats it as a benign skip.
-  return withAdvisoryLock(prisma, `sync_run:${storeId}`, async () => {
+  return withAdvisoryLock(`sync_run:${storeId}`, async () => {
     const run = await prisma.syncRun.create({
       data: {
         storeId,

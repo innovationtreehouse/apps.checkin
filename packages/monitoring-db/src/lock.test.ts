@@ -1,76 +1,76 @@
 /**
- * Unit tests for withAdvisoryLock. A fake `$queryRaw` drives the two SQL round-trips
- * (try-lock, then unlock) deterministically so we can exercise every branch — including
- * the package-specific `onUnlockError` path that no integration test can reliably trigger.
- * Cross-session exclusion against real Postgres lives in test/integration/lock.test.ts.
+ * Unit tests for withAdvisoryLock. A fake pg Client answers the try-lock, so every branch runs
+ * without a database. Cross-session exclusion against real Postgres lives in
+ * test/integration/lock.test.ts.
  */
-import { describe, it, expect, vi } from "vitest";
-import { withAdvisoryLock, ConcurrentRunError } from "./lock.js";
-import type { PrismaClient } from "./generated/prisma/client.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-/** `$queryRaw` is called as a tagged template; a plain fn is a sufficient stand-in. */
-function prismaWith(queryRaw: ReturnType<typeof vi.fn>): PrismaClient {
-  return { $queryRaw: queryRaw } as unknown as PrismaClient;
-}
+const client = vi.hoisted(() => ({
+  connect: vi.fn(),
+  query: vi.fn(),
+  end: vi.fn(),
+}));
+
+vi.mock("pg", () => ({
+  default: {
+    Client: class {
+      connect = client.connect;
+      query = client.query;
+      end = client.end;
+    },
+  },
+}));
+
+import { withAdvisoryLock, ConcurrentRunError } from "./lock.js";
+
+const URL = "postgresql://lock-test/db";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  client.connect.mockResolvedValue(undefined);
+  client.end.mockResolvedValue(undefined);
+});
 
 describe("withAdvisoryLock", () => {
-  it("runs fn, returns its result, and releases the lock when acquisition succeeds", async () => {
-    const q = vi
-      .fn()
-      .mockResolvedValueOnce([{ locked: true }]) // pg_try_advisory_lock
-      .mockResolvedValueOnce([{}]); // pg_advisory_unlock
+  it("takes the session lock on its own connection, runs fn, and closes the connection", async () => {
+    client.query.mockResolvedValue({ rows: [{ locked: true }] });
     const fn = vi.fn().mockResolvedValue("ok");
 
-    const res = await withAdvisoryLock(prismaWith(q), "k", fn);
-
-    expect(res).toBe("ok");
+    expect(await withAdvisoryLock("k", fn, URL)).toBe("ok");
+    expect(client.query).toHaveBeenCalledOnce();
+    expect(client.query.mock.calls[0][0]).toContain("pg_try_advisory_lock");
+    expect(client.query.mock.calls[0][1]).toEqual(["k"]);
     expect(fn).toHaveBeenCalledOnce();
-    expect(q).toHaveBeenCalledTimes(2); // lock + unlock
+    expect(client.end).toHaveBeenCalledOnce();
   });
 
-  it("throws ConcurrentRunError without running fn or unlocking when the lock is held", async () => {
-    const q = vi.fn().mockResolvedValueOnce([{ locked: false }]);
+  it("throws ConcurrentRunError without running fn when the lock is held, and still closes", async () => {
+    client.query.mockResolvedValue({ rows: [{ locked: false }] });
     const fn = vi.fn();
 
-    const err = await withAdvisoryLock(prismaWith(q), "mykey", fn).catch((e) => e);
+    const run = withAdvisoryLock("mykey", fn, URL);
 
-    expect(err).toBeInstanceOf(ConcurrentRunError);
-    expect(err.lockKey).toBe("mykey");
+    await expect(run).rejects.toBeInstanceOf(ConcurrentRunError);
+    await expect(run).rejects.toMatchObject({ lockKey: "mykey" });
     expect(fn).not.toHaveBeenCalled();
-    expect(q).toHaveBeenCalledTimes(1); // never attempted unlock
+    expect(client.end).toHaveBeenCalledOnce();
   });
 
-  it("still releases the lock when fn throws, and rethrows fn's error", async () => {
-    const q = vi
-      .fn()
-      .mockResolvedValueOnce([{ locked: true }])
-      .mockResolvedValueOnce([{}]);
-    const fn = vi.fn().mockRejectedValue(new Error("boom"));
+  it("rethrows fn's error and closes the connection, which releases the lock", async () => {
+    client.query.mockResolvedValue({ rows: [{ locked: true }] });
 
-    await expect(withAdvisoryLock(prismaWith(q), "k", fn)).rejects.toThrow("boom");
-    expect(q).toHaveBeenCalledTimes(2); // unlock ran in finally despite the throw
+    await expect(withAdvisoryLock("k", vi.fn().mockRejectedValue(new Error("boom")), URL)).rejects.toThrow("boom");
+    expect(client.end).toHaveBeenCalledOnce();
   });
 
-  it("reports a failed unlock via onUnlockError but still returns fn's result", async () => {
-    const unlockErr = new Error("unlock failed");
-    const q = vi
-      .fn()
-      .mockResolvedValueOnce([{ locked: true }])
-      .mockRejectedValueOnce(unlockErr);
-    const onUnlockError = vi.fn();
+  it("returns fn's result even when closing the connection fails", async () => {
+    client.query.mockResolvedValue({ rows: [{ locked: true }] });
+    client.end.mockRejectedValue(new Error("socket gone"));
 
-    const res = await withAdvisoryLock(prismaWith(q), "k", vi.fn().mockResolvedValue(42), onUnlockError);
-
-    expect(res).toBe(42); // a failed release is non-fatal
-    expect(onUnlockError).toHaveBeenCalledWith(unlockErr);
+    await expect(withAdvisoryLock("k", vi.fn().mockResolvedValue(7), URL)).resolves.toBe(7);
   });
 
-  it("swallows a failed unlock silently when no onUnlockError callback is given", async () => {
-    const q = vi
-      .fn()
-      .mockResolvedValueOnce([{ locked: true }])
-      .mockRejectedValueOnce(new Error("unlock failed"));
-
-    await expect(withAdvisoryLock(prismaWith(q), "k", vi.fn().mockResolvedValue(7))).resolves.toBe(7);
+  it("refuses to run without a connection string", async () => {
+    await expect(withAdvisoryLock("k", vi.fn(), "")).rejects.toThrow(/MONITORING_DATABASE_URL/);
   });
 });

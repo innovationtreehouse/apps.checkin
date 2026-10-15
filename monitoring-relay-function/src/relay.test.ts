@@ -81,7 +81,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Default: the lock is free, so withAdvisoryLock just runs the drain.
   vi.mocked(withAdvisoryLock).mockImplementation(
-    async (_prisma: unknown, _key: string, fn: () => Promise<unknown>) => fn(),
+    async (_key: string, fn: () => Promise<unknown>) => fn(),
   );
   vi.mocked(claimPending).mockResolvedValue([]);
   vi.mocked(publishAlert).mockResolvedValue(undefined);
