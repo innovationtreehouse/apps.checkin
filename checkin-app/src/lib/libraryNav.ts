@@ -72,8 +72,23 @@ export const INVENTORY_LIBRARY_TABS: LibraryTab[] = [
   },
 ];
 
+/** Income's gate: the income read routes admit FINANCE or BOARD (`finance-or-board`). */
+export const canSeeIncome = (user: Pick<SessionUser, "isFinance" | "isBoardMember"> | undefined): boolean =>
+  !!user?.isFinance || !!user?.isBoardMember;
+
 /** Revenue Ops section (/finance-ops, /income, /donations): Income, Donations. */
 export const REVENUE_OPS_LIBRARY_TABS: LibraryTab[] = [
+  {
+    name: "Income",
+    href: "/income",
+    icon: "💵",
+    library: "income",
+    visible: canSeeIncome,
+    badge: (c) => {
+      const n = libraryCount(c, "income", "openReconciliation");
+      return n > 0 ? { count: n, color: "red", label: `${n} open income reconciliation items` } : null;
+    },
+  },
   {
     name: "Donations",
     href: "/donations",
