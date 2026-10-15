@@ -248,6 +248,11 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // queue and the match audit are board bookkeeping, with no person-facing view.
     'PaymentQueueRow',
     'MatchAuditEnrollmentRow',
+    // The unconfirmed Shopify stock screen's rows (registry.ts). Their `programId`
+    // makes them scopable, but every route is board-only with everyones grants:
+    // settling stock is board bookkeeping, with no program-facing view.
+    'UnconfirmedStockRow',
+    'UnconfirmedStockSettlement',
 ]);
 
 /**
