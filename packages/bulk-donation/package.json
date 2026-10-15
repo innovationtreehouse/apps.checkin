@@ -30,6 +30,7 @@
   "dependencies": {
     "@inventory/donations": "*",
     "@inventory/money": "*",
+    "@inventory/quickbooks": "*",
     "@inventory/receipt-types": "*",
     "@inventory/utils": "*",
     "@inventory/workflows": "*",

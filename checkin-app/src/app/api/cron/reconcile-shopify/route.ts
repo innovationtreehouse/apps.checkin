@@ -6,6 +6,7 @@ import { runSaleSweep } from "@/lib/programs/saleSweep";
 import { runReconcile as runIncomeReconcile } from "@inventory/income";
 import { getOrg } from "@/lib/catalog/configure";
 import { runExpenseCatchUp, runExpenseQbPosting } from "@inventory/expense";
+import { runDonationQbPosting } from "@inventory/bulk-donation";
 import { healProgramStock } from "@/lib/shopify";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@inventory/local-inventory";
 import { catchUpOrgEvents as catchUpWorkflowEvents } from "@inventory/workflow-mapping";
@@ -44,6 +45,9 @@ import { repushUnpushed, resendDonorSync, sweepInterruptedOcr } from "@inventory
  * Then runs the expense library's catch-up (intake replay, catalog events) and its QuickBooks
  * step (stranded QB recovery, the outbox drain, the drift check). Their failure never fails checkin's reconcile; counts only.
  *
+ * Then posts completed Benevity disbursements to QuickBooks (the bulk-donation drain).
+ * Its failure never fails checkin's reconcile; counts only.
+ *
  * Then re-pushes program stock the stock writer left owing (healProgramStock),
  * which needs no mirror. Isolated the same way.
  *
@@ -80,6 +84,14 @@ export const GET = withCron(async () => {
         expense = { status: "error" };
     }
     logger.info(`[reconcile] expense ${JSON.stringify(expense)}`);
+    let donationQb: Awaited<ReturnType<typeof runDonationQbPosting>> | { status: "error" };
+    try {
+        donationQb = await runDonationQbPosting((await getOrg()).id);
+    } catch (err) {
+        logger.error("[reconcile] donation QuickBooks posting failed:", err);
+        donationQb = { status: "error" };
+    }
+    logger.info(`[reconcile] donation QuickBooks ${JSON.stringify(donationQb)}`);
     let programStock: Awaited<ReturnType<typeof healProgramStock>> | { status: "error" };
     try {
         programStock = await healProgramStock();
@@ -128,5 +140,5 @@ export const GET = withCron(async () => {
         donorSync = { status: "error" };
     }
     logger.info(`[reconcile] donor sync ${JSON.stringify(donorSync)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receipt, receiptPush, donorSync });
+    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, donationQb, programStock, inventoryEvents, workflowEvents, receipt, receiptPush, donorSync });
 });

@@ -3,7 +3,7 @@ import type {
   BulkDonationConfig,
   BulkDonationPrincipal,
   CatalogLookup,
-  DonationQbWriter,
+  DonationQbPosting,
   InventoryApply,
   OrgIdentity,
   OwnerDirectory,
@@ -22,11 +22,6 @@ const INERT_CATALOG: CatalogLookup = { search: async () => [], getItem: async ()
 const INERT_INVENTORY: InventoryApply = {
   apply: async () => {
     throw new NotWiredError("InventoryApply (X11)");
-  },
-};
-const INERT_QB: DonationQbWriter = {
-  post: async () => {
-    throw new NotWiredError("DonationQbWriter");
   },
 };
 
@@ -74,8 +69,14 @@ export function getInventoryApply(): InventoryApply {
   return requireRuntime().inventory ?? INERT_INVENTORY;
 }
 
-export function getQbWriter(): DonationQbWriter {
-  return requireRuntime().qb ?? INERT_QB;
+/** The QuickBooks posting binding; undefined where QuickBooks is not wired, and the drain answers "unbound". */
+export function getQbPosting(): DonationQbPosting | undefined {
+  return requireRuntime().qb;
+}
+
+/** Deposits another lane holds; empty while that port is unbound. */
+export async function otherLaneClaimedDepositIds(orgId: string): Promise<string[]> {
+  return (await requireRuntime().otherLaneClaims?.claimedDepositIds(orgId)) ?? [];
 }
 
 /** An HTTP-status error thrown by a route factory; the host translates it at the route boundary. */

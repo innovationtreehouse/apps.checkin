@@ -15,6 +15,7 @@
  *   QBO_INCOME_BANK_ACCOUNT_ID. Unset, a run answers "unbound" and matches
  *   nothing.
  * - owners: checkin's budget-owner buckets.
+ * - otherLaneClaims: deposits bulk donation holds, kept out of income's matching.
  * - alerts: a drain that stops at a cap emails finance (the board when no one
  *   holds FINANCE), so the payouts it left waiting reach a person.
  */
@@ -105,6 +106,10 @@ function depositSource(): QbDepositSource | undefined {
   };
 }
 
+async function donationClaimedDepositIds(orgId: string): Promise<string[]> {
+  return (await import("@inventory/bulk-donation")).donationClaimedDepositIds(orgId);
+}
+
 export function configureRuntime(): void {
   configureIncome({
     auth: { getPrincipal },
@@ -114,5 +119,6 @@ export function configureRuntime(): void {
     bankAccountId: process.env.QBO_INCOME_BANK_ACCOUNT_ID || undefined,
     owners,
     alerts,
+    otherLaneClaims: { claimedDepositIds: donationClaimedDepositIds },
   });
 }

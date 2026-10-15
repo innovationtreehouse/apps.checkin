@@ -1,4 +1,4 @@
-// Pre-seated state for the QuickBooks drain (design §7). The drain itself lands in D.
+// Match state and takeover line for the QuickBooks drain (design §7); the drain is lib/qb-poster.ts.
 import { z } from "zod";
 import type { DbOrTx } from "../db";
 import { recordEvent } from "../repositories/audit";
@@ -12,6 +12,14 @@ export const QB_MATCH_STATE = {
   BEFORE_LINE: "BEFORE_LINE",
   WAITING: "WAITING",
   POST_FAILED: "POST_FAILED",
+  /** Claimed by a post whose QuickBooks call is in flight. */
+  POSTING: "POSTING",
+  /** Out of automatic retries, or over the per-run cap: finance's to resolve. */
+  NEEDS_FINANCE: "NEEDS_FINANCE",
+  /** Outside prod, not a TEST- disbursement: never sent. Re-checked each run. */
+  NOT_TEST_DATA: "NOT_TEST_DATA",
+  /** In prod, a TEST- disbursement: never sent. Re-checked each run. */
+  TEST_DATA_REFUSED: "TEST_DATA_REFUSED",
 } as const;
 export type QbMatchState = (typeof QB_MATCH_STATE)[keyof typeof QB_MATCH_STATE];
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ZodError } from "zod";
 import type { CompletedReceipt } from "@inventory/receipt-types";
-import { configureBulkDonation, getInventoryApply, getOwnerDirectory, getQbWriter, NotWiredError } from "../../runtime";
+import { configureBulkDonation, getInventoryApply, getOwnerDirectory, getQbPosting, NotWiredError, otherLaneClaimedDepositIds } from "../../runtime";
 import { getCatalogItem, ingestInKind, recordInKindDonor, recordInKindWithoutReceipt, searchCatalog, withdrawInKind } from "../../inKind";
 import { MAX_IN_KIND_LINE_QUANTITY, MAX_IN_KIND_LINE_VALUE_CENTS, type ManualInKindInput } from "../../services/manualInKindService";
 import { inventorySourceKey } from "../../contract";
@@ -107,9 +107,8 @@ describe("caller ports", () => {
     expect(await getCatalogItem("0000000000000")).toBeNull();
     expect(await getOwnerDirectory().list()).toEqual([]);
     await expect(getInventoryApply().apply({ receiptId: inventorySourceKey(1), orgId: ORG, retailer: null, lineItems: [] })).rejects.toBeInstanceOf(NotWiredError);
-    await expect(
-      getQbWriter().post({ stream: "benevity", retryKey: "k", netCents: 1, depositDate: "2026-09-01", takeoverLine: null, claimedQbTxnIds: [], excludedQbTxnIds: [] }),
-    ).rejects.toBeInstanceOf(NotWiredError);
+    expect(getQbPosting()).toBeUndefined();
+    expect(await otherLaneClaimedDepositIds(ORG)).toEqual([]);
   });
 
   it("X10 parses what the bound catalog returns", async () => {
