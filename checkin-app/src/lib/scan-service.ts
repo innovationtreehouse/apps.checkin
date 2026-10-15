@@ -577,23 +577,31 @@ const closeMoment = (id: number, closedAt: Date) => Prisma.sql`t AS (
     FROM "FacilityClose" fc WHERE fc.id = ${id}
 )`;
 
+/** How long before its arrival stamp a live badge's own log row is written: at
+ *  most the scan transaction's timeout. A replayed arrival's log row carries
+ *  exactly the arrival's time instead. */
+export const LIVE_ARRIVAL_WINDOW_MS = 15_000;
+
+/** A live badge at the kiosk began visit `v`: its badge log row was written in
+ *  the scan, just before the server stamped the arrival. */
+const liveBadgeArrival = Prisma.sql`EXISTS (
+    SELECT 1 FROM "RawBadgeLog" r
+    WHERE r."personId" = v."personId" AND r."timestamp" < v."arrivedAt"
+      AND r."timestamp" >= v."arrivedAt" - ${LIVE_ARRIVAL_WINDOW_MS}::double precision * interval '1 millisecond')`;
+
 /** The visits `v` a close at `t` departs: open, or machine-departed after it,
  *  and begun by then. Tombstoned visits are excluded: closing one would rewrite
  *  a record the member chose to erase.
  *
  *  An arrival up to {@link LATE_CLOSE_SKEW_MS} after the close is a kiosk clock
- *  disagreeing with the close's, so it departs too, unless the server recorded
- *  it after it recorded the close: that arrival was stamped by the server (a
- *  live badge, a web check-in), or was fenced when it landed, and came after
- *  the close. Further past the close is someone who came in after lock-up. */
+ *  disagreeing with the close's, so it departs too, unless the server stamped it
+ *  (a live badge, a web check-in) after it recorded the close: that arrival came
+ *  after the close. Further past the close is someone who came in after lock-up. */
 const closeSweeps = Prisma.sql`v."deletedAt" IS NULL
     AND (v."arrivedAt" <= t.close_at
          OR (v."arrivedAt" <= t.close_at + ${LATE_CLOSE_SKEW_MS}::double precision * interval '1 millisecond'
-             AND (v."arrivedVia" IS DISTINCT FROM 'TYPED'::"VisitSource" OR v."arrivedAt" <= t.recorded_at)
-             AND NOT EXISTS (
-                 SELECT 1 FROM "PresenceEvent" pe
-                 WHERE pe."personId" = v."personId" AND pe."visitId" = v.id
-                   AND pe.direction = 'IN'::"PresenceDirection" AND pe."createdAt" > t.recorded_at)))
+             AND NOT (v."arrivedAt" > t.recorded_at
+                      AND (v."arrivedVia" IS NOT DISTINCT FROM 'TYPED'::"VisitSource" OR ${liveBadgeArrival}))))
     AND (v."departedAt" IS NULL
          OR (v."departedVia" IN ('AUTO_CLOSE'::"VisitSource", 'FACILITY_CLOSE'::"VisitSource")
              AND v."departedAt" > t.close_at))`;

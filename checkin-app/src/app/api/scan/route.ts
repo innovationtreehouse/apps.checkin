@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { apiError, apiJson } from "@/lib/api-response";
-import { processCheckin, processCheckout, processCloseRequest, executePendingCloses, type CloseKind, type LegacyKiosk, closeActor, lastKeyholderGuard, finishCloseGuard, recordWebClose, type CloseGuardResult, notifyScanOutcome, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/scan-service";
+import { processCheckin, processCheckout, processCloseRequest, executePendingCloses, type CloseKind, type LegacyKiosk, closeActor, lastKeyholderGuard, finishCloseGuard, recordWebClose, type CloseGuardResult, notifyScanOutcome, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS, LIVE_ARRIVAL_WINDOW_MS } from "@/lib/scan-service";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
 import { applyPresenceIntent, flagForReview } from "@/lib/presence/project";
 import { config } from "@/lib/config";
@@ -45,14 +45,17 @@ const isPersonId = (v: unknown): v is number =>
     typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 2147483647;
 
 // A live badge IN is stamped when it takes the facility lock, after the scan's
-// own presence event; a replayed IN arrives exactly at its event time.
+// own badge log row; a replayed IN's row carries exactly its arrival time.
 async function openedByLiveBadge(tx: Prisma.TransactionClient, personId: number): Promise<boolean> {
     const open = await tx.visit.findFirst({
-        where: { personId, departedAt: null, deletedAt: null },
-        select: { id: true, arrivedAt: true },
+        where: { personId, departedAt: null, deletedAt: null, arrivedVia: "SCANNER" },
+        select: { arrivedAt: true },
     });
-    return !!open && await tx.presenceEvent.count({
-        where: { personId, visitId: open.id, direction: "IN", source: "SCANNER", occurredAt: { lt: open.arrivedAt } },
+    return !!open && await tx.rawBadgeLog.count({
+        where: {
+            personId,
+            timestamp: { lt: open.arrivedAt, gte: new Date(open.arrivedAt.getTime() - LIVE_ARRIVAL_WINDOW_MS) },
+        },
     }) > 0;
 }
 
@@ -618,13 +621,11 @@ export const POST = withKiosk(
             // toggle is PROJECTED; review parks keep their own class; warnings
             // (visit still open) stay unclassified.
             let classification: string | null = null;
-            let visitId: number | null = null;
             let parkedDoubleIn = false;
             try {
-                const body = (await res.clone().json()) as { type?: string; reason?: string; visit?: { id?: number } };
+                const body = (await res.clone().json()) as { type?: string; reason?: string };
                 if (body.type === "checkin" || body.type === "checkout") {
                     classification = PresenceClass.PROJECTED;
-                    if (body.type === "checkin" && typeof body.visit?.id === "number") visitId = body.visit.id;
                 } else if (body.type === "parked") {
                     classification = body.reason ? parkReasonToClass(body.reason) : null;
                     parkedDoubleIn = body.reason === "double_in";
@@ -642,7 +643,6 @@ export const POST = withKiosk(
                 source: "SCANNER",
                 clientEventId,
                 classification,
-                visitId,
             });
             return recordSessionClose(tx, res);
         }, {
