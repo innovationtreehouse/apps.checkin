@@ -227,9 +227,10 @@ describe('Program Volunteers API Integration Tests', () => {
 
         it('refuses a merged-away record and assigns no one', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
-             const tombstone = await prisma.person.create({
-                 data: { email: 'tombstone-volun-api-test@example.com', name: 'Tombstone', mergedIntoId: candidateId, household: { create: { name: "Test HH" } } }
+             const created = await prisma.person.create({
+                 data: { email: 'tombstone-volun-api-test@example.com', name: 'Tombstone', household: { create: { name: "Test HH" } } }
              });
+             const tombstone = await prisma.person.update({ where: { id: created.id }, data: { mergedIntoId: candidateId } });
              try {
                  const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
                      method: 'POST',
