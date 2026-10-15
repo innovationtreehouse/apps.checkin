@@ -147,6 +147,7 @@ export const classifications = {
         scholarshipDenialGraceDays: 'public',
         releasedLibraries: 'public',
         updatedAt: 'internal',
+        qboProductionRealmId: 'internal',
     },
     AppSettings: {
         id: 'public',

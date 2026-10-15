@@ -8,9 +8,9 @@
  * - mirror: the s-read Shopify mirror, bound only where it is wired. Unbound,
  *   a run answers "unbound" instead of reading an empty mirror and reopening
  *   every settled payout as drift.
- * - deposits: QuickBooks deposit reads over checkin's one token source, bound
- *   only where QBO_REALM_ID is set. Without a published token every read
- *   throws, so a run fails and writes nothing.
+ * - deposits: QuickBooks deposit reads through checkin's one guarded client,
+ *   bound only where QBO_REALM_ID is set. While the guard keeps QuickBooks off,
+ *   every read throws, so a run fails and writes nothing.
  * - bankAccountId: the QuickBooks bank account payouts land in, from
  *   QBO_INCOME_BANK_ACCOUNT_ID. Unset, a run answers "unbound" and matches
  *   nothing.
@@ -22,7 +22,7 @@ import {
   configureIncome,
   mirrorPayoutStatus,
   mirrorSource,
-  quickBooksDepositSource,
+  toQbDeposit,
   type MirrorBalanceTxn,
   type IncomeAlerts,
   type MirrorPayout,
@@ -31,7 +31,6 @@ import {
   type QbDepositSource,
 } from "@inventory/income";
 import { getOrg, getPrincipal } from "@/lib/catalog/configure";
-import { qboAccessTokenSource, qboRealm } from "@/lib/quickbooks/connection";
 import {
   incomeItemsSeen,
   incomeOrderLines,
@@ -42,7 +41,6 @@ import {
   type IncomeMirrorPayoutRow,
 } from "@/lib/shopifyRead/client";
 import { config } from "@/lib/config";
-import { logger } from "@/lib/logger";
 
 function toPayout(row: IncomeMirrorPayoutRow): MirrorPayout | null {
   const source = mirrorSource(row.source);
@@ -91,15 +89,20 @@ const alerts: IncomeAlerts = {
   },
 };
 
+/** Loaded on first use, so binding at boot pulls in no AWS SDK. */
+async function quickBooks() {
+  return (await import("@/lib/quickbooks/client")).getQuickBooks();
+}
+
 function depositSource(): QbDepositSource | undefined {
-  const realm = qboRealm();
-  if (!realm) return undefined;
-  try {
-    return quickBooksDepositSource(qboAccessTokenSource(), realm);
-  } catch (err) {
-    logger.error("[income] QuickBooks realm rejected; deposit reads stay unbound:", err);
-    return undefined;
-  }
+  if (!process.env.QBO_REALM_ID) return undefined;
+  return {
+    async depositsBetween(from, to) {
+      const qb = await quickBooks();
+      if (!qb) throw new Error("QuickBooks is off");
+      return (await qb.depositsBetween(from, to)).map(toQbDeposit);
+    },
+  };
 }
 
 export function configureRuntime(): void {

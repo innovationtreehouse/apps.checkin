@@ -749,6 +749,11 @@ model BoardSettings {
   releasedLibraries          String[]  @default([])
   /// @sensitivity:internal
   updatedAt                  DateTime  @updatedAt
+  /// QuickBooks company (realm) id prod may reach, set by the Board on Settings → QuickBooks.
+  /// NULL = QuickBooks is off in prod. Off prod it is refused as a target, which keeps a
+  /// prod-data copy off the real company (packages/quickbooks/src/guard.ts).
+  /// @sensitivity:internal
+  qboProductionRealmId       String?
 }
 
 /// App-wide localization config (singleton, id=1). Distinct from BoardSettings,

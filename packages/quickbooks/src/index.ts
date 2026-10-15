@@ -4,3 +4,4 @@ export * from "./local";
 export * from "./client";
 export * from "./match";
 export * from "./write";
+export * from "./guard";

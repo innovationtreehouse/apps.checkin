@@ -58,6 +58,44 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   `fileAccessTokenSource(path)` (refreshes and re-saves the consent token file),
   `saveTokens` / `loadTokens` / `tokenFileFromEnv()` (`QBO_TOKEN_FILE`, required).
 
+## Which company a deployment reaches (`guard.ts`)
+
+The guard decides from our config and database only, never from anything QuickBooks returns.
+
+- `assertQboTarget`: only `CHECKIN_ENV=prod` and `dev` (exactly) get a client. Prod uses the
+  production API and only the realm the Board set (`BoardSettings.qboProductionRealmId`); unset,
+  QuickBooks is off. Dev uses the sandbox API and only `QBO_SANDBOX_REALM_ALLOWED`, and refuses
+  the realm its own database names as production. stg, local and unset reach nothing.
+- `assertQboClientId`: off prod the token must come from Intuit's development keys
+  (`QBO_DEV_CLIENT_ID`), which cannot open a production company; prod refuses them.
+- `assertPayloadMarked`, on every write's final body: sandbox writes carry `[checkin-test]` in
+  `PrivateNote` (Vendors a `TEST-` name prefix) and never name the org; production writes never
+  carry either marker. The client stamps the markers itself.
+- No realm id is ever committed: prod's lives in the Board setting, the sandbox's in deploy config.
+
+checkin builds its one client in `checkin-app/src/lib/quickbooks/client.ts` (`getQuickBooks()`,
+null while off). Its token comes from the refresher Lambda (`QBO_REFRESHER_FN`): invoked with
+`{ "action": "current" }`, it answers a `RefresherToken` and is the only holder of the refresh token.
+
+### Per-environment deploy checklist (infra)
+
+- [ ] `CHECKIN_ENV=prod` set on prod (the guard reads it raw; unset is not prod).
+- [ ] stg gets no QuickBooks: no `QBO_*` env and no refresher grant in its task definition.
+- [ ] `QBO_ENVIRONMENT` (`production` on prod, `sandbox` on dev) and `QBO_REALM_ID`.
+- [ ] Dev: `QBO_SANDBOX_REALM_ALLOWED`, provisioned apart from `QBO_REALM_ID`.
+- [ ] `QBO_DEV_CLIENT_ID` (public) on prod and dev; dev's refresher holds only the development keys.
+- [ ] `QBO_REFRESHER_FN` + task-role `lambda:InvokeFunction` on that function only. The app gets
+      no client secret and no Secrets Manager grant.
+- [ ] Refresher: reserved concurrency 1; the refresh-token secret readable and writable by it
+      alone; a weekly keepalive invoke; alarms on `invalid_grant` and on `GetSecretValue` by any
+      other principal.
+- [ ] Prod: the Board sets the realm on Settings → QuickBooks after consent.
+- Binding a posting port (QB-2): set its `prod` flag from `CHECKIN_ENV === "prod"`, the same raw
+  check the guard uses.
+- Binding expense posting: `QbRefs` (`refs.paymentAccountId`, `refs.vendorIdFor`) and the posting
+  port's `paymentAccountId` and reimbursee vendor table name the same QuickBooks ids; bind both
+  from the same source so they cannot disagree.
+
 ## One-time setup (you do this — OAuth consent can't be automated)
 
 1. **Create a sandbox app** at <https://developer.intuit.com> → *Dashboard → Create an app → QuickBooks Online Accounting*.
