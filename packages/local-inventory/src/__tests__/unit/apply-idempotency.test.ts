@@ -128,4 +128,26 @@ describeDb("apply idempotency", () => {
       expect.objectContaining({ sourceKey: "receipt:r-3", status: "applied", failureReason: null }),
     ]);
   });
+
+  it("rejects malformed input at the boundary before touching stock", async () => {
+    const svc = makeReceiptService();
+    const bad: Array<[string, string, number, number | undefined]> = [
+      ["blank org", " ", 1, undefined],
+      ["zero quantity", TEST_ORG_ID, 0, undefined],
+      ["negative quantity", TEST_ORG_ID, -2, undefined],
+      ["fractional quantity", TEST_ORG_ID, 1.5, undefined],
+      ["zero conversion factor", TEST_ORG_ID, 1, 0],
+    ];
+    for (const [label, orgId, quantityDelta, conversionFactor] of bad) {
+      await expect(
+        svc.applyReceipt(orgId, "r-bad", undefined, [{ gtin13: GTIN, quantityDelta, conversionFactor }]),
+        label,
+      ).rejects.toMatchObject({ statusCode: 400 });
+    }
+    await expect(svc.applyDonation(TEST_ORG_ID, "", [{ gtin13: GTIN, quantityDelta: 1 }])).rejects.toMatchObject({
+      statusCode: 400,
+    });
+    expect(await qty(TEST_ORG_ID)).toBe(0);
+    expect(await db.receivedInventoryDelta.count()).toBe(0);
+  });
 });

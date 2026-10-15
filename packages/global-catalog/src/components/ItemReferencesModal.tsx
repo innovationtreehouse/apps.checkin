@@ -84,7 +84,7 @@ function RefRow({ row: r, canEdit, onArchive, onEditingChange, onUpdated }: {
       <Table.Td>{r.retailer ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
       <Table.Td>
         {r.url
-          ? <Anchor href={r.url} target="_blank" rel="noopener noreferrer" size="sm" style={{ wordBreak: "break-all" }}>{r.url}</Anchor>
+          ? <Anchor href={/^https?:\/\//i.test(r.url) ? r.url : undefined} target="_blank" rel="noopener noreferrer" size="sm" style={{ wordBreak: "break-all" }}>{r.url}</Anchor>
           : <Text c="dimmed" size="sm">—</Text>}
       </Table.Td>
       <Table.Td>{r.conversionFactor}</Table.Td>
