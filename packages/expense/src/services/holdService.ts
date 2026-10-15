@@ -39,10 +39,9 @@ export async function resubmitHeldExpense(principal: ExpensePrincipal, expenseId
   const orgId = await getOrgId();
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId }, select: { id: true, qbMatchState: true } });
   if (!expense) throw new ServiceError(404, "Expense not found");
-  // Processing runs as the system actor across its own transactions; this row records who asked.
+  // Processing runs as the system actor across its own transactions; the audit row records who asked.
   if (expense.qbMatchState === "POST_FAILED" || expense.qbMatchState === "NEEDS_FINANCE") {
-    await writeAudit(db, actorOf(principal), { expenseId, action: "qb_post_retried" });
-    if (!(await retryQbPost(orgId, expenseId))) {
+    if (!(await retryQbPost(orgId, expenseId, actorOf(principal)))) {
       throw new ServiceError(409, "A line no longer resolves to one QuickBooks account; fix the account mapping first");
     }
     return;

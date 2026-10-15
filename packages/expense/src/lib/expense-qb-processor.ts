@@ -5,7 +5,8 @@ import { SYSTEM_ACTOR } from "./system-actor";
 import { logError } from "./logger";
 import { QbExpenseEventSchema, type QbExpenseEvent } from "../workflows/expense-event-schema";
 import { lookupItems, getItem, listCategories, listSubcategories } from "./catalog";
-import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost } from "./workflow-engine";
+import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from "./workflow-engine";
+import { writeAudit } from "./audit";
 import { unsignedLines } from "./signoff-facts";
 import { reimburseeUnknown } from "./signoff";
 import { postExpenseToQb } from "./expense-qb-poster";
@@ -524,10 +525,10 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
 
 /**
  * Re-arms an expense whose post failed: rebuilds the outbox payload from the current account
- * mappings (so a fixed mapping takes effect), resets the attempt count and posts once.
+ * mappings (so a fixed mapping takes effect), resets the attempt count, records who asked and posts once.
  * Returns false when a line no longer resolves to one account; the expense stays as it is.
  */
-export async function retryQbPost(orgId: string, expenseId: string): Promise<boolean> {
+export async function retryQbPost(orgId: string, expenseId: string, actor: Actor): Promise<boolean> {
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId } });
   if (!expense || !["POST_FAILED", "NEEDS_FINANCE"].includes(expense.qbMatchState)) return false;
   const lineItems = await db.expenseLineItem.findMany({ where: { expenseId } });
@@ -539,6 +540,7 @@ export async function retryQbPost(orgId: string, expenseId: string): Promise<boo
   await db.$transaction(async (tx) => {
     await tx.expenseEvent.update({ where: { expense_events_org_expense_unique: { orgId, expenseId } }, data: { payload: JSON.stringify(payload) } });
     await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED", qbPostAttempts: 0 } });
+    await writeAudit(tx, actor, { expenseId, action: "qb_post_retried" });
   });
   await postExpenseToQb(orgId, expenseId);
   return true;
