@@ -207,6 +207,7 @@ export const PAGES: PageEntry[] = [
   { href: '/finance-ops/payment-plan', label: 'Program Payment Plan', section: 'Revenue Ops', visible: FINANCE },
   { href: '/finance-ops/membership-payment-plan', label: 'Membership Payment Plan', section: 'Revenue Ops', visible: FINANCE },
   { href: '/finance-ops/shopify-holds', label: 'Shopify Hold Reconciliation', section: 'Revenue Ops', keywords: 'seat hold failed inventory scholarship manual reconcile shopify', visible: FINANCE },
+  { href: '/finance-ops/shopify-stock', label: 'Unconfirmed Shopify stock', section: 'Revenue Ops', keywords: 'inventory seats unconfirmed settle carry shopify stock', visible: FINANCE },
   { href: '/finance-ops/payments', label: 'Payment problems', section: 'Revenue Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: FINANCE },
 
   // Expense Ops — FINANCE or BOARD
