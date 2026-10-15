@@ -230,6 +230,13 @@ describe("findPackageEgressLines", () => {
         expect(findPackageEgressLines(`a("https://localhost.evil.com");`)).toEqual([1]);
     });
 
+    it("flags the Gmail host and a Google API SDK import", () => {
+        expect(findPackageEgressLines(`const B = "https://gmail.googleapis.com/gmail/v1";\nimport { google } from "googleapis";\nimport { gmail } from "@googleapis/gmail";`))
+            .toEqual([1, 2, 3]);
+        expect(findPackageEgressLines(`const host = "gmail.googleapis.com";`)).toEqual([1]);
+        expect(findPackageEgressLines(`const HOSTS = ["storage.googleapis.com"];`)).toEqual([]);
+    });
+
     it("flags an import of the resend SDK", () => {
         expect(findPackageEgressLines(`import { Resend } from "resend";`)).toEqual([1]);
     });

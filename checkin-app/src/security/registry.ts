@@ -979,3 +979,11 @@ defineOutbound({
     // purchaser's name, address and partial card number. Bytes only, never a URL.
     tiers: ['pii'],
 });
+
+defineOutbound({
+    surface: 'gmail.read',
+    // packages/receipt/src/lib/gmail.ts → gmail.googleapis.com, gmail.readonly scope.
+    // List/get requests only: a date-window query string and message/attachment ids;
+    // no model data. Mail read back is tiered by the receipt models that store it.
+    tiers: [],
+});
