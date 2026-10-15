@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { INVALID_GRANT_MARKER, REFRESH_MARGIN_MS, run, type CredentialStore, type StoredCredentials } from "./refresher";
+import { INVALID_GRANT_MARKER, REFRESH_MARGIN_MS, SAVE_RETRY_DELAYS_MS, run, type CredentialStore, type StoredCredentials } from "./refresher";
 
 const NOW = 1_800_000_000_000;
 const DEV_ID = "dev-client-id";
@@ -91,6 +91,49 @@ describe("run current", () => {
   it("rejects an unknown action", async () => {
     const { store } = memoryStore(creds());
     await expect(run({ action: "rotate" }, store, SANDBOX, NOW)).rejects.toThrow(/unknown action/);
+  });
+});
+
+describe("saving the rotated pair", () => {
+  function flakyStore(initial: StoredCredentials, failures: number) {
+    const saved: StoredCredentials[] = [];
+    const save = vi.fn(async (c: StoredCredentials) => {
+      if (save.mock.calls.length <= failures) throw new Error("secrets manager unavailable");
+      saved.push(c);
+    });
+    const store: CredentialStore = { load: async () => initial, save };
+    return { store, saved, save };
+  }
+
+  it("retries a failed write and returns the token once it lands", async () => {
+    intuitOk();
+    const { store, saved, save } = flakyStore(creds(), 2);
+
+    const pending = run({ action: "keepalive" }, store, SANDBOX, NOW);
+    await vi.runAllTimersAsync();
+    const out = await pending;
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledTimes(3);
+    expect(saved[0].refreshToken).toBe("new-refresh");
+    expect(out.accessToken).toBe("new-access");
+  });
+
+  it("after the last retry logs the alarm marker once without secrets and returns nothing", async () => {
+    intuitOk();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { store, save } = flakyStore(creds(), Infinity);
+
+    const pending = run({ action: "keepalive" }, store, SANDBOX, NOW);
+    const assertion = expect(pending).rejects.toThrow(/secrets manager unavailable/);
+    await vi.runAllTimersAsync();
+    await assertion;
+
+    expect(save).toHaveBeenCalledTimes(SAVE_RETRY_DELAYS_MS.length + 1);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(String(errorSpy.mock.calls[0][0])).toContain(INVALID_GRANT_MARKER);
+    const logged = JSON.stringify(errorSpy.mock.calls[0]);
+    for (const secret of ["new-access", "new-refresh", "test-secret"]) expect(logged).not.toContain(secret);
   });
 });
 
