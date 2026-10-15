@@ -88,9 +88,6 @@ const AUTHZ_TESTED = new Set<string>([
     'membership-ops/applications/certify-payment',
     'membership-ops/applications/external',
     'membership-ops/applications/review-override',
-    // 401/403 deny-path in authzRoleRejection.integration.test.ts, incl. a
-    // dedicated sysadmin-alone-is-denied case (board-only, not sysadmin).
-    'membership-ops/bg-attestations/[id]',
     // POST deny-path (401 anon / 403 plain / 403 sysadmin-excluded) in
     // membership-ops/contacts/__tests__/route.integration.test.ts.
     'membership-ops/contacts',

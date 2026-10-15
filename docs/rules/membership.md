@@ -233,10 +233,6 @@ Procedure below is built on them.
   stands. A rejection cannot be undone by its reviewer; moving a blocked
   application on is the board's reset.  [Decision]
 
-- Removing someone else's attestation — the cleanup for a reviewer recorded under
-  two identities — is a board action, with a written reason. A sysadmin alone
-  cannot remove one.  [Decision]
-
 - A board override names the adult it covers. It cannot infer one: a blocked
   application never holds the second approval that would identify a subject, so
   an override naming nobody would date a clearance against no one.  [Decision]

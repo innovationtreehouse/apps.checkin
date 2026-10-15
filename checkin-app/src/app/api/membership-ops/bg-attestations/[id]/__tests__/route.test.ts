@@ -45,7 +45,7 @@ const ctx = { params: Promise.resolve({ id: "42" }) };
 
 beforeEach(() => {
     jest.clearAllMocks();
-    mockSession.mockResolvedValue({ user: { id: 99, isBoardMember: true } });
+    mockSession.mockResolvedValue({ user: { id: 99, isSysadmin: true } });
     tx.backgroundCheckAttestation.findUnique.mockResolvedValue(attestation);
     tx.backgroundCheckAttestation.delete.mockResolvedValue(attestation);
     tx.auditLog.create.mockResolvedValue({});
