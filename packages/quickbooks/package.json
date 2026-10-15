@@ -9,6 +9,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./oauth": {
+      "types": "./src/oauth.ts",
+      "import": "./src/oauth.ts"
     }
   },
   "scripts": {

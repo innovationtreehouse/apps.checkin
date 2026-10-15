@@ -1,4 +1,5 @@
-import { refreshTokens, type QboEnv, type QboTokens } from "@inventory/quickbooks";
+import type { QboEnv, QboTokens } from "@inventory/quickbooks";
+import { refreshTokens } from "@inventory/quickbooks/oauth";
 
 /** The secret's JSON: the Intuit app keys plus the live token pair. Only this function reads it. */
 export interface StoredCredentials extends QboTokens {
