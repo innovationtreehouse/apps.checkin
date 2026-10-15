@@ -1,10 +1,9 @@
 /**
- * Receipt pipeline (X6): a receipt uploaded and read by the local OCR mock, confirmed by its
+ * Receipt pipeline (X6 → X5): a receipt uploaded and read by the local OCR mock, confirmed by its
  * uploader, reaches workflow-mapping in the same request (S1), where the manager resolves its
- * line and it proceeds. Once received, the receipt side refuses restarts and edits, and a
- * re-send is answered as a replay. Real HTTP against the running dev server.
- *
- * The expense leg (X5) is inert on main, so the proceeded receipt holds in apply_failed.
+ * line; it proceeds and expense books it under the receipt's id. Once received, the receipt side
+ * refuses restarts and edits, and a re-send is answered as a replay. Real HTTP against the
+ * running dev server.
  */
 import { api, BASE, loginAs, type Session } from "./helpers";
 
@@ -13,6 +12,7 @@ const FINANCE = "finance@example.com";
 
 interface Receipt { id: string; state: string }
 type Received = { id: number; receiptId: string; state: string; validationNotes?: string | null };
+type ExpenseRow = { id: string; vendorName: string | null };
 type Detail = { ReceivedReceipt: Received; ReceivedReceiptLineStatus: Array<{ id: number; recognitionStatus: string }> };
 
 const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -61,11 +61,14 @@ describe("receipt pipeline — receipt to workflow mapping", () => {
     const detail = (await api<Detail>(submitter, `/api/workflow-mapping/receipts/${row.id}`)).json;
     expect(detail.ReceivedReceiptLineStatus).toEqual([expect.objectContaining({ recognitionStatus: "unrecognized" })]);
 
-    // Resolving the last line proceeds it; the inert expense leg holds it in apply_failed.
+    // Resolving the last line proceeds it, and expense books it under the receipt's id.
     const line = detail.ReceivedReceiptLineStatus[0];
     expect((await post(submitter, `/api/workflow-mapping/receipts/${row.id}/lines/${line.id}/non-inventory`)).status).toBe(200);
     const proceeded = (await api<Detail>(submitter, `/api/workflow-mapping/receipts/${row.id}`)).json.ReceivedReceipt;
-    expect(proceeded.state).toBe("apply_failed");
+    expect(proceeded.state).toBe("resolved");
+    const expense = await api<ExpenseRow>(finance, `/api/expense/expenses/${auto.json.id}`);
+    expect(expense.status).toBe(200);
+    expect(expense.json).toMatchObject({ id: auto.json.id, vendorName: "Fixture Hardware" });
 
     // Received is final on the receipt side: no restart, no edit.
     const restart = await post(finance, `/api/receipts/${auto.json.id}/restart-flow`);
@@ -76,6 +79,6 @@ describe("receipt pipeline — receipt to workflow mapping", () => {
 
     // A manual re-send is a replay: still one received receipt, state unchanged.
     expect((await post(finance, `/api/receipts/${auto.json.id}/push-to-inventory`)).json).toEqual({ pushed: true });
-    expect(await received(submitter, auto.json.id)).toEqual([expect.objectContaining({ id: row.id, state: "apply_failed" })]);
+    expect(await received(submitter, auto.json.id)).toEqual([expect.objectContaining({ id: row.id, state: "resolved" })]);
   });
 });
