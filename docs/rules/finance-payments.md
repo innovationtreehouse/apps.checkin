@@ -95,6 +95,10 @@ Things the app takes as true because they are handled outside it.
 
 - Finance Ops belongs to the board; sysadmins are excluded outright.  [Unsettled — which superuser]
 
+- Being on the Board is enough to view receipt and expense data, and to edit it
+  where the app allows an edit. Every Board member is an insider today; an
+  outside Board member joining would reopen this whole access model.  [Decision — owner]
+
 - Membership and program payment plans are read by the board and finance only;
   a sysadmin role alone does not admit.  [Decision — owner]
 

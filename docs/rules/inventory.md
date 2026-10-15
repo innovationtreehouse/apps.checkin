@@ -112,6 +112,11 @@ org identity, the own-database packaging — is described in
   catalog audience, or adding a background-check leg is a decision on the
   record. `[Decision — owner]`
 
+- Being on the Board is enough to view receipt and inventory data, and to edit
+  it where the app allows an edit. Every Board member is an insider today; an
+  outside Board member joining would reopen this whole access model.
+  `[Decision — owner]`
+
 - `INVENTORY_MANAGER` is a single write role that collapses the two manager
   tiers the catalog was ported from. Splitting it back into distinct
   catalog-manager and org-manager roles is intended strategic work, not done;
