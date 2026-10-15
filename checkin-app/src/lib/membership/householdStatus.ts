@@ -18,7 +18,7 @@
  * and the writers take the client as a parameter.
  */
 import type { Prisma, OrgMembershipStatus } from "@/generated/prisma/client";
-import { withTx, type DbClient } from "@/lib/db-client";
+import { withTx, type DbClient, type TxClient } from "@/lib/db-client";
 import type { AuditActor } from "@/lib/auditActor";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { fromStatusWhere, isLegalTransition, type Transition, type Expect, type Equal } from "@/lib/lifecycle";
@@ -110,6 +110,22 @@ export async function setHouseholdStatus(
         });
         return true;
     });
+}
+
+/**
+ * Locks the OrgMembership rows of `householdIds` FOR UPDATE, in household-id order,
+ * and returns the first DENIED household among them, or null. A household move or
+ * merge holds these locks so a concurrent deny either lands first and is seen, or
+ * waits for the move. Callers take `lockBoardRoles` first, the order a deny takes
+ * its locks in.
+ */
+export async function lockAndFindDeniedHousehold(tx: TxClient, householdIds: readonly number[]): Promise<number | null> {
+    let denied: number | null = null;
+    for (const householdId of [...new Set(householdIds)].sort((a, b) => a - b)) {
+        const [row] = await tx.$queryRaw<{ status: HouseholdStatus }[]>`SELECT status FROM "OrgMembership" WHERE "householdId" = ${householdId} FOR UPDATE`;
+        if (row?.status === "DENIED" && denied === null) denied = householdId;
+    }
+    return denied;
 }
 
 /**

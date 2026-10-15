@@ -12,8 +12,8 @@ import { LIVE_PERSON } from "@/lib/person/filters";
 import { mintPersonId } from "@/lib/person/mintId";
 import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
 import { config } from "@/lib/config";
-import { ensureHouseholdMembership, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
-import { assertNotOwnHousehold, OwnHouseholdRoleError } from "@/lib/roles";
+import { ensureHouseholdMembership, lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+import { assertNotOwnHousehold, lockBoardRoles, OwnHouseholdRoleError } from "@/lib/roles";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 
@@ -409,7 +409,14 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
                         // Atomic: if any step throws, the whole merge rolls back so
                         // participants are never left half-moved between households.
-                        await prisma.$transaction(async (tx) => {
+                        const deniedHouseholdId = await prisma.$transaction(async (tx) => {
+                            // A DENIED household on either side refuses the merge: it would
+                            // free the source's members of the denial or put them under it.
+                            // The BOARD lock comes first, as a deny takes it.
+                            await lockBoardRoles(tx);
+                            const denied = await lockAndFindDeniedHousehold(tx, [sourceHouseholdId, targetHouseholdId]);
+                            if (denied !== null) return denied;
+
                             // Move all participants from source to target. Their
                             // isHouseholdLead flag travels with them (a1), so source
                             // leads become target leads automatically — no re-add.
@@ -467,7 +474,13 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                             if (pr.email) {
                                 await addHouseholdLead(tx, targetHouseholdId, participantId);
                             }
+                            return null;
                         });
+                        if (deniedHouseholdId !== null) {
+                            await raiseDeniedHouseholdActivity({ householdId: deniedHouseholdId, what: "CSV import household merge refused" });
+                            errors.push(`Row ${pr.index + 2} (${pr.fullName}): Household ${deniedHouseholdId} has been denied membership, so it cannot be merged.`);
+                            continue;
+                        }
                         linked.push({ ...pr, participantId });
                     } else {
                         errors.push(`Row ${pr.index + 2} (${pr.fullName}): Could not find participant "${pr.sameHouseholdAs}" for household association`);

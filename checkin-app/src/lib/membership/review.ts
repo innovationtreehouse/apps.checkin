@@ -578,13 +578,15 @@ export async function overrideBlocked(processId: number, actorId: number, action
             // A blocked application resumes at the review status its cycle calls for; one
             // still in review already sits there, so only its attestations go.
             const reviewStatus = blocked ? blockedResetStatus(fresh) : fresh.status;
+            // The deleted attestations, a rejection and its note included, live on only in the audit row.
+            const attestations = await tx.backgroundCheckAttestation.findMany({ where: { processId }, orderBy: { id: "asc" } });
             await tx.backgroundCheckAttestation.deleteMany({ where: { processId } });
             const { count } = await tx.orgMembershipProcess.updateMany({
                 where: { id: processId, ...(blocked ? fromWhere("BLOCKED") : awaitingBgReview.where) },
                 data: { status: reviewStatus, bgClearedAt: null, stageEnteredAt: new Date() },
             });
             if (!count) throw movedOn();
-            await audit(tx, personActor(actorId), processId, { status: fresh.status }, { status: reviewStatus, action: "board reset" });
+            await audit(tx, personActor(actorId), processId, { status: fresh.status, attestations }, { status: reviewStatus, action: "board reset" });
             return reviewStatus;
         });
         await notifyReviewers();
