@@ -27,6 +27,25 @@ model WorkflowSystemData {
   @@map("system_data")
 }
 
+// A catalog OrgEvent whose reaction failed (id = the catalog event id). Catch-up retries it by
+// id; the row is deleted once it applies.
+model WorkflowFailedOrgEvent {
+  /// @sensitivity:public
+  id            Int      @id
+  /// @sensitivity:internal
+  orgId         String   @map("org_id")
+  /// @sensitivity:public
+  eventType     String   @map("event_type")
+  /// @sensitivity:internal
+  payload       String
+  /// @sensitivity:internal
+  failureReason String   @map("failure_reason")
+  /// @sensitivity:public
+  failedAt      DateTime @default(now()) @map("failed_at")
+
+  @@map("failed_org_events")
+}
+
 model ReceivedReceipt {
   /// @sensitivity:public
   id              Int      @id @default(autoincrement())

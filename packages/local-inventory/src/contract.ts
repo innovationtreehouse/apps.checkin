@@ -34,7 +34,25 @@ export interface InventoryRuntimeConfig {
    * resolve it from its own store, so it is never read at boot.
    */
   org: () => Promise<OrgIdentity>;
+  /** S5 replay read; inert (no events) until the host binds it to the catalog. */
+  catalogEventSource?: CatalogEventSource;
 }
+
+/** One catalog OrgEvent row; `payload` is its stored JSON body without `eventType`. */
+export interface OrgEventRecord {
+  id: number;
+  orgId: string;
+  eventType: string;
+  payload: string;
+  createdAt: Date;
+}
+
+/** Replay read: the org's events with id greater than `afterId`, ascending. */
+export interface CatalogEventSource {
+  eventsSince(orgId: string, afterId: number): Promise<OrgEventRecord[]>;
+}
+
+export const inertCatalogEventSource: CatalogEventSource = { eventsSince: async () => [] };
 
 /** The slice of a route context a factory consumes: request + path params. */
 export interface InventoryRouteCtx {

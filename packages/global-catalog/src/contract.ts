@@ -36,6 +36,24 @@ export interface CatalogRuntimeConfig {
    * multi-org later resolves the current org per request — same seam.
    */
   org: () => Promise<OrgIdentity>;
+  /**
+   * S5 consumers, by name. The catalog calls each in-process after a transaction that wrote
+   * OrgEvent rows commits; a consumer that throws replays from its own cursor.
+   */
+  orgEventConsumers?: Record<string, OrgEventConsumer>;
+}
+
+/** One OrgEvent row as consumers receive it; `payload` is the stored JSON body without `eventType`. */
+export interface OrgEventRecord {
+  id: number;
+  orgId: string;
+  eventType: string;
+  payload: string;
+  createdAt: Date;
+}
+
+export interface OrgEventConsumer {
+  onOrgEvents(events: OrgEventRecord[]): Promise<void>;
 }
 
 /**

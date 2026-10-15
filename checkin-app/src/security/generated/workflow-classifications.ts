@@ -6,6 +6,14 @@ export const classifications = {
         id: 'public',
         orgEventCursor: 'internal',
     },
+    WorkflowFailedOrgEvent: {
+        id: 'public',
+        orgId: 'internal',
+        eventType: 'public',
+        payload: 'internal',
+        failureReason: 'internal',
+        failedAt: 'public',
+    },
     ReceivedReceipt: {
         id: 'public',
         orgId: 'internal',
@@ -48,6 +56,8 @@ export const classifications = {
 
 export const relations = {
     WorkflowSystemData: {
+    },
+    WorkflowFailedOrgEvent: {
     },
     ReceivedReceipt: {
         lineStatuses: { model: 'ReceivedReceiptLineStatus', isList: true },
