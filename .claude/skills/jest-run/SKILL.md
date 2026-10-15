@@ -11,7 +11,8 @@ hard-blocks the three catastrophic shapes (background test, tail/head pipe, hand
 
 ## Use the package.json scripts verbatim
 
-They already carry `--runInBand` (integration tests share one DB — parallel runs corrupt it):
+They already carry the right worker flags (unit: `--runInBand`; integration: one worker by
+default, each worker on its own cloned DB, `INTEGRATION_WORKERS=N` for more):
 
 | Want | Command |
 |------|---------|

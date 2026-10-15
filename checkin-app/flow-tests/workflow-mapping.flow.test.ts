@@ -1,12 +1,11 @@
 /**
  * Receipt mapping (#1289): the persona matrix over all 10 routes, and a manager
- * journey from proceed through apply into org inventory (X4). Real HTTP against
- * the running dev server and the seeded workflow-mapping DB (see
- * docker-compose.flow.yml + packages/workflow-mapping/prisma/seed.ts).
+ * journey from proceed through apply into org inventory (X4) and expense (X5).
+ * Real HTTP against the running dev server and the seeded workflow-mapping DB
+ * (see docker-compose.flow.yml + packages/workflow-mapping/prisma/seed.ts).
  *
- * X3 (catalog reads) and X4 are bound: the expense leg (X5) is inert, so every
- * push lands in apply_failed after the inventory leg applies, and the catalog
- * submissions port is inert, so propose answers 502.
+ * X3 (catalog reads), X4 and X5 are bound, so a pushed receipt resolves; the
+ * catalog submissions port is inert, so propose answers 502.
  */
 import { loginAs, api, type Session } from "./helpers";
 
@@ -42,6 +41,7 @@ type Detail = {
   WorkflowReceiptView: Record<string, unknown> & { lineItems: Array<Record<string, unknown>> };
   ReceivedReceiptLineStatus: LineRow[];
 };
+type ExpenseRow = { id: string; vendorName: string | null };
 type AuditRow = { eventType: string; receivedReceiptId: number | null; actorUsername?: string | null };
 
 const post = (s: Session, path: string, body?: unknown) =>
@@ -50,6 +50,11 @@ const post = (s: Session, path: string, body?: unknown) =>
 async function stock(s: Session): Promise<number> {
   const res = await api<{ existingQuantity: number }>(s, `/api/inventory/org-items/${GTIN}`);
   return res.status === 404 ? 0 : res.json.existingQuantity;
+}
+
+/** The expense booked from a receipt, read as FINANCE; the expense id is the receipt's receiptId. */
+async function bookedExpense(receiptId: string) {
+  return api<ExpenseRow>(await loginAs(FINANCE), `/api/expense/expenses/${receiptId}`);
 }
 
 async function seeded(s: Session, vendor: string): Promise<ReceiptRow> {
@@ -107,7 +112,7 @@ describe("workflow mapping — route auth", () => {
 });
 
 describe("workflow mapping — manager journey", () => {
-  it("proceeds and applies a receipt into org inventory, holding it in apply_failed for the unwired expense leg", async () => {
+  it("proceeds and applies a receipt into org inventory and books its expense", async () => {
     const m = await loginAs(MANAGER);
     const receipt = await seeded(m, "Seed Hardware");
     expect(receipt.state).toBe("pending_review");
@@ -118,29 +123,29 @@ describe("workflow mapping — manager journey", () => {
 
     const applied = await post(m, `/api/workflow-mapping/receipts/${receipt.id}/apply`);
     expect(applied.status).toBe(200);
-    expect(applied.json).toMatchObject({ state: "apply_failed", validationNotes: "ExpenseSink.pushReceipt not wired" });
+    expect(applied.json).toMatchObject({ state: "resolved" });
     expect(await stock(m)).toBe(before + 5);
+    const expense = await bookedExpense("seed-wm-proceed");
+    expect(expense.status).toBe(200);
+    expect(expense.json).toMatchObject({ id: "seed-wm-proceed", vendorName: "Seed Hardware" });
 
     const detail = await api<Detail>(m, `/api/workflow-mapping/receipts/${receipt.id}`);
     expect(detail.json.ReceivedReceipt.inventoryAppliedAt).not.toBeNull();
     const [line] = detail.json.ReceivedReceiptLineStatus;
     expect((await post(m, `/api/workflow-mapping/receipts/${receipt.id}/lines/${line.id}/non-inventory`)).status).toBe(409);
 
-    // Retry pushes only the legs not yet applied: stock is not counted twice.
-    expect((await post(m, `/api/workflow-mapping/receipts/${receipt.id}/retry-apply`)).json).toMatchObject({ state: "applying" });
-    expect((await post(m, `/api/workflow-mapping/receipts/${receipt.id}/apply`)).json).toMatchObject({ state: "apply_failed" });
+    // A resolved receipt cannot be pushed again: stock is not counted twice.
+    expect((await post(m, `/api/workflow-mapping/receipts/${receipt.id}/retry-apply`)).status).toBe(409);
     expect(await stock(m)).toBe(before + 5);
 
-    const counts = await api<Record<string, number>>(m, "/api/workflow-mapping/receipts/counts");
-    expect(counts.json.apply_failed).toBeGreaterThanOrEqual(1);
-    const failed = await api<ReceiptRow[]>(m, "/api/workflow-mapping/receipts?state=apply_failed,applying");
-    expect(failed.json.some((r) => r.id === receipt.id)).toBe(true);
+    const resolved = await api<ReceiptRow[]>(m, "/api/workflow-mapping/receipts?state=resolved");
+    expect(resolved.json.some((r) => r.id === receipt.id)).toBe(true);
     const log = await api<AuditRow[]>(m, `/api/workflow-mapping/audit-log?receiptId=${receipt.id}`);
-    expect(log.json.map((e) => e.eventType)).toEqual(expect.arrayContaining(["receipt_proceeded", "receipt_apply_failed", "receipt_retry_started"]));
+    expect(log.json.map((e) => e.eventType)).toEqual(expect.arrayContaining(["receipt_proceeded", "receipt_apply_succeeded"]));
     expect(log.json.find((e) => e.eventType === "receipt_proceeded")?.actorUsername).toBe("Inventory Manager");
   });
 
-  it("resolves the last line by marking it non-inventory, which auto-proceeds and applies", async () => {
+  it("resolves the last line by marking it non-inventory, which auto-proceeds, applies and books the expense", async () => {
     const m = await loginAs(MANAGER);
     const receipt = await seeded(m, "Seed Supply");
     const detail = await api<Detail>(m, `/api/workflow-mapping/receipts/${receipt.id}`);
@@ -156,7 +161,8 @@ describe("workflow mapping — manager journey", () => {
 
     expect((await post(m, `${line}/non-inventory`)).status).toBe(200);
     const after = await api<Detail>(m, `/api/workflow-mapping/receipts/${receipt.id}`);
-    expect(after.json.ReceivedReceipt.state).toBe("apply_failed");
+    expect(after.json.ReceivedReceipt.state).toBe("resolved");
     expect(await stock(m)).toBe(before + 2);
+    expect((await bookedExpense("seed-wm-mapping")).json).toMatchObject({ id: "seed-wm-mapping", vendorName: "Seed Supply" });
   });
 });

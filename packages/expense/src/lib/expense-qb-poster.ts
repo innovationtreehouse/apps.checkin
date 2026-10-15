@@ -6,9 +6,11 @@ import type { ExpensePosting } from "../contract";
 import type { Expense } from "../db/schema";
 import { getExpenseRuntime } from "../runtime";
 import { MATCH_WINDOW_DAYS, claimQbTxn, claimedQbTxnIds } from "../services/qbMatchService";
-import { QbExpenseEventSchema } from "../workflows/expense-event-schema";
+import { QbExpenseEventSchema, type QbExpenseEvent } from "../workflows/expense-event-schema";
 import { writeAudit } from "./audit";
 import { logError, logWarn } from "./logger";
+import { reimburseeUnknown } from "./signoff";
+import { unsignedLines } from "./signoff-facts";
 import { SYSTEM_ACTOR } from "./system-actor";
 import { raiseFlag } from "../services/flagService";
 
@@ -17,6 +19,9 @@ import { raiseFlag } from "../services/flagService";
  * AMBIGUOUS and BEFORE_LINE wait for finance.
  */
 export const POSTABLE_QB_STATES = ["UNMATCHED", "POST_FAILED", "NOT_TEST_DATA", "TEST_DATA_REFUSED"];
+
+/** Claimed by a post whose QuickBooks call is in flight; qbClaimedAt says since when. */
+export const POSTING = "POSTING";
 
 export const TEST_VENDOR_PREFIX = "TEST-";
 
@@ -77,7 +82,7 @@ async function recordFailure(tx: Db, current: Expense, error: string): Promise<"
   const attempts = current.qbPostAttempts + 1;
   const exhausted = attempts >= MAX_POST_ATTEMPTS;
   const qbMatchState = exhausted ? "NEEDS_FINANCE" : "POST_FAILED";
-  await tx.expense.update({ where: { id: current.id }, data: { qbMatchState, qbPostAttempts: attempts } });
+  await tx.expense.update({ where: { id: current.id }, data: { qbMatchState, qbPostAttempts: attempts, qbClaimedAt: null } });
   await writeAudit(tx, SYSTEM_ACTOR, {
     expenseId: current.id,
     action: `qb_${qbMatchState.toLowerCase()}`,
@@ -91,34 +96,66 @@ async function recordFailure(tx: Db, current: Expense, error: string): Promise<"
   return "needs_finance";
 }
 
+function lockedExpense(tx: Db, orgId: string, expenseId: string) {
+  return tx.$queryRaw`SELECT id FROM expenses WHERE id = ${expenseId} FOR UPDATE`.then(() =>
+    tx.expense.findFirstOrThrow({ where: { id: expenseId, orgId } }),
+  );
+}
+
+/** A claim older than this belongs to a post that died between claim and settle; it may be taken over. */
+export const STALE_CLAIM_MS = 10 * 60_000;
+
+function isPostable(e: Expense, now = Date.now()): boolean {
+  if (e.backfill || e.qbTxnId) return false;
+  if (e.qbMatchState === POSTING) return !!e.qbClaimedAt && now - e.qbClaimedAt.getTime() > STALE_CLAIM_MS;
+  return POSTABLE_QB_STATES.includes(e.qbMatchState);
+}
+
 /** Locks the expense and runs `fn` on it when it is still waiting to be posted. */
-function withPostable<T>(orgId: string, expenseId: string, fn: (tx: Db, current: Expense) => Promise<T>, timeout?: number) {
+function withPostable<T>(orgId: string, expenseId: string, fn: (tx: Db, current: Expense) => Promise<T>) {
   return db.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM expenses WHERE id = ${expenseId} FOR UPDATE`;
-    const current = await tx.expense.findFirstOrThrow({ where: { id: expenseId, orgId } });
-    if (current.backfill || current.qbTxnId || !POSTABLE_QB_STATES.includes(current.qbMatchState)) return "waiting" as const;
-    return fn(tx, current);
-  }, timeout ? { timeout } : undefined);
+    const current = await lockedExpense(tx, orgId, expenseId);
+    return isPostable(current) ? fn(tx, current) : ("waiting" as const);
+  });
+}
+
+/** A claim this post holds: the row as it was before the claim, and when the claim was taken. */
+type Claim = { before: Expense; at: Date };
+
+/** Locks the expense and runs `fn` only while `claim` is still the one on the row. */
+function withClaim<T>(orgId: string, expenseId: string, claim: Claim, fn: (tx: Db) => Promise<T>) {
+  return db.$transaction(async (tx) => {
+    const current = await lockedExpense(tx, orgId, expenseId);
+    if (current.qbMatchState !== POSTING || current.qbClaimedAt?.getTime() !== claim.at.getTime()) {
+      logWarn("qb_post_claim_lost", { expenseId, orgId });
+      return "waiting" as const;
+    }
+    return fn(tx);
+  });
 }
 
 type Built = { write: TxnWrite; lineAccounts: Map<number, string> } | { queue: string } | { error: string };
 
+function lineCents(i: QbExpenseEvent["items"][number]): number {
+  return i.totalPriceCents + i.allocatedTaxCents + i.allocatedShippingCents - i.allocatedDiscountCents;
+}
+
+/** What an outboxed payload posts: the sum of its lines, not the receipt total. */
+export function payloadLineCents(payloadJson: string): number {
+  return QbExpenseEventSchema.parse(JSON.parse(payloadJson)).items.reduce((s, i) => s + lineCents(i), 0);
+}
+
 /** The entry to create for an outboxed expense; each line keeps its own account. */
-async function buildWrite(orgId: string, payloadJson: string, posting: ExpensePosting): Promise<Built> {
+async function buildWrite(client: Db, orgId: string, payloadJson: string, posting: ExpensePosting): Promise<Built> {
   const event = QbExpenseEventSchema.parse(JSON.parse(payloadJson));
   if (!event.receiptDate) return { error: "the expense has no receipt date" };
-  const lines = event.items.map((i) => ({
-    lineItemId: i.lineItemId,
-    amountCents: i.totalPriceCents + i.allocatedTaxCents + i.allocatedShippingCents - i.allocatedDiscountCents,
-    accountId: i.account,
-    description: i.description,
-  }));
+  const lines = event.items.map((i) => ({ lineItemId: i.lineItemId, amountCents: lineCents(i), accountId: i.account, description: i.description }));
   const lineAccounts = new Map(lines.map((l) => [l.lineItemId, l.accountId]));
   const writeLines = lines.map(({ amountCents, accountId, description }) => ({ amountCents, accountId, description }));
   const memo = event.vendorName ?? undefined;
 
   if (event.needsReimbursement) {
-    const vendor = await db.expenseReimburseeVendor.findFirst({ where: { orgId, reimburseePersonId: event.reimburseePersonId! } });
+    const vendor = await client.expenseReimburseeVendor.findFirst({ where: { orgId, reimburseePersonId: event.reimburseePersonId! } });
     if (!vendor) return { queue: "the reimbursee has no QuickBooks Vendor" };
     return { write: { entity: "Bill", fields: { txnDate: event.receiptDate, vendorId: vendor.qbVendorId, lines: writeLines, memo } }, lineAccounts };
   }
@@ -131,136 +168,174 @@ async function buildWrite(orgId: string, payloadJson: string, posting: ExpensePo
   };
 }
 
+type SettleData = { qbMatchState: string; qbTxnId?: string; qbTxnEntity?: string; qbVendorId?: string };
+
+async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: SettleData, notes?: string): Promise<PostOutcome> {
+  await tx.expense.update({ where: { id: before.id }, data: { ...data, qbClaimedAt: null } });
+  if (before.qbMatchState === data.qbMatchState && !data.qbTxnId) return outcome;
+  await writeAudit(tx, SYSTEM_ACTOR, {
+    expenseId: before.id,
+    action: `qb_${data.qbMatchState.toLowerCase()}`,
+    fieldChanged: "qbMatchState",
+    valueBefore: before.qbMatchState,
+    valueAfter: data.qbTxnId ? `${data.qbMatchState}:${data.qbTxnId}` : data.qbMatchState,
+    notes: notes ?? null,
+  });
+  return outcome;
+}
+
+export type PostOptions = {
+  /** The drain's run-alone slot: the one post allowed past the per-expense ceiling. */
+  allowOverCap?: boolean;
+};
+
 /**
  * One expense's turn through the outbox. found by key or created → CREATED; found by amount →
  * MATCHED; ambiguous or an unmapped reimbursee → AMBIGUOUS; before the takeover line →
  * BEFORE_LINE; a failure (QuickBooks down, rejected, or a thrown error) → POST_FAILED, retried by
  * the drain until MAX_POST_ATTEMPTS, then NEEDS_FINANCE with a flag (finance's retry re-arms it); an
- * expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. With no
- * takeover date configured nothing is posted. A row lock serializes the request path and the cron drain.
+ * expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. An
+ * expense whose lines sum past MAX_CREATE_CENTS_PER_RUN is left for the drain's run-alone slot and
+ * flagged QB_OVER_CAP. With no takeover date configured nothing is posted.
+ *
+ * Claim, call, settle: the payload and sign-off seats are re-read under the row lock and the row is
+ * claimed (POSTING); the QuickBooks call runs outside any transaction; the outcome is settled in a
+ * new one only if the claim is still ours.
  */
-export async function postExpenseToQb(orgId: string, expenseId: string): Promise<PostOutcome | "unbound" | "no_takeover_date"> {
+export async function postExpenseToQb(
+  orgId: string,
+  expenseId: string,
+  opts: PostOptions = {},
+): Promise<PostOutcome | "unbound" | "no_takeover_date"> {
   const posting = getExpenseRuntime().quickbooks.posting;
   if (!posting) return "unbound";
   if (!posting.takeoverDate) {
     logWarn("qb_post_no_takeover_date", { expenseId, orgId });
     return "no_takeover_date";
   }
-  const event = await db.expenseEvent.findFirst({ where: { orgId, expenseId } });
-  if (!event) return "waiting";
 
+  let claim: Claim | null = null;
   try {
-    return await attemptPost(orgId, expenseId, posting, posting.takeoverDate, event.payload);
+    const claimed = await claimForPost(orgId, expenseId, posting, opts);
+    if (typeof claimed === "string") return claimed;
+    claim = claimed.claim;
+    return await callAndSettle(orgId, expenseId, posting, posting.takeoverDate, claimed);
   } catch (err) {
-    // The attempt's own transaction rolled back, so the failure is recorded in a fresh one.
+    // The failing transaction rolled back, so the failure is recorded in a fresh one.
     logError("qb_post_threw", { expenseId, orgId }, err);
     const error = err instanceof Error ? err.message : String(err);
-    return withPostable(orgId, expenseId, (tx, current) => recordFailure(tx, current, error));
+    const held = claim;
+    return held
+      ? withClaim(orgId, expenseId, held, (tx) => recordFailure(tx, held.before, error))
+      : withPostable(orgId, expenseId, (tx, current) => recordFailure(tx, current, error));
   }
 }
 
-async function attemptPost(
-  orgId: string,
-  expenseId: string,
-  posting: ExpensePosting,
-  takeoverDate: string,
-  payload: string,
-): Promise<PostOutcome> {
-  const line = await expenseTakeoverLine(orgId, takeoverDate);
-  let built: Built;
-  try {
-    built = await buildWrite(orgId, payload, posting);
-  } catch (e) {
-    built = { error: e instanceof Error ? e.message : String(e) };
-  }
-  const { claimedIds, excludedIds } = "write" in built
-    ? await claimedAndExcluded(orgId, built.write.entity === "Bill" ? "Bill" : "Purchase")
-    : { claimedIds: new Set<string>(), excludedIds: new Set<string>() };
+type Claimed = { claim: Claim; write: TxnWrite; lineAccounts: Map<number, string> };
 
-  return withPostable(
-    orgId,
-    expenseId,
-    async (tx, current) => {
-      const settle = async (
-        outcome: PostOutcome,
-        data: { qbMatchState: string; qbTxnId?: string; qbTxnEntity?: string; qbVendorId?: string },
-        notes?: string,
-      ) => {
-        if (current.qbMatchState === data.qbMatchState && !data.qbTxnId) return outcome;
-        await tx.expense.update({ where: { id: expenseId }, data });
-        await writeAudit(tx, SYSTEM_ACTOR, {
-          expenseId,
-          action: `qb_${data.qbMatchState.toLowerCase()}`,
-          fieldChanged: "qbMatchState",
-          valueBefore: current.qbMatchState,
-          valueAfter: data.qbTxnId ? `${data.qbMatchState}:${data.qbTxnId}` : data.qbMatchState,
-          notes: notes ?? null,
-        });
-        return outcome;
-      };
+async function claimForPost(orgId: string, expenseId: string, posting: ExpensePosting, opts: PostOptions): Promise<PostOutcome | Claimed> {
+  return withPostable(orgId, expenseId, async (tx, locked): Promise<PostOutcome | Claimed> => {
+    // A stale claim is a post that died mid-call; it settles as a retry of a failed post.
+    const current = locked.qbMatchState === POSTING ? { ...locked, qbMatchState: "POST_FAILED" } : locked;
+    const event = await tx.expenseEvent.findFirst({ where: { orgId, expenseId } });
+    if (!event) return "waiting";
+    if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0) {
+      logWarn("qb_post_unsigned", { expenseId, orgId });
+      return "waiting";
+    }
 
-      const fail = (error: string) => recordFailure(tx, current, error);
+    const refused = notSendable(posting, current);
+    if (refused) {
+      if (posting.prod) logWarn("qb_post_test_data_refused", { expenseId, orgId });
+      return settle(tx, current, "not_sent", { qbMatchState: refused.qbMatchState }, refused.note);
+    }
 
-      const refused = notSendable(posting, current);
-      if (refused) {
-        if (posting.prod) logWarn("qb_post_test_data_refused", { expenseId, orgId });
-        return settle("not_sent", { qbMatchState: refused.qbMatchState }, refused.note);
-      }
-      if ("error" in built) return fail(built.error);
-      if ("queue" in built) return settle("queued", { qbMatchState: "AMBIGUOUS" }, built.queue);
+    let built: Built;
+    try {
+      built = await buildWrite(tx, orgId, event.payload, posting);
+    } catch (e) {
+      built = { error: e instanceof Error ? e.message : String(e) };
+    }
+    if ("error" in built) return recordFailure(tx, current, built.error);
+    if ("queue" in built) return settle(tx, current, "queued", { qbMatchState: "AMBIGUOUS" }, built.queue);
 
-      const { write, lineAccounts } = built;
-      const date = write.fields.txnDate;
-      const result: FindOrCreateResult = await findOrCreate(posting.client, {
-        write,
-        key: qbKey("expense", expenseId),
-        window: { from: shiftDate(date, -MATCH_WINDOW_DAYS), to: shiftDate(date, MATCH_WINDOW_DAYS) },
-        takeoverLine: line,
-        claimedIds,
-        excludedIds,
-      });
+    const cents = built.write.fields.lines.reduce((s, l) => s + l.amountCents, 0);
+    if (cents > MAX_CREATE_CENTS_PER_RUN && !opts.allowOverCap) {
+      logWarn("qb_post_over_cap", { expenseId, orgId });
+      await raiseFlag(expenseId, "QB_OVER_CAP", "queued for the drain: over the per-expense cap", tx);
+      return "queued";
+    }
 
-      switch (result.kind) {
-        case "created":
-        case "found": {
-          const byAmount = result.kind === "found" && result.via === "amount";
-          if (!(await claimQbTxn(tx, orgId, write.entity, result.id))) {
-            const note = `QuickBooks ${write.entity} ${result.id} is already claimed by another expense or line`;
-            // An entry the app posted for this expense is now a duplicate in QuickBooks.
-            if (!byAmount) await raiseFlag(expenseId, "QB_POST_FAILED", `${note}; the entry posted for this expense needs voiding`, tx);
-            return settle("queued", { qbMatchState: "AMBIGUOUS" }, note);
-          }
-          if (byAmount) {
-            return settle("matched", { qbMatchState: "MATCHED", qbTxnId: result.id, qbTxnEntity: write.entity });
-          }
-          for (const [id, accountId] of lineAccounts) {
-            await tx.expenseLineItem.update({ where: { id }, data: { qbAccountId: accountId } });
-          }
-          const qbVendorId = write.entity === "Bill" ? write.fields.vendorId : undefined;
-          return settle("posted", { qbMatchState: "CREATED", qbTxnId: result.id, qbTxnEntity: write.entity, qbVendorId });
-        }
-        case "ambiguous":
-          return settle("queued", { qbMatchState: "AMBIGUOUS" }, `candidates: ${result.ids.join(", ")}`);
-        case "too-old":
-          return settle("queued", { qbMatchState: "BEFORE_LINE" });
-        case "failed":
-          return fail(result.error);
-        case "no-line":
-          return "waiting";
-      }
-    },
-    // findOrCreate makes up to two QuickBooks requests, each with a 30s timeout and one Retry-After wait.
-    90_000,
-  );
+    const at = new Date();
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: POSTING, qbClaimedAt: at } });
+    return { claim: { before: current, at }, write: built.write, lineAccounts: built.lineAccounts };
+  });
 }
-
-export type DrainCounts = Record<PostOutcome, number> & { overCap: number; capped: "count" | "cents" | null };
 
 /**
- * The catch-up drain: every outboxed expense not yet in QuickBooks, oldest receipt first. Stops
- * at the count and cents caps and logs the hit (the alarm hook); the rest waits for the next run.
- * An expense over the cents cap on its own is posted alone, as the first post of a run, and
- * flagged for finance. Returns counts only.
+ * The QuickBooks call holds no transaction or row lock. A crash after QuickBooks accepts and before
+ * settle is safe: the entry carries the expense's key (sent as requestid and kept in its
+ * PrivateNote), so the post that takes over the stale claim finds it by key instead of creating
+ * a second one.
+ */
+async function callAndSettle(orgId: string, expenseId: string, posting: ExpensePosting, takeoverDate: string, claimed: Claimed): Promise<PostOutcome> {
+  const { claim, write, lineAccounts } = claimed;
+  const { before } = claim;
+  const line = await expenseTakeoverLine(orgId, takeoverDate);
+  const { claimedIds, excludedIds } = await claimedAndExcluded(orgId, write.entity === "Bill" ? "Bill" : "Purchase");
+  const date = write.fields.txnDate;
+  const result: FindOrCreateResult = await findOrCreate(posting.client, {
+    write,
+    key: qbKey("expense", expenseId),
+    window: { from: shiftDate(date, -MATCH_WINDOW_DAYS), to: shiftDate(date, MATCH_WINDOW_DAYS) },
+    takeoverLine: line,
+    claimedIds,
+    excludedIds,
+  });
+
+  return withClaim(orgId, expenseId, claim, async (tx) => {
+    switch (result.kind) {
+      case "created":
+      case "found": {
+        const byAmount = result.kind === "found" && result.via === "amount";
+        if (!(await claimQbTxn(tx, orgId, write.entity, result.id))) {
+          const note = `QuickBooks ${write.entity} ${result.id} is already claimed by another expense or line`;
+          // An entry the app posted for this expense is now a duplicate in QuickBooks.
+          if (!byAmount) await raiseFlag(expenseId, "QB_POST_FAILED", `${note}; the entry posted for this expense needs voiding`, tx);
+          return settle(tx, before, "queued", { qbMatchState: "AMBIGUOUS" }, note);
+        }
+        if (byAmount) {
+          return settle(tx, before, "matched", { qbMatchState: "MATCHED", qbTxnId: result.id, qbTxnEntity: write.entity });
+        }
+        for (const [id, accountId] of lineAccounts) {
+          await tx.expenseLineItem.update({ where: { id }, data: { qbAccountId: accountId } });
+        }
+        const qbVendorId = write.entity === "Bill" ? write.fields.vendorId : undefined;
+        return settle(tx, before, "posted", { qbMatchState: "CREATED", qbTxnId: result.id, qbTxnEntity: write.entity, qbVendorId });
+      }
+      case "ambiguous":
+        return settle(tx, before, "queued", { qbMatchState: "AMBIGUOUS" }, `candidates: ${result.ids.join(", ")}`);
+      case "too-old":
+        return settle(tx, before, "queued", { qbMatchState: "BEFORE_LINE" });
+      case "failed":
+        return recordFailure(tx, before, result.error);
+      case "no-line":
+        return settle(tx, before, "waiting", { qbMatchState: before.qbMatchState });
+    }
+  });
+}
+
+export type DrainCounts = Record<PostOutcome, number> & { overCap: number; capped: "count" | "cents" | null; stoppedAfterFailures: boolean };
+
+/** Consecutive failed posts after which a drain run stops: QuickBooks is likely down. */
+export const MAX_CONSECUTIVE_FAILURES = 3;
+
+/**
+ * The catch-up drain: every outboxed expense not yet in QuickBooks, oldest receipt first, plus any
+ * claim gone stale. Stops at the count and cents caps (measured on the posted line sum) and logs
+ * the hit (the alarm hook); the rest waits for the next run. An expense over the cents cap on its
+ * own is posted alone, as the first post of a run, and flagged for finance. Stops after
+ * MAX_CONSECUTIVE_FAILURES failures in a row. Returns counts only.
  */
 export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound" | "no_takeover_date"> {
   const posting = getExpenseRuntime().quickbooks.posting;
@@ -269,39 +344,57 @@ export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound" | "n
     logWarn("qb_drain_no_takeover_date", {});
     return "no_takeover_date";
   }
-  const outboxed = new Set((await db.expenseEvent.findMany({ select: { expenseId: true } })).map((e) => e.expenseId));
+  const payloads = new Map((await db.expenseEvent.findMany({ select: { expenseId: true, payload: true } })).map((e) => [e.expenseId, e.payload]));
+  const now = Date.now();
   const due = (
     await db.expense.findMany({
-      where: { backfill: false, qbTxnId: null, qbMatchState: { in: POSTABLE_QB_STATES } },
+      where: { backfill: false, qbTxnId: null, qbMatchState: { in: [...POSTABLE_QB_STATES, POSTING] } },
       orderBy: [{ receiptDate: "asc" }, { submittedAt: "asc" }],
-      select: { id: true, orgId: true, receiptTotalCents: true },
     })
-  ).filter((e) => outboxed.has(e.id));
+  ).filter((e) => payloads.has(e.id) && isPostable(e, now));
 
-  const counts: DrainCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, overCap: 0, capped: null };
+  const counts: DrainCounts = {
+    posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0,
+    overCap: 0, capped: null, stoppedAfterFailures: false,
+  };
   let postedCents = 0;
+  let failuresInARow = 0;
   for (const [i, e] of due.entries()) {
-    const alone = e.receiptTotalCents > MAX_CREATE_CENTS_PER_RUN && counts.posted === 0;
-    if (!alone && (counts.posted >= MAX_CREATES_PER_RUN || postedCents + e.receiptTotalCents > MAX_CREATE_CENTS_PER_RUN)) {
+    let cents: number;
+    try {
+      cents = payloadLineCents(payloads.get(e.id)!);
+    } catch {
+      cents = 0; // an unreadable payload is recorded as a failure by the post itself
+    }
+    const alone = cents > MAX_CREATE_CENTS_PER_RUN && counts.posted === 0;
+    if (!alone && (counts.posted >= MAX_CREATES_PER_RUN || postedCents + cents > MAX_CREATE_CENTS_PER_RUN)) {
       counts.capped = counts.posted >= MAX_CREATES_PER_RUN ? "count" : "cents";
       logWarn("qb_drain_capped", { cap: counts.capped, remaining: due.length - i });
       break;
     }
+    let outcome: PostOutcome;
     try {
-      const outcome = await postExpenseToQb(e.orgId, e.id);
-      if (outcome === "unbound" || outcome === "no_takeover_date") break;
-      counts[outcome]++;
-      if (outcome === "posted") postedCents += e.receiptTotalCents;
-      if (alone && outcome === "posted") {
-        counts.overCap++;
-        logWarn("qb_drain_over_cap", { expenseId: e.id, orgId: e.orgId });
-        await raiseFlag(e.id, "QB_OVER_CAP", "posted alone: over the per-run cap");
-        counts.capped = "cents";
-        break;
-      }
+      const result = await postExpenseToQb(e.orgId, e.id, { allowOverCap: alone });
+      if (result === "unbound" || result === "no_takeover_date") break;
+      outcome = result;
     } catch (err) {
-      counts.failed++;
+      outcome = "failed";
       logError("qb_drain_failed", { expenseId: e.id, orgId: e.orgId }, err);
+    }
+    counts[outcome]++;
+    failuresInARow = outcome === "failed" || outcome === "needs_finance" ? failuresInARow + 1 : 0;
+    if (failuresInARow >= MAX_CONSECUTIVE_FAILURES) {
+      counts.stoppedAfterFailures = true;
+      logWarn("qb_drain_failure_streak", { failures: failuresInARow, remaining: due.length - i - 1 });
+      break;
+    }
+    if (outcome === "posted") postedCents += cents;
+    if (alone && outcome === "posted") {
+      counts.overCap++;
+      logWarn("qb_drain_over_cap", { expenseId: e.id, orgId: e.orgId });
+      await raiseFlag(e.id, "QB_OVER_CAP", "posted alone: over the per-run cap");
+      counts.capped = "cents";
+      break;
     }
   }
   return counts;

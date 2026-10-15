@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import {
-  Anchor, Badge, Button, Checkbox, Group, Modal, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Textarea, Title,
+  Anchor, Badge, Button, Checkbox, Group, Modal, NumberInput, Paper, Select, Stack, Switch, Table, Text, TextInput, Textarea, Title,
 } from "@mantine/core";
 import { formatCents } from "@inventory/money";
 import { STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
@@ -90,8 +90,11 @@ function actionsFor(a: Approval, state: string, isFinance: boolean): Action[] {
   return [];
 }
 
-/** /expense/expenses/[id] — lines, bucket approvals, sign-off seats, and FINANCE's actions. */
-export default function ExpenseDetailPage({ id, listHref = "/expense/expenses" }: { id: string; listHref?: string }) {
+/**
+ * /expense/expenses/[id] — lines, bucket approvals, sign-off seats, and FINANCE's actions.
+ * `testDataToggle` is the host's word that this is dev or local; the route 404s anywhere else.
+ */
+export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", testDataToggle = false }: { id: string; listHref?: string; testDataToggle?: boolean }) {
   const base = `/expenses/${encodeURIComponent(id)}`;
   const { isFinance, isBoard } = useRoles();
   const expense = useLoad<Expense>(base);
@@ -147,6 +150,13 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses" }
         {e.backfill && <Badge color="gray">Backfill</Badge>}
         {e.isTestData && <Badge color="grape">Test data</Badge>}
       </Group>
+      {isFinance && testDataToggle && (
+        <Switch
+          label="Test data"
+          checked={e.isTestData ?? false}
+          onChange={async (ev) => { if (await send(`${base}/test-data`, "PUT", { isTestData: ev.currentTarget.checked }, "Test data updated")) reloadAll(); }}
+        />
+      )}
       {e.qbMatchState && NOT_SENT[e.qbMatchState] && <Text size="sm" c="orange">{NOT_SENT[e.qbMatchState]}</Text>}
       {isFinance && e.qbMatchState === "NEEDS_FINANCE" && (
         <Group>
