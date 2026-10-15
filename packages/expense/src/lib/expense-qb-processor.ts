@@ -83,47 +83,86 @@ function matchesRule(rule: AccountMapping, category: string, subcategory: string
   return true;
 }
 
-// ── Stage 1 (pure): resolve accounts for all line items ──────────────────────
+// ── Catalog inputs: live lookup and the sign-off snapshot ────────────────────
 
+export type CatalogInfo = { gtin13: string; category: string; subcategory: string };
+
+type CatalogLine = Pick<ExpenseLineItem, "id" | "partNumber" | "manufacturer" | "description">;
+
+/** Live catalog GTIN and category names for each part-numbered line; unmatched lines have no `info` entry. */
+export async function lookupCatalogInfo(
+  lines: CatalogLine[],
+  vendorName: string,
+): Promise<{ gtin13ByItemId: Map<number, string | null>; info: Map<number, CatalogInfo> }> {
+  const withPartNumbers = lines.filter((li) => li.partNumber);
+  const info = new Map<number, CatalogInfo>();
+  if (withPartNumbers.length === 0) return { gtin13ByItemId: new Map(), info };
+
+  const [categories, subcategories, lookupResults] = await Promise.all([
+    listCategories(),
+    listSubcategories(),
+    lookupItems(
+      vendorName,
+      withPartNumbers.map((li) => ({
+        index: li.id,
+        partNumber: li.partNumber,
+        manufacturer: li.manufacturer,
+        description: li.description,
+      })),
+    ),
+  ]);
+  const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
+  const subcategoryMap = new Map(subcategories.map((s) => [s.id, s.name]));
+  const gtin13ByItemId = new Map(lookupResults.map((r) => [r.index, r.gtin13]));
+
+  for (const li of withPartNumbers) {
+    const gtin13 = gtin13ByItemId.get(li.id);
+    if (!gtin13) continue;
+    const item = await getItem(gtin13);
+    if (!item) continue;
+    const category = categoryMap.get(item.categoryId);
+    const subcategory = subcategoryMap.get(item.subcategoryId);
+    if (category && subcategory) info.set(li.id, { gtin13, category, subcategory });
+  }
+  return { gtin13ByItemId, info };
+}
+
+function snapshotOf(li: ExpenseLineItem): CatalogInfo | null {
+  const { signedGtin13: gtin13, signedCategory: category, signedSubcategory: subcategory } = li;
+  return gtin13 && category && subcategory ? { gtin13, category, subcategory } : null;
+}
+
+/** Fixes the catalog inputs of signed lines; a line that already has a snapshot keeps it. */
+export async function saveCatalogSnapshots(info: Map<number, CatalogInfo>): Promise<void> {
+  for (const [id, { gtin13, category, subcategory }] of info) {
+    await db.expenseLineItem.updateMany({
+      where: { id, signedGtin13: null },
+      data: { signedGtin13: gtin13, signedCategory: category, signedSubcategory: subcategory },
+    });
+  }
+}
+
+// ── Stage 1: resolve accounts for all line items ─────────────────────────────
+
+/**
+ * Callers run this only once every line is signed off, so a line resolved from the live catalog
+ * here has its snapshot taken now, and later catalog edits cannot move its account.
+ */
 async function resolveAccountsForExpense(
   lineItems: ExpenseLineItem[],
   rules: AccountMapping[],
   vendorName: string,
 ): Promise<{ resolved: ResolvedItem[]; conflicts: ConflictItem[] }> {
-  const [categories, subcategories] = await Promise.all([
-    listCategories(),
-    listSubcategories(),
-  ]);
-  const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
-  const subcategoryMap = new Map(subcategories.map((s) => [s.id, s.name]));
+  const live = await lookupCatalogInfo(lineItems.filter((li) => !snapshotOf(li)), vendorName);
+  await saveCatalogSnapshots(live.info);
 
-  const itemsWithPartNumbers = lineItems.filter((li) => li.partNumber);
-  const lookupResults =
-    itemsWithPartNumbers.length > 0
-      ? await lookupItems(
-          vendorName,
-          itemsWithPartNumbers.map((li) => ({
-            index: li.id,
-            partNumber: li.partNumber,
-            manufacturer: li.manufacturer,
-            description: li.description,
-          })),
-        )
-      : [];
-
-  const gtin13ByItemId = new Map(lookupResults.map((r) => [r.index, r.gtin13]));
-
-  const itemInfoByItemId = new Map<number, { category: string; subcategory: string }>();
-  for (const li of itemsWithPartNumbers) {
-    const gtin13 = gtin13ByItemId.get(li.id);
-    if (gtin13) {
-      const info = await getItem(gtin13);
-      if (info) {
-        const cat = categoryMap.get(info.categoryId);
-        const sub = subcategoryMap.get(info.subcategoryId);
-        if (cat && sub) itemInfoByItemId.set(li.id, { category: cat, subcategory: sub });
-      }
-    }
+  const gtin13ByItemId = live.gtin13ByItemId;
+  const itemInfoByItemId = live.info;
+  for (const li of lineItems) {
+    const snapshot = snapshotOf(li);
+    if (!snapshot) continue;
+    gtin13ByItemId.set(li.id, snapshot.gtin13);
+    itemInfoByItemId.set(li.id, snapshot);
   }
 
   const resolved: ResolvedItem[] = [];
