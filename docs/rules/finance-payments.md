@@ -100,6 +100,10 @@ Things the app takes as true because they are handled outside it.
 
 - Nobody decides a scholarship or payment plan for their own household.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- Nobody makes a finance decision on a receipt that they or their household
+  uploaded or is reimbursed for. Tax and the receipt date drive financial review,
+  so only an independent finance person changes them.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
 - A budget bucket is an accounting bucket, not a person. Finance creates, renames
   and archives buckets and maps each to a QuickBooks Class. Archiving keeps the
   row, because finance records point at it.  [Decision]

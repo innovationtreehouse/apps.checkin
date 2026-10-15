@@ -1,9 +1,9 @@
 /**
  * Wire the receipt library into checkin (#1265 §3/§6), called once at server boot from
  * instrumentation.ts. Binding touches no database and no network: the principal and the org
- * are read lazily, inside a request. The donor sink (X13) is bound to donations in-process.
- * The S1 sink (X6) and reimbursement status (X12) stay unbound, so the library's inert
- * adapters queue or answer "not yet paid".
+ * are read lazily, inside a request, and so are households. The donor sink (X13) is bound to
+ * donations in-process. The S1 sink (X6) and reimbursement status (X12) stay unbound, so the
+ * library's inert adapters queue or answer "not yet paid".
  */
 import { configureReceipt, createAnthropicOcr, fixtureOcr, type ReceiptPrincipal } from "@inventory/receipt";
 import { recordInKindDonor, withdrawInKind } from "@inventory/bulk-donation";
@@ -34,10 +34,22 @@ async function getPrincipal(): Promise<ReceiptPrincipal | null> {
   return { id: user.id, name: person.name, firstName, lastName: rest.join(" "), isAdult: isKnownAdult(person) };
 }
 
+/** Live members of every household holding one of these people; a merged-away person's household still counts. */
+async function householdOf(personIds: number[]): Promise<number[]> {
+  if (personIds.length === 0) return [];
+  const [{ default: prisma }, { LIVE_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
+  const members = await prisma.person.findMany({
+    where: { household: { householdMembers: { some: { id: { in: personIds } } } }, ...LIVE_PERSON },
+    select: { id: true },
+  });
+  return members.map((m) => m.id);
+}
+
 export function configureRuntime(): void {
   configureReceipt({
     auth: { getPrincipal },
     org: getOrg,
+    households: { householdOf },
     donorSink: { recordInKindDonor, withdrawInKind },
     // Chosen by CHECKIN_ENV, never by whether a key is set (fail closed): a deployed instance
     // without the key reads nothing and lands auto uploads in ocr_failed.

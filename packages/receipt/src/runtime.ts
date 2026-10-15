@@ -3,6 +3,7 @@ import type {
   OcrProvider,
   OrgIdentity,
   ReceiptConfig,
+  ReceiptHouseholds,
   ReceiptPrincipal,
   ReceiptSink,
   ReimbursementStatus,
@@ -39,6 +40,11 @@ export const inertReimbursementStatus: ReimbursementStatus = {
   forReceipts: async (receiptIds) => new Map(receiptIds.map((id) => [id, { paidOn: null }])),
 };
 
+/** Knows no households: only the uploader and the reimbursee themselves are refused. */
+export const inertHouseholds: ReceiptHouseholds = {
+  householdOf: async () => [],
+};
+
 export const inertOcr: OcrProvider = {
   extract: async () => ({ success: false, error: "OCR is not configured" }),
 };
@@ -70,6 +76,7 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits">
     receiptSink: r.receiptSink ?? inertReceiptSink,
     donorSink: r.donorSink ?? inertDonorSink,
     reimbursementStatus: r.reimbursementStatus ?? inertReimbursementStatus,
+    households: r.households ?? inertHouseholds,
     ocr: r.ocr ?? inertOcr,
   };
 }

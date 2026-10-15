@@ -10,7 +10,7 @@ import { createInventoryRepository } from "../../lib/repositories/inventoryRepos
 import { createProvisionalItemRepository } from "../../lib/repositories/provisionalItemRepository";
 import { createProvisionalResolutionRepository } from "../../lib/repositories/provisionalResolutionRepository";
 import { createReceiveQueueRepository } from "../../lib/repositories/receiveQueueRepository";
-import { createInventoryService } from "../../lib/services/inventoryService";
+import { applyQtyChangeIn, createInventoryService } from "../../lib/services/inventoryService";
 import { createProvisionalItemService } from "../../lib/services/provisionalItemService";
 import { createReceiptService } from "../../lib/services/receiptService";
 import { createReceiveQueueService } from "../../lib/services/receiveQueueService";
@@ -38,6 +38,16 @@ function services() {
     receipts: createReceiptService({ provisionalItemService, inventoryRepo, receiveQueueRepo, db }),
     queue: createReceiveQueueService({ receiveQueueRepo, db }),
   };
+}
+
+/** Resolves once some backend in this database is waiting on a lock. */
+async function someoneBlocked(): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    const [{ n }] = await db.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+    if (n > 0n) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error("no backend blocked on a lock");
 }
 
 async function qty(gtin13: string) {
@@ -76,6 +86,30 @@ describeDb("stock write concurrency", () => {
       ...Array.from({ length: 5 }, (_, i) => receipts.applyReceipt(TEST_ORG_ID, `m-${i + 1}`, undefined, [{ gtin13: REAL, quantityDelta: 1 }])),
     ]);
     expect(await qty(REAL)).toBe(17);
+  });
+
+  it("a rename merge racing the first receipt on the real GTIN keeps both counts", async () => {
+    const { receipts, provisional } = services();
+    await receipts.applyReceipt(TEST_ORG_ID, "r-0", undefined, [{ gtin13: PROVISIONAL, quantityDelta: 5, isProvisional: true }]);
+
+    // The first receipt on the real GTIN holds its new row uncommitted while the merge runs.
+    let commit!: () => void;
+    const gate = new Promise<void>((r) => (commit = r));
+    let inserted!: () => void;
+    const rowInserted = new Promise<void>((r) => (inserted = r));
+    const receipt = db.$transaction(async (tx) => {
+      await applyQtyChangeIn(tx, TEST_ORG_ID, REAL, 3, { userId: null, changeType: "received", receiptId: "r-1" });
+      inserted();
+      await gate;
+    });
+    await rowInserted;
+    const merge = provisional.mapProvisionalToExisting(TEST_ORG_ID, PROVISIONAL, REAL, 1);
+    await someoneBlocked();
+    commit();
+    await Promise.all([receipt, merge]);
+
+    expect(await qty(REAL)).toBe(8);
+    expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
   });
 
   it("concurrent conflict resolves apply once", async () => {

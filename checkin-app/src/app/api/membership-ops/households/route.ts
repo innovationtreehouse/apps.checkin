@@ -29,7 +29,6 @@ const PRIMARY_CONTACT_WHERE = { conflictParticipantId: null, name: { not: "" }, 
 function withFlatContact<T extends { emergencyContacts: { name: string; phone: string }[] }>(h: T) {
     const primary = h.emergencyContacts[0] ?? null;
     const { emergencyContacts: _drop, ...rest } = h;
-    void _drop;
     return { ...rest, emergencyContactName: primary?.name ?? null, emergencyContactPhone: primary?.phone ?? null };
 }
 
