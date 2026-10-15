@@ -12,7 +12,7 @@ import { logBackendError, logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
-import { LIVE_VISIT } from "@/lib/visit/filters";
+import { KEYHOLDER_IN_BUILDING, LIVE_VISIT } from "@/lib/visit/filters";
 import { systemActor } from "@/lib/auditActor";
 
 // GET is kiosk-first with distinct signature-failure semantics (403 on bad signature,
@@ -267,7 +267,7 @@ export const POST = withAuth({}, async (req, auth) => {
                 // under the lock so a racing keyholder check-in is either fully
                 // committed or not yet seen.
                 const activeKeyholders = await tx.visit.count({
-                    where: { departedAt: null, person: { isKeyholder: true }, ...LIVE_VISIT }
+                    where: KEYHOLDER_IN_BUILDING
                 });
                 if (activeKeyholders === 0) {
                     return { facilityClosed: true as const };

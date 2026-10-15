@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { isYouth } from "@/lib/time";
 import { LIVE_PERSON } from "@/lib/person/filters";
-import { LIVE_VISIT } from "@/lib/visit/filters";
+import { LIVE_KEYHOLDER, LIVE_VISIT } from "@/lib/visit/filters";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits } from "@/lib/supervision";
 import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
 import { invalidatableCache } from "@/lib/invalidatableCache";
@@ -160,7 +160,7 @@ async function computeFullAttendance(kiosk: boolean) {
     const keyholderCover: Span[] = otherArrivals.length === 0 ? [] : await prisma.visit.findMany({
         where: {
             ...LIVE_VISIT,
-            person: { isKeyholder: true, ...LIVE_PERSON },
+            person: LIVE_KEYHOLDER,
             arrivedAt: { lte: new Date(Math.max(...otherArrivals) + NO_KEYHOLDER_GRACE_MS) },
             OR: [{ departedAt: null }, { departedAt: { gte: new Date(Math.min(...otherArrivals)) } }],
         },

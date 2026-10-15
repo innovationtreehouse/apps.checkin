@@ -87,18 +87,16 @@ export async function reviewTransaction<T>(fn: (tx: TxClient) => Promise<T>): Pr
 }
 
 /**
- * "Awaiting background-check review" now lives as ONE definition — the
- * `awaitingBgReview` StateSet in lib/membership/lifecycle (fix #1). `.has(row)` is
- * the in-tx / client predicate, `.where` the reviewer-queue Prisma fragment; both
- * derive from the same status lists so they can't drift. Formerly three hand-kept
- * encodings (this function, AWAITING_BG_WHERE, applications/page.tsx).
+ * "Awaiting background-check review" is the `awaitingBgReview` StateSet in
+ * lib/membership/lifecycle: `.has(row)` is the in-tx / client predicate, `.where`
+ * the reviewer-queue Prisma fragment.
  *
  * A PERSON_BG surfaces in the reviewer queue only once it's been SUBMITTED — i.e.
  * bgConsentAt is set (the board recorded that an external check exists via
  * submitPersonBgForReview). This mirrors how the household parallel track gates on
  * bgConsentAt in awaitingBgReview.where. An unsubmitted PERSON_BG (bgConsentAt ==
  * null) stays out: not listed, not counted, no reviewer ping — its subject isn't
- * ready to approve yet, and the queue GET now renders the subject once it is. A
+ * ready to approve yet, and the queue GET renders the subject once it is. A
  * single `NOT` key so it spreads cleanly alongside awaitingBgReview.where's own
  * `OR` (two spread objects sharing an `OR` key would clobber it).
  */

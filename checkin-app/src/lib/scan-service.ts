@@ -5,7 +5,7 @@ import { apiError, apiJson } from "@/lib/api-response";
 import type { FacilityCloseVia, Person } from "@/generated/prisma/client";
 import type { DbClient, TxClient } from "@/lib/db-client";
 import { lockFacility, withFacilityLock } from "@/lib/facilityLock";
-import { LIVE_VISIT } from "@/lib/visit/filters";
+import { KEYHOLDER_IN_BUILDING, LIVE_KEYHOLDER, LIVE_VISIT } from "@/lib/visit/filters";
 import { LATE_CLOSE_SKEW_MS, MAX_VISIT_MS } from "@/lib/visitTimes";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, youthIsPresent } from "@/lib/supervision";
 import { isYouth } from "@/lib/time";
@@ -14,7 +14,6 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { logBackendError } from "@/lib/logger";
 import { type AuditActor, personActor, systemActor } from "@/lib/auditActor";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import type { AuthenticatedUser } from "@/types/auth";
 import { sendEmail } from "@/lib/email";
 import { escapeHtml } from "@/lib/email-templates/base";
@@ -96,13 +95,7 @@ export async function processCheckin(
     // Every other surface needs a keyholder already present, a keyholder's own
     // check-in included: only a badge at the door opens the building.
     if (authType !== "kiosk") {
-        const activeKeyholders = await tx.visit.count({
-            where: {
-                departedAt: null,
-                deletedAt: null,
-                person: { isKeyholder: true }
-            }
-        });
+        const activeKeyholders = await tx.visit.count({ where: KEYHOLDER_IN_BUILDING });
         if (activeKeyholders === 0) {
             return apiError("Facility is closed. A keyholder must badge in at the door first.", 403);
         }
@@ -180,9 +173,7 @@ export async function processCheckout(
     if (participant.isKeyholder && authType === "kiosk") {
         const remainingKeyholders = await db.visit.count({
             where: {
-                departedAt: null,
-                deletedAt: null,
-                person: { isKeyholder: true },
+                ...KEYHOLDER_IN_BUILDING,
                 id: { not: activeVisitId },
                 // A late replay reads the building as it was at the scan.
                 ...(isReplay ? { arrivedAt: { lte: visitTime } } : {}),
@@ -746,7 +737,7 @@ const readsRoster = (actor: CloseActor) => actor.isKeyholder || actor.isBoardMem
 /** Live keyholders other than the leaver with no open visit: who a leave can name. */
 async function handoverCandidates(db: DbClient, subjectId: number) {
     const people = await db.person.findMany({
-        where: { ...LIVE_PERSON, isKeyholder: true, id: { not: subjectId }, visits: { none: { departedAt: null, deletedAt: null } } },
+        where: { ...LIVE_KEYHOLDER, id: { not: subjectId }, visits: { none: { departedAt: null, deletedAt: null } } },
         select: { id: true, name: true, nickname: true, email: true },
     });
     const labels = getKioskDisplayNames(people);
@@ -784,7 +775,7 @@ export async function lastKeyholderGuard(
     if (!subject.isKeyholder) return proceed;
 
     const remainingKeyholders = await db.visit.count({
-        where: { departedAt: null, deletedAt: null, person: { isKeyholder: true }, id: { not: visitId } }
+        where: { ...KEYHOLDER_IN_BUILDING, id: { not: visitId } }
     });
     if (remainingKeyholders > 0) return proceed;
 
@@ -858,7 +849,7 @@ export async function lastKeyholderGuard(
         } else {
             const named = typeof confirm.handoverToId === "number" && Number.isInteger(confirm.handoverToId)
                 ? await db.person.findFirst({
-                    where: { ...LIVE_PERSON, id: confirm.handoverToId, isKeyholder: true, NOT: { id: subject.id } },
+                    where: { ...LIVE_KEYHOLDER, id: confirm.handoverToId, NOT: { id: subject.id } },
                     select: { id: true },
                 })
                 : null;
