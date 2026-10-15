@@ -4,12 +4,14 @@
  * lazy Org-registry accessor, so every library stamps the same org and person
  * ids, and boot stays DB-free.
  *
- * Bound crossings: X3 (CatalogReader → catalog reads) and X4 (InventorySink →
- * local-inventory apply). Catalog submissions, expense (X5), donations (X9)
- * and the S5 replay read (X2) keep the library's inert adapters, so a receipt
- * whose money leg cannot land waits in apply_failed.
+ * Bound crossings: X3 (CatalogReader → catalog reads), X4 (InventorySink →
+ * local-inventory apply) and X9 (DonationSink → donations ingestInKind).
+ * Catalog submissions, expense (X5) and the S5 replay read (X2) keep the
+ * library's inert adapters, so a receipt whose money leg cannot land waits in
+ * apply_failed.
  */
 import { configureWorkflowMapping } from "@inventory/workflow-mapping";
+import { ingestInKind } from "@inventory/bulk-donation";
 import { getOrg, getPrincipal } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createLocalInventorySink } from "@/lib/workflowMapping/inventorySink";
@@ -42,5 +44,6 @@ export function configureRuntime(): void {
     httpError: (status, message) => new WorkflowMappingHttpError(status, message),
     catalogReader,
     inventorySink: createLocalInventorySink(getOrg),
+    donationSink: { ingestInKind },
   });
 }

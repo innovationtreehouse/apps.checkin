@@ -1,10 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ZodError } from "zod";
 import type { CompletedReceipt } from "@inventory/receipt-types";
 import { configureBulkDonation, getInventoryApply, getOwnerDirectory, getQbWriter, NotWiredError } from "../../runtime";
 import { getCatalogItem, ingestInKind, recordInKindDonor, searchCatalog, withdrawInKind } from "../../inKind";
 import { inventorySourceKey } from "../../contract";
 import { deriveTakeoverLine } from "../../lib/qb-match";
+import { inKindService } from "../../services/inKindService";
+
+vi.mock("../../services/inKindService", () => ({
+  inKindService: { recordMoney: vi.fn(), recordDonor: vi.fn(), withdraw: vi.fn(), listQueue: vi.fn() },
+}));
 
 const ORG = "00000000-0000-0000-0000-000000000001";
 const RECEIPT_ID = "5f0c6a3e-1d2b-4c8e-9a7f-2b3c4d5e6f70";
@@ -41,7 +46,10 @@ const configure = (extra: Partial<Parameters<typeof configureBulkDonation>[0]> =
     ...extra,
   });
 
-beforeEach(() => configure());
+beforeEach(() => {
+  vi.clearAllMocks();
+  configure();
+});
 afterEach(() => {
   delete (globalThis as Record<string, unknown>).__bulkDonationRuntime;
 });
@@ -51,13 +59,20 @@ describe("X9 ingestInKind (callee)", () => {
     await expect(ingestInKind(receipt("other-org"))).rejects.toBeInstanceOf(ZodError);
   });
 
-  it("accepts this org's receipt, then throws not-wired so the caller retries", async () => {
-    await expect(ingestInKind(receipt(ORG))).rejects.toBeInstanceOf(NotWiredError);
+  it("rejects a purchase receipt", async () => {
+    await expect(ingestInKind({ ...receipt(ORG), isInKind: false })).rejects.toBeInstanceOf(ZodError);
+    expect(inKindService.recordMoney).not.toHaveBeenCalled();
+  });
+
+  it("records this org's money side", async () => {
+    await ingestInKind(receipt(ORG));
+    expect(inKindService.recordMoney).toHaveBeenCalledWith(ORG, RECEIPT_ID, { receiptTotalCents: 1000, receiptDate: "2026-09-01" });
   });
 
   it("reads the org at call time, not at import", async () => {
     configure({ org: async () => ({ id: "other-org", name: "Other" }) });
-    await expect(ingestInKind(receipt("other-org"))).rejects.toBeInstanceOf(NotWiredError);
+    await ingestInKind(receipt("other-org"));
+    expect(inKindService.recordMoney).toHaveBeenCalledWith("other-org", RECEIPT_ID, expect.anything());
   });
 });
 
@@ -77,9 +92,11 @@ describe("X13 recordInKindDonor / withdrawInKind (callees)", () => {
     await expect(withdrawInKind(ORG, "")).rejects.toBeInstanceOf(ZodError);
   });
 
-  it("throws not-wired on a valid call", async () => {
-    await expect(recordInKindDonor(ORG, RECEIPT_ID, DONOR)).rejects.toBeInstanceOf(NotWiredError);
-    await expect(withdrawInKind(ORG, RECEIPT_ID)).rejects.toBeInstanceOf(NotWiredError);
+  it("records a valid call", async () => {
+    await recordInKindDonor(ORG, RECEIPT_ID, DONOR);
+    await withdrawInKind(ORG, RECEIPT_ID);
+    expect(inKindService.recordDonor).toHaveBeenCalledWith(ORG, RECEIPT_ID, DONOR);
+    expect(inKindService.withdraw).toHaveBeenCalledWith(ORG, RECEIPT_ID);
   });
 });
 

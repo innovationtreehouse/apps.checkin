@@ -123,6 +123,19 @@ export const classifications = {
         excludedByUserId: 'internal',
         excludedAt: 'internal',
     },
+    InKindDonation: {
+        id: 'internal',
+        orgId: 'internal',
+        receiptId: 'internal',
+        receiptTotalCents: 'internal',
+        receiptDate: 'internal',
+        moneyReceivedAt: 'internal',
+        donorFirstName: 'pii',
+        donorLastName: 'pii',
+        donorCompanyName: 'pii',
+        donorRecordedAt: 'internal',
+        withdrawnAfterMoneyAt: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -145,6 +158,8 @@ export const relations = {
     WorkflowEvent: {
     },
     DonationQbMatchExclusion: {
+    },
+    InKindDonation: {
     },
 } as const;
 

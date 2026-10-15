@@ -2,8 +2,10 @@
  * Wire the bulk-donation library into checkin (#1280 §3/§6), called once at
  * server boot from instrumentation.ts. It shares the catalog's principal and
  * lazy Org-registry accessor, and binds the owner directory to checkin's
- * BudgetOwner table, read per call. Boot stays DB-free. The QuickBooks writer
- * and the in-kind ports (X9–X11, X13) stay unbound, so they are inert.
+ * BudgetOwner table, read per call. Boot stays DB-free. The in-kind callees
+ * X9 and X13 are bound by their callers (workflow-mapping and receipt). The
+ * QuickBooks writer, the catalog lookup (X10) and the inventory load (X11) stay
+ * unbound, so they are inert.
  */
 import { configureBulkDonation } from "@inventory/bulk-donation";
 import type { OwnerInfo } from "@inventory/bulk-donation";

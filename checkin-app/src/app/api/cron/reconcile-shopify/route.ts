@@ -7,6 +7,7 @@ import { runReconcile as runIncomeReconcile } from "@inventory/income";
 import { getOrg } from "@/lib/catalog/configure";
 import { runExpenseCatchUp } from "@inventory/expense";
 import { healProgramStock } from "@/lib/shopify";
+import { resendDonorSync } from "@inventory/receipt";
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
@@ -43,6 +44,9 @@ import { healProgramStock } from "@/lib/shopify";
  *
  * Then re-pushes program stock the stock writer left owing (healProgramStock),
  * which needs no mirror. Isolated the same way.
+ *
+ * Then re-sends in-kind donor changes the receipt library has not yet delivered to
+ * donations (resendDonorSync). Isolated the same way; counts only, no donor data.
  */
 export const GET = withCron(async () => {
     const result = await runReconcile();
@@ -73,5 +77,13 @@ export const GET = withCron(async () => {
         programStock = { status: "error" };
     }
     logger.info(`[reconcile] program stock ${JSON.stringify(programStock)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock });
+    let donorSync: Awaited<ReturnType<typeof resendDonorSync>> | { status: "error" };
+    try {
+        donorSync = await resendDonorSync();
+    } catch (err) {
+        logger.error("[reconcile] receipt donor re-send failed:", err);
+        donorSync = { status: "error" };
+    }
+    logger.info(`[reconcile] donor sync ${JSON.stringify(donorSync)}`);
+    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, donorSync });
 });
