@@ -8,8 +8,8 @@
  * test boots the image (placeholder env, no Google creds). So every checkin-side
  * dependency is loaded lazily, off the boot path; the app must boot without them.
  */
-import { configureCatalog } from "@inventory/global-catalog";
-import type { CatalogPrincipal, OrgIdentity } from "@inventory/global-catalog";
+import { configureCatalog, orgEventService } from "@inventory/global-catalog";
+import type { CatalogPrincipal, OrgEventConsumer, OrgEventRecord, OrgIdentity } from "@inventory/global-catalog";
 import type { Session } from "next-auth";
 
 /**
@@ -63,6 +63,34 @@ export async function getOrg(): Promise<OrgIdentity> {
   return row;
 }
 
+/** S5 replay read, bound into each consumer library's event-source port. */
+export function catalogEventsSince(orgId: string, afterId: number): Promise<OrgEventRecord[]> {
+  return orgEventService.eventsSince(orgId, afterId);
+}
+
+/**
+ * The S5 consumers the catalog calls after each commit that wrote events. Each library parses
+ * the events, applies them and keeps its own cursor; loaded on first event, never at boot.
+ */
+const orgEventConsumers: Record<string, OrgEventConsumer> = {
+  localInventory: {
+    async onOrgEvents(events) {
+      await (await import("@inventory/local-inventory")).orgEventConsumer.onOrgEvents(events);
+    },
+  },
+  expense: {
+    async onOrgEvents(events) {
+      const { consumeCatalogEvent } = await import("@inventory/expense");
+      for (const event of events) await consumeCatalogEvent(event);
+    },
+  },
+  workflowMapping: {
+    async onOrgEvents(events) {
+      await (await import("@inventory/workflow-mapping")).orgEventConsumer.onOrgEvents(events);
+    },
+  },
+};
+
 export function configureCatalogRuntime(): void {
-  configureCatalog({ auth: { getPrincipal }, org: getOrg });
+  configureCatalog({ auth: { getPrincipal }, org: getOrg, orgEventConsumers });
 }

@@ -10,6 +10,12 @@ jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { org: { findUniqu
 const configureCatalog = jest.fn<void, [CatalogRuntimeConfig]>();
 jest.mock("@inventory/global-catalog", () => ({ configureCatalog }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
+const consumeCatalogEvent = jest.fn();
+const inventoryOnOrgEvents = jest.fn();
+const workflowOnOrgEvents = jest.fn();
+jest.mock("@inventory/expense", () => ({ consumeCatalogEvent }));
+jest.mock("@inventory/local-inventory", () => ({ orgEventConsumer: { onOrgEvents: inventoryOnOrgEvents } }));
+jest.mock("@inventory/workflow-mapping", () => ({ orgEventConsumer: { onOrgEvents: workflowOnOrgEvents } }));
 jest.mock("@/lib/config", () => ({
   config: { isStaging: jest.fn(() => false) },
   isStagingAccessAllowed: jest.requireActual("@/lib/config").isStagingAccessAllowed,
@@ -98,5 +104,23 @@ describe("getPrincipal", () => {
     await expect(getPrincipal()).resolves.toBeNull();
     signedIn({ id: 7, name: "Ada", canAccessStaging: true });
     await expect(getPrincipal()).resolves.toEqual({ id: 7, name: "Ada" });
+  });
+});
+
+describe("S5 consumers", () => {
+  const events = [
+    { id: 1, orgId: "treehouse", eventType: "provisional_rejected", payload: "{}", createdAt: new Date() },
+    { id: 2, orgId: "treehouse", eventType: "provisional_rejected", payload: "{}", createdAt: new Date() },
+  ];
+
+  it("registers local-inventory, expense and workflow-mapping, each handed the committed events", async () => {
+    const consumers = (await boot()).orgEventConsumers ?? {};
+    expect(Object.keys(consumers).sort()).toEqual(["expense", "localInventory", "workflowMapping"]);
+
+    for (const consumer of Object.values(consumers)) await consumer.onOrgEvents(events);
+
+    expect(inventoryOnOrgEvents).toHaveBeenCalledWith(events);
+    expect(workflowOnOrgEvents).toHaveBeenCalledWith(events);
+    expect(consumeCatalogEvent.mock.calls).toEqual([[events[0]], [events[1]]]);
   });
 });

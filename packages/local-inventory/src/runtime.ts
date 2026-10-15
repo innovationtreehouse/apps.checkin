@@ -14,7 +14,7 @@ import { createLocationService } from "./lib/services/locationService";
 import { createProvisionalItemService } from "./lib/services/provisionalItemService";
 import { createReceiveQueueService } from "./lib/services/receiveQueueService";
 import { ServiceError } from "./lib/services/serviceError";
-import type { InventoryPrincipal, InventoryRuntimeConfig, OrgIdentity } from "./contract";
+import { inertCatalogEventSource, type CatalogEventSource, type InventoryPrincipal, type InventoryRuntimeConfig, type OrgIdentity } from "./contract";
 
 // On globalThis so the instrumentation chunk that configures it and the route
 // chunks that read it share one runtime (and it survives dev HMR).
@@ -53,6 +53,11 @@ export function getOrg(): Promise<OrgIdentity> {
 /** The current request's org id, the scope of every inventory row. */
 export async function getOrgId(): Promise<string> {
   return (await getOrg()).id;
+}
+
+/** The S5 replay read the host bound, or the inert one. */
+export function getCatalogEventSource(): CatalogEventSource {
+  return requireRuntime().catalogEventSource ?? inertCatalogEventSource;
 }
 
 function buildServices() {

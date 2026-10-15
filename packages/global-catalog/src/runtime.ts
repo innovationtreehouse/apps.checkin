@@ -7,7 +7,7 @@
 import { db as defaultDb } from "./db";
 import type { PrismaClient } from "./generated/prisma/client";
 import { ServiceError } from "./services/categoryService";
-import type { CatalogRuntimeConfig, CatalogPrincipal, OrgIdentity } from "./contract";
+import type { CatalogRuntimeConfig, CatalogPrincipal, OrgEventConsumer, OrgIdentity } from "./contract";
 
 // Stored on globalThis, not a module-scoped `let` — the same singleton pattern
 // the catalog Prisma client uses (`__gcPrisma`). It survives Turbopack HMR
@@ -42,6 +42,11 @@ export async function getPrincipal(): Promise<CatalogPrincipal> {
     throw new Error("no catalog principal — host admission should have rejected this request");
   }
   return principal;
+}
+
+/** Registered S5 consumers; none when the host registered none (or has not configured). */
+export function getOrgEventConsumers(): Record<string, OrgEventConsumer> {
+  return globalForRuntime.__gcRuntime?.orgEventConsumers ?? {};
 }
 
 /** Org identity for the current request (#1286 §6). */
