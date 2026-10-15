@@ -731,6 +731,17 @@ describeDb("QB-2 posting — QuickBooks Class per line", () => {
     expect((await db.expenseFlag.findMany({ where: { expenseId: id } })).map((f) => f.kind)).toEqual(["QB_NO_CLASS"]);
   });
 
+  it("an unclassed expense counts toward neither cap, so the rest of the run still posts", async () => {
+    await handMatched("2026-08-01");
+    await bucket100Unclassed();
+    const unclassed = await outboxed("2026-09-01", { amounts: [MAX_CREATE_CENTS_PER_RUN, 300] });
+    const classed = await outboxed("2026-09-10", { buckets: [7, 7] });
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, no_class: 1, overCap: 0, capped: null });
+    expect((await expenseRow(unclassed.id)).qbMatchState).toBe("UNMATCHED");
+    expect((await expenseRow(classed.id)).qbMatchState).toBe("CREATED");
+  });
+
   it("setting the bucket's Class lets the next drain post it", async () => {
     await handMatched("2026-08-01");
     await bucket100Unclassed();
