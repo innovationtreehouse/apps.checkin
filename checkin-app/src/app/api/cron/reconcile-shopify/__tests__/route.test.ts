@@ -96,6 +96,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
             stranded: { checked: 0, failed: 0 },
             catalogEvents: { processed: 0, duplicate: 0, failed: 0 },
             qbPost: 'unbound' as const,
+            qbDrift: 'unbound' as const,
         });
         jest.mocked(healProgramStock).mockRejectedValue(new Error('stock db down'));
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
