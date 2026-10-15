@@ -124,7 +124,7 @@ export default function ReceiptDetailPage() {
               <Stack gap="xs">
                 <Text fw={500} size="sm">Correct the details</Text>
                 <TextInput label="Retailer" value={edit.retailer ?? r.retailer ?? ""} onChange={(e) => setEdit({ ...edit, retailer: e.currentTarget.value })} />
-                <TextInput label="Date" value={edit.receiptDate ?? r.receiptDate ?? ""} onChange={(e) => setEdit({ ...edit, receiptDate: e.currentTarget.value })} />
+                <TextInput label="Date" disabled={own || !isFinance} value={edit.receiptDate ?? r.receiptDate ?? ""} onChange={(e) => setEdit({ ...edit, receiptDate: e.currentTarget.value })} />
                 <TextInput label="Total ($)" value={edit.receiptTotal ?? ((r.receiptTotalCents ?? 0) / 100).toFixed(2)} onChange={(e) => setEdit({ ...edit, receiptTotal: e.currentTarget.value })} />
                 <Button size="xs" w="fit-content" disabled={Object.keys(edit).length === 0} onClick={() => void saveEdit()}>Save</Button>
               </Stack>

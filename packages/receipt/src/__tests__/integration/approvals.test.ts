@@ -45,8 +45,8 @@ describeDb("financial review", () => {
   it("refuses a finance user deciding their own receipt", async () => {
     actAs(FINANCE);
     const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
-    await expect(receiptService.approveFinancial(r.id, "mine")).rejects.toMatchObject({ statusCode: 409 });
-    await expect(receiptService.rejectFinancial(r.id, "mine")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(receiptService.approveFinancial(r.id, "mine")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(receiptService.rejectFinancial(r.id, "mine")).rejects.toMatchObject({ statusCode: 403 });
     expect(await stateOf(r.id)).toBe("financial_review");
   });
 
