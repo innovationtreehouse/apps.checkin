@@ -9,6 +9,7 @@ import { db } from "../../db";
 import { bindPorts, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { MAX_DRIFT_CHECKS_PER_RUN, checkQbDrift } from "../../lib/expense-qb-drift";
 import { runExpenseCatchUp } from "../../services/sweeps";
+import { raiseFlag } from "../../services/flagService";
 
 const line = (amount: number, account: string) => ({ Amount: amount, AccountBasedExpenseLineDetail: { AccountRef: { value: account } } });
 
@@ -141,6 +142,15 @@ describeDb("QB-3 drift", () => {
     entry.PrivateNote = "edited";
     await checkQbDrift();
     expect(await driftFlag(id)).toMatchObject({ detail: "amount, key", checkedOffAt: null });
+  });
+
+  it("keeps the stay-closed rule to QB_DRIFT: a re-raised COI flag still reopens", async () => {
+    const { id } = await created("2026-09-10");
+    await raiseFlag(id, "COI", "same detail");
+    await db.expenseFlag.updateMany({ where: { expenseId: id, kind: "COI" }, data: { checkedOffAt: new Date(), checkedOffByUserId: 5 } });
+
+    await raiseFlag(id, "COI", "same detail");
+    expect(await db.expenseFlag.findFirst({ where: { expenseId: id, kind: "COI" } })).toMatchObject({ checkedOffAt: null });
   });
 
   it("never checks a hand-booked match", async () => {
