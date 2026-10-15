@@ -57,9 +57,9 @@ async function callJson(endpoint: string) {
 beforeEach(() => mockSession.mockReset());
 
 describe('donation registry — shape', () => {
-    it('registers 22 JSON routes (11 reads, 11 writes) and the blob file route', () => {
-        expect(endpoints).toHaveLength(22);
-        expect(reads).toHaveLength(11);
+    it('registers 23 JSON routes (12 reads, 11 writes) and the blob file route', () => {
+        expect(endpoints).toHaveLength(23);
+        expect(reads).toHaveLength(12);
         expect(writes).toHaveLength(11);
         expect(getFileRoute(FILE_ENDPOINT)?.file).toEqual({ model: 'UploadedFile', field: 'fileBlob' });
     });
