@@ -52,7 +52,7 @@ jest.mock('../prisma', () => {
 const db = prisma as unknown as { __state: { row: Record<string, unknown> | null }; person: { findMany: jest.Mock } };
 
 type Vars = Record<string, unknown> & { idempotencyKey?: string; input?: { changes: { delta: number; changeFromQuantity: null }[] } };
-type Reply = { status?: number; data?: unknown; errors?: unknown[] } | Error;
+type Reply = { status?: number; data?: unknown; errors?: unknown[]; unreadable?: boolean; delayMs?: number } | Error;
 type Op = 'ProgramStockRead' | 'ProgramStockAdjust' | 'ProgramStockActivate';
 
 const program = { id: 42, shopifyVariantId: '67890' };
@@ -88,7 +88,12 @@ function shopify(replies: Partial<Record<Op, Reply[]>>) {
         const reply = replies[op]?.shift();
         if (!reply) throw new Error(`unexpected ${op}`);
         if (reply instanceof Error) throw reply;
-        return { ok: (reply.status ?? 200) < 400, status: reply.status ?? 200, json: async () => ({ data: reply.data, errors: reply.errors }) };
+        if (reply.delayMs) await new Promise((r) => setTimeout(r, reply.delayMs));
+        const json = async () => {
+            if (reply.unreadable) throw new SyntaxError('Unexpected end of JSON input');
+            return { data: reply.data, errors: reply.errors };
+        };
+        return { ok: (reply.status ?? 200) < 400, status: reply.status ?? 200, json };
     }) as unknown as typeof fetch;
     return { calls, ops: () => calls.map((c) => c.op), adjusts: () => calls.filter((c) => c.op === 'ProgramStockAdjust') };
 }
@@ -372,11 +377,92 @@ describe('adjustProgramInventory (the one program-stock writer)', () => {
         setRow({ shopifyStockCarry: -2, shopifyStockPushNeededAt: new Date() });
         const s = shopify({ ProgramStockRead: [readReply(1), readReply(1)], ProgramStockAdjust: [adjustOk] });
 
-        expect(await setProgramInventory(program, 4, 're-arm')).toBe(true);
+        // The quantity is counted under the lease.
+        const quantity = jest.fn(async () => {
+            expect(db.__state.row!.shopifyStockLeaseToken).not.toBeNull();
+            return 4;
+        });
+
+        expect(await setProgramInventory(program, quantity, 're-arm')).toBe(true);
+
+        expect(quantity).toHaveBeenCalledTimes(1);
 
         expect(s.adjusts()[0].variables.input!.changes[0]).toMatchObject({ delta: 3 });
         expect(s.adjusts()[0].variables.idempotencyKey).toMatch(/^program-42-re-arm-/);
         expect(after()).toEqual(clean);
+    });
+
+    it('setProgramInventory (re-arm) of an overfilled program holds stock at 0 and keeps the shortfall owed', async () => {
+        const s = shopify({ ProgramStockRead: [readReply(1), readReply(1)], ProgramStockAdjust: [adjustOk] });
+
+        // Capacity 3, 5 seats taken: 2 over.
+        expect(await setProgramInventory(program, async () => 3 - 5, 're-arm')).toBe(true);
+
+        expect(s.adjusts()[0].variables.input!.changes[0]).toMatchObject({ delta: -1 });
+        expect(after()).toEqual({ ...clean, carry: -2, flagged: true });
+    });
+
+    it('a 200 whose body cannot be read is unsettled: resent under the SAME key, booked once', async () => {
+        const s = shopify({ ProgramStockRead: [readReply(5)], ProgramStockAdjust: [{ unreadable: true }, adjustOk] });
+
+        expect(await adjustProgramInventory(program, -1, 'comp')).toBe(true);
+
+        expect(s.adjusts()).toHaveLength(2);
+        expect(new Set(s.adjusts().map((c) => c.variables.idempotencyKey)).size).toBe(1);
+        expect(after()).toEqual(clean);
+    });
+
+    it('a 401/403 after a timeout does not say the write missed: it stays pending under its key', async () => {
+        programStockTiming.capMs = 30;
+        programStockTiming.maxBackoffMs = 5;
+        const s = shopify({
+            ProgramStockRead: [readReply(5)],
+            ProgramStockAdjust: [timedOut(), ...Array.from({ length: 500 }, (_, i): Reply => ({ status: i % 2 ? 401 : 403 }))],
+        });
+
+        expect(await adjustProgramInventory(program, -1, 'comp')).toBe(false);
+
+        expect(new Set(s.adjusts().map((c) => c.variables.idempotencyKey)).size).toBe(1);
+        const a = after();
+        expect(a).toMatchObject({ carry: 0, flagged: true });
+        expect(a.pending).toMatchObject({ key: s.adjusts()[0].variables.idempotencyKey, delta: -1 });
+    });
+
+    it('a 401 on the first attempt (nothing reached Shopify) did not apply: the delta stays owed', async () => {
+        shopify({ ProgramStockRead: [readReply(5)], ProgramStockAdjust: [{ status: 401 }] });
+
+        expect(await adjustProgramInventory(program, -1, 'comp')).toBe(false);
+
+        expect(after()).toEqual({ ...clean, carry: -1, flagged: true });
+    });
+
+    it('stops at the top of the loop once the cap has passed, leaving the rest owed', async () => {
+        programStockTiming.capMs = 50;
+        setRow({ shopifyStockPendingWrite: pendingWrite() });
+        const s = shopify({ ProgramStockAdjust: [{ ...(adjustOk as object), delayMs: 80 }] });
+
+        expect(await adjustProgramInventory(program, 1, 'hold-release')).toBe(false);
+
+        expect(s.ops()).toEqual(['ProgramStockAdjust']);
+        expect(after()).toMatchObject({ carry: 1, pending: null, flagged: true, leased: false });
+    });
+
+    it('a multi-location store writes to the location that already stocks the item', async () => {
+        const STOCKED = 'gid://shopify/Location/777';
+        const s = shopify({
+            ProgramStockRead: [{
+                data: {
+                    locations: { nodes: [{ id: LOC, isActive: true }, { id: STOCKED, isActive: true }] },
+                    productVariant: { inventoryItem: { id: ITEM, inventoryLevels: { nodes: [{ location: { id: STOCKED }, quantities: [{ quantity: 3 }] }] } } },
+                },
+            }],
+            ProgramStockAdjust: [adjustOk],
+        });
+
+        expect(await adjustProgramInventory(program, -1, 'comp')).toBe(true);
+
+        expect(s.ops()).toEqual(['ProgramStockRead', 'ProgramStockAdjust']);
+        expect(s.adjusts()[0].variables.input!.changes[0]).toMatchObject({ locationId: STOCKED, delta: -1 });
     });
 
     it('no variant or a zero delta is a no-op', async () => {
