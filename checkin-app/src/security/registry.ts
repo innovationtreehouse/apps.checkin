@@ -886,18 +886,26 @@ defineOutbound({
 defineOutbound({
     surface: 'quickbooks.query',
     // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
-    // Query literals: date windows, QBO ids, and account/class/vendor/customer
-    // names ('public'). Never an email, address or phone.
+    // Query literals: date windows, QBO ids, and account/class names ('public').
+    // Vendor/Customer name lookups are quickbooks.vendor. Never an email, address or phone.
     tiers: ['public'],
 });
 
 defineOutbound({
     surface: 'quickbooks.create',
     // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
-    // Purchase/Bill/Deposit/Vendor only: amounts, dates, account/class/vendor ids,
-    // line descriptions and memos ('internal'; memos may name a program participant,
-    // accepted by the owner), vendor DisplayName ('public').
+    // Purchase/Bill/Deposit only: amounts, dates, account/class/vendor ids, line
+    // descriptions and memos ('internal'; memos may name a program participant,
+    // accepted by the owner).
     tiers: ['public', 'internal'],
+});
+
+defineOutbound({
+    surface: 'quickbooks.vendor',
+    // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
+    // Vendor create and Vendor/Customer lookup by DisplayName only: a business
+    // name ('public') or a reimbursee's name ('pii'). Never an email, address or phone.
+    tiers: ['public', 'pii'],
 });
 
 defineOutbound({
