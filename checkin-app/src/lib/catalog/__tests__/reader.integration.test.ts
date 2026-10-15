@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * X3 binding: the host's catalog reader, bound by each consumer's configureRuntime(),
+ * X3/X10 binding: the host's catalog reader, bound by each consumer's configureRuntime(),
  * reading a real global-catalog database migrated from its committed migrations. The
  * last tests point the catalog at a missing database to show the display reads fall
  * back and the reference check fails closed.
@@ -11,8 +11,10 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { getPrisma as getCatalogPrisma } from '@inventory/global-catalog';
+import { getCatalogItem, searchCatalog } from '@inventory/bulk-donation';
 import { getExpenseRuntime } from '@inventory/expense';
 import { ports } from '@inventory/workflow-mapping';
+import { configureRuntime as configureBulkDonationRuntime } from '@/lib/bulkDonation/configure';
 import { configureRuntime as configureExpenseRuntime } from '@/lib/expense/configure';
 import { configureRuntime as configureWorkflowRuntime } from '@/lib/workflowMapping/configure';
 
@@ -73,6 +75,7 @@ beforeAll(async () => {
 
     configureExpenseRuntime();
     configureWorkflowRuntime();
+    configureBulkDonationRuntime();
 }, 120_000);
 
 // DROP DATABASE waits on a forced checkpoint, which can outlast the default hook timeout.
@@ -86,7 +89,7 @@ describe('expense CatalogReader bound to the catalog', () => {
         const reader = getExpenseRuntime().catalog;
         expect(await reader.listCategories()).toEqual([{ id: categoryId, name: 'Fasteners', letter: 'F' }]);
         expect(await reader.listSubcategories()).toEqual([{ id: subcategoryId, name: 'Bolts', number: 1, categoryId }]);
-        expect(await reader.getItem(GTIN)).toEqual({ gtin13: GTIN, categoryId, subcategoryId });
+        expect(await reader.getItem(GTIN)).toEqual({ gtin13: GTIN, name: 'Hex bolt', categoryId, subcategoryId });
         expect(await reader.getItem('0000000000000')).toBeNull();
         expect(await reader.lookupItems('Hardware Co', [{ index: 0, partNumber: 'HB-1', manufacturer: 'Acme' }])).toEqual([
             expect.objectContaining({ index: 0, gtin13: GTIN, conversionFactor: 4 }),
@@ -104,6 +107,14 @@ describe('workflow-mapping CatalogReader bound to the catalog', () => {
         expect(refs.mfr_part).toEqual(expect.objectContaining({ exists: true, gtin13: GTIN }));
         expect(refs.retailer_part.exists).toBe(true);
         expect(refs.wouldCreateNewReference).toBe(false);
+    });
+});
+
+describe('bulk-donation CatalogLookup bound to the catalog', () => {
+    it('searches and reads items as the no-receipt picker sees them', async () => {
+        expect(await searchCatalog('hex')).toEqual([{ gtin13: GTIN, name: 'Hex bolt' }]);
+        expect(await getCatalogItem(GTIN)).toEqual({ gtin13: GTIN, name: 'Hex bolt' });
+        expect(await getCatalogItem('0000000000000')).toBeNull();
     });
 });
 

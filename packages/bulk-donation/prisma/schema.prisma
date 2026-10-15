@@ -287,3 +287,50 @@ model DonationQbMatchExclusion {
   @@unique([orgId, qbTxnId])
   @@map("qb_match_exclusion")
 }
+
+// An in-kind donation entered by ops with no receipt (FR5): each line is a catalog item with a
+// quantity and its total value. Its goods load into inventory under `donation:<id>` (X11);
+// inventoryLoadedAt is set once that load succeeds.
+model ManualInKindDonation {
+  /// @sensitivity:internal
+  id                 Int                        @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId              String                     @map("org_id")
+  /// @sensitivity:pii
+  donorFirstName     String                     @map("donor_first_name")
+  /// @sensitivity:pii
+  donorLastName      String                     @map("donor_last_name")
+  /// @sensitivity:pii
+  donorCompanyName   String?                    @map("donor_company_name")
+  /// @sensitivity:internal
+  donationDate       String                     @map("donation_date")
+  /// @sensitivity:internal
+  recordedByUserId   Int                        @map("recorded_by_user_id")
+  /// @sensitivity:internal
+  recordedByUsername String?                    @map("recorded_by_username")
+  /// @sensitivity:internal
+  recordedAt         DateTime                   @default(now()) @map("recorded_at")
+  /// @sensitivity:internal
+  inventoryLoadedAt  DateTime?                  @map("inventory_loaded_at")
+  lines              ManualInKindDonationLine[]
+
+  @@index([orgId, recordedAt])
+  @@map("manual_in_kind_donations")
+}
+
+model ManualInKindDonationLine {
+  /// @sensitivity:internal
+  id          Int                  @id @default(autoincrement())
+  /// @sensitivity:internal
+  donationId  Int                  @map("donation_id")
+  /// @sensitivity:internal
+  gtin13      String
+  /// @sensitivity:internal
+  quantity    Int
+  /// @sensitivity:internal
+  valueCents  Int                  @map("value_cents")
+  donation    ManualInKindDonation @relation(fields: [donationId], references: [id], onDelete: Cascade)
+
+  @@index([donationId])
+  @@map("manual_in_kind_donation_lines")
+}
