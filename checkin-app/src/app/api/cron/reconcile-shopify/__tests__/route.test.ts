@@ -110,7 +110,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
     });
 
     it('a throwing event catch-up step still answers 200 and runs the other one', async () => {
-        jest.mocked(runExpenseCatchUp).mockResolvedValue({ intake: { applied: 0, failed: 0 }, stranded: { checked: 0, failed: 0 }, catalogEvents: { processed: 0, duplicate: 0, failed: 0 }, qbPost: 'unbound' });
+        jest.mocked(runExpenseCatchUp).mockResolvedValue({ intake: { applied: 0, failed: 0 }, stranded: { checked: 0, failed: 0 }, catalogEvents: { processed: 0, duplicate: 0, failed: 0 }, qbPost: 'unbound', qbDrift: 'unbound' });
         jest.mocked(catchUpInventoryEvents).mockRejectedValue(new Error('inventory db down'));
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
 
