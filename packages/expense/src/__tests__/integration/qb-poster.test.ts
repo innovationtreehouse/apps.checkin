@@ -693,9 +693,9 @@ describeDb("QB-2 posting — QuickBooks Class per line", () => {
 
     expect(await postExpenseToQb(ORG, purchase.id)).toBe("posted");
     expect(await postExpenseToQb(ORG, bill.id)).toBe("posted");
-    expect(classesOf(0)).toEqual(["class-7", "class-100"]);
+    expect(classesOf(0)).toEqual(["97", "9100"]);
     expect(qbo.posts[1].entity).toBe("Bill");
-    expect(classesOf(1)).toEqual(["class-200", "class-7"]);
+    expect(classesOf(1)).toEqual(["9200", "97"]);
   });
 
   it("an event without bucketIds takes each line's current bucket", async () => {
@@ -705,7 +705,7 @@ describeDb("QB-2 posting — QuickBooks Class per line", () => {
     await seedApproval(id, lines[1], { ownerId: 200, status: "approved" });
 
     expect(await postExpenseToQb(ORG, id)).toBe("posted");
-    expect(classesOf(0)).toEqual(["class-101", "class-200"]);
+    expect(classesOf(0)).toEqual(["9101", "9200"]);
   });
 
   it("a line whose bucket has no Class is not posted: state stays postable, no attempt counted, finance flagged", async () => {
@@ -751,7 +751,7 @@ describeDb("QB-2 posting — QuickBooks Class per line", () => {
 
     bindQbo();
     expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, no_class: 0 });
-    expect(classesOf(0)).toEqual(["class-7", "class-100"]);
+    expect(classesOf(0)).toEqual(["97", "9100"]);
     expect((await expenseRow(id)).qbMatchState).toBe("CREATED");
   });
 });
