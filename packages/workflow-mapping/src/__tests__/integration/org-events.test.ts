@@ -113,20 +113,38 @@ describeDb("catch-up sweep", () => {
     expect(await catchUpOrgEvents()).toEqual({ applied: 0, failed: 0 });
   });
 
-  it("replays from the cursor, stops at the first failure, and returns counts only", async () => {
+  it("replays past a bad event, records it, and retries it by id", async () => {
     const asked: number[] = [];
+    const poison = event(3, "provisional_approved", { bad: true });
     configure({
       catalogEventSource: {
         eventsSince: async (_org, since) => {
           asked.push(since);
-          return [approved(1), approved(2), event(3, "provisional_approved", { bad: true }), approved(4)].filter((e) => e.id > since);
+          return [approved(1), approved(2), poison, approved(4)].filter((e) => e.id > since);
         },
       },
     });
-    expect(await catchUpOrgEvents()).toEqual({ applied: 2, failed: 1 });
-    expect(await cursor()).toBe(2);
-    expect(await catchUpOrgEvents()).toEqual({ applied: 2, failed: 1 });
+    expect(await catchUpOrgEvents()).toEqual({ applied: 3, failed: 1 });
+    expect(await cursor()).toBe(4);
+    expect(await db.workflowFailedOrgEvent.findMany()).toMatchObject([{ id: 3, eventType: "provisional_approved" }]);
+
+    // The recorded failure is retried by id from its stored payload, not re-read from the window.
+    expect(await catchUpOrgEvents()).toEqual({ applied: 3, failed: 1 });
     expect(asked).toEqual([0, 0]);
+  });
+
+  it("a bad event in the post-commit call-out does not block later events, and a fixed retry clears it", async () => {
+    const ls = await provisionalLine("pending_review");
+    await orgEventConsumer.onOrgEvents([event(3, "provisional_approved", { bad: true }), approved(4)]);
+
+    expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).assignedGtin13).toBe(REAL);
+    expect(await cursor()).toBe(4);
+    expect(await db.workflowFailedOrgEvent.count()).toBe(1);
+
+    // A failure that clears (the stored payload now applies) is removed from the record.
+    await db.workflowFailedOrgEvent.update({ where: { id: 3 }, data: { payload: approved(3).payload } });
+    expect(await catchUpOrgEvents()).toEqual({ applied: 1, failed: 0 });
+    expect(await db.workflowFailedOrgEvent.count()).toBe(0);
   });
 
   it("catch-up re-reads behind the cursor, so an event that committed late is not skipped", async () => {

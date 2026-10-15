@@ -12,6 +12,8 @@ const CURSOR_ROW = 1;
  * How far behind the cursor catch-up re-reads. Catalog ids are assigned at insert, not at
  * commit, so an event with a lower id can commit after a higher one was applied. Every action
  * here is set-to-value or a deduped audit row, so re-applying an event changes nothing.
+ * Assumes no catalog transaction stays open while more than this many others commit; make it
+ * time-based if bulk catalog edits arrive.
  */
 export const ORG_EVENT_LOOKBACK = 100;
 
@@ -117,38 +119,58 @@ async function applyEvent(event: OrgEventRecord): Promise<void> {
 }
 
 /**
+ * Apply one event. A failure is recorded for catch-up to retry by id, and the cursor moves past
+ * it, so one bad event never holds back the ones after it.
+ */
+async function consumeEvent(event: OrgEventRecord): Promise<boolean> {
+  try {
+    await applyEvent(event);
+    await db.workflowFailedOrgEvent.deleteMany({ where: { id: event.id } });
+    return true;
+  } catch (err) {
+    const failureReason = err instanceof Error ? err.message : String(err);
+    console.warn(`[workflow-mapping/org-events] event ${event.id} failed:`, err);
+    await db.workflowFailedOrgEvent.upsert({
+      where: { id: event.id },
+      create: { id: event.id, orgId: event.orgId, eventType: event.eventType, payload: event.payload, failureReason },
+      update: { failureReason, failedAt: new Date() },
+    });
+    await advanceCursor(event.id);
+    return false;
+  }
+}
+
+/**
  * S5 handler, registered with the catalog's post-commit call-out. Applies every event it is
  * handed, in id order, including one below the cursor (a late commit); the cursor only moves
- * forward. A throw leaves the cursor behind the failed event.
+ * forward. A failed event is recorded, not thrown.
  */
 export const orgEventConsumer: OrgEventConsumer = {
   async onOrgEvents(events) {
-    for (const event of [...events].sort((a, b) => a.id - b.id)) await applyEvent(event);
+    for (const event of [...events].sort((a, b) => a.id - b.id)) await consumeEvent(event);
   },
 };
 
 /**
- * Catch-up sweep: replay events from a lookback window behind the cursor through the replay
- * port. Stops at the first failure (the cursor cannot skip it). Returns counts only.
+ * Catch-up sweep: retries recorded failures by id, then replays events from a lookback window
+ * behind the cursor through the replay port, skipping recorded failures. Returns counts only.
  */
 export async function catchUpOrgEvents(opts: { limit?: number } = {}): Promise<{ applied: number; failed: number }> {
   const limit = opts.limit ?? 500;
-  const cursor = await readCursor();
-  const since = Math.max(0, cursor - ORG_EVENT_LOOKBACK);
-  const events = (await ports().catalogEventSource.eventsSince((await getOrg()).id, since))
-    .filter((e) => e.id > since)
+  const recorded = await db.workflowFailedOrgEvent.findMany({ orderBy: { id: "asc" } });
+  const retries = recorded.slice(0, limit).map((r) => ({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload }));
+  const since = Math.max(0, (await readCursor()) - ORG_EVENT_LOOKBACK);
+  const skip = new Set(recorded.map((r) => r.id));
+  const fresh = (await ports().catalogEventSource.eventsSince((await getOrg()).id, since))
+    .filter((e) => e.id > since && !skip.has(e.id))
     .sort((a, b) => a.id - b.id)
-    .slice(0, limit);
+    .slice(0, Math.max(0, limit - retries.length));
 
   let applied = 0;
-  for (const event of events) {
-    try {
-      await applyEvent(event);
-      applied++;
-    } catch (err) {
-      console.warn(`[workflow-mapping/org-events] event ${event.id} failed:`, err);
-      return { applied, failed: 1 };
-    }
+  let failed = 0;
+  for (const event of [...retries, ...fresh]) {
+    if (await consumeEvent(event)) applied++;
+    else failed++;
   }
-  return { applied, failed: 0 };
+  return { applied, failed };
 }

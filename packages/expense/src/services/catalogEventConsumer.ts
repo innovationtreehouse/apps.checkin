@@ -68,6 +68,8 @@ export async function consumeCatalogEvent(raw: unknown): Promise<ConsumeResult> 
 /**
  * How far behind the cursor catch-up re-reads. Catalog ids are assigned at insert, not at
  * commit, so an event with a lower id can commit after a higher one was consumed.
+ * Assumes no catalog transaction stays open while more than this many others commit; make it
+ * time-based if bulk catalog edits arrive.
  */
 export const CATALOG_EVENT_LOOKBACK = 100;
 
