@@ -4,8 +4,8 @@
 export const MAX_JSON_BODY_BYTES = 1024 * 1024;
 
 /**
- * A 10 MB file plus multipart framing. Also next.config's proxyClientMaxBodySize, which bounds
- * what a route can read when the client sends no Content-Length.
+ * A 10 MB file plus multipart framing. Also next.config's proxyClientMaxBodySize, the most of a
+ * body Next buffers for the middleware and the route.
  */
 export const MAX_UPLOAD_BODY_BYTES = 11 * 1024 * 1024;
 
@@ -26,4 +26,20 @@ export function bodyLimitFor(pathname: string): number {
 export function isDeclaredBodyTooLarge(pathname: string, contentLength: string | null): boolean {
     if (contentLength === null) return false;
     return !(Number(contentLength) <= bodyLimitFor(pathname));
+}
+
+/** True when a body sent without Content-Length runs past the route's limit. Stops reading once it does. */
+export async function isStreamedBodyTooLarge(pathname: string, body: ReadableStream<Uint8Array>): Promise<boolean> {
+    const limit = bodyLimitFor(pathname);
+    const reader = body.getReader();
+    let total = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return false;
+        total += value.byteLength;
+        if (total > limit) {
+            await reader.cancel();
+            return true;
+        }
+    }
 }

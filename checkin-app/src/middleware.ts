@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 import { config as appConfig, isStagingAccessAllowed, ORG_DOMAIN } from '@/lib/config';
-import { isDeclaredBodyTooLarge } from '@/lib/requestBodyLimit';
+import { isDeclaredBodyTooLarge, isStreamedBodyTooLarge } from '@/lib/requestBodyLimit';
 
 /**
  * Site-wide org-login gate for the cloud dev instance (docs/ops/dev-instance.md, "Running the
@@ -29,8 +29,15 @@ import { isDeclaredBodyTooLarge } from '@/lib/requestBodyLimit';
  */
 export async function middleware(req: NextRequest) {
     // /api gets the body size check only; routes there self-enforce auth.
-    if (req.nextUrl.pathname.startsWith('/api/')) {
-        if (isDeclaredBodyTooLarge(req.nextUrl.pathname, req.headers.get('content-length'))) {
+    const { pathname } = req.nextUrl;
+    if (pathname.startsWith('/api/')) {
+        const contentLength = req.headers.get('content-length');
+        // A body with no declared length is counted on a clone so the route still reads the original.
+        const streamedBody = contentLength === null ? req.clone().body : null;
+        if (
+            isDeclaredBodyTooLarge(pathname, contentLength)
+            || (streamedBody !== null && await isStreamedBodyTooLarge(pathname, streamedBody))
+        ) {
             return NextResponse.json({ error: 'Request body too large' }, { status: 413 });
         }
         return NextResponse.next();
