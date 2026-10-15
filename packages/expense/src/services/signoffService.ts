@@ -8,6 +8,8 @@ import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
 import { filledSeatsByLine, lockExpense, signoffFactsByLine, unsignedLines, voidSignoffs } from "../lib/signoff-facts";
 import { CLOSED_STATES, blockedSeats, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
+import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
+import { logError } from "../lib/logger";
 import { raiseFlag } from "./flagService";
 import { ServiceError } from "./serviceError";
 
@@ -60,8 +62,22 @@ export async function signLine(principal: ExpensePrincipal, lineItemId: number, 
   if (blockedSeats(nowFacts, nowFilled).length > 0) {
     await raiseFlag(expense.id, "COI", "a card charge needs a second Board substitution; held");
   }
+  if (missingSeats(facts, nowFilled).length === 0) await snapshotCatalog(lineItemId, expense.vendorName ?? "", expense.id);
   if (expense.state === "qb_pending" && (await unsignedLines(db, expense)).size === 0) {
     await drainExpense(expense.orgId, expense.id);
+  }
+}
+
+/**
+ * Fixes a fully signed line's catalog inputs to its QuickBooks account. A catalog miss or
+ * failure leaves it unset, and the first successful lookup at posting takes it instead.
+ */
+async function snapshotCatalog(lineItemId: number, vendorName: string, expenseId: string): Promise<void> {
+  try {
+    const line = (await db.expenseLineItem.findUnique({ where: { id: lineItemId } }))!;
+    await saveCatalogSnapshots((await lookupCatalogInfo([line], vendorName)).info);
+  } catch (err) {
+    logError("catalog_snapshot_failed", { expenseId, lineItemId }, err);
   }
 }
 

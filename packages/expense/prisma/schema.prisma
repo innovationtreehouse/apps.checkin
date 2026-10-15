@@ -195,6 +195,13 @@ model ExpenseLineItem {
   depreciationYears Int?     @map("depreciation_years")
   /// @sensitivity:internal
   manualQbAccount   String?  @map("manual_qb_account")
+  // Catalog inputs to account resolution, fixed once the line is signed off; null = resolve live.
+  /// @sensitivity:internal
+  signedGtin13       String? @map("signed_gtin13")
+  /// @sensitivity:internal
+  signedCategory     String? @map("signed_category")
+  /// @sensitivity:internal
+  signedSubcategory  String? @map("signed_subcategory")
   /// @sensitivity:internal
   allocatedTaxCents      Int?  @map("allocated_tax_cents")
   /// @sensitivity:internal
