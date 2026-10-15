@@ -1,6 +1,7 @@
 import { logger } from "@/lib/logger";
 import { ApiResponseError, handler } from "@/security/handler";
 import prisma from "@/lib/prisma";
+import { personActor } from "@/lib/auditActor";
 import * as mirror from "@/lib/shopifyRead/client";
 import { isPaid, raisePaymentException } from "@/lib/finance/reconcile";
 
@@ -133,7 +134,8 @@ async function trackEnrollment(programId: number, personId: number): Promise<voi
 
 export const POST = handler(
     "POST /api/finance-ops/s-read/match-audit/track",
-    async ({ req }) => {
+    async ({ req, auth }) => {
+        if (auth.type !== "session") throw new ApiResponseError(401, "Unauthorized");
         if (!mirror.isConfigured()) {
             throw new ApiResponseError(503, "The Shopify mirror is not wired in this environment");
         }
@@ -151,6 +153,17 @@ export const POST = handler(
             if (body.kind === "order") await trackOrder(body.shopifyOrderId);
             else if (body.kind === "membership") await trackMembership(body.processId);
             else await trackEnrollment(body.programId, body.personId);
+            // The decision is audited with its actor; the row points at the gap, not
+            // the PaymentException, which dedup may have left unchanged.
+            await prisma.auditLog.create({
+                data: {
+                    ...personActor(auth.user.id),
+                    action: "CREATE",
+                    tableName: "MATCH_AUDIT_TRACK",
+                    affectedEntityId: 0,
+                    newData: body,
+                },
+            });
         } catch (error) {
             if (error instanceof ApiResponseError) throw error;
             logger.error("Failed to track match-audit gap:", error);
