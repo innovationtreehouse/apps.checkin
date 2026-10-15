@@ -1,6 +1,6 @@
 import { CompletedReceiptSchema } from "@inventory/receipt-types";
-import { db } from "../db";
-import type { ReceiptOrgSettings } from "../generated/prisma/client";
+import { db, type Db } from "../db";
+import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
 import { audit, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
 import { getOrg, ports } from "../runtime";
@@ -49,8 +49,13 @@ export function financialReviewReasons(row: ReceiptRow, settings: ReceiptOrgSett
   return reasons;
 }
 
-export function getOrgSettings(orgId: string): Promise<ReceiptOrgSettings> {
-  return db.receiptOrgSettings.upsert({ where: { orgId }, create: { orgId }, update: {} });
+/**
+ * The org's settings, created with defaults on first read. ON CONFLICT DO NOTHING (skipDuplicates)
+ * lets concurrent first reads all succeed, where an upsert's find-then-create would race.
+ */
+export async function getOrgSettings(orgId: string, client: Db | Prisma.TransactionClient = db): Promise<ReceiptOrgSettings> {
+  await client.receiptOrgSettings.createMany({ data: [{ orgId }], skipDuplicates: true });
+  return client.receiptOrgSettings.findUniqueOrThrow({ where: { orgId } });
 }
 
 /**

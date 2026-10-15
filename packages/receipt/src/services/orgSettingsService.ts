@@ -18,7 +18,7 @@ export const orgSettingsService = {
     if (!parsed.success) throw new ServiceError(400, parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
     const orgId = (await getOrg()).id;
     return db.$transaction(async (tx) => {
-      const before = await tx.receiptOrgSettings.upsert({ where: { orgId }, create: { orgId }, update: {} });
+      const before = await getOrgSettings(orgId, tx);
       const after = await tx.receiptOrgSettings.update({ where: { orgId }, data: parsed.data });
       for (const field of Object.keys(parsed.data) as (keyof typeof parsed.data)[]) {
         if (before[field] === after[field]) continue;

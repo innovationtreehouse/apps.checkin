@@ -53,6 +53,13 @@ describeDb("settings changes", () => {
     ]);
     expect(await orgSettingsService.get()).toMatchObject({ orgId: TEST_ORG_ID, taxExempt: true, receiptAgeLimitDays: 30 });
   });
+
+  it("concurrent first reads of an org's settings all get the one default row", async () => {
+    actAs(FINANCE);
+    const all = await Promise.all(Array.from({ length: 8 }, () => orgSettingsService.get()));
+    expect(all.every((s) => s.orgId === TEST_ORG_ID && s.receiptAgeLimitDays === 90)).toBe(true);
+    expect(await db.receiptOrgSettings.count()).toBe(1);
+  });
 });
 
 describeDb("OCR output is a proposal", () => {

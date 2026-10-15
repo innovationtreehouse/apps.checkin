@@ -91,22 +91,22 @@ describeDb("approveItemReferenceProposal", () => {
     await expect(approveItemReferenceProposal(999999, 1)).rejects.toMatchObject({ status: 404 });
   });
 
-  it("throws 400 when proposal is already approved (invalid state transition)", async () => {
+  it("throws 409 when proposal is already approved", async () => {
     await resetDb();
     const gtin13 = await seedCatalogItem();
     const proposal = await seedPendingProposal(gtin13, "PN-TRANSITION");
     // First approval succeeds
     await approveItemReferenceProposal(proposal.id, 1);
     // Second approval on an already-approved proposal must fail
-    await expect(approveItemReferenceProposal(proposal.id, 1)).rejects.toMatchObject({ status: 400 });
+    await expect(approveItemReferenceProposal(proposal.id, 1)).rejects.toMatchObject({ status: 409 });
   });
 
-  it("throws 400 when proposal is already rejected (invalid state transition)", async () => {
+  it("throws 409 when proposal is already rejected", async () => {
     await resetDb();
     const gtin13 = await seedCatalogItem();
     const proposal = await seedPendingProposal(gtin13, "PN-REJECT-THEN-APPROVE");
     await rejectItemReferenceProposal(proposal.id, 1, "Wrong item");
-    await expect(approveItemReferenceProposal(proposal.id, 1)).rejects.toMatchObject({ status: 400 });
+    await expect(approveItemReferenceProposal(proposal.id, 1)).rejects.toMatchObject({ status: 409 });
   });
 
   it("golden path: creates item reference and marks proposal approved", async () => {
@@ -155,24 +155,24 @@ describeDb("rejectItemReferenceProposal", () => {
     await expect(rejectItemReferenceProposal(999999, 1, "bad")).rejects.toMatchObject({ status: 404 });
   });
 
-  it("throws 400 when proposal is already rejected", async () => {
+  it("throws 409 when proposal is already rejected", async () => {
     await resetDb();
     const gtin13 = await seedCatalogItem();
     const proposal = await seedPendingProposal(gtin13, "PN-DOUBLE-REJECT");
     await rejectItemReferenceProposal(proposal.id, 1, "First rejection");
     await expect(
       rejectItemReferenceProposal(proposal.id, 1, "Second rejection")
-    ).rejects.toMatchObject({ status: 400 });
+    ).rejects.toMatchObject({ status: 409 });
   });
 
-  it("throws 400 when proposal is already approved", async () => {
+  it("throws 409 when proposal is already approved", async () => {
     await resetDb();
     const gtin13 = await seedCatalogItem();
     const proposal = await seedPendingProposal(gtin13, "PN-REJECT-APPROVED");
     await approveItemReferenceProposal(proposal.id, 1);
     await expect(
       rejectItemReferenceProposal(proposal.id, 1, "Too late")
-    ).rejects.toMatchObject({ status: 400 });
+    ).rejects.toMatchObject({ status: 409 });
   });
 
   it("golden path: marks proposal rejected with reason and reviewer", async () => {

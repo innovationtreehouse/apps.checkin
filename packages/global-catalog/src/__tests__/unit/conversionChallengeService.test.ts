@@ -112,12 +112,12 @@ describeDb("acceptChallenge", () => {
     await expect(acceptChallenge(99999, 1)).rejects.toMatchObject({ status: 404 });
   });
 
-  it("throws 400 when challenge is not pending (invalid transition)", async () => {
+  it("throws 409 when challenge is not pending (already reviewed)", async () => {
     await resetDb();
     const { refId } = await seedRef();
     const ch = await seedPending(refId);
     await acceptChallenge(ch.id, 1);
-    await expect(acceptChallenge(ch.id, 1)).rejects.toMatchObject({ status: 400 });
+    await expect(acceptChallenge(ch.id, 1)).rejects.toMatchObject({ status: 409 });
   });
 });
 
@@ -143,11 +143,11 @@ describeDb("rejectChallenge", () => {
     await expect(rejectChallenge(99999, 1)).rejects.toMatchObject({ status: 404 });
   });
 
-  it("throws 400 when challenge is already resolved (invalid transition)", async () => {
+  it("throws 409 when challenge is already resolved", async () => {
     await resetDb();
     const { refId } = await seedRef();
     const ch = await seedPending(refId);
     await rejectChallenge(ch.id, 1);
-    await expect(rejectChallenge(ch.id, 1)).rejects.toMatchObject({ status: 400 });
+    await expect(rejectChallenge(ch.id, 1)).rejects.toMatchObject({ status: 409 });
   });
 });

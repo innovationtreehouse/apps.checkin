@@ -7,6 +7,7 @@ import {
   approveProvisionalProposal,
   createProvisionalItem,
   mapProvisionalToExisting,
+  rejectProvisionalProposal,
 } from "../../services/provisionalGtinService";
 
 const ORG = { orgId: "org-test-1", orgName: "Test Org" };
@@ -56,6 +57,24 @@ describeDb("provisional review actions", () => {
     expect(await prisma.item.count()).toBe(1);
     expect(await prisma.provisionalItemMappingLog.count()).toBe(1);
     expect(await prisma.orgEvent.count({ where: { eventType: "provisional_approved" } })).toBe(1);
+  });
+
+  it("a review action that reads after the winner committed gets 409", async () => {
+    const proposal = await seedPendingProvisional();
+    await approveProvisionalProposal(proposal.id, 1, {});
+
+    await expect(approveProvisionalProposal(proposal.id, 2, {})).rejects.toMatchObject({ status: 409 });
+    await expect(rejectProvisionalProposal(proposal.id, 2, "late")).rejects.toMatchObject({ status: 409 });
+    await expect(mapProvisionalToExisting(proposal.id, 2, proposal.provisionalGtin13)).rejects.toMatchObject({ status: 409 });
+    expect(await prisma.provisionalItemMappingLog.count()).toBe(1);
+  });
+
+  it("approving a pending proposal with no category is still a 400", async () => {
+    const { gtin13 } = await allocateNextProvisionalGtin();
+    const proposal = await createProvisionalItem({
+      ...ORG, provisionalGtin13: gtin13, localUserId: 1, proposedName: "Widget", proposedUsageBehavior: "Durable",
+    });
+    await expect(approveProvisionalProposal(proposal.id, 1, {})).rejects.toMatchObject({ status: 400 });
   });
 
   it("approve racing map-to-existing records one mapping", async () => {
