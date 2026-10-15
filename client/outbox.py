@@ -16,22 +16,13 @@ log = logging.getLogger("kiosk")
 # Start at the waker's Retry-After (~30s), exponential to a ~5 min cap.
 MIN_BACKOFF_SECONDS = 30
 MAX_BACKOFF_SECONDS = 300
-# Also the idle-poll interval and the pace between processed events (ack/dead)
+# Also the idle-poll interval and the pace between acked events
 # -- one knob, not two, since both cap the drain loop's cycle time. ~1
 # event/sec leaves the shared 300/min scan rate limit mostly to live scans.
 DRAIN_PACE_SECONDS = 1.0
 # Guard rail against a pathological stuck state. Un-acked rows are never
 # evicted to enforce this -- it is a log-only warning, not a hard cap.
 WARN_QUEUE_SIZE = 50_000
-# A row the server has answered with a handler error this many times (~4h at
-# the backoff cap) is a poison row, not an outage: dead-letter it so it reaches
-# the server review queue instead of blocking the FIFO head forever. Offline,
-# throttled and gateway responses (502/503/504: cold start, warming) never count.
-MAX_5XX_ATTEMPTS = 50
-
-
-def counts_toward_poison(status):
-    return 500 <= status < 600 and status not in (502, 503, 504)
 
 # Overnight, 23:00-06:00 local: the health monitor's nightly reboot window,
 # with its recovery ladder quiet. Roster, scan and drain traffic ignore it.
@@ -79,11 +70,9 @@ class Outbox:
         state            TEXT NOT NULL DEFAULT 'pending',
         created_at       TEXT NOT NULL,
         force_close_token TEXT,
-        last_attempt_at  TEXT,
         intent           TEXT,
         clock_suspect    INTEGER NOT NULL DEFAULT 0,
         force_close_confirmed INTEGER NOT NULL DEFAULT 0,
-        server_errors    INTEGER NOT NULL DEFAULT 0,
         close            TEXT,
         roster_as_of     TEXT,
         shown_empty      INTEGER
@@ -102,10 +91,6 @@ class Outbox:
                 except sqlite3.OperationalError:
                     pass  # already there
                 try:
-                    conn.execute("ALTER TABLE outbox ADD COLUMN last_attempt_at TEXT")
-                except sqlite3.OperationalError:
-                    pass  # already there
-                try:
                     conn.execute("ALTER TABLE outbox ADD COLUMN intent TEXT")
                 except sqlite3.OperationalError:
                     pass
@@ -121,17 +106,14 @@ class Outbox:
                     )
                 except sqlite3.OperationalError:
                     pass
-                try:
-                    conn.execute(
-                        "ALTER TABLE outbox ADD COLUMN server_errors INTEGER NOT NULL DEFAULT 0"
-                    )
-                except sqlite3.OperationalError:
-                    pass
                 for column in ("close TEXT", "roster_as_of TEXT", "shown_empty INTEGER"):
                     try:
                         conn.execute(f"ALTER TABLE outbox ADD COLUMN {column}")
                     except sqlite3.OperationalError:
                         pass
+                # Rows an older client dead-lettered replay like any other: the
+                # server parks what it cannot apply.
+                conn.execute("UPDATE outbox SET state='pending' WHERE state='dead'")
                 conn.commit()
             except sqlite3.DatabaseError:
                 conn.close()
@@ -224,7 +206,7 @@ class Outbox:
             clause, args = self._not_inflight() if skip_inflight else ("", ())
             return self._conn.execute(
                 "SELECT client_event_id, participant_id, scanned_at, attempts, force_close_token, "
-                "intent, clock_suspect, force_close_confirmed, server_errors, close, roster_as_of, shown_empty "
+                "intent, clock_suspect, force_close_confirmed, close, roster_as_of, shown_empty "
                 "FROM outbox WHERE state='pending'" + clause + " ORDER BY scanned_at ASC",
                 args,
             ).fetchall()
@@ -247,85 +229,27 @@ class Outbox:
     def bump_attempt(self, client_event_id, status):
         with self._lock:
             self._conn.execute(
-                "UPDATE outbox SET attempts = attempts + 1, last_status=?, "
-                "server_errors = server_errors + ? WHERE client_event_id=?",
-                (status, 1 if counts_toward_poison(status) else 0, client_event_id),
-            )
-            self._conn.commit()
-
-    def mark_dead(self, client_event_id, status):
-        """Terminal failure: stop retrying so it stops burning rate limit
-        and blocking FIFO. Transmitted to the server-side DLQ by the dead
-        pass in replay_drain (#1347 PR-2, Q10) once the pending FIFO empties."""
-        with self._lock:
-            self._conn.execute(
-                "UPDATE outbox SET state='dead', last_status=? WHERE client_event_id=?",
+                "UPDATE outbox SET attempts = attempts + 1, last_status=? WHERE client_event_id=?",
                 (status, client_event_id),
-            )
-            self._conn.commit()
-
-    def dead_count(self):
-        with self._lock:
-            return self._conn.execute(
-                "SELECT COUNT(*) FROM outbox WHERE state='dead'"
-            ).fetchone()[0]
-
-    def dead_rows(self):
-        """The next dead-lettered row for the server-side DLQ (LIMIT 1: one
-        send per cycle). Rotation, not FIFO (#1727): never-tried rows oldest
-        first, then least-recently-tried -- so one terminally-refused row
-        cannot head-of-line-block the rows behind it.
-        Only read once the pending FIFO is empty -- never competes with it."""
-        with self._lock:
-            return self._conn.execute(
-                "SELECT client_event_id, participant_id, scanned_at, last_status "
-                "FROM outbox WHERE state='dead' "
-                "ORDER BY (last_attempt_at IS NOT NULL), last_attempt_at ASC, scanned_at ASC "
-                "LIMIT 1"
-            ).fetchall()
-
-    def mark_dead_attempt(self, client_event_id):
-        """Stamp a failed DLQ delivery so rotation moves past this row."""
-        with self._lock:
-            self._conn.execute(
-                "UPDATE outbox SET last_attempt_at=? WHERE client_event_id=?",
-                (now_iso(), client_event_id),
             )
             self._conn.commit()
 
 
 def classify_response(status, body):
-    """Maps a scan response to one of three outcomes: ack (delete), retry
-    (keep, backoff), dead (terminal, stop retrying)."""
+    """Maps a scan response to ack (delete) or retry (keep, backoff). A server
+    speaking the drain's protocol parks a replay it cannot apply rather than
+    refusing it, so anything else is a retry -- never a dropped scan."""
     # F2: check first, regardless of status -- post_scan normalizes a
     # non-JSON body (waker HTML, captive portal login, ...) to this sentinel,
     # preserving the intermediary's real status (often 200, not 400), so
-    # gating on status==400 alone would falsely ack an unrecorded scan.
+    # gating on status alone would falsely ack an unrecorded scan.
     if isinstance(body, dict) and body.get("type") == "warming":
         return "retry"
-    if status == 0:
-        return "retry"  # network error / timeout -- safe, idempotent retry
     if status in (200, 201):
         # checkin | checkout | duplicate_ignored | ignored_debounce | parked
         return "ack"
-    if status == 401:
-        return "retry"  # clock skew / key mismatch -- re-signing can recover
-    if status == 429:
-        return "retry"
-    if status == 426:
-        # Version race: this instance does not speak the row's protocol
-        # generation yet (rolling deploy). The row is fine — hold and retry
-        # until an upgraded instance answers.
-        return "retry"
     if status == 400 and isinstance(body, dict) and body.get("type") == "warning":
         return "ack"  # force-close caution; the touch WAS recorded server-side
-    if status in (400, 404, 409):
-        return "dead"
-    if status == 503:
-        return "retry"  # warming, not failure
-    if 500 <= status < 600:
-        return "retry"  # handler threw, transaction rolled back, idempotent
-    # Unrecognized status: fail safe -- never silently drop a scan.
     return "retry"
 
 
@@ -339,48 +263,11 @@ def _backoff_seconds(retry_after_header, current_backoff):
     return max(1.0, base + jitter)
 
 
-def _send_dead_row(outbox, send_fn, push_fn=None, backoff=MIN_BACKOFF_SECONDS):
-    """Second pass, only once the pending FIFO is empty: retire one
-    dead-lettered row to the server-side DLQ (#1347 PR-2, Q10). 2xx deletes
-    it; any other outcome leaves it for a later cycle -- a dead row is never
-    re-queued as pending, so it can't jump the live FIFO.
-
-    Returns (wait, next_backoff): wait is how long the caller should sleep
-    before the next drain iteration (None = nothing sent or success -- use
-    the normal pace), mirroring the pending path's exponential backoff. A
-    permanently-failing row (e.g. its participant was deleted, so the DLQ
-    ingest 404s before the park path) must not burn ~1 req/s forever."""
-    rows = outbox.dead_rows()
-    if not rows:
-        return None, MIN_BACKOFF_SECONDS
-    client_event_id, participant_id, scanned_at, last_status = rows[0]
-    _body, status, retry_after = send_fn(
-        participant_id,
-        client_event_id=client_event_id,
-        scanned_at=scanned_at,
-        dead=True,
-        dead_status=last_status,
-    )
-    if 200 <= status < 300:
-        outbox.ack(client_event_id)
-        if push_fn:
-            push_fn({"html": "", "queued": outbox.pending_count()})
-        return None, MIN_BACKOFF_SECONDS
-    outbox.mark_dead_attempt(client_event_id)
-    log.warning(
-        f"Dead-letter DLQ delivery failed for {client_event_id} "
-        f"(status={status}, originally dead-lettered with {last_status}); backing off"
-    )
-    return _backoff_seconds(retry_after, backoff), min(backoff * 2, MAX_BACKOFF_SECONDS)
-
-
-def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok_fn=lambda: True,
-                 quiet_fn=lambda: False):
+def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok_fn=lambda: True):
     """Single drain thread: pulls pending rows in scanned_at order,
     resubmits each one (send_fn re-signs per call), and applies the
-    ack/retry/dead outcome. Runs forever; call in a background thread."""
+    ack/retry outcome. Runs forever; call in a background thread."""
     backoff = MIN_BACKOFF_SECONDS
-    dead_backoff = MIN_BACKOFF_SECONDS
     protocol_hold_logged = False
     while True:
         # Deploy-order race: a server that hasn't advertised the replay
@@ -400,17 +287,11 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok
         rows = outbox.pending_rows(skip_inflight=True)
         if not rows:
             backoff = MIN_BACKOFF_SECONDS
-            # Dead rows wait out a known-empty building: retiring them is not
-            # worth deferring prod's overnight curfew. Pending rows always go.
-            if quiet_fn():
-                sleep_fn(DRAIN_PACE_SECONDS)
-                continue
-            dead_wait, dead_backoff = _send_dead_row(outbox, send_fn, push_fn, dead_backoff)
-            sleep_fn(dead_wait if dead_wait is not None else DRAIN_PACE_SECONDS)
+            sleep_fn(DRAIN_PACE_SECONDS)
             continue
 
         (client_event_id, participant_id, scanned_at, _attempts, force_close_token, intent,
-         clock_suspect, force_close_confirmed, server_errors, close, roster_as_of, shown_empty) = rows[0]
+         clock_suspect, force_close_confirmed, close, roster_as_of, shown_empty) = rows[0]
         # replay=True is what tells the server this is a redelivery: the live
         # attempt may already have sent this clientEventId (the row is written
         # before it), so only the drain may trip the replay-only guards. `close`
@@ -436,22 +317,6 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok
 
         if outcome == "ack":
             outbox.ack(client_event_id)
-            backoff = MIN_BACKOFF_SECONDS
-            if push_fn:
-                push_fn({"html": "", "queued": outbox.pending_count()})
-            sleep_fn(DRAIN_PACE_SECONDS)
-        elif outcome == "dead":
-            outbox.mark_dead(client_event_id, status)
-            log.warning(f"Outbox event {client_event_id} dead-lettered (status={status})")
-            backoff = MIN_BACKOFF_SECONDS
-            # Same badge refresh as the ack branch: a queue that empties by
-            # dead-lettering must not leave a stale count on screen.
-            if push_fn:
-                push_fn({"html": "", "queued": outbox.pending_count()})
-            sleep_fn(DRAIN_PACE_SECONDS)
-        elif counts_toward_poison(status) and server_errors + 1 >= MAX_5XX_ATTEMPTS:
-            outbox.mark_dead(client_event_id, status)
-            log.warning(f"Outbox event {client_event_id} dead-lettered after {server_errors + 1} server errors (status={status})")
             backoff = MIN_BACKOFF_SECONDS
             if push_fn:
                 push_fn({"html": "", "queued": outbox.pending_count()})

@@ -486,7 +486,7 @@ class TestKioskClose(unittest.TestCase):
 
         rows = ob.pending_rows()
         self.assertEqual([r[5] for r in rows], ["OUT", "OUT"])
-        self.assertEqual([r[9] for r in rows], [None, "confirmed"])
+        self.assertEqual([r[8] for r in rows], [None, "confirmed"])
         self.assertIn("BUILDING CLOSED", events[-1]["html"])
         self.assertIn("will sync", events[-1]["html"])
 
@@ -587,7 +587,7 @@ class TestKioskClose(unittest.TestCase):
 
         handle_scan(self._offline(), state, ob, 9)
 
-        self.assertEqual(ob.pending_rows()[0][10], "2026-10-12T20:58:30+00:00")
+        self.assertEqual(ob.pending_rows()[0][9], "2026-10-12T20:58:30+00:00")
 
     def test_supervision_caution_on_the_prompt_is_yellow_never_red(self):
         state = self._state(two_deep_violation=True)
@@ -1003,7 +1003,7 @@ class TestRepeatReadFilter(unittest.TestCase):
         self.now += 3
         handle_scan(backend, self.state, self.outbox, 9)
         rows = self.outbox.pending_rows()
-        self.assertEqual([(r[5], r[9]) for r in rows], [("OUT", None), ("OUT", "confirmed")])
+        self.assertEqual([(r[5], r[8]) for r in rows], [("OUT", None), ("OUT", "confirmed")])
 
 
     def test_held_badge_slides_the_online_close_window(self):
@@ -1038,7 +1038,7 @@ class TestRepeatReadFilter(unittest.TestCase):
         self.assertEqual(self.state.local_close_deadline, self.now + 15)
         self.now += 14                                      # 16 s after the prompt
         handle_scan(backend, self.state, self.outbox, 9)
-        self.assertEqual([(r[5], r[9]) for r in self.outbox.pending_rows()], [("OUT", None), ("OUT", "confirmed")])
+        self.assertEqual([(r[5], r[8]) for r in self.outbox.pending_rows()], [("OUT", None), ("OUT", "confirmed")])
 
     def test_repeat_read_without_a_close_shows_nothing(self):
         events = []
