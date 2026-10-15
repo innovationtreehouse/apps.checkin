@@ -13,11 +13,14 @@ export interface SignoffFacts {
   /** The line's bucket approvers (program leader + treasurers); empty for an org-level bucket. */
   approvers: number[];
   orgLevel: boolean;
-  purchaserIsMember: boolean;
+  /** False only for a reimbursement whose known reimbursee holds no org membership. */
+  reimburseeIsMember: boolean;
   finance: number[];
   board: number[];
   /** The submitter, the reimbursee, and their households. */
   conflicted: number[];
+  /** The line's Program Leader and their household: conflicted for the Treasurer seat. */
+  leaderHousehold: number[];
   /** Who named the reimbursee; null when it came with the receipt. They never sign the Treasurer seat. */
   reimburseeSetter: number | null;
   /** Household members of the people already seated on this expense, other than those people. */
@@ -44,11 +47,11 @@ export function lineKind(expense: { needsReimbursement: boolean }): LineKind {
 }
 
 /**
- * F2 exceptions: a Board member, not a program approver, fills the program-approver seat for an
- * org-level bucket or a non-member purchaser. The Treasurer seat stays.
+ * A Board member, not a program approver, fills the program-approver seat for an org-level bucket
+ * or a reimbursement owed to a non-member. The Treasurer seat stays.
  */
 export function boardFillsProgramSeat(facts: SignoffFacts): boolean {
-  return facts.orgLevel || !facts.purchaserIsMember;
+  return facts.orgLevel || (facts.kind === "reimbursement" && !facts.reimburseeIsMember);
 }
 
 /** Who the seat belongs to before any Board substitution. */
@@ -59,11 +62,15 @@ function eligible(facts: SignoffFacts, seat: Exclude<Seat, "SUBMITTER">): number
 
 /**
  * Eligible people who can still sign the seat: not conflicted, not in another seat on the line, and
- * not in the household of someone seated on the expense.
+ * not in the household of someone seated on the expense. The Treasurer seat also excludes the
+ * reimbursee's setter and the Program Leader's household.
  */
 export function availableSigners(facts: SignoffFacts, filled: FilledSeat[], seat: Exclude<Seat, "SUBMITTER">): number[] {
   const blocked = new Set([...facts.conflicted, ...facts.seatedHouseholds, ...filled.filter((f) => f.seat !== seat).map((f) => f.signerUserId)]);
-  if (seat === "TREASURER" && facts.reimburseeSetter !== null) blocked.add(facts.reimburseeSetter);
+  if (seat === "TREASURER") {
+    if (facts.reimburseeSetter !== null) blocked.add(facts.reimburseeSetter);
+    for (const id of facts.leaderHousehold) blocked.add(id);
+  }
   return eligible(facts, seat).filter((id) => !blocked.has(id));
 }
 
@@ -108,6 +115,7 @@ export function signoffRefusal(
   }
   if (facts.conflicted.includes(signerUserId)) return "signer is the submitter, the reimbursee, or in their household";
   if (seat === "TREASURER" && signerUserId === facts.reimburseeSetter) return "whoever set the reimbursee cannot fill the Treasurer seat";
+  if (seat === "TREASURER" && facts.leaderHousehold.includes(signerUserId)) return "the Program Leader or their household cannot fill the Treasurer seat";
   if (facts.seatedHouseholds.includes(signerUserId)) return "someone in the signer's household already holds a seat on this expense";
 
   const available = availableSigners(facts, filled, seat);

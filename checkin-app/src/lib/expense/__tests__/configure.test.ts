@@ -52,7 +52,7 @@ describe("expense signer directory excludes people in a DENIED household", () =>
     });
     const dir = await signoff();
 
-    await expect(dir.bucketApprovers(100)).resolves.toEqual({ orgLevel: false, approvers: [8] });
+    await expect(dir.bucketApprovers(100)).resolves.toEqual({ orgLevel: false, approvers: [8], leader: 7 });
     expect(budgetOwnerFindUnique.mock.calls[0][0].select.program.select.volunteers.where.person).toEqual({ mergedIntoId: null, ...NOT_DENIED });
   });
 

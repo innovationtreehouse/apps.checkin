@@ -123,6 +123,39 @@ Things the app takes as true because they are handled outside it.
   is decided by which environment the app is told it is running in — never
   guessed from whether store credentials happen to be present.  [Decision — *Principle: fail closed*]
 
+### Spending sign-off
+
+- A reimbursement or card charge reaches the books only once each of its lines is
+  signed by the submitter, a program approver, and the Treasurer — three
+  different people from three different households.  [Decision — *Policy: Financial Policy, Art. IX §IX.3*]
+
+- "The Treasurer" is, for now, anyone holding the finance role. The app has no
+  record of who holds the Treasurer office.  [Decision — owner]
+
+- A Treasurer with a conflict does not sign. For the Treasurer seat, a conflict is
+  being — or sharing a household with — the submitter, the person reimbursed, or
+  the line's Program Leader, or having approved the line as its program approver.
+  Another finance holder without a conflict signs instead; if there is none, a
+  Board member without a conflict takes the seat. This differs from the policy on
+  purpose: the policy has the conflicted Treasurer sign and adds one or two Board
+  members, where the app replaces the conflicted signer, because nobody decides on
+  a receipt they are conflicted on.  [Decision — *Policy: Financial Policy, Art. IX §IX.3; Ethics Policy, Art. III §III.5*]
+
+- When every Program Leader and Program Treasurer of a line's program is
+  conflicted or unavailable, a Board member without a conflict signs the
+  program-approver seat. The policy names no one for this case; the app fills
+  the gap rather than leave the line held for good.  [Decision — owner]
+
+- Reimbursing someone who is not a Treehouse Member takes a Board member in the
+  program-approver seat. What counts is the person reimbursed, not whoever
+  submitted the receipt, and a card charge is not a reimbursement.  [Decision — *Policy: Financial Policy, Art. IX §IX.2*]
+
+- Every expense that is not a reimbursement is treated as a Treehouse Card
+  charge. The app records no payment method.  [Decision — owner]
+
+- Whoever named the person reimbursed does not sign as Treasurer on that expense.
+  The policy does not ask for this.  [Decision — deliberate limit]
+
 - A program's price lives on the program. Where one run of it needs a different
   price, that is set against the run — not by issuing a code people pass around.
   Early-bird and sliding rates are the store's to run, not ours to model.  [Decision — deliberate limit]

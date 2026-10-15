@@ -169,9 +169,13 @@ export function bindPorts(ports: Omit<Parameters<typeof configureExpense>[0], "o
   configureExpense({ org: async () => ({ id: ORG, name: "Org One" }), budgetOwners: TEST_BUCKETS, ...ports });
 }
 
-/** A directory from plain lists; bucket 100+ is program-level with the given approvers; each `households` entry is one household. */
+/**
+ * A directory from plain lists; bucket 100+ is program-level with the given approvers, whose
+ * leader is `leaders[bucket]`; each `households` entry is one household.
+ */
 export function directory(d: {
   approvers?: Record<number, number[]>;
+  leaders?: Record<number, number>;
   orgLevel?: number[];
   finance?: number[];
   board?: number[];
@@ -180,7 +184,7 @@ export function directory(d: {
   unknownPeople?: number[];
 }): SignoffDirectory {
   return {
-    bucketApprovers: async (b) => ({ orgLevel: (d.orgLevel ?? []).includes(b), approvers: d.approvers?.[b] ?? [] }),
+    bucketApprovers: async (b) => ({ orgLevel: (d.orgLevel ?? []).includes(b), approvers: d.approvers?.[b] ?? [], leader: d.leaders?.[b] ?? null }),
     bucketsApprovedBy: async (p) => Object.entries(d.approvers ?? {}).filter(([, a]) => a.includes(p)).map(([b]) => Number(b)),
     financeHolders: async () => d.finance ?? [],
     boardMembers: async () => d.board ?? [],
