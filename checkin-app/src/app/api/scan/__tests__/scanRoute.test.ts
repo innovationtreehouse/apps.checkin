@@ -461,27 +461,39 @@ describe('POST /api/scan', () => {
             expect((await res.json()).error).toContain('replay');
         });
 
-        it('rejects replay:true without a clientEventId — it could neither dedup nor park', async () => {
-            const res = await POST(replayReq({ clientEventId: undefined }));
-            expect(res.status).toBe(400);
-            expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
+        // A refused replay would block the head of the kiosk's queue: one the
+        // server cannot apply parks as a dead letter instead, never toggling.
+        it.each([
+            ['without a clientEventId', { clientEventId: undefined }],
+            ['without a scannedAt', { scannedAt: undefined }],
+            ['with an unparseable scannedAt', { scannedAt: 'not-a-date' }],
+            ['with an unknown intent', { intent: 'SIDEWAYS' }],
+            ['with a malformed protocolVersion', { protocolVersion: '2' }],
+        ])('parks a replay %s as client_dead:400 instead of refusing it', async (_label, overrides) => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            const res = await POST(replayReq(overrides));
+            expect(res.status).toBe(200);
+            expect((await res.json()).type).toBe('parked');
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ personId: 1, reviewReason: 'client_dead:400' }),
+            });
+            expect(processCheckin).not.toHaveBeenCalled();
+            expect(processCheckout).not.toHaveBeenCalled();
         });
 
-        // Without a usable scannedAt a replay would silently inherit server-now:
-        // the freshness check passes trivially and the out-of-order guard
-        // compares against now, so a stale replay toggles instead of parking.
-        it('rejects replay:true without a scannedAt', async () => {
-            const res = await POST(replayReq({ scannedAt: undefined }));
-            expect(res.status).toBe(400);
-            expect((await res.json()).error).toContain('scannedAt');
-            expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
-        });
-
-        it('rejects replay:true with an unparseable scannedAt', async () => {
-            const res = await POST(replayReq({ scannedAt: 'not-a-date' }));
-            expect(res.status).toBe(400);
-            expect((await res.json()).error).toContain('scannedAt');
-            expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
+        it.each([
+            ['an over-int4 id', { participantId: 99999999999 }],
+            ['an id that matches no one', { participantId: 424242 }],
+        ])('parks a replay of %s as unresolvable instead of refusing it', async (_label, overrides) => {
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue(null);
+            (prisma.personMerge.findUnique as jest.Mock).mockResolvedValue(null);
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            const res = await POST(replayReq(overrides));
+            expect(res.status).toBe(200);
+            expect((await res.json()).type).toBe('parked');
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ personId: null, clientEventId: 'evt-1', reviewReason: 'client_dead:unresolvable' }),
+            });
         });
 
         it('toggles a fresh replay using scannedAt as the visit time', async () => {

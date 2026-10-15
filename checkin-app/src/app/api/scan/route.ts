@@ -65,10 +65,10 @@ export const POST = withKiosk(
 
     try {
         const participantId = isPersonId(body.participantId) ? body.participantId : null;
-        // A dead-lettered row is the exception: it is parked below whatever it
-        // carries, so a corrupt read reaches the review queue instead of
-        // bouncing on the kiosk forever.
-        if (participantId === null && body.dead !== true) {
+        // A queued row (dead-lettered or replayed) is the exception: it is
+        // parked below whatever it carries, so a corrupt read reaches the
+        // review queue instead of bouncing on the kiosk forever.
+        if (participantId === null && body.dead !== true && body.replay !== true) {
             return apiError("A valid numeric participantId is required.", 400);
         }
 
@@ -81,7 +81,7 @@ export const POST = withKiosk(
 
         // Optional replay fields from a queued kiosk scan. Absent → exactly
         // today's behavior (legacy/web callers). An unparseable scannedAt
-        // normalizes to null, which a replay then rejects below.
+        // normalizes to null, which parks a replay below.
         const clientEventId = (typeof body.clientEventId === 'string' && body.clientEventId) || null;
         const parsedScannedAt = typeof body.scannedAt === 'string' ? new Date(body.scannedAt) : null;
         const scannedAt = parsedScannedAt && !isNaN(parsedScannedAt.getTime()) ? parsedScannedAt : null;
@@ -92,7 +92,6 @@ export const POST = withKiosk(
         if (body.replay !== undefined && typeof body.replay !== 'boolean') {
             return apiError("replay must be a boolean.", 400);
         }
-        const isReplay = body.replay === true;
 
         // Q10: a terminally-failed outbox row rides this same endpoint to reach
         // the server-side DLQ instead of being lost on the kiosk. It shares
@@ -101,40 +100,14 @@ export const POST = withKiosk(
         if (body.dead !== undefined && typeof body.dead !== 'boolean') {
             return apiError("dead must be a boolean.", 400);
         }
-        const isDead = body.dead === true;
-        if (isDead && isReplay) {
+        if (body.dead === true && body.replay === true) {
             return apiError("dead and replay are mutually exclusive.", 400);
         }
-        const deadStatus = typeof body.deadStatus === 'number' && Number.isFinite(body.deadStatus)
-            ? body.deadStatus
-            : 'unknown';
-
-        // A live scan is happening now and never inherits the kiosk's clock (D3's
-        // window and the debounce both measure against server now). A replay must
-        // carry its own id and event time: falling back to now would make the
-        // freshness check pass trivially and toggle a scan that should park.
-        let eventTime = new Date();
-        if (isReplay) {
-            if (!clientEventId) {
-                return apiError("A replayed scan requires clientEventId.", 400);
-            }
-            if (!scannedAt) {
-                return apiError("A replayed scan requires a valid scannedAt.", 400);
-            }
-            eventTime = scannedAt;
+        if (body.dead === true && !clientEventId) {
+            return apiError("A dead-lettered scan requires clientEventId.", 400);
         }
-        // A visit can't start or end in the future: a scan time ahead of server
-        // now applies at now instead.
-        const clockAhead = isReplay && eventTime.getTime() - Date.now() > REPLAY_FUTURE_TOLERANCE_MS;
-        if (clockAhead) eventTime = new Date();
-        if (isDead) {
-            if (!clientEventId) {
-                return apiError("A dead-lettered scan requires clientEventId.", 400);
-            }
-            if (!scannedAt) {
-                return apiError("A dead-lettered scan requires a valid scannedAt.", 400);
-            }
-            eventTime = scannedAt;
+        if (body.dead === true && !scannedAt) {
+            return apiError("A dead-lettered scan requires a valid scannedAt.", 400);
         }
 
         // The token a web caller echoes from the close-choice dialog. Anything
@@ -147,57 +120,70 @@ export const POST = withKiosk(
         // A keyholder's close, decided at the kiosk (docs/rules/attendance-checkin.md,
         // Opening and closing). An older kiosk's offline confirm flag, or a token it
         // echoes on the second scan of the same badge, is the same decision.
-        if (body.close !== undefined && body.close !== 'alone' && body.close !== 'confirmed') {
-            return apiError("close must be alone or confirmed.", 400);
-        }
-        const closeKind: CloseKind | null = body.close === 'alone' || body.close === 'confirmed'
+        const requestedClose: CloseKind | null = body.close === 'alone' || body.close === 'confirmed'
             ? body.close
             : auth.type === 'kiosk' && (body.forceCloseConfirmed === true || confirmToken !== null)
                 ? 'confirmed'
                 : auth.type === 'kiosk' && body.shownEmpty === true
                     ? 'alone'
                     : null;
-
-        // Displayed direction (invariant 5). Absent → legacy live-state toggle.
-        if (body.intent !== undefined && body.intent !== 'IN' && body.intent !== 'OUT') {
-            return apiError("intent must be IN or OUT.", 400);
-        }
-        const intent = body.intent === 'IN' || body.intent === 'OUT' ? body.intent : null;
-        if (closeKind && intent === 'IN') {
-            return apiError("A close is a checkout; intent must be OUT.", 400);
-        }
         // Server time of the kiosk's last roster: a check-in after it is one the
         // keyholder could not have seen on the kiosk.
         const parsedRosterAsOf = typeof body.rosterAsOf === 'string' ? new Date(body.rosterAsOf) : null;
-        if (body.rosterAsOf !== undefined && (!parsedRosterAsOf || isNaN(parsedRosterAsOf.getTime()))) {
-            return apiError("rosterAsOf must be a timestamp.", 400);
-        }
-        const rosterAsOf = parsedRosterAsOf;
-        if (body.clockSuspect !== undefined && typeof body.clockSuspect !== 'boolean') {
-            return apiError("clockSuspect must be a boolean.", 400);
-        }
-        const clockSuspect = body.clockSuspect === true;
-        if (body.shownEmpty !== undefined && typeof body.shownEmpty !== 'boolean') {
-            return apiError("shownEmpty must be a boolean.", 400);
-        }
+        const rosterAsOfValid = parsedRosterAsOf !== null && !isNaN(parsedRosterAsOf.getTime());
 
-        // Contract bit (§2): a caller may declare the scan-body generation it
-        // speaks. A version newer than this server refuses only the bodies
-        // that can be misread — replay/dead rows, whose scannedAt semantics
-        // the newer generation may have changed. A LIVE scan is a bare toggle
-        // at server-now under every generation, so it always processes: a
-        // version race must degrade replay delivery, never door availability.
-        // 426 (not 400) so the kiosk drain holds the row and retries — this
-        // is also what closes the rolling-deploy race for future bumps: a
-        // too-new replay landing on a not-yet-upgraded instance bounces
-        // instead of being misread, whatever the advertised version said.
-        if (body.protocolVersion !== undefined) {
-            if (typeof body.protocolVersion !== 'number' || !Number.isInteger(body.protocolVersion) || body.protocolVersion < 1) {
-                return apiError("protocolVersion must be a positive integer.", 400);
-            }
-            if ((isReplay || isDead) && body.protocolVersion > SCAN_PROTOCOL_VERSION) {
-                return apiError(`Unsupported protocolVersion ${body.protocolVersion}; this server speaks ${SCAN_PROTOCOL_VERSION}.`, 426);
-            }
+        // A replay must carry its own id and event time: falling back to now
+        // would make the freshness check pass trivially and toggle a scan that
+        // should park. intent is the displayed direction (invariant 5); absent,
+        // a legacy live-state toggle. protocolVersion is the contract bit (§2).
+        const invalid =
+            body.replay === true && !clientEventId ? "A replayed scan requires clientEventId." :
+            body.replay === true && !scannedAt ? "A replayed scan requires a valid scannedAt." :
+            body.intent !== undefined && body.intent !== 'IN' && body.intent !== 'OUT' ? "intent must be IN or OUT." :
+            body.close !== undefined && body.close !== 'alone' && body.close !== 'confirmed' ? "close must be alone or confirmed." :
+            requestedClose && body.intent === 'IN' ? "A close is a checkout; intent must be OUT." :
+            body.rosterAsOf !== undefined && !rosterAsOfValid ? "rosterAsOf must be a timestamp." :
+            body.clockSuspect !== undefined && typeof body.clockSuspect !== 'boolean' ? "clockSuspect must be a boolean." :
+            body.shownEmpty !== undefined && typeof body.shownEmpty !== 'boolean' ? "shownEmpty must be a boolean." :
+            body.protocolVersion !== undefined && !(typeof body.protocolVersion === 'number' && Number.isInteger(body.protocolVersion) && body.protocolVersion >= 1)
+                ? "protocolVersion must be a positive integer." :
+            null;
+        // A replay is never refused: a refusal would block the head of the
+        // kiosk's queue. One the server cannot apply is ingested as a dead
+        // letter instead, and parks for review without closing anything.
+        if (invalid && body.replay !== true) {
+            return apiError(invalid, 400);
+        }
+        const isReplay = body.replay === true && !invalid;
+        const isDead = body.dead === true || (body.replay === true && invalid !== null);
+        const deadStatus = invalid ? 400
+            : typeof body.deadStatus === 'number' && Number.isFinite(body.deadStatus) ? body.deadStatus
+            : 'unknown';
+        const closeKind = invalid ? null : requestedClose;
+        const rosterAsOf = rosterAsOfValid ? parsedRosterAsOf : null;
+
+        // A live scan is happening now and never inherits the kiosk's clock (D3's
+        // window and the debounce both measure against server now).
+        let eventTime = ((isReplay || isDead) && scannedAt) || new Date();
+        // A visit can't start or end in the future: a scan time ahead of server
+        // now applies at now instead.
+        const clockAhead = isReplay && eventTime.getTime() - Date.now() > REPLAY_FUTURE_TOLERANCE_MS;
+        if (clockAhead) eventTime = new Date();
+
+        const intent = body.intent === 'IN' || body.intent === 'OUT' ? body.intent : null;
+        const clockSuspect = body.clockSuspect === true;
+
+        // A version newer than this server refuses only the bodies that can be
+        // misread — replay/dead rows, whose scannedAt semantics the newer
+        // generation may have changed. A LIVE scan is a bare toggle at
+        // server-now under every generation, so it always processes: a version
+        // race must degrade replay delivery, never door availability. 426 (not
+        // 400) so the kiosk drain holds the row and retries — this is also what
+        // closes the rolling-deploy race for future bumps: a too-new replay
+        // landing on a not-yet-upgraded instance bounces instead of being
+        // misread, whatever the advertised version said.
+        if ((isReplay || isDead) && typeof body.protocolVersion === 'number' && body.protocolVersion > SCAN_PROTOCOL_VERSION) {
+            return apiError(`Unsupported protocolVersion ${body.protocolVersion}; this server speaks ${SCAN_PROTOCOL_VERSION}.`, 426);
         }
         // A kiosk below the close-request generation still has its keyholder
         // checkout decide the close (whether the kiosk showed anyone else inside,
@@ -278,7 +264,7 @@ export const POST = withKiosk(
                     // Before any hop the scanned id is simply unknown. After one, we got
                     // here by following a merge pointer into a gap — a different fault,
                     // and one the operator can act on by reissuing the badge.
-                    if (isDead) return await parkUnresolvable();
+                    if (isDead || isReplay) return await parkUnresolvable();
                     return mergeHops > 0
                         ? apiError(`This badge belongs to a merged record; reissue it for participant ${lookupId}.`, 409)
                         : apiError(`Participant ${participantId} not found.`, 404);
@@ -291,7 +277,7 @@ export const POST = withKiosk(
             // record to reissue for — and so that id is never fetched.
             mergeHops++;
             if (mergeHops > MAX_MERGE_HOPS) {
-                if (isDead) return await parkUnresolvable();
+                if (isDead || isReplay) return await parkUnresolvable();
                 return apiError(`This badge belongs to a merged record; reissue it for participant ${lookupId}.`, 409);
             }
             participant = await prisma.person.findUnique({ where: { id: lookupId } });
