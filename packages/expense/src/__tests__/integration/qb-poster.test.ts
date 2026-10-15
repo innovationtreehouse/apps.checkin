@@ -331,6 +331,32 @@ describeDb("QB-2 posting — ids are unique per entity type", () => {
   });
 });
 
+describeDb("QB-2 posting — one claim per QuickBooks entry", () => {
+  it("never matches an entry a line already holds, and records its own claim", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    qbo.purchases.push({ Id: "900", TxnDate: "2026-09-12", TotalAmt: 10, AccountRef: { value: PAYMENT_ACCOUNT } });
+    await db.expenseQbClaim.create({ data: { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: "900" } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    const row = await expenseRow(id);
+    expect(row.qbTxnId).not.toBe("900");
+    expect(await db.expenseQbClaim.count({ where: { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: row.qbTxnId! } })).toBe(1);
+  });
+
+  it("an entry it created that is already claimed goes to finance as AMBIGUOUS with a flag", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    // The fake company hands out 5000 next; a claim on it stands in for one written mid-post.
+    await db.expenseQbClaim.create({ data: { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: "5000" } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("queued");
+    expect(qbo.posts).toHaveLength(1);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "AMBIGUOUS", qbTxnId: null });
+    expect(await db.expenseFlag.count({ where: { expenseId: id, kind: "QB_POST_FAILED", checkedOffAt: null } })).toBe(1);
+  });
+});
+
 describeDb("QB-2 posting — bounded retry", () => {
   /** Outboxed through the real processor on one manual line, so a finance retry can rebuild it. */
   async function outboxedManual(account: string) {
@@ -372,6 +398,47 @@ describeDb("QB-2 posting — bounded retry", () => {
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbPostAttempts: 0 });
     expect(qbo.posts).toHaveLength(1);
     expect(qbo.posts[0].body.Line[0].AccountBasedExpenseLineDetail.AccountRef).toEqual({ value: "60" });
+  });
+
+  it("an error thrown inside the post counts as an attempt, so it too stops at NEEDS_FINANCE with a flag", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    // A payload line that no longer exists makes the line update throw after QuickBooks answers.
+    const event = await db.expenseEvent.findFirstOrThrow({ where: { expenseId: id } });
+    const payload = JSON.parse(event.payload);
+    payload.items[0].lineItemId = 2_000_000_000;
+    await db.expenseEvent.update({ where: { id: event.id }, data: { payload: JSON.stringify(payload) } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("failed");
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbPostAttempts: 1, qbTxnId: null });
+
+    for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS });
+    const flags = await db.expenseFlag.findMany({ where: { expenseId: id } });
+    expect(flags.map((f) => f.kind)).toEqual(["QB_POST_FAILED"]);
+    expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("a refused retry answers 409 and records no retry", async () => {
+    const { id, line } = await outboxedManual("not-an-account");
+    for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
+    await db.expenseLineItem.update({ where: { id: line }, data: { manualQbAccount: null } });
+
+    await expect(resubmitHeldExpense(principal(500, { isFinance: true }), id)).rejects.toMatchObject({ statusCode: 409 });
+
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_post_retried" } })).toBe(0);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "NEEDS_FINANCE", qbPostAttempts: MAX_POST_ATTEMPTS });
+  });
+
+  it("an accepted retry records who asked", async () => {
+    const { id, line } = await outboxedManual("not-an-account");
+    for (let i = 1; i < MAX_POST_ATTEMPTS; i++) await drainExpenseOutbox();
+    const finance = principal(500, { isFinance: true });
+    await setHeldLineAccount(finance, id, line, "60");
+    await resubmitHeldExpense(finance, id);
+
+    const retried = await db.expenseAuditLog.findMany({ where: { expenseId: id, action: "qb_post_retried" } });
+    expect(retried.map((a) => a.userId)).toEqual([500]);
   });
 
   it("exhausting again after a retry reopens the checked-off QB_POST_FAILED flag", async () => {

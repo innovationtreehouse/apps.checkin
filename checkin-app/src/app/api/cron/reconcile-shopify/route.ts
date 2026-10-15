@@ -7,6 +7,8 @@ import { runReconcile as runIncomeReconcile } from "@inventory/income";
 import { getOrg } from "@/lib/catalog/configure";
 import { runExpenseCatchUp } from "@inventory/expense";
 import { healProgramStock } from "@/lib/shopify";
+import { catchUpOrgEvents as catchUpInventoryEvents } from "@inventory/local-inventory";
+import { catchUpOrgEvents as catchUpWorkflowEvents } from "@inventory/workflow-mapping";
 import { resendDonorSync } from "@inventory/receipt";
 
 /**
@@ -45,6 +47,9 @@ import { resendDonorSync } from "@inventory/receipt";
  * Then re-pushes program stock the stock writer left owing (healProgramStock),
  * which needs no mirror. Isolated the same way.
  *
+ * Then replays catalog events that local-inventory and workflow-mapping missed (a consumer that
+ * threw during the catalog's post-commit call-out). Each step is isolated; counts only.
+ *
  * Then re-sends in-kind donor changes the receipt library has not yet delivered to
  * donations (resendDonorSync). Isolated the same way; counts only, no donor data.
  */
@@ -77,6 +82,22 @@ export const GET = withCron(async () => {
         programStock = { status: "error" };
     }
     logger.info(`[reconcile] program stock ${JSON.stringify(programStock)}`);
+    let inventoryEvents: Awaited<ReturnType<typeof catchUpInventoryEvents>> | { status: "error" };
+    try {
+        inventoryEvents = await catchUpInventoryEvents();
+    } catch (err) {
+        logger.error("[reconcile] inventory event catch-up failed:", err);
+        inventoryEvents = { status: "error" };
+    }
+    logger.info(`[reconcile] inventory events ${JSON.stringify(inventoryEvents)}`);
+    let workflowEvents: Awaited<ReturnType<typeof catchUpWorkflowEvents>> | { status: "error" };
+    try {
+        workflowEvents = await catchUpWorkflowEvents();
+    } catch (err) {
+        logger.error("[reconcile] workflow-mapping event catch-up failed:", err);
+        workflowEvents = { status: "error" };
+    }
+    logger.info(`[reconcile] workflow-mapping events ${JSON.stringify(workflowEvents)}`);
     let donorSync: Awaited<ReturnType<typeof resendDonorSync>> | { status: "error" };
     try {
         donorSync = await resendDonorSync();
@@ -85,5 +106,5 @@ export const GET = withCron(async () => {
         donorSync = { status: "error" };
     }
     logger.info(`[reconcile] donor sync ${JSON.stringify(donorSync)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, donorSync });
+    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, donorSync });
 });

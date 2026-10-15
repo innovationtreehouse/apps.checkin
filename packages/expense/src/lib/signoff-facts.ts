@@ -97,7 +97,8 @@ export async function lockExpense(tx: Prisma.TransactionClient, expenseId: strin
 
 /**
  * Deletes the non-submitter sign-offs on the given lines (every line when `lineItemIds` is
- * null) and audits each as `signoff_voided`, so those seats are signed again.
+ * null), clears those lines' catalog snapshots, and audits each as `signoff_voided`, so those
+ * seats are signed again and the re-signed line takes a fresh snapshot.
  */
 export async function voidSignoffs(
   tx: Prisma.TransactionClient,
@@ -110,6 +111,10 @@ export async function voidSignoffs(
   const voided = await tx.expenseLineSignoff.findMany({ where });
   if (voided.length === 0) return;
   await tx.expenseLineSignoff.deleteMany({ where: { id: { in: voided.map((v) => v.id) } } });
+  await tx.expenseLineItem.updateMany({
+    where: { id: { in: [...new Set(voided.map((v) => v.lineItemId))] } },
+    data: { signedGtin13: null, signedCategory: null, signedSubcategory: null },
+  });
   for (const v of voided) {
     await writeAudit(tx, actor, {
       expenseId,

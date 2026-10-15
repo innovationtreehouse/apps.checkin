@@ -5,14 +5,14 @@
  * ids, and boot stays DB-free.
  *
  * Bound crossings: X3 (CatalogReader → catalog reads), X4 (InventorySink →
- * local-inventory apply) and X9 (DonationSink → donations ingestInKind).
- * Catalog submissions, expense (X5) and the S5 replay read (X2) keep the
- * library's inert adapters, so a receipt whose money leg cannot land waits in
+ * local-inventory apply), X9 (DonationSink → donations ingestInKind) and the
+ * S5 replay read (X2). Catalog submissions and expense (X5) keep the library's
+ * inert adapters, so a receipt whose money leg cannot land waits in
  * apply_failed.
  */
 import { configureWorkflowMapping } from "@inventory/workflow-mapping";
 import { ingestInKind } from "@inventory/bulk-donation";
-import { getOrg, getPrincipal } from "@/lib/catalog/configure";
+import { catalogEventsSince, getOrg, getPrincipal } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createLocalInventorySink } from "@/lib/workflowMapping/inventorySink";
 
@@ -44,6 +44,7 @@ export function configureRuntime(): void {
     httpError: (status, message) => new WorkflowMappingHttpError(status, message),
     catalogReader,
     inventorySink: createLocalInventorySink(getOrg),
+    catalogEventSource: { eventsSince: catalogEventsSince },
     donationSink: { ingestInKind },
   });
 }

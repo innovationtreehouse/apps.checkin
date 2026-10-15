@@ -22,9 +22,6 @@ export type ReceivedExpensePayloadStatus = (typeof receivedExpensePayloadStatusE
 export const receivedOrgEventStatusEnum = ["pending", "processed", "failed"] as const;
 export type ReceivedOrgEventStatus = (typeof receivedOrgEventStatusEnum)[number];
 
-export const qbMatchStateEnum = ["UNMATCHED", "MATCHED", "CREATED", "AMBIGUOUS", "BEFORE_LINE", "POST_FAILED"] as const;
-export type QbMatchState = (typeof qbMatchStateEnum)[number];
-
 export type {
   ExpenseOrgSettings,
   Expense,

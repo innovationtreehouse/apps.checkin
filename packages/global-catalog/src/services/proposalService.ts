@@ -9,7 +9,7 @@ const catalogRepo = createCatalogRepository(db);
 import { ServiceError, reviewTransitionError } from "./categoryService";
 import { assertItemReferenceProposalTransition } from "../workflows/item-reference-proposal.machine";
 import { normalizeDescription } from "../lib/normalizeDescription";
-import { emitOrgEvent, recordTransition } from "./orgEventService";
+import { emitOrgEvent, recordTransition, transactionWithEvents } from "./orgEventService";
 
 export interface CreateItemReferenceProposalParams {
   gtin13: string;
@@ -114,7 +114,7 @@ export async function approveItemReferenceProposal(proposalId: number, userId: n
     ? { status: "pending", id: { not: proposalId }, ...matchClause }
     : undefined;
 
-  await db.$transaction(async (tx) => {
+  await transactionWithEvents(async (tx) => {
     const reviewedAt = new Date();
     const claimed = await proposalRepo.transitionItemReferenceProposal(tx, proposalId, proposal.status, { status: approvedStatus, reviewedByUserId: userId, reviewedAt });
     if (claimed === 0) throw new ServiceError(409, "Proposal was already reviewed");
@@ -184,7 +184,7 @@ export async function rejectItemReferenceProposal(
     throw reviewTransitionError(err, proposal.status !== "pending", "Proposal was already reviewed");
   }
 
-  await db.$transaction(async (tx) => {
+  await transactionWithEvents(async (tx) => {
     const claimed = await proposalRepo.transitionItemReferenceProposal(tx, proposalId, proposal.status, { status: rejectedStatus, reviewedByUserId: userId, reviewedAt: new Date(), rejectionReason: reason });
     if (claimed === 0) throw new ServiceError(409, "Proposal was already reviewed");
     await recordTransition(tx, "item_reference_proposal", proposalId, proposal.status, rejectedStatus, userId, reason);
