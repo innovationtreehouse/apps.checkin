@@ -57,20 +57,41 @@ describeDb("X12 reimbursement status", () => {
     expect([...paid.values()]).toEqual([{ paidOn: null }, { paidOn: null }, { paidOn: null }]);
   });
 
-  it("a backfilled receipt is paid on its hand-booked transaction's date", async () => {
-    bindQb([{ id: "h2", txnDate: "2025-03-04", balance: 50, paymentIds: [] }], [{ id: "h1", txnDate: "2025-02-03" }]);
+  it("a backfilled Purchase is paid on its own date", async () => {
+    bindQb([], [{ id: "h1", txnDate: "2025-02-03" }]);
     const paid = await reimbursementStatus.forReceipts([
       ask("r1", { qbEntity: "Purchase", qbTxnId: "h1" }),
-      ask("r2", { qbEntity: "Bill", qbTxnId: "h2" }),
-      ask("r3", { qbEntity: "Purchase", qbTxnId: "h2" }),
-      ask("r4", { qbEntity: null, qbTxnId: "h1" }),
+      ask("r2", { qbEntity: "Purchase", qbTxnId: "h2" }),
+      ask("r3", { qbEntity: null, qbTxnId: "h1" }),
     ]);
     expect(paid).toEqual(
       new Map([
         ["r1", { paidOn: "2025-02-03" }],
-        ["r2", { paidOn: "2025-03-04" }],
+        ["r2", { paidOn: null }],
         ["r3", { paidOn: null }],
-        ["r4", { paidOn: null }],
+      ]),
+    );
+  });
+
+  it("a backfilled Bill is paid on its latest BillPayment, and not while open", async () => {
+    bindQb(
+      [
+        { id: "h1", txnDate: "2025-03-04", balance: 0, paymentIds: ["p1", "p2"] },
+        { id: "h2", txnDate: "2025-03-04", balance: 50, paymentIds: [] },
+        { id: "h3", txnDate: "2025-03-04", balance: 0, paymentIds: [] },
+      ],
+      [{ id: "h2", txnDate: "2025-02-03" }],
+    );
+    const paid = await reimbursementStatus.forReceipts([
+      ask("r1", { qbEntity: "Bill", qbTxnId: "h1" }),
+      ask("r2", { qbEntity: "Bill", qbTxnId: "h2" }),
+      ask("r3", { qbEntity: "Bill", qbTxnId: "h3" }),
+    ]);
+    expect(paid).toEqual(
+      new Map([
+        ["r1", { paidOn: "2026-06-20" }],
+        ["r2", { paidOn: null }],
+        ["r3", { paidOn: null }],
       ]),
     );
   });
