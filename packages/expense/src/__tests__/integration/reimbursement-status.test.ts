@@ -1,5 +1,5 @@
 /** X12: a receipt's "paid on" read from QuickBooks against the real database. */
-import { describe, it, expect } from "vitest";
+import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, seedExpense } from "../helpers/seed";
