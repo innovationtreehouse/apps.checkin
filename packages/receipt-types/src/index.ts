@@ -34,7 +34,7 @@ export type UsageBehavior =
 export { ResolvedInventoryDeltaSchema, ResolvedInventoryDeltaLineItemSchema } from "./resolved-inventory-delta";
 export type { ResolvedInventoryDelta, ResolvedInventoryDeltaLineItem } from "./resolved-inventory-delta";
 
-export { CompletedReceiptSchema, CompletedReceiptLineItemSchema } from "./completed-receipt";
+export { CompletedReceiptSchema, CompletedReceiptLineItemSchema, MAX_LINE_QUANTITY } from "./completed-receipt";
 export type { CompletedReceipt, CompletedReceiptLineItem } from "./completed-receipt";
 
 export {

@@ -5,7 +5,7 @@
  * adapters in runtime.ts.
  */
 import { z } from "zod";
-import type { CompletedReceipt } from "@inventory/receipt-types";
+import { MAX_LINE_QUANTITY, type CompletedReceipt } from "@inventory/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
 
 /** The acting host user, projected from the checkin Person. `id` is the Person.id. */
@@ -77,7 +77,7 @@ export const OcrLineItemSchema = z.object({
   description: z.string().min(1).max(500),
   partNumber: z.string().max(100).optional(),
   manufacturer: z.string().max(100).optional(),
-  quantity: z.number().finite().positive().max(MAX_DOLLARS),
+  quantity: z.number().finite().positive().max(MAX_LINE_QUANTITY),
   unitPrice: ocrMoney,
   isDelayed: z.boolean(),
 });
