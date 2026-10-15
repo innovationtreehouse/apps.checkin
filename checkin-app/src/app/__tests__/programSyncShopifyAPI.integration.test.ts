@@ -134,7 +134,7 @@ describe('POST /api/programs/[id]/sync-shopify', () => {
     it('starts the new variant at capacity less the seats already taken, dropping bookkeeping owed to the old one', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         const program = await makeBrokenProgram();
-        await prisma.program.update({ where: { id: program.id }, data: { maxParticipants: 5, shopifyStockCarry: -3 } });
+        await prisma.program.update({ where: { id: program.id }, data: { maxParticipants: 5, shopifyStockCarry: -3, offSaleAt: new Date("2999-01-01") } });
         await prisma.programParticipant.create({ data: { programId: program.id, personId: commonId, status: 'ACTIVE' } });
         const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
         try {
