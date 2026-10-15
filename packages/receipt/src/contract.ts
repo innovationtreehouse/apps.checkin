@@ -69,6 +69,12 @@ export interface ReimbursementStatus {
   forReceipts(receipts: ReimbursementAsk[]): Promise<Map<string, PaidStatus>>;
 }
 
+/** The host's households, for the rule that nobody decides a receipt their household is party to. */
+export interface ReceiptHouseholds {
+  /** Everyone in the given people's households. */
+  householdOf(personIds: number[]): Promise<number[]>;
+}
+
 // ── OCR provider ─────────────────────────────────────────────────────────────
 
 // OCR output is untrusted: it carries the manual-entry bounds, and money stays inside the
@@ -116,6 +122,7 @@ export interface ReceiptConfig {
   receiptSink?: ReceiptSink;
   donorSink?: DonorSink;
   reimbursementStatus?: ReimbursementStatus;
+  households?: ReceiptHouseholds;
   ocr?: OcrProvider;
   /** Overrides for the daily intake limits; unset ones keep DEFAULT_LIMITS. */
   limits?: Partial<ReceiptLimits>;

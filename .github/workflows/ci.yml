@@ -446,6 +446,9 @@ jobs:
           CI: true # jest.config.js only turns on the jest-junit reporter under CI
           DATABASE_URL: "postgresql://testuser:testpassword@localhost:5432/checkmein_test"
           SKIP_COVERAGE_THRESHOLD: 1
+          # Each jest worker gets its own cloned DB; 3 of the runner's 4 vCPUs,
+          # one left for Postgres. Local runs default to 1 worker.
+          INTEGRATION_WORKERS: 3
         run: npm run test:coverage:integration
 
       - name: Publish test results

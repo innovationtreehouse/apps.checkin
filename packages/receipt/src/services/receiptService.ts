@@ -99,8 +99,31 @@ async function step(
   await audit(db, row.id, actor, { action, valueAfter });
 }
 
-function refuseSelfDecision(row: ReceiptRow, actor: ReceiptPrincipal): void {
-  if (row.uploadedByUserId === actor.id) throw new ServiceError(409, "You cannot decide on a receipt you uploaded");
+/** An audited 403: the attempt is on the receipt's record even though nothing changed. */
+async function refuse(row: ReceiptRow, actor: ReceiptPrincipal, attempted: string, message: string): Promise<never> {
+  await audit(db, row.id, actor, { action: "decision_refused", valueAfter: attempted });
+  throw new ServiceError(403, message);
+}
+
+/** The uploader, the reimbursee, and everyone in either one's household. */
+async function conflictedParties(row: ReceiptRow): Promise<number[]> {
+  const parties = [row.uploadedByUserId, row.reimburseePersonId].filter((id): id is number => id != null);
+  return [...parties, ...(await ports().households.householdOf(parties))];
+}
+
+async function refuseSelfDecision(row: ReceiptRow, actor: ReceiptPrincipal, attempted: string): Promise<void> {
+  if (!(await conflictedParties(row)).includes(actor.id)) return;
+  await refuse(row, actor, attempted, "You cannot decide on a receipt that you or your household uploaded or is reimbursed for");
+}
+
+/**
+ * The access a write runs with. Finance on a receipt it is party to holds no finance rights:
+ * the uploader acts as its submitter, and anyone else conflicted is refused.
+ */
+async function writeAccess(row: ReceiptRow, access: Access, actor: ReceiptPrincipal, attempted: string): Promise<Access> {
+  if (access === "submitter" || row.uploadedByUserId === actor.id) return "submitter";
+  await refuseSelfDecision(row, actor, attempted);
+  return "finance";
 }
 
 function donorNames(donor: DonorInput, actor: ReceiptPrincipal) {
@@ -247,9 +270,14 @@ export const receiptService = {
     if (!EDITABLE.has(row.state)) {
       throw new ServiceError(400, "Receipt can only be edited in validation_failed or submitter_review state");
     }
-    // The tax amount drives financial review, so only finance may change it.
-    if (access === "submitter" && updates.tax !== undefined && toCents(updates.tax) !== row.taxCents) {
-      throw new ServiceError(400, "Only finance can change the tax");
+    // Tax and date drive financial review, so only an independent finance user may change them.
+    if ((await writeAccess(row, access, actor, "edit")) === "submitter") {
+      if (updates.tax !== undefined && toCents(updates.tax) !== row.taxCents) {
+        await refuse(row, actor, "edit tax", "Only an independent finance user can change the tax");
+      }
+      if (updates.receiptDate !== undefined && updates.receiptDate !== row.receiptDate) {
+        await refuse(row, actor, "edit receiptDate", "Only an independent finance user can change the date");
+      }
     }
 
     const next = {
@@ -287,6 +315,7 @@ export const receiptService = {
     if (!EDITABLE.has(row.state)) {
       throw new ServiceError(400, "Can only add lines in validation_failed or submitter_review state");
     }
+    await writeAccess(row, access, actor, "add line");
     return db.$transaction(async (tx) => {
       const count = await tx.receiptLineItem.count({ where: { receiptId: id } });
       if (count >= 200) throw new ServiceError(400, "At most 200 line items");
@@ -305,6 +334,7 @@ export const receiptService = {
     if (!EDITABLE.has(row.state)) {
       throw new ServiceError(400, "Line items can only be edited in validation_failed or submitter_review state");
     }
+    await writeAccess(row, access, actor, "edit line");
     const li = await db.receiptLineItem.findFirst({ where: { id: lineItemId, receiptId: id } });
     if (!li) throw new ServiceError(404, "Line item not found");
 
@@ -353,6 +383,7 @@ export const receiptService = {
     if (!EDITABLE.has(row.state)) {
       throw new ServiceError(400, "Can only delete lines in validation_failed or submitter_review state");
     }
+    await writeAccess(row, access, actor, "delete line");
     const li = await db.receiptLineItem.findFirst({ where: { id: lineItemId, receiptId: id } });
     if (!li) throw new ServiceError(404, "Line item not found");
     await db.$transaction(async (tx) => {
@@ -364,6 +395,7 @@ export const receiptService = {
   async retryOcr(id: string, access: Access) {
     const actor = await requireActor();
     const row = await load(id, access, actor);
+    await writeAccess(row, access, actor, "retry ocr");
     try {
       assertLegalTransition(row.state, { type: "OCR_RETRY" });
     } catch (e) {
@@ -378,15 +410,16 @@ export const receiptService = {
   async discard(id: string, access: Access) {
     const actor = await requireActor();
     const row = await load(id, access, actor);
+    await writeAccess(row, access, actor, "discard");
     await step(row, { type: "DISCARD" }, "discarded", {}, actor, "discarded");
     return load(id, access, actor);
   },
 
-  /** Finance sign-off. A note is required when the reason is tax; the uploader cannot decide. */
+  /** Finance sign-off. A note is required when the reason is tax; no conflicted party can decide. */
   async approveFinancial(id: string, note?: string | null) {
     const actor = await requireActor();
     const row = await load(id, "finance", actor);
-    refuseSelfDecision(row, actor);
+    await refuseSelfDecision(row, actor, "approve");
     const reasons = row.state === "financial_review" ? financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
     const trimmed = note?.trim() || null;
     if (reasons.includes("tax") && !trimmed) throw new ServiceError(400, "A note explaining the tax is required");
@@ -398,7 +431,7 @@ export const receiptService = {
   async rejectFinancial(id: string, reason?: string | null) {
     const actor = await requireActor();
     const row = await load(id, "finance", actor);
-    refuseSelfDecision(row, actor);
+    await refuseSelfDecision(row, actor, "reject");
     const note = reason?.trim() || null;
     await step(row, { type: "REJECT" }, "rejected", { detail: { validationNotes: note } }, actor, "reject_financial", note);
     return load(id, "finance", actor);
@@ -408,7 +441,7 @@ export const receiptService = {
   async clearDuplicate(id: string) {
     const actor = await requireActor();
     const row = await load(id, "finance", actor);
-    refuseSelfDecision(row, actor);
+    await refuseSelfDecision(row, actor, "clear duplicate");
     await step(row, { type: "DUPLICATE_CLEARED" }, "uploaded", { detail: { duplicateFlagClearedAt: new Date() } }, actor, "duplicate_cleared");
     await runFullFlow(id, actor);
     return load(id, "finance", actor);
@@ -417,6 +450,7 @@ export const receiptService = {
   async resubmit(id: string, access: Access) {
     const actor = await requireActor();
     const row = await load(id, access, actor);
+    await writeAccess(row, access, actor, "resubmit");
     await step(row, { type: "RESUBMIT" }, "uploaded", {}, actor, "resubmitted");
     await runFullFlow(id, actor);
     return load(id, access, actor);
@@ -494,7 +528,7 @@ export const receiptService = {
   async restartFlow(id: string) {
     const actor = await requireActor();
     const row = await load(id, "finance", actor);
-    refuseSelfDecision(row, actor);
+    await refuseSelfDecision(row, actor, "restart flow");
     try {
       assertLegalTransition(row.state, { type: "RUN_PIPELINE" });
     } catch (e) {

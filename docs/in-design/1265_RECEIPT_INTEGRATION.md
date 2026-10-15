@@ -393,11 +393,14 @@ required when a reason is tax**, stored on the audit row. The source approves
 silently, so nothing records why tax was accepted; that note is FR4's "tax
 explanation". QB-linked backfill keeps its waivers (no submitter step, no age gate).
 
-**Self-decision is refused.** A `FINANCE` person cannot approve or reject their
-own upload (409), as finance-payments already refuses deciding a
-scholarship for one's own household (*Ethics Policy Art. III §III.5*). The source
-allows it. Household conflicts are left to expense's COI flag (#1272 §6), which
-reviews the same money downstream.
+**Self-decision is refused.** A `FINANCE` person makes no finance decision on a
+receipt they, or anyone in their household, uploaded or are reimbursed for:
+approve, reject, clear the duplicate flag, restart the flow, edit details or
+lines, or discard. Each attempt is a 403 with a `decision_refused` audit row, as
+finance-payments already refuses deciding a scholarship for one's own household
+(*Ethics Policy Art. III §III.5*). The uploader still edits their own receipt as
+its submitter. Tax and the receipt date drive financial review, so only an
+independent finance person changes them. The source allows all of this.
 
 **Backorder deferral (FR6)** is a per-line `isDelayed` flag here, set by hand or by
 OCR and carried on S1. The deferral itself is local-inventory's receive queue,
