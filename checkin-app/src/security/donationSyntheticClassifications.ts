@@ -14,6 +14,9 @@
  * id, amount, date and the three join timestamps, all `internal`. It carries no
  * donor field, so a donor name on the row is stripped from every view.
  *
+ * ManualInKindRecordResult — the reply to recording a no-receipt in-kind
+ * donation: its id and whether its goods loaded into inventory, both `internal`.
+ *
  * Hand-authored, not generated: these describe API responses, not tables. This
  * is a security-boundary artifact — changes ship in a boundary PR.
  */
@@ -37,6 +40,10 @@ export const classifications = {
     moneyReceivedAt: "internal",
     donorRecordedAt: "internal",
     withdrawnAfterMoneyAt: "internal",
+  },
+  ManualInKindRecordResult: {
+    id: "internal",
+    inventoryLoaded: "internal",
   },
 } as const;
 
