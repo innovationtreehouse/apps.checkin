@@ -34,4 +34,11 @@ describe("hasHouseholdConflict", () => {
     it("no conflict when the subject has no household to conflict with", async () => {
         expect(await hasHouseholdConflict(db(3), 1, null)).toBe(false);
     });
+
+    it.each([
+        ["an actor id that resolves to nobody", 1],
+        ["an actor id that is not a positive integer", 0],
+    ])("conflicts (fails closed) for %s", async (_label, actorId) => {
+        expect(await hasHouseholdConflict(db(null), actorId, 3)).toBe(true);
+    });
 });

@@ -473,30 +473,32 @@ export async function submitIntake(userId: number) {
     const boundary = settings?.orgMembershipYearBoundary ? nextBoundary(settings.orgMembershipYearBoundary, new Date()) : null;
     const bgFresh = await householdBgIsFresh(household.id, boundary, settings?.bgRecheckMonths ?? 0);
 
-    const { count } = await prisma.orgMembershipProcess.updateMany({
-        where: { id: process.id, ...fromWhere("INTAKE") },
-        data: {
-            status: "PENDING_EXTERNAL_ACTION",
-            stageEnteredAt: new Date(),
-            ...(bgFresh ? { bgClearedAt: new Date() } : {}),
-        },
-    });
-    if (count !== 1) throw new IntakeError("no_process", "No application is awaiting your information.");
+    await prisma.$transaction(async (tx) => {
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id: process.id, ...fromWhere("INTAKE") },
+            data: {
+                status: "PENDING_EXTERNAL_ACTION",
+                stageEnteredAt: new Date(),
+                ...(bgFresh ? { bgClearedAt: new Date() } : {}),
+            },
+        });
+        if (count !== 1) throw new IntakeError("no_process", "No application is awaiting your information.");
 
-    await prisma.auditLog.create({
-        data: {
-            actorId: userId,
-            action: "EDIT",
-            tableName: "OrgMembershipProcess",
-            affectedEntityId: process.id,
-            oldData: { status: "INTAKE" },
-            newData: { status: "PENDING_EXTERNAL_ACTION", ...(bgFresh ? { bgClearedAt: true } : {}) },
-        },
-    });
+        await tx.auditLog.create({
+            data: {
+                actorId: userId,
+                action: "EDIT",
+                tableName: "OrgMembershipProcess",
+                affectedEntityId: process.id,
+                oldData: { status: "INTAKE" },
+                newData: { status: "PENDING_EXTERNAL_ACTION", ...(bgFresh ? { bgClearedAt: true } : {}) },
+            },
+        });
 
-    // Fresh-check shortcut ⇒ clearBackgroundCheck never runs this cycle, so match
-    // the volunteer-designation allowlist here or it would never be applied (#874).
-    if (bgFresh) await applyVolunteerStatus(prisma, process.orgMembershipId!, household.id, false);
+        // Fresh-check shortcut ⇒ clearBackgroundCheck never runs this cycle, so match
+        // the volunteer-designation allowlist here or it would never be applied (#874).
+        if (bgFresh) await applyVolunteerStatus(tx, process.orgMembershipId!, household.id, false);
+    });
 
     // The external actions (contract sign, BG consent) can already be satisfied the
     // moment we land at PENDING_EXTERNAL_ACTION: bgFresh stamps bgClearedAt above,
