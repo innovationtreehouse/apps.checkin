@@ -4,7 +4,7 @@ import { findOrCreate, qbKey, takeoverLine, type FindOrCreateResult, type TxnWri
 import { db } from "../db";
 import type { ExpensePosting } from "../contract";
 import { getExpenseRuntime } from "../runtime";
-import { MATCH_WINDOW_DAYS } from "../services/qbMatchService";
+import { MATCH_WINDOW_DAYS, claimQbTxn, claimedQbTxnIds } from "../services/qbMatchService";
 import { QbExpenseEventSchema } from "../workflows/expense-event-schema";
 import { writeAudit } from "./audit";
 import { logError, logWarn } from "./logger";
@@ -60,17 +60,13 @@ async function expenseTakeoverLine(orgId: string, takeoverDate: string): Promise
 }
 
 /** QuickBooks ids are unique per entity type only, so claims are read for the entity being posted. */
-async function claimedAndExcluded(orgId: string, expenseId: string, entity: "Purchase" | "Bill") {
-  const [expenses, lines, excluded] = await Promise.all([
-    db.expense.findMany({ where: { orgId, qbTxnId: { not: null }, qbTxnEntity: entity, id: { not: expenseId } }, select: { qbTxnId: true } }),
-    db.expenseLineItem.findMany({
-      where: { qbTxnId: { not: null }, OR: [{ qbTxnEntity: entity }, { qbTxnEntity: null }], expense: { orgId } },
-      select: { qbTxnId: true },
-    }),
+async function claimedAndExcluded(orgId: string, entity: "Purchase" | "Bill") {
+  const [claimed, excluded] = await Promise.all([
+    claimedQbTxnIds(orgId, entity),
     db.expenseQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
   ]);
   return {
-    claimedIds: new Set([...expenses, ...lines].map((r) => r.qbTxnId!)),
+    claimedIds: new Set(claimed),
     excludedIds: new Set(excluded.map((e) => e.qbTxnId)),
   };
 }
@@ -131,7 +127,7 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
     built = { error: e instanceof Error ? e.message : String(e) };
   }
   const { claimedIds, excludedIds } = "write" in built
-    ? await claimedAndExcluded(orgId, expenseId, built.write.entity === "Bill" ? "Bill" : "Purchase")
+    ? await claimedAndExcluded(orgId, built.write.entity === "Bill" ? "Bill" : "Purchase")
     : { claimedIds: new Set<string>(), excludedIds: new Set<string>() };
 
   return db.$transaction(
@@ -199,7 +195,14 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
       switch (result.kind) {
         case "created":
         case "found": {
-          if (result.kind === "found" && result.via === "amount") {
+          const byAmount = result.kind === "found" && result.via === "amount";
+          if (!(await claimQbTxn(tx, orgId, write.entity, result.id))) {
+            const note = `QuickBooks ${write.entity} ${result.id} is already claimed by another expense or line`;
+            // An entry the app posted for this expense is now a duplicate in QuickBooks.
+            if (!byAmount) await raiseFlag(expenseId, "QB_POST_FAILED", `${note}; the entry posted for this expense needs voiding`, tx);
+            return settle("queued", { qbMatchState: "AMBIGUOUS" }, note);
+          }
+          if (byAmount) {
             return settle("matched", { qbMatchState: "MATCHED", qbTxnId: result.id, qbTxnEntity: write.entity });
           }
           for (const [id, accountId] of lineAccounts) {

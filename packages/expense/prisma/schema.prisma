@@ -517,6 +517,24 @@ model ExpenseQbMatchExclusion {
   @@map("qb_match_exclusion")
 }
 
+// A QuickBooks entry held by an expense or a line. Every claim writes a row here in the
+// claim's transaction, so an entry is claimed once across both; ids are unique per entity type only.
+model ExpenseQbClaim {
+  /// @sensitivity:internal
+  id          Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId       String   @map("org_id")
+  /// @sensitivity:internal
+  qbTxnEntity String   @map("qb_txn_entity")
+  /// @sensitivity:internal
+  qbTxnId     String   @map("qb_txn_id")
+  /// @sensitivity:internal
+  claimedAt   DateTime @default(now()) @map("claimed_at")
+
+  @@unique([orgId, qbTxnEntity, qbTxnId])
+  @@map("qb_claim")
+}
+
 // The QuickBooks Vendor a reimbursee's Bills are posted to (checkin Person.id, no FK).
 model ExpenseReimburseeVendor {
   /// @sensitivity:internal

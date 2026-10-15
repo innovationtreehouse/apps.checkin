@@ -1,6 +1,6 @@
 // Expense's side of match-before-create (QB-2). The shared find-or-create in
 // @inventory/quickbooks is stateless; expense hands it the takeover line and the ids it must skip.
-import { db, isUniqueConstraintError } from "../db";
+import { db, isUniqueConstraintError, type Db } from "../db";
 import type { ExpensePrincipal, QbTxn } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { writeAudit } from "../lib/audit";
@@ -10,8 +10,26 @@ import { reimburseeUnknown } from "../lib/signoff";
 import { requireFinance } from "./approvalService";
 import { ServiceError } from "./serviceError";
 
+/** A reimbursement matches a Bill; every other line matches a Purchase. */
+export type QbMatchEntity = "Bill" | "Purchase";
+
+/**
+ * Claims a QuickBooks entry for an expense or a line inside the caller's transaction; false when
+ * it is already claimed. Never throws on a conflict, so the caller's transaction stays usable.
+ */
+export async function claimQbTxn(tx: Db, orgId: string, qbTxnEntity: string, qbTxnId: string): Promise<boolean> {
+  const { count } = await tx.expenseQbClaim.createMany({ data: [{ orgId, qbTxnEntity, qbTxnId }], skipDuplicates: true });
+  return count === 1;
+}
+
+/** QuickBooks ids of one entity type held by any expense or line. */
+export async function claimedQbTxnIds(orgId: string, qbTxnEntity: string): Promise<string[]> {
+  const rows = await db.expenseQbClaim.findMany({ where: { orgId, qbTxnEntity }, select: { qbTxnId: true } });
+  return rows.map((r) => r.qbTxnId);
+}
+
 export interface QbMatchInputs {
-  /** QuickBooks ids already claimed by a line or excluded by finance: never a candidate. */
+  /** QuickBooks ids of the entity type already claimed by an expense or a line, or excluded by finance: never a candidate. */
   skipIds: string[];
   /**
    * Receipt date of the newest line matched to a QuickBooks entry the app did not create.
@@ -20,10 +38,10 @@ export interface QbMatchInputs {
   takeoverDate: string | null;
 }
 
-export async function qbMatchInputs(): Promise<QbMatchInputs> {
+export async function qbMatchInputs(entity: QbMatchEntity): Promise<QbMatchInputs> {
   const orgId = await getOrgId();
   const [claimed, excluded, newestMatched] = await Promise.all([
-    db.expenseLineItem.findMany({ where: { qbTxnId: { not: null }, expense: { orgId } }, select: { qbTxnId: true } }),
+    claimedQbTxnIds(orgId, entity),
     db.expenseQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
     db.expense.findFirst({
       where: { orgId, receiptDate: { not: null }, lineItems: { some: { qbMatchState: "MATCHED" } } },
@@ -32,7 +50,7 @@ export async function qbMatchInputs(): Promise<QbMatchInputs> {
     }),
   ]);
   return {
-    skipIds: [...claimed.map((c) => c.qbTxnId!), ...excluded.map((e) => e.qbTxnId)],
+    skipIds: [...claimed, ...excluded.map((e) => e.qbTxnId)],
     takeoverDate: newestMatched?.receiptDate ?? null,
   };
 }
@@ -70,9 +88,6 @@ async function loadLine(lineItemId: number) {
   return line;
 }
 
-/** A reimbursement matches a Bill; every other line matches a Purchase. */
-export type QbMatchEntity = "Bill" | "Purchase";
-
 /** Line states that may still be linked to an existing QuickBooks entry. */
 const MATCHABLE_STATES = new Set(["UNMATCHED", "AMBIGUOUS", "BEFORE_LINE", "POST_FAILED"]);
 
@@ -88,7 +103,7 @@ async function candidatesFor(line: Awaited<ReturnType<typeof loadLine>>): Promis
     entity === "Bill" ? (personId === null ? null : await refs.vendorIdFor(personId)) : await refs.paymentAccountId();
   if (expectedRef === null) return { entity, txns: [] };
   const txns = entity === "Bill" ? await reader.billsBetween(from, to) : await reader.purchasesBetween(from, to);
-  const skip = new Set((await qbMatchInputs()).skipIds);
+  const skip = new Set((await qbMatchInputs(entity)).skipIds);
   const matches = (t: QbTxn) =>
     t.totalCents === line.totalPriceCents &&
     t.txnDate >= from &&
@@ -109,7 +124,7 @@ export async function qbCandidates(principal: ExpensePrincipal, lineItemId: numb
 }
 
 /**
- * Finance links a line to an existing QuickBooks entry; an entry is claimed by one line at most.
+ * Finance links a line to an existing QuickBooks entry; an entry is claimed once across expenses and lines.
  * The entry must be one of the line's own candidates, and the line fully signed off.
  */
 export async function matchLineToQb(principal: ExpensePrincipal, lineItemId: number, qbTxnId: string): Promise<void> {
@@ -135,6 +150,7 @@ export async function matchLineToQb(principal: ExpensePrincipal, lineItemId: num
         data: { qbMatchState: "MATCHED", qbTxnId, qbTxnEntity: entity },
       });
       if (linked.count === 0) throw new ServiceError(409, "Line is already linked to QuickBooks");
+      if (!(await claimQbTxn(tx, expense.orgId, entity, qbTxnId))) throw new ServiceError(409, "That QuickBooks entry is already claimed");
       await writeAudit(tx, actor, { expenseId: line.expenseId, action: "qb_matched", lineItemId, fieldChanged: "qbTxnId", valueAfter: qbTxnId });
     });
   } catch (err) {
