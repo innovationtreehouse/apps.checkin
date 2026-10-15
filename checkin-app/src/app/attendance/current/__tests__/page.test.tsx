@@ -445,7 +445,6 @@ describe("attendance/current page", () => {
     it("reads a payload without the link as unreachable", async () => {
       setAdminSession();
       const { building: _omit, ...withoutLink } = attendanceData;
-      void _omit;
       mockRoutes({ "/api/attendance": withoutLink });
       renderWithProviders(<KioskDisplay />);
 
@@ -910,7 +909,6 @@ describe("attendance/current page", () => {
   it("does not treat a roster without safety flags as two-deep compliant (B6)", async () => {
     setAdminSession();
     const { safety: _omit, ...withoutSafety } = attendanceData;
-    void _omit;
     mockFetchJson({
       "/api/household": householdData,
       "/api/attendance": withoutSafety,

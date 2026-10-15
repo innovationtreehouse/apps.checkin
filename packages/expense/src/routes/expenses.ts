@@ -20,6 +20,7 @@ import {
 } from "../services/approvalService";
 import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
 import { setReimbursee, signLine, signoffStatus } from "../services/signoffService";
+import { setTestData } from "../services/testDataService";
 import {
   httpError,
   mapServiceErrors,
@@ -265,4 +266,11 @@ export const reimbursee: ExpenseRouteHandler = async ({ req, params }) => {
   const orgId = await getOrgId();
   await mapServiceErrors(() => setReimbursee(orgId, params.id, personId, principal));
   return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId } }) };
+};
+
+export const testData: ExpenseRouteHandler = async ({ req, params }) => {
+  const { isTestData } = await parseBody(req, z.object({ isTestData: z.boolean() }));
+  const principal = await getPrincipal();
+  await mapServiceErrors(() => setTestData(principal, params.id, isTestData));
+  return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } }) };
 };

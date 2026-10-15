@@ -8,7 +8,6 @@ import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
 import {
-  INVENTORY_LIBRARY_TABS,
   REVENUE_OPS_LIBRARY_TABS,
   type LibraryTab,
 } from "@/lib/libraryNav";
@@ -19,13 +18,9 @@ const mockedUseTodoCounts = useTodoCounts as jest.Mock;
 const financeOrBoard = (u: { isFinance?: boolean; isBoardMember?: boolean } | undefined) =>
   !!u?.isFinance || !!u?.isBoardMember;
 
-// Fake registrations for the libraries not wired yet; expense and receipt register their own tabs.
+// Fake registration for Income, the one library not wired yet; the others register their own tabs.
 const REGISTRATIONS: Array<[LibraryTab[], LibraryTab]> = [
   [REVENUE_OPS_LIBRARY_TABS, { name: "Income", href: "/income", library: "income", visible: financeOrBoard }],
-  [
-    INVENTORY_LIBRARY_TABS,
-    { name: "Receiving", href: "/inventory/receiving", library: "workflow-mapping", visible: (u) => !!u?.isInventoryManager || financeOrBoard(u) },
-  ],
 ];
 
 beforeAll(() => REGISTRATIONS.forEach(([slot, tab]) => slot.push(tab)));
@@ -109,6 +104,13 @@ describe("AppFrame library nav slots", () => {
     setSession({ id: 1, isBoardMember: true });
     renderFrame();
     expect(hrefOf("Expense Ops")).toBe("/expense");
+  });
+
+  it("FINANCE with only workflow-mapping released: Inventory lands on Receiving", () => {
+    mockedUseTodoCounts.mockReturnValue(counts({ releasedLibraries: ["workflow-mapping"] }));
+    setSession({ id: 2, isFinance: true });
+    renderFrame();
+    expect(hrefOf("Inventory")).toBe("/inventory/receiving");
   });
 
   it("plain member: none of the library entries", () => {

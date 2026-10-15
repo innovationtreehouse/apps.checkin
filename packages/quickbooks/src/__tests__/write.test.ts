@@ -185,7 +185,7 @@ describe("closed-enum writer", () => {
     expect(c.create).toBeUndefined();
     expect(Object.values(pkg)).not.toContain(CREATE);
     const pkgJson = JSON.parse(readFileSync(join(__dirname, "../../package.json"), "utf-8")) as { exports: Record<string, unknown> };
-    expect(Object.keys(pkgJson.exports)).toEqual(["."]);
+    expect(Object.keys(pkgJson.exports)).toEqual([".", "./oauth"]);
   });
 
   it("keys the writer with a registered symbol, so a second loaded copy of the module matches", () => {

@@ -46,6 +46,12 @@ export function visibleLibraryTabs(
 export const hasAnyRole = (user: SessionUser | undefined, roles: readonly NavRole[]): boolean =>
   roles.some((r) => user?.[r] === true);
 
+/** Receiving's gate: the workflow-mapping read routes admit INVENTORY_MANAGER, FINANCE or BOARD. */
+export const canSeeReceiving = (
+  user: Pick<SessionUser, "isInventoryManager" | "isFinance" | "isBoardMember"> | undefined,
+): boolean =>
+  !!user?.isInventoryManager || !!user?.isFinance || !!user?.isBoardMember;
+
 // ---- Slots. Library wiring PRs append their tabs here. ----
 
 /**
@@ -53,7 +59,18 @@ export const hasAnyRole = (user: SessionUser | undefined, roles: readonly NavRol
  * A viewer who sees any of these is admitted to the section even without the
  * catalog-viewer gate (FINANCE reaches Receiving), and then sees only these.
  */
-export const INVENTORY_LIBRARY_TABS: LibraryTab[] = [];
+export const INVENTORY_LIBRARY_TABS: LibraryTab[] = [
+  {
+    name: "Receiving",
+    href: "/inventory/receiving",
+    library: "workflow-mapping",
+    visible: canSeeReceiving,
+    badge: (c) => {
+      const n = libraryCount(c, "workflow-mapping", "pending_review") + libraryCount(c, "workflow-mapping", "apply_failed");
+      return n > 0 ? { count: n, color: "red", label: `${n} receipts awaiting mapping or apply` } : null;
+    },
+  },
+];
 
 /** Revenue Ops section (/finance-ops, /income, /donations): Income, Donations. */
 export const REVENUE_OPS_LIBRARY_TABS: LibraryTab[] = [
