@@ -26,7 +26,7 @@ async function getPrincipal(): Promise<ExpensePrincipal | null> {
 
 const budgetOwners: OwnerDirectory = {
   async list() {
-    return (await db()).budgetOwner.findMany({ select: { id: true, name: true, archivedAt: true }, orderBy: { name: "asc" } });
+    return (await db()).budgetOwner.findMany({ select: { id: true, name: true, archivedAt: true, quickBooksClassId: true }, orderBy: { name: "asc" } });
   },
 };
 

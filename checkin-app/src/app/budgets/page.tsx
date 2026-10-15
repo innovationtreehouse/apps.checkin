@@ -139,7 +139,7 @@ export default function BudgetsPage() {
                 onChange={setNewProgramId}
                 w={260}
               />
-              <TextInput label="QuickBooks Class id" value={newClassId} onChange={(e) => setNewClassId(e.currentTarget.value)} w={200} />
+              <TextInput label="QuickBooks Class id" description="Expenses in this bucket post to QuickBooks only once it is set" value={newClassId} onChange={(e) => setNewClassId(e.currentTarget.value)} w={200} />
               <Button onClick={create} disabled={!newName.trim()}>Create</Button>
             </Group>
           </Card>

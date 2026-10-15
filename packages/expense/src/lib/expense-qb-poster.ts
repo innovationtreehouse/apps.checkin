@@ -41,7 +41,7 @@ export const MAX_CREATE_CENTS_PER_RUN = 2_500_000;
 /** Failed posts before the drain stops retrying and hands the expense to finance. */
 export const MAX_POST_ATTEMPTS = 5;
 
-export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "not_sent" | "needs_finance";
+export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "not_sent" | "needs_finance" | "no_class";
 
 function shiftDate(isoDate: string, days: number): string {
   const d = new Date(`${isoDate}T00:00:00Z`);
@@ -134,7 +134,7 @@ function withClaim<T>(orgId: string, expenseId: string, claim: Claim, fn: (tx: D
   });
 }
 
-type Built = { write: TxnWrite; lineAccounts: Map<number, string> } | { queue: string } | { error: string };
+type Built = { write: TxnWrite; lineAccounts: Map<number, string> } | { queue: string } | { noClass: string } | { error: string };
 
 function lineCents(i: QbExpenseEvent["items"][number]): number {
   return i.totalPriceCents + i.allocatedTaxCents + i.allocatedShippingCents - i.allocatedDiscountCents;
@@ -145,13 +145,42 @@ export function payloadLineCents(payloadJson: string): number {
   return QbExpenseEventSchema.parse(JSON.parse(payloadJson)).items.reduce((s, i) => s + lineCents(i), 0);
 }
 
-/** The entry to create for an outboxed expense; each line keeps its own account. */
+/** Each line's QuickBooks Class, from its budget bucket; an event without a bucketId reads the line's current bucket. */
+async function lineClasses(client: Db, items: QbExpenseEvent["items"]): Promise<Map<number, string> | { noClass: string }> {
+  const missing = items.filter((i) => i.bucketId == null).map((i) => i.lineItemId);
+  const approvals = missing.length
+    ? await client.lineItemOwnerApproval.findMany({ where: { lineItemId: { in: missing } }, select: { lineItemId: true, ownerId: true } })
+    : [];
+  const fallback = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
+  const buckets = new Map((await getExpenseRuntime().budgetOwners.list()).map((b) => [b.id, b]));
+  const classes = new Map<number, string>();
+  for (const i of items) {
+    const bucketId = i.bucketId ?? fallback.get(i.lineItemId) ?? null;
+    const bucket = bucketId === null ? undefined : buckets.get(bucketId);
+    if (!bucket) return { noClass: `Line "${i.description}" has no budget bucket, so it has no QuickBooks Class` };
+    if (!bucket.quickBooksClassId) {
+      return { noClass: `Budget bucket '${bucket.name}' has no QuickBooks Class; set it on the Budgets page` };
+    }
+    classes.set(i.lineItemId, bucket.quickBooksClassId);
+  }
+  return classes;
+}
+
+/** The entry to create for an outboxed expense; each line keeps its own account and its bucket's Class. */
 async function buildWrite(client: Db, orgId: string, payloadJson: string, posting: ExpensePosting): Promise<Built> {
   const event = QbExpenseEventSchema.parse(JSON.parse(payloadJson));
   if (!event.receiptDate) return { error: "the expense has no receipt date" };
-  const lines = event.items.map((i) => ({ lineItemId: i.lineItemId, amountCents: lineCents(i), accountId: i.account, description: i.description }));
+  const classes = await lineClasses(client, event.items);
+  if ("noClass" in classes) return classes;
+  const lines = event.items.map((i) => ({
+    lineItemId: i.lineItemId,
+    amountCents: lineCents(i),
+    accountId: i.account,
+    classId: classes.get(i.lineItemId)!,
+    description: i.description,
+  }));
   const lineAccounts = new Map(lines.map((l) => [l.lineItemId, l.accountId]));
-  const writeLines = lines.map(({ amountCents, accountId, description }) => ({ amountCents, accountId, description }));
+  const writeLines = lines.map(({ amountCents, accountId, classId, description }) => ({ amountCents, accountId, classId, description }));
   const memo = event.vendorName ?? undefined;
 
   if (event.needsReimbursement) {
@@ -194,7 +223,9 @@ export type PostOptions = {
  * MATCHED; ambiguous or an unmapped reimbursee → AMBIGUOUS; before the takeover line →
  * BEFORE_LINE; a failure (QuickBooks down, rejected, or a thrown error) → POST_FAILED, retried by
  * the drain until MAX_POST_ATTEMPTS, then NEEDS_FINANCE with a flag (finance's retry re-arms it); an
- * expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. An
+ * expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. A line
+ * whose bucket has no QuickBooks Class → no_class, state unchanged, flagged QB_NO_CLASS, re-checked each
+ * run. An
  * expense whose lines sum past MAX_CREATE_CENTS_PER_RUN is left for the drain's run-alone slot and
  * flagged QB_OVER_CAP. With no takeover date configured nothing is posted.
  *
@@ -258,6 +289,11 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
     }
     if ("error" in built) return recordFailure(tx, current, built.error);
     if ("queue" in built) return settle(tx, current, "queued", { qbMatchState: "AMBIGUOUS" }, built.queue);
+    // State stays postable, so the next drain posts it once the bucket has a Class.
+    if ("noClass" in built) {
+      await raiseFlag(expenseId, "QB_NO_CLASS", built.noClass, tx);
+      return "no_class";
+    }
 
     const cents = built.write.fields.lines.reduce((s, l) => s + l.amountCents, 0);
     if (cents > MAX_CREATE_CENTS_PER_RUN && !opts.allowOverCap) {
@@ -354,7 +390,7 @@ export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound" | "n
   ).filter((e) => payloads.has(e.id) && isPostable(e, now));
 
   const counts: DrainCounts = {
-    posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0,
+    posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0,
     overCap: 0, capped: null, stoppedAfterFailures: false,
   };
   let postedCents = 0;
@@ -382,7 +418,8 @@ export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound" | "n
       logError("qb_drain_failed", { expenseId: e.id, orgId: e.orgId }, err);
     }
     counts[outcome]++;
-    failuresInARow = outcome === "failed" || outcome === "needs_finance" ? failuresInARow + 1 : 0;
+    // No QuickBooks call was made for a missing Class, so it says nothing about QuickBooks being down.
+    if (outcome !== "no_class") failuresInARow = outcome === "failed" || outcome === "needs_finance" ? failuresInARow + 1 : 0;
     if (failuresInARow >= MAX_CONSECUTIVE_FAILURES) {
       counts.stoppedAfterFailures = true;
       logWarn("qb_drain_failure_streak", { failures: failuresInARow, remaining: due.length - i - 1 });

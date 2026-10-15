@@ -36,6 +36,8 @@ export interface OwnerInfo {
   id: number;
   name: string;
   archivedAt: Date | null;
+  /** The bucket's QuickBooks Class; an expense line in a bucket without one is not posted. */
+  quickBooksClassId: string | null;
 }
 
 /** Read-only list of checkin's budget-owner buckets. Same port income and bulk donation declare. */
