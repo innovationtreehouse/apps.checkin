@@ -731,6 +731,17 @@ describeDb("QB-2 posting — QuickBooks Class per line", () => {
     expect((await db.expenseFlag.findMany({ where: { expenseId: id } })).map((f) => f.kind)).toEqual(["QB_NO_CLASS"]);
   });
 
+  it("an unclassed expense neither counts toward nor breaks the consecutive-failure stop", async () => {
+    await handMatched("2026-08-01");
+    await bucket100Unclassed();
+    qbo.mode = "down";
+    await outboxed("2026-09-10", { buckets: [7, 7] });
+    await outboxed("2026-09-11");
+    for (let d = 12; d < 12 + MAX_CONSECUTIVE_FAILURES; d++) await outboxed(`2026-09-${d}`, { buckets: [7, 7] });
+
+    expect(await drainExpenseOutbox()).toMatchObject({ failed: MAX_CONSECUTIVE_FAILURES, no_class: 1, stoppedAfterFailures: true });
+  });
+
   it("an unclassed expense counts toward neither cap, so the rest of the run still posts", async () => {
     await handMatched("2026-08-01");
     await bucket100Unclassed();
