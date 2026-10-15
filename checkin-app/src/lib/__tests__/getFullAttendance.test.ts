@@ -232,6 +232,16 @@ describe("no-keyholder visits", () => {
         expect(coverFindMany).not.toHaveBeenCalled();
     });
 
+    it("re-derives from the current flag after a revoke, checking nobody out", async () => {
+        const revoked = { ...rows[0], person: { ...rows[0].person, isKeyholder: false } };
+        findMany.mockResolvedValue([revoked, loneVolunteer]);
+        coverFindMany.mockResolvedValue([]);
+        const { attendance, counts, safety } = await getFullAttendance();
+        expect(counts).toMatchObject({ keyholders: 0, total: 2 });
+        expect(safety.facilityOpen).toBe(false);
+        expect(attendance.map(v => v.noKeyholder)).toEqual([true, true]);
+    });
+
     it("asks only for live keyholder visits that could cover the arrivals", async () => {
         await getFullAttendance();
         expect(coverFindMany.mock.calls[0][0].where).toMatchObject({

@@ -293,7 +293,8 @@ const PERSON_RELATION_RE = new RegExp(String.raw`\b(?:${PERSON_RELATION_NAMES.jo
 const JOIN_CALL_RE =
     /\b(?:prisma|tx|db)\.(programParticipant|programVolunteer|rSVP|toolStatus)\.(findMany|findFirst|count|aggregate|groupBy)\s*\(/g;
 
-const FILTERED_RE = /LIVE_PERSON|mergedIntoId/;
+// LIVE_KEYHOLDER and KEYHOLDER_IN_BUILDING (lib/visit/filters.ts) spread LIVE_PERSON.
+const FILTERED_RE = /LIVE_PERSON|mergedIntoId|LIVE_KEYHOLDER|KEYHOLDER_IN_BUILDING/;
 
 /**
  * A sibling `where: { person: LIVE_PERSON }` for a class-2 hit lives in the

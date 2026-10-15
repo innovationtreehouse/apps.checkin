@@ -94,7 +94,8 @@ const VISIT_CALL_RE = /\b(?:prisma|tx|db)\.visit\.(findMany|findFirst|count|aggr
 // pure-filter shape to exempt: it must carry the filter in its own config.
 const VISITS_RELATION_RE = /\bvisits\s*:\s*(true|\{)/g;
 
-const FILTERED_RE = /LIVE_VISIT|deletedAt/;
+// KEYHOLDER_IN_BUILDING (lib/visit/filters.ts) spreads LIVE_VISIT.
+const FILTERED_RE = /LIVE_VISIT|deletedAt|KEYHOLDER_IN_BUILDING/;
 
 function scan(): Set<string> {
     const hits = new Set<string>();

@@ -9,7 +9,7 @@ import { logBackendError, logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { withinMaxDuration } from "@/lib/visitTimes";
 import { orgCalendarDay } from "@/lib/time";
-import { LIVE_VISIT } from "@/lib/visit/filters";
+import { KEYHOLDER_IN_BUILDING, LIVE_VISIT } from "@/lib/visit/filters";
 import { visitSubject } from "@/lib/visit/scope";
 import { lockFacility } from "@/lib/facilityLock";
 import { appendPresenceEvent, PresenceClass } from "@/lib/presence/events";
@@ -124,7 +124,7 @@ export const POST = withAuth({}, async (req, auth) => {
                 // nothing: projection C's hold is for kiosk scans, which must
                 // never be lost.
                 const activeKeyholders = await tx.visit.count({
-                    where: { departedAt: null, person: { isKeyholder: true }, ...LIVE_VISIT }
+                    where: KEYHOLDER_IN_BUILDING
                 });
                 if (activeKeyholders === 0) return { facilityClosed: true as const };
             }

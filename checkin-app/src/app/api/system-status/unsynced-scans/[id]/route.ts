@@ -5,7 +5,7 @@ import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
 import { withinMaxDuration } from "@/lib/visitTimes";
 import { lockFacility } from "@/lib/facilityLock";
 import { LIVE_PERSON } from "@/lib/person/filters";
-import { LIVE_VISIT } from "@/lib/visit/filters";
+import { KEYHOLDER_IN_BUILDING, LIVE_VISIT } from "@/lib/visit/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 // Registry-governed (POST /api/system-status/unsynced-scans/[id]): admission
@@ -133,7 +133,7 @@ export const POST = handler<{ id: string }>(
             // in the building (#254 keyholder-first).
             if (!parsedDeparted && !person.isKeyholder) {
                 const activeKeyholders = await tx.visit.count({
-                    where: { departedAt: null, person: { isKeyholder: true, ...LIVE_PERSON }, ...LIVE_VISIT },
+                    where: KEYHOLDER_IN_BUILDING,
                 });
                 if (activeKeyholders === 0) {
                     throw new ApiResponseError(403, "Facility is closed — supply a departure time to record this visit as closed.");

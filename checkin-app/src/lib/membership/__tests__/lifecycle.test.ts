@@ -86,7 +86,7 @@ describe('awaitingBgReview', () => {
         expect(awaitingBgReview.has({ status: 'ACTIVE', bgConsentAt: true, bgClearedAt: false })).toBe(false);
     });
 
-    test('where is the exact AWAITING_BG_WHERE fragment it replaced', () => {
+    test('where is the reviewer-queue Prisma fragment', () => {
         expect(awaitingBgReview.where).toEqual({
             bgClearedAt: null,
             OR: [
