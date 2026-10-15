@@ -262,7 +262,19 @@ export type Authorize =
     | 'program-core-volunteer'
     | 'household-lead'
     | 'household-member'
-    | 'kiosk';
+    | 'kiosk'
+    // A scheduled job holding the named machine secret (CRON_SECRET_ENV). Only
+    // `Authorization: Bearer <secret>` admits; a session never does.
+    | { cronSecret: CronSecretName };
+
+/**
+ * Machine secrets a cron route may name in `authorize: { cronSecret }`, each
+ * read from its own env var so holding one never admits another job's route.
+ */
+export const CRON_SECRET_ENV = {
+    'qbo-posting': 'QBO_POSTING_CRON_SECRET',
+} as const;
+export type CronSecretName = keyof typeof CRON_SECRET_ENV;
 
 /**
  * Response envelope:
@@ -390,7 +402,7 @@ function roleNeeds(role: Role): Partial<CtxNeeds> {
 }
 
 function authorizeNeeds(authorize: Authorize): Partial<CtxNeeds> {
-    if (typeof authorize !== 'string') return {}; // anyRole — session flags only
+    if (typeof authorize !== 'string') return {}; // anyRole reads session flags; cronSecret reads a header
     switch (authorize) {
         case 'public':
         case 'authenticated':
