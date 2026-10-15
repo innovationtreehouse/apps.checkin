@@ -14,6 +14,7 @@ import {
     KIND_TO_FLAG,
     KIND_TO_MIRROR,
     setRoleFlag,
+    lockBoardRoles,
     RoleMatrixError,
     LastBoardMemberError,
     DeniedHouseholdBoardError,
@@ -487,6 +488,12 @@ export const POST = withAuth(
             const bgFreshBeforeMerge = await householdBgFresh(keepParticipant.householdId);
 
             await prisma.$transaction(async (tx) => {
+                // The BOARD lock comes before any Person row lock, the order a role change
+                // takes them in; the keeper's row is locked and re-checked live after it.
+                await lockBoardRoles(tx);
+                const [keeper] = await tx.$queryRaw<{ mergedIntoId: number | null }[]>`SELECT "mergedIntoId" FROM "Person" WHERE id = ${keepId} FOR UPDATE`;
+                if (!keeper || keeper.mergedIntoId !== null) throw new AlreadyMergedError();
+
                 // 1. Clear tombstone identity first (CAS) — frees the tombstone's unique
                 // email/googleId so the keeper can adopt them below without a P2002.
                 // updateMany (not update) so `mergedIntoId: null` is part of the write:

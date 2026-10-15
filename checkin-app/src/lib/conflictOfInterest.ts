@@ -50,7 +50,8 @@ export async function resolveActorHouseholdId(db: DbClient, actorId: unknown): P
 /**
  * Whether `actorId` has a household conflict with a subject in `subjectHouseholdId`.
  * Resolves the actor's household so callers don't re-roll the same findUnique.
- * Returns false (no conflict) only when the subject has no household to conflict with.
+ * Returns false (no conflict) only when the subject has no household to conflict
+ * with; an actor that can't be resolved is a conflict (fail closed).
  */
 export async function hasHouseholdConflict(
     db: DbClient,
@@ -58,6 +59,6 @@ export async function hasHouseholdConflict(
     subjectHouseholdId: number | null | undefined,
 ): Promise<boolean> {
     if (subjectHouseholdId == null) return false;
-    const actor = await db.person.findUnique({ where: { id: actorId }, select: { householdId: true } });
-    return sharesHousehold(actor?.householdId, subjectHouseholdId);
+    const actorHouseholdId = await resolveActorHouseholdId(db, actorId);
+    return actorHouseholdId === null || sharesHousehold(actorHouseholdId, subjectHouseholdId);
 }

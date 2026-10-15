@@ -168,6 +168,24 @@ describe("Merge Participants API", () => {
         expect(merged?.mergedIntoId).toBe(pKeepId);
     });
 
+    it("refuses with 409 when the keeper is merged away between the pre-check and the transaction", async () => {
+        const other = await prisma.person.create({ data: { name: "Other Keeper", email: "other-keeper@example.com", householdId } });
+        extraPersonIds.push(other.id);
+        const realTransaction = prisma.$transaction.bind(prisma) as (fn: unknown) => Promise<unknown>;
+        const spy = jest.spyOn(prisma, "$transaction").mockImplementation((async (fn: unknown) => {
+            await prisma.person.update({ where: { id: pKeepId }, data: { mergedIntoId: other.id } });
+            return realTransaction(fn);
+        }) as unknown as typeof prisma.$transaction);
+        try {
+            expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(409);
+        } finally {
+            spy.mockRestore();
+            await prisma.person.update({ where: { id: pKeepId }, data: { mergedIntoId: null } });
+        }
+        const merged = await prisma.person.findUnique({ where: { id: pMergeId }, select: { mergedIntoId: true } });
+        expect(merged?.mergedIntoId).toBeNull();
+    });
+
     // #1456 phase 2b — the PersonMerge archive. The tombstone Person row is still
     // written here; 2b-3 deletes it and this table becomes the only record.
     describe("PersonMerge archive", () => {
@@ -1670,6 +1688,18 @@ describe("Merge Participants API", () => {
 
             const after = await reload(process.id);
             expect({ status: after.status, cleared: after.bgClearedAt }).toEqual({ status: "PENDING_BG_REVIEW", cleared: null });
+        });
+
+        it.each(["PENDING_PAYMENT", "PENDING_BG_CLEARANCE"] as const)("leaves a %s row a board reset sent back for two new approvals", async (status) => {
+            const process = await makeApplication(status, { contractSignedAt: new Date(), bgConsentAt: new Date(), ...(status === "PENDING_BG_CLEARANCE" ? { paidAt: new Date() } : {}) });
+            await prisma.auditLog.create({
+                data: { actorId, action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: process.id, oldData: { status: "BLOCKED" }, newData: { status, action: "board reset" } },
+            });
+
+            expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
+
+            const after = await reload(process.id);
+            expect({ status: after.status, cleared: after.bgClearedAt }).toEqual({ status, cleared: null });
         });
 
         it("carries the check over a household that has a live intake note (#1499)", async () => {

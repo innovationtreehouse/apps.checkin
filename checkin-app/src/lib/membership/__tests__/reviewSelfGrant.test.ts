@@ -23,9 +23,9 @@ const anyState = { where: {} };
 const people: Record<number, number | null> = { 1: 10, 2: 10, 3: 20, 4: null }; // person id -> household id
 
 /** A tx double for one process: a PERSON_BG when `subjectPersonId` is set, else a household membership. */
-function fakeTx(process: { subjectPersonId: number | null; householdId: number }) {
+function fakeTx(process: { subjectPersonId: number | null; householdId: number }, householdStatus = "NONE") {
     const tx = {
-        $queryRaw: jest.fn(),
+        $queryRaw: jest.fn(async () => [{ status: householdStatus }]),
         orgMembershipProcess: {
             findFirst: async () => ({ id: 7, status: "PENDING_BG_REVIEW", kind: "INITIAL", paidAt: null, orgMembershipId: 70, subjectPersonId: process.subjectPersonId, attestations: [] }),
             updateMany: jest.fn(async () => ({ count: 1 })),
@@ -74,6 +74,14 @@ describe("clearBackgroundCheck self-grant guard", () => {
         await clearBackgroundCheck(tx as unknown as TxClient, 7, 1, anyState);
         expect(tx.person.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 3 } }));
         expect(tx.auditLog.create).not.toHaveBeenCalledWith({ data: expect.objectContaining({ tableName: SELF_GRANT_REFUSAL_TABLE }) });
+    });
+
+    it("leaves a PERSON_BG in a DENIED household uncleared and carries the household out for the board", async () => {
+        const tx = fakeTx({ subjectPersonId: 3, householdId: 20 }, "DENIED");
+        const outcome = await clearBackgroundCheck(tx as unknown as TxClient, 7, 1, anyState);
+        expect(outcome.denied).toEqual({ householdId: 20, processId: 7 });
+        expect(tx.person.update).not.toHaveBeenCalled();
+        expect(tx.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 });
 

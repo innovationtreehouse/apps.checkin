@@ -9,7 +9,7 @@ import { signingMockActive } from "@/lib/membership/contract/signingTarget";
 import { loadAgreementPdf, stampWatermark, AGREEMENT_FILENAME, AgreementUnavailableError } from "@/lib/membership/contract/agreementDocument";
 import { latestPendingExternal } from "@/lib/membership/phases";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
-import { fromWhere, openProcess, zohoWebhookMatchable } from "@/lib/membership/lifecycle";
+import { fromWhere, openProcess, zohoWebhookMatchable, type ProcessKind } from "@/lib/membership/lifecycle";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 
 /**
@@ -197,14 +197,22 @@ export async function markContractSigned(processId: number, actorId?: number, re
     return advanceExternalIfComplete(processId);
 }
 
-/** Board human-marks that the applicant submitted background-check consent, then maybe advance. */
-export async function markBgConsent(processId: number, actorId: number) {
+/**
+ * Records that the applicant submitted background-check consent, then maybe advance.
+ * Only an open household application takes it, unless `kind` names the PERSON_BG
+ * submit path, where consent is implicit in the external check.
+ */
+export async function markBgConsent(processId: number, actorId: number, kind: "household" | "PERSON_BG" = "household") {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ExternalError("not_found", "Application not found.");
+    const kinds: ProcessKind[] = kind === "PERSON_BG" ? ["PERSON_BG"] : ["INITIAL", "RENEWAL"];
+    if (!kinds.includes(process.kind) || !openProcess.has(process)) {
+        throw new ExternalError("wrong_phase", "This application is not open for background-check consent.");
+    }
     // Conditional on bgConsentAt: null so concurrent marks write the audit row once.
     await prisma.$transaction(async (tx) => {
         const { count } = await tx.orgMembershipProcess.updateMany({
-            where: { id: processId, bgConsentAt: null },
+            where: { id: processId, bgConsentAt: null, kind: { in: kinds }, ...openProcess.where },
             data: { bgConsentAt: new Date() },
         });
         if (count !== 1) return;
@@ -257,8 +265,9 @@ export async function selfRecordBgConsent(userId: number): Promise<ExternalStatu
 export async function setZohoEnvelope(processId: number, requestId: string, actorId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ExternalError("not_found", "Application not found.");
-    const { count } = await prisma.orgMembershipProcess.updateMany({ where: { id: processId, ...openProcess.where }, data: { zohoEnvelopeId: requestId, zohoActionId: null, zohoSignerPersonId: null } });
-    if (!count) throw new ExternalError("wrong_phase", "This application is closed; its signing request can't be changed.");
+    // A signed process keeps its envelope and signer: re-pointing it would erase who signed.
+    const { count } = await prisma.orgMembershipProcess.updateMany({ where: { id: processId, contractSignedAt: null, ...openProcess.where }, data: { zohoEnvelopeId: requestId, zohoActionId: null, zohoSignerPersonId: null } });
+    if (!count) throw new ExternalError("wrong_phase", "This application is closed or already signed; its signing request can't be changed.");
     const updated = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId } });
     await prisma.auditLog.create({
         data: { actorId, action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { zohoEnvelopeId: requestId, zohoActionId: null, zohoSignerPersonId: null } },
