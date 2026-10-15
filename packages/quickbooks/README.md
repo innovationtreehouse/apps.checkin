@@ -54,9 +54,13 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
 - `createVendor(client, name, key)`: finance's "Create new". A name a Customer holds becomes
   `<name> (Vendor)`; an existing Vendor with the resulting name is returned as `found` with `via: "name"`.
 - `qboString` / `qboDate` — the only way a value enters a query: escaped / validated literals.
-- Local dev and operator CLI only: `envAccessTokenSource()` (`QBO_ACCESS_TOKEN`),
-  `fileAccessTokenSource(path)` (refreshes and re-saves the consent token file),
-  `saveTokens` / `loadTokens` / `tokenFileFromEnv()` (`QBO_TOKEN_FILE`, required).
+- Not on the main entry, because they read `QBO_CLIENT_SECRET` or token files and the app never
+  holds either:
+  - `@inventory/quickbooks/oauth` (`src/oauth.ts`): `oauthConfigFromEnv`, `authUrl`, `exchangeCode`,
+    `refreshTokens`, `isExpired`. Only `qbo-refresher-function` and the operator scripts import it.
+  - `src/local.ts`, operator scripts only (no export): `envAccessTokenSource()` (`QBO_ACCESS_TOKEN`),
+    `fileAccessTokenSource(path)` (refreshes and re-saves the consent token file),
+    `saveTokens` / `loadTokens` / `tokenFileFromEnv()` (`QBO_TOKEN_FILE`, required).
 
 ## Which company a deployment reaches (`guard.ts`)
 
@@ -87,8 +91,8 @@ null while off). Its token comes from the refresher Lambda (`QBO_REFRESHER_FN`):
 - [ ] `QBO_REFRESHER_FN` + task-role `lambda:InvokeFunction` on that function only. The app gets
       no client secret and no Secrets Manager grant.
 - [ ] Refresher: reserved concurrency 1; the refresh-token secret readable and writable by it
-      alone; a weekly keepalive invoke; alarms on `invalid_grant` and on `GetSecretValue` by any
-      other principal.
+      alone; a weekly keepalive invoke; alarms on `invalid_grant`, and on `GetSecretValue` against the
+      QBO secret by any principal other than the refresher Lambda's role.
 - [ ] Prod: the Board sets the realm on Settings → QuickBooks after consent.
 - Binding a posting port (QB-2): set its `prod` flag from `CHECKIN_ENV === "prod"`, the same raw
   check the guard uses.
