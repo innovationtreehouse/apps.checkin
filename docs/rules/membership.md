@@ -313,6 +313,10 @@ Procedure below is built on them.
 - A volunteer designation matches on canonical email, so address variants cannot
   change what a family owes.  [Decision]
 
+- A volunteer designation applies only to a person who has signed in with that
+  address. The Board sees everyone on file with the address when it designates
+  it.  [Decision — *Principle: fail closed*]
+
 - The board can activate a household with no payment by certifying a payment
   plan.  [Decision — *Policy: Membership Policy, Art. XIII*]
 

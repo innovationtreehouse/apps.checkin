@@ -9,6 +9,7 @@
 import { POST, PATCH, DELETE } from '@/app/api/programs/[id]/volunteers/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { SELF_GRANT_REFUSAL_TABLE } from '@/lib/membership/selfGrantGuard';
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -22,6 +23,7 @@ describe('Program Volunteers API Integration Tests', () => {
     let existingVolunteerId: number; // For testing PATCH & DELETE
     let youthVolunteerId: number;
     let treasurerId: number;
+    let leadSpouseId: number; // In the lead's own household
     
     let targetProgramId: number;
 
@@ -59,6 +61,11 @@ describe('Program Volunteers API Integration Tests', () => {
             data: { email: 'lead-volun-api-test@example.com', name: 'Lead', household: { create: { name: "Test HH" } } }
         });
         leadId = lead.id;
+
+        const leadSpouse = await prisma.person.create({
+            data: { email: 'spouse-volun-api-test@example.com', name: 'Lead Spouse', isDeclaredAdult: true, householdId: lead.householdId }
+        });
+        leadSpouseId = leadSpouse.id;
 
         const commonUser = await prisma.person.create({
             data: { email: 'common-volun-api-test@example.com', name: 'Common', household: { create: { name: "Test HH" } } }
@@ -98,6 +105,7 @@ describe('Program Volunteers API Integration Tests', () => {
                         { personId: existingVolunteerId, isCore: false },
                         { personId: youthVolunteerId, isCore: false },
                         { personId: treasurerId, isCore: false, isTreasurer: true },
+                        { personId: leadSpouseId, isCore: false },
                     ]
                 }
             }
@@ -106,7 +114,7 @@ describe('Program Volunteers API Integration Tests', () => {
     });
 
     afterAll(async () => {
-        const existingUserIds = [adminId, leadId, commonId, candidateId, existingVolunteerId, youthVolunteerId, treasurerId].filter(id => id !== undefined);
+        const existingUserIds = [adminId, leadId, commonId, candidateId, existingVolunteerId, youthVolunteerId, treasurerId, leadSpouseId].filter(id => id !== undefined);
 
         if (existingUserIds.length > 0) {
             await prisma.programVolunteer.deleteMany({
@@ -217,6 +225,27 @@ describe('Program Volunteers API Integration Tests', () => {
              expect(res.status).not.toBe(500);
         });
 
+        it.each([
+            ['themself', () => leadId],
+            ['someone in their own household', () => leadSpouseId],
+        ])('refuses a lead mentor adding %s, with an audited refusal', async (_label, subjectId) => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+             const before = await prisma.programVolunteer.count({ where: { programId: targetProgramId } });
+
+             const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
+                 method: 'POST',
+                 body: JSON.stringify({ participantId: subjectId() })
+             });
+             const res = await POST(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
+             expect(res.status).toBe(403);
+
+             expect(await prisma.programVolunteer.count({ where: { programId: targetProgramId } })).toBe(before);
+             const refusal = await prisma.auditLog.findFirst({
+                 where: { actorId: leadId, tableName: SELF_GRANT_REFUSAL_TABLE, affectedEntityId: subjectId() }
+             });
+             expect(refusal).not.toBeNull();
+        });
+
         it('documents intent: any participant is assignable (no age/membership gate)', async () => {
              // The candidate has no dateOfBirth and is not a program member, yet
              // assignment succeeded above. Volunteers are staff, not enrollees —
@@ -281,6 +310,48 @@ describe('Program Volunteers API Integration Tests', () => {
         it('still lets a youth be un-cored', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
              const res = await patch(youthVolunteerId, false);
+             expect(res.status).toBe(200);
+        });
+
+        it('refuses a lead mentor making their own household core, with an audited refusal', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+
+             const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
+                 method: 'PATCH',
+                 body: JSON.stringify({ participantId: leadSpouseId, isCore: true })
+             });
+             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
+             expect(res.status).toBe(403);
+
+             const row = await prisma.programVolunteer.findUnique({
+                 where: { programId_personId: { programId: targetProgramId, personId: leadSpouseId } }
+             });
+             expect(row?.isCore).toBe(false);
+             const refusal = await prisma.auditLog.findFirst({
+                 where: { actorId: leadId, tableName: SELF_GRANT_REFUSAL_TABLE, affectedEntityId: leadSpouseId }
+             });
+             expect(refusal).not.toBeNull();
+        });
+
+        it('lets a lead mentor clear core on their own household', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+
+             const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
+                 method: 'PATCH',
+                 body: JSON.stringify({ participantId: leadSpouseId, isCore: false })
+             });
+             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
+             expect(res.status).toBe(200);
+        });
+
+        it('lets a lead mentor make someone outside their household core', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+
+             const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
+                 method: 'PATCH',
+                 body: JSON.stringify({ participantId: existingVolunteerId, isCore: true })
+             });
+             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
              expect(res.status).toBe(200);
         });
 

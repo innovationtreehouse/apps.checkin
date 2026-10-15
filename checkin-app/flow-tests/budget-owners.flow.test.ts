@@ -98,8 +98,15 @@ describe("program treasurers", () => {
     expect(cleared.json).toMatchObject({ isTreasurer: false });
   });
 
+  // Neither can be seated as a volunteer by the board either; the treasurer
+  // route refuses on the household before it looks for a volunteer row.
+  const refusedVolunteer = async (personId: number) => {
+    const res = await send(board, "POST", `/api/programs/${programId}/volunteers`, { participantId: personId });
+    expect(res.status).toBe(403);
+  };
+
   it("the board cannot set themself or anyone in their own household", async () => {
-    await volunteer(board.personaId);
+    await refusedVolunteer(board.personaId);
     const self = await send(board, "PUT", `/api/programs/${programId}/treasurers/${board.personaId}`);
     expect(self.status).toBe(403);
     expect(JSON.stringify(self.json)).toMatch(/own household/);
@@ -111,7 +118,7 @@ describe("program treasurers", () => {
     });
     expect(added.status).toBe(200);
     const memberId = (added.json as { participant: { id: number } }).participant.id;
-    await volunteer(memberId);
+    await refusedVolunteer(memberId);
 
     const peer = await send(board, "PUT", `/api/programs/${programId}/treasurers/${memberId}`);
     expect(peer.status).toBe(403);

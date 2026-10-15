@@ -14,7 +14,7 @@ import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { type DbClient, type TxClient } from "@/lib/db-client";
 import { awaitingBgReview, fromWhere } from "@/lib/membership/lifecycle";
 import { raiseDeniedHouseholdActivity, setHouseholdStatus } from "@/lib/membership/householdStatus";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
 import { approvalsForSubject, establishedSubject } from "@/lib/membership/approvals";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 
@@ -513,8 +513,8 @@ export function matchesVolunteerDesignation(parentEmails: string[], designationE
 
 /**
  * Sticky/additive volunteer status: set Membership.isVolunteer = true if ANY
- * reviewer marked the family volunteer-only OR a household parent's email is pre-
- * designated. Never clears it here. Runs at every PENDING_PAYMENT transition
+ * reviewer marked the family volunteer-only OR a household parent's sign-in-verified
+ * email is pre-designated. Never clears it here. Runs at every PENDING_PAYMENT transition
  * (external advance, fresh-check intake shortcut, fresh-check renewal) so the
  * allowlist drives dues BEFORE the check clears (#874), and again at clearance
  * with the reviewers' volunteer marks.
@@ -524,7 +524,7 @@ export function matchesVolunteerDesignation(parentEmails: string[], designationE
 export async function applyVolunteerStatus(db: DbClient, orgMembershipId: number, householdId: number, markedByReviewer: boolean) {
     let isVolunteer = markedByReviewer;
     if (!isVolunteer) {
-        const parents = await db.person.findMany({ where: { householdId, isHouseholdLead: true, email: { not: null }, ...LIVE_PERSON }, select: { email: true } });
+        const parents = await db.person.findMany({ where: { householdId, isHouseholdLead: true, email: { not: null }, ...LIVE_PERSON, ...SIGN_IN_VERIFIED_PERSON }, select: { email: true } });
         const designations = await db.volunteerDesignation.findMany({ select: { email: true } });
         isVolunteer = matchesVolunteerDesignation(parents.map((p) => p.email!), designations.map((d) => d.email));
     }

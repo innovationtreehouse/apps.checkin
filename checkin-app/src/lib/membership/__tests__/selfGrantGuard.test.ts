@@ -64,7 +64,7 @@ describe("refuseSelfGrant", () => {
 });
 
 /**
- * Every source file that writes a dues-discount or background-check grant must call
+ * Every source file that writes a dues-discount, background-check or program-volunteer grant must call
  * refuseSelfGrant, so a new writer cannot skip the own-household rule unnoticed.
  */
 describe("self-grant writers", () => {
@@ -73,6 +73,7 @@ describe("self-grant writers", () => {
         /volunteerDesignation\.(create|createMany|upsert|update|updateMany)\(/,
         /data:\s*\{[^}]*\bisVolunteer\s*:/,
         /\bupdateData\.lastBackgroundCheck\s*=|data:\s*\{[^}]*\blastBackgroundCheck\s*:/,
+        /programVolunteer\.(create|createMany|upsert)\(|data:\s*\{[^}]*\bisCore\b/,
     ];
 
     function sourceFiles(dir: string): string[] {
@@ -91,6 +92,7 @@ describe("self-grant writers", () => {
         expect(writers.map((w) => w.rel).sort()).toEqual([
             "app/api/membership-ops/households/[id]/route.ts",
             "app/api/membership-ops/participants/[id]/route.ts",
+            "app/api/programs/[id]/volunteers/route.ts",
             "app/api/settings/membership/volunteer-designations/route.ts",
             "lib/membership/review.ts",
         ]);

@@ -5,10 +5,11 @@ import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
- * The one own-household check for grants that discount dues or clear a person:
- * the household volunteer flag, a volunteer designation, and a background-check
- * date, plus acting on a payment problem. Every writer of one of these calls it
- * (selfGrantGuard.test.ts enforces that).
+ * The one own-household check for grants that discount dues, clear a person, or
+ * confer volunteer standing: the household volunteer flag, a volunteer designation,
+ * a background-check date, a program volunteer row or its core flag, plus acting
+ * on a payment problem. Every writer of one of these calls it (selfGrantGuard.test.ts
+ * enforces that).
  *
  * Refuses when the subject is the actor or shares the actor's household, and when
  * the actor's household can't be resolved (fail closed). No role is exempt. Every
@@ -23,7 +24,7 @@ export type GrantSubject =
     | { email: string };
 
 /** What the actor tried: the table the grant writes and the fields it would have set. */
-export type GrantAttempt = { table: "Person" | "OrgMembership" | "VolunteerDesignation" | "PaymentException"; attempted: Prisma.InputJsonObject };
+export type GrantAttempt = { table: "Person" | "OrgMembership" | "VolunteerDesignation" | "PaymentException" | "ProgramVolunteer"; attempted: Prisma.InputJsonObject };
 
 export const SELF_GRANT_REFUSAL_TABLE = "SelfGrantRefusal";
 

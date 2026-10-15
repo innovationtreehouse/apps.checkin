@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { LIVE_PERSON, isSignInVerified } from "@/lib/person/filters";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { handler } from "@/security/handler";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
@@ -23,10 +23,12 @@ export const GET = handler('GET /api/settings/membership/volunteer-designations'
 /**
  * POST — designate a volunteer household. Body: { email, confirmHouseholdId? }.
  *
- * An address that canonically matches a person already in the app is never
- * stored: the response shows the match, and only a confirm naming that person's
- * household sets its OrgMembership.isVolunteer (audited). An address with no
- * such household membership is stored as a designation, the dues preload.
+ * Only a person whose address is sign-in-verified counts as its holder. When one
+ * such person's household has a membership, the address is never stored: only a
+ * confirm naming that household sets its OrgMembership.isVolunteer (audited).
+ * Otherwise the address is stored as a designation, the dues preload. Every
+ * response lists every person on file with the address, verified or not, so the
+ * Board sees who else holds it.
  */
 export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
@@ -57,22 +59,36 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
         select: {
             name: true,
             email: true,
+            _count: { select: { accounts: true } },
             household: { select: { id: true, name: true, orgMembership: { select: { id: true, isVolunteer: true } } } },
         },
     });
-    const matches = people.filter((p) => p.household.orgMembership && canonicalizeEmail(p.email!) === email);
+    const holders = people.filter((p) => canonicalizeEmail(p.email!) === email);
+    const matches = holders.map((p) => ({
+        personName: p.name,
+        householdId: p.household.id,
+        householdName: p.household.name,
+        hasMembership: p.household.orgMembership !== null,
+        isVolunteer: p.household.orgMembership?.isVolunteer ?? false,
+        signInVerified: isSignInVerified(p),
+    }));
+    const confirmable = holders.filter((p) => p.household.orgMembership && isSignInVerified(p));
 
-    if (matches.length > 0) {
-        if (new Set(matches.map((p) => p.household.id)).size > 1) {
-            return apiError("This email matches people in more than one household. Set the volunteer checkbox on the household instead.", 409);
+    if (confirmable.length > 0) {
+        if (new Set(confirmable.map((p) => p.household.id)).size > 1) {
+            return NextResponse.json(
+                { error: "This email matches people in more than one household. Set the volunteer checkbox on the household instead.", matches },
+                { status: 409 },
+            );
         }
-        const { name: personName, household } = matches[0];
+        const { name: personName, household } = confirmable[0];
         const { id: householdId, name: householdName, orgMembership } = household;
         const membership = orgMembership!;
         if (body.confirmHouseholdId === undefined) {
             return NextResponse.json({
                 requiresConfirmation: true,
                 match: { personName, householdId, householdName, isVolunteer: membership.isVolunteer },
+                matches,
             });
         }
         if (body.confirmHouseholdId !== householdId) {
@@ -92,13 +108,13 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
                 },
             });
         });
-        return NextResponse.json({ household: { id: householdId, name: householdName }, isVolunteer: true });
+        return NextResponse.json({ household: { id: householdId, name: householdName }, isVolunteer: true, matches });
     }
 
     // Canonicalize both sides: rows stored before canonicalization still dedupe.
     const all = await prisma.volunteerDesignation.findMany();
     const existing = all.find((d) => canonicalizeEmail(d.email) === email);
-    if (existing) return NextResponse.json({ designation: existing, warning: "This email is already designated." });
+    if (existing) return NextResponse.json({ designation: existing, warning: "This email is already designated.", matches });
 
     const designation = await prisma.$transaction(async (tx) => {
         const created = await tx.volunteerDesignation.create({ data: { email, createdById: auth.user.id } });
@@ -113,7 +129,7 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
         });
         return created;
     });
-    return NextResponse.json({ designation }, { status: 201 });
+    return NextResponse.json({ designation, matches }, { status: 201 });
 });
 
 /** DELETE — remove a designation. Query: ?id=<n>. */
