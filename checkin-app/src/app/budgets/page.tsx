@@ -139,8 +139,8 @@ export default function BudgetsPage() {
                 onChange={setNewProgramId}
                 w={260}
               />
-              <TextInput label="QuickBooks Class id" description="Expenses in this bucket post to QuickBooks only once it is set" value={newClassId} onChange={(e) => setNewClassId(e.currentTarget.value)} w={200} />
-              <Button onClick={create} disabled={!newName.trim()}>Create</Button>
+              <TextInput label="QuickBooks Class id" description="Expenses in this bucket post to QuickBooks only once it is set" error={classIdError(newClassId)} value={newClassId} onChange={(e) => setNewClassId(e.currentTarget.value)} w={200} />
+              <Button onClick={create} disabled={!newName.trim() || classIdError(newClassId) !== null}>Create</Button>
             </Group>
           </Card>
         )}
@@ -205,8 +205,8 @@ export default function BudgetsPage() {
       <Modal opened={editing !== null} onClose={() => setEditing(null)} title="Edit bucket">
         <Stack>
           <TextInput label="Name" value={editName} onChange={(e) => setEditName(e.currentTarget.value)} />
-          <TextInput label="QuickBooks Class id" value={editClassId} onChange={(e) => setEditClassId(e.currentTarget.value)} />
-          <Button onClick={saveEdit} disabled={!editName.trim()}>Save</Button>
+          <TextInput label="QuickBooks Class id" error={classIdError(editClassId)} value={editClassId} onChange={(e) => setEditClassId(e.currentTarget.value)} />
+          <Button onClick={saveEdit} disabled={!editName.trim() || classIdError(editClassId) !== null}>Save</Button>
         </Stack>
       </Modal>
 
@@ -221,6 +221,12 @@ export default function BudgetsPage() {
       )}
     </PageContainer>
   );
+}
+
+/** The server's Class id rule: empty, or a numeric QuickBooks id. */
+function classIdError(value: string): string | null {
+  const id = value.trim();
+  return id && !/^\d+$/.test(id) ? "Digits only: the Class's QuickBooks id" : null;
 }
 
 function TreasurersModal({ programId, programName, canEdit, onClose }: {

@@ -41,7 +41,10 @@ function readName(value: unknown): string {
 function readClassId(value: unknown): string | null {
     if (value === null) return null;
     if (typeof value !== "string") throw badRequest("quickBooksClassId must be a string or null");
-    return value.trim() || null;
+    const id = value.trim();
+    // QuickBooks ref ids are numeric; the expense poster refuses anything else.
+    if (id && !/^\d+$/.test(id)) throw badRequest("quickBooksClassId must be a QuickBooks id (digits only)");
+    return id || null;
 }
 
 // A QuickBooks Class maps to one bucket.
