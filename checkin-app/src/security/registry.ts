@@ -589,6 +589,29 @@ defineRoute({
     ],
 });
 
+// Board's unconfirmed Shopify stock screen: programs whose stock write could not
+// be confirmed (lib/shopify.ts parks it in Program.shopifyStockUnconfirmed), and
+// the per-program settle action ("Shopify has it" / "doesn't have it"). Board
+// only: no sysadmin, no finance. Rows are computed, all `internal`.
+defineRoute({
+    endpoint: 'GET /api/finance-ops/shopify-stock',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: null,
+    returns: ['UnconfirmedStockRow'],
+    orderedView: [
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+defineRoute({
+    endpoint: 'POST /api/finance-ops/shopify-stock/[id]',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: null,
+    returns: ['UnconfirmedStockSettlement'],
+    orderedView: [
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+
 // Shop member roster (for certifying tools). Admins/board see the full row incl.
 // email (pii). Certifiers only need to NAME the member they certify, so they get
 // name (public) + member-tier — NOT everyones:pii. This deliberately TIGHTENS the
