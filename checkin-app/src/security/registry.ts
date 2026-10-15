@@ -430,6 +430,16 @@ defineRoute({
     ],
 });
 
+// A reviewer withdraws their own approval while the review still waits on its
+// second reviewer; the service enforces ownership, APPROVE-only and phase. Same
+// admission band as the queue. No bag: the response is {}, no model data.
+defineRoute({
+    endpoint: 'POST /api/membership/reviews/undo',
+    authorize: { anyRole: ['isBackgroundCheckReviewer', 'isBoardMember'] },
+    envelope: null,
+    orderedView: [],
+});
+
 // Background-check reviewers' queue. Reviewers must see applicant parents' names
 // + emails (to look them up on Averity) but NOT internal/personal fields — so the
 // grant is deliberately limited to pii + public. Board members are implicit
