@@ -211,7 +211,7 @@ Default is `internal`; nothing is `public` except the synthetic count model.
 | Tier | Fields | Why |
 |---|---|---|
 | `pii` | `Transaction.donorFirstName`, `donorLastName`, `donorComment`; `TransactionCommentRule.comment`; `UploadedFile.fileBlob`; `DonationQbCandidateView.memo` | Names identify a person. Comments are free text that often names one ("in memory of…") and are copied verbatim into rules. The blob is the raw CSV, every name included. A hand-entered QuickBooks memo is free text that may name a donor. |
-| `internal` | amounts and fees, company and campaign, nonprofit/project/bank ids, dates, `ownerId`, `isOrganizationalLevel`, all actor ids and usernames, `originalFilename`, `fileHash`, counts, `AccountMap.*`, hold `reason`/`matchedRows`/`status`, `DisbursementEvent.payload`, snapshot `state`/`context`, `WorkflowEvent.*`, `DisbursementEvent.qbMatchState`/`qbTxnId`, `DonationQbMatchExclusion.*`, `DonationQbCandidateView` id/type/date/amount (synthetic) | Financial and attribution data; not identifying alone. |
+| `internal` | amounts and fees, company and campaign, nonprofit/project/bank ids, dates, `ownerId`, `isOrganizationalLevel`, all actor ids and usernames, `originalFilename`, `fileHash`, counts, `AccountMap.*`, hold `reason`/`matchedRows`/`status`, `DisbursementEvent.payload`, snapshot `state`/`context`, `WorkflowEvent.*`, `DisbursementEvent.qbMatchState`/`qbTxnId`, `DonationQbMatchExclusion.*`, `DonationQbCandidateView` id/type/date/amount (synthetic), `InKindQueueItemView.*` (synthetic, no donor field) | Financial and attribution data; not identifying alone. |
 | `public` | `DonationNavCounts { unassignedQueue, disbursementHolds }` (synthetic, §5) | Two scalars; #1286 §7 pattern. |
 
 `companyName` names the donor's employer. With a name beside it, it narrows
@@ -278,8 +278,9 @@ Routes, all human, all under `/api/donations/`, registered in one B PR:
 | `disbursement-events/[disbursementId]/qb-candidates` | GET (returns `DonationQbCandidateView[]`) |
 | `disbursement-events/[disbursementId]/qb-resolve` | POST (pick a candidate, create, or retry) |
 | `qb-exclusions` | GET, POST |
+| `in-kind/queue` | GET (returns `InKindQueueItemView[]`: in-kind donations whose money arrived with no donor, and withdrawals after the money) |
 
-That is 22 entries; the last four serve the drain's finance queue and are registered now so the drain PR touches no boundary. Dropped: `auth/*`, `health`, `system-data`, and the source's `local-owners`: the owner picker reads the bucket list route the expense lane registers with the bucket table (§6), as income does. Volume is
+That is 23 entries. The four before `in-kind/queue` serve the drain's finance queue and are registered now so the drain PR touches no boundary. Dropped: `auth/*`, `health`, `system-data`, and the source's `local-owners`: the owner picker reads the bucket list route the expense lane registers with the bucket table (§6), as income does. Volume is
 hundreds of gifts a year, so no list gets a `.../count` endpoint now. Pages go
 under the Finance section as `NavLink[]` tabs (#1272 §7), gated `FINANCE`/`BOARD`.
 
