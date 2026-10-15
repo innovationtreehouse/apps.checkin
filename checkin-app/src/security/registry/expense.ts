@@ -89,4 +89,7 @@ defineRoute({ endpoint: 'POST /api/expense/capital-assets/seed', authorize: 'fin
 defineRoute({ endpoint: 'GET /api/expense/line-items/[lineItemId]/qb-candidates', authorize: 'finance', envelope: null, returns: ['ExpenseQbCandidateView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/line-items/[lineItemId]/qb-match', authorize: 'finance', envelope: null, returns: ['ExpenseLineItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/line-items/[lineItemId]/qb-create', authorize: 'finance', envelope: null, returns: ['ExpenseLineItem'], orderedView: FINANCE_VIEW });
+// QuickBooks matching per expense: the expense's candidates, and pick one.
+defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/qb-candidates', authorize: 'finance', envelope: null, returns: ['ExpenseQbCandidateView'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/qb-match', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/qb-exclusions', authorize: 'finance', envelope: null, returns: ['ExpenseQbMatchExclusion'], orderedView: FINANCE_VIEW });
