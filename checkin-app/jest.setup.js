@@ -50,7 +50,8 @@ process.env.CHECKIN_ENV = 'dev';
   // connections so the IdCounter row lock is what serializes them.
   // scanFlushRace commits a racing visit from a second connection mid-scan.
   // cronNightlyLock holds a departure open on one connection while the sweep runs on another.
-  if (testPath && /(scanConcurrency|attendanceManualConcurrency|attendanceManualCheckinConcurrency|visitWriteLockConcurrency|programsParticipantsConcurrency|programsPublicRegisterConcurrency|trustedAdultConcurrency|householdLeadsConcurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace)\.integration\.test\.[jt]sx?$/.test(testPath)) {
+  // programStockLockConcurrency runs two stock writers on separate connections.
+  if (testPath && /(scanConcurrency|attendanceManualConcurrency|attendanceManualCheckinConcurrency|visitWriteLockConcurrency|programsParticipantsConcurrency|programsPublicRegisterConcurrency|trustedAdultConcurrency|householdLeadsConcurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programStockLockConcurrency)\.integration\.test\.[jt]sx?$/.test(testPath)) {
     process.env.TEST_DB_POOL_MAX = '2';
   }
 }

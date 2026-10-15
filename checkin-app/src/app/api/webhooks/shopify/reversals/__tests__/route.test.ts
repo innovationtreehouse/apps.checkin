@@ -9,9 +9,18 @@
 import crypto from 'crypto';
 import { POST } from '../route';
 import { raiseReversalByOrderId } from '@/lib/finance/reconcile';
+import { nudgeProgramStock } from '@/lib/shopify';
+import prisma from '@/lib/prisma';
 
 jest.mock('@/lib/finance/reconcile', () => ({
     raiseReversalByOrderId: jest.fn().mockResolvedValue(true),
+}));
+jest.mock('@/lib/shopify', () => ({
+    nudgeProgramStock: jest.fn().mockResolvedValue(undefined),
+}));
+jest.mock('@/lib/prisma', () => ({
+    __esModule: true,
+    default: { program: { findMany: jest.fn().mockResolvedValue([]) } },
 }));
 jest.mock('@/lib/shopifyWebhookReceipt', () => ({
     recordShopifyWebhookReceipt: jest.fn().mockResolvedValue(undefined),
@@ -68,5 +77,18 @@ describe('POST /api/webhooks/shopify/reversals — restocked lines', () => {
     it('passes no lines for a cancellation', async () => {
         await POST(req('orders/cancelled', { id: 777 }));
         expect(raise).toHaveBeenCalledWith('777', 'CANCELLED', [], null);
+        expect(prisma.program.findMany).not.toHaveBeenCalled();
+    });
+
+    it('nudges a stock push for a restocked program held at 0 with a shortfall', async () => {
+        (prisma.program.findMany as jest.Mock).mockResolvedValueOnce([{ id: 9, shopifyVariantId: '111' }]);
+        await POST(req('refunds/create', {
+            order_id: 556,
+            refund_line_items: [{ quantity: 1, restock_type: 'return', line_item: { variant_id: 111, quantity: 1 } }],
+        }));
+        expect(prisma.program.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: { shopifyVariantId: { in: ['111'] }, shopifyStockCarry: { lt: 0 } },
+        }));
+        expect(nudgeProgramStock).toHaveBeenCalledWith({ id: 9, shopifyVariantId: '111' });
     });
 });

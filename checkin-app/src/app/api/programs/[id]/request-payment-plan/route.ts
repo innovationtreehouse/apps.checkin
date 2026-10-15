@@ -4,7 +4,7 @@ import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
 import { isKnownAdult } from "@/lib/programAge";
-import { adjustProgramInventory } from "@/lib/shopify";
+import { changeProgramStock } from "@/lib/shopify";
 import { fromWhere } from "@/lib/programs/enrollmentState";
 import { ScholarshipRequestKind } from "@/generated/prisma/client";
 import { scholarshipRequestKindLabel } from "@/lib/scholarshipRequestKind";
@@ -143,8 +143,10 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
         let warning: string | undefined;
         if (holdResult.count > 0 && participant.program) {
-            const ok = await adjustProgramInventory(participant.program, -1);
-            if (!ok) {
+            // Recorded = owed in the stock carry, so the -1 lands later even if this
+            // push failed: the hold stands. Only an unrecorded -1 rolls it back.
+            const stock = await changeProgramStock(participant.program, -1, "scholarship-hold", { inRequest: true });
+            if (!stock.recorded) {
                 // The seat was never taken out of Shopify — leaving inventoryHeldAt
                 // set would be a phantom hold whose later release (+1) credits a
                 // seat that was never removed (oversell). Roll the stamp back to
@@ -155,8 +157,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
                 // placing the hold (Shopify Hold Reconciliation queue → Confirm
                 // manual hold). isPaymentPlanRequested stays true, so the 7-day
                 // non-payment sweep (which filters isPaymentPlanRequested:false)
-                // never auto-kicks it. adjustProgramInventory has already emailed
-                // sysadmins/board via reportShopifyFailure.
+                // never auto-kicks it. The stock writer has already emailed the board.
                 await prisma.programParticipant.updateMany({
                     where: { programId, personId: participantId, inventoryHeldAt: { not: null } },
                     data: { inventoryHeldAt: null },

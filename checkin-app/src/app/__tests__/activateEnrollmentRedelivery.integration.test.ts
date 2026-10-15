@@ -80,7 +80,7 @@ describe('activateProgramEnrollment — atomic collapse + redelivery no-op', () 
 
         // Exactly one compensating +1 for the one released hold.
         expect(mockAdjust).toHaveBeenCalledTimes(1);
-        expect(mockAdjust).toHaveBeenCalledWith(expect.anything(), 1);
+        expect(mockAdjust).toHaveBeenCalledWith(expect.anything(), 1, 'activation', { deferred: true });
 
         mockAdjust.mockClear();
 
@@ -133,7 +133,7 @@ describe('activateProgramEnrollment — atomic collapse + redelivery no-op', () 
             });
             expect(result).toEqual({ activatedCount: 1, releasedHoldCount: 0, claimantSeatCount: 1 });
             expect(mockAdjust).toHaveBeenCalledTimes(1);
-            expect(mockAdjust).toHaveBeenCalledWith(expect.objectContaining({ shopifyVariantId: 'dev-mock-variant-redeliv' }), -1);
+            expect(mockAdjust).toHaveBeenCalledWith(expect.objectContaining({ shopifyVariantId: 'dev-mock-variant-redeliv' }), -1, 'activation', { deferred: true });
         } finally {
             await prisma.program.update({
                 where: { id: programId },

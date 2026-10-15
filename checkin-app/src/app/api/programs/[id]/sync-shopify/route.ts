@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
-import { createClaimantProduct, createShopifySingleVariantProgram } from "@/lib/shopify";
+import { adjustProgramInventory, createClaimantProduct, createShopifySingleVariantProgram } from "@/lib/shopify";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
@@ -26,7 +26,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         // One sync per program at a time: the try-lock makes a concurrent second run a 409
         // instead of a second Shopify product, and the program is read only once it is held.
         // Shopify calls run inside the transaction, so its timeout covers their deadlines.
-        return await prisma.$transaction(async (tx) => {
+        const synced = await prisma.$transaction(async (tx) => {
             const [{ locked }] = await tx.$queryRaw<{ locked: boolean }[]>`SELECT pg_try_advisory_xact_lock(${SYNC_SHOPIFY_LOCK_CLASS}::int, ${programId}::int) AS locked`;
             if (!locked) return apiError("A Shopify sync for this program is already running.", 409);
 
@@ -68,11 +68,22 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 },
             });
 
-            const warning = needsClaimant && !claimantData
-                ? "Public product created, but the reserved-seat product failed; checkout uses the public variant until you retry."
-                : undefined;
-            return NextResponse.json({ success: true, program: updated, ...(warning && { warning }) });
+            return { updated, publicCreated: !!publicData, claimantFailed: needsClaimant && !claimantData };
         }, { timeout: SYNC_SHOPIFY_TIMEOUT_MS });
+        if (synced instanceof Response) return synced;
+        const { updated, publicCreated, claimantFailed } = synced;
+
+        // After the sync's transaction commits: the stock writer updates this Program row itself.
+        // A new capped variant starts sold out (0 available); lift it to capacity.
+        const stockOk = !publicCreated || updated.maxParticipants === null
+            || await adjustProgramInventory(updated, updated.maxParticipants, "initial-stock", { inRequest: true });
+
+        const warning = claimantFailed
+            ? "Public product created, but the reserved-seat product failed; checkout uses the public variant until you retry."
+            : !stockOk
+                ? "Public product created, but setting its Shopify stock failed, so it may show as sold out. Check System Status > Link Status."
+                : undefined;
+        return NextResponse.json({ success: true, program: updated, ...(warning && { warning }) });
     } catch (error) {
         await logBackendError(error, "POST /api/programs/[id]/sync-shopify");
         return apiError("Failed to sync program to Shopify", 500);

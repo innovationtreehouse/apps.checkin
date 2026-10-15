@@ -150,7 +150,7 @@ async function healEnrollmentI1(): Promise<number> {
             // logs + emails on failure and returns false; the hold is already cleared.
             // Once the sale has ended the seat is not resold: no +1.
             const saleEnded = isSaleEnded(row.program);
-            const shopifyOk = saleEnded || await adjustProgramInventory(row.program, 1);
+            const shopifyOk = saleEnded || await adjustProgramInventory({ id: row.programId, shopifyVariantId: row.program.shopifyVariantId }, 1, "reconcile-heal");
             if (!shopifyOk) {
                 logger.error(
                     `[lifecycle-reconcile] I1 heal cleared hold for program ${row.programId} / person ${row.personId} but the +1 release failed (see Shopify error alert).`,
