@@ -202,7 +202,7 @@ describe('Protected-route role rejection', () => {
         { name: 'POST /api/membership-ops/applications/review-override', invoke: () => REVIEW_OVERRIDE_POST(nreq('http://localhost/api/membership-ops/applications/review-override', 'POST', {})) },
         { name: 'POST /api/membership-ops/applications/archive', invoke: () => APP_ARCHIVE_POST(nreq('http://localhost/api/membership-ops/applications/archive', 'POST', {})) },
         { name: 'POST /api/membership-ops/applications/unarchive', invoke: () => APP_UNARCHIVE_POST(nreq('http://localhost/api/membership-ops/applications/unarchive', 'POST', {})) },
-        { name: 'DELETE /api/membership-ops/bg-attestations/[id] (sysadmin-only)', invoke: () => BG_ATTEST_DELETE(nreq('http://localhost/api/membership-ops/bg-attestations/1', 'DELETE', { reason: 'test' }), idCtx(1)) },
+        { name: 'DELETE /api/membership-ops/bg-attestations/[id] (board-only)', invoke: () => BG_ATTEST_DELETE(nreq('http://localhost/api/membership-ops/bg-attestations/1', 'DELETE', { reason: 'test' }), idCtx(1)) },
         { name: 'GET /api/membership-ops/households (collection)', invoke: () => MOPS_HH_GET(nreq('http://localhost/api/membership-ops/households')) },
         { name: 'POST /api/membership-ops/households (collection)', invoke: () => MOPS_HH_POST(nreq('http://localhost/api/membership-ops/households', 'POST', {})) },
         { name: 'GET /api/membership-ops/volunteer-memberships', invoke: () => VOL_ROSTER_GET(nreq('http://localhost/api/membership-ops/volunteer-memberships')) },
@@ -237,12 +237,12 @@ describe('Protected-route role rejection', () => {
         });
     });
 
-    // ---- bg-attestations DELETE — sysadmin-only, NOT board (#1456 Decision 3) --
-    // Attestations are review artifacts, not a membership decision, so the
-    // board's usual "board OR sysadmin" reach does not extend here.
-    describe('DELETE /api/membership-ops/bg-attestations/[id] — board alone is denied', () => {
-        it('403s a board member who is not also sysadmin', async () => {
-            as(plainId, { householdId: plainHh, isBoardMember: true });
+    // ---- bg-attestations DELETE — Board-only, NOT sysadmin ----------------------
+    // Removing a review artifact is a Board call; sysadmin reach stops at
+    // operating the system.
+    describe('DELETE /api/membership-ops/bg-attestations/[id] — sysadmin alone is denied', () => {
+        it('403s a sysadmin who is not also on the board', async () => {
+            as(plainId, { householdId: plainHh, isSysadmin: true });
             const res = await BG_ATTEST_DELETE(nreq('http://localhost/api/membership-ops/bg-attestations/1', 'DELETE', { reason: 'test' }), idCtx(1));
             expect(res.status).toBe(403);
         });

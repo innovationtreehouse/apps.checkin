@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 class NotFoundError extends Error {}
 
 /**
- * DELETE /api/membership-ops/bg-attestations/[id] — sysadmin-only cleanup for a
+ * DELETE /api/membership-ops/bg-attestations/[id] — Board-only cleanup for a
  * BackgroundCheckAttestation the participant-merge route refuses to carry
  * forward ("Both attested the same background check", merge/route.ts): the
  * same human reviewed under two Person identities, and nothing else removes
@@ -21,7 +21,7 @@ class NotFoundError extends Error {}
  * process-status coupling this was checked against and why it's a no-op here.
  */
 export const DELETE = withAuth<{ params: Promise<{ id: string }> }>(
-    { roles: ["isSysadmin"] },
+    { roles: ["isBoardMember"] },
     async (req, auth, { params }) => {
         if (auth.type !== "session") return apiError("Unauthorized", 401);
 
