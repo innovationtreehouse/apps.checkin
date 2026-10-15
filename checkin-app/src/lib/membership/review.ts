@@ -404,6 +404,13 @@ export async function clearBackgroundCheck(
     if (process.subjectPersonId) {
         const subject = { personId: process.subjectPersonId, householdId: await applicantHousehold(tx, process) };
         await throwIfOwnHousehold(tx, actorId, subject, { lastBackgroundCheck: now.toISOString() });
+        // A subject in a DENIED household converges nowhere, as on the household path below.
+        if (subject.householdId !== null) {
+            const [subjectMembership] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE "householdId" = ${subject.householdId} FOR UPDATE`;
+            if (subjectMembership?.status === "DENIED") {
+                return { status: process.status, activated: false, householdId: null, isInitial: false, denied: { householdId: subject.householdId, processId } };
+            }
+        }
         await tx.person.update({ where: { id: process.subjectPersonId }, data: { lastBackgroundCheck: now } });
         const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...expected.where }, data: { bgClearedAt: now, status: "ACTIVE", stageEnteredAt: now } });
         if (!count) throw movedOn();
@@ -578,13 +585,15 @@ export async function overrideBlocked(processId: number, actorId: number, action
             // A blocked application resumes at the review status its cycle calls for; one
             // still in review already sits there, so only its attestations go.
             const reviewStatus = blocked ? blockedResetStatus(fresh) : fresh.status;
+            // The deleted attestations, a rejection and its note included, live on only in the audit row.
+            const attestations = await tx.backgroundCheckAttestation.findMany({ where: { processId }, orderBy: { id: "asc" } });
             await tx.backgroundCheckAttestation.deleteMany({ where: { processId } });
             const { count } = await tx.orgMembershipProcess.updateMany({
                 where: { id: processId, ...(blocked ? fromWhere("BLOCKED") : awaitingBgReview.where) },
                 data: { status: reviewStatus, bgClearedAt: null, stageEnteredAt: new Date() },
             });
             if (!count) throw movedOn();
-            await audit(tx, personActor(actorId), processId, { status: fresh.status }, { status: reviewStatus, action: "board reset" });
+            await audit(tx, personActor(actorId), processId, { status: fresh.status, attestations }, { status: reviewStatus, action: "board reset" });
             return reviewStatus;
         });
         await notifyReviewers();

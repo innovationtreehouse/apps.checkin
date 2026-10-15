@@ -19,7 +19,8 @@ import {
 
 let receiptService: ReceiptService | undefined;
 
-function inventoryReceipts(): ReceiptService {
+/** local-inventory's apply service, built once and shared by X4 and X11. */
+export function inventoryReceipts(): ReceiptService {
   if (receiptService) return receiptService;
   const inventoryRepo = createInventoryRepository(inventoryDb);
   receiptService = createReceiptService({

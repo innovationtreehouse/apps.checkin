@@ -9,7 +9,7 @@ import { runExpenseCatchUp } from "@inventory/expense";
 import { healProgramStock } from "@/lib/shopify";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@inventory/local-inventory";
 import { catchUpOrgEvents as catchUpWorkflowEvents } from "@inventory/workflow-mapping";
-import { resendDonorSync } from "@inventory/receipt";
+import { resendDonorSync, sweepInterruptedOcr } from "@inventory/receipt";
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
@@ -50,7 +50,10 @@ import { resendDonorSync } from "@inventory/receipt";
  * Then replays catalog events that local-inventory and workflow-mapping missed (a consumer that
  * threw during the catalog's post-commit call-out). Each step is isolated; counts only.
  *
- * Then re-sends in-kind donor changes the receipt library has not yet delivered to
+ * Then the receipt library's catch-up step moves receipts stranded mid-OCR to
+ * `ocr_failed`. Isolated the same way; the response carries its count only.
+ *
+ * Last, it re-sends in-kind donor changes the receipt library has not yet delivered to
  * donations (resendDonorSync). Isolated the same way; counts only, no donor data.
  */
 export const GET = withCron(async () => {
@@ -98,6 +101,14 @@ export const GET = withCron(async () => {
         workflowEvents = { status: "error" };
     }
     logger.info(`[reconcile] workflow-mapping events ${JSON.stringify(workflowEvents)}`);
+    let receipt: Awaited<ReturnType<typeof sweepInterruptedOcr>> | { status: "error" };
+    try {
+        receipt = await sweepInterruptedOcr();
+    } catch (err) {
+        logger.error("[reconcile] receipt catch-up failed:", err);
+        receipt = { status: "error" };
+    }
+    logger.info(`[reconcile] receipt ${JSON.stringify(receipt)}`);
     let donorSync: Awaited<ReturnType<typeof resendDonorSync>> | { status: "error" };
     try {
         donorSync = await resendDonorSync();
@@ -106,5 +117,5 @@ export const GET = withCron(async () => {
         donorSync = { status: "error" };
     }
     logger.info(`[reconcile] donor sync ${JSON.stringify(donorSync)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, donorSync });
+    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receipt, donorSync });
 });

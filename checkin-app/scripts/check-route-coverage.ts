@@ -53,7 +53,7 @@ const ALLOWED_THIRD_PARTY_FETCH_FILES = new Set<string>([
 // Keys are relative to the monorepo root.
 const MONOREPO_ROOT = path.resolve(REPO_ROOT, '..');
 export const PACKAGE_EGRESS_FILES: ReadonlyMap<string, readonly string[]> = new Map([
-    ['packages/quickbooks/src/client.ts', ['quickbooks.query', 'quickbooks.create']],
+    ['packages/quickbooks/src/client.ts', ['quickbooks.query', 'quickbooks.create', 'quickbooks.vendor']],
     ['packages/quickbooks/src/oauth.ts', ['quickbooks.oauth']],
     ['packages/receipt/src/lib/ocr.ts', ['anthropic.receipt-ocr']],
     // Builds the endpoint; s-read-function makes the call.

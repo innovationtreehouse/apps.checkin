@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+// Bounds per-unit work downstream (one capital asset is minted per unit) while
+// clearing any real bulk purchase.
+export const MAX_LINE_QUANTITY = 100_000;
+
+const cents = z.number().int().nonnegative();
+
 export const CompletedReceiptLineItemSchema = z.object({
   receiptLineItemId: z.number().int(),
   lineNumber: z.number().int(),
@@ -9,9 +15,9 @@ export const CompletedReceiptLineItemSchema = z.object({
   // Positive but MAY be fractional — consumables are bought by weight/volume (e.g. 6.002 gal of
   // gasoline). Integer is still enforced where inventory is actually applied (ResolvedInventoryDelta
   // .quantityDelta × integer factor); non-inventory/fractional lines are filtered out before that.
-  quantity: z.number().positive(),
-  unitPriceCents: z.number().int(),
-  totalPriceCents: z.number().int(),
+  quantity: z.number().positive().max(MAX_LINE_QUANTITY),
+  unitPriceCents: cents,
+  totalPriceCents: cents,
   isDelayed: z.boolean(),
   gtin13: z.string().nullable().optional(),
   // Set when gtin13 is a provisional GTIN awaiting catalog resolution —
@@ -29,10 +35,10 @@ export const CompletedReceiptSchema = z.object({
   receiptNumber: z.string().nullable(),
   orderNumber: z.string().nullable(),
   currency: z.string().default("USD"),
-  taxCents: z.number().int(),
-  shippingCents: z.number().int(),
-  discountCents: z.number().int(),
-  receiptTotalCents: z.number().int(),
+  taxCents: cents,
+  shippingCents: cents,
+  discountCents: cents,
+  receiptTotalCents: cents,
   receiptDate: z.string().nullable(),
   needsReimbursement: z.boolean(),
   // Display only; the reimbursee's identity is reimburseePersonId.

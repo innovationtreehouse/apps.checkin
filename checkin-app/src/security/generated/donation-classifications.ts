@@ -136,6 +136,25 @@ export const classifications = {
         donorRecordedAt: 'internal',
         withdrawnAfterMoneyAt: 'internal',
     },
+    ManualInKindDonation: {
+        id: 'internal',
+        orgId: 'internal',
+        donorFirstName: 'pii',
+        donorLastName: 'pii',
+        donorCompanyName: 'pii',
+        donationDate: 'internal',
+        recordedByUserId: 'internal',
+        recordedByUsername: 'internal',
+        recordedAt: 'internal',
+        inventoryLoadedAt: 'internal',
+    },
+    ManualInKindDonationLine: {
+        id: 'internal',
+        donationId: 'internal',
+        gtin13: 'internal',
+        quantity: 'internal',
+        valueCents: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -160,6 +179,12 @@ export const relations = {
     DonationQbMatchExclusion: {
     },
     InKindDonation: {
+    },
+    ManualInKindDonation: {
+        lines: { model: 'ManualInKindDonationLine', isList: true },
+    },
+    ManualInKindDonationLine: {
+        donation: { model: 'ManualInKindDonation', isList: false },
     },
 } as const;
 

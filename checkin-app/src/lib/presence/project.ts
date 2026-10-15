@@ -27,6 +27,8 @@ export async function applyPresenceIntent(
         clockSuspect?: boolean;
         webClose?: boolean;
         legacyKiosk?: LegacyKiosk | null;
+        /** A trusted replay's event id, for the close fence (processCheckin). */
+        fenceClientEventId?: string | null;
     },
 ): Promise<Response> {
     const event = await appendPresenceEvent(db, {
@@ -52,7 +54,7 @@ export async function applyPresenceIntent(
             return apiJson({ type: "parked", message: "Recorded for review." });
         }
 
-        const res = await processCheckin(args.participant, args.authType, db, args.isReplay ? args.occurredAt : undefined);
+        const res = await processCheckin(args.participant, args.authType, db, args.isReplay ? args.occurredAt : undefined, args.fenceClientEventId);
         await classifyCheckin(db, event.id, res, args.participant.id, args.clientEventId);
         return res;
     }

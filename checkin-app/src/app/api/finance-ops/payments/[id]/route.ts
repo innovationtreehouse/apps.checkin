@@ -5,7 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import type { Prisma } from "@/generated/prisma/client";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, type GrantSubject } from "@/lib/membership/selfGrantGuard";
-import { ordersByLegacyIds, type MirrorOrder } from "@/lib/shopifyRead/client";
+import { orderAttr, ordersByLegacyIds, type MirrorOrder } from "@/lib/shopifyRead/client";
 
 /**
  * PATCH /api/finance-ops/payments/[id] — the board acknowledges or resolves one
@@ -106,11 +106,6 @@ async function exceptionConflict(id: number, actorId: number, attempted: Prisma.
         if (process?.orgMembership) subjects.push({ householdId: process.orgMembership.householdId });
         personIds.push(process?.subjectPersonId ?? null);
     }
-    for (const personId of personIds) {
-        if (personId === null) continue;
-        const person = await prisma.person.findUnique({ where: { id: personId }, select: { householdId: true } });
-        subjects.push({ personId, householdId: person?.householdId ?? null });
-    }
     if (exception.shopifyOrderId !== null) {
         let orders: MirrorOrder[];
         try {
@@ -119,8 +114,14 @@ async function exceptionConflict(id: number, actorId: number, attempted: Prisma.
             logger.error("Failed to read payer for payment exception conflict check:", error);
             return 'mirror-unavailable';
         }
-        const payerEmail = orders[0]?.customerEmail;
-        if (payerEmail) subjects.push({ email: payerEmail });
+        const order = orders[0];
+        if (order?.customerEmail) subjects.push({ email: order.customerEmail });
+        // A program exception records one person; the order may name several children.
+        if (order) personIds.push(...orderAccountIds(order));
+    }
+    for (const personId of new Set(personIds)) {
+        if (personId === null) continue;
+        subjects.push(...(await mergeChainSubjects(personId)));
     }
 
     const attempt = { table: "PaymentException" as const, attempted };
@@ -132,4 +133,28 @@ async function exceptionConflict(id: number, actorId: number, attempted: Prisma.
         }
     }
     return false;
+}
+
+function orderAccountIds(order: MirrorOrder): number[] {
+    const raw = orderAttr(order, "CheckMeIn_Account_ID") ?? "";
+    return raw.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
+}
+
+const MAX_MERGE_HOPS = 10;
+
+/** The person plus every record it was merged into, so a merged-away id still resolves to its survivor's household. */
+async function mergeChainSubjects(personId: number): Promise<GrantSubject[]> {
+    const subjects: GrantSubject[] = [];
+    const seen = new Set<number>();
+    let id: number | null = personId;
+    while (id !== null && !seen.has(id) && seen.size < MAX_MERGE_HOPS) {
+        seen.add(id);
+        const person: { householdId: number | null; mergedIntoId: number | null } | null = await prisma.person.findUnique({
+            where: { id },
+            select: { householdId: true, mergedIntoId: true },
+        });
+        subjects.push({ personId: id, householdId: person?.householdId ?? null });
+        id = person?.mergedIntoId ?? null;
+    }
+    return subjects;
 }

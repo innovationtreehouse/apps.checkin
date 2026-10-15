@@ -1,5 +1,6 @@
-import { Prisma, type OrgMembershipProcess } from "@/generated/prisma/client";
+import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { ReviewError, applicantHousehold } from "@/lib/membership/review";
 import { ARCHIVABLE_STATUSES, RESTORABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
@@ -136,7 +137,7 @@ export async function unarchiveApplication(processId: number, actorId: number) {
         });
     } catch (e) {
         // The partial unique indexes (membership_one_inflight_*) back the sibling check.
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        if (isPrismaError(e, "P2002")) {
             throw new ReviewError("wrong_phase", "Another application is already open for this household. Resolve or close it first.");
         }
         throw e;

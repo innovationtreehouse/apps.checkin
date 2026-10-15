@@ -6,6 +6,7 @@ import type { PrismaClient } from "../db/client.js";
 import { SyncKind, SyncStatus } from "../generated/prisma/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { logger } from "../logger.js";
+import { redactSecrets } from "../redact.js";
 import { withAdvisoryLock } from "./locks.js";
 
 /** Default staleness cutoff (~Lambda max timeout): older RUNNING runs must be dead. */
@@ -150,7 +151,7 @@ export async function withSyncRun<T extends Record<string, unknown>>(
       return counts;
     } catch (err) {
       const finishedAt = new Date();
-      const message = err instanceof Error ? err.message : String(err);
+      const message = redactSecrets(err instanceof Error ? err.message : String(err));
       // If fn committed partial work before failing (e.g. a row-by-row replay), persist how far
       // it got so the FAILED run is honest about progress rather than reporting nothing.
       const partialCounts = partialCountsOf(err);

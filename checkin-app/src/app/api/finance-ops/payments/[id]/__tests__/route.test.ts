@@ -10,7 +10,11 @@ jest.mock('@/lib/auth', () => ({
     withAuth: (_opts: unknown, handler: (req: Request, auth: unknown, ctx: unknown) => unknown) =>
         (req: Request, auth: unknown, ctx: unknown) => handler(req, auth, ctx),
 }));
-jest.mock('@/lib/shopifyRead/client', () => ({ ordersByLegacyIds: jest.fn() }));
+jest.mock('@/lib/shopifyRead/client', () => ({
+    ordersByLegacyIds: jest.fn(),
+    orderAttr: (o: { noteAttributes?: { key: string; value: string }[] | null }, key: string) =>
+        o.noteAttributes?.find((a) => a.key === key)?.value ?? null,
+}));
 
 import { PATCH } from '../route';
 import prisma from '@/lib/prisma';
@@ -23,13 +27,15 @@ const OTHER_HOUSEHOLD = 9;
 
 const ordersMock = ordersByLegacyIds as jest.Mock;
 let householdById: Record<number, number>;
+let mergedIntoById: Record<number, number>;
 let exception: { personId: number | null; processId: number | null; shopifyOrderId: string | null };
 
 beforeEach(() => {
-    householdById = { [ACTOR_ID]: ACTOR_HOUSEHOLD, 20: OTHER_HOUSEHOLD, 21: ACTOR_HOUSEHOLD };
+    householdById = { [ACTOR_ID]: ACTOR_HOUSEHOLD, 20: OTHER_HOUSEHOLD, 21: ACTOR_HOUSEHOLD, 22: OTHER_HOUSEHOLD };
+    mergedIntoById = {};
     exception = { personId: null, processId: null, shopifyOrderId: null };
     prisma.person.findUnique = jest.fn(async ({ where }: { where: { id: number } }) =>
-        where.id in householdById ? { householdId: householdById[where.id] } : null,
+        where.id in householdById ? { householdId: householdById[where.id], mergedIntoId: mergedIntoById[where.id] ?? null } : null,
     ) as jest.Mock;
     prisma.person.findMany = jest.fn().mockResolvedValue([]);
     prisma.paymentException.findUnique = jest.fn(async () => exception) as jest.Mock;
@@ -115,6 +121,26 @@ describe('PATCH /api/finance-ops/payments/[id] — own-household guard', () => {
         expect(errorSpy).toHaveBeenCalled();
         errorSpy.mockRestore();
         expect(prisma.paymentException.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("refuses when the exception's person was merged into someone in the actor's household", async () => {
+        exception.personId = 22;
+        mergedIntoById = { 22: 21 };
+        expect((await call()).status).toBe(403);
+    });
+
+    it("refuses when any child the order names is in the actor's household, not just the recorded one", async () => {
+        exception.personId = 20;
+        exception.shopifyOrderId = '1001';
+        ordersMock.mockResolvedValue([{ customerEmail: 'other@example.com', noteAttributes: [{ key: 'CheckMeIn_Account_ID', value: '20, 21' }] }]);
+        expect((await call()).status).toBe(403);
+    });
+
+    it("allows when every child the order names is outside the actor's household", async () => {
+        exception.personId = 20;
+        exception.shopifyOrderId = '1001';
+        ordersMock.mockResolvedValue([{ customerEmail: 'other@example.com', noteAttributes: [{ key: 'CheckMeIn_Account_ID', value: '20,22' }] }]);
+        expect((await call()).status).toBe(200);
     });
 
     it('refuses an actor with no household', async () => {

@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import FinanceOpsLayout from "../layout";
+import IncomeLayout from "../../income/layout";
 
 const push = jest.fn();
 let mockPathname = "/finance-ops/payment-plan";
@@ -101,5 +102,22 @@ describe("Revenue Ops layout role gate", () => {
   it("redirects unauthenticated callers", () => {
     renderLayout("/finance-ops/payment-plan", { data: null, status: "unauthenticated" });
     expect(push).toHaveBeenCalledWith("/");
+  });
+});
+
+describe("/income layout", () => {
+  it("renders the Revenue Ops top row, Income tab included", () => {
+    mockPathname = "/income/reconciliation";
+    mockSession = { data: { user: { id: 1, isBoardMember: true } }, status: "authenticated" };
+    render(
+      <MantineProvider>
+        <IncomeLayout>
+          <div>{CHILD}</div>
+        </IncomeLayout>
+      </MantineProvider>,
+    );
+    expect(screen.getByText(CHILD)).toBeInTheDocument();
+    expect(screen.getByText("Program Payment Plan")).toBeInTheDocument();
+    expect(screen.getByText("Income")).toBeInTheDocument();
   });
 });

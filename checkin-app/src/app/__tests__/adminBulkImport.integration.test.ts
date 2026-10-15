@@ -337,14 +337,18 @@ describe('Admin Bulk Import API Integration Tests', () => {
             expect(await prisma.auditLog.count({ where: { tableName: 'OrgMembership', actorId: testAdminId } })).toBe(0);
         });
 
-        it('refuses to merge a household whose membership status is not NONE, keeping that status', async () => {
+        // DENIED is refused before the move and raised to the board; any other non-NONE status is refused at the delete.
+        it.each([
+            ['REVOKED', 'merge refused'],
+            ['DENIED', 'has been denied membership'],
+        ] as const)('refuses to merge a %s household, keeping that status', async (status, message) => {
             const target = await prisma.person.create({
                 data: { email: 'target-batch-import-test@example.com', name: 'Target Batch Import Test', household: { create: { name: 'Target Batch Household' } } }
             });
             const source = await prisma.person.create({
                 data: { email: 'source-batch-import-test@example.com', name: 'Source Batch Import Test', household: { create: { name: 'Source Batch Household' } } }
             });
-            await prisma.orgMembership.create({ data: { householdId: source.householdId, status: 'DENIED' } });
+            await prisma.orgMembership.create({ data: { householdId: source.householdId, status } });
 
             const res = await importAs([
                 ['First Name', 'Last Name', 'Email', 'Same Household As'],
@@ -352,10 +356,10 @@ describe('Admin Bulk Import API Integration Tests', () => {
             ]);
             expect(res.status).toBe(200);
             const data = await res.json();
-            expect(data.errors).toEqual([expect.stringContaining('merge refused')]);
+            expect(data.errors).toEqual([expect.stringContaining(message)]);
 
             expect((await prisma.person.findUniqueOrThrow({ where: { id: source.id } })).householdId).toBe(source.householdId);
-            expect((await prisma.orgMembership.findUnique({ where: { householdId: source.householdId } }))?.status).toBe('DENIED');
+            expect((await prisma.orgMembership.findUnique({ where: { householdId: source.householdId } }))?.status).toBe(status);
             expect((await prisma.person.findUniqueOrThrow({ where: { id: target.id } })).householdId).toBe(target.householdId);
         });
 

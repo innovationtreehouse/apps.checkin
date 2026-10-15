@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ZodError } from "zod";
 import type { CompletedReceipt } from "@inventory/receipt-types";
 import { configureBulkDonation, getInventoryApply, getOwnerDirectory, getQbWriter, NotWiredError } from "../../runtime";
-import { getCatalogItem, ingestInKind, recordInKindDonor, searchCatalog, withdrawInKind } from "../../inKind";
+import { getCatalogItem, ingestInKind, recordInKindDonor, recordInKindWithoutReceipt, searchCatalog, withdrawInKind } from "../../inKind";
+import { MAX_IN_KIND_LINE_QUANTITY, MAX_IN_KIND_LINE_VALUE_CENTS, type ManualInKindInput } from "../../services/manualInKindService";
 import { inventorySourceKey } from "../../contract";
 import { deriveTakeoverLine } from "../../lib/qb-match";
 import { inKindService } from "../../services/inKindService";
@@ -124,6 +125,37 @@ describe("caller ports", () => {
   it("an unconfigured runtime fails loudly", async () => {
     delete (globalThis as Record<string, unknown>).__bulkDonationRuntime;
     await expect(ingestInKind(receipt(ORG))).rejects.toThrow(/configureBulkDonation/);
+  });
+});
+
+describe("no-receipt in-kind entry: input bounds (rejected before any catalog or DB call)", () => {
+  const line = { gtin13: "0011111111116", quantity: 1, valueCents: 100 };
+  const input: ManualInKindInput = { donor: { firstName: "Jane", lastName: "Doe", companyName: null }, donationDate: "2026-10-01", lines: [line] };
+  const rejects = (over: Partial<ManualInKindInput>, lineOver: Partial<typeof line> = {}) =>
+    expect(recordInKindWithoutReceipt({ ...input, ...over, lines: [{ ...line, ...lineOver }] })).rejects.toMatchObject({ statusCode: 400 });
+
+  it("requires a donor name", async () => {
+    await rejects({ donor: { firstName: "", lastName: "Doe", companyName: null } });
+  });
+
+  it("requires a calendar date", async () => {
+    await rejects({ donationDate: "Oct 1" });
+  });
+
+  it("bounds quantity to a positive integer under the cap", async () => {
+    await rejects({}, { quantity: 0 });
+    await rejects({}, { quantity: 1.5 });
+    await rejects({}, { quantity: MAX_IN_KIND_LINE_QUANTITY + 1 });
+  });
+
+  it("bounds value to non-negative integer cents under the cap", async () => {
+    await rejects({}, { valueCents: -1 });
+    await rejects({}, { valueCents: 9.99 });
+    await rejects({}, { valueCents: MAX_IN_KIND_LINE_VALUE_CENTS + 1 });
+  });
+
+  it("requires at least one line", async () => {
+    await expect(recordInKindWithoutReceipt({ ...input, lines: [] })).rejects.toMatchObject({ statusCode: 400 });
   });
 });
 

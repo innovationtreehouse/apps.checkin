@@ -7,24 +7,10 @@ import { renderWithProviders, setSession, setPathname, resetRtl } from "@/test-h
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
-import {
-  REVENUE_OPS_LIBRARY_TABS,
-  type LibraryTab,
-} from "@/lib/libraryNav";
 import AppFrame from "../AppFrame";
 
 const mockedUseTodoCounts = useTodoCounts as jest.Mock;
 
-const financeOrBoard = (u: { isFinance?: boolean; isBoardMember?: boolean } | undefined) =>
-  !!u?.isFinance || !!u?.isBoardMember;
-
-// Fake registration for Income, the one library not wired yet; the others register their own tabs.
-const REGISTRATIONS: Array<[LibraryTab[], LibraryTab]> = [
-  [REVENUE_OPS_LIBRARY_TABS, { name: "Income", href: "/income", library: "income", visible: financeOrBoard }],
-];
-
-beforeAll(() => REGISTRATIONS.forEach(([slot, tab]) => slot.push(tab)));
-afterAll(() => REGISTRATIONS.forEach(([slot, tab]) => slot.splice(slot.indexOf(tab), 1)));
 beforeEach(() => {
   resetRtl();
   mockedUseTodoCounts.mockReturnValue(counts());
@@ -54,10 +40,10 @@ describe("AppFrame library nav slots", () => {
     expect(screen.queryByText("My Programs")).not.toBeInTheDocument();
   });
 
-  it("FINANCE-only: Revenue Ops lands on Donations (no legacy tab); Inventory lands on the catalog (a role holder is a catalog viewer)", () => {
+  it("FINANCE-only: Revenue Ops lands on Income (no legacy tab); Inventory lands on the catalog (a role holder is a catalog viewer)", () => {
     setSession({ id: 2, isFinance: true });
     renderFrame();
-    expect(hrefOf("Revenue Ops")).toBe("/donations");
+    expect(hrefOf("Revenue Ops")).toBe("/income");
     expect(hrefOf("Expense Ops")).toBe("/expense");
     expect(hrefOf("Inventory")).toBe("/catalog/items");
   });

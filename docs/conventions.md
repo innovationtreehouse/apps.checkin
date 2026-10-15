@@ -180,3 +180,31 @@ and in a UTC test environment both are right. The failure appears later as a
 birthday rendered a day early, an age gate that turns someone away on the morning
 they qualify, or a second record for a person because a lookup by exact date
 missed a row stored at a different time of day.
+
+---
+
+## A library names its failures; the host renders them
+
+- **Every expected failure in a hosted library leaves it as an HTTP status, never
+  a 500.** Its services throw `ServiceError(status)` and its `mapServiceErrors`
+  turns that into the library's HTTP error: 400 for validation, 403 for
+  forbidden, 404 for not found, 409 for a conflict or a duplicate. Anything else
+  is rethrown and the host answers an opaque 500. Each library's
+  `error-mapping.test.ts` pins this.
+
+- **A duplicate the service expects is caught by the service.** A unique-key race
+  it can tolerate is caught where it happens and re-read or thrown as
+  `ServiceError(409)`. A P2002 that escapes uncaught is a bug and stays a 500,
+  logged with enough to find the missing handler: `handler()` logs the route's
+  endpoint and the error itself, whose `meta` names the colliding constraint.
+  Nothing on the way may swallow or rewrap it into a bare message.
+
+- **A Prisma error is recognised by its `code`, never by `instanceof`.** Clients
+  are memoized on `globalThis`, and the instrumentation chunk that configures a
+  library and each route chunk can load separate copies of the generated client,
+  so the class identity differs. The library's `isUniqueConstraintError` and
+  checkin's `isPrismaError` (`lib/prismaUniqueViolation.ts`) read the code.
+
+The failure shows only in a built app. In unit tests every module is loaded once,
+so `instanceof` holds; in the server, the same 409 arrives as an error from
+another copy of the class and the caller sees a 500.

@@ -8,7 +8,7 @@
 import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
 import { PAGES } from '@/components/pageRegistry';
 import { isCatalogViewerClient } from '@/lib/catalogNav';
-import { EXPENSE_OPS_SECTION_ROLES, INVENTORY_LIBRARY_TABS, hasAnyRole, type LibraryTab } from '@/lib/libraryNav';
+import { EXPENSE_OPS_SECTION_ROLES, INVENTORY_LIBRARY_TABS, REVENUE_OPS_LIBRARY_TABS, hasAnyRole, type LibraryTab } from '@/lib/libraryNav';
 import { canSubmitReceipts } from '@/lib/volunteer';
 import { LIBRARY_COUNT_PROVIDERS } from '@/lib/navLibraryCounts';
 import { LIBRARY_KEYS, type LibraryKey } from '@/lib/libraryRelease';
@@ -140,6 +140,9 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'Expense Ops section', client: (u) => hasAnyRole(u, EXPENSE_OPS_SECTION_ROLES), token: 'finance-or-board' },
     { name: 'page /expense/settings', client: page('/expense/settings'), token: 'finance-or-board' },
     { name: 'page /budgets', client: page('/budgets'), token: 'finance-or-board' },
+    { name: 'tab /income', client: tab(REVENUE_OPS_LIBRARY_TABS, '/income'), token: routeToken('GET /api/income/payouts') },
+    { name: 'page /income', client: page('/income'), token: routeToken('GET /api/income/payouts') },
+    { name: 'counts:income', client: counts('income'), token: routeToken('GET /api/income/reconciliation/count') },
     { name: 'page /donations', client: page('/donations'), token: 'finance-or-board' },
     {
         name: 'page /my-programs/expense-approvals',

@@ -10,7 +10,7 @@
  *   - advanceExternalIfComplete: the volunteer-designation allowlist is matched
  *     at the PENDING_PAYMENT transition (#874) — and only by the race winner.
  */
-import { setZohoEnvelope, findProcessByEnvelope, getOrCreateContractSigningUrl, selfRecordBgConsent, advanceExternalIfComplete, markContractSigned, resetSigning, ExternalError } from '@/lib/membership/external';
+import { setZohoEnvelope, markBgConsent, findProcessByEnvelope, getOrCreateContractSigningUrl, selfRecordBgConsent, advanceExternalIfComplete, markContractSigned, resetSigning, ExternalError } from '@/lib/membership/external';
 
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
@@ -108,6 +108,7 @@ describe('setZohoEnvelope', () => {
         const call = prisma.orgMembershipProcess.updateMany.mock.calls[0][0];
         expect(call.data).toEqual({ zohoEnvelopeId: 'req-1', zohoActionId: null, zohoSignerPersonId: null });
         expect(call.where.id).toBe(1);
+        expect(call.where.contractSignedAt).toBeNull();
         expect(call.where.status.in).not.toContain('ACTIVE');
         expect(call.where.status.in).not.toContain('ARCHIVED');
         expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
@@ -120,6 +121,33 @@ describe('setZohoEnvelope', () => {
 
         await expect(setZohoEnvelope(1, 'req-1', 5)).rejects.toMatchObject({ code: 'wrong_phase' });
         expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+});
+
+describe('markBgConsent', () => {
+    beforeEach(() => {
+        prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
+    });
+
+    it.each([
+        ['a PERSON_BG', { kind: 'PERSON_BG', status: 'PENDING_BG_REVIEW' }],
+        ['a PERSON_AGREEMENT', { kind: 'PERSON_AGREEMENT', status: 'PENDING_EXTERNAL_ACTION' }],
+        ['an archived application', { kind: 'INITIAL', status: 'ARCHIVED' }],
+        ['an active application', { kind: 'RENEWAL', status: 'ACTIVE' }],
+    ])('refuses %s and writes nothing', async (_label, row) => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: 20, ...row });
+        await expect(markBgConsent(20, 5)).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('takes a PERSON_BG only on its own submit path, still conditional on an open status', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: 20, kind: 'PERSON_BG', status: 'PENDING_BG_REVIEW', bgConsentAt: null });
+        prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+        await markBgConsent(20, 5, 'PERSON_BG');
+        const where = prisma.orgMembershipProcess.updateMany.mock.calls[0][0].where;
+        expect(where).toMatchObject({ id: 20, bgConsentAt: null, kind: { in: ['PERSON_BG'] } });
+        expect(where.status.in).not.toContain('ARCHIVED');
     });
 });
 
@@ -140,6 +168,7 @@ describe('findProcessByEnvelope', () => {
 describe('selfRecordBgConsent', () => {
     const pendingProcess = {
         id: 20,
+        kind: 'INITIAL',
         status: 'PENDING_EXTERNAL_ACTION',
         contractSignedAt: null,
         bgConsentAt: null,
@@ -189,7 +218,7 @@ describe('selfRecordBgConsent', () => {
         const status = await selfRecordBgConsent(1);
 
         expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { id: 20, bgConsentAt: null } }),
+            expect.objectContaining({ where: expect.objectContaining({ id: 20, bgConsentAt: null, kind: { in: ['INITIAL', 'RENEWAL'] } }) }),
         );
         expect(prisma.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ actorId: 1 }) });
         expect(status.bgConsented).toBe(true);

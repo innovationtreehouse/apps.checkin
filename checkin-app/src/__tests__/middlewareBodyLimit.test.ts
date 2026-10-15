@@ -30,14 +30,36 @@ import { middleware } from '@/middleware';
 
 type Result = { kind: string; status?: number };
 
-const apiReq = (pathname: string, contentLength: number | string | null): NextRequest => ({
+// A body sent in 64 KB chunks with no Content-Length, as with Transfer-Encoding: chunked.
+const chunkedBody = (bytes: number): ReadableStream<Uint8Array> => {
+    let left = bytes;
+    return new ReadableStream({
+        pull(controller) {
+            if (left === 0) return controller.close();
+            const n = Math.min(left, 64 * 1024);
+            left -= n;
+            controller.enqueue(new Uint8Array(n));
+        },
+    });
+};
+
+const apiReq = (
+    pathname: string,
+    contentLength: number | string | null,
+    body: ReadableStream<Uint8Array> | null = null,
+): NextRequest => ({
     nextUrl: { pathname, search: '' },
     url: `http://localhost:4000${pathname}`,
     headers: new Headers(contentLength === null ? {} : { 'content-length': String(contentLength) }),
+    clone: () => ({ body }),
 } as unknown as NextRequest);
 
-const run = async (pathname: string, contentLength: number | string | null) =>
-    (await middleware(apiReq(pathname, contentLength))) as unknown as Result;
+const run = async (pathname: string, contentLength: number | string | null, streamedBytes?: number) =>
+    (await middleware(apiReq(
+        pathname,
+        contentLength,
+        streamedBytes === undefined ? null : chunkedBody(streamedBytes),
+    ))) as unknown as Result;
 
 describe('middleware /api body size limit', () => {
     it('passes a JSON body at the limit', async () => {
@@ -61,8 +83,34 @@ describe('middleware /api body size limit', () => {
         expect((await run(`${UPLOAD_ROUTES[0]}/123/blob`, MAX_JSON_BODY_BYTES + 1)).status).toBe(413);
     });
 
-    it('passes a request with no Content-Length (the proxy body limit bounds it)', async () => {
+    it('passes a request with no body and no Content-Length', async () => {
         expect((await run('/api/webhooks/shopify', null)).kind).toBe('next');
+    });
+
+    it('passes a JSON body at the limit sent without Content-Length', async () => {
+        expect((await run('/api/scan', null, MAX_JSON_BODY_BYTES)).kind).toBe('next');
+    });
+
+    it('answers 413 for a JSON body over the limit sent without Content-Length', async () => {
+        expect((await run('/api/scan', null, MAX_JSON_BODY_BYTES + 1)).status).toBe(413);
+    });
+
+    it('allows the upload limit on an upload route sent without Content-Length, and no more', async () => {
+        expect((await run(UPLOAD_ROUTES[0], null, MAX_UPLOAD_BODY_BYTES)).kind).toBe('next');
+        expect((await run(UPLOAD_ROUTES[0], null, MAX_UPLOAD_BODY_BYTES + 1)).status).toBe(413);
+    });
+
+    it('stops reading a body with no Content-Length once it passes the limit', async () => {
+        let pulls = 0;
+        const endless = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                pulls += 1;
+                controller.enqueue(new Uint8Array(MAX_JSON_BODY_BYTES / 2));
+            },
+        });
+        const res = (await middleware(apiReq('/api/scan', null, endless))) as unknown as Result;
+        expect(res.status).toBe(413);
+        expect(pulls).toBeLessThanOrEqual(4);
     });
 });
 

@@ -96,6 +96,17 @@ export function createCatalogRepository(db: PrismaClient) {
     findItemByName: (name: string) =>
       db.item.findFirst({ where: { name, archivedAt: null } }),
 
+    searchItemsActive: (query: string, take: number) =>
+      db.item.findMany({
+        where: {
+          archivedAt: null,
+          OR: [{ name: { contains: query, mode: "insensitive" } }, { gtin13: { contains: query } }],
+        },
+        select: { gtin13: true, name: true },
+        orderBy: { name: "asc" },
+        take,
+      }),
+
     findItemByNameExcluding: (name: string, excludeGtin13: string) =>
       db.item.findFirst({ where: { name, archivedAt: null, gtin13: { not: excludeGtin13 } } }),
 

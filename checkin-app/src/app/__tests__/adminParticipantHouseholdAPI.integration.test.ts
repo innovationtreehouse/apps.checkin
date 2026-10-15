@@ -124,6 +124,24 @@ describe('Admin Participant Household API Integration Tests', () => {
             expect(after?.householdId).toBe(merged.householdId);
         });
 
+        it.each([
+            ['out of a DENIED household', 'source'],
+            ['into a DENIED household', 'target'],
+        ] as const)('refuses moving someone %s -> 409, unchanged, and raises it to the board', async (_label, deniedSide) => {
+            const subject = await prisma.person.findUniqueOrThrow({ where: { id: testParticipantId }, select: { householdId: true } });
+            const deniedHouseholdId = deniedSide === 'source' ? subject.householdId : testHouseholdId;
+            await prisma.orgMembership.create({ data: { householdId: deniedHouseholdId, status: 'DENIED' } });
+            try {
+                const res = await POST(moveReq(testParticipantId, { householdId: testHouseholdId }), { params: Promise.resolve({ id: String(testParticipantId) }) });
+                expect(res.status).toBe(409);
+                const after = await prisma.person.findUnique({ where: { id: testParticipantId }, select: { householdId: true } });
+                expect(after?.householdId).toBe(subject.householdId);
+                expect(await prisma.paymentException.count({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: testParticipantId } })).toBe(1);
+            } finally {
+                await prisma.paymentException.deleteMany({ where: { personId: testParticipantId } });
+            }
+        });
+
         it('refuses moving yourself -> 403', async () => {
             const res = await POST(moveReq(testAdminId, { householdId: testHouseholdId }), { params: Promise.resolve({ id: String(testAdminId) }) });
             expect(res.status).toBe(403);

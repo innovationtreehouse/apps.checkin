@@ -229,6 +229,11 @@ describe('Membership BG review API', () => {
         const audit = await prisma.auditLog.findFirst({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: proc.processId }, orderBy: { id: 'desc' } });
         expect(audit?.actorId).toBe(board);
         expect(normalizeAuditData(audit?.newData)).toMatchObject({ action: 'board reset' });
+        // The deleted rejection and its note are kept in the audit row.
+        expect(normalizeAuditData(audit?.oldData)).toMatchObject({
+            status: 'BLOCKED',
+            attestations: [expect.objectContaining({ reviewerId: rev1, result: 'REJECT', note: 'Needs another look' })],
+        });
     });
 
     it('board override-approve on a BLOCKED app forces it to PENDING_PAYMENT', async () => {

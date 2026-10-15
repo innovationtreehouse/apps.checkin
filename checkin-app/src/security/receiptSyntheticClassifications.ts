@@ -53,7 +53,7 @@ export const classifications = {
     duplicateFlaggedAt: "internal",
     duplicateFlagClearedAt: "internal",
     duplicateSuspectReceiptId: "pii",
-    duplicateSuspectIsRejected: "internal",
+    duplicateSuspectIsRejected: "pii",
     validationNotes: "personal",
     approvedAt: "internal",
     reviewedAt: "internal",

@@ -1,10 +1,12 @@
 /**
  * Wire the receipt library into checkin (#1265 §3/§6), called once at server boot from
  * instrumentation.ts. Binding touches no database and no network: the principal and the org
- * are read lazily, inside a request, and so are households. The donor sink (X13) is bound to
- * donations in-process. The S1 sink (X6) and reimbursement status (X12) stay unbound, so the
- * library's inert adapters queue or answer "not yet paid".
+ * are read lazily, inside a request, and so are households. Bound crossings: X12 (reimbursement
+ * status, read by expense from QuickBooks; QuickBooks off or any failure answers "not yet paid")
+ * and X13 (the donor sink, bound to donations in-process). The S1 sink (X6) stays unbound, so the
+ * library's inert adapter queues it.
  */
+import { reimbursementStatus } from "@inventory/expense";
 import { configureReceipt, createAnthropicOcr, fixtureOcr, type ReceiptPrincipal } from "@inventory/receipt";
 import { recordInKindDonor, withdrawInKind } from "@inventory/bulk-donation";
 import { getOrg } from "@/lib/catalog/configure";
@@ -50,6 +52,7 @@ export function configureRuntime(): void {
     auth: { getPrincipal },
     org: getOrg,
     households: { householdOf },
+    reimbursementStatus,
     donorSink: { recordInKindDonor, withdrawInKind },
     // Chosen by CHECKIN_ENV, never by whether a key is set (fail closed): a deployed instance
     // without the key reads nothing and lands auto uploads in ocr_failed.

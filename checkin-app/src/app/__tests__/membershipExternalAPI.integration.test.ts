@@ -230,12 +230,23 @@ describe('Membership EXTERNAL phase API', () => {
         expect(body.ignored).toBeDefined();
     });
 
-    it('set-envelope associates a Zoho request id', async () => {
+    it('set-envelope associates a Zoho request id with an unsigned process', async () => {
+        const { processId } = await makeProcess(`E ${TAG}`, 'zoho-E');
         asBoard(boardId);
-        const res = await BOARD_EXTERNAL(boardReq({ processId: procB, action: 'set-envelope', envelopeId: 'zoho-B2' }) as never);
+        const res = await BOARD_EXTERNAL(boardReq({ processId, action: 'set-envelope', envelopeId: 'zoho-E2' }) as never);
         expect(res.status).toBe(200);
-        const p = await prisma.orgMembershipProcess.findUnique({ where: { id: procB } });
-        expect(p?.zohoEnvelopeId).toBe('zoho-B2');
+        const p = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+        expect(p?.zohoEnvelopeId).toBe('zoho-E2');
+    });
+
+    it('set-envelope refuses a signed process, keeping its envelope', async () => {
+        const { processId } = await makeProcess(`F ${TAG}`, 'zoho-F');
+        await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { contractSignedAt: new Date() } });
+        asBoard(boardId);
+        const res = await BOARD_EXTERNAL(boardReq({ processId, action: 'set-envelope', envelopeId: 'zoho-F2' }) as never);
+        expect(res.status).toBe(400);
+        const p = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+        expect(p?.zohoEnvelopeId).toBe('zoho-F');
     });
 
     it('keeps hhA/hhB distinct (sanity)', () => {

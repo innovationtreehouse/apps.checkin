@@ -9,7 +9,7 @@ import { PaymentError } from '@/lib/membership/payment';
 jest.mock('@/lib/prisma', () => {
     const db = {
         orgMembership: { findUnique: jest.fn(), upsert: jest.fn() },
-        orgMembershipProcess: { findFirst: jest.fn(), create: jest.fn() },
+        orgMembershipProcess: { findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn() },
         auditLog: { create: jest.fn() },
         $queryRaw: jest.fn(),
         $transaction: jest.fn((fn: (tx: unknown) => unknown): unknown => fn(db)),
@@ -57,5 +57,32 @@ describe('grantCurrentYear opening an application', () => {
         await expect(grantCurrentYear(7, { actorId: 99, reason: 'comp' })).rejects.toBeInstanceOf(PaymentError);
         expect(prisma.orgMembershipProcess.create).not.toHaveBeenCalled();
         expect(raise).toHaveBeenCalledWith(expect.objectContaining({ householdId: 7 }));
+    });
+
+    it('refuses when the household has a BLOCKED application, without opening a new one', async () => {
+        findUnique.mockResolvedValue({ status: 'NONE' } as Awaited<ReturnType<typeof prisma.orgMembership.findUnique>>);
+        jest.mocked(prisma.orgMembership.upsert).mockResolvedValue({ id: 3, status: 'NONE' } as Awaited<ReturnType<typeof prisma.orgMembership.upsert>>);
+        jest.mocked(prisma.orgMembershipProcess.findFirst).mockResolvedValue(null);
+        jest.mocked(prisma.$queryRaw).mockResolvedValue([{ status: 'NONE' }]);
+        jest.mocked(prisma.orgMembershipProcess.findMany).mockResolvedValue([
+            { id: 11, kind: 'INITIAL', status: 'BLOCKED' },
+        ] as Awaited<ReturnType<typeof prisma.orgMembershipProcess.findMany>>);
+
+        await expect(grantCurrentYear(7, { actorId: 99, reason: 'comp' })).rejects.toThrow(/blocked application/);
+        expect(prisma.orgMembershipProcess.create).not.toHaveBeenCalled();
+        expect(prisma.orgMembershipProcess.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ orgMembershipId: 3, OR: expect.arrayContaining([expect.objectContaining({ status: 'BLOCKED' })]) }),
+        }));
+    });
+
+    it('opens an INITIAL application when nothing is open or blocked', async () => {
+        findUnique.mockResolvedValue({ status: 'NONE' } as Awaited<ReturnType<typeof prisma.orgMembership.findUnique>>);
+        jest.mocked(prisma.orgMembership.upsert).mockResolvedValue({ id: 3, status: 'NONE' } as Awaited<ReturnType<typeof prisma.orgMembership.upsert>>);
+        jest.mocked(prisma.orgMembershipProcess.findFirst).mockResolvedValue(null);
+        jest.mocked(prisma.$queryRaw).mockResolvedValue([{ status: 'NONE' }]);
+        jest.mocked(prisma.orgMembershipProcess.findMany).mockResolvedValue([]);
+        jest.mocked(prisma.orgMembershipProcess.create).mockResolvedValue({ id: 12, kind: 'INITIAL', status: 'INTAKE' } as Awaited<ReturnType<typeof prisma.orgMembershipProcess.create>>);
+
+        await expect(grantCurrentYear(7, { actorId: 99, reason: 'comp' })).resolves.toMatchObject({ paid: false, opened: true });
     });
 });

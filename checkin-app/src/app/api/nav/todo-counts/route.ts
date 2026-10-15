@@ -398,6 +398,8 @@ export const GET = withAuth({}, async (_req, auth) => {
 
     // ---- Admin surface (board's own queue) — only for board/isSysadmin ----
     if (user.isSysadmin || user.isBoardMember) {
+        // Finance counts are Board/Finance reads; a sysadmin off the Board gets zeros.
+        const seesFinance = !!user.isBoardMember || !!user.isFinance;
         const [membership, applicationsTotal, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, programsMisconfig, openPaymentExceptions, boardSettings, unhealthyCronJobs] = await Promise.all([
             prisma.orgMembershipProcess.count({
                 where: { status: { in: BOARD_ACTIONABLE_MEMBERSHIP } },
@@ -411,13 +413,13 @@ export const GET = withAuth({}, async (_req, auth) => {
             // PENDING_HOLD_FAILED rows (inventoryHeldAt null) — those live in the
             // Shopify reconciliation queue, and the board is already emailed when a
             // hold fails, so they don't need a green "approval pending" pill.
-            prisma.programParticipant.count({
-                where: { status: "PENDING", isPaymentPlanRequested: true, inventoryHeldAt: { not: null }, paymentPlanDeniedAt: null, person: LIVE_PERSON },
-            }),
+            seesFinance
+                ? prisma.programParticipant.count({
+                      where: { status: "PENDING", isPaymentPlanRequested: true, inventoryHeldAt: { not: null }, paymentPlanDeniedAt: null, person: LIVE_PERSON },
+                  })
+                : 0,
             // Households awaiting board approval of a membership-dues payment plan.
-            prisma.orgMembershipProcess.count({
-                where: { status: "PENDING_PAYMENT", isPaymentPlanRequested: true },
-            }),
+            seesFinance ? prisma.orgMembershipProcess.count({ where: { status: "PENDING_PAYMENT", isPaymentPlanRequested: true } }) : 0,
             prisma.trustedAdultReview.count({
                 where: { status: "PENDING_BOARD_REVIEW" },
             }),
@@ -445,7 +447,7 @@ export const GET = withAuth({}, async (_req, auth) => {
             prisma.program.count({ where: PROGRAM_CHECKOUT_BROKEN_WHERE }),
             // Reconciler-detected payment problems still needing board action
             // (OPEN or ACKNOWLEDGED). Green pill on the Finance Ops Payment problems tab.
-            prisma.paymentException.count({ where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } } }),
+            seesFinance ? prisma.paymentException.count({ where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } } }) : 0,
             // Required membership settings — count how many are still unset so the board
             // sees a red pill until all are configured. Empty string counts as unset for
             // the Shopify fields; bgRecheckMonths <= 0 means the re-check interval is unset;

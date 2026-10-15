@@ -569,11 +569,26 @@ describe('submitIntake', () => {
         },
     };
 
+    // The status write, its audit row and the allowlist share one transaction; run it on the root mock.
     beforeEach(() => {
+        prisma.$transaction.mockImplementation((cb: (tx: unknown) => unknown) => cb(prisma));
         prisma.person.findUnique.mockResolvedValue(inFlightUser);
         prisma.boardSettings.findUnique.mockResolvedValue(null);
         prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
         prisma.orgMembershipProcess.findUniqueOrThrow.mockResolvedValue({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
+    });
+
+    afterAll(() => {
+        prisma.$transaction.mockImplementation((cb: (tx: unknown) => unknown) => cb(tx));
+    });
+
+    it('writes the status and its audit row in one transaction', async () => {
+        householdBgIsFresh.mockResolvedValue(false);
+        prisma.auditLog.create.mockRejectedValueOnce(new Error('audit write failed'));
+
+        await expect(submitIntake(1)).rejects.toThrow('audit write failed');
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(advanceExternalIfComplete).not.toHaveBeenCalled();
     });
 
     it('no_process when there is no INTAKE-status INITIAL process', async () => {

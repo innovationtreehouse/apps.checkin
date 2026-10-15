@@ -75,7 +75,7 @@ describe("handler() dispatch + arg mapping", () => {
   });
 
   it("replay: explicit storeId wins (loadDbConfig untouched); omitted objectType/since/gid → undefined", async () => {
-    await handler({ mode: "replay", storeId: "explicit.myshopify.com", actor: "a", reason: "r" });
+    await handler({ mode: "replay", storeId: "explicit.myshopify.com", scope: "all", actor: "a", reason: "r" });
 
     const [, args] = mocks.replay.mock.calls[0];
     expect(args.storeId).toBe("explicit.myshopify.com");
@@ -104,7 +104,7 @@ describe("handler() dispatch + arg mapping", () => {
   });
 
   it("reset-watermark: omitted `to` and `objectType` map to null / undefined (reset all types)", async () => {
-    await handler({ mode: "reset-watermark", actor: "a", reason: "r" });
+    await handler({ mode: "reset-watermark", scope: "all", actor: "a", reason: "r" });
 
     const [, args] = mocks.resetWatermark.mock.calls[0];
     expect(args.to).toBeNull();
@@ -133,7 +133,7 @@ describe("handler() error handling", () => {
   it("maps a ConcurrentRunError to a benign { skipped:true } and logs a warning", async () => {
     mocks.replay.mockRejectedValueOnce(new ConcurrentRunError("sync_run:some-store"));
 
-    const res = await handler({ mode: "replay", storeId: "s", actor: "a", reason: "r" });
+    const res = await handler({ mode: "replay", storeId: "s", objectType: "ORDER", actor: "a", reason: "r" });
 
     expect(res.skipped).toBe(true);
     expect(res.mode).toBe("replay");
@@ -144,7 +144,7 @@ describe("handler() error handling", () => {
   it("rethrows any non-ConcurrentRunError error (and does not log the skip warning)", async () => {
     mocks.reingestBulk.mockRejectedValueOnce(new Error("boom"));
 
-    await expect(handler({ mode: "reingest-bulk", storeId: "s", actor: "a", reason: "r" })).rejects.toThrow("boom");
+    await expect(handler({ mode: "reingest-bulk", storeId: "s", since: "2026-01-01T00:00:00Z", actor: "a", reason: "r" })).rejects.toThrow("boom");
     expect(mocks.warn).not.toHaveBeenCalled();
   });
 
@@ -155,4 +155,16 @@ describe("handler() error handling", () => {
     expect(mocks.resetWatermark).not.toHaveBeenCalled();
     expect(mocks.reingestBulk).not.toHaveBeenCalled();
   });
+});
+
+describe("handler() unfiltered calls", () => {
+  it.each(["replay", "reset-watermark", "reingest-bulk"] as const)(
+    "%s: refuses an unfiltered call without scope:\"all\" before any dispatch",
+    async (mode) => {
+      await expect(handler({ mode, storeId: "s", actor: "a", reason: "r" })).rejects.toThrow(/scope/);
+      expect(mocks.replay).not.toHaveBeenCalled();
+      expect(mocks.resetWatermark).not.toHaveBeenCalled();
+      expect(mocks.reingestBulk).not.toHaveBeenCalled();
+    },
+  );
 });

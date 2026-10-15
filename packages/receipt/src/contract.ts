@@ -5,7 +5,7 @@
  * adapters in runtime.ts.
  */
 import { z } from "zod";
-import type { CompletedReceipt } from "@inventory/receipt-types";
+import { MAX_LINE_QUANTITY, type CompletedReceipt } from "@inventory/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
 
 /** The acting host user, projected from the checkin Person. `id` is the Person.id. */
@@ -61,9 +61,12 @@ export interface DonorSink {
 export const reimbursementStatusSchema = z.map(z.string(), z.object({ paidOn: z.string().nullable() }));
 export type PaidStatus = { paidOn: string | null };
 
+/** An owed receipt; a backfilled one names the hand-booked QuickBooks transaction it matched. */
+export type ReimbursementAsk = { receiptId: string; qbEntity: string | null; qbTxnId: string | null };
+
 /** X12. QuickBooks is the system of record; a receipt missing from the answer is not yet paid. */
 export interface ReimbursementStatus {
-  forReceipts(receiptIds: string[]): Promise<Map<string, PaidStatus>>;
+  forReceipts(receipts: ReimbursementAsk[]): Promise<Map<string, PaidStatus>>;
 }
 
 /** The host's households, for the rule that nobody decides a receipt their household is party to. */
@@ -83,7 +86,7 @@ export const OcrLineItemSchema = z.object({
   description: z.string().min(1).max(500),
   partNumber: z.string().max(100).optional(),
   manufacturer: z.string().max(100).optional(),
-  quantity: z.number().finite().positive().max(MAX_DOLLARS),
+  quantity: z.number().finite().positive().max(MAX_LINE_QUANTITY),
   unitPrice: ocrMoney,
   isDelayed: z.boolean(),
 });
