@@ -211,6 +211,13 @@ export const classifications = {
         excludedByUsername: 'pii',
         excludedAt: 'internal',
     },
+    ExpenseQbClaim: {
+        id: 'internal',
+        orgId: 'internal',
+        qbTxnEntity: 'internal',
+        qbTxnId: 'internal',
+        claimedAt: 'internal',
+    },
     ExpenseReimburseeVendor: {
         id: 'internal',
         orgId: 'internal',
@@ -294,6 +301,8 @@ export const relations = {
     CapitalAsset: {
     },
     ExpenseQbMatchExclusion: {
+    },
+    ExpenseQbClaim: {
     },
     ExpenseReimburseeVendor: {
     },
