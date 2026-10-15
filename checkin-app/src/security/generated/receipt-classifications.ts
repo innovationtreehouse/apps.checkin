@@ -44,7 +44,7 @@ export const classifications = {
         ocrStartedAt: 'internal',
         duplicateFlaggedAt: 'internal',
         duplicateFlagClearedAt: 'internal',
-        duplicateSuspectReceiptId: 'internal',
+        duplicateSuspectReceiptId: 'pii',
         duplicateSuspectIsRejected: 'internal',
         validationNotes: 'personal',
         approvedAt: 'internal',

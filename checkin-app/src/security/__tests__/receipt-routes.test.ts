@@ -16,7 +16,8 @@
  *   3. FINANCE-only routes refuse a non-finance session; BOARD reads with
  *      FINANCE's view on every finance-or-board route but does not act; a
  *      sysadmin gets nothing beyond the submitter view.
- *   4. The submitter view never returns donor or reimbursee names.
+ *   4. The submitter view never returns donor or reimbursee names, or the id
+ *      of a suspected duplicate (another person's receipt); FINANCE sees it.
  *   5. The receipt file routes serve the uploader's own file and FINANCE's,
  *      and 404 anyone else's; both file columns are file-only.
  *   6. The submitter, shared and file routes admit an adult whose household
@@ -317,6 +318,24 @@ describe('the submitter view', () => {
     it("returns nothing of another person's receipt", () => {
         const out = stripValue('ReceiptView', row, own, { selfId: 8 } as CallerContext);
         expect(out).toEqual({ lineItems: [{}] });
+    });
+
+    it('strips the suspected-duplicate receipt id from the uploader on every receipt route', () => {
+        const flagged = { ...row, duplicateSuspectReceiptId: 'r-other', duplicateFlaggedAt: '2026-10-01T00:00:00.000Z' };
+        for (const endpoint of jsonRoutes) {
+            const views = new Map(getRoute(endpoint)!.orderedView);
+            const submitter = views.get('authenticated');
+            if (!submitter || !getRoute(endpoint)!.returns?.includes('ReceiptView')) continue;
+            const out = stripValue('ReceiptView', flagged, submitter, ctx) as Record<string, unknown>;
+            expect({ endpoint, leaked: 'duplicateSuspectReceiptId' in out }).toEqual({ endpoint, leaked: false });
+            expect(out.duplicateFlaggedAt).toBe(flagged.duplicateFlaggedAt);
+        }
+    });
+
+    it('returns the suspected-duplicate receipt id to FINANCE', () => {
+        const finance = new Map(getRoute('GET /api/receipts/[id]')!.orderedView).get('isFinance')!;
+        const out = stripValue('ReceiptView', { ...row, duplicateSuspectReceiptId: 'r-other' }, finance, { selfId: 5 } as CallerContext) as Record<string, unknown>;
+        expect(out.duplicateSuspectReceiptId).toBe('r-other');
     });
 
     it('drops a line item missing its owner stamp (fails closed)', () => {
