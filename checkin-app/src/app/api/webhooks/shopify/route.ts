@@ -144,7 +144,11 @@ export const POST = withWebhook({ provider: "shopify", verify: verifyShopifyHmac
         // "Send test notification" sample order, which carries no cart attributes.
         let outcome = "no membership or program attributes — ignored";
 
-        if (accountIdStr && programIdStr) {
+        if (accountIdStr && programIdStr && isShopifyTestNotification(order)) {
+            // A test-mode order moves no money; it never activates a seat or moves stock.
+            outcome = `test order for program ${programIdStr} — ignored`;
+            logger.info(`[SHOPIFY WEBHOOK] Test order ${order.id ?? "?"} for program ${programIdStr} — ignored`);
+        } else if (accountIdStr && programIdStr) {
             const participantIds = accountIdStr.split(',').map((id: string) => parseInt(id.trim(), 10)).filter((id: number) => !isNaN(id));
             const programId = parseInt(programIdStr, 10);
             outcome = "invalid CheckMeIn_Account_ID or Program_ID — ignored";
