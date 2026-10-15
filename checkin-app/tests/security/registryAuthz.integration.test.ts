@@ -107,6 +107,7 @@ describe('Registry route admission gates', () => {
     let plainUser: AuthenticatedUser;
     let programId: number;
     let eventId: number;
+    let otherPersonId: number;
     const householdIds: number[] = [];
     const participantIds: number[] = [];
     const ENV_BEFORE = process.env.CHECKIN_ENV;
@@ -136,6 +137,19 @@ describe('Registry route admission gates', () => {
             isOperations: false,
             isInventoryManager: false,
         };
+
+        // [personId] target outside the caller and their household, so
+        // self/own-household edit guards never decide the case.
+        const other = await prisma.person.create({
+            data: {
+                name: 'Authz Other',
+                email: `other-${TAG}@example.com`,
+                household: { create: { name: `Other ${TAG}` } },
+            },
+        });
+        participantIds.push(other.id);
+        householdIds.push(other.householdId);
+        otherPersonId = other.id;
 
         // For the public route's 2xx sanity (programs/[id]). orgMemberOnly defaults
         // false, so an anonymous caller is admitted and sees it.
@@ -171,14 +185,15 @@ describe('Registry route admission gates', () => {
         if (typeof verb !== 'function') {
             throw new Error(`${plan.endpoint}: no ${plan.method} export — registry/route out of sync`);
         }
-        // Event routes carry an EVENT id in [id]; everything else uses the
-        // program id (the only other seeded resource).
+        // Event routes carry an EVENT id in [id]; [personId] is the other
+        // person; everything else uses the program id.
         const idValue = String(plan.routePath.startsWith('/api/events/') ? eventId : programId);
-        const url = `http://localhost${plan.routePath.replace(/\[(\w+)\]/g, idValue)}`;
+        const valueFor = (name: string) => (name === 'personId' ? String(otherPersonId) : idValue);
+        const url = `http://localhost${plan.routePath.replace(/\[(\w+)\]/g, (_, name: string) => valueFor(name))}`;
         const hasParams = /\[(\w+)\]/.test(plan.routePath);
         const ctx = hasParams
             ? { params: Promise.resolve(Object.fromEntries(
-                  [...plan.routePath.matchAll(/\[(\w+)\]/g)].map(m => [m[1], idValue]),
+                  [...plan.routePath.matchAll(/\[(\w+)\]/g)].map(m => [m[1], valueFor(m[1])]),
               )) }
             : undefined;
         return verb(new Request(url, { method: plan.method }), ctx);
