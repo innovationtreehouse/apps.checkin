@@ -45,7 +45,7 @@ describe('POST /api/programs/[id]/sync-shopify', () => {
     beforeAll(async () => {
         // Route reaches the Shopify MOCK only when CHECKIN_ENV=local (jest.setup
         // sets 'dev'). config reads process.env live per call, so flip it here and
-        // restore in afterAll — --runInBand shares the process with sibling suites.
+        // restore in afterAll — the jest worker runs sibling suites in this process.
         prevCheckinEnv = process.env.CHECKIN_ENV;
         process.env.CHECKIN_ENV = 'local';
 
