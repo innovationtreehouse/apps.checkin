@@ -212,7 +212,7 @@ model ExpenseLineItem {
   /// @sensitivity:internal
   allocatedDiscountCents Int?  @map("allocated_discount_cents")
   // QuickBooks match state: UNMATCHED | MATCHED | CREATED | AMBIGUOUS | BEFORE_LINE | POST_FAILED.
-  // qb_txn_id is the claimed QuickBooks entry; unique, so an entry is claimed by one line at most.
+  // Read only: the expense holds its QuickBooks entry; qb_txn_id is unique, so a line held an entry at most once.
   /// @sensitivity:internal
   qbMatchState      String   @default("UNMATCHED") @map("qb_match_state")
   /// @sensitivity:internal
