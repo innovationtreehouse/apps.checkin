@@ -1,5 +1,6 @@
 // Inputs the services accept. Money in the upload and edit shapes is in dollars, as typed.
 import { z } from "zod";
+import { MAX_LINE_QUANTITY } from "@inventory/receipt-types";
 
 export const MAX_LINE_ITEMS = 200;
 export const MAX_IMPORT_BATCH = 50;
@@ -8,13 +9,15 @@ const MAX_FILE_BASE64 = Math.ceil((10 * 1024 * 1024) / 3) * 4;
 
 const finite = z.number().finite();
 const nonNegative = finite.nonnegative();
+const quantity = finite.positive().max(MAX_LINE_QUANTITY);
+const cents = z.number().int().nonnegative();
 const dollarString = z.string().refine((v) => Number.isFinite(parseFloat(v)), { message: "must be a finite number" });
 
 export const LineItemSchema = z.object({
   description: z.string().min(1).max(500),
   partNumber: z.string().max(100).nullable().optional(),
   manufacturer: z.string().max(100).nullable().optional(),
-  quantity: z.coerce.number().finite().positive(),
+  quantity: z.coerce.number().finite().positive().max(MAX_LINE_QUANTITY),
   unitPrice: z.coerce.number().finite().nonnegative(),
   isDelayed: z.boolean().optional(),
 });
@@ -74,7 +77,7 @@ export const AddLineItemSchema = z.object({
   description: z.string().min(1).max(500),
   partNumber: z.string().max(100).nullable().optional(),
   manufacturer: z.string().max(100).nullable().optional(),
-  quantity: finite.positive().optional(),
+  quantity: quantity.optional(),
   unitPrice: nonNegative.optional(),
   isDelayed: z.boolean().optional(),
 });
@@ -96,7 +99,7 @@ export const EditLineItemSchema = z
     description: z.string().min(1).max(500).optional(),
     partNumber: z.string().max(100).nullable().optional(),
     manufacturer: z.string().max(100).nullable().optional(),
-    quantity: finite.positive().optional(),
+    quantity: quantity.optional(),
     unitPrice: nonNegative.optional(),
     isDelayed: z.boolean().optional(),
   })
@@ -117,9 +120,9 @@ export const ImportLineItemSchema = z.object({
   partNumber: z.string().max(100).nullable().optional(),
   manufacturer: z.string().max(100).nullable().optional(),
   // May be fractional for consumables bought by weight or volume.
-  quantity: z.number().positive(),
-  unitPriceCents: z.number().int(),
-  totalPriceCents: z.number().int(),
+  quantity,
+  unitPriceCents: cents,
+  totalPriceCents: cents,
   isDelayed: z.boolean(),
 });
 
@@ -137,10 +140,10 @@ export const ImportReceiptSchema = z
     orderNumber: z.string().max(200).nullable().optional(),
     receiptDate: z.string().max(50).nullable().optional(),
     currency: z.string().max(10).default("USD"),
-    shippingCents: z.number().int(),
-    taxCents: z.number().int(),
-    discountCents: z.number().int(),
-    receiptTotalCents: z.number().int(),
+    shippingCents: cents,
+    taxCents: cents,
+    discountCents: cents,
+    receiptTotalCents: cents,
     mimeType: z.string().max(100),
     fileBase64: z.string().min(1).max(MAX_FILE_BASE64),
     lineItems: z.array(ImportLineItemSchema).min(1).max(MAX_LINE_ITEMS),
