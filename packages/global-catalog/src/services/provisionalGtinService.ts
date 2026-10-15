@@ -7,7 +7,7 @@ import type { ProvisionalItem, ProvisionalItemStatus, UsageBehavior } from "../d
 import { buildProvisionalGtin13, isProvisionalGtin13, parseProvisionalSequence } from "../lib/gtin";
 import { ServiceError, reviewTransitionError } from "./categoryService";
 import { allocateAndInsertItem, resolveItemContext } from "./itemService";
-import { emitOrgEvent, recordTransition } from "./orgEventService";
+import { emitOrgEvent, recordTransition, transactionWithEvents } from "./orgEventService";
 import { getCanonicalConversion } from "./referenceMatchingService";
 import { assertProvisionalProposalTransition } from "../workflows/provisional-proposal.machine";
 import type { ProvisionalProposalContext } from "../workflows/provisional-proposal.machine";
@@ -118,7 +118,7 @@ export async function approveProvisionalProposal(
 
   const now = new Date();
 
-  return db.$transaction(async (tx) => {
+  return transactionWithEvents(async (tx) => {
     const claimed = await proposalRepo.transitionProvisionalItem(tx, proposalId, proposal.status, { status: approvedStatus, reviewedByUserId: userId, reviewedAt: now });
     if (claimed === 0) throw new ServiceError(409, ALREADY_REVIEWED);
 
@@ -182,7 +182,7 @@ export async function rejectProvisionalProposal(
   }
 
   const now = new Date();
-  await db.$transaction(async (tx) => {
+  await transactionWithEvents(async (tx) => {
     const claimed = await proposalRepo.transitionProvisionalItem(tx, proposalId, proposal.status, { status: rejectedStatus, reviewedByUserId: userId, reviewedAt: now, rejectionReason: reason });
     if (claimed === 0) throw new ServiceError(409, ALREADY_REVIEWED);
     await recordTransition(tx, "provisional_item_proposal", proposalId, proposal.status, rejectedStatus, userId, reason);
@@ -218,7 +218,7 @@ export async function mapProvisionalToExisting(
   const canonical = await getCanonicalConversion(realGtin13);
 
   const now = new Date();
-  await db.$transaction(async (tx) => {
+  await transactionWithEvents(async (tx) => {
     const claimed = await proposalRepo.transitionProvisionalItem(tx, proposalId, proposal.status, { status: mappedStatus, reviewedByUserId: userId, reviewedAt: now, resultGtin13: realGtin13 });
     if (claimed === 0) throw new ServiceError(409, ALREADY_REVIEWED);
 

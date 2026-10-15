@@ -17,6 +17,7 @@ export * from "./lib/services/provisionalItemService";
 export * from "./lib/services/receiptService";
 export * from "./lib/services/receiveQueueService";
 export * from "./lib/services/serviceError";
+export * from "./lib/services/orgEventConsumer";
 
 export * from "./workflows/index";
 
@@ -40,4 +41,6 @@ export type {
   InventoryRouteCtx,
   InventoryBag,
   InventoryRouteHandler,
+  OrgEventRecord,
+  CatalogEventSource,
 } from "./contract";

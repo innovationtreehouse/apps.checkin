@@ -33,4 +33,6 @@ export type {
   CatalogRouteCtx,
   CatalogBag,
   CatalogRouteHandler,
+  OrgEventRecord,
+  OrgEventConsumer,
 } from "./contract";

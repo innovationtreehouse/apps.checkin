@@ -7,7 +7,7 @@ const challengeRepo = createConversionChallengeRepository(db);
 const itemRefRepo = createItemReferenceRepository(db);
 import { ServiceError, reviewTransitionError } from "./categoryService";
 import { assertConversionChallengeTransition } from "../workflows/conversion-challenge.machine";
-import { emitOrgEvent, recordTransition } from "./orgEventService";
+import { emitOrgEvent, recordTransition, transactionWithEvents } from "./orgEventService";
 
 const ALREADY_REVIEWED = "Challenge was already reviewed";
 
@@ -54,7 +54,7 @@ export async function acceptChallenge(challengeId: number, userId: number): Prom
   const ref = await itemRefRepo.findById(challenge.itemReferenceId);
   if (!ref) throw new ServiceError(404, "Item reference not found");
 
-  await db.$transaction(async (tx) => {
+  await transactionWithEvents(async (tx) => {
     const { count } = await tx.conversionChallenge.updateMany({
       where: { id: challengeId, status: challenge.status },
       data: { status: acceptedStatus, reviewedByUserId: userId, reviewedAt: new Date() },
@@ -89,7 +89,7 @@ export async function rejectChallenge(challengeId: number, userId: number): Prom
     throw reviewTransitionError(err, challenge.status !== "pending", ALREADY_REVIEWED);
   }
 
-  await db.$transaction(async (tx) => {
+  await transactionWithEvents(async (tx) => {
     const { count } = await tx.conversionChallenge.updateMany({
       where: { id: challengeId, status: challenge.status },
       data: { status: rejectedStatus, reviewedByUserId: userId, reviewedAt: new Date() },

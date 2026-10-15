@@ -82,11 +82,21 @@ describeDb("S5 remap", () => {
     expect(await cursor()).toBe(events.length);
   });
 
-  it("replay is a no-op: events at or below the cursor are skipped", async () => {
+  it("replay is a no-op: a re-applied event changes nothing and audits nothing new", async () => {
     await provisionalLine("pending_review");
-    await orgEventConsumer.onOrgEvents([approved(5)]);
-    await orgEventConsumer.onOrgEvents([approved(5)]);
+    const rejected = event(6, "provisional_rejected", { provisionalGtin13: "2000000000022", rejectionReason: "dup" });
+    await orgEventConsumer.onOrgEvents([approved(5), rejected]);
+    await orgEventConsumer.onOrgEvents([approved(5), rejected]);
     expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(1);
+    expect(await db.workflowAuditLog.count({ where: { eventType: "provisional_rejected" } })).toBe(1);
+  });
+
+  it("an event committed after a higher id is still applied, and the cursor does not move back", async () => {
+    const ls = await provisionalLine("pending_review");
+    await orgEventConsumer.onOrgEvents([event(8, "provisional_rejected", { provisionalGtin13: "2000000000022", rejectionReason: "dup" })]);
+    await orgEventConsumer.onOrgEvents([approved(7)]);
+    expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).assignedGtin13).toBe(REAL);
+    expect(await cursor()).toBe(8);
   });
 
   it("an event for another org is rejected, audited, and the cursor advances past it", async () => {
@@ -115,7 +125,20 @@ describeDb("catch-up sweep", () => {
     });
     expect(await catchUpOrgEvents()).toEqual({ applied: 2, failed: 1 });
     expect(await cursor()).toBe(2);
-    expect(await catchUpOrgEvents({ limit: 1 })).toEqual({ applied: 0, failed: 1 });
-    expect(asked).toEqual([0, 2]);
+    expect(await catchUpOrgEvents()).toEqual({ applied: 2, failed: 1 });
+    expect(asked).toEqual([0, 0]);
+  });
+
+  it("catch-up re-reads behind the cursor, so an event that committed late is not skipped", async () => {
+    const ls = await provisionalLine("pending_review");
+    // Event 8 committed and was applied first; event 7 committed after it.
+    await orgEventConsumer.onOrgEvents([event(8, "provisional_rejected", { provisionalGtin13: "2000000000022", rejectionReason: "dup" })]);
+    configure({ catalogEventSource: { eventsSince: async (_org, since) => [approved(7), event(8, "provisional_rejected", { provisionalGtin13: "2000000000022", rejectionReason: "dup" })].filter((e) => e.id > since) } });
+
+    expect(await catchUpOrgEvents()).toEqual({ applied: 2, failed: 0 });
+
+    expect((await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: ls.id } })).assignedGtin13).toBe(REAL);
+    expect(await db.workflowAuditLog.count({ where: { eventType: "provisional_rejected" } })).toBe(1);
+    expect(await cursor()).toBe(8);
   });
 });

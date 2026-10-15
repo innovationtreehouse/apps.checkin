@@ -8,6 +8,18 @@ import { getOrg, ports } from "../runtime";
 // ponytail: one cursor row (single org); key it by org if the host goes multi-org.
 const CURSOR_ROW = 1;
 
+/**
+ * How far behind the cursor catch-up re-reads. Catalog ids are assigned at insert, not at
+ * commit, so an event with a lower id can commit after a higher one was applied. Every action
+ * here is set-to-value or a deduped audit row, so re-applying an event changes nothing.
+ */
+export const ORG_EVENT_LOOKBACK = 100;
+
+/** Whether this event already wrote its audit row, so a replay does not write it again. */
+async function alreadyAudited(eventType: string, eventId: number): Promise<boolean> {
+  return (await db.workflowAuditLog.count({ where: { eventType, details: { contains: `"eventId":${eventId},` } } })) > 0;
+}
+
 async function readCursor(): Promise<number> {
   const row = await db.workflowSystemData.findUnique({ where: { id: CURSOR_ROW } });
   return row?.orgEventCursor ?? 0;
@@ -71,7 +83,7 @@ async function applyEvent(event: OrgEventRecord): Promise<void> {
   if (event.orgId !== orgId) {
     // Not ours to apply: record it and move past, so one stray event cannot halt the feed.
     console.error(`[workflow-mapping/org-events] event ${event.id} is for another org; skipped`);
-    await insertAuditEvent(db, {
+    if (!(await alreadyAudited("org_event_rejected", event.id))) await insertAuditEvent(db, {
       orgId,
       actorUserId: null,
       eventType: "org_event_rejected",
@@ -89,11 +101,12 @@ async function applyEvent(event: OrgEventRecord): Promise<void> {
       break;
     case "provisional_rejected":
       // The machine has no way back to pending_review, so a rejection is recorded only.
+      if (await alreadyAudited("provisional_rejected", event.id)) break;
       await insertAuditEvent(db, {
         orgId,
         actorUserId: null,
         eventType: "provisional_rejected",
-        details: JSON.stringify({ provisionalGtin13: ev.provisionalGtin13, rejectionReason: ev.rejectionReason }),
+        details: JSON.stringify({ eventId: event.id, provisionalGtin13: ev.provisionalGtin13, rejectionReason: ev.rejectionReason }),
       });
       break;
     default:
@@ -104,28 +117,26 @@ async function applyEvent(event: OrgEventRecord): Promise<void> {
 }
 
 /**
- * S5 handler, registered with the catalog's post-commit call-out. Applies events in id order
- * and advances the cursor after each; a throw leaves the cursor behind the failed event.
+ * S5 handler, registered with the catalog's post-commit call-out. Applies every event it is
+ * handed, in id order, including one below the cursor (a late commit); the cursor only moves
+ * forward. A throw leaves the cursor behind the failed event.
  */
 export const orgEventConsumer: OrgEventConsumer = {
   async onOrgEvents(events) {
-    const cursor = await readCursor();
-    for (const event of [...events].sort((a, b) => a.id - b.id)) {
-      if (event.id <= cursor) continue;
-      await applyEvent(event);
-    }
+    for (const event of [...events].sort((a, b) => a.id - b.id)) await applyEvent(event);
   },
 };
 
 /**
- * Catch-up sweep: replay events past the cursor through the replay port. Stops at the first
- * failure (the cursor cannot skip it). Returns counts only.
+ * Catch-up sweep: replay events from a lookback window behind the cursor through the replay
+ * port. Stops at the first failure (the cursor cannot skip it). Returns counts only.
  */
 export async function catchUpOrgEvents(opts: { limit?: number } = {}): Promise<{ applied: number; failed: number }> {
   const limit = opts.limit ?? 500;
   const cursor = await readCursor();
-  const events = (await ports().catalogEventSource.eventsSince((await getOrg()).id, cursor))
-    .filter((e) => e.id > cursor)
+  const since = Math.max(0, cursor - ORG_EVENT_LOOKBACK);
+  const events = (await ports().catalogEventSource.eventsSince((await getOrg()).id, since))
+    .filter((e) => e.id > since)
     .sort((a, b) => a.id - b.id)
     .slice(0, limit);
 

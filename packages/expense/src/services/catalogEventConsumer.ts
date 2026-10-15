@@ -66,8 +66,15 @@ export async function consumeCatalogEvent(raw: unknown): Promise<ConsumeResult> 
 }
 
 /**
- * Catch-up sweep: retries failed events, then reads events past the cursor (max received id)
- * from the catalog. The host's daily reconcile cron step calls it. Capped; counts only.
+ * How far behind the cursor catch-up re-reads. Catalog ids are assigned at insert, not at
+ * commit, so an event with a lower id can commit after a higher one was consumed.
+ */
+export const CATALOG_EVENT_LOOKBACK = 100;
+
+/**
+ * Catch-up sweep: retries failed events, then reads the catalog's events from a lookback
+ * window behind the cursor (max received id), skipping ids already in the ledger. The host's
+ * daily reconcile cron step calls it. Capped; counts only.
  */
 export async function catchUpCatalogEvents(limit = 200): Promise<Record<ConsumeResult, number>> {
   const counts: Record<ConsumeResult, number> = { processed: 0, duplicate: 0, failed: 0 };
@@ -76,7 +83,11 @@ export async function catchUpCatalogEvents(limit = 200): Promise<Record<ConsumeR
   for (const r of failed) {
     counts[await consumeCatalogEvent({ id: r.id, orgId: r.orgId, eventType: r.eventType, payload: r.payload, createdAt: r.receivedAt })]++;
   }
-  const fresh = await getExpenseRuntime().catalogEvents.eventsAfter(await repo.getMaxId());
+  const from = Math.max(0, (await repo.getMaxId()) - CATALOG_EVENT_LOOKBACK);
+  const received = new Set(await repo.idsAfter(from));
+  const fresh = (await getExpenseRuntime().catalogEvents.eventsAfter(from)).filter(
+    (raw) => !received.has(CatalogOrgEventSchema.pick({ id: true }).parse(raw).id),
+  );
   for (const raw of fresh.slice(0, Math.max(0, limit - failed.length))) counts[await consumeCatalogEvent(raw)]++;
   return counts;
 }
