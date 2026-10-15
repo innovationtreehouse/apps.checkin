@@ -44,6 +44,10 @@ RUN npm -w checkin-app exec -- prisma generate
 # build` to trace into the standalone bundle. Also re-emits each library's
 # committed security classifications (idempotent).
 RUN scripts/each-library.sh run db:generate
+# The Shopify mirror's client (lib/shopifyRead/client.ts). Not a checkin-hosted library:
+# s-read owns and migrates that database, so it stays out of libraries.json and is
+# generated here explicitly, with its committed security classifications.
+RUN npm -w @inventory/s-ingest-core run db:generate:checkin && npm -w @inventory/s-ingest-core run db:generate:security
 # Build stamp surfaced in the app footer: the deployed commit SHA, passed via
 # --build-arg by the deploy workflow and inlined into the bundle (NEXT_PUBLIC_*,
 # build-time). Empty in local/ad-hoc builds -> the footer shows "dev".

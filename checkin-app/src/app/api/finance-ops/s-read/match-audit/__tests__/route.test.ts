@@ -3,10 +3,11 @@
  */
 /**
  * Unit tests for /api/finance-ops/s-read/match-audit — the deny paths (401 anon /
- * 403 plain member through the REAL withAuth, never running the audit) and the
+ * 403 plain member through the REAL handler(), never running the audit) and the
  * status contract (503 unwired / 200 passthrough / 500 on failure). The audit's
  * bucketing logic itself is covered in lib/finance/__tests__/matchAudit.test.ts.
  */
+import type { NextRequest } from 'next/server';
 import { GET } from '../route';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -19,7 +20,7 @@ jest.mock('@/lib/finance/matchAudit', () => ({
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const mockSession = require('next-auth/next').getServerSession;
 
-const req = () => new Request('http://localhost/api/finance-ops/s-read/match-audit');
+const req = () => new Request('http://localhost/api/finance-ops/s-read/match-audit') as unknown as NextRequest;
 
 const HEALTHY = {
     configured: true,

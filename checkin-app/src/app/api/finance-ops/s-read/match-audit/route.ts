@@ -1,8 +1,6 @@
-import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
-import { withAuth } from "@/lib/auth";
-import { apiError } from "@/lib/api-response";
-import { runMatchAudit } from "@/lib/finance/matchAudit";
+import { ApiResponseError, handler } from "@/security/handler";
+import { runMatchAudit, type MatchAuditResult } from "@/lib/finance/matchAudit";
 
 /**
  * GET /api/finance-ops/s-read/match-audit — the bidirectional Shopify ↔ activation
@@ -18,22 +16,19 @@ import { runMatchAudit } from "@/lib/finance/matchAudit";
  * Same board gate + mirror-503 shape as the sibling s-read routes, so the
  * page can treat "not wired here" uniformly.
  */
-export const GET = withAuth(
-    { roles: ['isBoardMember'] },
-    async (_req, auth) => {
-        if (auth.type !== 'session') {
-            return apiError("Unauthorized", 401);
-        }
-
+export const GET = handler(
+    "GET /api/finance-ops/s-read/match-audit",
+    async () => {
+        let result: MatchAuditResult;
         try {
-            const result = await runMatchAudit();
-            if (!result.configured) {
-                return apiError("The Shopify mirror is not wired in this environment", 503);
-            }
-            return NextResponse.json(result);
+            result = await runMatchAudit();
         } catch (error) {
             logger.error("Match audit failed:", error);
-            return apiError("Failed to run the match audit", 500);
+            throw new ApiResponseError(500, "Failed to run the match audit");
         }
+        if (!result.configured) {
+            throw new ApiResponseError(503, "The Shopify mirror is not wired in this environment");
+        }
+        return { MatchAuditReport: result };
     },
 );

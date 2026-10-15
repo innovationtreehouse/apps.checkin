@@ -90,6 +90,8 @@ const customJestConfig = {
         '^@inventory/bulk-donation$': '<rootDir>/../packages/bulk-donation/src/index.ts',
         '^@inventory/expense/(.*)$': '<rootDir>/../packages/expense/src/$1',
         '^@inventory/expense$': '<rootDir>/../packages/expense/src/index.ts',
+        // The Shopify mirror's generated client (lib/shopifyRead/client.ts).
+        '^@inventory/s-ingest-core/client$': '<rootDir>/../packages/s-ingest-core/src/generated/checkin-prisma/client.ts',
         '^@inventory/receipt/(.*)$': '<rootDir>/../packages/receipt/src/$1',
         '^@inventory/receipt$': '<rootDir>/../packages/receipt/src/index.ts',
         // Shared packages the libraries import; their `exports` declare only `import`.

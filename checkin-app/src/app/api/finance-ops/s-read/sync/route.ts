@@ -1,8 +1,6 @@
-import { NextResponse } from "next/server";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { logger } from "@/lib/logger";
-import { withAuth } from "@/lib/auth";
-import { apiError } from "@/lib/api-response";
+import { ApiResponseError, handler } from "@/security/handler";
 import { config } from "@/lib/config";
 import { isConfigured, latestSyncRun } from "@/lib/shopifyRead/client";
 
@@ -38,16 +36,14 @@ import { isConfigured, latestSyncRun } from "@/lib/shopifyRead/client";
  *
  * GET on the same path reports the latest run's status — see below.
  */
-export const POST = withAuth(
-    { roles: ['isBoardMember'] },
-    async (_req, auth) => {
-        if (auth.type !== 'session') {
-            return apiError("Unauthorized", 401);
-        }
+export const POST = handler(
+    "POST /api/finance-ops/s-read/sync",
+    async ({ auth }) => {
+        if (auth.type !== 'session') throw new ApiResponseError(401, "Unauthorized");
 
         const functionName = config.sReadTriggerFunction();
         if (!functionName) {
-            return apiError("Shopify sync is not wired in this environment", 503);
+            throw new ApiResponseError(503, "Shopify sync is not wired in this environment");
         }
 
         try {
@@ -65,10 +61,10 @@ export const POST = withAuth(
             );
 
             logger.info(`[s-read] manual incremental sync triggered by user ${auth.user.id}`);
-            return NextResponse.json({ success: true });
+            return { SReadSyncTrigger: { success: true } };
         } catch (error) {
             logger.error("Failed to trigger s-read sync:", error);
-            return apiError("Failed to start the Shopify sync", 500);
+            throw new ApiResponseError(500, "Failed to start the Shopify sync");
         }
     },
 );
@@ -91,22 +87,18 @@ export const POST = withAuth(
  * The status is read verbatim from the mirror; the caller decides what to do with a
  * value it does not recognise (s-read owns that enum and may extend it).
  */
-export const GET = withAuth(
-    { roles: ['isBoardMember'] },
-    async (_req, auth) => {
-        if (auth.type !== 'session') {
-            return apiError("Unauthorized", 401);
-        }
-
+export const GET = handler(
+    "GET /api/finance-ops/s-read/sync",
+    async () => {
         if (!isConfigured()) {
-            return apiError("The Shopify mirror is not wired in this environment", 503);
+            throw new ApiResponseError(503, "The Shopify mirror is not wired in this environment");
         }
 
         try {
-            return NextResponse.json({ run: await latestSyncRun() });
+            return { SyncRun: await latestSyncRun() };
         } catch (error) {
             logger.error("Failed to read the s-read sync status:", error);
-            return apiError("Failed to read the Shopify sync status", 500);
+            throw new ApiResponseError(500, "Failed to read the Shopify sync status");
         }
     },
 );
