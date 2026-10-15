@@ -1061,6 +1061,12 @@ model Program {
   /// Never re-sent; a person checks Shopify and settles it.
   /// @sensitivity:internal
   shopifyStockUnconfirmed   Int       @default(0)
+  /// Claim on the Shopify product sync: one run per program, held without a DB
+  /// transaction across the Shopify calls. A claim past its stale age may be taken over.
+  /// @sensitivity:internal
+  shopifySyncStartedAt      DateTime?
+  /// @sensitivity:internal
+  shopifySyncToken          String?
 
   volunteers   ProgramVolunteer[]
   participants ProgramParticipant[]
