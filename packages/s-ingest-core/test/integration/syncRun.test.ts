@@ -84,6 +84,17 @@ describeDb("withSyncRun", () => {
     expect(beats[0]).toMatchObject({ status: SyncStatus.FAILED, error: "kaboom" });
   });
 
+  it("redacts secrets from the stored error and the heartbeat", async () => {
+    const beats: RunHeartbeat[] = [];
+    await expect(
+      withSyncRun(prisma, STORE, SyncKind.INCREMENTAL, "orders", async () => {
+        throw new Error("401 from X-Shopify-Access-Token: shpat_0123456789abcdef");
+      }, { heartbeat: (b) => void beats.push(b) }),
+    ).rejects.toThrow();
+    expect((await latestRun())?.error).toBe("401 from X-Shopify-Access-Token: [redacted]");
+    expect(beats[0]).toMatchObject({ error: "401 from X-Shopify-Access-Token: [redacted]" });
+  });
+
   it("never fires a heartbeat for an ADMIN run (replay/reset must not reset freshness)", async () => {
     const beats: RunHeartbeat[] = [];
     await withSyncRun(prisma, STORE, SyncKind.ADMIN, "reset-watermark", async () => ({ ok: true }), {
