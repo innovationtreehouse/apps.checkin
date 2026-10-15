@@ -1,5 +1,6 @@
-import { Prisma } from "@/generated/prisma/client";
+import type { Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { logger } from "@/lib/logger";
 import { certifyPaymentPlan, PaymentError } from "./payment";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, grantableRenewalWhere, handledThisCycleWhere, fromWhere } from "@/lib/membership/lifecycle";
@@ -355,7 +356,7 @@ export async function createRenewalProcess(orgMembershipId: number) {
             return created;
         });
     } catch (e) {
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        if (isPrismaError(e, "P2002")) {
             logger.info("Renewal already in flight for membership %d — concurrent open, skipping", orgMembershipId);
             return null;
         }

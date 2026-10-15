@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { logBackendError } from "@/lib/logger";
@@ -8,14 +9,6 @@ export const dynamic = "force-dynamic";
 
 /** Thrown inside the transaction when the id no longer resolves — caught below and mapped to a 404. */
 class NotFoundError extends Error {}
-
-// Prisma known-request errors carry a string `code`. Duck-typed so we don't
-// pull in the generated Prisma namespace just for one check (mirrors
-// programs/[id]/participants/route.ts).
-function isPrismaError(error: unknown, code: string): boolean {
-    return typeof error === "object" && error !== null && "code" in error
-        && (error as { code: unknown }).code === code;
-}
 
 /**
  * DELETE /api/membership-ops/bg-attestations/[id] — sysadmin-only cleanup for a

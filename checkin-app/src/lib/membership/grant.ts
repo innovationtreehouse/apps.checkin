@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
-import { Prisma, type OrgMembershipProcess } from "@/generated/prisma/client";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
+import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL } from "@/lib/membership/lifecycle";
 import type { DbClient } from "@/lib/db-client";
@@ -119,7 +120,7 @@ async function openInitial(
         });
     } catch (e) {
         // membership_one_inflight_initial: a concurrent start won; return its row.
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        if (isPrismaError(e, "P2002")) {
             const winner = await findInFlight(prisma);
             if (winner) return { process: winner, opened: false };
         }

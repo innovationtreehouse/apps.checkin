@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
-import { Prisma, type OrgMembershipProcess } from "@/generated/prisma/client";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
+import type { OrgMembershipProcess } from "@/generated/prisma/client";
 import { IN_FLIGHT_INITIAL_STATUSES } from "@/lib/membership/phases";
 import { getExternalStatus, advanceExternalIfComplete } from "@/lib/membership/external";
 import { householdBgIsFresh, nextBoundary, householdApplicationOpenOrBlockedWhere } from "@/lib/membership/renewal";
@@ -219,7 +220,7 @@ export async function startIntake(userId: number) {
     } catch (e) {
         // A rolling deploy can leave a pre-lock instance inserting concurrently — the
         // partial unique index then rejects the duplicate with P2002. Return the winner.
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        if (isPrismaError(e, "P2002")) {
             const winner = await prisma.orgMembershipProcess.findFirst({
                 where: { orgMembershipId: membership.id, kind: "INITIAL", status: { in: IN_FLIGHT_INITIAL_STATUSES } },
                 orderBy: { id: "desc" },
