@@ -27,6 +27,16 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
     count: async (u) =>
       process.env.EXPENSE_DATABASE_URL ? (await import("@/lib/expense/navCounts")).expenseLibraryCounts(u) : {},
   },
+  {
+    library: "bulk-donation",
+    visible: (u) => !!u.isFinance || !!u.isBoardMember,
+    count: async (): Promise<Record<string, number>> => {
+      if (!process.env.BULK_DONATION_DATABASE_URL) return {};
+      const { getNavCounts, getOrgId } = await import("@inventory/bulk-donation");
+      const { unassignedQueue, disbursementHolds } = await getNavCounts(await getOrgId());
+      return { unassignedQueue, disbursementHolds };
+    },
+  },
 ];
 
 /**

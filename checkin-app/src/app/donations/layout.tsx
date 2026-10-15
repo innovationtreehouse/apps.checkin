@@ -1,26 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Box, Center, Loader, Stack, Text } from "@mantine/core";
+import { Box } from "@mantine/core";
 import { SectionTabs } from "@/components/ui/SectionTabs";
-import { PageContainer } from "@/components/ui/PageContainer";
 import { CountBadge } from "@/components/ui/CountBadge";
 import { DONATION_NAV_LINKS, donationAreaLinks, isDonationViewerClient } from "@/lib/donationNav";
+import RevenueOpsLayout from "../finance-ops/layout";
 
 type NavCounts = { unassignedQueue: number; disbursementHolds: number };
 
+/** Revenue Ops chrome and gate, with the donation screens as a second tab row. */
 export default function DonationsLayout({ children }: { children: React.ReactNode }) {
-  const { data: session, status } = useSession();
-  const router = useRouter();
+  const { data: session } = useSession();
   const authorized = isDonationViewerClient(session?.user);
   const [counts, setCounts] = useState<NavCounts | null>(null);
-
-  useEffect(() => {
-    if (status === "unauthenticated") router.push("/");
-    else if (status === "authenticated" && !authorized) router.push("/");
-  }, [status, authorized, router]);
 
   useEffect(() => {
     if (!authorized) return;
@@ -31,21 +25,8 @@ export default function DonationsLayout({ children }: { children: React.ReactNod
       .catch(() => setCounts(null));
   }, [authorized]);
 
-  if (status === "loading") {
-    return (
-      <Center mih="60vh">
-        <Stack align="center">
-          <Loader />
-          <Text>Verifying Finance Access...</Text>
-        </Stack>
-      </Center>
-    );
-  }
-
-  if (!authorized) return null;
-
   return (
-    <PageContainer>
+    <RevenueOpsLayout>
       <SectionTabs
         links={donationAreaLinks}
         mb="md"
@@ -56,6 +37,6 @@ export default function DonationsLayout({ children }: { children: React.ReactNod
         }}
       />
       <Box style={{ minWidth: 0 }}>{children}</Box>
-    </PageContainer>
+    </RevenueOpsLayout>
   );
 }

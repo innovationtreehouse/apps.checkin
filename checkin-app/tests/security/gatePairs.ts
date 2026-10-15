@@ -135,4 +135,5 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'page /receipts/review', client: page('/receipts/review'), token: 'finance-or-board' },
     // The provider runs for every signed-in viewer; the approver rule it reports is paired on the page above.
     { name: 'counts:expense', client: counts('expense'), token: 'authenticated' },
+    { name: 'counts:bulk-donation', client: counts('bulk-donation'), token: 'finance-or-board' },
 ];
