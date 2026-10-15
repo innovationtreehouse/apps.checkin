@@ -946,9 +946,9 @@ defineOutbound({
 defineOutbound({
     surface: 'quickbooks.vendor',
     // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
-    // Vendor create and Vendor/Customer lookup by DisplayName only: a business
-    // name ('public') or a reimbursee's name ('pii'). Never an email, address or phone.
-    tiers: ['public', 'pii'],
+    // Vendor create and Vendor/Customer lookup carry the vendor display name only
+    // ('public'). Never an email, address or phone.
+    tiers: ['public'],
 });
 
 defineOutbound({
