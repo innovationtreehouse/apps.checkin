@@ -5,7 +5,7 @@
  * GET /api/cron/reconcile-shopify: the expense catch-up and program-stock heal steps are
  * isolated, so neither one's failure fails checkin's reconcile. Every step is mocked; prisma.cronRunLog is stubbed for withCron's stamp.
  */
-import { runExpenseCatchUp } from '@inventory/expense';
+import { runExpenseCatchUp, runExpenseQbPosting } from '@inventory/expense';
 import { runReconcile as runIncomeReconcile } from '@inventory/income';
 import { runReconcile } from '@/lib/finance/reconcile';
 import { runSaleSweep } from '@/lib/programs/saleSweep';
@@ -14,7 +14,7 @@ import prisma from '@/lib/prisma';
 import { GET } from '../route';
 
 jest.mock('@/lib/finance/reconcile', () => ({ runReconcile: jest.fn() }));
-jest.mock('@inventory/expense', () => ({ runExpenseCatchUp: jest.fn() }));
+jest.mock('@inventory/expense', () => ({ runExpenseCatchUp: jest.fn(), runExpenseQbPosting: jest.fn() }));
 jest.mock('@inventory/income', () => ({ runReconcile: jest.fn() }));
 jest.mock('@/lib/programs/saleSweep', () => ({ runSaleSweep: jest.fn() }));
 jest.mock('@/lib/shopify', () => ({ healProgramStock: jest.fn() }));
@@ -25,6 +25,8 @@ const RECONCILED = { configured: true, ordersScanned: 2, reversalsRaised: 0, fai
 const SALE_SWEEP = { salesEnded: 0, productsHidden: 0, unpaidNotified: 0 };
 const INCOME = { status: 'unbound' as const };
 const PROGRAM_STOCK = { checked: 0, settled: 0 };
+const CATCH_UP = { intake: { applied: 0, failed: 0 }, catalogEvents: { processed: 0, duplicate: 0, failed: 0 } };
+const QB_POSTING = { stranded: { checked: 0, failed: 0 }, qbPost: 'unbound' as const };
 const req = () =>
     new Request('http://localhost/api/cron/reconcile-shopify', { headers: { authorization: `Bearer ${SECRET}` } });
 
@@ -40,6 +42,8 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         jest.mocked(runSaleSweep).mockResolvedValue(SALE_SWEEP);
         jest.mocked(runIncomeReconcile).mockResolvedValue(INCOME);
         jest.mocked(healProgramStock).mockResolvedValue(PROGRAM_STOCK);
+        jest.mocked(runExpenseCatchUp).mockResolvedValue(CATCH_UP);
+        jest.mocked(runExpenseQbPosting).mockResolvedValue(QB_POSTING);
     });
 
     afterAll(() => {
@@ -47,19 +51,13 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         else process.env.CRON_SECRET = prev;
     });
 
-    it('returns the expense counts beside the reconcile result', async () => {
-        const counts = {
-            intake: { applied: 0, failed: 0 },
-            stranded: { checked: 0, failed: 0 },
-            catalogEvents: { processed: 0, duplicate: 0, failed: 0 },
-            qbPost: 'unbound' as const,
-        };
-        jest.mocked(runExpenseCatchUp).mockResolvedValue(counts);
-
+    it('returns the expense catch-up and QuickBooks posting counts under one expense key', async () => {
         const res = await GET(req());
 
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: counts, programStock: PROGRAM_STOCK });
+        const body = await res.json();
+        expect(body).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: { ...CATCH_UP, ...QB_POSTING }, programStock: PROGRAM_STOCK });
+        expect(Object.keys(body.expense).sort()).toEqual(['catalogEvents', 'intake', 'qbPost', 'stranded']);
     });
 
     it('a throwing expense step still answers 200 with the reconcile result', async () => {
@@ -76,12 +74,6 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
     });
 
     it('a throwing program-stock heal still answers 200 with the reconcile result', async () => {
-        jest.mocked(runExpenseCatchUp).mockResolvedValue({
-            intake: { applied: 0, failed: 0 },
-            stranded: { checked: 0, failed: 0 },
-            catalogEvents: { processed: 0, duplicate: 0, failed: 0 },
-            qbPost: 'unbound' as const,
-        });
         jest.mocked(healProgramStock).mockRejectedValue(new Error('stock db down'));
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
 

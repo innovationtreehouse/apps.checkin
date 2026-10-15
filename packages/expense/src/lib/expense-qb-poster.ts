@@ -1,7 +1,7 @@
 // QB-2 write path: drains the ExpenseEvent outbox into QuickBooks, one entry per expense
 // (a Bill to the reimbursee's Vendor, else a Purchase from the payment account), match before create.
 import { findOrCreate, qbKey, takeoverLine, type FindOrCreateResult, type TxnWrite } from "@inventory/quickbooks";
-import { db } from "../db";
+import { db, type Db } from "../db";
 import type { ExpensePosting } from "../contract";
 import { getExpenseRuntime } from "../runtime";
 import { MATCH_WINDOW_DAYS } from "../services/qbMatchService";
@@ -32,10 +32,18 @@ function notSendable(posting: ExpensePosting, e: { isTestData: boolean; vendorNa
 // ponytail: fixed per-run caps; move to ExpenseOrgSettings when finance needs to tune them.
 export const MAX_CREATES_PER_RUN = 25;
 export const MAX_CREATE_CENTS_PER_RUN = 2_500_000;
+export const MAX_CREATES_PER_DAY = 50;
 /** Failed posts before the drain stops retrying and hands the expense to finance. */
 export const MAX_POST_ATTEMPTS = 5;
 
 export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "not_sent" | "needs_finance";
+
+/** QuickBooks entries created since UTC midnight, counted from the audit rows settle() writes. */
+export async function qbCreatesToday(client: Db = db): Promise<number> {
+  const midnight = new Date();
+  midnight.setUTCHours(0, 0, 0, 0);
+  return client.expenseAuditLog.count({ where: { action: "qb_created", changedAt: { gte: midnight } } });
+}
 
 function shiftDate(isoDate: string, days: number): string {
   const d = new Date(`${isoDate}T00:00:00Z`);
@@ -111,7 +119,8 @@ async function buildWrite(orgId: string, payloadJson: string, posting: ExpensePo
  * BEFORE_LINE; a failure (QuickBooks down, rejected) → POST_FAILED, retried by the drain until
  * MAX_POST_ATTEMPTS, then NEEDS_FINANCE with a flag (finance's retry re-arms it); an
  * expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. With no
- * takeover date configured nothing is posted. A row lock serializes the request path and the cron drain.
+ * takeover date configured nothing is posted. At MAX_CREATES_PER_DAY the expense waits for the next
+ * UTC day, nothing recorded. A row lock serializes the request path and the cron drain.
  */
 export async function postExpenseToQb(orgId: string, expenseId: string): Promise<PostOutcome | "unbound" | "no_takeover_date"> {
   const posting = getExpenseRuntime().quickbooks.posting;
@@ -185,6 +194,8 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
       if ("error" in built) return fail(built.error);
       if ("queue" in built) return settle("queued", { qbMatchState: "AMBIGUOUS" }, built.queue);
 
+      // ponytail: concurrent posts can each see the count under the ceiling, so a day may overshoot by the in-flight posts.
+      if ((await qbCreatesToday(tx)) >= MAX_CREATES_PER_DAY) return "waiting";
       const { write, lineAccounts } = built;
       const date = write.fields.txnDate;
       const result: FindOrCreateResult = await findOrCreate(posting.client, {
@@ -223,11 +234,11 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
   );
 }
 
-export type DrainCounts = Record<PostOutcome, number> & { overCap: number; capped: "count" | "cents" | null };
+export type DrainCounts = Record<PostOutcome, number> & { overCap: number; capped: "count" | "cents" | "day" | null };
 
 /**
  * The catch-up drain: every outboxed expense not yet in QuickBooks, oldest receipt first. Stops
- * at the count and cents caps and logs the hit (the alarm hook); the rest waits for the next run.
+ * at the daily, count and cents caps and logs the hit (the alarm hook); the rest waits for the next run.
  * An expense over the cents cap on its own is posted alone, as the first post of a run, and
  * flagged for finance. Returns counts only.
  */
@@ -249,7 +260,13 @@ export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound" | "n
 
   const counts: DrainCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, overCap: 0, capped: null };
   let postedCents = 0;
+  const createdBefore = await qbCreatesToday();
   for (const [i, e] of due.entries()) {
+    if (createdBefore + counts.posted >= MAX_CREATES_PER_DAY) {
+      counts.capped = "day";
+      logWarn("qb_daily_cap", { cap: MAX_CREATES_PER_DAY, remaining: due.length - i });
+      break;
+    }
     const alone = e.receiptTotalCents > MAX_CREATE_CENTS_PER_RUN && counts.posted === 0;
     if (!alone && (counts.posted >= MAX_CREATES_PER_RUN || postedCents + e.receiptTotalCents > MAX_CREATE_CENTS_PER_RUN)) {
       counts.capped = counts.posted >= MAX_CREATES_PER_RUN ? "count" : "cents";

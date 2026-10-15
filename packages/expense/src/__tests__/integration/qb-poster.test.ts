@@ -8,9 +8,9 @@ import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, catalogResolving, principal, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
-import { MAX_CREATE_CENTS_PER_RUN, MAX_POST_ATTEMPTS, drainExpenseOutbox, postExpenseToQb } from "../../lib/expense-qb-poster";
+import { MAX_CREATE_CENTS_PER_RUN, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, drainExpenseOutbox, postExpenseToQb } from "../../lib/expense-qb-poster";
 import { resubmitHeldExpense, setHeldLineAccount } from "../../services/holdService";
-import { runExpenseCatchUp } from "../../services/sweeps";
+import { runExpenseQbPosting } from "../../services/sweeps";
 
 const PAYMENT_ACCOUNT = "41";
 const VENDOR = "77";
@@ -249,7 +249,7 @@ describeDb("QB-2 posting — retries and recovery", () => {
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbTxnId: null });
 
     qbo.mode = "ok";
-    const result = await runExpenseCatchUp();
+    const result = await runExpenseQbPosting();
     expect(result.qbPost).toMatchObject({ posted: 1 });
     expect((await expenseRow(id)).qbMatchState).toBe("CREATED");
   });
@@ -412,5 +412,64 @@ describeDb("QB-2 posting — per-run cents cap", () => {
     expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, overCap: 1 });
     expect((await expenseRow(large.id)).qbMatchState).toBe("CREATED");
     expect((await expenseRow(after.id)).qbMatchState).toBe("UNMATCHED");
+  });
+});
+
+describeDb("QB-2 posting — daily ceiling", () => {
+  /** Audit rows for `n` QuickBooks creates at `changedAt`, as settle() writes them. */
+  async function createdAt(n: number, changedAt: Date) {
+    const id = await seedExpense({ state: "qb_complete" });
+    await db.expenseAuditLog.createMany({
+      data: Array.from({ length: n }, () => ({ expenseId: id, userId: 0, action: "qb_created", fieldChanged: "qbMatchState", changedAt })),
+    });
+  }
+
+  it("at the ceiling nothing is sent: the expense waits, no attempt counted, and the drain logs the cap once", async () => {
+    await createdAt(MAX_CREATES_PER_DAY, new Date());
+    const a = await outboxed("2026-09-10");
+    await outboxed("2026-09-11");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(await postExpenseToQb(ORG, a.id)).toBe("waiting");
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, failed: 0, capped: "day" });
+
+    expect(qbo.posts).toHaveLength(0);
+    expect(await expenseRow(a.id)).toMatchObject({ qbMatchState: "UNMATCHED", qbPostAttempts: 0 });
+    expect(warn.mock.calls.filter(([m]) => String(m).includes('"qb_daily_cap"'))).toHaveLength(1);
+    warn.mockRestore();
+  });
+
+  it("the drain stops at the ceiling partway through a run", async () => {
+    await createdAt(MAX_CREATES_PER_DAY - 1, new Date());
+    const first = await outboxed("2026-09-10");
+    const second = await outboxed("2026-09-11");
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, capped: "day" });
+    expect((await expenseRow(first.id)).qbMatchState).toBe("CREATED");
+    expect((await expenseRow(second.id)).qbMatchState).toBe("UNMATCHED");
+  });
+
+  it("creates from before UTC midnight do not count", async () => {
+    const yesterday = new Date();
+    yesterday.setUTCHours(0, 0, 0, 0);
+    yesterday.setUTCMilliseconds(-1);
+    await createdAt(MAX_CREATES_PER_DAY, yesterday);
+    const { id } = await outboxed("2026-09-10");
+
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+  });
+
+  it("the post right after sign-off respects the ceiling and leaves the expense for a later run", async () => {
+    await createdAt(MAX_CREATES_PER_DAY, new Date());
+    bindPorts({ catalog: catalogResolving({}), quickbooks: { posting: posting() } });
+    const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 500 });
+    await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", isTestData: true, vendorName: "TEST-Acme" } });
+    await seedLineItem(id, { manualQbAccount: "60", totalPriceCents: 500 });
+    await signAllLines(id);
+
+    await checkAndProcessExpense(ORG, id);
+
+    expect(qbo.posts).toHaveLength(0);
+    expect(await expenseRow(id)).toMatchObject({ state: "qb_complete", qbMatchState: "UNMATCHED", qbPostAttempts: 0 });
   });
 });
