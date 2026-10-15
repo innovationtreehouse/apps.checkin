@@ -8,12 +8,13 @@
 import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
 import { PAGES } from '@/components/pageRegistry';
 import { isCatalogViewerClient } from '@/lib/catalogNav';
-import { EXPENSE_OPS_SECTION_ROLES, hasAnyRole } from '@/lib/libraryNav';
+import { EXPENSE_OPS_SECTION_ROLES, INVENTORY_LIBRARY_TABS, hasAnyRole, type LibraryTab } from '@/lib/libraryNav';
 import { canSubmitReceipts } from '@/lib/volunteer';
 import { LIBRARY_COUNT_PROVIDERS } from '@/lib/navLibraryCounts';
 import { LIBRARY_KEYS, type LibraryKey } from '@/lib/libraryRelease';
 import { ORG_DOMAIN } from '@/lib/config';
-import type { Authorize } from '@/security/core';
+import { getRoute, type Authorize } from '@/security/core';
+import '@/security/registry';
 import type { AuthenticatedUser } from '@/types/auth';
 
 const base: AuthenticatedUser = {
@@ -105,6 +106,20 @@ const page = (href: string): ClientGate => {
     return (user) => entry.visible(user, true, countsFor(user));
 };
 
+/** A registered route's own Authorize, read from the registry so the pair cannot drift from it. */
+const routeToken = (endpoint: string): Authorize => {
+    const route = getRoute(endpoint);
+    if (!route) throw new Error(`${endpoint} is not registered`);
+    return route.authorize;
+};
+
+/** A library tab's own `visible` for `href`, with every library released. */
+const tab = (slot: readonly LibraryTab[], href: string): ClientGate => {
+    const entry = slot.find((t) => t.href === href);
+    if (!entry) throw new Error(`${href} is not a registered library tab`);
+    return (user) => entry.visible(user, countsFor(user));
+};
+
 export type GatePair = {
     name: string;
     client: ClientGate;
@@ -119,6 +134,9 @@ export const GATE_PAIRS: GatePair[] = [
     { name: 'page /catalog', client: page('/catalog'), token: 'catalog-viewer' },
     { name: 'page /inventory/org-items', client: page('/inventory/org-items'), token: 'catalog-viewer' },
     { name: 'page /inventory/merge-conflicts', client: page('/inventory/merge-conflicts'), token: 'inventory-manager' },
+    { name: 'tab /inventory/receiving', client: tab(INVENTORY_LIBRARY_TABS, '/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
+    { name: 'page /inventory/receiving', client: page('/inventory/receiving'), token: routeToken('GET /api/workflow-mapping/receipts') },
+    { name: 'counts:workflow-mapping', client: counts('workflow-mapping'), token: routeToken('GET /api/workflow-mapping/receipts/counts') },
     { name: 'Expense Ops section', client: (u) => hasAnyRole(u, EXPENSE_OPS_SECTION_ROLES), token: 'finance-or-board' },
     { name: 'page /expense/settings', client: page('/expense/settings'), token: 'finance-or-board' },
     { name: 'page /budgets', client: page('/budgets'), token: 'finance-or-board' },

@@ -6,6 +6,7 @@
  */
 import type { SessionUser } from "@/types/auth";
 import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
+import { canSeeReceiving } from "@/lib/libraryNav";
 
 export type LibraryCounts = Partial<Record<LibraryKey, Record<string, number>>>;
 
@@ -36,6 +37,12 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
       const { unassignedQueue, disbursementHolds } = await getNavCounts(await getOrgId());
       return { unassignedQueue, disbursementHolds };
     },
+  },
+  {
+    library: "workflow-mapping",
+    visible: canSeeReceiving,
+    count: async () =>
+      process.env.WORKFLOW_MAPPING_DATABASE_URL ? (await import("@inventory/workflow-mapping")).receiptService.counts() : {},
   },
 ];
 

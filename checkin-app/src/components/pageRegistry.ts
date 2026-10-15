@@ -13,6 +13,7 @@ import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
 import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
 import { membershipOpsRouteVisible } from '@/lib/membershipOpsNav';
 import { isLibraryVisible, type LibraryKey } from '@/lib/libraryRelease';
+import { canSeeReceiving } from '@/lib/libraryNav';
 import { canSeeCatalog, canSubmitReceipts, type VolunteerClaims } from '@/lib/volunteer';
 
 export type RegistryUser = VolunteerClaims & {
@@ -70,7 +71,7 @@ const released = (lib: LibraryKey, gate: Visible): Visible => (u, signedIn, coun
   gate(u, signedIn, counts) && isLibraryVisible(lib, { isBoardMember: u?.isBoardMember, releasedLibraries: counts?.releasedLibraries });
 // Bulk donation (#1280 §5): FINANCE or BOARD, like its routes, until the board releases it.
 const DONATIONS = released('bulk-donation', FINANCE_OR_BOARD);
-const RECEIVING: Visible = (u, signedIn) => signedIn && (!!u?.isInventoryManager || !!u?.isFinance || !!u?.isBoardMember);
+const RECEIVING: Visible = (u, signedIn) => signedIn && canSeeReceiving(u);
 
 export type PageEntry = {
   href: string;
