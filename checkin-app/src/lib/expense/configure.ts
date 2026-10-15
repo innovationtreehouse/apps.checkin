@@ -2,13 +2,14 @@
  * Wire the expense library into checkin (#1272 §3/§6), called once at server boot from
  * instrumentation.ts. Binding touches no database: every port below reads lazily, inside a
  * request. Bound crossings: X3 (catalog reads), the S5 replay read (X2) and X12's QuickBooks
- * reads (bound on the receipt side). The QuickBooks reader goes through checkin's one guarded
- * client (off = no rows). The QuickBooks writer stays unbound (inert); it is a later crossing.
+ * reads (bound on the receipt side). The QuickBooks reader and finance's reimbursee Vendor
+ * create go through checkin's one guarded client (off = no rows, no create). The posting writer
+ * stays unbound (inert); it is a later crossing.
  */
-import { configureExpense } from "@inventory/expense";
-import type { ExpensePrincipal, OwnerDirectory, QbReader, QbTxn, SignoffDirectory } from "@inventory/expense";
+import { configureExpense, reimburseeVendorId } from "@inventory/expense";
+import type { ExpensePrincipal, OwnerDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@inventory/expense";
 import { dollarsToCents } from "@inventory/money";
-import type { QboBill, QboPurchase } from "@inventory/quickbooks";
+import { createVendor, type QboBill, type QboPurchase } from "@inventory/quickbooks";
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg, sessionUser } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
@@ -166,6 +167,16 @@ const qbReader: QbReader = {
   },
 };
 
+/** Finance's find-or-create of a reimbursee's Vendor, through the guarded client (off = null). */
+const qbVendors: QbVendors = {
+  async findOrCreate(name, key) {
+    const qb = await quickBooks();
+    if (!qb) return null;
+    const { id, displayName } = await createVendor(qb, name, key);
+    return { id, displayName };
+  },
+};
+
 export function configureRuntime(): void {
   configureExpense({
     org: getOrg,
@@ -174,6 +185,6 @@ export function configureRuntime(): void {
     signoff,
     catalog: catalogReader,
     catalogEvents: { eventsAfter: async (afterId) => catalogEventsSince((await getOrg()).id, afterId) },
-    quickbooks: { reader: qbReader },
+    quickbooks: { reader: qbReader, refs: { paymentAccountId: async () => null, vendorIdFor: reimburseeVendorId }, vendors: qbVendors },
   });
 }

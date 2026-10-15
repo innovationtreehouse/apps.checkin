@@ -107,6 +107,8 @@ POST /api/expense/qb-accounts
 GET /api/expense/expenses/[id]
 POST /api/expense/expenses/[id]/set-depreciation-cycle/submit
 PUT /api/expense/expenses/[id]/reimbursee
+GET /api/expense/expenses/[id]/reimbursee-vendor
+PUT /api/expense/expenses/[id]/reimbursee-vendor
 POST /api/expense/expenses/[id]/line-items/[lineItemId]/signoffs
 POST /api/expense/expenses/[id]/board-authorization
 POST /api/expense/expenses/[id]/not-everyday

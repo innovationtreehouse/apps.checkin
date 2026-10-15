@@ -1,4 +1,4 @@
-import type { QbReader, SignoffDirectory } from "@inventory/expense";
+import type { QbReader, QbRefs, QbVendors, SignoffDirectory } from "@inventory/expense";
 
 const personRoleFindMany = jest.fn();
 const budgetOwnerFindUnique = jest.fn();
@@ -16,8 +16,11 @@ jest.mock("@/lib/prisma", () => ({
 }));
 
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
-const configureExpense = jest.fn<void, [{ signoff: SignoffDirectory; quickbooks: { reader: QbReader } }]>();
-jest.mock("@inventory/expense", () => ({ configureExpense }));
+const configureExpense = jest.fn<void, [{ signoff: SignoffDirectory; quickbooks: { reader: QbReader; refs: QbRefs; vendors: QbVendors } }]>();
+const reimburseeVendorId = jest.fn();
+jest.mock("@inventory/expense", () => ({ configureExpense, reimburseeVendorId }));
+const createVendor = jest.fn();
+jest.mock("@inventory/quickbooks", () => ({ createVendor }));
 jest.mock("@/lib/catalog/configure", () => ({ getOrg: jest.fn() }));
 const getQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks }));
@@ -150,5 +153,32 @@ describe("expense QuickBooks reader", () => {
       { id: "2", txnDate: "2026-01-03", totalCents: 500, accountRef: null, vendorRef: "8" },
     ]);
     await expect(qb.billPaymentsBetween("2026-01-01", "2026-01-31")).resolves.toEqual([{ id: "3", txnDate: "2026-01-04", billIds: ["2"] }]);
+  });
+});
+
+describe("expense reimbursee Vendor ports", () => {
+  async function quickbooks() {
+    await jest.isolateModulesAsync(async () => {
+      (await import("../configure")).configureRuntime();
+    });
+    return configureExpense.mock.calls.at(-1)![0].quickbooks;
+  }
+
+  it("creates nothing while QuickBooks is off", async () => {
+    getQuickBooks.mockResolvedValue(null);
+    await expect((await quickbooks()).vendors.findOrCreate("Pat Lee", "k")).resolves.toBeNull();
+    expect(createVendor).not.toHaveBeenCalled();
+  });
+
+  it("finds or creates through the guarded client", async () => {
+    const qb = {};
+    getQuickBooks.mockResolvedValue(qb);
+    createVendor.mockResolvedValue({ kind: "found", via: "name", id: "61", displayName: "Pat Lee (Vendor)" });
+    await expect((await quickbooks()).vendors.findOrCreate("Pat Lee", "k")).resolves.toEqual({ id: "61", displayName: "Pat Lee (Vendor)" });
+    expect(createVendor).toHaveBeenCalledWith(qb, "Pat Lee", "k");
+  });
+
+  it("matches a Bill against the reimbursee's linked Vendor", async () => {
+    expect((await quickbooks()).refs.vendorIdFor).toBe(reimburseeVendorId);
   });
 });

@@ -106,6 +106,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const expense = useLoad<Expense>(base);
   const approvals = useLoad<Approval[] | { LineItemOwnerApproval: Approval[]; ExpenseBucketView: Bucket[] }>(`${base}/line-item-approvals`);
   const signoffs = useLoad<SignoffStatus[]>(`${base}/signoffs`);
+  const vendor = useLoad<{ qbVendorId: string } | null>(isFinance ? `${base}/reimbursee-vendor` : null);
   const bucketOptions = useBuckets(isFinance || isBoard);
   const [dialog, setDialog] = useState<{ action: Action; approval: Approval } | null>(null);
   const [text, setText] = useState("");
@@ -113,9 +114,11 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const [permanent, setPermanent] = useState(false);
   const [reimbursee, setReimbursee] = useState("");
   const [authorization, setAuthorization] = useState("");
+  const [vendorId, setVendorId] = useState("");
+  const [vendorName, setVendorName] = useState("");
   const [capital, setCapital] = useState<Record<number, { isCapital: boolean; years: number | ""; owner: string }>>({});
 
-  const reloadAll = () => { expense.reload(); approvals.reload(); signoffs.reload(); };
+  const reloadAll = () => { expense.reload(); approvals.reload(); signoffs.reload(); vendor.reload(); };
   const e = expense.data;
   const approvalBag = approvals.data;
   const approvalRows = Array.isArray(approvalBag) ? approvalBag : approvalBag?.LineItemOwnerApproval ?? [];
@@ -298,6 +301,27 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
               >Set reimbursee</Button>
             </Group>
           )}
+          {!!e.reimburseePersonId && (vendor.data
+            ? <Text size="sm">QuickBooks Vendor #{vendor.data.qbVendorId}</Text>
+            : (
+              <Stack gap="xs">
+                <Group>
+                  <TextInput placeholder="QuickBooks Vendor id" value={vendorId} onChange={(ev) => setVendorId(ev.currentTarget.value)} />
+                  <Button
+                    disabled={!/^\d+$/.test(vendorId)}
+                    onClick={async () => { if (await send(`${base}/reimbursee-vendor`, "PUT", { qbVendorId: vendorId }, "Vendor linked")) reloadAll(); }}
+                  >Link Vendor</Button>
+                </Group>
+                <Group>
+                  <TextInput placeholder="Vendor name" value={vendorName} onChange={(ev) => setVendorName(ev.currentTarget.value)} />
+                  <Button
+                    variant="light"
+                    disabled={!vendorName.trim()}
+                    onClick={async () => { if (await send(`${base}/reimbursee-vendor`, "PUT", { createName: vendorName.trim() }, "Vendor linked")) reloadAll(); }}
+                  >Find or create in QuickBooks</Button>
+                </Group>
+              </Stack>
+            ))}
         </Paper>
       )}
 

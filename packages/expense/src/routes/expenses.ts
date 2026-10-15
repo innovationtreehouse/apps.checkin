@@ -19,6 +19,7 @@ import {
   resolveUnknown,
 } from "../services/approvalService";
 import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
+import { linkReimburseeVendor, reimburseeVendorFor } from "../services/reimburseeVendorService";
 import { markNotEveryday, recordBoardAuthorization, setReimbursee, signLine, signoffStatus } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
 import {
@@ -282,6 +283,23 @@ export const reimbursee: ExpenseRouteHandler = async ({ req, params }) => {
   const orgId = await getOrgId();
   await mapServiceErrors(() => setReimbursee(orgId, params.id, personId, principal));
   return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId } }) };
+};
+
+const vendorChoiceSchema = z.union([
+  z.object({ qbVendorId: z.string().trim().regex(/^\d+$/, "qbVendorId is a QuickBooks id") }).strict(),
+  z.object({ createName: z.string().trim().min(1).max(100) }).strict(),
+]);
+
+export const reimburseeVendor: ExpenseRouteHandler = async ({ params }) => {
+  const orgId = await getOrgId();
+  return { ExpenseReimburseeVendor: await mapServiceErrors(() => reimburseeVendorFor(orgId, params.id)) };
+};
+
+export const linkVendor: ExpenseRouteHandler = async ({ req, params }) => {
+  const choice = await parseBody(req, vendorChoiceSchema);
+  const principal = await getPrincipal();
+  const orgId = await getOrgId();
+  return { ExpenseReimburseeVendor: await mapServiceErrors(() => linkReimburseeVendor(orgId, params.id, choice, principal)) };
 };
 
 export const testData: ExpenseRouteHandler = async ({ req, params }) => {

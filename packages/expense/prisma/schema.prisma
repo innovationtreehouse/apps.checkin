@@ -570,7 +570,7 @@ model ExpenseQbClaim {
   @@map("qb_claim")
 }
 
-// The QuickBooks Vendor a reimbursee's Bills are posted to (checkin Person.id, no FK).
+// The QuickBooks Vendor a reimbursee's Bills are posted to (checkin Person.id, no FK); one person per Vendor.
 model ExpenseReimburseeVendor {
   /// @sensitivity:internal
   id         Int      @id @default(autoincrement())
@@ -584,6 +584,7 @@ model ExpenseReimburseeVendor {
   createdAt  DateTime @default(now()) @map("created_at")
 
   @@unique([orgId, reimburseePersonId])
+  @@unique([orgId, qbVendorId])
   @@map("reimbursee_vendor")
 }
 

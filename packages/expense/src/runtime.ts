@@ -4,6 +4,7 @@ import {
   inertOwnerDirectory,
   inertQbReader,
   inertQbRefs,
+  inertQbVendors,
   inertSignoffDirectory,
   type CatalogEventSource,
   type CatalogReader,
@@ -13,6 +14,7 @@ import {
   type OwnerDirectory,
   type QbReader,
   type QbRefs,
+  type QbVendors,
   type ExpensePosting,
   type SignoffDirectory,
 } from "./contract";
@@ -20,6 +22,7 @@ import {
 export interface QuickBooksPorts {
   reader: QbReader;
   refs: QbRefs;
+  vendors: QbVendors;
   /** Null until the host binds QuickBooks: nothing is posted. */
   posting: ExpensePosting | null;
 }
@@ -63,6 +66,7 @@ export function configureExpense(config: ExpenseConfig): void {
     quickbooks: {
       reader: config.quickbooks?.reader ?? inertQbReader,
       refs: config.quickbooks?.refs ?? inertQbRefs,
+      vendors: config.quickbooks?.vendors ?? inertQbVendors,
       posting: config.quickbooks?.posting ?? null,
     },
   };

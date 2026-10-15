@@ -196,6 +196,16 @@ export const inertQbRefs: QbRefs = {
 };
 
 /**
+ * Finance's find-or-create of a reimbursee's QuickBooks Vendor by name. An existing Vendor with
+ * that name is returned, not created again. Null means QuickBooks is off for this deployment.
+ */
+export interface QbVendors {
+  findOrCreate(name: string, key: string): Promise<{ id: string; displayName: string } | null>;
+}
+
+export const inertQbVendors: QbVendors = { findOrCreate: async () => null };
+
+/**
  * QB-2 posting: the host's QuickBooks client (the create-only writer lives in
  * `@inventory/quickbooks`) and the card or bank account a non-reimbursement expense is paid from.
  */
