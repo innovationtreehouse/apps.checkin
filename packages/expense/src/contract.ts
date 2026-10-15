@@ -2,6 +2,7 @@
 // here; an unbound port behaves as that adapter, so nothing reaches another library, checkin
 // or QuickBooks until the host binds it.
 import { z } from "zod";
+import type { QuickBooksClient } from "@inventory/quickbooks";
 import {
   CatalogCategorySchema,
   CatalogSubcategorySchema,
@@ -173,19 +174,22 @@ export const inertQbRefs: QbRefs = {
   vendorIdFor: async () => null,
 };
 
-/** The entities expense creates. Never a BillPayment, Check or Payment. */
-export type QbCreateEntity = "Purchase" | "Bill" | "Vendor";
-
-/** The create-only QuickBooks writer `@inventory/quickbooks` owns (QB-2). */
-export interface QbWriter {
-  create(entity: QbCreateEntity, fields: Record<string, unknown>): Promise<{ id: string }>;
+/**
+ * QB-2 posting: the host's QuickBooks client (the create-only writer lives in
+ * `@inventory/quickbooks`) and the card or bank account a non-reimbursement expense is paid from.
+ */
+export interface ExpensePosting {
+  client: QuickBooksClient;
+  paymentAccountId: string;
+  paymentType: "Cash" | "CreditCard";
+  /**
+   * YYYY-MM-DD: finance booked everything up to here by hand, so only later receipts may be
+   * created. Null posts nothing. A newer hand-booked match moves the line later, never earlier.
+   */
+  takeoverDate: string | null;
+  /** CHECKIN_ENV is prod. Outside prod only an isTestData expense from a "TEST-" vendor posts; prod never posts one. */
+  prod: boolean;
 }
-
-export const inertQbWriter: QbWriter = {
-  create: async () => {
-    throw new Error("QuickBooks writer is not bound");
-  },
-};
 
 // ── Surfaces expense exports to other libraries (bound by the host into theirs) ─
 

@@ -8,6 +8,7 @@ import { lookupItems, getItem, listCategories, listSubcategories } from "./catal
 import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost } from "./workflow-engine";
 import { unsignedLines } from "./signoff-facts";
 import { reimburseeUnknown } from "./signoff";
+import { postExpenseToQb } from "./expense-qb-poster";
 import type { Expense } from "../generated/prisma/client";
 
 // ── Allocation helpers ────────────────────────────────────────────────────────
@@ -249,6 +250,19 @@ function buildQbPayload(
   return QbExpenseEventSchema.parse(payload);
 }
 
+/** Allocates tax, shipping and discount over the lines and builds the outbound payload with each line's bucket. */
+async function qbPayloadFor(expense: Expense, resolved: ResolvedItem[], lineItems: ExpenseLineItem[]) {
+  const allocItems = lineItems.map((li) => ({ id: li.id, totalPriceCents: li.totalPriceCents }));
+  const taxAlloc      = allocateAmount(allocItems, expense.taxCents);
+  const shippingAlloc = allocateAmount(allocItems, expense.shippingCents);
+  const discountAlloc = allocateAmount(allocItems, expense.discountCents);
+
+  const approvals = await db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true } });
+  const bucketByLine = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
+  const payload = buildQbPayload(expense, resolved, lineItems, taxAlloc, shippingAlloc, discountAlloc, bucketByLine);
+  return { payload, taxAlloc, shippingAlloc, discountAlloc };
+}
+
 // ── Stage 4 (atomic): commit QB processing ───────────────────────────────────
 // All domain writes (holds, allocations, event) and the state transition are
 // committed in a single interactive transaction so the expense can never be
@@ -416,14 +430,7 @@ async function processExpenseForQb(
     });
   }
 
-  const allocItems = lineItems.map((li) => ({ id: li.id, totalPriceCents: li.totalPriceCents }));
-  const taxAlloc      = allocateAmount(allocItems, expense.taxCents);
-  const shippingAlloc = allocateAmount(allocItems, expense.shippingCents);
-  const discountAlloc = allocateAmount(allocItems, expense.discountCents);
-
-  const approvals = await db.lineItemOwnerApproval.findMany({ where: { expenseId }, select: { lineItemId: true, ownerId: true } });
-  const bucketByLine = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
-  const payload = buildQbPayload(expense, resolved, lineItems, taxAlloc, shippingAlloc, discountAlloc, bucketByLine);
+  const { payload, taxAlloc, shippingAlloc, discountAlloc } = await qbPayloadFor(expense, resolved, lineItems);
 
   try {
     await commitQbProcessing(
@@ -436,6 +443,9 @@ async function processExpenseForQb(
     if (!isUniqueConstraintError(err)) throw err;
     // Unique constraint on expenseEvents → concurrent run already committed; safe to ignore
   }
+
+  // Post right after the outbox commit; anything left is the catch-up drain's.
+  await postExpenseToQb(orgId, expenseId).catch((err) => logError("qb_post_failed", { expenseId, orgId }, err));
 }
 
 // ── Stranded recovery (catch-up sweep) ────────────────────────────────────────
@@ -469,4 +479,28 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
     }
   }
   return { checked, failed };
+}
+
+// ── Finance retry of a failed QuickBooks post ─────────────────────────────────
+
+/**
+ * Re-arms an expense whose post failed: rebuilds the outbox payload from the current account
+ * mappings (so a fixed mapping takes effect), resets the attempt count and posts once.
+ * Returns false when a line no longer resolves to one account; the expense stays as it is.
+ */
+export async function retryQbPost(orgId: string, expenseId: string): Promise<boolean> {
+  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId } });
+  if (!expense || !["POST_FAILED", "NEEDS_FINANCE"].includes(expense.qbMatchState)) return false;
+  const lineItems = await db.expenseLineItem.findMany({ where: { expenseId } });
+  const rules = await db.accountMapping.findMany({ where: { orgId } });
+  const { resolved, conflicts } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "");
+  if (conflicts.length > 0) return false;
+
+  const { payload } = await qbPayloadFor(expense, resolved, lineItems);
+  await db.$transaction(async (tx) => {
+    await tx.expenseEvent.update({ where: { expense_events_org_expense_unique: { orgId, expenseId } }, data: { payload: JSON.stringify(payload) } });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED", qbPostAttempts: 0 } });
+  });
+  await postExpenseToQb(orgId, expenseId);
+  return true;
 }

@@ -51,6 +51,12 @@ export const classifications = {
         state: 'internal',
         backfill: 'internal',
         noteInLieuOfReceipt: 'internal',
+        qbMatchState: 'internal',
+        qbTxnId: 'internal',
+        qbTxnEntity: 'internal',
+        qbVendorId: 'internal',
+        qbPostAttempts: 'internal',
+        isTestData: 'internal',
     },
     ExpenseLineItem: {
         id: 'internal',
@@ -75,6 +81,7 @@ export const classifications = {
         qbMatchState: 'internal',
         qbTxnId: 'internal',
         qbTxnEntity: 'internal',
+        qbAccountId: 'internal',
     },
     LineItemOwnerApproval: {
         id: 'internal',
@@ -204,6 +211,13 @@ export const classifications = {
         excludedByUsername: 'pii',
         excludedAt: 'internal',
     },
+    ExpenseReimburseeVendor: {
+        id: 'internal',
+        orgId: 'internal',
+        reimburseePersonId: 'pii',
+        qbVendorId: 'internal',
+        createdAt: 'internal',
+    },
     ExpenseLineSignoff: {
         id: 'internal',
         expenseId: 'internal',
@@ -280,6 +294,8 @@ export const relations = {
     CapitalAsset: {
     },
     ExpenseQbMatchExclusion: {
+    },
+    ExpenseReimburseeVendor: {
     },
     ExpenseLineSignoff: {
         lineItem: { model: 'ExpenseLineItem', isList: false },

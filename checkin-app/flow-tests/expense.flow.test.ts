@@ -167,7 +167,7 @@ describe("expense — field stripping", () => {
     const asApprover = await api<ExpenseRow>(approver, E);
     const asFinance = await api<ExpenseRow>(finance, E);
     expect(asApprover.status).toBe(200);
-    expect(asApprover.json.vendorName).toBe("Seed Lumber");
+    expect(asApprover.json.vendorName).toBe("TEST-Lumber Co");
     expect(asApprover.json.submitterId).toBeUndefined();
     expect(asFinance.json.submitterId).toBe(10);
   });

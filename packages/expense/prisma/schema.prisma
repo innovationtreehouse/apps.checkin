@@ -132,6 +132,25 @@ model Expense {
   // A signed note stands in for the receipt (F2 exception; changes who fills the program-approver seat).
   /// @sensitivity:internal
   noteInLieuOfReceipt Boolean  @default(false) @map("note_in_lieu_of_receipt")
+  // QuickBooks match state of the whole expense (one QB entry per expense):
+  // UNMATCHED | MATCHED | CREATED | AMBIGUOUS | BEFORE_LINE | POST_FAILED, or not sent:
+  // NOT_TEST_DATA (outside prod) | TEST_DATA_REFUSED (prod) | NEEDS_FINANCE (posts kept failing). qb_txn_id is the
+  // claimed entry of type qb_txn_entity (Bill | Purchase), unique per type so an entry is claimed
+  // once; qb_vendor_id is the Vendor a Bill was posted to.
+  /// @sensitivity:internal
+  qbMatchState       String    @default("UNMATCHED") @map("qb_match_state")
+  /// @sensitivity:internal
+  qbTxnId            String?   @map("qb_txn_id")
+  /// @sensitivity:internal
+  qbTxnEntity        String?   @map("qb_txn_entity")
+  /// @sensitivity:internal
+  qbVendorId         String?   @map("qb_vendor_id")
+  // Failed QuickBooks posts since the last success or finance retry; at the limit the expense stops at NEEDS_FINANCE.
+  /// @sensitivity:internal
+  qbPostAttempts     Int       @default(0) @map("qb_post_attempts")
+  // Set only outside prod (seed, FINANCE toggle). Outside prod only test data posts to QuickBooks; prod never posts it.
+  /// @sensitivity:internal
+  isTestData         Boolean   @default(false) @map("is_test_data")
 
   lineItems          ExpenseLineItem[]
   approvals          LineItemOwnerApproval[]
@@ -139,6 +158,7 @@ model Expense {
   auditLog           ExpenseAuditLog[]
   flags              ExpenseFlag[]
 
+  @@unique([qbTxnEntity, qbTxnId])
   @@map("expenses")
 }
 
@@ -190,6 +210,9 @@ model ExpenseLineItem {
   // QuickBooks entity type of qb_txn_id (Bill | Purchase); QuickBooks ids are unique per entity type only.
   /// @sensitivity:internal
   qbTxnEntity       String?  @map("qb_txn_entity")
+  // The QBO account this line was posted to on an entry the app created.
+  /// @sensitivity:internal
+  qbAccountId       String?  @map("qb_account_id")
 
   expense           Expense                 @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   approvals         LineItemOwnerApproval[]
@@ -492,6 +515,23 @@ model ExpenseQbMatchExclusion {
 
   @@unique([orgId, qbTxnId])
   @@map("qb_match_exclusion")
+}
+
+// The QuickBooks Vendor a reimbursee's Bills are posted to (checkin Person.id, no FK).
+model ExpenseReimburseeVendor {
+  /// @sensitivity:internal
+  id         Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId      String   @map("org_id")
+  /// @sensitivity:pii
+  reimburseePersonId Int @map("reimbursee_person_id")
+  /// @sensitivity:internal
+  qbVendorId String   @map("qb_vendor_id")
+  /// @sensitivity:internal
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([orgId, reimburseePersonId])
+  @@map("reimbursee_vendor")
 }
 
 // One filled sign-off seat on a reimbursement or card-charge line (Financial Policy F2 / F2-COI).

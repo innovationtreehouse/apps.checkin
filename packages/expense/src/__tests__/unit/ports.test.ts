@@ -30,7 +30,7 @@ describe("runtime", () => {
     expect(await inertOwnerDirectory.list()).toEqual([]);
     expect(await rt.signoff.bucketApprovers(1)).toEqual({ orgLevel: false, approvers: [] });
     expect(await rt.quickbooks.reader.purchasesBetween("2026-01-01", "2026-01-31")).toEqual([]);
-    await expect(rt.quickbooks.writer.create("Purchase", {})).rejects.toThrow(/not bound/);
+    expect(rt.quickbooks.posting).toBeNull();
   });
 
   it("assertOrg accepts only the injected org", async () => {
