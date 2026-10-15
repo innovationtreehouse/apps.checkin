@@ -9,6 +9,7 @@ import { runExpenseCatchUp } from "@inventory/expense";
 import { healProgramStock } from "@/lib/shopify";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@inventory/local-inventory";
 import { catchUpOrgEvents as catchUpWorkflowEvents } from "@inventory/workflow-mapping";
+import { sweepInterruptedOcr } from "@inventory/receipt";
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
@@ -48,6 +49,9 @@ import { catchUpOrgEvents as catchUpWorkflowEvents } from "@inventory/workflow-m
  *
  * Then replays catalog events that local-inventory and workflow-mapping missed (a consumer that
  * threw during the catalog's post-commit call-out). Each step is isolated; counts only.
+ *
+ * Last, the receipt library's catch-up step moves receipts stranded mid-OCR to
+ * `ocr_failed`. Isolated the same way; the response carries its count only.
  */
 export const GET = withCron(async () => {
     const result = await runReconcile();
@@ -94,5 +98,13 @@ export const GET = withCron(async () => {
         workflowEvents = { status: "error" };
     }
     logger.info(`[reconcile] workflow-mapping events ${JSON.stringify(workflowEvents)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents });
+    let receipt: Awaited<ReturnType<typeof sweepInterruptedOcr>> | { status: "error" };
+    try {
+        receipt = await sweepInterruptedOcr();
+    } catch (err) {
+        logger.error("[reconcile] receipt catch-up failed:", err);
+        receipt = { status: "error" };
+    }
+    logger.info(`[reconcile] receipt ${JSON.stringify(receipt)}`);
+    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receipt });
 });
