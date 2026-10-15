@@ -4,6 +4,7 @@ import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL } from "@/lib/membership/lifecycle";
 import type { DbClient } from "@/lib/db-client";
 import { ensureHouseholdMembership, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
+import { householdApplicationOpenOrBlockedWhere } from "@/lib/membership/renewal";
 
 /**
  * Board "Grant Membership" for the current year: money only (owner, 2026-10-12).
@@ -20,6 +21,7 @@ import { ensureHouseholdMembership, raiseDeniedHouseholdActivity, type Household
  * - No in-flight application: an INITIAL one is opened at INTAKE for the family to
  *   complete, and the board grants again once it reaches payment. An ACTIVE
  *   household is never given a joining application (it renews instead).
+ * - A BLOCKED application: refused. Only a board reset or override moves it on.
  * - DENIED: refused, and raised to the board.
  */
 export type GrantResult =
@@ -83,27 +85,34 @@ export async function grantCurrentYear(
     }
     const opened = await openInitial(membership.id, householdId, actor);
     if (opened === "denied") return refuseDenied(householdId, actor.actorId);
+    if (opened === "blocked") {
+        throw new PaymentError("wrong_phase", "This household has a blocked application. Reset or override it before granting membership.");
+    }
     return { paid: false, ...opened };
 }
 
 /**
  * Open an INITIAL application at INTAKE, serialized on the membership row like
- * startIntake. The DENIED check sits under that row lock, so a deny that lands
- * after the caller's pre-check still stops the open.
+ * startIntake. The DENIED and BLOCKED checks sit under that row lock, so a deny or
+ * a block that lands after the caller's pre-check still stops the open.
  */
 async function openInitial(
     orgMembershipId: number,
     householdId: number,
     actor: { actorId: number; reason: string },
-): Promise<{ process: OrgMembershipProcess; opened: boolean } | "denied"> {
+): Promise<{ process: OrgMembershipProcess; opened: boolean } | "denied" | "blocked"> {
     const findInFlight = (db: DbClient) =>
         db.orgMembershipProcess.findFirst({ where: { orgMembershipId, kind: "INITIAL", status: { in: [...IN_FLIGHT_INITIAL] } }, orderBy: { id: "desc" } });
     try {
         return await prisma.$transaction(async (tx) => {
             const [locked] = await tx.$queryRaw<{ status: HouseholdStatus }[]>`SELECT status FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
             if (locked?.status === "DENIED") return "denied" as const;
-            const raced = await findInFlight(tx);
-            if (raced) return { process: raced, opened: false };
+            const open = await tx.orgMembershipProcess.findMany({
+                where: { orgMembershipId, ...householdApplicationOpenOrBlockedWhere },
+                orderBy: { id: "desc" },
+            });
+            if (open.some((p) => p.status === "BLOCKED")) return "blocked" as const;
+            if (open[0]) return { process: open[0], opened: false };
             const process = await tx.orgMembershipProcess.create({ data: { orgMembershipId, kind: "INITIAL", status: "INTAKE" } });
             await tx.auditLog.create({
                 data: {

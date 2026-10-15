@@ -7,10 +7,19 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadYouthError } from "@/lib/household/leads";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { lockBoardRoles } from "@/lib/roles";
+import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 
 /** The person was merged away between the pre-check and the write. */
 class MergedPersonError extends Error {}
 const MERGED_PERSON_MESSAGE = "This person has been merged into another record and cannot be moved.";
+
+/** The source or destination household is DENIED. */
+class DeniedHouseholdMoveError extends Error {
+    constructor(public readonly householdId: number, public readonly personId: number) {
+        super(`household ${householdId} is denied`);
+    }
+}
 
 export const POST = withAuth<{ params: Promise<{ id: string }> }>(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -75,6 +84,14 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
         // transaction keeps the whole reassign atomic and puts the helper's lock
         // in it. A same-household no-op leaves the flag untouched.
         const { updatedParticipant, targetHouseholdId } = await prisma.$transaction(async (tx) => {
+            // Moving someone out of a DENIED household would free them of the denial, and
+            // moving someone in would put them under it (a board member included, which a
+            // deny refuses). The BOARD lock comes first, as a deny takes it, so a deny of
+            // either household serializes with this move.
+            await lockBoardRoles(tx);
+            const denied = await lockAndFindDeniedHousehold(tx, requestedHouseholdId === null ? [participant.householdId] : [participant.householdId, requestedHouseholdId]);
+            if (denied !== null) throw new DeniedHouseholdMoveError(denied, participantId);
+
             // New household starts as a visitor (no membership) — membership is
             // earned via the application process or set on the households page.
             const targetHouseholdId = requestedHouseholdId ?? (await tx.household.create({
@@ -122,6 +139,10 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
     } catch (error) {
         if (error instanceof MergedPersonError) {
             return apiError(MERGED_PERSON_MESSAGE, 409);
+        }
+        if (error instanceof DeniedHouseholdMoveError) {
+            await raiseDeniedHouseholdActivity({ householdId: error.householdId, personId: error.personId, what: "household reassign refused" });
+            return apiError("This household has been denied membership, so no one can be moved into or out of it.", 409);
         }
         if (error instanceof HouseholdLeadYouthError) {
             return apiError("A youth cannot lead a household, so they cannot be given one of their own. Assign them to an existing household instead.", 400);
