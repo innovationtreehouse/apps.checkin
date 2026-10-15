@@ -7,8 +7,8 @@ import { LIVE_PERSON } from "@/lib/person/filters";
 /**
  * The one own-household check for grants that discount dues, clear a person, or
  * confer volunteer standing: the household volunteer flag, a volunteer designation,
- * a background-check date, a program volunteer row or its core flag, plus acting
- * on a payment problem. Every writer of one of these calls it (selfGrantGuard.test.ts
+ * a background-check date, a program volunteer row or its core flag, a tool
+ * certification level, plus acting on a payment problem. Every writer of one of these calls it (selfGrantGuard.test.ts
  * enforces that).
  *
  * Refuses when the subject is the actor or shares the actor's household, and when
@@ -24,7 +24,7 @@ export type GrantSubject =
     | { email: string };
 
 /** What the actor tried: the table the grant writes and the fields it would have set. */
-export type GrantAttempt = { table: "Person" | "OrgMembership" | "VolunteerDesignation" | "PaymentException" | "ProgramVolunteer"; attempted: Prisma.InputJsonObject };
+export type GrantAttempt = { table: "Person" | "OrgMembership" | "VolunteerDesignation" | "PaymentException" | "ProgramVolunteer" | "ToolStatus"; attempted: Prisma.InputJsonObject };
 
 export const SELF_GRANT_REFUSAL_TABLE = "SelfGrantRefusal";
 
