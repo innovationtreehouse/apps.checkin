@@ -1,9 +1,9 @@
 /**
  * Wire the expense library into checkin (#1272 §3/§6), called once at server boot from
  * instrumentation.ts. Binding touches no database: every port below reads lazily, inside a
- * request. Bound crossings: X3 (catalog reads) and the S5 replay read (X2). The QuickBooks reader
- * goes through checkin's one guarded client (off = no rows). The QuickBooks writer stays unbound
- * (inert); it is a later crossing.
+ * request. Bound crossings: X3 (catalog reads), the S5 replay read (X2) and X12's QuickBooks
+ * reads (bound on the receipt side). The QuickBooks reader goes through checkin's one guarded
+ * client (off = no rows). The QuickBooks writer stays unbound (inert); it is a later crossing.
  */
 import { configureExpense } from "@inventory/expense";
 import type { ExpensePrincipal, OwnerDirectory, QbReader, QbTxn, SignoffDirectory } from "@inventory/expense";
@@ -139,6 +139,24 @@ const qbReader: QbReader = {
       txnDate: p.TxnDate,
       billIds: [...new Set((p.Line ?? []).flatMap((l) => l.LinkedTxn ?? []).filter((t) => t.TxnType === "Bill").map((t) => t.TxnId))],
     }));
+  },
+  async purchasesByIds(ids) {
+    const qb = await quickBooks();
+    return qb ? (await qb.purchasesByIds(ids)).map(qbTxn) : [];
+  },
+  async billsByIds(ids) {
+    const qb = await quickBooks();
+    if (!qb) return [];
+    return (await qb.billsByIds(ids)).map((b) => ({
+      id: b.Id,
+      txnDate: b.TxnDate,
+      balance: b.Balance ?? null,
+      paymentIds: [...new Set((b.LinkedTxn ?? []).filter((t) => t.TxnType === "BillPayment").map((t) => t.TxnId))],
+    }));
+  },
+  async billPaymentsByIds(ids) {
+    const qb = await quickBooks();
+    return qb ? (await qb.billPaymentsByIds(ids)).map((p) => ({ id: p.Id, txnDate: p.TxnDate })) : [];
   },
 };
 

@@ -40,12 +40,13 @@ describe("runtime", () => {
 });
 
 describe("X12 reimbursementStatus", () => {
-  it("answers not yet paid for every receipt until QuickBooks is read", async () => {
-    expect(await reimbursementStatus.forReceipts(["r1", "r2"])).toEqual(new Map([["r1", { paidOn: null }], ["r2", { paidOn: null }]]));
+  it("answers nothing for no receipts, before any read", async () => {
+    expect(await reimbursementStatus.forReceipts([])).toEqual(new Map());
   });
 
   it("parses its input", async () => {
-    await expect(reimbursementStatus.forReceipts([1])).rejects.toThrow();
+    await expect(reimbursementStatus.forReceipts(["r1"])).rejects.toThrow();
+    await expect(reimbursementStatus.forReceipts([{ receiptId: 1 }])).rejects.toThrow();
   });
 });
 

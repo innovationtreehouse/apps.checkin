@@ -14,7 +14,7 @@ import { checkOffFlag, listOpenFlags, raiseFlag } from "../../services/flagServi
 import { expenseOpsCounts } from "../../services/badgeCounts";
 import { financeAssign, raiseException } from "../../services/approvalService";
 import { claimQbTxn, excludeQbTxn, matchLineToQb, qbCandidates, qbMatchInputs } from "../../services/qbMatchService";
-import type { QbTxn } from "../../contract";
+import { inertQbReader, type QbTxn } from "../../contract";
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
@@ -396,6 +396,7 @@ describeDb("QuickBooks match", () => {
       signoff: directory({ finance: [3], board: [5] }),
       quickbooks: {
         reader: {
+          ...inertQbReader,
           purchasesBetween: async () => (qb.purchases ?? []).map(txn),
           billsBetween: async () => (qb.bills ?? []).map(txn),
           billPaymentsBetween: async () => [],
