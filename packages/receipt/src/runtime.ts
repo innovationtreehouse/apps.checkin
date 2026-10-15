@@ -36,7 +36,7 @@ export const inertDonorSink: DonorSink = {
 
 /** Never claims a payment: every receipt reads "not yet paid" until X12 is bound. */
 export const inertReimbursementStatus: ReimbursementStatus = {
-  forReceipts: async (receiptIds) => new Map(receiptIds.map((id) => [id, { paidOn: null }])),
+  forReceipts: async (receipts) => new Map(receipts.map((r) => [r.receiptId, { paidOn: null }])),
 };
 
 export const inertOcr: OcrProvider = {

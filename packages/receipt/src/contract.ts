@@ -61,9 +61,12 @@ export interface DonorSink {
 export const reimbursementStatusSchema = z.map(z.string(), z.object({ paidOn: z.string().nullable() }));
 export type PaidStatus = { paidOn: string | null };
 
+/** An owed receipt; a backfilled one names the hand-booked QuickBooks transaction it matched. */
+export type ReimbursementAsk = { receiptId: string; qbEntity: string | null; qbTxnId: string | null };
+
 /** X12. QuickBooks is the system of record; a receipt missing from the answer is not yet paid. */
 export interface ReimbursementStatus {
-  forReceipts(receiptIds: string[]): Promise<Map<string, PaidStatus>>;
+  forReceipts(receipts: ReimbursementAsk[]): Promise<Map<string, PaidStatus>>;
 }
 
 // ── OCR provider ─────────────────────────────────────────────────────────────

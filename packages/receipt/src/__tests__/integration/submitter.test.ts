@@ -1,6 +1,6 @@
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
-import type { ReimbursementStatus } from "../../contract";
+import type { ReimbursementAsk, ReimbursementStatus } from "../../contract";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
@@ -81,23 +81,36 @@ describeDb("My receipts", () => {
     expect((await receiptService.listMine({ hideCompleted: true })).map((r) => r.id)).toEqual([owed.id]);
 
     const paid: ReimbursementStatus = {
-      forReceipts: async (ids) => new Map(ids.map((id) => [id, { paidOn: "2026-10-01" }])),
+      forReceipts: async (asks) => new Map(asks.map((a) => [a.receiptId, { paidOn: "2026-10-01" }])),
     };
     configure({ receiptSink: ports.receiptSink, reimbursementStatus: paid });
     expect(await receiptService.listMine({ hideCompleted: true })).toEqual([]);
   });
 
-  it("asks X12 only about the caller's own owed receipts", async () => {
-    const asked: string[][] = [];
+  it("a failing X12 reads 'not yet paid', never an error", async () => {
+    const owed = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     configure({
       receiptSink: ports.receiptSink,
-      reimbursementStatus: { forReceipts: async (ids) => (asked.push(ids), new Map()) },
+      reimbursementStatus: {
+        forReceipts: async () => {
+          throw new Error("QuickBooks is down");
+        },
+      },
+    });
+    expect((await receiptService.listMine()).find((r) => r.id === owed.id)).toMatchObject({ reimbursement: { paidOn: null } });
+  });
+
+  it("asks X12 only about the caller's own owed receipts", async () => {
+    const asked: ReimbursementAsk[][] = [];
+    configure({
+      receiptSink: ports.receiptSink,
+      reimbursementStatus: { forReceipts: async (asks) => (asked.push(asks), new Map()) },
     });
     const mine = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     actAs(BOB);
     await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Bob's" }), needsReimbursement: true });
     actAs(ALICE);
     await receiptService.listMine();
-    expect(asked.at(-1)).toEqual([mine.id]);
+    expect(asked.at(-1)).toEqual([{ receiptId: mine.id, qbEntity: null, qbTxnId: null }]);
   });
 });

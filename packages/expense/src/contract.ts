@@ -146,17 +146,31 @@ export interface QbBillPayment {
   billIds: string[];
 }
 
-/** Windowed QuickBooks readers; nothing reads QuickBooks since a date. */
+/** A Bill's paid state: `balance` 0 means paid (null = not reported); `paymentIds` are its linked BillPayments. */
+export interface QbBillBalance {
+  id: string;
+  txnDate: string;
+  balance: number | null;
+  paymentIds: string[];
+}
+
+/** Windowed and by-id QuickBooks readers; nothing reads QuickBooks since a date. */
 export interface QbReader {
   purchasesBetween(from: string, to: string): Promise<QbTxn[]>;
   billsBetween(from: string, to: string): Promise<QbTxn[]>;
   billPaymentsBetween(from: string, to: string): Promise<QbBillPayment[]>;
+  purchasesByIds(ids: string[]): Promise<QbTxn[]>;
+  billsByIds(ids: string[]): Promise<QbBillBalance[]>;
+  billPaymentsByIds(ids: string[]): Promise<{ id: string; txnDate: string }[]>;
 }
 
 export const inertQbReader: QbReader = {
   purchasesBetween: async () => [],
   billsBetween: async () => [],
   billPaymentsBetween: async () => [],
+  purchasesByIds: async () => [],
+  billsByIds: async () => [],
+  billPaymentsByIds: async () => [],
 };
 
 /**
@@ -201,9 +215,12 @@ export interface ExpenseIntake {
 /** FINANCE names the Person owed a reimbursement whose receipt did not carry one. */
 export type SetReimbursee = (orgId: string, expenseId: string, personId: number, principal: ExpensePrincipal) => Promise<void>;
 
-/** X12 callee: when QuickBooks recorded each receipt's reimbursement as paid; null = not yet. */
+/**
+ * X12 callee: when QuickBooks recorded each receipt's reimbursement as paid; null = not yet.
+ * A backfilled receipt names the hand-booked transaction it matched (`qbEntity` + `qbTxnId`).
+ */
 export interface ReimbursementStatus {
-  forReceipts(receiptIds: unknown): Promise<Map<string, { paidOn: string | null }>>;
+  forReceipts(receipts: unknown): Promise<Map<string, { paidOn: string | null }>>;
 }
 
 /** The org's money thresholds, in cents. Read and updated through services/settingsService. */

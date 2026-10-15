@@ -1,7 +1,15 @@
 import type { ReceiptState } from "@inventory/receipt-types";
 import { z } from "zod";
 import { db } from "../db";
-import { OcrDataSchema, reimbursementStatusSchema, type OcrData, type OcrResult, type ReceiptPrincipal } from "../contract";
+import {
+  OcrDataSchema,
+  reimbursementStatusSchema,
+  type OcrData,
+  type OcrResult,
+  type PaidStatus,
+  type ReceiptPrincipal,
+  type ReimbursementAsk,
+} from "../contract";
 import { sendDonorSync } from "../lib/donor-sync";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
@@ -36,6 +44,16 @@ export type SubmitterReceipt = Omit<ReceiptRow, "donorFirstName" | "donorLastNam
 function toSubmitterView(row: ReceiptRow): SubmitterReceipt {
   const { donorFirstName: _f, donorLastName: _l, donorCompanyName: _c, ...rest } = row;
   return rest;
+}
+
+/** X12 answer; QuickBooks off or any failure reads "not yet paid", never an error on the page. */
+async function paidStatus(owed: ReimbursementAsk[]): Promise<Map<string, PaidStatus>> {
+  try {
+    return reimbursementStatusSchema.parse(await ports().reimbursementStatus.forReceipts(owed));
+  } catch (err) {
+    console.warn("[receipt] reimbursement status unavailable", err);
+    return new Map();
+  }
 }
 
 const toCents = (dollars: number | string | undefined): number =>
@@ -525,10 +543,8 @@ export const receiptService = {
   async listMine(opts: { hideCompleted?: boolean } = {}) {
     const actor = await requireActor();
     const rows = await receiptRepo.list({ orgId: (await getOrg()).id, uploadedByUserId: actor.id });
-    const owed = rows.filter((r) => r.needsReimbursement).map((r) => r.id);
-    const paid = owed.length
-      ? reimbursementStatusSchema.parse(await ports().reimbursementStatus.forReceipts(owed))
-      : new Map<string, { paidOn: string | null }>();
+    const owed = rows.filter((r) => r.needsReimbursement).map((r) => ({ receiptId: r.id, qbEntity: r.qbEntity, qbTxnId: r.qbTxnId }));
+    const paid = owed.length ? await paidStatus(owed) : new Map<string, PaidStatus>();
 
     const list = rows.map((r) => {
       const paidOn = r.needsReimbursement ? (paid.get(r.id)?.paidOn ?? null) : null;
