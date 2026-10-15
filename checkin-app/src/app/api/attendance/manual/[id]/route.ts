@@ -6,7 +6,7 @@ import type { FacilityCloseVia, Prisma } from "@/generated/prisma/client";
 import { parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTime } from "@/lib/visitTimes";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
-import { closeActor, correctCloseTime, finishCloseGuard, lastKeyholderGuard } from "@/lib/scan-service";
+import { closeActor, correctCloseTime, finishCloseGuard, lastKeyholderGuard, recordWebClose } from "@/lib/scan-service";
 import type { CloseGuardResult } from "@/lib/scan-service";
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 import { visitSubject } from "@/lib/visit/scope";
@@ -20,7 +20,7 @@ import { resolveDisplayTimezone } from "@/lib/appSettings";
 // Side channel: handler() returns through stripBag, so the guard result
 // can't ride the bag. A WeakMap keyed on the request lets the wrapper
 // intercept a warning or run the facility close after the handler commits.
-const guardResults = new WeakMap<Request, { guard: CloseGuardResult; actorId: number; subjectId: number; visitId: number; closeTime?: Date }>();
+const guardResults = new WeakMap<Request, { guard: CloseGuardResult; actorId: number; subjectId: number; visitId: number; closeTime?: Date; recorded?: boolean }>();
 
 // Self-correction of a member's own visits, and a household lead's correction
 // of their household members' (trust-first, see
@@ -128,8 +128,8 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
         // one-open-visit invariant is per, so a lead's edit serializes against
         // the member's own kiosk scan. When the edit CLOSES an open visit, only
         // the arrival is written here — the departure goes through
-        // processVisitCheckout below, outside this lock (as on the sibling
-        // POST); it refuses already-closed or tombstoned visits, and it owns
+        // processVisitCheckout below, in its own transaction under the same
+        // lock; it refuses already-closed or tombstoned visits, and it owns
         // the back-to-back event chunking.
         const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(${Number(visit.personId)})`;
@@ -183,7 +183,17 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
         // that survives. Empty means the close lost a race — nothing applied.
         let surviving = updated;
         if (closingOpenVisit) {
-            const chunks = await processVisitCheckout(visitId, nextDeparted!, undefined, "TYPED");
+            const pending = guardResults.get(req);
+            // The close the caller chose commits with the checkout, under the
+            // person lock, so a kiosk departure that won the race is kept.
+            const chunks = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+                await tx.$executeRaw`SELECT pg_advisory_xact_lock(${Number(visit.personId)})`;
+                const departed = await processVisitCheckout(visitId, nextDeparted!, tx, "TYPED");
+                if (departed.length > 0 && pending?.guard.action === "proceed") {
+                    pending.recorded = await recordWebClose(tx, pending.guard, { ...pending, via: "WEB_CORRECTION" });
+                }
+                return departed;
+            });
             if (chunks.length === 0) throw notFound("Visit not found.");
             surviving = chunks[chunks.length - 1];
         }

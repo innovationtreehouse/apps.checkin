@@ -58,7 +58,8 @@ describe("flow: web checkout by the last recorded keyholder", () => {
     const signOut = (session: Session, visitId: number, extra: Record<string, unknown> = {}) =>
         api<Warning & { facilityClosed?: boolean }>(session, "/api/attendance", { method: "DELETE", body: JSON.stringify({ visitId, ...extra }) });
 
-    /** Start every journey from an empty building: the board closes it. */
+    /** Start every journey from an empty building: the board signs everyone out.
+     *  Not a keyholder, it may only leave, never close. */
     async function emptyBuilding() {
         for (const v of (await roster()).attendance.filter(a => !a.participant.isKeyholder)) await signOut(board, v.id);
         for (const v of (await roster()).attendance) {
@@ -179,6 +180,8 @@ describe("flow: web checkout by the last recorded keyholder", () => {
         expect(warn.json.choices).toEqual(["leave", "cancel"]);
         expect(warn.json.names).toHaveLength(1);
 
+        const close = await signOut(board, kv.id, { forceCloseToken: warn.json.forceCloseToken, closeChoice: "close" });
+        expect(close.status).toBe(400);
         const res = await signOut(board, kv.id, { forceCloseToken: warn.json.forceCloseToken, closeChoice: "leave" });
         expect(res.json.facilityClosed).toBe(false);
         expect((await roster()).attendance.map(v => v.participant.id)).toEqual([otherId]);

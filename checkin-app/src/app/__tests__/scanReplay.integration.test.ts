@@ -12,8 +12,8 @@
 import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
-import type { Person } from '@/generated/prisma/client';
 import { SCAN_PROTOCOL_VERSION } from '@/lib/scanProtocol';
+import type { Person } from '@/generated/prisma/client';
 
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
 jest.mock('@/lib/notifications', () => ({

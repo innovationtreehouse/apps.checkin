@@ -7,10 +7,12 @@
 const findMany = jest.fn();
 // The keyholder-cover query is the one that selects bare times.
 const coverFindMany = jest.fn();
+const lastCloseFind = jest.fn();
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {
     visit: {
         findMany: (args: { select?: unknown }) => (args.select ? coverFindMany(args) : findMany(args)),
     },
+    facilityClose: { findFirst: (args: unknown) => lastCloseFind(args) },
 } }));
 
 // Who counts as a supervising adult is lib/supervision's rule and is tested there
@@ -68,6 +70,44 @@ beforeEach(() => {
     coverFindMany.mockReset();
     coverFindMany.mockResolvedValue([{ arrivedAt: rows[0].arrivedAt, departedAt: null }]);
     supervisingAdultVisits.mockClear();
+    lastCloseFind.mockReset();
+    lastCloseFind.mockResolvedValue(null);
+});
+
+describe("facilityOpen", () => {
+    it("is open while a keyholder visit is open and no close has run", async () => {
+        expect((await getFullAttendance()).safety.facilityOpen).toBe(true);
+    });
+
+    const arrived = rows[0].arrivedAt.getTime();
+    const close = (closedAt: number, executedAt: number, via = "KIOSK") =>
+        lastCloseFind.mockResolvedValue({ closedAt: new Date(closedAt), executedAt: new Date(executedAt), via });
+
+    it("is not reopened by a check-in scanned before the latest close and delivered after it ran", async () => {
+        close(arrived + 60 * 60_000, arrived + 2 * 60 * 60_000);
+        expect((await getFullAttendance()).safety.facilityOpen).toBe(false);
+        expect(lastCloseFind).toHaveBeenCalledWith(expect.objectContaining({ where: { executedAt: { not: null } } }));
+    });
+
+    it("is not reopened by a fast-clock check-in stamped just after a close that ran later", async () => {
+        close(arrived - 60_000, arrived + 60 * 60_000);
+        expect((await getFullAttendance()).safety.facilityOpen).toBe(false);
+    });
+
+    it("is reopened by a keyholder arriving live just after a close ran", async () => {
+        close(arrived - 60_000, arrived - 59_000);
+        expect((await getFullAttendance()).safety.facilityOpen).toBe(true);
+    });
+
+    it("is not reopened by an arrival within the skew of the nightly sweep", async () => {
+        close(arrived - 60_000, arrived - 59_000, "NIGHTLY_SWEEP");
+        expect((await getFullAttendance()).safety.facilityOpen).toBe(false);
+    });
+
+    it("is reopened by a keyholder who arrived well after the latest close", async () => {
+        close(arrived - 60 * 60_000, arrived - 60 * 60_000);
+        expect((await getFullAttendance()).safety.facilityOpen).toBe(true);
+    });
 });
 
 describe("getFullAttendance({ kiosk: true })", () => {

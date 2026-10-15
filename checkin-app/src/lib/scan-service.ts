@@ -3,22 +3,22 @@ import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTra
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { apiError, apiJson } from "@/lib/api-response";
 import type { FacilityCloseVia, Person } from "@/generated/prisma/client";
-import { type DbClient, type TxClient, isRootClient } from "@/lib/db-client";
+import type { DbClient, TxClient } from "@/lib/db-client";
 import { lockFacility, withFacilityLock } from "@/lib/facilityLock";
 import { LIVE_VISIT } from "@/lib/visit/filters";
-import { MAX_VISIT_MS } from "@/lib/visitTimes";
+import { LATE_CLOSE_SKEW_MS, MAX_VISIT_MS } from "@/lib/visitTimes";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, youthIsPresent } from "@/lib/supervision";
 import { isYouth } from "@/lib/time";
 import { getKioskDisplayName, getKioskDisplayNames } from "@/lib/kiosk-names";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { logBackendError } from "@/lib/logger";
-import { type AuditActor, personActor } from "@/lib/auditActor";
+import { type AuditActor, personActor, systemActor } from "@/lib/auditActor";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import type { AuthenticatedUser } from "@/types/auth";
 import { sendEmail } from "@/lib/email";
 import { escapeHtml } from "@/lib/email-templates/base";
-import { formatDateTime } from "@/lib/time";
+import { formatDateTime, formatTime } from "@/lib/time";
 import { resolveDisplayTimezone } from "@/lib/appSettings";
 
 /**
@@ -67,10 +67,16 @@ export const SUPERVISION_CONFIRM_DEADFRONT_MS = 1_000;
  * unit tests) `db` defaults to the global prisma client. Notifications are the
  * caller's job, after commit (see notifyScanOutcome).
  */
-export async function processCheckin(participant: Person, authType: string, db: DbClient = prisma, visitTime: Date = new Date()) {
+export async function processCheckin(
+    participant: Person,
+    authType: string,
+    db: DbClient = prisma,
+    /** A replay's scan time; absent for a live check-in. */
+    visitTime?: Date,
+) {
     // Facility lock serializes the open-state read and the create against the
     // last-keyholder sweep: a check-in lands wholly before a close (and is swept)
-    // or wholly after it. Same 2-arg lock space as runFacilityClose —
+    // or wholly after it. Same 2-arg lock space as the close sweep —
     // independent of the per-person lock the scan route already holds.
     return withFacilityLock(db, async (tx) => {
     // Callers read "no open visit" before this lock; a concurrent check-in for
@@ -102,7 +108,9 @@ export async function processCheckin(participant: Person, authType: string, db: 
         }
     }
 
-    const arrivalTime = visitTime;
+    // A live arrival is stamped once it holds the facility lock: after any close
+    // it waited behind was carried out, so it reads as arriving after that close.
+    const arrivalTime = visitTime ?? new Date();
     const eventId = await findAssociatedEventAt(participant.id, arrivalTime, tx);
 
     const newVisit = await tx.visit.create({
@@ -137,9 +145,18 @@ export async function processCheckin(participant: Person, authType: string, db: 
     });
 }
 
+/** A kiosk older than the close-request generation sends no close request, so
+ *  its keyholder checkout still decides the close: shown others (`shownEmpty`
+ *  false) leaves, and unsaid falls back to the server's records. The route reads
+ *  `shownEmpty: true` as a one-badge close request. `clientEventId` is the scan's,
+ *  for flagging a replay. */
+export type LegacyKiosk = { shownEmpty: boolean | null; clientEventId: string | null };
+
 /**
- * Process a check-out for a participant who has an active visit.
- * Handles last-isKeyholder logic and facility closure.
+ * Process a check-out for a participant who has an active visit. Only this
+ * person leaves: a building close is its own request (see
+ * {@link processCloseRequest}), decided by the kiosk or the web dialog. The one
+ * exception is a {@link LegacyKiosk}, whose keyholder checkout may close.
  *
  * `db` is the scan route's transaction client (covered by the per-participant
  * advisory lock) or, when called standalone, the global prisma client.
@@ -149,24 +166,15 @@ export async function processCheckout(
     activeVisitId: number,
     authType: string,
     db: DbClient = prisma,
-    /** Force-close confirm token echoed by this scan, live or replayed. */
-    confirmToken: string | null = null,
     visitTime: Date = new Date(),
-    /** clientEventId of a REPLAYED event (drain-delivered), null for a live scan. */
-    replayEventId: string | null = null,
-    /** The kiosk confirmed this close locally while offline — the two-scan
-     *  confirm ran on the kiosk, no server token was ever minted to echo.
-     *  Honored only on a replay; a live scan stays server-authoritative. */
-    forceCloseConfirmed: boolean = false,
-    /** A session checkout's close, decided by {@link lastKeyholderGuard}. */
+    isReplay: boolean = false,
+    /** A web checkout whose dialog chose close; reported in the response. */
     webClose: boolean = false,
-    /** Whether the kiosk showed nobody else inside; null when it did not say. */
-    shownEmpty: boolean | null = null,
+    legacy: LegacyKiosk | null = null,
 ) {
     let facilityClosed = authType !== "kiosk" && webClose;
-    let closeOfferToken: string | null = null;
-    let closePrompt = "";
-    /** The last keyholder's single-badge leave, with how many it left inside. */
+    let closeOffer: { closePrompt: string; forceCloseToken: string; confirmSeconds: number } | null = null;
+    /** The last recorded keyholder's single-badge leave, with how many it left inside. */
     let leave: { othersInside: number } | null = null;
 
     if (participant.isKeyholder && authType === "kiosk") {
@@ -176,93 +184,52 @@ export async function processCheckout(
                 deletedAt: null,
                 person: { isKeyholder: true },
                 id: { not: activeVisitId },
-                // A late replay closes the building as it was at the scan: a
-                // keyholder who arrived after it reopened a different session.
-                ...(replayEventId ? { arrivedAt: { lte: visitTime } } : {}),
-            }
+                // A late replay reads the building as it was at the scan.
+                ...(isReplay ? { arrivedAt: { lte: visitTime } } : {}),
+            },
         });
-        // The kiosk's offline two-scan confirm: a keyholder at the reader
-        // confirmed the room is clear. Honored only on a replay; a live scan stays
-        // server-authoritative.
-        const offlineConfirmed = forceCloseConfirmed && replayEventId != null;
-
-        if (shownEmpty === true) {
-            // The keyholder saw nobody else inside: anyone the server still
-            // records is a forgotten badge-out or a check-in not yet delivered.
-            facilityClosed = true;
-        } else if (remainingKeyholders === 0) {
-            const others = await db.visit.findMany({
+        const others = remainingKeyholders === 0
+            ? await db.visit.findMany({
                 where: { departedAt: null, deletedAt: null, id: { not: activeVisitId } },
                 include: { person: true },
-            });
-            const ownVisit = await db.visit.findUnique({
-                where: { id: activeVisitId },
-                select: { forceCloseToken: true }
-            });
-            // A token on the still-open visit is a close the keyholder was offered
-            // before their badge checked them out.
-            const confirmForceClose = forceCloseTokenMatches(ownVisit?.forceCloseToken, confirmToken);
+            })
+            : [];
+        // An older kiosk echoes this token on the same badge's second scan; the
+        // route reads any echo as a confirmed close, so nothing stores it.
+        const offer = (closePrompt: string) => isReplay ? null
+            : { closePrompt, forceCloseToken: randomUUID(), confirmSeconds: FORCE_CLOSE_CONFIRM_SECONDS };
 
-            // The kiosk showed others (shownEmpty false) even when the server
-            // records nobody: its view decides, so only a second badge closes.
-            if (confirmForceClose || offlineConfirmed || (others.length === 0 && shownEmpty !== false)) {
-                facilityClosed = true;
-            } else {
-                // The last keyholder's single badge is a leave: they check out and
-                // the others stay inside a closed facility. Live, the kiosk offers
-                // the close for the countdown; a replay has nobody at the reader.
-                leave = { othersInside: others.length };
-                if (!replayEventId) {
-                    closeOfferToken = randomUUID();
-                    const inside = others.length > 0
-                        ? `, and others are still recorded inside: ${presentLabels(others).join(", ")}.`
-                        : ".";
-                    closePrompt = `No other keyholder is checked in${inside} Badge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to close the building and check everyone out.`;
-                } else {
+        if (remainingKeyholders === 0 && legacy && others.length === 0 && legacy.shownEmpty !== false) {
+            facilityClosed = true;
+        } else if (remainingKeyholders === 0) {
+            leave = { othersInside: others.length };
+            if (legacy) {
+                const inside = others.length > 0
+                    ? `, and others are still recorded inside: ${presentLabels(others).join(", ")}.`
+                    : ".";
+                closeOffer = offer(`No other keyholder is checked in${inside} Badge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to close the building and check everyone out.`);
+                if (isReplay && legacy.clientEventId) {
                     // Nobody confirmed a close: the leave applies, and a human
                     // checks who the server still records inside.
-                    await db.rawBadgeLog.update({
-                        where: { clientEventId: replayEventId },
+                    await db.rawBadgeLog.updateMany({
+                        where: { clientEventId: legacy.clientEventId },
                         data: { reviewReason: "force_close_review" },
                     });
                 }
             }
-        } else if (offlineConfirmed) {
-            // The kiosk's offline two-scan close, from a keyholder whose visit is
-            // still open while another keyholder is recorded: any keyholder may
-            // close, so the other keyholder does not stop it.
-            facilityClosed = true;
-        } else if (!replayEventId) {
-            // Another keyholder is still recorded inside, so this departure goes
-            // through — but the keyholder may be the last one actually here, with
-            // the other a forgotten badge-out. A second badge closes the building
-            // (closeOnOfferConfirm). Never offered on a replay: nobody is at the
-            // reader to badge again.
-            closeOfferToken = randomUUID();
-            closePrompt = `Others are still recorded inside. Badge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to close the building and check everyone out.`;
+        } else if (legacy) {
+            closeOffer = offer(`Others are still recorded inside. Badge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to close the building and check everyone out.`);
         }
     }
 
-    if (facilityClosed) {
-        // The token is spent. Clear it before the visit departs: a token on
-        // a departed row is a live close offer (closeOnOfferConfirm).
-        await db.visit.update({
-            where: { id: activeVisitId },
-            data: { forceCloseWarnedAt: null, forceCloseToken: null }
-        });
-        await sweepIfStandalone(db, { closedById: participant.id, via: closeVia(authType, replayEventId) }, visitTime);
-    }
-
-    // SUPERVISION INTERRUPT (#1436). Fires on EVERY badge departure, not just a
-    // keyholder's — the close-guard above is a separate interrupt with its own
-    // stamp. Skipped when the facility is closing: that sweep departs everyone.
-    // Skipped for a REPLAY too: its 400 records nothing but the drain acks that
+    // SUPERVISION INTERRUPT (#1436). Fires on every live badge departure.
+    // Skipped when the facility is closing: that sweep departs everyone.
+    // Skipped for a REPLAY: its 400 records nothing but the drain acks that
     // shape, so the queued departure would be dropped and the visit left open.
-    // Hours-old bookkeeping has no room to warn about and nobody to re-badge.
     // Skipped for a web checkout as well: the badge scanner is the only place
     // anyone can re-badge (docs/rules/attendance-checkin.md, Supervision).
     let supervisionWarning: string | undefined;
-    if (!facilityClosed && !replayEventId && authType === "kiosk") {
+    if (!facilityClosed && !isReplay && authType === "kiosk") {
         const interrupt = await supervisionInterrupt(activeVisitId, db);
         if (interrupt?.confirmRequired) return interrupt.response;
         supervisionWarning = interrupt?.warning;
@@ -270,30 +237,10 @@ export async function processCheckout(
 
     const finalVisits = await processVisitCheckout(activeVisitId, visitTime, db, "SCANNER");
     const updatedVisit = finalVisits.length > 0 ? finalVisits[finalVisits.length - 1] : null;
-    // Stamped after the checkout: event-chunking may replace the original row.
-    const closeOffer = closeOfferToken && updatedVisit
-        ? await db.visit.update({
-            where: { id: updatedVisit.id },
-            data: { forceCloseWarnedAt: new Date(), forceCloseToken: closeOfferToken },
-        }).then(() => ({
-            closePrompt,
-            forceCloseToken: closeOfferToken,
-            confirmSeconds: FORCE_CLOSE_CONFIRM_SECONDS,
-        }))
-        : {};
-    if (leave) {
-        // Same shape as a web leave; the kiosk has no pick-list, so the handover is not named.
-        await db.auditLog.create({
-            data: {
-                ...personActor(participant.id),
-                action: "EDIT",
-                tableName: "Visit",
-                affectedEntityId: updatedVisit?.id ?? activeVisitId,
-                secondaryAffectedEntity: participant.id,
-                newData: { type: "last_keyholder_choice", choice: "leave", via: closeVia(authType, replayEventId), handoverToId: null, othersInside: leave.othersInside },
-            },
-        });
+    if (facilityClosed && authType === "kiosk") {
+        await recordClose(db, { closedById: participant.id, via: closeVia(authType, isReplay) }, visitTime);
     }
+    if (leave) await auditKioskLeave(db, participant.id, updatedVisit?.id ?? activeVisitId, isReplay, leave.othersInside);
 
     return apiJson({
         message: facilityClosed ? "Checked out and Facility closed" : "Checked out successfully",
@@ -307,44 +254,123 @@ export async function processCheckout(
     });
 }
 
+/** The last recorded keyholder's kiosk leave, audited like a web leave; the kiosk
+ *  has no pick-list, so the handover is not named. */
+async function auditKioskLeave(db: DbClient, personId: number, visitId: number, isReplay: boolean, othersInside: number) {
+    await db.auditLog.create({
+        data: {
+            ...personActor(personId),
+            action: "EDIT",
+            tableName: "Visit",
+            affectedEntityId: visitId,
+            secondaryAffectedEntity: personId,
+            newData: { type: "last_keyholder_choice", choice: "leave", via: closeVia("kiosk", isReplay), handoverToId: null, othersInside },
+        },
+    });
+}
+
+/** What the kiosk decided when it sent a close: the keyholder alone on its
+ *  screen, or the second scan of the same badge. */
+export type CloseKind = "alone" | "confirmed";
+
 /**
- * The second badge of a keyholder whose checkout offered a close (see
- * processCheckout): they are already departed, so this closes the facility
- * without a visit of their own. Live, the scan must echo the offer's token; a
- * replay may instead carry the kiosk's offline two-scan confirm. Returns null
- * when the scan is not such a confirm.
+ * A keyholder's close request from the kiosk: check the keyholder out and record
+ * the close, both in the caller's transaction. The keyholder at the reader saw
+ * the room, so the server's records never overrule it, with one exception: the
+ * check-ins the kiosk's roster could not have shown (after `rosterAsOf`).
+ *
+ * - A live one-badge close with such a check-in does not close yet: the keyholder
+ *   leaves, and is told who checked in; the same badge again closes.
+ * - Any other close applies, and if it sweeps such a check-in it is raised for
+ *   review, naming them.
+ *
+ * The keyholder's visit may already be departed or removed; the close needs
+ * none. The sweep runs after commit, from the recorded row ({@link executePendingCloses}).
  */
-export async function closeOnOfferConfirm(
+export async function processCloseRequest(
     participant: Person,
-    authType: string,
     db: DbClient,
-    confirmToken: string | null,
-    replayEventId: string | null,
-    forceCloseConfirmed: boolean,
-    /** When the confirming badge was read; the sweep departs everyone at it. */
-    closeTime: Date = new Date(),
-): Promise<Response | null> {
-    if (!participant.isKeyholder || authType !== "kiosk") return null;
-    const offlineConfirmed = forceCloseConfirmed && replayEventId != null;
-    if (!offlineConfirmed) {
-        if (confirmToken == null) return null;
-        const offered = await db.visit.findFirst({
-            where: { personId: participant.id, departedAt: { not: null }, deletedAt: null, forceCloseToken: confirmToken },
-            select: { id: true },
-        });
-        if (!offered) return null;
-        await db.visit.update({
-            where: { id: offered.id },
-            data: { forceCloseWarnedAt: null, forceCloseToken: null },
+    closeTime: Date,
+    clientEventId: string | null,
+    isReplay: boolean,
+    kind: CloseKind = "confirmed",
+    /** Server time of the kiosk's last roster; null when it had none to send. */
+    rosterAsOf: Date | null = null,
+) {
+    const closedAt = clampToNow(closeTime);
+    const unseen = rosterAsOf
+        ? await db.visit.findMany({
+            where: {
+                departedAt: null,
+                deletedAt: null,
+                personId: { not: participant.id },
+                arrivedAt: { gt: rosterAsOf, lte: new Date(closedAt.getTime() + LATE_CLOSE_SKEW_MS) },
+            },
+            include: { person: true },
+            orderBy: { arrivedAt: "asc" },
+        })
+        : [];
+    const hold = unseen.length > 0 && kind === "alone" && !isReplay;
+    const ownVisit = await db.visit.findFirst({
+        where: {
+            personId: participant.id,
+            departedAt: null,
+            deletedAt: null,
+            arrivedAt: { lte: new Date(closedAt.getTime() + LATE_CLOSE_SKEW_MS) },
+        },
+        orderBy: { arrivedAt: "desc" },
+        select: { id: true, arrivedAt: true },
+    });
+    const departed = ownVisit
+        ? await processVisitCheckout(ownVisit.id, new Date(Math.max(closedAt.getTime(), ownVisit.arrivedAt.getTime())), db, "SCANNER")
+        : [];
+    const visit = departed.length > 0 ? departed[departed.length - 1] : null;
+
+    if (hold) {
+        const othersInside = await db.visit.count({ where: { departedAt: null, deletedAt: null, personId: { not: participant.id } } });
+        if (visit) await auditKioskLeave(db, participant.id, visit.id, isReplay, othersInside);
+        const timeZone = await resolveDisplayTimezone();
+        const labels = getKioskDisplayNames(unseen.map(v => ({ ...v.person, id: v.id })));
+        const who = unseen.map(v => `${labels.get(v.id) || "Someone"} checked in at ${formatTime(v.arrivedAt, { timeZone })}`).join("; ");
+        return apiJson({
+            message: "Checked out successfully",
+            type: "checkout" as const,
+            participant: scanParticipant(participant),
+            visit,
+            facilityClosed: false,
+            closePrompt: `${who}. Badge again to close the building.`,
+            signedRequest: true,
         });
     }
 
-    await sweepIfStandalone(db, { closedById: participant.id, via: closeVia(authType, replayEventId) }, closeTime);
+    const closeId = await recordClose(db, { closedById: participant.id, via: closeVia("kiosk", isReplay) }, closedAt, clientEventId);
+    if (unseen.length > 0) {
+        // The kiosk's roster predates these check-ins: the close may have swept
+        // out someone still inside. Raised for review, never held.
+        if (clientEventId) {
+            await db.rawBadgeLog.updateMany({ where: { clientEventId, reviewReason: null }, data: { reviewReason: "close_stale_roster" } });
+        }
+        await db.auditLog.create({
+            data: {
+                ...personActor(participant.id),
+                action: "EDIT",
+                tableName: "FacilityClose",
+                affectedEntityId: closeId,
+                secondaryAffectedEntity: participant.id,
+                newData: {
+                    type: "close_stale_roster",
+                    rosterAsOf: rosterAsOf!.toISOString(),
+                    unseen: unseen.map(v => ({ visitId: v.id, personId: v.personId, arrivedAt: v.arrivedAt.toISOString() })),
+                },
+            },
+        });
+    }
+
     return apiJson({
-        message: "Facility closed",
+        message: "Checked out and Facility closed",
         type: "checkout" as const,
         participant: scanParticipant(participant),
-        visit: null,
+        visit,
         facilityClosed: true,
         signedRequest: true,
     });
@@ -414,62 +440,54 @@ async function supervisionInterrupt(
     };
 }
 
-/**
- * The facility-wide sweep takes row locks on EVERY open visit, and the email
- * kick fires its own DB queries. Neither may run inside the scan route's
- * per-participant advisory-lock transaction: it would block concurrent scans
- * for other participants and let the email run contend on the still-open
- * transaction. When called standalone (root client — e.g. tests) we own the
- * whole operation, so run them here; under the route's tx client the route runs
- * both AFTER it commits (see finalizeFacilityClose in route.ts).
- */
-async function sweepIfStandalone(db: DbClient, closer: FacilityCloser, closeTime: Date) {
-    if (!isRootClient(db)) return;
-    await withFacilityLock(db, (tx) => closeAllOpenVisits(tx, closer, closeTime));
-    invalidateAttendanceCache();
-    kickPostEventEmails();
-}
-
-/** Depart everyone who was in the building at `closeTime` — the moment the last
- *  keyholder left. Live that is server now; a confirmed close replayed late
- *  carries the keyholder's own scan time (the route parks one from a clock
- *  running ahead; the clamp to now only absorbs the tolerated skew).
- *  Facility-wide, not participant-scoped: a single atomic statement, so it needs
- *  no wrapping transaction.
- *
- *  Raw rather than `updateMany` because the stamp is per-row: the close moment
- *  is capped at the visit's own `arrivedAt + MAX_VISIT_MS`, and `updateMany`
- *  can only set one constant for every row it touches.
- *
- *  Someone who arrived more than {@link LATE_CLOSE_SKEW_MS} after `closeTime`
- *  badged in after lock-up and is left as they are — a late close never ends a
- *  visit that began after it. An arrival inside the skew is the kiosk's clock
- *  disagreeing with the server's, so it departs too, no earlier than it
- *  arrived. A visit the nightly cron already AUTO_CLOSEd past `closeTime` is
- *  pulled back to it — the cron stamped only because the close had not arrived
- *  yet. Live, nobody arrived after `closeTime` and no departure lies in the
- *  future.
- *
- *  FACILITY_CLOSE, not AUTO_CLOSE: the stamp is the moment the building
- *  actually closed, so it is bounded by building hours — plausible, unlike the
- *  cron's midnight sweep. Where the cap bites the stamp is 24h after arrival
- *  instead; both are placeholders the member is meant to correct, and a
- *  placeholder inside the 24h rule beats an accurate record that breaks it.
- *
- *  The columns are timestamp-without-zone holding UTC, so the instant is
- *  converted AT TIME ZONE 'UTC' or the comparison is off by the server's offset. */
-/** Kiosk-vs-server clock skew a late close absorbs on the arrival side. */
-export const LATE_CLOSE_SKEW_MS = 2 * 60_000;
+export { LATE_CLOSE_SKEW_MS };
 
 /** Who closed the facility, and through which path. `ownCheckout` is false
  *  when the closer ended someone else's visit, so no visit of theirs is the close. */
 export type FacilityCloser = { closedById: number; via: FacilityCloseVia; ownCheckout?: boolean };
 
 /** The path a scan-route close came through. */
-export function closeVia(authType: string, replayEventId: string | null): FacilityCloseVia {
+export function closeVia(authType: string, isReplay: boolean): FacilityCloseVia {
     if (authType !== "kiosk") return "WEB_CHECKOUT";
-    // A replay reached the server from the kiosk's offline queue, whichever confirm it carries.
-    return replayEventId != null ? "KIOSK_OFFLINE" : "KIOSK";
+    // A replay reached the server from the kiosk's offline queue.
+    return isReplay ? "KIOSK_OFFLINE" : "KIOSK";
+}
+
+/** A close time from a kiosk clock running ahead is taken as now. */
+const clampToNow = (t: Date) => new Date(Math.min(t.getTime(), Date.now()));
+
+/**
+ * Record a close in the caller's transaction, unexecuted. It commits with
+ * whatever the caller commits (the keyholder's checkout); the sweep then runs
+ * from this row, so a crash after commit loses nothing.
+ */
+export async function recordClose(db: DbClient, closer: FacilityCloser, closeTime: Date, clientEventId: string | null = null): Promise<number> {
+    const closedAt = clampToNow(closeTime);
+    // The closer's own visit the close ends: their latest departure at or before
+    // it, with no time bound (a late kiosk confirm can come long after the leave),
+    // or one the overnight sweep departed after it.
+    const closerVisit = closer.ownCheckout === false ? null : await db.visit.findFirst({
+        where: {
+            personId: closer.closedById,
+            deletedAt: null,
+            arrivedAt: { lte: closedAt },
+            OR: [
+                { departedVia: { in: ["SCANNER", "TYPED"] }, departedAt: { lte: closedAt } },
+                { departedVia: "AUTO_CLOSE", departedAt: { gt: closedAt } },
+            ],
+        },
+        // By departure, not arrival: a backdated visit can arrive before one that left earlier.
+        orderBy: { departedAt: "desc" },
+        select: { id: true },
+    });
+    const close = await db.facilityClose.create({
+        data: {
+            closedAt, closedById: closer.closedById, via: closer.via, clientEventId, executedAt: null,
+            closerVisitId: closerVisit?.id ?? null,
+        },
+        select: { id: true },
+    });
+    return close.id;
 }
 
 export type DepartureChange = {
@@ -507,30 +525,33 @@ export async function logCloseDepartures(
     });
 }
 
-async function closeAllOpenVisits(db: DbClient, closer: FacilityCloser, closeTime: Date = new Date()) {
-    const closedAt = new Date(Math.min(closeTime.getTime(), Date.now()));
-    const closeAt = closedAt.toISOString();
-    // The closer's own visit the close ends: their latest departure at or before
-    // it, with no time bound (a late kiosk confirm can come long after the leave),
-    // or one the overnight sweep departed after it.
-    const closerVisit = closer.ownCheckout === false ? null : await db.visit.findFirst({
-        where: {
-            personId: closer.closedById,
-            deletedAt: null,
-            arrivedAt: { lte: closedAt },
-            OR: [
-                { departedVia: { in: ["SCANNER", "TYPED"] }, departedAt: { lte: closedAt } },
-                { departedVia: "AUTO_CLOSE", departedAt: { gt: closedAt } },
-            ],
-        },
-        // By departure, not arrival: a backdated visit can arrive before one that left earlier.
-        orderBy: { departedAt: "desc" },
-        select: { id: true },
-    });
-    const close = await db.facilityClose.create({
-        data: { closedAt, closedById: closer.closedById, via: closer.via, closerVisitId: closerVisit?.id ?? null },
-        select: { id: true },
-    });
+/** Depart everyone who was in the building at the close's `closedAt` — the
+ *  moment the keyholder closed. Live that is server now; a close replayed late
+ *  carries the keyholder's own scan time.
+ *
+ *  Raw rather than `updateMany` because the stamp is per-row: the close moment
+ *  is capped at the visit's own `arrivedAt + MAX_VISIT_MS`, and `updateMany`
+ *  can only set one constant for every row it touches.
+ *
+ *  Someone who arrived more than {@link LATE_CLOSE_SKEW_MS} after the close
+ *  badged in after lock-up and is left as they are — a close never ends a visit
+ *  that began after it. An arrival inside the skew is the kiosk's clock
+ *  disagreeing with the server's, so it departs too, no earlier than it arrived.
+ *  A machine departure stamped after the close — the nightly cron's AUTO_CLOSE,
+ *  or a later close's FACILITY_CLOSE — is pulled back to it: closes apply in
+ *  close-time order, whatever order they reach the server. A departure a person
+ *  typed is left alone.
+ *
+ *  FACILITY_CLOSE, not AUTO_CLOSE: the stamp is the moment the building
+ *  actually closed, so it is bounded by building hours — plausible, unlike the
+ *  cron's midnight sweep. Where the cap bites the stamp is 24h after arrival
+ *  instead; both are placeholders the member is meant to correct, and a
+ *  placeholder inside the 24h rule beats an accurate record that breaks it.
+ *
+ *  The columns are timestamp-without-zone holding UTC, so the instant is
+ *  converted AT TIME ZONE 'UTC' or the comparison is off by the server's offset. */
+async function sweepForClose(db: DbClient, close: { id: number; closedAt: Date; closedById: number | null; via: FacilityCloseVia }) {
+    const closeAt = close.closedAt.toISOString();
     // Tombstoned visits are excluded: closing one would rewrite a record the
     // member chose to erase, and resurrect a machine departure if it is undone.
     // `old` locks each row before reading it, so the logged before-value is the
@@ -544,7 +565,8 @@ async function closeAllOpenVisits(db: DbClient, closer: FacilityCloser, closeTim
             WHERE v."deletedAt" IS NULL
               AND v."arrivedAt" <= t.close_at + ${LATE_CLOSE_SKEW_MS}::double precision * interval '1 millisecond'
               AND (v."departedAt" IS NULL
-                   OR (v."departedVia" = 'AUTO_CLOSE'::"VisitSource" AND v."departedAt" > t.close_at))
+                   OR (v."departedVia" IN ('AUTO_CLOSE'::"VisitSource", 'FACILITY_CLOSE'::"VisitSource")
+                       AND v."departedAt" > t.close_at))
             FOR UPDATE OF v
         )
         UPDATE "Visit" v
@@ -558,7 +580,8 @@ async function closeAllOpenVisits(db: DbClient, closer: FacilityCloser, closeTim
         WHERE v.id = old.id
         RETURNING v.id, v."personId", old."departedAt" AS "oldDepartedAt", old."departedVia"::text AS "oldDepartedVia",
                   v."departedAt", v."departedVia"::text AS "departedVia"`;
-    await logCloseDepartures(db, close.id, personActor(closer.closedById), changes, closer.via);
+    const actor = close.closedById != null ? personActor(close.closedById) : systemActor("system:facility-close");
+    await logCloseDepartures(db, close.id, actor, changes, close.via);
 }
 
 /**
@@ -609,17 +632,64 @@ function kickPostEventEmails() {
         .catch(err => console.error("Failed to run post-event emails on facility close:", err));
 }
 
+/** Run one recorded close's sweep, unless it already ran. The facility lock
+ *  serializes executors, so a close runs exactly once however many re-drive it.
+ *  Locks follow the order every visit path uses: the person lock of everyone the
+ *  sweep may depart (ascending, so executors never cross), then the facility. */
+async function executeClose(id: number): Promise<boolean> {
+    return prisma.$transaction(async (tx) => {
+        const pending = await tx.facilityClose.findFirst({ where: { id, executedAt: null }, select: { closedAt: true } });
+        if (!pending) return false;
+        const closeAt = pending.closedAt.toISOString();
+        // A superset of sweepForClose's rows: a check-in that lands after this read
+        // arrives after the close and is not swept.
+        const people = await tx.$queryRaw<{ personId: number }[]>`
+            WITH t AS (
+                SELECT (${closeAt}::timestamptz AT TIME ZONE 'UTC') AS close_at
+            )
+            SELECT DISTINCT v."personId" FROM "Visit" v, t
+            WHERE v."deletedAt" IS NULL
+              AND v."arrivedAt" <= t.close_at + ${LATE_CLOSE_SKEW_MS}::double precision * interval '1 millisecond'
+              AND (v."departedAt" IS NULL
+                   OR (v."departedVia" IN ('AUTO_CLOSE'::"VisitSource", 'FACILITY_CLOSE'::"VisitSource")
+                       AND v."departedAt" > t.close_at))
+            ORDER BY v."personId"`;
+        for (const { personId } of people) await tx.$executeRaw`SELECT pg_advisory_xact_lock(${personId})`;
+        await lockFacility(tx);
+        const close = await tx.facilityClose.findFirst({
+            where: { id, executedAt: null },
+            select: { id: true, closedAt: true, closedById: true, via: true },
+        });
+        if (!close) return false;
+        await sweepForClose(tx, close);
+        await tx.facilityClose.update({ where: { id }, data: { executedAt: new Date() } });
+        return true;
+    });
+}
+
 /**
- * Close every open visit and kick post-event emails. Called after the
- * last-keyholder checkout is committed — both from the scan route (via
- * finalizeFacilityClose) and from web close paths.
+ * Carry out every recorded close that has not run, oldest close time first.
+ * Called after every scan, after a web close and by the nightly cron, so a close
+ * whose sweep was cut off (crash, lock timeout) runs at the next of those. Never
+ * throws: the close is already durable, and the next re-drive retries it.
  */
-export async function runFacilityClose(closer: FacilityCloser, closeTime: Date = new Date()): Promise<void> {
-    await withFacilityLock(prisma, (tx) => closeAllOpenVisits(tx, closer, closeTime));
-    // After the lock/tx commits so a concurrent kiosk GET cannot refill the
-    // cache from still-open rows (READ COMMITTED).
-    invalidateAttendanceCache();
-    kickPostEventEmails();
+export async function executePendingCloses(): Promise<void> {
+    try {
+        const pending = await prisma.facilityClose.findMany({
+            where: { executedAt: null },
+            orderBy: [{ closedAt: "asc" }, { id: "asc" }],
+            select: { id: true },
+        });
+        let ran = false;
+        for (const { id } of pending) ran = (await executeClose(id)) || ran;
+        if (!ran) return;
+        // After the sweep commits, so a concurrent kiosk GET cannot refill the
+        // cache from still-open rows (READ COMMITTED).
+        invalidateAttendanceCache();
+        kickPostEventEmails();
+    } catch (err) {
+        await logBackendError(err, "facility-close");
+    }
 }
 
 /** Timing-safe force-close token compare: hash both sides to a fixed length so
@@ -696,9 +766,11 @@ async function handoverCandidates(db: DbClient, subjectId: number) {
  * - a removal never closes, whoever makes it.
  *
  * The token is bound to the actor shown the choice, and the allowed choices are
- * worked out again on confirm, so a role revoked in between takes effect.
+ * worked out again on confirm, so a role revoked in between takes effect. The
+ * token columns belong to this dialog alone; no kiosk path reads them.
  * A keyholder alone in the record closes with no warning when the caller may
- * close. Callers depart or remove the visit, then call {@link finishCloseGuard}.
+ * close. Callers depart or remove the visit, recording the close in the same
+ * transaction ({@link recordWebClose}), then call {@link finishCloseGuard}.
  */
 export async function lastKeyholderGuard(
     visitId: number,
@@ -807,16 +879,40 @@ export async function lastKeyholderGuard(
 }
 
 /**
- * After the guarded visit is departed or removed: run the close the guard
- * decided on, audit the caller's choice, and email a named keyholder who is not
- * checked in. Never throws; the checkout has already committed.
+ * Record the close a web caller chose, on `db` — the transaction that checks the
+ * visit out, so the checkout and the close commit together. It runs after the
+ * checkout, so it can link the closer's departed visit. False when the caller
+ * did not choose a close.
+ */
+export async function recordWebClose(
+    db: DbClient,
+    guard: Extract<CloseGuardResult, { action: "proceed" }>,
+    ctx: { actorId: number; subjectId: number; via: FacilityCloseVia; closeTime?: Date },
+): Promise<boolean> {
+    if (!guard.facilityClosed) return false;
+    await recordClose(db, { closedById: ctx.actorId, via: ctx.via, ownCheckout: ctx.actorId === ctx.subjectId }, ctx.closeTime ?? new Date());
+    return true;
+}
+
+/**
+ * After the guarded visit is departed or removed: carry out the close the caller
+ * chose (recording it first unless the caller already did, `recorded`), audit
+ * the choice, and email a named keyholder who is not checked in. Never throws;
+ * the checkout has already committed.
  */
 export async function finishCloseGuard(
     guard: Extract<CloseGuardResult, { action: "proceed" }>,
-    ctx: { actorId: number; subjectId: number; visitId: number; via: FacilityCloseVia; closeTime?: Date },
+    ctx: { actorId: number; subjectId: number; visitId: number; via: FacilityCloseVia; closeTime?: Date; recorded?: boolean },
 ): Promise<void> {
     if (guard.facilityClosed) {
-        await closeWithRetry({ closedById: ctx.actorId, via: ctx.via, ownCheckout: ctx.actorId === ctx.subjectId }, ctx.closeTime);
+        if (!ctx.recorded) {
+            try {
+                await recordWebClose(prisma, guard, ctx);
+            } catch (err) {
+                await logBackendError(err, "facility-close");
+            }
+        }
+        await executePendingCloses();
     }
     if (!guard.choice) return;
     const { choice, handoverToId, othersInside } = guard.choice;
@@ -857,39 +953,6 @@ async function emailHandover(handoverToId: number, leaverId: number, othersInsid
 }
 
 /**
- * Run the facility-wide visit close + post-event email kick AFTER the scan
- * route's per-participant transaction has committed — off the advisory lock.
- *
- * processCheckout (under the lock, on the tx client) only *decides* whether the
- * facility closed and reports it via `facilityClosed` in the response body; the
- * route hands that response here once committed. The sweep is retried once (it
- * can lose a lock race against an in-flight check-in); a second failure lands in
- * ErrorLog, never thrown, so it can't turn a committed checkout into a 500.
- */
-export async function finalizeFacilityClose(res: Response, closer: FacilityCloser, closeTime: Date = new Date()): Promise<void> {
-    let body: { facilityClosed?: boolean } | null;
-    try {
-        body = await res.clone().json();
-    } catch {
-        return; // non-JSON / empty body (e.g. debounce) — nothing to close
-    }
-    if (!body?.facilityClosed) return;
-    await closeWithRetry(closer, closeTime);
-}
-
-async function closeWithRetry(closer: FacilityCloser, closeTime: Date = new Date()): Promise<void> {
-    try {
-        await runFacilityClose(closer, closeTime);
-    } catch {
-        try {
-            await runFacilityClose(closer, closeTime);
-        } catch (err) {
-            await logBackendError(err, "facility-close");
-        }
-    }
-}
-
-/**
  * Send the check-in/out email for a committed scan. Runs only after the scan
  * transaction commits, so a rollback can't leave a false email and a retried
  * (duplicate_ignored) scan can't send a second one. `at` is the scan's event
@@ -904,7 +967,7 @@ export async function notifyScanOutcome(res: Response, at: Date): Promise<void> 
     }
     const personId = body?.participant?.id;
     if (typeof personId !== "number") return;
-    // A close-offer confirm departs nobody (closeOnOfferConfirm): the keyholder
+    // A close request for a keyholder already checked out departs nobody: the keyholder
     // already left, and got their checkout email then.
     if (body?.visit === null) return;
     if (body?.type === "checkin") {

@@ -1,7 +1,9 @@
 /**
- * The last keyholder's single badge with others inside is a leave: it checks
- * them out and offers the close; a second badge echoing the offer's token closes
- * (docs/rules/attendance-checkin.md, Opening and closing).
+ * A keyholder's checkout at the kiosk. From a kiosk that sends close requests it
+ * only checks that keyholder out; the last recorded keyholder's checkout is
+ * audited as a leave. From an older kiosk the checkout still decides the close:
+ * the kiosk's `shownEmpty` when sent, else the server's records — a leave with a
+ * close offer, or a close (docs/rules/attendance-checkin.md, Opening and closing).
  *
  * The offer is rendered on the kiosk screen, a public display that mostly lists
  * minors. It names people the way the kiosk roster does — nickname, else first
@@ -11,7 +13,7 @@
  */
 import type { Person } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
-import { processCheckout, FORCE_CLOSE_CONFIRM_SECONDS } from "@/lib/scan-service";
+import { processCheckout, FORCE_CLOSE_CONFIRM_SECONDS, type LegacyKiosk } from "@/lib/scan-service";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {} }));
@@ -30,41 +32,66 @@ jest.mock("@/lib/supervision", () => ({
 }));
 
 const keyholder = { id: 1, isKeyholder: true } as Person;
+const older: LegacyKiosk = { shownEmpty: null, clientEventId: "evt-replay-1" };
 
-/** Tx-shaped fake (not a registered root client, so isRootClient() is false). */
-function fakeDb(
-    remaining: Array<{ name: string | null; email: string | null }>,
-    storedToken: string | null = null
-): DbClient {
+/** Tx-shaped fake: no other keyholder recorded, `remaining` inside. */
+function fakeDb(remaining: Array<{ name: string | null; email: string | null }>): DbClient {
     return {
         visit: {
-            count: jest.fn().mockResolvedValue(0), // no other keyholders present
-            findMany: jest.fn().mockResolvedValue(
-                remaining.map((person, i) => ({ id: 100 + i, person }))
-            ),
-            findUnique: jest.fn().mockResolvedValue({ forceCloseToken: storedToken }),
+            count: jest.fn().mockResolvedValue(0),
+            findMany: jest.fn().mockResolvedValue(remaining.map((person, i) => ({ id: 100 + i, person }))),
+            findFirst: jest.fn().mockResolvedValue({ id: 77 }),
             update: jest.fn().mockResolvedValue({}),
         },
-        auditLog: {
-            create: jest.fn().mockResolvedValue({}),
-        },
-        rawBadgeLog: {
-            update: jest.fn().mockResolvedValue({}),
-        },
+        auditLog: { create: jest.fn().mockResolvedValue({}) },
+        rawBadgeLog: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        facilityClose: { create: jest.fn().mockResolvedValue({ id: 5 }) },
     } as unknown as DbClient;
 }
+
+/** processCheckout with only the kiosk generation and replay-ness varied. */
+const badge = (db: DbClient, legacy: LegacyKiosk | null, isReplay = false) =>
+    processCheckout(keyholder, 42, "kiosk", db, new Date(), isReplay, false, legacy);
 
 beforeEach(() => {
     jest.mocked(processVisitCheckout).mockResolvedValue([{ id: 77 }] as never);
 });
 
-async function offerFor(remaining: Array<{ name: string | null; email: string | null }>) {
-    const res = await processCheckout(keyholder, 42, "kiosk", fakeDb(remaining));
-    expect(res.status).toBe(200);
-    return (await res.json()) as { closePrompt: string; type: string };
-}
+const present = [{ name: "Someone Inside", email: "inside@example.com" }];
 
-describe("the close offer names people as the kiosk roster does", () => {
+describe("from a kiosk that sends close requests, a keyholder checkout only checks out", () => {
+    it("closes nothing and offers nothing, even with nobody else recorded", async () => {
+        const db = fakeDb([]);
+        const body = await (await badge(db, null)).json();
+
+        expect(body).toMatchObject({ type: "checkout", facilityClosed: false });
+        expect(body.forceCloseToken).toBeUndefined();
+        expect(db.facilityClose.create).not.toHaveBeenCalled();
+    });
+
+    it("audits the last recorded keyholder's checkout as a leave with the handover not named", async () => {
+        const db = fakeDb(present);
+        await badge(db, null);
+
+        expect(db.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                action: "EDIT",
+                tableName: "Visit",
+                affectedEntityId: 77,
+                secondaryAffectedEntity: 1,
+                newData: { type: "last_keyholder_choice", choice: "leave", via: "KIOSK", handoverToId: null, othersInside: 1 },
+            }),
+        });
+    });
+});
+
+describe("from an older kiosk, the close offer names people as the kiosk roster does", () => {
+    async function offerFor(remaining: Array<{ name: string | null; email: string | null }>) {
+        const res = await badge(fakeDb(remaining), older);
+        expect(res.status).toBe(200);
+        return (await res.json()) as { closePrompt: string; type: string };
+    }
+
     it("renders a nameless person as the email local-part, not the address", async () => {
         const body = await offerFor([{ name: null, email: "jane.doe@example.com" }]);
 
@@ -105,151 +132,55 @@ describe("the close offer names people as the kiosk roster does", () => {
     });
 });
 
-describe("the last keyholder's single badge is a leave", () => {
-    const present = [{ name: "Someone Inside", email: "inside@example.com" }];
-
-    it("checks them out and offers the close, saying no other keyholder is checked in", async () => {
+describe("from an older kiosk, the last keyholder's single badge with others inside is a leave", () => {
+    it("checks them out and offers the close, saying no other keyholder is checked in, storing no token", async () => {
         const db = fakeDb(present);
-        const res = await processCheckout(keyholder, 42, "kiosk", db);
-        const body = await res.json();
+        const body = await (await badge(db, older)).json();
 
-        expect(res.status).toBe(200);
         expect(body.type).toBe("checkout");
         expect(body.facilityClosed).toBe(false);
         expect(body.closePrompt).toContain("No other keyholder is checked in");
         expect(body.closePrompt).toContain(`within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds`);
         expect(body.confirmSeconds).toBe(FORCE_CLOSE_CONFIRM_SECONDS);
+        expect(body.forceCloseToken).toEqual(expect.any(String));
         expect(processVisitCheckout).toHaveBeenCalledWith(42, expect.any(Date), db, "SCANNER");
-        // The offer's token rides the departed visit, for closeOnOfferConfirm.
-        expect(db.visit.update).toHaveBeenCalledWith({
-            where: { id: 77 },
-            data: { forceCloseWarnedAt: expect.any(Date), forceCloseToken: body.forceCloseToken },
-        });
+        expect(db.visit.update).not.toHaveBeenCalled();
     });
 
-    it("audits the leave with the handover not named", async () => {
+    it("checks a replay out as a leave, with no offer, flagged for review", async () => {
         const db = fakeDb(present);
-        await processCheckout(keyholder, 42, "kiosk", db);
+        const body = await (await badge(db, older, true)).json();
 
-        expect(db.auditLog.create).toHaveBeenCalledWith({
-            data: expect.objectContaining({
-                action: "EDIT",
-                tableName: "Visit",
-                affectedEntityId: 77,
-                secondaryAffectedEntity: 1,
-                newData: { type: "last_keyholder_choice", choice: "leave", via: "KIOSK", handoverToId: null, othersInside: 1 },
-            }),
-        });
-    });
-
-    it("checks a token-less replay out as a leave, with no offer, flagged for review", async () => {
-        const db = fakeDb(present);
-        const body = await (await processCheckout(keyholder, 42, "kiosk", db, null, new Date(), "evt-replay-1")).json();
-
-        expect(body.type).toBe("checkout");
         expect(body.facilityClosed).toBe(false);
         expect(body.forceCloseToken).toBeUndefined();
-        expect(db.rawBadgeLog.update).toHaveBeenCalledWith({
-            where: { clientEventId: "evt-replay-1" },
-            data: { reviewReason: "force_close_review" },
-        });
         expect(db.auditLog.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 newData: expect.objectContaining({ choice: "leave", via: "KIOSK_OFFLINE", handoverToId: null }),
             }),
         });
-    });
-
-    it("leaves rather than closing when the token does not match", async () => {
-        // Deliberately a DIFFERENT length from the stored token: the compare is
-        // timing-safe, and an unguarded timingSafeEqual throws on unequal lengths.
-        const db = fakeDb(present, "token-abc");
-        const body = await (await processCheckout(keyholder, 42, "kiosk", db, "token-guessed")).json();
-
-        expect(body.facilityClosed).toBe(false);
-        expect(body.forceCloseToken).not.toBe("token-abc");
-    });
-
-    it("closes with no offer when nobody else is inside", async () => {
-        const db = fakeDb([]);
-        const body = await (await processCheckout(keyholder, 42, "kiosk", db)).json();
-
-        expect(body.facilityClosed).toBe(true);
-        expect(body.forceCloseToken).toBeUndefined();
-        expect(db.auditLog.create).not.toHaveBeenCalled();
-    });
-});
-
-describe("a token on the still-open visit closes", () => {
-    const present = [{ name: "Someone Inside", email: "inside@example.com" }];
-
-    it("closes the facility when the scan echoes it, and spends it", async () => {
-        const db = fakeDb(present, "token-abc");
-        const res = await processCheckout(keyholder, 42, "kiosk", db, "token-abc");
-
-        expect(res.status).toBe(200);
-        expect((await res.json()).facilityClosed).toBe(true);
-        expect(db.visit.update).toHaveBeenCalledWith({
-            where: { id: 42 },
-            data: { forceCloseWarnedAt: null, forceCloseToken: null },
+        expect(db.rawBadgeLog.updateMany).toHaveBeenCalledWith({
+            where: { clientEventId: "evt-replay-1" },
+            data: { reviewReason: "force_close_review" },
         });
-        expect(db.auditLog.create).not.toHaveBeenCalled();
     });
 
-    it("closes on a replay echoing it, at the scan time (§5.23a)", async () => {
-        const departedAt = new Date(Date.now() - 3 * 60_000);
-        const db = fakeDb(present, "token-abc");
-        const res = await processCheckout(keyholder, 42, "kiosk", db, "token-abc", departedAt, "evt-replay-4");
-
-        expect((await res.json()).facilityClosed).toBe(true);
-        expect(processVisitCheckout).toHaveBeenCalledWith(42, departedAt, db, "SCANNER");
-    });
-});
-
-describe("offline force-close: a client-confirmed replay closes without a server token (§5.23a extended)", () => {
-    const present = [{ name: "Someone Inside", email: "inside@example.com" }];
-
-    it("closes on a token-less replay carrying forceCloseConfirmed", async () => {
-        const db = fakeDb(present, null);
-        const res = await processCheckout(keyholder, 42, "kiosk", db, null, new Date(), "evt-offline-1", true);
-
-        expect((await res.json()).facilityClosed).toBe(true);
-        expect(db.rawBadgeLog.update).not.toHaveBeenCalled();
-    });
-
-    it("offers rather than closes when forceCloseConfirmed rides a LIVE scan", async () => {
-        const db = fakeDb(present, null);
-        const body = await (await processCheckout(keyholder, 42, "kiosk", db, null, new Date(), null, true)).json();
-
-        expect(body.facilityClosed).toBe(false);
-        expect(body.forceCloseToken).toEqual(expect.any(String));
-    });
-});
-
-describe("the kiosk's view of who is inside decides (shownEmpty)", () => {
-    const present = [{ name: "Someone Inside", email: "inside@example.com" }];
-    /** processCheckout with only the kiosk's view varied: live, no token. */
-    const badge = (db: DbClient, shownEmpty: boolean | null) =>
-        processCheckout(keyholder, 42, "kiosk", db, null, new Date(), null, false, false, shownEmpty);
-
-    it("closes on one live badge when the kiosk showed nobody, whoever the server records", async () => {
-        const db = fakeDb(present);
-        const body = await (await badge(db, true)).json();
+    it("records a close, with no offer, when nobody else is recorded", async () => {
+        const db = fakeDb([]);
+        const body = await (await badge(db, older)).json();
 
         expect(body.facilityClosed).toBe(true);
         expect(body.forceCloseToken).toBeUndefined();
         expect(db.auditLog.create).not.toHaveBeenCalled();
+        expect(db.facilityClose.create).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ closedById: 1, via: "KIOSK", executedAt: null, closerVisitId: 77 }),
+        }));
     });
+});
 
-    it("closes on one live badge when the kiosk showed nobody, even with another keyholder recorded", async () => {
-        const db = fakeDb(present);
-        jest.mocked(db.visit.count).mockResolvedValue(1);
-        expect((await (await badge(db, true)).json()).facilityClosed).toBe(true);
-    });
-
+describe("from an older kiosk, what the kiosk showed decides (shownEmpty; true is a close request, in the route)", () => {
     it("leaves and offers the close when the kiosk showed others, though the server records nobody", async () => {
         const db = fakeDb([]);
-        const body = await (await badge(db, false)).json();
+        const body = await (await badge(db, { shownEmpty: false, clientEventId: null })).json();
 
         expect(body.facilityClosed).toBe(false);
         expect(body.forceCloseToken).toEqual(expect.any(String));
@@ -262,7 +193,7 @@ describe("the kiosk's view of who is inside decides (shownEmpty)", () => {
     });
 
     it("follows the server's records when the kiosk does not say", async () => {
-        expect((await (await badge(fakeDb([]), null)).json()).facilityClosed).toBe(true);
-        expect((await (await badge(fakeDb(present), null)).json()).facilityClosed).toBe(false);
+        expect((await (await badge(fakeDb([]), older)).json()).facilityClosed).toBe(true);
+        expect((await (await badge(fakeDb(present), older)).json()).facilityClosed).toBe(false);
     });
 });

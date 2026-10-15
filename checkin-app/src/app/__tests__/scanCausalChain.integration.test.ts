@@ -2,13 +2,10 @@
  * @jest-environment node
  */
 /**
- * Causal-chain coverage for the last-isKeyholder checkout: check-in → facility
- * close → post-event emails, plus the "others are still here" leave branch.
- * Previously post-event emails were only tested in isolation with a hand-seeded
- * visit; the trigger from an actual checkout was never exercised.
+ * Causal-chain coverage for a keyholder's close: check-in → close request →
+ * sweep → post-event emails, driven through the scan route.
  */
 import { POST } from '@/app/api/scan/route';
-import { processCheckout } from '@/lib/scan-service';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
 import { processPostEventEmails } from '@/lib/postEventEmails';
@@ -31,10 +28,10 @@ jest.mock('@/lib/logger', () => ({
 const TAG = 'scan-causal-test';
 const flush = () => new Promise(r => setImmediate(r));
 
-function scanReq(participantId: number, forceCloseToken?: string, intent?: 'IN' | 'OUT', extra: Record<string, unknown> = {}) {
+function scanReq(participantId: number, extra: Record<string, unknown> = {}) {
     return new Request('http://localhost/api/scan', {
         method: 'POST',
-        body: JSON.stringify({ participantId, ...(forceCloseToken ? { forceCloseToken } : {}), ...(intent ? { intent } : {}), ...extra }),
+        body: JSON.stringify({ participantId, ...extra }),
     }) as unknown as import('next/server').NextRequest;
 }
 
@@ -81,8 +78,8 @@ describe('Scan causal chain — last isKeyholder closes facility', () => {
             data: { timestamp: new Date(Date.now() - 5000) },
         });
 
-        // Check out → last isKeyholder, nobody else present → facility closes.
-        const outRes = await POST(scanReq(isKeyholder.id));
+        // The kiosk showed nobody else: one scan closes.
+        const outRes = await POST(scanReq(isKeyholder.id, { intent: 'OUT', close: 'alone' }));
         expect(outRes.status).toBe(200);
         const json = await outRes.json();
         expect(json.type).toBe('checkout');
@@ -95,23 +92,15 @@ describe('Scan causal chain — last isKeyholder closes facility', () => {
         expect(open).toBe(0);
     });
 
-    it('force-closes (departing everyone) when the scan echoes the confirm token, then sends post-event emails', async () => {
-        const kVisit = await prisma.visit.create({
-            data: {
-                personId: isKeyholder.id, arrivedAt: new Date(),
-                forceCloseWarnedAt: new Date(Date.now() - 5000), forceCloseToken: 'confirm-me',
-            },
-        });
+    it('a close request departs everyone the server records inside, then sends post-event emails', async () => {
+        await prisma.visit.create({ data: { personId: isKeyholder.id, arrivedAt: new Date() } });
         await prisma.visit.create({ data: { personId: normal.id, arrivedAt: new Date() } });
 
-        const res = await processCheckout(isKeyholder, kVisit.id, 'kiosk', undefined, 'confirm-me');
-        const json = await res.json();
-        expect(json.facilityClosed).toBe(true);
+        const res = await POST(scanReq(isKeyholder.id, { intent: 'OUT', close: 'alone' }));
+        expect((await res.json()).facilityClosed).toBe(true);
 
         await flush();
         expect(processPostEventEmails).toHaveBeenCalledWith({ forceImmediate: true });
-
-        // Everyone is departedAt, including the other attendee.
         const openAnyone = await prisma.visit.count({
             where: { personId: { in: [isKeyholder.id, normal.id] }, departedAt: null },
         });
@@ -123,7 +112,7 @@ describe('Scan causal chain — last isKeyholder closes facility', () => {
         const beforeClose = Date.now();
 
         const kVisit = await prisma.visit.create({
-            data: { personId: isKeyholder.id, arrivedAt: new Date(), forceCloseToken: 'confirm-me' },
+            data: { personId: isKeyholder.id, arrivedAt: new Date() },
         });
         const staleVisit = await prisma.visit.create({ data: { personId: normal.id, arrivedAt: stale } });
         // Open AND tombstoned — the one-open-visit index only covers live rows.
@@ -131,7 +120,7 @@ describe('Scan causal chain — last isKeyholder closes facility', () => {
             data: { personId: normal.id, arrivedAt: stale, deletedAt: new Date() },
         });
 
-        const res = await processCheckout(isKeyholder, kVisit.id, 'kiosk', undefined, 'confirm-me');
+        const res = await POST(scanReq(isKeyholder.id, { intent: 'OUT', close: 'confirmed' }));
         expect((await res.json()).facilityClosed).toBe(true);
 
         const capped = await prisma.visit.findUnique({ where: { id: staleVisit.id } });
@@ -142,82 +131,36 @@ describe('Scan causal chain — last isKeyholder closes facility', () => {
         const sameDay = await prisma.visit.findUnique({ where: { id: kVisit.id } });
         expect(sameDay!.departedAt!.getTime()).toBeGreaterThanOrEqual(beforeClose);
         expect(sameDay!.departedAt!.getTime()).toBeLessThanOrEqual(Date.now());
-        expect(sameDay?.departedVia).toBe('FACILITY_CLOSE');
+        expect(sameDay?.departedVia).toBe('SCANNER');
 
         const untouched = await prisma.visit.findUnique({ where: { id: tombstoned.id } });
         expect(untouched?.departedAt).toBeNull();
     });
 
-    it('checks the keyholder out and offers the close when others are present and no offer has been shown', async () => {
-        const kVisit = await prisma.visit.create({ data: { personId: isKeyholder.id, arrivedAt: new Date() } });
-        await prisma.visit.create({ data: { personId: normal.id, arrivedAt: new Date() } });
-        // An ordinary double-tap: two badge events 5s apart, no offer behind them.
-        await prisma.rawBadgeLog.create({ data: { personId: isKeyholder.id, timestamp: new Date(Date.now() - 5000) } });
-        await prisma.rawBadgeLog.create({ data: { personId: isKeyholder.id, timestamp: new Date() } });
-
-        const res = await processCheckout(isKeyholder, kVisit.id, 'kiosk');
-        expect(res.status).toBe(200);
-        const json = await res.json();
-        expect(json.type).toBe('checkout');
-        expect(json.facilityClosed).toBe(false);
-        expect(json.closePrompt).toContain('No other keyholder is checked in');
-
-        // Only the keyholder left: the other visit stays open and no emails fired.
-        expect(await prisma.visit.count({ where: { personId: isKeyholder.id, departedAt: null } })).toBe(0);
-        expect(await prisma.visit.count({ where: { personId: normal.id, departedAt: null } })).toBe(1);
-        expect(processPostEventEmails).not.toHaveBeenCalled();
-
-        // The offer's token rides the departed visit; only a scan echoing it may confirm.
-        const stamped = await prisma.visit.findUnique({ where: { id: kVisit.id } });
-        expect(stamped?.departedVia).toBe('SCANNER');
-        expect(stamped?.forceCloseToken).toEqual(json.forceCloseToken);
-
-        // The leave is audited, the handover not named.
-        const audit = await prisma.auditLog.findFirst({ where: { tableName: 'Visit', affectedEntityId: kVisit.id }, orderBy: { id: 'desc' } });
-        expect(audit?.newData).toEqual({ type: 'last_keyholder_choice', choice: 'leave', via: 'KIOSK', handoverToId: null, othersInside: 1 });
-        await prisma.auditLog.deleteMany({ where: { tableName: 'Visit', affectedEntityId: kVisit.id } });
-    });
-
-    it('confirms through the route inside the debounce window — the token is the confirm, not the gap', async () => {
+    it('a plain keyholder OUT with others inside checks out only the keyholder', async () => {
         await prisma.visit.create({ data: { personId: isKeyholder.id, arrivedAt: new Date() } });
         await prisma.visit.create({ data: { personId: normal.id, arrivedAt: new Date() } });
 
-        const offerRes = await POST(scanReq(isKeyholder.id, undefined, 'OUT'));
-        expect(offerRes.status).toBe(200);
-        const offer = await offerRes.json();
+        const res = await POST(scanReq(isKeyholder.id, { intent: 'OUT', protocolVersion: 6 }));
+        const json = await res.json();
+        expect(json.type).toBe('checkout');
+        expect(json.facilityClosed).toBe(false);
 
-        // Badge again immediately: inside the 3s debounce, which would swallow an
-        // untokened scan. The confirm carries the token, so it lands.
-        const closeRes = await POST(scanReq(isKeyholder.id, offer.forceCloseToken, 'OUT'));
+        expect(await prisma.visit.count({ where: { personId: normal.id, departedAt: null } })).toBe(1);
+        expect(processPostEventEmails).not.toHaveBeenCalled();
+    });
+
+    it('the confirmed close lands inside the debounce window of the leaving scan', async () => {
+        await prisma.visit.create({ data: { personId: isKeyholder.id, arrivedAt: new Date() } });
+        await prisma.visit.create({ data: { personId: normal.id, arrivedAt: new Date() } });
+
+        await POST(scanReq(isKeyholder.id, { intent: 'OUT' }));
+        const closeRes = await POST(scanReq(isKeyholder.id, { intent: 'OUT', close: 'confirmed' }));
         expect((await closeRes.json()).facilityClosed).toBe(true);
 
         const open = await prisma.visit.count({
             where: { personId: { in: [isKeyholder.id, normal.id] }, departedAt: null },
         });
         expect(open).toBe(0);
-    });
-
-    it('closes on one live badge the kiosk showed with nobody else inside, departing who the server still records', async () => {
-        await prisma.visit.create({ data: { personId: isKeyholder.id, arrivedAt: new Date() } });
-        await prisma.visit.create({ data: { personId: normal.id, arrivedAt: new Date() } });
-
-        const res = await POST(scanReq(isKeyholder.id, undefined, 'OUT', { shownEmpty: true }));
-        expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: true });
-
-        const open = await prisma.visit.count({
-            where: { personId: { in: [isKeyholder.id, normal.id] }, departedAt: null },
-        });
-        expect(open).toBe(0);
-    });
-
-    it('leaves and offers the close on one live badge the kiosk showed with others, though the server records nobody', async () => {
-        const kVisit = await prisma.visit.create({ data: { personId: isKeyholder.id, arrivedAt: new Date() } });
-
-        const res = await POST(scanReq(isKeyholder.id, undefined, 'OUT', { shownEmpty: false }));
-        const body = await res.json();
-        expect(body).toMatchObject({ type: 'checkout', facilityClosed: false });
-        expect(body.forceCloseToken).toEqual(expect.any(String));
-        expect(processPostEventEmails).not.toHaveBeenCalled();
-        await prisma.auditLog.deleteMany({ where: { tableName: 'Visit', affectedEntityId: kVisit.id } });
     });
 });

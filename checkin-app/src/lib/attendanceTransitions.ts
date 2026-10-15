@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import { MAX_VISIT_MS } from "@/lib/visitTimes";
+import { LIVE_VISIT } from "@/lib/visit/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 /**
@@ -114,16 +115,23 @@ export async function processVisitCheckout(
         Math.min(checkoutTime.getTime(), arrivedAt.getTime() + MAX_VISIT_MS),
     ));
 
+    // Every write below applies only while the visit is still open, so a caller
+    // that lost a race to another departure changes nothing and gets [].
+    const closeOpenVisit = async () => {
+        const { count } = await db.visit.updateMany({
+            where: { id: visitId, departedAt: null, ...LIVE_VISIT },
+            data: { departedAt: departure, departedVia: source, facilityCloseId },
+        });
+        if (count === 0) return [];
+        invalidateAttendanceCache();
+        return [await db.visit.findUniqueOrThrow({ where: { id: visitId } })];
+    };
+
     const relevantProgramIds = departure > arrivedAt ? await getRelevantProgramIds(participantId, db) : [];
 
     if (relevantProgramIds.length === 0) {
         // No programs enrolled, just close the visit normally
-        const closed = await db.visit.update({
-            where: { id: visitId },
-            data: { departedAt: departure, departedVia: source, facilityCloseId }
-        });
-        invalidateAttendanceCache();
-        return [closed];
+        return closeOpenVisit();
     }
 
     // Find all events in these programs that fall between arrival and departure
@@ -139,21 +147,15 @@ export async function processVisitCheckout(
 
     if (eventsDuringStay.length === 0) {
         // No relevant events during their stay, just close normally
-        const closed = await db.visit.update({
-            where: { id: visitId },
-            data: { departedAt: departure, departedVia: source, facilityCloseId }
-        });
-        invalidateAttendanceCache();
-        return [closed];
+        return closeOpenVisit();
     }
 
     // We have at least one event. We need to chunk the visit by deleting the
     // original open visit and recreating the chunks atomically.
     const chunk = async (tx: TxClient) => {
         // First, delete the original open visit
-        await tx.visit.delete({
-            where: { id: visitId }
-        });
+        const { count } = await tx.visit.deleteMany({ where: { id: visitId, departedAt: null, ...LIVE_VISIT } });
+        if (count === 0) return [];
 
         const createdVisits = [];
         let currentIterStart = arrivedAt;

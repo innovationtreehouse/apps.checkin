@@ -5,7 +5,7 @@ import { getKioskPublicKeys, verifyKioskSignature } from "@/lib/verify-kiosk";
 import { buildingLink } from "@/lib/kioskSeen";
 import { getFullAttendance, invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
-import { closeActor, finishCloseGuard, lastKeyholderGuard } from "@/lib/scan-service";
+import { closeActor, finishCloseGuard, lastKeyholderGuard, recordWebClose } from "@/lib/scan-service";
 import { lockFacility } from "@/lib/facilityLock";
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { logBackendError, logger } from "@/lib/logger";
@@ -172,10 +172,19 @@ export const DELETE = withAuth({}, async (req, auth) => {
         if (guard.action === 'refuse') return apiError(guard.error, guard.status);
         const { facilityClosed } = guard;
 
-        const finalVisits = await processVisitCheckout(visitId, new Date(), undefined, "TYPED");
+        const closeCtx = { actorId: Number(user.id), subjectId: visit.personId, visitId, via: "WEB_DASHBOARD" as const };
+        // The close commits with the checkout, so a crash between them loses neither.
+        // The person lock serializes this checkout with the kiosk's: a lost race
+        // departs nothing and records no close.
+        const finalVisits = await prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(${visit.personId})`;
+            const departed = await processVisitCheckout(visitId, new Date(), tx, "TYPED");
+            if (departed.length > 0) await recordWebClose(tx, guard, closeCtx);
+            return departed;
+        });
         const updatedVisit = finalVisits.length > 0 ? finalVisits[finalVisits.length - 1] : visit;
 
-        await finishCloseGuard(guard, { actorId: Number(user.id), subjectId: visit.personId, visitId, via: "WEB_DASHBOARD" });
+        await finishCloseGuard(guard, { ...closeCtx, recorded: true });
 
         // Fire-and-forget: send check-out notifications (mirrors /api/scan)
         sendCheckinNotifications(visit.personId, 'checkout').catch(err =>
@@ -225,9 +234,6 @@ export const POST = withAuth({}, async (req, auth) => {
                 return apiError("Participant not found", 404);
             }
 
-            const arrivalTime = new Date();
-            const eventId = await findAssociatedEventAt(participant.id, arrivalTime);
-
             // Read-then-create on this participant's open-visit state. Without
             // serialization, two concurrent MANUAL_CHECKINs — or one racing a kiosk
             // /api/scan or /api/attendance/manual — both pass the "already checked in?"
@@ -239,6 +245,9 @@ export const POST = withAuth({}, async (req, auth) => {
             const result = await prisma.$transaction(async (tx) => {
                 await tx.$executeRaw`SELECT pg_advisory_xact_lock(${participant.id})`;
                 await lockFacility(tx);
+                // Stamped under the facility lock: after any close it waited
+                // behind was carried out, so it reads as arriving after that close.
+                const arrivalTime = new Date();
 
                 const activeVisit = await tx.visit.findFirst({
                     where: {
@@ -264,6 +273,7 @@ export const POST = withAuth({}, async (req, auth) => {
                     return { facilityClosed: true as const };
                 }
 
+                const eventId = await findAssociatedEventAt(participant.id, arrivalTime, tx);
                 const visit = await tx.visit.create({
                     data: {
                         personId: participant.id,

@@ -333,6 +333,8 @@ export const classifications = {
         via: 'internal',
         closerVisitId: 'internal',
         createdAt: 'internal',
+        clientEventId: 'internal',
+        executedAt: 'internal',
     },
     AuditLog: {
         id: 'internal',

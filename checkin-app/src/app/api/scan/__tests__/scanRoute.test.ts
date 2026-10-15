@@ -5,7 +5,7 @@ import { POST } from '../route';
 import { authenticateRequest } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { logger } from '@/lib/logger';
-import { processCheckin, processCheckout, notifyScanOutcome, lastKeyholderGuard, finishCloseGuard, finalizeFacilityClose } from '@/lib/scan-service';
+import { processCheckin, processCheckout, processCloseRequest, executePendingCloses, notifyScanOutcome, lastKeyholderGuard, finishCloseGuard, recordWebClose } from '@/lib/scan-service';
 import { config } from '@/lib/config';
 import { KIOSK_DEBOUNCE_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 
@@ -56,11 +56,12 @@ jest.mock('@/lib/logger', () => ({
 jest.mock('@/lib/scan-service', () => ({
     processCheckin: jest.fn(),
     processCheckout: jest.fn(),
-    finalizeFacilityClose: jest.fn().mockResolvedValue(undefined),
-    closeVia: jest.fn().mockReturnValue("KIOSK"),
+    processCloseRequest: jest.fn(),
+    executePendingCloses: jest.fn().mockResolvedValue(undefined),
     closeActor: jest.fn((user: { id: string }) => ({ id: Number(user.id), isKeyholder: false, isBoardMember: false, isSysadmin: false })),
     lastKeyholderGuard: jest.fn().mockResolvedValue({ action: 'proceed', facilityClosed: false, choice: null }),
     finishCloseGuard: jest.fn().mockResolvedValue(undefined),
+    recordWebClose: jest.fn().mockResolvedValue(true),
     notifyScanOutcome: jest.fn().mockResolvedValue(undefined),
     SUPERVISION_CONFIRM_MS: 15_000,
     SUPERVISION_CONFIRM_DEADFRONT_MS: 1_000,
@@ -200,7 +201,7 @@ describe('POST /api/scan', () => {
         expect(res.status).toBe(200);
 
         // Scanned, recorded, and checked in AS THE SURVIVOR (id 99), not the badge's own id (1).
-        expect(processCheckin).toHaveBeenCalledWith(survivor, 'session', expect.anything(), expect.any(Date));
+        expect(processCheckin).toHaveBeenCalledWith(survivor, 'session', expect.anything(), undefined);
         expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({ data: { personId: 99, location: 'Main Entrance' } });
         expect(logger.info).toHaveBeenCalledWith('Scan forwarded from merged record', {
             badgeId: 1, tombstoneId: 99, survivorId: 99, hops: 1, viaArchive: false,
@@ -234,7 +235,7 @@ describe('POST /api/scan', () => {
             const res = await POST(scanReq(1));
             expect(res.status).toBe(200);
 
-            expect(processCheckin).toHaveBeenCalledWith(survivor, 'session', expect.anything(), expect.any(Date));
+            expect(processCheckin).toHaveBeenCalledWith(survivor, 'session', expect.anything(), undefined);
             expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({ data: { personId: 99, location: 'Main Entrance' } });
             expect(logger.info).toHaveBeenCalledWith('Scan forwarded from merged record', {
                 badgeId: 1, tombstoneId: null, survivorId: 99, hops: 1, viaArchive: true,
@@ -256,7 +257,7 @@ describe('POST /api/scan', () => {
 
             const res = await POST(scanReq(1));
             expect(res.status).toBe(200);
-            expect(processCheckin).toHaveBeenCalledWith(survivor, 'session', expect.anything(), expect.any(Date));
+            expect(processCheckin).toHaveBeenCalledWith(survivor, 'session', expect.anything(), undefined);
             expect(logger.info).toHaveBeenCalledWith('Scan forwarded from merged record', {
                 badgeId: 1, tombstoneId: 2, survivorId: 3, hops: 2, viaArchive: false,
             });
@@ -745,8 +746,7 @@ describe('POST /api/scan', () => {
 
             const res = await POST(liveReq());
             expect((await res.json()).type).toBe('checkout');
-            // Last arg null => processCheckout takes the live warn/confirm path.
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), null, expect.any(Date), null, false, false, null);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), expect.any(Date), false, false, { shownEmpty: null, clientEventId: 'evt-live' });
         });
 
         it('still dedups a clientEventId already recorded server-side', async () => {
@@ -758,7 +758,7 @@ describe('POST /api/scan', () => {
         });
     });
 
-    describe('force-close confirm token', () => {
+    describe('web close-choice token', () => {
         const scanReq = (body: Record<string, unknown>) => new Request('http://localhost/api/scan', {
             method: 'POST',
             body: JSON.stringify(body),
@@ -780,7 +780,8 @@ describe('POST /api/scan', () => {
             const res = await POST(scanReq({ participantId: 1, forceCloseToken: 'tok-1' }));
 
             expect((await res.json()).facilityClosed).toBe(true);
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), 'tok-1', expect.any(Date), null, false, false, null);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), expect.any(Date), false, false, null);
+            expect(processCloseRequest).not.toHaveBeenCalled();
         });
 
         it('returns the shared close choice to a web checkout and runs no checkout', async () => {
@@ -804,9 +805,10 @@ describe('POST /api/scan', () => {
 
             expect(lastKeyholderGuard).toHaveBeenCalledWith(7, { id: 1, mergedIntoId: null }, expect.objectContaining({ id: 1 }),
                 { token: 'tok-1', choice: 'close', handoverToId: undefined }, {}, expect.anything());
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), 'tok-1', expect.any(Date), null, false, true, null);
-            expect(finishCloseGuard).toHaveBeenCalledWith(guard, { actorId: 1, subjectId: 1, visitId: 7, via: 'WEB_CHECKOUT' });
-            expect(finalizeFacilityClose).not.toHaveBeenCalled();
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), expect.any(Date), false, true, null);
+            // Recorded in the scan transaction, with the checkout; the finisher only carries it out.
+            expect(recordWebClose).toHaveBeenCalledWith(expect.anything(), guard, { actorId: 1, subjectId: 1, via: 'WEB_CHECKOUT' });
+            expect(finishCloseGuard).toHaveBeenCalledWith(guard, { actorId: 1, subjectId: 1, visitId: 7, via: 'WEB_CHECKOUT', recorded: true });
         });
 
         it('debounces a spent or unknown token, so a stray second read cannot re-toggle', async () => {
@@ -826,41 +828,139 @@ describe('POST /api/scan', () => {
             expect(processCheckout).not.toHaveBeenCalled();
         });
 
-        // §5.23a: the outbox persists the token with the queued event, so a
-        // confirm given before the outage arrives on the replay and closes.
-        it('forwards a replayed scan\'s token so a pre-outage confirm still closes', async () => {
+    });
+
+    describe('kiosk close request', () => {
+        const kioskReq = (body: Record<string, unknown>) => new Request('http://localhost/api/scan', {
+            method: 'POST',
+            body: JSON.stringify({ participantId: 1, ...body }),
+        }) as unknown as import('next/server').NextRequest;
+        const closed = () => new Response(JSON.stringify({ type: 'checkout', facilityClosed: true }), { status: 200 });
+
+        beforeEach(() => {
             (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
-            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null, isKeyholder: true });
             (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
-            (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
-
-            const scannedAt = new Date(Date.now() - 60_000).toISOString();
-            const res = await POST(scanReq({
-                participantId: 1, clientEventId: 'evt-q', scannedAt, replay: true, forceCloseToken: 'tok-q',
-            }));
-
-            expect((await res.json()).facilityClosed).toBe(true);
-            expect(processCheckout).toHaveBeenCalledWith(
-                { id: 1, mergedIntoId: null }, 7, 'kiosk', expect.anything(), 'tok-q', new Date(scannedAt), 'evt-q', false, false, null);
+            // Inside the 3s debounce window: a close must get through anyway.
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue({ timestamp: new Date() });
+            (processCloseRequest as jest.Mock).mockImplementation(async () => closed());
         });
 
-        // A token closes late only for a keyholder; a stale replay with no
-        // displayed direction has nothing to apply, so it is held for review.
-        it('still parks a non-keyholder\'s intent-less token-carrying replay older than the freshness window', async () => {
-            (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
-            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
-            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+        it('records a live close at server now, past the debounce, and re-drives after commit', async () => {
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'alone', clientEventId: 'evt-c' }));
 
-            const res = await POST(scanReq({
-                participantId: 1,
-                clientEventId: 'evt-old',
-                scannedAt: new Date(Date.now() - 20 * 60_000).toISOString(),
-                replay: true,
-                forceCloseToken: 'tok-q',
-            }));
-
-            expect((await res.json()).type).toBe('parked');
+            expect((await res.json()).facilityClosed).toBe(true);
+            expect(processCloseRequest).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), expect.anything(), expect.any(Date), 'evt-c', false, 'alone', null);
             expect(processCheckout).not.toHaveBeenCalled();
+            expect(executePendingCloses).toHaveBeenCalled();
+        });
+
+        it('applies a replayed close at its scan time however old, never parked', async () => {
+            const scannedAt = new Date(Date.now() - 5 * 60 * 60_000).toISOString();
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'confirmed', clientEventId: 'evt-q', scannedAt, replay: true }));
+
+            expect((await res.json()).type).toBe('checkout');
+            expect(processCloseRequest).toHaveBeenCalledWith(expect.anything(), expect.anything(), new Date(scannedAt), 'evt-q', true, 'confirmed', null);
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({ data: expect.not.objectContaining({ reviewReason: expect.anything() }) });
+        });
+
+        it('reads an older kiosk\'s shownEmpty: true as a one-badge close', async () => {
+            await POST(kioskReq({ intent: 'OUT', shownEmpty: true, clientEventId: 'evt-se', protocolVersion: 5 }));
+            expect(processCloseRequest).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.any(Date), 'evt-se', false, 'alone', null);
+        });
+
+        it.each([
+            ['an older kiosk\'s offline confirm flag', { forceCloseConfirmed: true }],
+            ['an older kiosk\'s echoed token', { forceCloseToken: 'tok-q' }],
+        ])('reads %s as a confirmed close', async (_label, extra) => {
+            await POST(kioskReq({ clientEventId: 'evt-l', scannedAt: new Date().toISOString(), replay: true, ...extra }));
+            expect(processCloseRequest).toHaveBeenCalled();
+        });
+
+        it('applies a late close from someone no longer a keyholder, flagged for review', async () => {
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null, isKeyholder: false });
+
+            await POST(kioskReq({ intent: 'OUT', close: 'confirmed', clientEventId: 'evt-r', scannedAt: new Date().toISOString(), replay: true }));
+
+            expect(processCloseRequest).toHaveBeenCalled();
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ reviewReason: 'close_not_keyholder' }) });
+        });
+
+        it('refuses a live close from someone who is not a keyholder: an ordinary checkout, with a message', async () => {
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null, isKeyholder: false });
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue({ id: 7 });
+            (processCheckout as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkout', facilityClosed: false }), { status: 200 }));
+
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'alone', clientEventId: 'evt-nk', protocolVersion: 6 }));
+            const body = await res.json();
+
+            expect(processCloseRequest).not.toHaveBeenCalled();
+            expect(processCheckout).toHaveBeenCalled();
+            expect(body).toMatchObject({ type: 'checkout', facilityClosed: false, closeRefused: true, message: 'Only a keyholder can close the building.' });
+        });
+
+        it('re-drives recorded closes when a resend is deduped', async () => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue({ id: 5, clientEventId: 'evt-c' });
+
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'alone', clientEventId: 'evt-c' }));
+
+            expect((await res.json()).type).toBe('duplicate_ignored');
+            expect(processCloseRequest).not.toHaveBeenCalled();
+            expect(executePendingCloses).toHaveBeenCalled();
+        });
+
+        it('refuses a close that is not a checkout', async () => {
+            const res = await POST(kioskReq({ intent: 'IN', close: 'alone' }));
+            expect(res.status).toBe(400);
+        });
+
+        it('passes the kiosk\'s roster time to the close', async () => {
+            const rosterAsOf = new Date(Date.now() - 90_000).toISOString();
+            await POST(kioskReq({ intent: 'OUT', close: 'alone', clientEventId: 'evt-r2', rosterAsOf }));
+            expect(processCloseRequest).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.any(Date), 'evt-r2', false, 'alone', new Date(rosterAsOf));
+        });
+
+        it('refuses a rosterAsOf that is not a timestamp', async () => {
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'alone', rosterAsOf: 'yesterday-ish' }));
+            expect(res.status).toBe(400);
+            expect(processCloseRequest).not.toHaveBeenCalled();
+        });
+
+        it('refuses an unknown close kind', async () => {
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'maybe' }));
+            expect(res.status).toBe(400);
+        });
+
+        describe('a plain keyholder OUT', () => {
+            beforeEach(() => {
+                (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+                (prisma.visit.findFirst as jest.Mock).mockResolvedValue({ id: 7 });
+                (processCheckout as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkout' }), { status: 200 }));
+            });
+            const legacyArg = () => (processCheckout as jest.Mock).mock.calls[0][7];
+
+            it('from a protocol-6 kiosk is only a checkout: the server never decides a close', async () => {
+                await POST(kioskReq({ protocolVersion: 6, shownEmpty: false }));
+                expect(processCloseRequest).not.toHaveBeenCalled();
+                expect(legacyArg()).toBeNull();
+            });
+
+            it('from an older kiosk lets the checkout decide, carrying what the kiosk showed', async () => {
+                await POST(kioskReq({ protocolVersion: 5, shownEmpty: false }));
+                expect(processCloseRequest).not.toHaveBeenCalled();
+                expect(legacyArg()).toEqual({ shownEmpty: false, clientEventId: null });
+            });
+
+            it('from a kiosk that declares no protocol is an older kiosk', async () => {
+                await POST(kioskReq({}));
+                expect(legacyArg()).toEqual({ shownEmpty: null, clientEventId: null });
+            });
+
+            it('refuses a non-boolean shownEmpty', async () => {
+                const res = await POST(kioskReq({ shownEmpty: 'yes' }));
+                expect(res.status).toBe(400);
+            });
         });
     });
 
@@ -907,7 +1007,7 @@ describe('POST /api/scan', () => {
             const res = await POST(scanReq({ participantId: 1 }));
 
             expect((await res.json()).type).toBe('checkout');
-            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), null, expect.any(Date), null, false, false, null);
+            expect(processCheckout).toHaveBeenCalledWith({ id: 1, mergedIntoId: null }, 7, 'session', expect.anything(), expect.any(Date), false, false, null);
             expect(prisma.visit.count).toHaveBeenCalledWith(expect.objectContaining({
                 where: expect.objectContaining({
                     personId: 1,
@@ -954,6 +1054,9 @@ describe('POST /api/scan', () => {
             ['deadStatus', { deadStatus: 404 }],
             ['scannedAt', { scannedAt: '2026-01-01T00:00:00Z' }],
             ['forceCloseConfirmed', { forceCloseConfirmed: true }],
+            ['close', { close: 'alone' }],
+            ['shownEmpty', { shownEmpty: true }],
+            ['rosterAsOf', { rosterAsOf: '2026-10-12T20:58:00Z' }],
             ['clockSuspect', { clockSuspect: false }],
         ])('rejects %s even from a sysadmin session, before touching the DB', async (field, extra) => {
             (authenticateRequest as jest.Mock).mockResolvedValue(adminSession);

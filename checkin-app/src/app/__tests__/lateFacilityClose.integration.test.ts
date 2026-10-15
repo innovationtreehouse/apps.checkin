@@ -2,20 +2,17 @@
  * @jest-environment node
  */
 /**
- * A facility close confirmed by the last keyholder at the kiosk applies whenever
- * it reaches the server, past the replay freshness window, and departs everyone
- * at the keyholder's scan time (docs/rules/attendance-checkin.md, kiosk
- * resilience) — but never anyone who arrived after it. That includes a confirm
- * arriving after the keyholder's own badge already checked them out and offered
- * the close, and a keyholder's late OUT the kiosk showed with nobody else
- * inside. A close fences a late check-in scanned before it. Unconfirmed
- * intent-less stale replays still park.
+ * A keyholder's close from the kiosk applies whenever it reaches the server,
+ * past the replay freshness window, and departs everyone at the keyholder's
+ * scan time (docs/rules/attendance-checkin.md, Opening and closing) — but never
+ * anyone who arrived after it. A plain keyholder OUT is not a close. A close
+ * fences a late check-in scanned before it.
  */
 import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
 import { LATE_CLOSE_SKEW_MS } from '@/lib/scan-service';
-import { SCAN_PROTOCOL_VERSION } from '@/lib/scanProtocol';
+import { SCAN_PROTOCOL_VERSION, TRUSTED_REPLAY_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 import type { Person } from '@/generated/prisma/client';
 
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
@@ -39,7 +36,7 @@ function scanReq(body: Record<string, unknown>) {
     }) as unknown as import('next/server').NextRequest;
 }
 
-describe('Late confirmed facility close (real DB)', () => {
+describe('Late facility close (real DB)', () => {
     let keyholder: Person;
     let member: Person;
     let lateComer: Person;
@@ -80,7 +77,7 @@ describe('Late confirmed facility close (real DB)', () => {
     async function occupy(departed?: { at: Date; via: 'AUTO_CLOSE' }) {
         const at = new Date(Date.now() - 5 * HOUR);
         const done = departed ? { departedAt: departed.at, departedVia: departed.via } : {};
-        await prisma.visit.create({ data: { personId: keyholder.id, arrivedAt: at, arrivedVia: 'SCANNER', forceCloseToken: 'tok-1', ...done } });
+        await prisma.visit.create({ data: { personId: keyholder.id, arrivedAt: at, arrivedVia: 'SCANNER', ...done } });
         await prisma.visit.create({ data: { personId: member.id, arrivedAt: at, arrivedVia: 'SCANNER', ...done } });
         await prisma.visit.create({ data: { personId: lateComer.id, arrivedAt: new Date(Date.now() - HOUR), arrivedVia: 'SCANNER', ...done } });
     }
@@ -88,8 +85,11 @@ describe('Late confirmed facility close (real DB)', () => {
     const visitOf = (p: Person) => prisma.visit.findFirstOrThrow({ where: { personId: p.id } });
 
     it.each([
-        ['offline confirm', { forceCloseConfirmed: true }],
-        ['echoed server token', { forceCloseToken: 'tok-1' }],
+        ['close shown alone', { close: 'alone', intent: 'OUT' }],
+        ['confirmed close', { close: 'confirmed', intent: 'OUT' }],
+        ['confirmed close on a suspect clock', { close: 'confirmed', intent: 'OUT', clockSuspect: true }],
+        ['older kiosk\'s offline confirm', { forceCloseConfirmed: true }],
+        ['older kiosk\'s echoed token', { forceCloseToken: 'tok-1' }],
         ['offline confirm with intent', { forceCloseConfirmed: true, intent: 'OUT' }],
         ['offline confirm on a suspect clock', { forceCloseConfirmed: true, clockSuspect: true }],
     ])('a stale %s closes the facility at the keyholder\'s scan time', async (_label, extra) => {
@@ -111,7 +111,7 @@ describe('Late confirmed facility close (real DB)', () => {
         await occupy();
         await prisma.visit.create({ data: { personId: opener.id, arrivedAt: new Date(Date.now() - 2 * HOUR), arrivedVia: 'SCANNER' } });
         const scannedAt = new Date(Date.now() - 3 * HOUR);
-        const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-reopened', scannedAt: scannedAt.toISOString(), replay: true, forceCloseToken: 'tok-1' }));
+        const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-reopened', scannedAt: scannedAt.toISOString(), replay: true, intent: 'OUT', close: 'confirmed' }));
         expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: true });
 
         expect((await visitOf(member)).departedAt?.getTime()).toBe(scannedAt.getTime());
@@ -169,7 +169,7 @@ describe('Late confirmed facility close (real DB)', () => {
     it('a late keyholder OUT shown with others and no second scan leaves without closing, flagged', async () => {
         await occupy();
         const scannedAt = new Date(Date.now() - 3 * HOUR);
-        const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-not-empty', scannedAt: scannedAt.toISOString(), replay: true, intent: 'OUT', shownEmpty: false, protocolVersion: SCAN_PROTOCOL_VERSION }));
+        const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-not-empty', scannedAt: scannedAt.toISOString(), replay: true, intent: 'OUT', shownEmpty: false, protocolVersion: TRUSTED_REPLAY_PROTOCOL_VERSION }));
         expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: false });
         expect((await visitOf(keyholder)).departedAt?.getTime()).toBe(scannedAt.getTime());
         expect((await visitOf(member)).departedAt).toBeNull();
@@ -229,7 +229,7 @@ describe('Late confirmed facility close (real DB)', () => {
         });
     });
 
-    it('an unconfirmed stale keyholder replay still parks', async () => {
+    it('a plain stale keyholder replay is not a close', async () => {
         await occupy();
         const scannedAt = new Date(Date.now() - 3 * HOUR);
         const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-unconfirmed', scannedAt: scannedAt.toISOString(), replay: true }));
@@ -266,85 +266,5 @@ describe('Late confirmed facility close (real DB)', () => {
         await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-typed', scannedAt: scannedAt.toISOString(), replay: true, forceCloseConfirmed: true }));
 
         expect((await visitOf(member)).departedAt?.getTime()).toBe(typedAt.getTime());
-    });
-
-    it('a wrong token against a cron-closed visit parks for review and changes nothing', async () => {
-        const cronAt = new Date(Date.now() - 30 * 60_000);
-        await occupy({ at: cronAt, via: 'AUTO_CLOSE' });
-        const scannedAt = new Date(Date.now() - 3 * HOUR);
-        const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-badtok', scannedAt: scannedAt.toISOString(), replay: true, forceCloseToken: 'nope' }));
-        expect((await res.json()).type).toBe('parked');
-        expect((await visitOf(member)).departedAt?.getTime()).toBe(cronAt.getTime());
-        const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId: 'evt-badtok' } });
-        expect(log?.reviewReason).toBe('force_close_review');
-    });
-
-    describe('after the keyholder\'s own badge checked them out and offered the close', () => {
-        const leaveAt = () => new Date(Date.now() - 3 * HOUR);
-
-        /** The leave at `leftAt` departed the keyholder by scan, the offer's token on the visit. */
-        async function leftByBadge(leftAt: Date) {
-            await occupy();
-            await prisma.visit.updateMany({ where: { personId: keyholder.id }, data: { departedAt: leftAt, departedVia: 'SCANNER' } });
-        }
-
-        it.each([
-            ['offer token', { forceCloseToken: 'tok-1' }],
-            ['offline confirm', { forceCloseConfirmed: true }],
-        ])('a stale confirm with the %s closes at the confirm\'s scan time', async (label, extra) => {
-            const leftAt = leaveAt();
-            await leftByBadge(leftAt);
-            const scannedAt = new Date(leftAt.getTime() + 5_000);
-            const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: `evt-left-${label}`, scannedAt: scannedAt.toISOString(), replay: true, intent: 'OUT', ...extra }));
-            expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: true });
-
-            const k = await visitOf(keyholder);
-            expect(k.departedAt?.getTime()).toBe(leftAt.getTime());
-            expect(k.departedVia).toBe('SCANNER');
-            expect(k.forceCloseToken).toBeNull();
-            const m = await visitOf(member);
-            expect(m.departedAt?.getTime()).toBe(scannedAt.getTime());
-            expect(m.departedVia).toBe('FACILITY_CLOSE');
-            expect((await visitOf(lateComer)).departedAt).toBeNull();
-        });
-
-        it('a wrong token parks for review and changes nothing', async () => {
-            const leftAt = leaveAt();
-            await leftByBadge(leftAt);
-            const scannedAt = new Date(leftAt.getTime() + 5_000);
-            const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-left-badtok', scannedAt: scannedAt.toISOString(), replay: true, intent: 'OUT', forceCloseToken: 'nope' }));
-            expect((await res.json()).type).toBe('parked');
-            expect((await visitOf(member)).departedAt).toBeNull();
-            const log = await prisma.rawBadgeLog.findUnique({ where: { clientEventId: 'evt-left-badtok' } });
-            expect(log?.reviewReason).toBe('force_close_review');
-        });
-
-        it('closes against the latest departure, not the latest arrival', async () => {
-            const leftAt = leaveAt();
-            await leftByBadge(leftAt);
-            const current = await visitOf(keyholder);
-            // Backdated: the current visit arrived before an older one that left earlier.
-            await prisma.visit.update({ where: { id: current.id }, data: { arrivedAt: new Date(Date.now() - 7 * HOUR) } });
-            const older = await prisma.visit.create({ data: {
-                personId: keyholder.id, arrivedAt: new Date(Date.now() - 6 * HOUR), arrivedVia: 'SCANNER',
-                departedAt: new Date(Date.now() - 4 * HOUR), departedVia: 'SCANNER', forceCloseToken: 'tok-old',
-            } });
-            const scannedAt = new Date(leftAt.getTime() + 5_000);
-            const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-left-backdated', scannedAt: scannedAt.toISOString(), replay: true, intent: 'OUT', forceCloseToken: 'tok-1' }));
-            expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: true });
-
-            expect((await prisma.visit.findUniqueOrThrow({ where: { id: current.id } })).forceCloseToken).toBeNull();
-            expect((await prisma.visit.findUniqueOrThrow({ where: { id: older.id } })).forceCloseToken).toBe('tok-old');
-            expect((await visitOf(member)).departedAt?.getTime()).toBe(scannedAt.getTime());
-        });
-
-        it('a badge departure after the confirm\'s scan time is not the one that offered it', async () => {
-            const leftAt = leaveAt();
-            await leftByBadge(leftAt);
-            const scannedAt = new Date(leftAt.getTime() - 60_000);
-            const res = await POST(scanReq({ participantId: keyholder.id, clientEventId: 'evt-left-before', scannedAt: scannedAt.toISOString(), replay: true, intent: 'OUT', forceCloseToken: 'tok-1' }));
-            expect((await res.json()).type).toBe('parked');
-            expect((await visitOf(member)).departedAt).toBeNull();
-        });
     });
 });
