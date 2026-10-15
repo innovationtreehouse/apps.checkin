@@ -6,7 +6,7 @@ import { beforeEach, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
 import { bindPorts, principal, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { db } from "../../db";
-import { finance } from "../../routes";
+import { expenses, finance } from "../../routes";
 import { resubmitHeldExpense, setHeldLineAccount } from "../../services/holdService";
 import { seedCapitalAssets } from "../../services/capitalService";
 import type { ExpenseRouteHandler } from "../../contract";
@@ -47,6 +47,44 @@ describeDb("FINANCE writes are audited", () => {
     const rows = await db.expenseAuditLog.findMany({ where: { expenseId: id } });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ userId: 3, username: "person-3", action: "hold_account_set", lineItemId: li, valueBefore: "4000", valueAfter: "5000" });
+  });
+
+  it("marking test data records test_data_set for each flip; an unchanged value writes nothing", async () => {
+    const id = await seedExpense();
+
+    const res = await call(expenses.testData, "PUT", { id }, { isTestData: true });
+    expect((res as { Expense: { isTestData: boolean } }).Expense.isTestData).toBe(true);
+    await call(expenses.testData, "PUT", { id }, { isTestData: true });
+    await call(expenses.testData, "PUT", { id }, { isTestData: false });
+
+    const rows = await db.expenseAuditLog.findMany({ where: { expenseId: id }, orderBy: { id: "asc" } });
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ userId: 3, username: "person-3", action: "test_data_set", fieldChanged: "isTestData", valueBefore: "false", valueAfter: "true" });
+    expect(rows[1]).toMatchObject({ action: "test_data_set", valueBefore: "true", valueAfter: "false" });
+  });
+
+  it("marking test data answers 409 once the expense is in the outbox or past its first QuickBooks state", async () => {
+    const queued = await seedExpense();
+    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: queued, payload: "{}" } });
+    const matched = await seedExpense();
+    await db.expense.update({ where: { id: matched }, data: { qbMatchState: "NOT_TEST_DATA" } });
+    const lineMatched = await seedExpense();
+    await seedLineItem(lineMatched);
+    await db.expenseLineItem.updateMany({ where: { expenseId: lineMatched }, data: { qbMatchState: "MATCHED" } });
+
+    for (const id of [queued, matched, lineMatched]) {
+      await expect(call(expenses.testData, "PUT", { id }, { isTestData: true })).rejects.toMatchObject({ status: 409 });
+    }
+    expect(await db.expense.count({ where: { id: { in: [queued, matched, lineMatched] }, isTestData: true } })).toBe(0);
+    expect(await db.expenseAuditLog.count({ where: { action: "test_data_set" } })).toBe(0);
+  });
+
+  it("marking test data is FINANCE only", async () => {
+    const id = await seedExpense();
+    bindPorts({ auth: { getPrincipal: async () => principal(4, { isBoard: true }) } });
+
+    await expect(call(expenses.testData, "PUT", { id }, { isTestData: true })).rejects.toMatchObject({ status: 403 });
+    expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ isTestData: false });
   });
 
   it("resubmitting a held expense records hold_resubmitted for the caller", async () => {
