@@ -519,6 +519,7 @@ model ExpenseQbMatchExclusion {
 
 // A QuickBooks entry held by an expense or a line. Every claim writes a row here in the
 // claim's transaction, so an entry is claimed once across both; ids are unique per entity type only.
+// Clearing a link (an unmatch) must delete its claim row in the same transaction.
 model ExpenseQbClaim {
   /// @sensitivity:internal
   id          Int      @id @default(autoincrement())
