@@ -34,6 +34,9 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   (`Purchase`, `Bill`, `Deposit`, `Vendor`). Anything else (BillPayment, Payment, JournalEntry, …), a
   Check-type Purchase, an update or a delete is refused before any request. Each entity's body is built
   from typed fields (integer cents, numeric account / Class / vendor ids), so nothing else reaches QBO.
+  Purchase/Bill/Deposit go out on the `quickbooks.create` outbound surface (`public`, `internal`); Vendor
+  creates and the `vendorNamed` / `customerNamed` lookups go out on `quickbooks.vendor` (`public`, `pii`), since a
+  reimbursee's Vendor carries a person's name.
   `key` comes from `qbKey(lane, sourceId)` (lanes never build keys themselves): `<lane>:<sourceId>`
   when it fits 50 chars of `[A-Za-z0-9._:/-]`, else `<lane>:h:<128-bit sha256 hex>`. The 50-char cap is
   QBO's documented `requestid` limit, unverified live; `qbKey` is the one place to change it. The key
