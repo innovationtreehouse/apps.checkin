@@ -1,10 +1,11 @@
 // QB-2 write path: drains the ExpenseEvent outbox into QuickBooks, one entry per expense
 // (a Bill to the reimbursee's Vendor, else a Purchase from the payment account), match before create.
 import { findOrCreate, qbKey, takeoverLine, type FindOrCreateResult, type TxnWrite } from "@inventory/quickbooks";
-import { db } from "../db";
+import { db, type Db } from "../db";
 import type { ExpensePosting } from "../contract";
+import type { Expense } from "../db/schema";
 import { getExpenseRuntime } from "../runtime";
-import { MATCH_WINDOW_DAYS } from "../services/qbMatchService";
+import { MATCH_WINDOW_DAYS, claimQbTxn, claimedQbTxnIds } from "../services/qbMatchService";
 import { QbExpenseEventSchema } from "../workflows/expense-event-schema";
 import { writeAudit } from "./audit";
 import { logError, logWarn } from "./logger";
@@ -60,19 +61,44 @@ async function expenseTakeoverLine(orgId: string, takeoverDate: string): Promise
 }
 
 /** QuickBooks ids are unique per entity type only, so claims are read for the entity being posted. */
-async function claimedAndExcluded(orgId: string, expenseId: string, entity: "Purchase" | "Bill") {
-  const [expenses, lines, excluded] = await Promise.all([
-    db.expense.findMany({ where: { orgId, qbTxnId: { not: null }, qbTxnEntity: entity, id: { not: expenseId } }, select: { qbTxnId: true } }),
-    db.expenseLineItem.findMany({
-      where: { qbTxnId: { not: null }, OR: [{ qbTxnEntity: entity }, { qbTxnEntity: null }], expense: { orgId } },
-      select: { qbTxnId: true },
-    }),
+async function claimedAndExcluded(orgId: string, entity: "Purchase" | "Bill") {
+  const [claimed, excluded] = await Promise.all([
+    claimedQbTxnIds(orgId, entity),
     db.expenseQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
   ]);
   return {
-    claimedIds: new Set([...expenses, ...lines].map((r) => r.qbTxnId!)),
+    claimedIds: new Set(claimed),
     excludedIds: new Set(excluded.map((e) => e.qbTxnId)),
   };
+}
+
+/** Every failure is recorded; at the limit the drain stops retrying and finance is flagged. */
+async function recordFailure(tx: Db, current: Expense, error: string): Promise<"failed" | "needs_finance"> {
+  const attempts = current.qbPostAttempts + 1;
+  const exhausted = attempts >= MAX_POST_ATTEMPTS;
+  const qbMatchState = exhausted ? "NEEDS_FINANCE" : "POST_FAILED";
+  await tx.expense.update({ where: { id: current.id }, data: { qbMatchState, qbPostAttempts: attempts } });
+  await writeAudit(tx, SYSTEM_ACTOR, {
+    expenseId: current.id,
+    action: `qb_${qbMatchState.toLowerCase()}`,
+    fieldChanged: "qbMatchState",
+    valueBefore: current.qbMatchState,
+    valueAfter: qbMatchState,
+    notes: `attempt ${attempts} of ${MAX_POST_ATTEMPTS}: ${error}`,
+  });
+  if (!exhausted) return "failed";
+  await raiseFlag(current.id, "QB_POST_FAILED", error.slice(0, 500), tx);
+  return "needs_finance";
+}
+
+/** Locks the expense and runs `fn` on it when it is still waiting to be posted. */
+function withPostable<T>(orgId: string, expenseId: string, fn: (tx: Db, current: Expense) => Promise<T>, timeout?: number) {
+  return db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM expenses WHERE id = ${expenseId} FOR UPDATE`;
+    const current = await tx.expense.findFirstOrThrow({ where: { id: expenseId, orgId } });
+    if (current.backfill || current.qbTxnId || !POSTABLE_QB_STATES.includes(current.qbMatchState)) return "waiting" as const;
+    return fn(tx, current);
+  }, timeout ? { timeout } : undefined);
 }
 
 type Built = { write: TxnWrite; lineAccounts: Map<number, string> } | { queue: string } | { error: string };
@@ -108,8 +134,8 @@ async function buildWrite(orgId: string, payloadJson: string, posting: ExpensePo
 /**
  * One expense's turn through the outbox. found by key or created → CREATED; found by amount →
  * MATCHED; ambiguous or an unmapped reimbursee → AMBIGUOUS; before the takeover line →
- * BEFORE_LINE; a failure (QuickBooks down, rejected) → POST_FAILED, retried by the drain until
- * MAX_POST_ATTEMPTS, then NEEDS_FINANCE with a flag (finance's retry re-arms it); an
+ * BEFORE_LINE; a failure (QuickBooks down, rejected, or a thrown error) → POST_FAILED, retried by
+ * the drain until MAX_POST_ATTEMPTS, then NEEDS_FINANCE with a flag (finance's retry re-arms it); an
  * expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. With no
  * takeover date configured nothing is posted. A row lock serializes the request path and the cron drain.
  */
@@ -123,23 +149,38 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
   const event = await db.expenseEvent.findFirst({ where: { orgId, expenseId } });
   if (!event) return "waiting";
 
-  const line = await expenseTakeoverLine(orgId, posting.takeoverDate);
+  try {
+    return await attemptPost(orgId, expenseId, posting, posting.takeoverDate, event.payload);
+  } catch (err) {
+    // The attempt's own transaction rolled back, so the failure is recorded in a fresh one.
+    logError("qb_post_threw", { expenseId, orgId }, err);
+    const error = err instanceof Error ? err.message : String(err);
+    return withPostable(orgId, expenseId, (tx, current) => recordFailure(tx, current, error));
+  }
+}
+
+async function attemptPost(
+  orgId: string,
+  expenseId: string,
+  posting: ExpensePosting,
+  takeoverDate: string,
+  payload: string,
+): Promise<PostOutcome> {
+  const line = await expenseTakeoverLine(orgId, takeoverDate);
   let built: Built;
   try {
-    built = await buildWrite(orgId, event.payload, posting);
+    built = await buildWrite(orgId, payload, posting);
   } catch (e) {
     built = { error: e instanceof Error ? e.message : String(e) };
   }
   const { claimedIds, excludedIds } = "write" in built
-    ? await claimedAndExcluded(orgId, expenseId, built.write.entity === "Bill" ? "Bill" : "Purchase")
+    ? await claimedAndExcluded(orgId, built.write.entity === "Bill" ? "Bill" : "Purchase")
     : { claimedIds: new Set<string>(), excludedIds: new Set<string>() };
 
-  return db.$transaction(
-    async (tx) => {
-      await tx.$queryRaw`SELECT id FROM expenses WHERE id = ${expenseId} FOR UPDATE`;
-      const current = await tx.expense.findFirstOrThrow({ where: { id: expenseId, orgId } });
-      if (current.backfill || current.qbTxnId || !POSTABLE_QB_STATES.includes(current.qbMatchState)) return "waiting";
-
+  return withPostable(
+    orgId,
+    expenseId,
+    async (tx, current) => {
       const settle = async (
         outcome: PostOutcome,
         data: { qbMatchState: string; qbTxnId?: string; qbTxnEntity?: string; qbVendorId?: string },
@@ -158,24 +199,7 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
         return outcome;
       };
 
-      // Every failure is recorded; at the limit the drain stops retrying and finance is flagged.
-      const fail = async (error: string) => {
-        const attempts = current.qbPostAttempts + 1;
-        const exhausted = attempts >= MAX_POST_ATTEMPTS;
-        const qbMatchState = exhausted ? "NEEDS_FINANCE" : "POST_FAILED";
-        await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState, qbPostAttempts: attempts } });
-        await writeAudit(tx, SYSTEM_ACTOR, {
-          expenseId,
-          action: `qb_${qbMatchState.toLowerCase()}`,
-          fieldChanged: "qbMatchState",
-          valueBefore: current.qbMatchState,
-          valueAfter: qbMatchState,
-          notes: `attempt ${attempts} of ${MAX_POST_ATTEMPTS}: ${error}`,
-        });
-        if (!exhausted) return "failed" as const;
-        await raiseFlag(expenseId, "QB_POST_FAILED", error.slice(0, 500), tx);
-        return "needs_finance" as const;
-      };
+      const fail = (error: string) => recordFailure(tx, current, error);
 
       const refused = notSendable(posting, current);
       if (refused) {
@@ -199,7 +223,14 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
       switch (result.kind) {
         case "created":
         case "found": {
-          if (result.kind === "found" && result.via === "amount") {
+          const byAmount = result.kind === "found" && result.via === "amount";
+          if (!(await claimQbTxn(tx, orgId, write.entity, result.id))) {
+            const note = `QuickBooks ${write.entity} ${result.id} is already claimed by another expense or line`;
+            // An entry the app posted for this expense is now a duplicate in QuickBooks.
+            if (!byAmount) await raiseFlag(expenseId, "QB_POST_FAILED", `${note}; the entry posted for this expense needs voiding`, tx);
+            return settle("queued", { qbMatchState: "AMBIGUOUS" }, note);
+          }
+          if (byAmount) {
             return settle("matched", { qbMatchState: "MATCHED", qbTxnId: result.id, qbTxnEntity: write.entity });
           }
           for (const [id, accountId] of lineAccounts) {
@@ -219,7 +250,7 @@ export async function postExpenseToQb(orgId: string, expenseId: string): Promise
       }
     },
     // findOrCreate makes up to two QuickBooks requests, each with a 30s timeout and one Retry-After wait.
-    { timeout: 90_000 },
+    90_000,
   );
 }
 

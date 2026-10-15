@@ -195,6 +195,13 @@ model ExpenseLineItem {
   depreciationYears Int?     @map("depreciation_years")
   /// @sensitivity:internal
   manualQbAccount   String?  @map("manual_qb_account")
+  // Catalog inputs to account resolution, fixed once the line is signed off; null = resolve live.
+  /// @sensitivity:internal
+  signedGtin13       String? @map("signed_gtin13")
+  /// @sensitivity:internal
+  signedCategory     String? @map("signed_category")
+  /// @sensitivity:internal
+  signedSubcategory  String? @map("signed_subcategory")
   /// @sensitivity:internal
   allocatedTaxCents      Int?  @map("allocated_tax_cents")
   /// @sensitivity:internal
@@ -515,6 +522,25 @@ model ExpenseQbMatchExclusion {
 
   @@unique([orgId, qbTxnId])
   @@map("qb_match_exclusion")
+}
+
+// A QuickBooks entry held by an expense or a line. Every claim writes a row here in the
+// claim's transaction, so an entry is claimed once across both; ids are unique per entity type only.
+// Clearing a link (an unmatch) must delete its claim row in the same transaction.
+model ExpenseQbClaim {
+  /// @sensitivity:internal
+  id          Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId       String   @map("org_id")
+  /// @sensitivity:internal
+  qbTxnEntity String   @map("qb_txn_entity")
+  /// @sensitivity:internal
+  qbTxnId     String   @map("qb_txn_id")
+  /// @sensitivity:internal
+  claimedAt   DateTime @default(now()) @map("claimed_at")
+
+  @@unique([orgId, qbTxnEntity, qbTxnId])
+  @@map("qb_claim")
 }
 
 // The QuickBooks Vendor a reimbursee's Bills are posted to (checkin Person.id, no FK).

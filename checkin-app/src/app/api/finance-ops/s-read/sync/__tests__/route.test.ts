@@ -31,6 +31,12 @@ jest.mock('@/lib/shopifyRead/client', () => ({
     latestSyncRun: () => latestSyncRunMock(),
 }));
 
+const auditCreateMock = jest.fn();
+jest.mock('@/lib/prisma', () => ({
+    __esModule: true,
+    default: { auditLog: { create: (...a: unknown[]) => auditCreateMock(...a) } },
+}));
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const mockSession = require('next-auth/next').getServerSession;
 
@@ -91,6 +97,18 @@ describe('POST /api/finance-ops/s-read/sync', () => {
         expect(sendMock).toHaveBeenCalledTimes(1);
         expect(invokedWith().FunctionName).toBe('s-read-dev-trigger');
         expect(JSON.parse(invokedWith().Payload)).toEqual({ mode: 'incremental' });
+        expect(auditCreateMock).toHaveBeenCalledWith({
+            data: expect.objectContaining({ actorId: 5, actorSystem: null, tableName: 'SREAD_SYNC' }),
+        });
+    });
+
+    it('500 without invoking when the audit row cannot be written', async () => {
+        mockSession.mockResolvedValue({ user: { id: 5, isBoardMember: true } });
+        auditCreateMock.mockRejectedValueOnce(new Error('db down'));
+
+        const res = await POST(req());
+        expect(res.status).toBe(500);
+        expect(sendMock).not.toHaveBeenCalled();
     });
 
     it('ignores a caller-supplied mode — the body can never reach the payload', async () => {

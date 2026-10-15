@@ -75,6 +75,9 @@ export const classifications = {
         capitalOwnerId: 'pii',
         depreciationYears: 'internal',
         manualQbAccount: 'internal',
+        signedGtin13: 'internal',
+        signedCategory: 'internal',
+        signedSubcategory: 'internal',
         allocatedTaxCents: 'internal',
         allocatedShippingCents: 'internal',
         allocatedDiscountCents: 'internal',
@@ -211,6 +214,13 @@ export const classifications = {
         excludedByUsername: 'pii',
         excludedAt: 'internal',
     },
+    ExpenseQbClaim: {
+        id: 'internal',
+        orgId: 'internal',
+        qbTxnEntity: 'internal',
+        qbTxnId: 'internal',
+        claimedAt: 'internal',
+    },
     ExpenseReimburseeVendor: {
         id: 'internal',
         orgId: 'internal',
@@ -294,6 +304,8 @@ export const relations = {
     CapitalAsset: {
     },
     ExpenseQbMatchExclusion: {
+    },
+    ExpenseQbClaim: {
     },
     ExpenseReimburseeVendor: {
     },

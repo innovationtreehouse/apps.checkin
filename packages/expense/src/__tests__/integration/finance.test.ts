@@ -13,7 +13,7 @@ import { setDepreciationCycle, seedCapitalAssets, submitCapitalReview } from "..
 import { checkOffFlag, listOpenFlags, raiseFlag } from "../../services/flagService";
 import { expenseOpsCounts } from "../../services/badgeCounts";
 import { financeAssign, raiseException } from "../../services/approvalService";
-import { excludeQbTxn, matchLineToQb, qbMatchInputs } from "../../services/qbMatchService";
+import { claimQbTxn, excludeQbTxn, matchLineToQb, qbCandidates, qbMatchInputs } from "../../services/qbMatchService";
 import { inertQbReader, type QbTxn } from "../../contract";
 
 const FINANCE = principal(3, { isFinance: true });
@@ -337,16 +337,24 @@ describeDb("QuickBooks match inputs", () => {
     const b = await seedLineItem(late);
     await db.expenseLineItem.update({ where: { id: a }, data: { qbMatchState: "MATCHED", qbTxnId: "qb-1" } });
     await db.expenseLineItem.update({ where: { id: b }, data: { qbMatchState: "CREATED", qbTxnId: "qb-2" } });
-    expect((await qbMatchInputs()).takeoverDate).toBe("2026-03-01");
+    await db.expenseQbClaim.createMany({
+      data: [
+        { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: "qb-1" },
+        { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: "qb-2" },
+        { orgId: ORG, qbTxnEntity: "Bill", qbTxnId: "qb-3" },
+      ],
+    });
+    expect((await qbMatchInputs("Purchase")).takeoverDate).toBe("2026-03-01");
 
     await excludeQbTxn(FINANCE, "qb-9", "hand-booked, no receipt");
     await expect(excludeQbTxn(FINANCE, "qb-9", "again")).rejects.toMatchObject({ statusCode: 409 });
 
-    expect((await qbMatchInputs()).skipIds.sort()).toEqual(["qb-1", "qb-2", "qb-9"]);
+    expect((await qbMatchInputs("Purchase")).skipIds.sort()).toEqual(["qb-1", "qb-2", "qb-9"]);
+    expect((await qbMatchInputs("Bill")).skipIds.sort()).toEqual(["qb-3", "qb-9"]);
   });
 
   it("with no hand-booked match there is no takeover line", async () => {
-    expect(await qbMatchInputs()).toEqual({ skipIds: [], takeoverDate: null });
+    expect(await qbMatchInputs("Purchase")).toEqual({ skipIds: [], takeoverDate: null });
   });
 
   it("a QuickBooks entry is claimed by one line at most", async () => {
@@ -355,6 +363,12 @@ describeDb("QuickBooks match inputs", () => {
     const b = await seedLineItem(id);
     await db.expenseLineItem.update({ where: { id: a }, data: { qbTxnId: "qb-1" } });
     await expect(db.expenseLineItem.update({ where: { id: b }, data: { qbTxnId: "qb-1" } })).rejects.toThrow();
+  });
+
+  it("two concurrent claims of one entry: exactly one wins", async () => {
+    const claim = () => db.$transaction((tx) => claimQbTxn(tx, ORG, "Purchase", "qb-7"));
+    expect((await Promise.all([claim(), claim()])).sort()).toEqual([false, true]);
+    expect(await db.expenseQbClaim.count({ where: { orgId: ORG, qbTxnId: "qb-7" } })).toBe(1);
   });
 });
 
@@ -405,6 +419,39 @@ describeDb("QuickBooks match", () => {
     const li = await qbLine({ purchases: ["42"] });
     await matchLineToQb(FINANCE, li, "42");
     expect(await linked(li)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
+  });
+
+  it("records the line's claim, so the entry is never offered again", async () => {
+    const li = await qbLine({ purchases: ["42"] });
+    await matchLineToQb(FINANCE, li, "42");
+    expect(await db.expenseQbClaim.count({ where: { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: "42" } })).toBe(1);
+    const other = await qbLine({ purchases: ["42"] });
+    expect(await qbCandidates(FINANCE, other)).toEqual([]);
+  });
+
+  it("never offers or links an entry an expense already holds", async () => {
+    const holder = await seedExpense({ state: "qb_complete" });
+    await db.expense.update({ where: { id: holder }, data: { qbMatchState: "CREATED", qbTxnId: "42", qbTxnEntity: "Purchase" } });
+    await db.expenseQbClaim.create({ data: { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: "42" } });
+    const li = await qbLine({ purchases: ["42"] });
+    expect(await qbCandidates(FINANCE, li)).toEqual([]);
+    await expect(matchLineToQb(FINANCE, li, "42")).rejects.toMatchObject({ statusCode: 409 });
+    expect(await linked(li)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+  });
+
+  it("a Bill claim with the same id does not block a Purchase", async () => {
+    await db.expenseQbClaim.create({ data: { orgId: ORG, qbTxnEntity: "Bill", qbTxnId: "42" } });
+    const li = await qbLine({ purchases: ["42"] });
+    await matchLineToQb(FINANCE, li, "42");
+    expect(await linked(li)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
+  });
+
+  it("two concurrent line matches on one entry: exactly one wins", async () => {
+    const a = await qbLine({ purchases: ["42"] });
+    const b = await qbLine({ purchases: ["42"] });
+    const results = await Promise.allSettled([matchLineToQb(FINANCE, a, "42"), matchLineToQb(FINANCE, b, "42")]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(await db.expenseQbClaim.count({ where: { orgId: ORG, qbTxnId: "42" } })).toBe(1);
   });
 
   it("refuses an id that is not among the line's candidates", async () => {
