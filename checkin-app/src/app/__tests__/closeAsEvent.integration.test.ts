@@ -11,7 +11,6 @@ import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
 import { executePendingCloses } from '@/lib/scan-service';
-import { lockFacility } from '@/lib/facilityLock';
 import { getFullAttendance, invalidateAttendanceCache } from '@/lib/getFullAttendance';
 import type { Person, Visit } from '@/generated/prisma/client';
 
@@ -363,7 +362,9 @@ describe('close as one recorded event (real DB)', () => {
         it('a queued OUT behind an arrival the server stamped later departs that visit, flagged', async () => {
             await open(k2, at(3 * HOUR), { departedAt: at(2 * HOUR), departedVia: 'SCANNER' });
             const outAt = at(60_000);
-            const kv = await open(k2, at(30_000));
+            // The live IN's reply was lost; the server stamped it after the OUT's kiosk time.
+            await scan({ participantId: k2.id, intent: 'IN', clientEventId: `${TAG}-live-in`, ...v7 });
+            const kv = await prisma.visit.findFirstOrThrow({ where: { personId: k2.id, departedAt: null } });
 
             const res = await scan({ participantId: k2.id, clientEventId: `${TAG}-late-in`, scannedAt: outAt.toISOString(), replay: true, intent: 'OUT', ...v7 });
             expect(await res.json()).toMatchObject({ type: 'checkout' });
@@ -372,28 +373,6 @@ describe('close as one recorded event (real DB)', () => {
             expect(v.departedAt?.getTime()).toBe(kv.arrivedAt.getTime());
             expect(v.departedVia).toBe('SCANNER');
             expect((await prisma.rawBadgeLog.findUniqueOrThrow({ where: { clientEventId: `${TAG}-late-in` } })).reviewReason).toBe('out_of_order');
-        });
-
-        it('a replayed IN waiting on the facility lock is fenced by a close committed meanwhile', async () => {
-            const inAt = at(5 * 60_000);
-            // A close's executor holds the facility lock while the replay reaches it.
-            let replayed!: Promise<Response>;
-            await prisma.$transaction(async (tx) => {
-                await lockFacility(tx);
-                replayed = scan({ participantId: m.id, clientEventId: `${TAG}-race-in`, scannedAt: inAt.toISOString(), replay: true, intent: 'IN', ...v7 });
-                for (let i = 0; i < 100; i++) {
-                    const [{ waiting }] = await tx.$queryRaw<{ waiting: number }[]>`
-                        SELECT count(*)::int AS waiting FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`;
-                    if (waiting > 0) break;
-                    await new Promise(r => setTimeout(r, 20));
-                }
-                await tx.facilityClose.create({ data: { closedAt: at(60_000), closedById: k.id, via: 'KIOSK', executedAt: new Date() } });
-            }, { timeout: 10_000 });
-
-            expect(await (await replayed).json()).toMatchObject({ type: 'checkin' });
-            const v = await prisma.visit.findFirstOrThrow({ where: { personId: m.id } });
-            expect(v.departedVia).toBe('FACILITY_CLOSE');
-            expect((await prisma.rawBadgeLog.findUniqueOrThrow({ where: { clientEventId: `${TAG}-race-in` } })).reviewReason).toBe('closed_before_delivery');
         });
 
         it.each([

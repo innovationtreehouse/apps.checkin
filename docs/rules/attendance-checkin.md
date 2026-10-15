@@ -330,12 +330,13 @@ hours at a time — is a normal operating mode here, not an incident.
   visit that began after it. A departure ends that visit: an open one checks out
   at the scan time, and a machine departure — the nightly sweep's, or a
   facility close's — stamped after the scan is pulled back to it. A visit never
-  departs before it arrived. A departure with no visit open at its own time
-  follows the arrival the kiosk queued it behind, which the server stamped later
-  (a live check-in whose reply was lost, or a kiosk clock behind the server's):
-  it ends the open visit, no earlier than it began, and is flagged. An arrival
-  behind later activity, or a departure against one a person recorded after it,
-  would rewrite the later record, so it is held for the reviewer.  [Decision]
+  departs before it arrived. A departure with no visit open at its own time ends
+  the open visit only when a live badge check-in began it: the kiosk queued the
+  departure behind that check-in, which the server stamped later (its reply was
+  lost, or the kiosk clock runs behind). It departs no earlier than the visit
+  began, and is flagged. Any other later visit, an arrival behind later
+  activity, or a departure against one a person recorded after it would rewrite
+  the later record, so it is held for the reviewer.  [Decision]
 
 - A close fences what came before it. A queued check-in scanned before a close
   that reached the server first is recorded as a visit from its scan time,

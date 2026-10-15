@@ -44,6 +44,18 @@ const REPLAY_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
 const isPersonId = (v: unknown): v is number =>
     typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 2147483647;
 
+// A live badge IN is stamped when it takes the facility lock, after the scan's
+// own presence event; a replayed IN arrives exactly at its event time.
+async function openedByLiveBadge(tx: Prisma.TransactionClient, personId: number): Promise<boolean> {
+    const open = await tx.visit.findFirst({
+        where: { personId, departedAt: null, deletedAt: null },
+        select: { id: true, arrivedAt: true },
+    });
+    return !!open && await tx.presenceEvent.count({
+        where: { personId, visitId: open.id, direction: "IN", source: "SCANNER", occurredAt: { lt: open.arrivedAt } },
+    }) > 0;
+}
+
 const KIOSK_ONLY_FIELDS = ["replay", "dead", "deadStatus", "scannedAt", "forceCloseConfirmed", "clockSuspect", "shownEmpty", "close", "rosterAsOf"] as const;
 
 // F7: the out-of-order guard needs the true latest activity across ALL of a
@@ -480,11 +492,12 @@ export const POST = withKiosk(
                     // visit: an open one checks out normally, and a machine
                     // departure (the nightly sweep, or a facility close) stamped
                     // after the scan is pulled back to it. An OUT with no visit
-                    // open at its time follows the arrival the kiosk queued it
-                    // behind, which the server stamped later (a live IN whose
-                    // reply was lost, or a kiosk clock behind the server's), so it
-                    // departs the open visit, no earlier than it began. An IN, or
-                    // an OUT against a departure someone recorded after it, would
+                    // open at its time departs the open visit only when a live
+                    // badge IN began it: the kiosk queued the OUT behind that IN,
+                    // which the server stamped later than the OUT's kiosk time (its
+                    // reply was lost, or the kiosk clock runs behind), so it departs
+                    // no earlier than it began. Any other later visit, an IN, or an
+                    // OUT against a departure someone recorded after it would
                     // contradict the later record, so it is held for the reviewer.
                     const at = await tx.visit.findFirst({
                         where: { personId: participant.id, deletedAt: null, arrivedAt: { lte: eventTime } },
@@ -499,7 +512,7 @@ export const POST = withKiosk(
                     } else if (intent === "OUT" && at?.departedAt === null) {
                         // Departs the visit open at its time.
                     } else if (!(intent === "OUT" && (!at?.departedAt || at.departedAt <= eventTime)
-                        && await tx.visit.count({ where: { personId: participant.id, departedAt: null, deletedAt: null } }) > 0)) {
+                        && await openedByLiveBadge(tx, participant.id))) {
                         hold = true;
                     }
                 }
