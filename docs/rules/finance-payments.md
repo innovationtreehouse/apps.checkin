@@ -84,6 +84,9 @@ Things the app takes as true because they are handled outside it.
   rule on that vote, and the requirement that program funds flow through the
   Treehouse are all handled there.
 
+- The Treasurer enforces the limits on a signed note in place of a receipt
+  outside the app. The app does not model notes in lieu of receipts.
+
 ---
 
 ## Procedure
