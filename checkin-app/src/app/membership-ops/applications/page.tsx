@@ -476,10 +476,12 @@ function ApplicationsBoard() {
               {r.status === "PENDING_PAYMENT" && (
                 <Group mt="md" gap="md" wrap="wrap" align="center">
                   <Text size="sm" c="dimmed">Awaiting payment.</Text>
-                  <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r)} onClick={() => handleCertify(r.id)}>
-                    Certify payment plan → {r.bgClearedAt ? "activate" : "(holds for background check)"}
-                  </Button>
-                  {ownHousehold(r) && (
+                  {me?.isBoardMember && (
+                    <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r)} onClick={() => handleCertify(r.id)}>
+                      Certify payment plan → {r.bgClearedAt ? "activate" : "(holds for background check)"}
+                    </Button>
+                  )}
+                  {me?.isBoardMember && ownHousehold(r) && (
                     <Text size="xs" c="dimmed">You can&apos;t certify your own household&apos;s application — someone outside your household must.</Text>
                   )}
                 </Group>
