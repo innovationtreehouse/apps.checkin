@@ -96,7 +96,7 @@ describe('DELETE /api/membership-ops/bg-attestations/[id]', () => {
     it('deletes the row and writes an audit row carrying the reason', async () => {
         const res = await DELETE(delReq(attestationId, { reason: 'duplicate identity — reviewed under two accounts' }), ctx(attestationId));
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ success: true });
+        expect(await res.json()).toEqual({});
 
         expect(await prisma.backgroundCheckAttestation.findUnique({ where: { id: attestationId } })).toBeNull();
 

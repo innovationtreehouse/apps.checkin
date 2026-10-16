@@ -153,6 +153,18 @@ describe("QuickBooksClient", () => {
     expect(sql(0)).toBe("SELECT * FROM BillPayment WHERE Id IN ('90', '9\\' OR Id > \\'0')");
   });
 
+  it.each([
+    ["billsByIds", "Bill"],
+    ["purchasesByIds", "Purchase"],
+  ] as const)("%s looks %s rows up by escaped id", async (method, entity) => {
+    const client = new QuickBooksClient(tokens, sandbox);
+    respond(entity, [{ Id: "7", TxnDate: "2025-04-01", TotalAmt: 5 }]);
+    await expect(client[method](["7", "x'y"])).resolves.toEqual([{ Id: "7", TxnDate: "2025-04-01", TotalAmt: 5 }]);
+    expect(sql(0)).toBe(`SELECT * FROM ${entity} WHERE Id IN ('7', 'x\\'y')`);
+    await expect(client[method]([])).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("reads no BillPayments for no ids and refuses more than a page of ids", async () => {
     const client = new QuickBooksClient(tokens, sandbox);
     await expect(client.billPaymentsByIds([])).resolves.toEqual([]);

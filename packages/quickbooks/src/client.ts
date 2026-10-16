@@ -309,11 +309,26 @@ export class QuickBooksClient {
     return this.between("Deposit", from, to);
   }
 
-  /** The BillPayments a Bill's LinkedTxn names, at most one page of ids. */
-  async billPaymentsByIds(ids: readonly string[]): Promise<QboBillPayment[]> {
+  /** Every `entity` with one of `ids`, at most one page of ids. */
+  private async byIds<T>(entity: string, ids: readonly string[]): Promise<T[]> {
     if (ids.length === 0) return [];
     if (ids.length > PAGE_SIZE) throw new Error(`QBO id lookup takes at most ${PAGE_SIZE} ids, got ${ids.length}`);
-    return this.query<QboBillPayment>(`SELECT * FROM BillPayment WHERE Id IN (${ids.map(qboString).join(", ")})`);
+    return this.query<T>(`SELECT * FROM ${entity} WHERE Id IN (${ids.map(qboString).join(", ")})`);
+  }
+
+  /** The BillPayments a Bill's LinkedTxn names. */
+  billPaymentsByIds(ids: readonly string[]): Promise<QboBillPayment[]> {
+    return this.byIds("BillPayment", ids);
+  }
+
+  /** Bills by id: a claimed reimbursement Bill's Balance and LinkedTxn. */
+  billsByIds(ids: readonly string[]): Promise<QboBill[]> {
+    return this.byIds("Bill", ids);
+  }
+
+  /** Purchases by id: a backfilled receipt's hand-booked transaction. */
+  purchasesByIds(ids: readonly string[]): Promise<QboPurchase[]> {
+    return this.byIds("Purchase", ids);
   }
 
   /** Reference lists (active entries) for the FINANCE bootstrap; not transaction history. */

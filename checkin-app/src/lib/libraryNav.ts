@@ -72,8 +72,23 @@ export const INVENTORY_LIBRARY_TABS: LibraryTab[] = [
   },
 ];
 
+/** Income's gate: the income read routes admit FINANCE or BOARD (`finance-or-board`). */
+export const canSeeIncome = (user: Pick<SessionUser, "isFinance" | "isBoardMember"> | undefined): boolean =>
+  !!user?.isFinance || !!user?.isBoardMember;
+
 /** Revenue Ops section (/finance-ops, /income, /donations): Income, Donations. */
 export const REVENUE_OPS_LIBRARY_TABS: LibraryTab[] = [
+  {
+    name: "Income",
+    href: "/income",
+    icon: "💵",
+    library: "income",
+    visible: canSeeIncome,
+    badge: (c) => {
+      const n = libraryCount(c, "income", "openReconciliation");
+      return n > 0 ? { count: n, color: "red", label: `${n} open income reconciliation items` } : null;
+    },
+  },
   {
     name: "Donations",
     href: "/donations",
@@ -121,7 +136,7 @@ export const MY_PROGRAMS_LIBRARY_TABS: LibraryTab[] = [
   },
 ];
 
-// Expense Ops admits FINANCE or BOARD; sysadmin has no access (finance-payments.md).
+// Expense Ops admits FINANCE or BOARD; sysadmin has no access (revenue.md).
 export const EXPENSE_OPS_SECTION_ROLES: NavRole[] = ["isFinance", "isBoardMember"];
 
 export function expenseOpsTabs(user: SessionUser | undefined, counts: TodoCounts | null): NavTab[] {

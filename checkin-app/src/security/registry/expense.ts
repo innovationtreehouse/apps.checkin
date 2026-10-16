@@ -73,6 +73,8 @@ defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[ap
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/capital-review/submit', authorize: 'finance', envelope: null, returns: ['Expense', 'ExpenseLineItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/set-depreciation-cycle/submit', authorize: 'finance', envelope: null, returns: ['Expense', 'ExpenseLineItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/reimbursee-vendor', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeVendor'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee-vendor', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeVendor'], orderedView: FINANCE_VIEW });
 // Dev-only expense test-data toggle; the route 404s when CHECKIN_ENV=prod.
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/test-data', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/expense-holds/[expenseId]/line-items/[lineItemId]/account', authorize: 'finance', envelope: null, returns: ['ExpenseLineItem'], orderedView: FINANCE_VIEW });
@@ -89,4 +91,7 @@ defineRoute({ endpoint: 'POST /api/expense/capital-assets/seed', authorize: 'fin
 defineRoute({ endpoint: 'GET /api/expense/line-items/[lineItemId]/qb-candidates', authorize: 'finance', envelope: null, returns: ['ExpenseQbCandidateView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/line-items/[lineItemId]/qb-match', authorize: 'finance', envelope: null, returns: ['ExpenseLineItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/line-items/[lineItemId]/qb-create', authorize: 'finance', envelope: null, returns: ['ExpenseLineItem'], orderedView: FINANCE_VIEW });
+// QuickBooks matching per expense: the expense's candidates, and pick one.
+defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/qb-candidates', authorize: 'finance', envelope: null, returns: ['ExpenseQbCandidateView'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/qb-match', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/qb-exclusions', authorize: 'finance', envelope: null, returns: ['ExpenseQbMatchExclusion'], orderedView: FINANCE_VIEW });

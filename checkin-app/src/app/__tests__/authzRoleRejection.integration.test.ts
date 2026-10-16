@@ -248,6 +248,15 @@ describe('Protected-route role rejection', () => {
         });
     });
 
+    // ---- certify-payment — Board only; a sysadmin off the Board is denied ------
+    describe('POST /api/membership-ops/applications/certify-payment — sysadmin alone is denied', () => {
+        it('403s a sysadmin who is not on the Board', async () => {
+            as(plainId, { householdId: plainHh, isSysadmin: true });
+            const res = await CERTIFY_PAYMENT_POST(nreq('http://localhost/api/membership-ops/applications/certify-payment', 'POST', {}));
+            expect(res.status).toBe(403);
+        });
+    });
+
     // ---- Operations gets the Participants directory (read + membership-ops/
     // contacts create) only — every edit/rich-create participants endpoint stays
     // board/sysadmin-only. isOperations must still 403 here (contrast with

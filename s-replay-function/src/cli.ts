@@ -1,13 +1,14 @@
 /**
  * Local dev entry — runs the same admin operations the Lambda handler exposes.
  *
- *   npm run replay -- --reason "<why>" [--actor <id>] [--object ORDER] [--gid <gid>] [--since <iso>] [--store <id>]
- *   npm run reset-watermark -- --reason "<why>" [--actor <id>] [--object ORDER] [--to <iso>] [--store <id>]
- *   npm run reingest-bulk -- --reason "<why>" [--actor <id>] [--since <iso>] [--bulk <operationId>] [--store <id>]
+ *   npm run replay -- --reason "<why>" [--actor <id>] [--object ORDER] [--gid <gid>] [--since <iso>] [--store <id>] [--all]
+ *   npm run reset-watermark -- --reason "<why>" [--actor <id>] [--object ORDER] [--to <iso>] [--store <id>] [--all]
+ *   npm run reingest-bulk -- --reason "<why>" [--actor <id>] [--since <iso>] [--bulk <operationId>] [--store <id>] [--all]
  *
  * --reason is required (audit) and --actor defaults to "cli:<os-user>". reset-watermark
  * with no --to clears the watermark (next sync re-pulls from cutover). reingest-bulk
- * re-reassembles + re-projects stored bulk exports (no Shopify calls).
+ * re-reassembles + re-projects stored bulk exports (no Shopify calls). --all is required
+when no narrowing filter is given (the op then covers the whole store).
  */
 import { prisma, logger } from "@inventory/s-ingest-core";
 import { handler } from "./handler.js";
@@ -23,6 +24,7 @@ async function main(): Promise<void> {
     storeId: flag(rest, "--store"),
     objectType: flag(rest, "--object"),
     gid: flag(rest, "--gid"),
+    ...(rest.includes("--all") ? { scope: "all" } : {}),
     actor,
     reason,
   };

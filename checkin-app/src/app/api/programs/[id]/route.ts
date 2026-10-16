@@ -5,19 +5,19 @@ import prisma from "@/lib/prisma";
 import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { isActiveOrgMember, isDuesSettled, isDuesSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { maybeAnnounceOnOpen } from "@/lib/programAnnounce";
-import { adjustProgramInventory, setProgramInventory, syncProgramPrice } from "@/lib/shopify";
+import { adjustProgramInventory, setProgramInventory, STOCK_BOOKKEEPING_RESET, syncProgramPrice } from "@/lib/shopify";
 import { dollarsToCentsOrNull } from "@inventory/money";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { validateProgramAgeBounds, isLeaderAgeEligible, checkProgramAge } from "@/lib/programAge";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
-import { seesHouseholdPaymentStatus } from "@/lib/programs/paymentVisibility";
+import { householdPaymentViewer } from "@/lib/programs/paymentVisibility";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
 import { escapeHtml } from "@/lib/email-templates/base";
 import { parseDateOnly } from "@/lib/time";
 import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
-import { STATES as ENROLLMENT_STATES } from "@/lib/programs/enrollmentState";
+import { countStockTakenSeats } from "@/lib/program/capacity";
 import { ProgramPhase, EnrollmentStatus, type Program } from "@/generated/prisma/client";
 
 // ORDER MATTERS: this export sits ABOVE getProgram so the routeAuthDrift
@@ -204,9 +204,14 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     // Payment status (status = paid vs not paid yet) is staff's, plus a household
     // lead's for their own household. The stripper can't express "own household",
     // so other rows are dropped of it here — including every row for a youth.
-    const showOwnPayment = !!sessionUser && await seesHouseholdPaymentStatus(sessionUser.id);
+    // The household is read from the DB, not the session, so a move applies at once.
+    const viewer = sessionUser ? await householdPaymentViewer(sessionUser.id) : null;
+    const seesPayment = (p: { personId: number; person: { householdId: number } | null }) => !!viewer && (
+        p.personId === sessionUser?.id ||
+        p.person?.householdId === viewer.householdId
+    );
     const participants = program.participants.map(({ status, pendingSince, ...row }) =>
-        showOwnPayment && isOwnHousehold(row) ? { ...row, status, pendingSince } : row
+        seesPayment(row) ? { ...row, status, pendingSince } : row
     );
     return { Program: { ...program, participants } };
 });
@@ -435,6 +440,8 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             // no live Shopify to sync against (local/testing).
             ...(isSysAdminOrBoard && shopifyProductId !== undefined && { shopifyProductId: shopifyProductId || null }),
             ...(newShopifyVariantId !== undefined && { shopifyVariantId: newShopifyVariantId }),
+            // What was owed or in flight belongs to the old variant's stock, not the new one's.
+            ...(newShopifyVariantId !== undefined && newShopifyVariantId !== currentProgram.shopifyVariantId && STOCK_BOOKKEEPING_RESET),
         };
 
         const updatedProgram = await prisma.program.update({
@@ -477,15 +484,8 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         if (rearmSale && hasShopifyVariant && newMax !== null) {
             // Changes skipped while the sale was ended are lost to a relative push;
             // set the absolute stock instead: capacity minus seats Shopify counts
-            // as taken (every ACTIVE seat and every held PENDING seat).
-            const taken = await prisma.programParticipant.count({
-                where: {
-                    programId,
-                    person: LIVE_PERSON,
-                    OR: [ENROLLMENT_STATES.ACTIVE.where, ENROLLMENT_STATES.PENDING_HELD.where, ENROLLMENT_STATES.PENDING_HELD_DENIED.where],
-                },
-            });
-            if (!(await setProgramInventory(updatedProgram, Math.max(0, newMax - taken), "re-arm"))) {
+            // as taken. Not clamped: an overfilled program keeps its shortfall owed.
+            if (!(await setProgramInventory(updatedProgram, async () => newMax - await countStockTakenSeats(programId), "re-arm"))) {
                 warning = "Program updated, but setting the Shopify inventory failed. Capacity may be out of sync — check System Status > Link Status.";
             }
         } else if (oldMax !== newMax && hasShopifyVariant) {

@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { apiError } from "@/lib/api-response";
 import { isKnownAdult } from "@/lib/programAge";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
+import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
  * A volunteer row confers volunteer standing and core grants scopes over enrolled
@@ -12,7 +14,8 @@ import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/se
  * Returns the error response to send, or null when the grant may proceed.
  */
 async function refuseOwnHousehold(actorId: number, personId: number, programId: number, isCore: boolean) {
-    const subject = await prisma.person.findUnique({ where: { id: personId }, select: { householdId: true } });
+    // A merged-away record is no one to volunteer; its survivor is.
+    const subject = await prisma.person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { householdId: true } });
     if (!subject) return apiError("Participant not found", 400);
     const refused = await refuseSelfGrant(prisma, actorId, { personId, householdId: subject.householdId }, { table: "ProgramVolunteer", attempted: { programId, isCore } });
     return refused ? apiError(SELF_GRANT_REFUSAL_MESSAGE, 403) : null;
@@ -88,13 +91,6 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         return apiError("Failed to assign volunteer", 500);
     }
 });
-
-// Prisma known-request errors carry a string `code`. Duck-typed so we don't
-// pull in the generated Prisma namespace just for one check.
-function isPrismaError(error: unknown, code: string): boolean {
-    return typeof error === 'object' && error !== null && 'code' in error
-        && (error as { code: unknown }).code === code;
-}
 
 export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);

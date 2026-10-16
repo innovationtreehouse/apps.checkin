@@ -683,16 +683,15 @@ this is a genuine port-gets-better item.
 raises no conflict of interest. COI controls apply only to **external payouts**
 (reimbursements) and to anything affecting **external reporting**. So the predicate runs on reimbursement and card-charge lines: a
 signer who is the submitter or the reimbursee, or shares a household with either,
-is conflicted. A conflicted signer cannot fill a seat, and a conflicted Treasurer
-adds Board seats (F2-COI, next subsection). Design it as a real predicate over
+is conflicted. A conflicted signer cannot fill a seat; a conflicted Treasurer is
+replaced, not escalated (next subsection). Design it as a real predicate over
 checkin's household graph (read via the injected principal/port, not a cross-DB
 join — §4), not as another rubber-stamp. This directly discharges GC-ROLES'
 "expense approval + conflict constraints" duty gap.
 
 ### Reimbursement and card-charge sign-off (Financial Policy F2 / F2-COI)
 
-Policy chain: purchaser → Program Leader or Program Treasurer → Treasurer (→ +1
-or +2 non-conflicted Board members on conflict). The Treasurer pays in
+Policy chain: purchaser → Program Leader or Program Treasurer → Treasurer. The Treasurer pays in
 QuickBooks; the system creates the Bill and never pays it (§9 QB-2).
 
 **Seats.** A reimbursement line needs every seat filled by a distinct person:
@@ -701,8 +700,7 @@ QuickBooks; the system creates the Bill and never pays it (§9 QB-2).
 |---|---|
 | Submitter | the person who submitted (an attestation, not an approval) |
 | Program approver | the bucket's Program Leader or one of its Program Treasurers (`ProgramVolunteer.isTreasurer`); for an org-level bucket, an independent Board member who is not the Treasurer-seat signer |
-| Treasurer | any `FINANCE` holder (a Treasurer-only seat can come later via #1314 designations) |
-| +1 / +2 Board | non-conflicted Board members, when F2-COI requires them |
+| Treasurer | any `FINANCE` holder without a conflict (a Treasurer-only seat can come later via #1314 designations); if none, a Board member without one |
 
 **Independence — who cannot fill a seat:**
 
@@ -710,25 +708,23 @@ QuickBooks; the system creates the Bill and never pays it (§9 QB-2).
 - anyone already in another seat for the same line (no one authorises and
   executes);
 - a conflicted program approver: another PL/PT of that program signs; if none
-  can, a Board member takes the seat.
+  can, a Board member takes the seat;
+- for the Treasurer seat, also the line's Program Leader and their household.
 
-**F2-COI escalation:**
-
-- Treasurer conflicted (is the submitter or related to them) → +1 non-conflicted
-  Board member;
-- Treasurer is the same person who signed as PL/PT → +1 (and a different
-  Treasurer-seat signer is required anyway by "distinct people");
-- both → +2.
+**Conflicted Treasurer: replaced, not escalated.** A conflicted Treasurer does not
+sign; another `FINANCE` holder or a Board member fills the seat, and no Board
+seats are added. See `docs/rules/revenue.md`, "Spending sign-off".
 
 **Exceptions carried from F2:**
 
 - a signed note in lieu of a receipt, under $50, in a program budget → PL/PT +
   Treasurer;
 - $50 or more, or not in a program budget → Board;
-- a non-member purchaser's reimbursement → Board only.
+- a reimbursement owed to a non-member → Board in the program seat (the person
+  reimbursed, not the submitter; card charges are not affected).
 
-**Card charges** use the same seats and independence rules with a reduced
-escalation: at most **+1** non-conflicted Board member, never +2.
+**Card charges** use the same seats and independence rules, with at most one
+Board stand-in. Their own policy rules are still to be designed.
 
 **Hold and record.** A line with an unfilled seat stays out of the QB-2 outbox
 (§9); no `ExpenseEvent` row is committed for it. Each sign-off writes an
@@ -741,9 +737,9 @@ reimbursement.
 |---|---|
 | one person fills two seats on a line | second sign-off rejected |
 | signer shares a household with the reimbursee | rejected for every seat |
-| Treasurer conflicted | line held until +1 Board seat is filled |
-| Treasurer also signed as PL/PT, and conflicted | +2 Board seats required |
-| card charge with both conflicts | +1 Board seat, never +2 |
+| only `FINANCE` holder conflicted | a Board member fills the Treasurer seat |
+| `FINANCE` holder in the Program Leader's household | refused for the Treasurer seat |
+| card charge needing two Board stand-ins | one, then held |
 | org-level bucket line | program approver seat accepts only a Board member who is not the Treasurer-seat signer |
 | line with any seat unfilled | no `ExpenseEvent`, nothing posted |
 
@@ -1460,7 +1456,7 @@ this doc.
   `VolunteerDesignation` / household rows (seed has 0), a program bucket with a
   leader and a treasurer, an org-level bucket, and enough Board and `FINANCE`
   holders in separate households, so the COI flag, the bucket-approver gate and
-  every sign-off seat (including +2 Board) are exercisable.
+  every sign-off seat (including a Board stand-in) are exercisable.
 - **`reimbursementFor` / reimbursee tiering** is `pii`, as are all person ids
   (§5).
 - **QuickBooks account/vendor identity:** the QBO chart of accounts + vendor list
@@ -1475,9 +1471,9 @@ This doc lives in `docs/in-design/` — **deleted at merge**. Planning the split
 keeps the extract step a file move, not a months-later judgement call over every
 paragraph (§4.2). Content splits three ways.
 
-**(1) Standing domain rules → the EXISTING `docs/rules/finance-payments.md`.**
+**(1) Standing domain rules → the EXISTING `docs/rules/revenue.md`.**
 Unlike catalog and local-inventory (both in `docs/rules/inventory.md`), expense
-is **not** a new domain — `finance-payments.md` already
+is **not** a new domain — `revenue.md` already
 covers *"fees, refunds, payment plans, and reconciliation,"* and expense→QB is
 reconciliation's core. So **add rules to that file, do not create a new one**
 (creating a near-duplicate finance file would fragment the register). Run the §3.9
@@ -1490,8 +1486,8 @@ and invariants only, no mechanism:
   from Procurement Policy H.
 - **Money leaving the org needs filled sign-off seats:** a reimbursement or
   card-charge line is held out of QuickBooks until its submitter, program
-  approver and Treasurer seats (plus +1/+2 Board under F2-COI; at most +1 for a
-  card charge) are filled by distinct, independent people, and each sign-off is
+  approver and Treasurer seats (a Board member standing in where nobody eligible
+  can sign; at most one stand-in on a card charge) are filled by distinct, independent people, and each sign-off is
   audit-recorded — *cite Financial Policy F2 / F2-COI* (§6).
 - **COI is household-aware and limited to external payouts and external
   reporting:** the submitter, the reimbursee and their households cannot sign;

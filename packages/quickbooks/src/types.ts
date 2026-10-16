@@ -54,7 +54,7 @@ export interface QboPurchase {
   TxnTaxDetail?: { TotalTax?: number };
   DocNumber?: string;
   PrivateNote?: string; // memo — real vendor often lives here on reimbursement bills
-  Line?: { Description?: string; Amount?: number }[]; // line detail — real vendor + allocated amounts
+  Line?: { Description?: string; Amount?: number; AccountBasedExpenseLineDetail?: { AccountRef?: QboRef } }[]; // line detail — real vendor + allocated amounts
 }
 
 /** A Bill. `Balance` 0 means paid; `LinkedTxn` names the BillPayments that paid it. */

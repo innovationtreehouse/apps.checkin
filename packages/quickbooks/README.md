@@ -34,6 +34,9 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   (`Purchase`, `Bill`, `Deposit`, `Vendor`). Anything else (BillPayment, Payment, JournalEntry, …), a
   Check-type Purchase, an update or a delete is refused before any request. Each entity's body is built
   from typed fields (integer cents, numeric account / Class / vendor ids), so nothing else reaches QBO.
+  Purchase/Bill/Deposit go out on the `quickbooks.create` outbound surface (`public`, `internal`); Vendor
+  creates and the `vendorNamed` / `customerNamed` lookups go out on `quickbooks.vendor` (`public`), which carries
+  the vendor display name only.
   `key` comes from `qbKey(lane, sourceId)` (lanes never build keys themselves): `<lane>:<sourceId>`
   when it fits 50 chars of `[A-Za-z0-9._:/-]`, else `<lane>:h:<128-bit sha256 hex>`. The 50-char cap is
   QBO's documented `requestid` limit, unverified live; `qbKey` is the one place to change it. The key
@@ -64,18 +67,17 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
 
 ## Which company a deployment reaches (`guard.ts`)
 
-The guard decides from our config and database only, never from anything QuickBooks returns.
+The guard decides from our config only, never from anything QuickBooks returns.
 
 - `assertQboTarget`: only `CHECKIN_ENV=prod` and `dev` (exactly) get a client. Prod uses the
-  production API and only the realm the Board set (`BoardSettings.qboProductionRealmId`); unset,
-  QuickBooks is off. Dev uses the sandbox API and only `QBO_SANDBOX_REALM_ALLOWED`, and refuses
-  the realm its own database names as production. stg, local and unset reach nothing.
+  production API and `QBO_REALM_ID`, set by infra when the refresher secret is seeded. Dev uses
+  the sandbox API and only `QBO_SANDBOX_REALM_ALLOWED`. stg, local and unset reach nothing.
 - `assertQboClientId`: off prod the token must come from Intuit's development keys
   (`QBO_DEV_CLIENT_ID`), which cannot open a production company; prod refuses them.
 - `assertPayloadMarked`, on every write's final body: sandbox writes carry `[checkin-test]` in
   `PrivateNote` (Vendors a `TEST-` name prefix) and never name the org; production writes never
   carry either marker. The client stamps the markers itself.
-- No realm id is ever committed: prod's lives in the Board setting, the sandbox's in deploy config.
+- No realm id is ever committed: both live in deploy config.
 
 checkin builds its one client in `checkin-app/src/lib/quickbooks/client.ts` (`getQuickBooks()`,
 null while off). Its token comes from the refresher Lambda (`QBO_REFRESHER_FN`): invoked with
@@ -93,7 +95,7 @@ null while off). Its token comes from the refresher Lambda (`QBO_REFRESHER_FN`):
 - [ ] Refresher: reserved concurrency 1; the refresh-token secret readable and writable by it
       alone; a weekly keepalive invoke; alarms on `invalid_grant`, and on `GetSecretValue` against the
       QBO secret by any principal other than the refresher Lambda's role.
-- [ ] Prod: the Board sets the realm on Settings → QuickBooks after consent.
+- [ ] Prod: `QBO_REALM_ID` set with the refresher secret after consent.
 - Binding a posting port (QB-2): set its `prod` flag from `CHECKIN_ENV === "prod"`, the same raw
   check the guard uses.
 - Binding expense posting: `QbRefs` (`refs.paymentAccountId`, `refs.vendorIdFor`) and the posting

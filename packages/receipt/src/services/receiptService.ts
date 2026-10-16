@@ -1,7 +1,15 @@
 import type { ReceiptState } from "@inventory/receipt-types";
 import { z } from "zod";
 import { db } from "../db";
-import { OcrDataSchema, reimbursementStatusSchema, type OcrData, type OcrResult, type ReceiptPrincipal } from "../contract";
+import {
+  OcrDataSchema,
+  reimbursementStatusSchema,
+  type OcrData,
+  type OcrResult,
+  type PaidStatus,
+  type ReceiptPrincipal,
+  type ReimbursementAsk,
+} from "../contract";
 import { sendDonorSync } from "../lib/donor-sync";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
@@ -38,6 +46,16 @@ function toSubmitterView(row: ReceiptRow): SubmitterReceipt {
   return rest;
 }
 
+/** X12 answer; QuickBooks off or any failure reads "not yet paid", never an error on the page. */
+async function paidStatus(owed: ReimbursementAsk[]): Promise<Map<string, PaidStatus>> {
+  try {
+    return reimbursementStatusSchema.parse(await ports().reimbursementStatus.forReceipts(owed));
+  } catch (err) {
+    console.warn("[receipt] reimbursement status unavailable", err);
+    return new Map();
+  }
+}
+
 const toCents = (dollars: number | string | undefined): number =>
   Math.round((typeof dollars === "string" ? parseFloat(dollars) || 0 : (dollars ?? 0)) * 100);
 
@@ -58,6 +76,16 @@ function transitionError(err: unknown): never {
 async function load(id: string, access: Access, actor: ReceiptPrincipal): Promise<ReceiptRow> {
   const row = await receiptRepo.find(id, (await getOrg()).id, access === "submitter" ? actor.id : undefined);
   if (!row) throw new ServiceError(404, "Receipt not found");
+  return row;
+}
+
+/**
+ * Load a receipt to change it. Once workflow-mapping has received it, it is fixed here: the
+ * callee keeps the first delivery, so a changed re-push would be silently dropped.
+ */
+async function loadForChange(id: string, access: Access, actor: ReceiptPrincipal): Promise<ReceiptRow> {
+  const row = await load(id, access, actor);
+  if (row.pushedAt) throw new ServiceError(409, "This receipt was already sent to receiving and can no longer be changed");
   return row;
 }
 
@@ -248,7 +276,7 @@ export const receiptService = {
   async edit(id: string, access: Access, rawUpdates: unknown) {
     const actor = await requireActor();
     const updates = parse(EditReceiptSchema, rawUpdates);
-    const row = await load(id, access, actor);
+    const row = await loadForChange(id, access, actor);
     if (!EDITABLE.has(row.state)) {
       throw new ServiceError(400, "Receipt can only be edited in validation_failed or submitter_review state");
     }
@@ -293,7 +321,7 @@ export const receiptService = {
   async addLine(id: string, access: Access, rawLine: unknown) {
     const actor = await requireActor();
     const line = parse(AddLineItemSchema, rawLine);
-    const row = await load(id, access, actor);
+    const row = await loadForChange(id, access, actor);
     if (!EDITABLE.has(row.state)) {
       throw new ServiceError(400, "Can only add lines in validation_failed or submitter_review state");
     }
@@ -312,7 +340,7 @@ export const receiptService = {
   async editLine(id: string, access: Access, lineItemId: number, rawLine: unknown) {
     const actor = await requireActor();
     const edit = parse(EditLineItemSchema, rawLine);
-    const row = await load(id, access, actor);
+    const row = await loadForChange(id, access, actor);
     if (!EDITABLE.has(row.state)) {
       throw new ServiceError(400, "Line items can only be edited in validation_failed or submitter_review state");
     }
@@ -361,7 +389,7 @@ export const receiptService = {
 
   async deleteLine(id: string, access: Access, lineItemId: number): Promise<void> {
     const actor = await requireActor();
-    const row = await load(id, access, actor);
+    const row = await loadForChange(id, access, actor);
     if (!EDITABLE.has(row.state)) {
       throw new ServiceError(400, "Can only delete lines in validation_failed or submitter_review state");
     }
@@ -376,7 +404,7 @@ export const receiptService = {
 
   async retryOcr(id: string, access: Access) {
     const actor = await requireActor();
-    const row = await load(id, access, actor);
+    const row = await loadForChange(id, access, actor);
     await writeAccess(row, access, actor, "retry ocr");
     try {
       assertLegalTransition(row.state, { type: "OCR_RETRY" });
@@ -391,7 +419,7 @@ export const receiptService = {
 
   async discard(id: string, access: Access) {
     const actor = await requireActor();
-    const row = await load(id, access, actor);
+    const row = await loadForChange(id, access, actor);
     await writeAccess(row, access, actor, "discard");
     await step(row, { type: "DISCARD" }, "discarded", {}, actor, "discarded");
     return load(id, access, actor);
@@ -400,7 +428,7 @@ export const receiptService = {
   /** Finance sign-off. A note is required when the reason is tax; no conflicted party can decide. */
   async approveFinancial(id: string, note?: string | null) {
     const actor = await requireActor();
-    const row = await load(id, "finance", actor);
+    const row = await loadForChange(id, "finance", actor);
     await refuseSelfDecision(row, actor, "approve");
     const reasons = row.state === "financial_review" ? financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
     const trimmed = note?.trim() || null;
@@ -412,7 +440,7 @@ export const receiptService = {
 
   async rejectFinancial(id: string, reason?: string | null) {
     const actor = await requireActor();
-    const row = await load(id, "finance", actor);
+    const row = await loadForChange(id, "finance", actor);
     await refuseSelfDecision(row, actor, "reject");
     const note = reason?.trim() || null;
     await step(row, { type: "REJECT" }, "rejected", { detail: { validationNotes: note } }, actor, "reject_financial", note);
@@ -422,7 +450,7 @@ export const receiptService = {
   /** A person's decision that this is not a duplicate; the pipeline never re-flags it. */
   async clearDuplicate(id: string) {
     const actor = await requireActor();
-    const row = await load(id, "finance", actor);
+    const row = await loadForChange(id, "finance", actor);
     await refuseSelfDecision(row, actor, "clear duplicate");
     await step(row, { type: "DUPLICATE_CLEARED" }, "uploaded", { detail: { duplicateFlagClearedAt: new Date() } }, actor, "duplicate_cleared");
     await runFullFlow(id, actor);
@@ -431,7 +459,7 @@ export const receiptService = {
 
   async resubmit(id: string, access: Access) {
     const actor = await requireActor();
-    const row = await load(id, access, actor);
+    const row = await loadForChange(id, access, actor);
     await writeAccess(row, access, actor, "resubmit");
     await step(row, { type: "RESUBMIT" }, "uploaded", {}, actor, "resubmitted");
     await runFullFlow(id, actor);
@@ -440,7 +468,7 @@ export const receiptService = {
 
   async submitterConfirm(id: string) {
     const actor = await requireActor();
-    const row = await load(id, "submitter", actor);
+    const row = await loadForChange(id, "submitter", actor);
     if (row.needsReimbursement && !row.reimbursementFor?.trim()) {
       throw new ServiceError(400, "reimbursementFor is required when needsReimbursement is set");
     }
@@ -451,7 +479,7 @@ export const receiptService = {
 
   async submitterDiscard(id: string) {
     const actor = await requireActor();
-    const row = await load(id, "submitter", actor);
+    const row = await loadForChange(id, "submitter", actor);
     await step(row, { type: "SUBMITTER_DISCARDED" }, "discarded", {}, actor, "discarded");
     return toSubmitterView(await load(id, "submitter", actor));
   },
@@ -460,7 +488,7 @@ export const receiptService = {
   async setReimbursement(id: string, rawInput: unknown) {
     const actor = await requireActor();
     const { needsReimbursement } = parse(z.object({ needsReimbursement: z.boolean() }).strict(), rawInput);
-    const row = await load(id, "submitter", actor);
+    const row = await loadForChange(id, "submitter", actor);
     if (row.state !== "submitter_review") throw new ServiceError(400, "Receipt is not in submitter_review state");
     if (needsReimbursement && !actor.isAdult) throw new ServiceError(400, "Reimbursement is not available for this account");
     if (needsReimbursement && row.isInKind) throw new ServiceError(400, "An in-kind receipt cannot be reimbursed");
@@ -486,7 +514,7 @@ export const receiptService = {
   async setInKind(id: string, rawInput: unknown) {
     const actor = await requireActor();
     const input = parse(InKindInputSchema, rawInput);
-    const row = await load(id, "submitter", actor);
+    const row = await loadForChange(id, "submitter", actor);
     if (!EDITABLE.has(row.state)) throw new ServiceError(400, "Receipt can only be edited in validation_failed or submitter_review state");
     if (input.isInKind && row.needsReimbursement) throw new ServiceError(400, "An in-kind receipt cannot be reimbursed");
     if (!input.isInKind && row.donorSync === "none") return toSubmitterView(row);
@@ -509,7 +537,7 @@ export const receiptService = {
 
   async restartFlow(id: string) {
     const actor = await requireActor();
-    const row = await load(id, "finance", actor);
+    const row = await loadForChange(id, "finance", actor);
     await refuseSelfDecision(row, actor, "restart flow");
     try {
       assertLegalTransition(row.state, { type: "RUN_PIPELINE" });
@@ -559,10 +587,8 @@ export const receiptService = {
   async listMine(opts: { hideCompleted?: boolean } = {}) {
     const actor = await requireActor();
     const rows = await receiptRepo.list({ orgId: (await getOrg()).id, uploadedByUserId: actor.id });
-    const owed = rows.filter((r) => r.needsReimbursement).map((r) => r.id);
-    const paid = owed.length
-      ? reimbursementStatusSchema.parse(await ports().reimbursementStatus.forReceipts(owed))
-      : new Map<string, { paidOn: string | null }>();
+    const owed = rows.filter((r) => r.needsReimbursement).map((r) => ({ receiptId: r.id, qbEntity: r.qbEntity, qbTxnId: r.qbTxnId }));
+    const paid = owed.length ? await paidStatus(owed) : new Map<string, PaidStatus>();
 
     const list = rows.map((r) => {
       const paidOn = r.needsReimbursement ? (paid.get(r.id)?.paidOn ?? null) : null;

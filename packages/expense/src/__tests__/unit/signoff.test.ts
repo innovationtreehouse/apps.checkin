@@ -16,10 +16,11 @@ const base: SignoffFacts = {
   submitterId: 1,
   approvers: [2],
   orgLevel: false,
-  purchaserIsMember: true,
+  reimburseeIsMember: true,
   finance: [3],
   board: [5, 6],
   conflicted: [1, 8],
+  leaderHousehold: [],
   reimburseeSetter: null,
   seatedHouseholds: [],
 };
@@ -120,17 +121,59 @@ describe("Board substitution (F2-COI)", () => {
   });
 });
 
-describe("boardFillsProgramSeat — F2 exceptions", () => {
-  it("a member purchaser in a program bucket keeps the normal seats", () => {
+describe("the Program Leader's household and the Treasurer seat", () => {
+  // 2 leads the program; 4 is 2's spouse and holds FINANCE alongside 3.
+  const led = { ...base, finance: [3, 4], leaderHousehold: [2, 4] };
+
+  it("a FINANCE holder in the leader's household cannot fill the Treasurer seat; another FINANCE holder can", () => {
+    expect(signoffRefusal(led, [], "TREASURER", 4)).toMatch(/Program Leader/);
+    expect(signoffRefusal(led, [], "TREASURER", 3)).toBeNull();
+  });
+
+  it("the leader holding FINANCE cannot fill the Treasurer seat even when a treasurer approved the line", () => {
+    const facts = { ...base, approvers: [2, 7], finance: [2], board: [5, 6], leaderHousehold: [2] };
+    const filled = seats(["PROGRAM_APPROVER", 7]);
+    expect(signoffRefusal(facts, filled, "TREASURER", 2)).toMatch(/Program Leader/);
+    expect(signoffRefusal(facts, filled, "TREASURER", 5)).toBeNull();
+  });
+
+  it("every FINANCE holder in the leader's household: a non-conflicted Board member replaces them", () => {
+    const facts = { ...led, finance: [4] };
+    expect(signoffRefusal(facts, [], "TREASURER", 5)).toBeNull();
+  });
+
+  it("a Board member in the leader's household cannot replace the Treasurer", () => {
+    const facts = { ...led, finance: [4], board: [4, 5] };
+    expect(signoffRefusal(facts, [], "TREASURER", 4)).toMatch(/Program Leader/);
+    expect(signoffRefusal(facts, [], "TREASURER", 5)).toBeNull();
+  });
+
+  it("the leader's household still fills the program-approver seat", () => {
+    expect(signoffRefusal(led, [], "PROGRAM_APPROVER", 2)).toBeNull();
+  });
+
+  it("the FINANCE holder who signed as program treasurer cannot also fill the Treasurer seat", () => {
+    const facts = { ...base, approvers: [3], finance: [3, 4] };
+    expect(signoffRefusal(facts, seats(["PROGRAM_APPROVER", 3]), "TREASURER", 3)).toMatch(/another seat/);
+    expect(signoffRefusal(facts, seats(["PROGRAM_APPROVER", 3]), "TREASURER", 4)).toBeNull();
+  });
+});
+
+describe("boardFillsProgramSeat", () => {
+  it("a member reimbursee in a program bucket keeps the normal seats", () => {
     expect(boardFillsProgramSeat(base)).toBe(false);
     expect(signoffRefusal(base, [], "PROGRAM_APPROVER", 2)).toBeNull();
   });
 
-  it("a non-member purchaser takes a Board member in the program seat; the Treasurer still signs", () => {
-    const facts = { ...base, purchaserIsMember: false };
+  it("a non-member reimbursee takes a Board member in the program seat; the Treasurer still signs", () => {
+    const facts = { ...base, reimburseeIsMember: false };
     expect(signoffRefusal(facts, [], "PROGRAM_APPROVER", 2)).toMatch(/not a Board member/);
     expect(signoffRefusal(facts, [], "PROGRAM_APPROVER", 5)).toBeNull();
     expect(missingSeats(facts, seats(["SUBMITTER", 1], ["PROGRAM_APPROVER", 5]))).toEqual(["TREASURER"]);
+  });
+
+  it("a card charge keeps the program approver whatever the membership fact", () => {
+    expect(boardFillsProgramSeat({ ...base, kind: "card_charge", reimburseeIsMember: false })).toBe(false);
   });
 });
 

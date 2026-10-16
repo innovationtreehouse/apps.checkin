@@ -52,7 +52,7 @@ describe("expense signer directory excludes people in a DENIED household", () =>
     });
     const dir = await signoff();
 
-    await expect(dir.bucketApprovers(100)).resolves.toEqual({ orgLevel: false, approvers: [8] });
+    await expect(dir.bucketApprovers(100)).resolves.toEqual({ orgLevel: false, approvers: [8], leader: 7 });
     expect(budgetOwnerFindUnique.mock.calls[0][0].select.program.select.volunteers.where.person).toEqual({ mergedIntoId: null, ...NOT_DENIED });
   });
 
@@ -82,6 +82,27 @@ describe("expense QuickBooks reader", () => {
     await expect(qb.purchasesBetween("2026-01-01", "2026-01-31")).resolves.toEqual([]);
     await expect(qb.billsBetween("2026-01-01", "2026-01-31")).resolves.toEqual([]);
     await expect(qb.billPaymentsBetween("2026-01-01", "2026-01-31")).resolves.toEqual([]);
+    await expect(qb.purchasesByIds(["1"])).resolves.toEqual([]);
+    await expect(qb.billsByIds(["2"])).resolves.toEqual([]);
+    await expect(qb.billPaymentsByIds(["3"])).resolves.toEqual([]);
+  });
+
+  it("maps by-id rows: a Bill's balance and linked BillPayments", async () => {
+    getQuickBooks.mockResolvedValue({
+      purchasesByIds: async () => [{ Id: "1", TxnDate: "2026-01-02", TotalAmt: 1 }],
+      billsByIds: async () => [
+        { Id: "2", TxnDate: "2026-01-03", TotalAmt: 5, Balance: 0, LinkedTxn: [{ TxnId: "3", TxnType: "BillPayment" }, { TxnId: "3", TxnType: "BillPayment" }, { TxnId: "9", TxnType: "PurchaseOrder" }] },
+        { Id: "4", TxnDate: "2026-01-03", TotalAmt: 5 },
+      ],
+      billPaymentsByIds: async () => [{ Id: "3", TxnDate: "2026-01-04", TotalAmt: 5 }],
+    });
+    const qb = await reader();
+    await expect(qb.purchasesByIds(["1"])).resolves.toEqual([{ id: "1", txnDate: "2026-01-02", totalCents: 100, accountRef: null, vendorRef: null }]);
+    await expect(qb.billsByIds(["2", "4"])).resolves.toEqual([
+      { id: "2", txnDate: "2026-01-03", balance: 0, paymentIds: ["3"] },
+      { id: "4", txnDate: "2026-01-03", balance: null, paymentIds: [] },
+    ]);
+    await expect(qb.billPaymentsByIds(["3"])).resolves.toEqual([{ id: "3", txnDate: "2026-01-04" }]);
   });
 
   it("maps QuickBooks rows to cents and refs", async () => {

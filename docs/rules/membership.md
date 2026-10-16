@@ -226,6 +226,13 @@ Procedure below is built on them.
   from a real one. A review carrying one is reset by the board and re-reviewed by
   two.  [Decision — *Principle: fail closed*]
 
+- A reviewer may undo their own approval, with a written reason, while the review
+  still waits on its second reviewer. The review returns to waiting for two
+  approvals, and the adult that approval named is no longer settled. Once the
+  check has cleared, or the application is blocked or closed, the approval
+  stands. A rejection cannot be undone by its reviewer; moving a blocked
+  application on is the board's reset.  [Decision]
+
 - A board override names the adult it covers. It cannot infer one: a blocked
   application never holds the second approval that would identify a subject, so
   an override naming nobody would date a clearance against no one.  [Decision]

@@ -64,7 +64,7 @@ states only what differs.
 **Source:** `income-app/` in `innovationtreehouse/Inventory` at `07797b59`. QB
 client: `packages/quickbooks` at worktree `crazy-wright-4e2dcf` (`a836c535`).
 
-**Domain rules relied on** (`docs/rules/finance-payments.md`): the store is the
+**Domain rules relied on** (`docs/rules/revenue.md`): the store is the
 source of truth for what was paid and the mirror is a read-only copy;
 reconciliation problems surface on the finance board; a financial control is a
 flag a person signs off, not a gate; Finance Ops excludes sysadmins
@@ -477,7 +477,7 @@ deposit write, and the stateless find-or-create shared with the other lanes
 
 ## 9. Distillation at merge
 
-Add to `docs/rules/finance-payments.md` (Procedure → Reconciliation); no new
+Add to `docs/rules/revenue.md` (Procedure → Reconciliation); no new
 register file:
 
 - Every paid store payout is matched to exactly one ledger deposit, or is raised

@@ -120,7 +120,8 @@ model ReceiptDetail {
   /// Another submitter's receipt id: pii keeps it off the submitter's own view.
   /// @sensitivity:pii
   duplicateSuspectReceiptId  String?   @map("duplicate_suspect_receipt_id")
-  /// @sensitivity:internal
+  /// Status of another submitter's receipt: pii keeps it off the submitter's own view.
+  /// @sensitivity:pii
   duplicateSuspectIsRejected Boolean?  @map("duplicate_suspect_is_rejected")
   /// @sensitivity:personal
   validationNotes            String?   @map("validation_notes")

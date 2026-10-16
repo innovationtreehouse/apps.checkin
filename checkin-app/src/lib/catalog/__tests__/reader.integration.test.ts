@@ -2,8 +2,9 @@
  * @jest-environment node
  */
 /**
- * X3 binding: the host's catalog reader, bound by each consumer's configureRuntime(),
- * reading a real global-catalog database migrated from its committed migrations. The
+ * X3/X8/X10 bindings: the host's catalog reader, bound by each consumer's configureRuntime(),
+ * reading a real global-catalog database migrated from its committed migrations, and
+ * workflow-mapping's catalog submissions writing to it. The
  * last tests point the catalog at a missing database to show the display reads fall
  * back and the reference check fails closed.
  */
@@ -11,8 +12,10 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { getPrisma as getCatalogPrisma } from '@inventory/global-catalog';
+import { getCatalogItem, searchCatalog } from '@inventory/bulk-donation';
 import { getExpenseRuntime } from '@inventory/expense';
 import { ports } from '@inventory/workflow-mapping';
+import { configureRuntime as configureBulkDonationRuntime } from '@/lib/bulkDonation/configure';
 import { configureRuntime as configureExpenseRuntime } from '@/lib/expense/configure';
 import { configureRuntime as configureWorkflowRuntime } from '@/lib/workflowMapping/configure';
 
@@ -73,6 +76,7 @@ beforeAll(async () => {
 
     configureExpenseRuntime();
     configureWorkflowRuntime();
+    configureBulkDonationRuntime();
 }, 120_000);
 
 // DROP DATABASE waits on a forced checkpoint, which can outlast the default hook timeout.
@@ -86,7 +90,7 @@ describe('expense CatalogReader bound to the catalog', () => {
         const reader = getExpenseRuntime().catalog;
         expect(await reader.listCategories()).toEqual([{ id: categoryId, name: 'Fasteners', letter: 'F' }]);
         expect(await reader.listSubcategories()).toEqual([{ id: subcategoryId, name: 'Bolts', number: 1, categoryId }]);
-        expect(await reader.getItem(GTIN)).toEqual({ gtin13: GTIN, categoryId, subcategoryId });
+        expect(await reader.getItem(GTIN)).toEqual({ gtin13: GTIN, name: 'Hex bolt', categoryId, subcategoryId });
         expect(await reader.getItem('0000000000000')).toBeNull();
         expect(await reader.lookupItems('Hardware Co', [{ index: 0, partNumber: 'HB-1', manufacturer: 'Acme' }])).toEqual([
             expect.objectContaining({ index: 0, gtin13: GTIN, conversionFactor: 4 }),
@@ -104,6 +108,40 @@ describe('workflow-mapping CatalogReader bound to the catalog', () => {
         expect(refs.mfr_part).toEqual(expect.objectContaining({ exists: true, gtin13: GTIN }));
         expect(refs.retailer_part.exists).toBe(true);
         expect(refs.wouldCreateNewReference).toBe(false);
+    });
+});
+
+describe('bulk-donation CatalogLookup bound to the catalog', () => {
+    it('searches and reads items as the no-receipt picker sees them', async () => {
+        expect(await searchCatalog('hex')).toEqual([{ gtin13: GTIN, name: 'Hex bolt' }]);
+        expect(await getCatalogItem(GTIN)).toEqual({ gtin13: GTIN, name: 'Hex bolt' });
+        expect(await getCatalogItem('0000000000000')).toBeNull();
+    });
+});
+
+describe('workflow-mapping CatalogSubmissions bound to the catalog', () => {
+    it('writes a reference proposal, a conflict and a provisional proposal stamped with the org', async () => {
+        const submissions = ports().catalogSubmissions;
+        const { id: proposalId } = await submissions.proposeItemReference({
+            gtin13: GTIN, localUserId: 7, partNumber: 'HB-2', retailer: 'Hardware Co', conversionFactor: 2,
+        });
+        expect(await catalog.itemReferenceProposal.findUniqueOrThrow({ where: { id: proposalId } })).toMatchObject({
+            orgId: 'treehouse', localUserId: 7, partNumber: 'HB-2', status: 'pending',
+        });
+
+        const ref = await catalog.itemReference.findFirstOrThrow({ where: { partNumber: 'HB-1' } });
+        const { id: conflictId } = await submissions.reportConflict({
+            itemReferenceId: ref.id, existingGtin13: GTIN, proposedGtin13: GTIN, receiptId: '42', lineItemId: 1,
+        });
+        expect(await catalog.referenceConflict.findUniqueOrThrow({ where: { id: conflictId } })).toMatchObject({ receiptId: '42' });
+
+        const provisionalGtin13 = await submissions.allocateProvisionalGtin();
+        await submissions.proposeProvisionalItem({
+            provisionalGtin13, proposedName: 'Mystery bolt', proposedUsageBehavior: 'Durable', localUserId: 7,
+        });
+        expect(await catalog.provisionalItem.findFirstOrThrow({ where: { provisionalGtin13 } })).toMatchObject({
+            orgId: 'treehouse', proposedName: 'Mystery bolt', status: 'pending',
+        });
     });
 });
 

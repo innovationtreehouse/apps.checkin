@@ -92,9 +92,8 @@ POST /api/donations/qb-exclusions
 GET /api/expense/local-owners
 GET /api/expense/flags
 POST /api/expense/flags/[id]/check-off
-GET /api/expense/line-items/[lineItemId]/qb-candidates
-POST /api/expense/line-items/[lineItemId]/qb-match
-POST /api/expense/line-items/[lineItemId]/qb-create
+GET /api/expense/expenses/[id]/qb-candidates
+POST /api/expense/expenses/[id]/qb-match
 GET /api/expense/expenses
 GET /api/expense/expenses/count
 PUT /api/expense/qb-accounts/[id]
@@ -187,6 +186,8 @@ POST /api/receipts/[id]/restart-flow
 POST /api/receipts/[id]/push-to-inventory
 POST /api/receipts/import
 GET /api/receipts/[id]/file
+DELETE /api/membership-ops/bg-attestations/[id]
+POST /api/membership/reviews/undo
 
 # Shopify mirror (s-read) — board payment queue and s-read routes via handler().
 GET /api/finance-ops/payments

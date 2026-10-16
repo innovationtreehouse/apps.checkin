@@ -180,7 +180,7 @@ class BackendClient:
 
     def post_scan(self, participant_id, force_close_token=None,
                   client_event_id=None, scanned_at=None, replay=False,
-                  dead=False, dead_status=None, intent=None, clock_suspect=False,
+                  intent=None, clock_suspect=False,
                   force_close_confirmed=False, close=None, roster_as_of=None, shown_empty=None):
         path = "/api/scan"
         payload = {"protocolVersion": SCAN_PROTOCOL_VERSION}
@@ -199,13 +199,6 @@ class BackendClient:
             # clientEventId (D4 try-first) but is NOT a replay, so the server
             # cannot infer replay-ness from the id.
             payload["replay"] = True
-        if dead:
-            # Dead-letter drain pass, mutually exclusive with replay.
-            # dead_status is the terminal status that got this row
-            # dead-lettered locally -- it lands in the server's reviewReason.
-            payload["dead"] = True
-            if dead_status is not None:
-                payload["deadStatus"] = dead_status
         if intent in ("IN", "OUT"):
             payload["intent"] = intent
         if clock_suspect:
@@ -289,13 +282,14 @@ def _server_date(header):
 # (NTP jump, bad RTC). Small skew is don't-care.
 CLOCK_STEP_SECONDS = 180
 
-# The scan-body generation this client speaks (2 = replay/dead/intent/
+# The scan-body generation this client speaks (2 = replay/intent/
 # clockSuspect; 3 = the kiosk filters repeat reads itself; 5 = shownEmpty;
-# 6 = close). Sent
+# 6 = close; 7 = the server parks a replay it cannot apply, so the drain only
+# acks or retries). Sent
 # with every POST /api/scan. Below this on the server, nothing is sent live and
 # the drain holds, so an auto-updated kiosk can't race a not-yet-deployed
 # server into ignoring a close.
-SCAN_PROTOCOL_VERSION = 6
+SCAN_PROTOCOL_VERSION = 7
 
 
 class ClockWatch:
@@ -629,19 +623,19 @@ def _overlay_pending(present, pending, arrivals=None):
     presence set: the last intent per person wins. `arrivals` collects each
     queued IN's scan time."""
     for row in pending:
-        if len(row) > 9 and row[9]:
+        if row.close:
             # A queued close: everyone shown before it has left.
             present.clear()
             continue
         try:
-            pid = int(row[1])
+            pid = int(row.participant_id)
         except (TypeError, ValueError):
             continue
-        if row[5] == "IN":
+        if row.intent == "IN":
             present.add(pid)
             if arrivals is not None:
-                arrivals[pid] = row[2]
-        elif row[5] == "OUT":
+                arrivals[pid] = row.scanned_at
+        elif row.intent == "OUT":
             present.discard(pid)
 
 # ---------------------------------------------------------------------------
@@ -1416,14 +1410,16 @@ def handle_scan(backend, state, outbox, participant_id):
         outbox.release(client_event_id)
         raise
 
-    if outcome == "retry":
+    # A live refusal is shown now and settled; only a replay is never refused.
+    rejected = outcome == "retry" and status in (400, 404, 409) and body.get("type") != "warming"
+    if outcome == "retry" and not rejected:
         # Unconfirmed: the row stays pending for the drain.
         outbox.release(client_event_id)
         show_queued(outbox.pending_count())
         log.warning(f"Scan queued (server unreachable/warming): participant {participant_id} {intent} close={close}")
         return
 
-    # Answered definitively (ack, or a dead rejection the screen shows now):
+    # Answered definitively (ack, or a rejection the screen shows now):
     # the row is settled either way and must not replay.
     outbox.ack(client_event_id)
 
@@ -1705,8 +1701,7 @@ def main():
     # re-signing and resubmitting each one, once the backend is reachable.
     drain = threading.Thread(
         target=replay_drain, args=(outbox, backend.post_scan, state.push_event),
-        kwargs={"protocol_ok_fn": lambda: state.scan_protocol >= SCAN_PROTOCOL_VERSION,
-                "quiet_fn": lambda: building_known_empty(state)}, daemon=True
+        kwargs={"protocol_ok_fn": lambda: state.scan_protocol >= SCAN_PROTOCOL_VERSION}, daemon=True
     )
     drain.start()
 

@@ -91,4 +91,29 @@ describe('bulk-donation field-stripping (comment rules and QB candidates)', () =
         const out = stripValue('DonationNavCounts', { unassignedQueue: 4, disbursementHolds: 1 }, ['public'], ctx());
         expect(out).toEqual({ unassignedQueue: 4, disbursementHolds: 1 });
     });
+
+    it('an in-kind queue row keeps its receipt fields and never carries a donor', () => {
+        const row = {
+            id: 1,
+            receiptId: 'r-1',
+            receiptTotalCents: 2500,
+            receiptDate: '2026-09-01',
+            moneyReceivedAt: '2026-09-02T00:00:00.000Z',
+            donorRecordedAt: null,
+            withdrawnAfterMoneyAt: null,
+            donorFirstName: 'Pat',
+            donorLastName: 'Doe',
+            donorCompanyName: 'Acme',
+        };
+        const out = stripValue('InKindQueueItemView', row, FINANCE_VIEW, ctx()) as Record<string, unknown>;
+        expect(out).toEqual({
+            id: 1,
+            receiptId: 'r-1',
+            receiptTotalCents: 2500,
+            receiptDate: '2026-09-01',
+            moneyReceivedAt: '2026-09-02T00:00:00.000Z',
+            donorRecordedAt: null,
+            withdrawnAfterMoneyAt: null,
+        });
+    });
 });

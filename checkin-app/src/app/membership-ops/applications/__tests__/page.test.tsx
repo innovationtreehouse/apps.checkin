@@ -18,7 +18,7 @@ jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } 
 import { MantineProvider } from "@mantine/core";
 import { ModalsProvider } from "@mantine/modals";
 import { EnvProvider } from "@/components/EnvProvider";
-import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
+import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
 import { notifications } from "@mantine/notifications";
 import AdminMembershipPage from "../page";
 
@@ -127,7 +127,16 @@ describe("AdminMembershipPage", () => {
         expect(await screen.findByText("No in-flight membership applications.")).toBeInTheDocument();
     });
 
+    it("offers certify-payment only to the board, not a sysadmin", async () => {
+        setSession({ id: 99, householdId: 99, isSysadmin: true });
+        mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
+        renderPage();
+        await screen.findByText("Payment Family");
+        expect(screen.queryByRole("button", { name: /Certify payment plan/ })).not.toBeInTheDocument();
+    });
+
     it("drives the external-action, certify, and override controls", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
         mockFetchJson({
             "/api/membership-ops/applications": { processes: rows },
             "/api/membership-ops/applications/external": { ok: true },

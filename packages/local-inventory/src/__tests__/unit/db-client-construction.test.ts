@@ -74,3 +74,12 @@ describe("getPrisma construction (env-read wiring)", () => {
     expect(adapterArgs).toEqual([]);
   });
 });
+
+describe("isUniqueConstraintError", () => {
+  it("matches a P2002 by code, whichever client instance threw it", async () => {
+    const { isUniqueConstraintError } = await import(CLIENT);
+    expect(isUniqueConstraintError({ code: "P2002" })).toBe(true);
+    expect(isUniqueConstraintError({ code: "P2025" })).toBe(false);
+    expect(isUniqueConstraintError(null)).toBe(false);
+  });
+});

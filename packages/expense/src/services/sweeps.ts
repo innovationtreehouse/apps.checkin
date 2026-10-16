@@ -1,5 +1,6 @@
 import { recoverStrandedQbExpenses } from "../lib/expense-qb-processor";
 import { drainExpenseOutbox } from "../lib/expense-qb-poster";
+import { checkQbDrift } from "../lib/expense-qb-drift";
 import { catchUpCatalogEvents } from "./catalogEventConsumer";
 import { replayReceivedPayloads } from "./intakeService";
 
@@ -14,11 +15,12 @@ export async function runExpenseCatchUp() {
 }
 
 /**
- * Expense's QuickBooks posting step: stranded QB recovery, then the outbox drain. Each part fails
- * on its own. Returns counts only.
+ * Expense's QuickBooks step: stranded QB recovery, the outbox drain, then the QB-3 drift check.
+ * Each part fails on its own. Returns counts only.
  */
 export async function runExpenseQbPosting() {
   const stranded = await recoverStrandedQbExpenses().catch(() => ({ error: true }));
   const qbPost = await drainExpenseOutbox().catch(() => ({ error: true }));
-  return { stranded, qbPost };
+  const qbDrift = await checkQbDrift().catch(() => ({ error: true }));
+  return { stranded, qbPost, qbDrift };
 }

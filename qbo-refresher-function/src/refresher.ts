@@ -72,6 +72,27 @@ async function refresh(creds: StoredCredentials): Promise<StoredCredentials> {
   }
 }
 
+/** Backoff before each retry of the secret write; the attempt count is this length + 1. */
+export const SAVE_RETRY_DELAYS_MS = [200, 1000, 3000];
+
+/**
+ * Intuit has already rotated the pair, so the old refresh token is dead: a write lost here
+ * means a manual reconnect. Retry it in this invocation, then raise the same alarm.
+ */
+async function saveRotated(store: CredentialStore, creds: StoredCredentials): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await store.save(creds);
+    } catch (err) {
+      if (attempt >= SAVE_RETRY_DELAYS_MS.length) {
+        console.error(`${INVALID_GRANT_MARKER}: rotated QuickBooks token could not be saved; re-run consent`, { realmId: creds.realmId });
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, SAVE_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
+
 /**
  * `current` returns a usable access token, refreshing only near expiry. `keepalive` (weekly
  * EventBridge) always refreshes, so an idle refresh token never reaches Intuit's 100-day expiry.
@@ -90,7 +111,7 @@ export async function run(
   assertClientIdAllowed(creds.clientId, env);
   if (event.action === "keepalive" || expiresAt(creds) - now < REFRESH_MARGIN_MS) {
     creds = await refresh(creds);
-    await store.save(creds);
+    await saveRotated(store, creds);
   }
   return { accessToken: creds.accessToken, expiresAt: expiresAt(creds), realmId: creds.realmId, clientId: creds.clientId };
 }

@@ -80,6 +80,15 @@ describe("cli — command dispatch", () => {
     });
   });
 
+  it("--all sets scope: \"all\"; without it no scope key is sent", async () => {
+    await runCli(["reset-watermark", "--reason", "rewind", "--all"]);
+    expect(event()).toMatchObject({ mode: "reset-watermark", scope: "all" });
+
+    m.handler.mockClear();
+    await runCli(["reset-watermark", "--reason", "rewind"]);
+    expect(event()).not.toHaveProperty("scope");
+  });
+
   it("an explicit --actor overrides the cli:<user> default", async () => {
     await runCli(["replay", "--reason", "r", "--actor", "alice"]);
 

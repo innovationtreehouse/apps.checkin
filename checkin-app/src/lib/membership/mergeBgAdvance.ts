@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import type { TxClient } from "@/lib/db-client";
 import { logBackendError } from "@/lib/logger";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
@@ -66,6 +67,18 @@ export async function advanceHouseholdBgAfterMerge(
 
 type Provenance = { via: "merge"; sourcePersonId: number };
 
+/**
+ * Whether a board reset sent this review back. A reset asks for two new approvals,
+ * so a carried-in check never stands in for them. Read under the process lock.
+ */
+async function wasBoardReset(tx: TxClient, processId: number): Promise<boolean> {
+    const reset = await tx.auditLog.findFirst({
+        where: { tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { path: ["action"], equals: "board reset" } },
+        select: { id: true },
+    });
+    return reset !== null;
+}
+
 /** Household INITIAL/RENEWAL rows at `from` that still owe a background check. */
 function uncleared(householdId: number, from: object, extra: object = {}): Promise<Candidate[]> {
     return prisma.orgMembershipProcess.findMany({
@@ -90,6 +103,7 @@ async function stampBgCleared(process: Candidate, householdId: number, actorId: 
         // A review an eligible reviewer has already attested is theirs to finish; a
         // dedupe action does not complete a human's 2-of-N.
         if (await tx.backgroundCheckAttestation.count({ where: { processId: process.id } })) return false;
+        if (await wasBoardReset(tx, process.id)) return false;
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: process.id, bgClearedAt: null, ...from },
             data: { bgClearedAt: new Date() },
@@ -170,6 +184,7 @@ async function clearHeldRow(
                 select: { status: true, bgClearedAt: true, _count: { select: { attestations: true } } },
             });
             if (!fresh || fresh.status !== status || fresh.bgClearedAt || fresh._count.attestations > 0) return null;
+            if (await wasBoardReset(tx, process.id)) return null;
             return clearBackgroundCheck(tx, process.id, actorId, { where: from }, {
                 provenance: {
                     via: "merge",

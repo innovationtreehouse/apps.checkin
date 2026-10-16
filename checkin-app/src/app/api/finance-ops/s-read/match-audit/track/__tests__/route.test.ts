@@ -18,6 +18,7 @@ jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 const prismaMock = {
     orgMembershipProcess: { findFirst: jest.fn(), findUnique: jest.fn() },
     programParticipant: { findFirst: jest.fn(), findUnique: jest.fn() },
+    auditLog: { create: jest.fn() },
 };
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
@@ -30,6 +31,7 @@ jest.mock('@/lib/prisma', () => ({
             findFirst: (...a: unknown[]) => prismaMock.programParticipant.findFirst(...a),
             findUnique: (...a: unknown[]) => prismaMock.programParticipant.findUnique(...a),
         },
+        auditLog: { create: (...a: unknown[]) => prismaMock.auditLog.create(...a) },
     },
 }));
 
@@ -138,6 +140,14 @@ describe('kind: order', () => {
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({ tracked: true });
         expect(raisePaymentExceptionMock).toHaveBeenCalledWith('UNMATCHED_ORDER', { shopifyOrderId: '900' });
+        expect(prismaMock.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                actorId: 5,
+                actorSystem: null,
+                tableName: 'MATCH_AUDIT_TRACK',
+                newData: { kind: 'order', shopifyOrderId: '900' },
+            }),
+        });
     });
 
     it('409 when the order is no longer paid (refunded since the audit) — not raised', async () => {
@@ -145,6 +155,7 @@ describe('kind: order', () => {
         const res = await POST(req({ kind: 'order', shopifyOrderId: '901' }));
         expect(res.status).toBe(409);
         expect(raisePaymentExceptionMock).not.toHaveBeenCalled();
+        expect(prismaMock.auditLog.create).not.toHaveBeenCalled();
     });
 
     it('409 when a membership process has since claimed the order — not raised', async () => {

@@ -1,39 +1,32 @@
-// Which QuickBooks company a deployment may reach, decided only from our own config and
-// database, never from anything read back from QuickBooks. Pure: callers pass every input.
+// Which QuickBooks company a deployment may reach, decided only from our own config, never
+// from anything read back from QuickBooks. Pure: callers pass every input.
 import type { QboEnv, QboRealm } from "./types";
 
 export interface QboTargetConfig {
   /** Raw CHECKIN_ENV. Only exactly "prod" (production) and "dev" (sandbox) get a client. */
   checkinEnv: string | undefined;
+  /** QBO_ENVIRONMENT + QBO_REALM_ID; on prod the realm is set with the refresher secret. */
   realm: QboRealm;
   /** On dev: the one sandbox realm it may use, provisioned apart from the realm itself. */
   sandboxRealmAllowed: string | undefined;
-  /** The Board-set production realm in this deployment's database; null while unset. */
-  productionRealmId: string | null;
 }
 
 /**
- * Throws unless `realm` is the one company this deployment may reach. Prod reaches only the
- * Board-set realm, and nothing while it is unset. Dev reaches only the allowlisted sandbox
- * realm, and never the realm its own database names as production. Every other environment
- * (stg, local, unset) reaches nothing.
+ * Throws unless `realm` is one this deployment may reach. Prod reaches the configured realm
+ * through the production API. Dev reaches only the allowlisted sandbox realm through the
+ * sandbox API. Every other environment (stg, local, unset) reaches nothing.
  */
 export function assertQboTarget(cfg: QboTargetConfig): void {
   const { realm } = cfg;
   if (!/^\d+$/.test(realm.realmId)) throw new Error("QBO realmId must be numeric");
   if (cfg.checkinEnv === "prod") {
     if (realm.env !== "production") throw new Error("CHECKIN_ENV=prod must use the production QuickBooks API");
-    if (!cfg.productionRealmId) throw new Error("QuickBooks is off: the Board has not set the production realm");
-    if (realm.realmId !== cfg.productionRealmId) throw new Error("QBO realm is not the Board-set production realm");
     return;
   }
   if (cfg.checkinEnv !== "dev") throw new Error("QuickBooks runs only on CHECKIN_ENV=prod or dev");
   if (realm.env !== "sandbox") throw new Error("Only CHECKIN_ENV=prod may use the production QuickBooks API");
   if (!cfg.sandboxRealmAllowed) throw new Error("QBO_SANDBOX_REALM_ALLOWED must be set on dev");
   if (realm.realmId !== cfg.sandboxRealmAllowed) throw new Error("QBO realm is not the allowlisted sandbox realm");
-  if (cfg.productionRealmId !== null && realm.realmId === cfg.productionRealmId) {
-    throw new Error("QBO realm is this database's production realm; refused off prod");
-  }
 }
 
 /**

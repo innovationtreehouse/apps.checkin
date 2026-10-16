@@ -167,21 +167,23 @@ export const DELETE = withAuth({}, async (req, auth) => {
             return apiError("Visit already checked out", 400);
         }
 
-        const guard = await lastKeyholderGuard(visitId, visit.person, closeActor(user), { token: forceCloseToken, choice: closeChoice, handoverToId });
+        const closeCtx = { actorId: Number(user.id), subjectId: visit.personId, visitId, via: "WEB_DASHBOARD" as const };
+        // The guard decides on the building as the checkout leaves it: under the
+        // person lock (this checkout against the kiosk's) and the facility lock
+        // (against any check-in or close), with the close committing alongside
+        // the checkout. A lost race departs nothing and records no close.
+        const { guard, finalVisits } = await prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(${visit.personId})`;
+            await lockFacility(tx);
+            const guard = await lastKeyholderGuard(visitId, visit.person, closeActor(user), { token: forceCloseToken, choice: closeChoice, handoverToId }, {}, tx);
+            if (guard.action !== 'proceed') return { guard, finalVisits: [] };
+            const departed = await processVisitCheckout(visitId, new Date(), tx, "TYPED");
+            if (departed.length > 0) await recordWebClose(tx, guard, closeCtx);
+            return { guard, finalVisits: departed };
+        }, { maxWait: 5000, timeout: 15000 });
         if (guard.action === 'warn') return NextResponse.json(guard.warning, { status: 400 });
         if (guard.action === 'refuse') return apiError(guard.error, guard.status);
         const { facilityClosed } = guard;
-
-        const closeCtx = { actorId: Number(user.id), subjectId: visit.personId, visitId, via: "WEB_DASHBOARD" as const };
-        // The close commits with the checkout, so a crash between them loses neither.
-        // The person lock serializes this checkout with the kiosk's: a lost race
-        // departs nothing and records no close.
-        const finalVisits = await prisma.$transaction(async (tx) => {
-            await tx.$executeRaw`SELECT pg_advisory_xact_lock(${visit.personId})`;
-            const departed = await processVisitCheckout(visitId, new Date(), tx, "TYPED");
-            if (departed.length > 0) await recordWebClose(tx, guard, closeCtx);
-            return departed;
-        });
         const updatedVisit = finalVisits.length > 0 ? finalVisits[finalVisits.length - 1] : visit;
 
         await finishCloseGuard(guard, { ...closeCtx, recorded: true });

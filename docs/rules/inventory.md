@@ -5,6 +5,11 @@ tools, and consumables *are* (reference data), and the organization's on-hand
 holdings that draw on it (local inventory: stock counts, the receive queue for
 backordered receipt lines, and provisional items awaiting a catalog GTIN).
 
+It also covers receiving, where a manager matches each line of a purchase
+receipt to a catalog item before the goods are counted into stock. What a
+receipt costs and what a donated item is worth are covered by the expense and
+donation rules; this file covers only the goods.
+
 The architecture these rules sit on — the library-isolation seam, the injected
 org identity, the own-database packaging — is described in
 `docs/designs/COMPONENT_ARCHITECTURE.md`, not here.
@@ -32,9 +37,15 @@ org identity, the own-database packaging — is described in
   and number are part of how items are named and must stay stable once in use —
   renumbering a category in use renames every item under it. `[Decision]`
 
+- An archived category keeps its letter, so no new category reuses it.
+  `[Decision]`
+
 - A reference's conversion factor — inventory units per receipt-line unit — is a
   whole number system-wide. There are no fractional packs; a change must not
   introduce a non-integer factor. `[Decision]`
+
+- A changed conversion factor applies only to goods received after the change.
+  Stock already counted is never recalculated. `[Decision]`
 
 ### Proposals, provisionals, conflicts
 
@@ -53,6 +64,10 @@ org identity, the own-database packaging — is described in
   by deleting the row. `[Decision]`
 
 ### On-hand stock
+
+- A receipt or a donation of goods adds to stock once. Sending it again never
+  double-counts, and a resend with different lines is refused rather than
+  quietly changing stock. `[Decision]`
 
 - Every change to an on-hand count, including removing an org item, writes an
   inventory-log row in the same transaction as the change, naming the actor
@@ -74,6 +89,22 @@ org identity, the own-database packaging — is described in
   use the same conversion factor. Otherwise the merge parks a unit-mismatch
   conflict for a person to resolve. The factor used is the one the catalog
   event carried, including when the event arrives before the provisional row.
+  `[Decision]`
+
+### Receiving
+
+- Receiving is the only way a receipt's goods reach stock, and only after every
+  line is linked to a catalog item, proposed as a new item, or marked as not
+  inventory. Expense approval neither holds up nor repeats this. `[Decision]`
+
+- When a manager links a receipt line to a catalog item, the link takes effect
+  at once. If it also proposes a new reference (how a retailer names that item)
+  or reports a conflict with an existing one, the catalog reviews that
+  separately: the receipt does not wait for the review, and the review's outcome
+  never changes a receipt whose goods are already in stock.
+  `[Decision — deliberate limit]`
+
+- Once a receipt is being counted or is done, its lines can't be edited.
   `[Decision]`
 
 ### Access
@@ -98,6 +129,13 @@ org identity, the own-database packaging — is described in
   widening write, is a decision on the record, not a casual change.
   `[Decision — *Principle: least privilege*]`
 
+- On-hand stock is read by the same audience as the catalog and changed only by
+  inventory managers. `[Decision — *Principle: least privilege*]`
+
+- Receiving is visible only to inventory managers, finance and the board,
+  because receipts show spending. Only inventory managers act on it.
+  `[Decision — *Principle: least privilege*]`
+
 - An adult member or a staff/role holder may submit a receipt and view, edit,
   and fetch their own receipts. An adult member is a person whose session age
   band is adult and whose household membership is ACTIVE. A role holder or a
@@ -111,6 +149,11 @@ org identity, the own-database packaging — is described in
   from the receipt. Widening it to any signed-in adult, narrowing it to the
   catalog audience, or adding a background-check leg is a decision on the
   record. `[Decision — owner]`
+
+- Being on the Board is enough to view receipt and inventory data, and to edit
+  it where the app allows an edit. Every Board member is an insider today; an
+  outside Board member joining would reopen this whole access model.
+  `[Decision — owner]`
 
 - `INVENTORY_MANAGER` is a single write role that collapses the two manager
   tiers the catalog was ported from. Splitting it back into distinct

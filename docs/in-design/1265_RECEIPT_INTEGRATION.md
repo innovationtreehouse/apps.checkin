@@ -42,7 +42,7 @@ library (`@inventory/receipt`), own database (`RECEIPT_DATABASE_URL`), checkin's
 security regime, retired source auth, injected `Org` and `Person` principal,
 per-crossing ports, no hosted `/api/internal`.
 
-**Domain rules relied on:** `docs/rules/finance-payments.md` (a financial control
+**Domain rules relied on:** `docs/rules/revenue.md` (a financial control
 is a flag a person signs off, recorded; nobody decides a matter they are
 conflicted in, *Ethics Policy Art. III §III.5*; SaaS vendors must be SOC 2 and
 ISO 27001 compliant, *Definitions Policy Art. III, "Suitably Secure Electronic
@@ -344,7 +344,7 @@ their own. "Did I get paid back?" has no answer anywhere.
 **QuickBooks is the system of record for reimbursement (owner decision)**, whether
 the payment happened years ago (backfill) or happens after this receipt. So the
 app records nothing about it: no "mark reimbursed" action and no reimbursed columns
-on `Receipt`, the same rule finance-payments sets for the store ("no payment fact
+on `Receipt`, the same rule revenue.md sets for the store ("no payment fact
 is authored here"). "My receipts" shows *Reimbursement: not yet paid / paid on
 <date>* beside the state, read through a port:
 
@@ -397,7 +397,7 @@ explanation". QB-linked backfill keeps its waivers (no submitter step, no age ga
 receipt they, or anyone in their household, uploaded or are reimbursed for:
 approve, reject, clear the duplicate flag, restart the flow, edit details or
 lines, or discard. Each attempt is a 403 with a `decision_refused` audit row, as
-finance-payments already refuses deciding a scholarship for one's own household
+revenue.md already refuses deciding a scholarship for one's own household
 (*Ethics Policy Art. III §III.5*). The uploader still edits their own receipt as
 its submitter. Tax and the receipt date drive financial review, so only an
 independent finance person changes them. The source allows all of this.
@@ -470,7 +470,7 @@ instead of expense. This lane's part is the mark and nothing else:
 | Upload; see own receipts; act on own receipt (submitter review, edit while editable, discard own, retry OCR) | any org role; `canActOnReceipt` = uploader | **an adult member, or a staff or role holder** (owner ruling 2026-10-13, superseding the 2026-10-12 ruling that admitted any signed-in adult: the age band rests on a self-declared adult flag anyone can set, so it cannot admit on its own): the `receipt-submitter` token, `isActiveOrgMember && ageBand === 'adult'` on the session, or `isTreehouseVolunteer` (role holder or staff account) whatever their age or membership. No background check; an adult with no ACTIVE membership, and any youth or unknown age without a role, is refused. Gates every submitter and shared route and the receipt file route. Rule: `docs/rules/inventory.md`. |
 | Review queue; approve / reject financial; see all receipts and files; clear duplicate; discard any; audit log; restart flow; import | `isFinance`, `isOrgManager` | **`FINANCE`** (org-manager collapses onto it, as #1272 did) |
 | Org receipt settings (tax-exempt, age limit) | `canEditOrg` | **`FINANCE`** |
-| `isAdmin` | blocked from receipts | `SYSADMIN` gets nothing extra (finance-payments excludes sysadmins from Finance Ops) |
+| `isAdmin` | blocked from receipts | `SYSADMIN` gets nothing extra (revenue.md excludes sysadmins from Finance Ops) |
 
 `FINANCE` comes from lane L3's role PR. The receipt W PR needs it on `main`; B does
 not (an unused `defineRoute` is inert).
@@ -643,7 +643,7 @@ All PRs are based on `main`; none stacks.
 
 ## 11. Distillation at merge
 
-Into `docs/rules/finance-payments.md`, if the owner accepts them: a receipt's
+Into `docs/rules/revenue.md`, if the owner accepts them: a receipt's
 financial-review sign-off is recorded with a reason, and a tax exception needs an
 explanation; nobody approves or rejects their own receipt; QuickBooks is the
 system of record for reimbursement and the app never authors a reimbursement fact;

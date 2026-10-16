@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { sendNotification } from "@/lib/notifications";
 import { lockProgramAndCheckCapacity, ProgramCapacityError, withdrawAndReleaseHold } from "@/lib/program/capacity";
 import { checkProgramAge, isKnownAdult } from "@/lib/programAge";
@@ -183,6 +184,9 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return apiError("This program has a price but no payment link set up, so enrollment can't be paid for. An admin must fix the Shopify link in program-ops before anyone can enroll.", 400);
         }
 
+        // A comp takes its seat out of Shopify stock (below). The stamp goes in with the
+        // row, so a crash before the -1 is recorded leaves a stamp, not a lost seat.
+        const takesSeatWithoutSale = isExternalAdmin && override && currentProgram.maxParticipants !== null;
         const enrollment = await prisma.$transaction(async (tx) => {
             // Re-check capacity under a row lock right before insert, so
             // concurrent enrollers can't both pass a stale count and overfill.
@@ -193,7 +197,8 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
                 data: {
                     programId,
                     personId: participantId,
-                    status: initialStatus
+                    status: initialStatus,
+                    ...(takesSeatWithoutSale && { seatTakenWithoutSaleAt: new Date() }),
                 }
             });
         });
@@ -229,19 +234,18 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // inventory (inventory_management=null), so only capped programs adjust;
         // changeProgramStock additionally no-ops when no variant is wired.
         let warning: string | undefined;
-        if (isExternalAdmin && override && currentProgram.maxParticipants !== null) {
+        if (takesSeatWithoutSale) {
             // Enrollment already committed above; on Shopify failure keep it and
             // warn (the stock writer has logged + emailed the board),
-            // mirroring the cap-edit and withdraw siblings. There is no stamp to
-            // roll back — deleting the just-created comp would be the worse
-            // half-commit.
+            // mirroring the cap-edit and withdraw siblings.
             const stock = await changeProgramStock(currentProgram, -1, "comp", { inRequest: true });
-            // Recorded = owed in the carry, so it lands later even if this push failed:
-            // the seat counts as taken out of stock and its withdrawal must put it back.
-            if (stock.recorded) {
-                await prisma.programParticipant.update({
-                    where: { programId_personId: { programId, personId: participantId } },
-                    data: { seatTakenWithoutSaleAt: new Date() },
+            // Recorded = owed in the carry, so it lands later even if this push failed and
+            // the stamp stands. Only an unrecorded -1 rolls the stamp back, so a withdrawal
+            // does not put back a seat that was never taken out.
+            if (!stock.recorded) {
+                await prisma.programParticipant.updateMany({
+                    where: { programId, personId: participantId, seatTakenWithoutSaleAt: { not: null } },
+                    data: { seatTakenWithoutSaleAt: null },
                 });
             }
             if (!stock.landed) {
@@ -267,11 +271,9 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
     }
 });
 
-// Prisma known-request errors carry a string `code`. Duck-typed so we don't
-// pull in the generated Prisma namespace just for one check.
-function isPrismaError(error: unknown, code: string): boolean {
-    return typeof error === 'object' && error !== null && 'code' in error
-        && (error as { code: unknown }).code === code;
+async function owesShortfall(programId: number): Promise<boolean> {
+    const row = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyStockCarry: true } });
+    return (row?.shopifyStockCarry ?? 0) < 0;
 }
 
 async function isLeadOfParticipant(actorId: number, participantId: number): Promise<boolean> {
@@ -380,7 +382,9 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         // inventory, so the advisory is noise (and a foot-gun) for them.
         const hasShopifyVariant = !!currentProgram.shopifyVariantId;
         // After the sale ends a freed seat is not resold, so there is nothing to advise.
-        if (isSysAdminOrBoard && !released && enrollment.status === 'ACTIVE' && currentProgram.maxParticipants !== null && hasShopifyVariant && !isSaleEnded(currentProgram)) {
+        // An over-capacity program (negative carry) owes this seat to its shortfall, not to the store.
+        if (isSysAdminOrBoard && !released && enrollment.status === 'ACTIVE' && currentProgram.maxParticipants !== null && hasShopifyVariant && !isSaleEnded(currentProgram)
+            && !(await owesShortfall(programId))) {
             responseObj.notice = "Seat freed. This enrollment held a seat in Shopify; it was NOT put back on sale automatically. If you want it available for a paying family, add +1 to this program's inventory in Shopify.";
         }
         return NextResponse.json(responseObj);

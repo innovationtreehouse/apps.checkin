@@ -36,7 +36,6 @@ const LEADS_PROGRAM: Visible = (_u, signedIn, counts) => signedIn && leadsAnyPro
 const EXPENSE_APPROVER: Visible = (u, signedIn, counts) =>
   LEADS_PROGRAM(u, signedIn, counts) || (signedIn && libraryCount(counts, 'expense', 'approver') > 0);
 const BOARD: Visible = (u) => !!u?.isSysadmin || !!u?.isBoardMember;
-const BOARD_MEMBER: Visible = (u) => !!u?.isBoardMember;
 // Participants is the one Membership Ops page operations can also reach (read-only
 // directory + add-contact) — see membership-ops/layout.tsx's nav gate. Outreach is
 // the one settings/* page operations can also reach (see settings/layout.tsx).
@@ -58,7 +57,7 @@ const MOPS = (href: string): Visible => (u) => membershipOpsRouteVisible(href, u
 // Global catalog (#1286 §7): the server 'catalog-viewer' predicate.
 const CATALOG_VIEWER: Visible = (u, signedIn) => signedIn && canSeeCatalog(u);
 
-// Expense Ops: FINANCE or BOARD, no sysadmin (docs/rules/finance-payments.md).
+// Expense Ops: FINANCE or BOARD, no sysadmin (docs/rules/revenue.md).
 const FINANCE_OR_BOARD: Visible = (u) => !!u?.isFinance || !!u?.isBoardMember;
 
 // Receipts: an adult member or a Treehouse Volunteer submits (canSubmitReceipts);
@@ -207,6 +206,7 @@ export const PAGES: PageEntry[] = [
   { href: '/finance-ops/payment-plan', label: 'Program Payment Plan', section: 'Revenue Ops', visible: FINANCE },
   { href: '/finance-ops/membership-payment-plan', label: 'Membership Payment Plan', section: 'Revenue Ops', visible: FINANCE },
   { href: '/finance-ops/shopify-holds', label: 'Shopify Hold Reconciliation', section: 'Revenue Ops', keywords: 'seat hold failed inventory scholarship manual reconcile shopify', visible: FINANCE },
+  { href: '/finance-ops/shopify-stock', label: 'Unconfirmed Shopify stock', section: 'Revenue Ops', keywords: 'inventory seats unconfirmed settle carry shopify stock', visible: FINANCE },
   { href: '/finance-ops/payments', label: 'Payment problems', section: 'Revenue Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: FINANCE },
 
   // Expense Ops — FINANCE or BOARD
@@ -246,7 +246,6 @@ export const PAGES: PageEntry[] = [
   { href: '/settings/email', label: 'Email Settings', section: 'Settings', keywords: 'sender from reply-to identity', visible: BOARD },
   { href: '/settings/outreach', label: 'Outreach', section: 'Settings', keywords: 'renewal join campaign email template bulk send reminder opening', visible: BOARD_OR_OPS },
   { href: '/settings/shopify-webhook', label: 'Shopify Webhook', section: 'Settings', keywords: 'orders paid delivery test notification signature secret payment', visible: BOARD },
-  { href: '/settings/quickbooks', label: 'QuickBooks', section: 'Settings', keywords: 'quickbooks company realm accounting', visible: BOARD_MEMBER },
 ];
 
 // Routes that exist as page.tsx but are intentionally absent from the directory.

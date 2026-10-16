@@ -430,6 +430,16 @@ defineRoute({
     ],
 });
 
+// A reviewer withdraws their own approval while the review still waits on its
+// second reviewer; the service enforces ownership, APPROVE-only and phase. Same
+// admission band as the queue. No bag: the response is {}, no model data.
+defineRoute({
+    endpoint: 'POST /api/membership/reviews/undo',
+    authorize: { anyRole: ['isBackgroundCheckReviewer', 'isBoardMember'] },
+    envelope: null,
+    orderedView: [],
+});
+
 // Background-check reviewers' queue. Reviewers must see applicant parents' names
 // + emails (to look them up on Averity) but NOT internal/personal fields — so the
 // grant is deliberately limited to pii + public. Board members are implicit
@@ -586,6 +596,29 @@ defineRoute({
     orderedView: [
         ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+    ],
+});
+
+// Board's unconfirmed Shopify stock screen: programs whose stock write could not
+// be confirmed (lib/shopify.ts parks it in Program.shopifyStockUnconfirmed), and
+// the per-program settle action ("Shopify has it" / "doesn't have it"). Board
+// only: no sysadmin, no finance. Rows are computed, all `internal`.
+defineRoute({
+    endpoint: 'GET /api/finance-ops/shopify-stock',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: null,
+    returns: ['UnconfirmedStockRow'],
+    orderedView: [
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+defineRoute({
+    endpoint: 'POST /api/finance-ops/shopify-stock/[id]',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: null,
+    returns: ['UnconfirmedStockSettlement'],
+    orderedView: [
+        ['isBoardMember', ['everyones:internal', 'public']],
     ],
 });
 
@@ -754,6 +787,16 @@ defineRoute({
     orderedView: [],
 });
 
+// Daily QuickBooks expense posting (stranded recovery + outbox drain), a money
+// write, so it answers only to its own secret, never the shared CRON_SECRET.
+// Admission gate only: the response carries no rows. Landed registry-first.
+defineRoute({
+    endpoint: 'GET /api/cron/qbo-posting',
+    authorize: { cronSecret: 'qbo-posting' },
+    envelope: null,
+    orderedView: [],
+});
+
 // In-memory kiosk last-seen. No DB row: the stamp
 // lives on the task, so the bag is a synthesized SystemMetricLog (metric
 // `kiosk_last_seen`, timestamp = last verified kiosk request, value = age
@@ -886,18 +929,26 @@ defineOutbound({
 defineOutbound({
     surface: 'quickbooks.query',
     // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
-    // Query literals: date windows, QBO ids, and account/class/vendor/customer
-    // names ('public'). Never an email, address or phone.
+    // Query literals: date windows, QBO ids, and account/class names ('public').
+    // Vendor/Customer name lookups are quickbooks.vendor. Never an email, address or phone.
     tiers: ['public'],
 });
 
 defineOutbound({
     surface: 'quickbooks.create',
     // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
-    // Purchase/Bill/Deposit/Vendor only: amounts, dates, account/class/vendor ids,
-    // line descriptions and memos ('internal'; memos may name a program participant,
-    // accepted by the owner), vendor DisplayName ('public').
+    // Purchase/Bill/Deposit only: amounts, dates, account/class/vendor ids, line
+    // descriptions and memos ('internal'; memos may name a program participant,
+    // accepted by the owner).
     tiers: ['public', 'internal'],
+});
+
+defineOutbound({
+    surface: 'quickbooks.vendor',
+    // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
+    // Vendor create and Vendor/Customer lookup carry the vendor display name only
+    // ('public'). Never an email, address or phone.
+    tiers: ['public'],
 });
 
 defineOutbound({
@@ -927,4 +978,12 @@ defineOutbound({
     // The receipt file's bytes (Receipt.fileBlob, 'pii'): a receipt can show a
     // purchaser's name, address and partial card number. Bytes only, never a URL.
     tiers: ['pii'],
+});
+
+defineOutbound({
+    surface: 'gmail.read',
+    // packages/receipt/src/lib/gmail.ts → gmail.googleapis.com, gmail.readonly scope.
+    // List/get requests only: a date-window query string and message/attachment ids;
+    // no model data. Mail read back is tiered by the receipt models that store it.
+    tiers: [],
 });

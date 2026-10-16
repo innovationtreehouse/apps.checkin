@@ -6,7 +6,7 @@ import { it, expect, beforeEach, afterEach, vi } from "vitest";
 import { QuickBooksClient, qbKey, type QboBill, type QboPurchase } from "@inventory/quickbooks";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, catalogResolving, principal, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
+import { TEST_BUCKETS, bindPorts, catalogResolving, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
 import { checkAndProcessExpense, retryQbPost } from "../../lib/expense-qb-processor";
 import {
   MAX_CONSECUTIVE_FAILURES, MAX_CREATE_CENTS_PER_RUN, MAX_CREATES_PER_DAY, MAX_POST_ATTEMPTS, STALE_CLAIM_MS, drainExpenseOutbox, postExpenseToQb,
@@ -19,7 +19,7 @@ const VENDOR = "77";
 
 interface PostedLine {
   Amount: number;
-  AccountBasedExpenseLineDetail: { AccountRef: { value: string } };
+  AccountBasedExpenseLineDetail: { AccountRef: { value: string }; ClassRef?: { value: string } };
 }
 interface PostedTxn {
   TxnDate: string;
@@ -82,10 +82,20 @@ async function handMatched(day: string) {
   await db.expense.update({ where: { id }, data: { receiptDate: day, qbMatchState: "MATCHED", qbTxnId: `hand-${day}`, qbTxnEntity: "Purchase" } });
 }
 
-/** An expense already in the outbox, every line signed: lines on accounts 60 and 61, receipt dated `day`; test data from a TEST- vendor unless told otherwise. */
+/**
+ * An expense already in the outbox, every line signed: lines on accounts 60 and 61 in buckets 7 and 100,
+ * receipt dated `day`; test data from a TEST- vendor unless told otherwise. A null bucket leaves bucketId
+ * off the event.
+ */
 async function outboxed(
   day: string,
-  opts: { reimburseePersonId?: number; amounts?: [number, number]; isTestData?: boolean; vendorName?: string } = {},
+  opts: {
+    reimburseePersonId?: number;
+    amounts?: [number, number];
+    isTestData?: boolean;
+    vendorName?: string;
+    buckets?: [number | null, number | null];
+  } = {},
 ) {
   const vendorName = opts.vendorName ?? "TEST-Acme";
   const [a, b] = opts.amounts ?? [700, 300];
@@ -98,16 +108,18 @@ async function outboxed(
   await db.expense.update({ where: { id }, data: { receiptDate: day, isTestData: opts.isTestData ?? true, vendorName } });
   const l1 = await seedLineItem(id, { totalPriceCents: a });
   const l2 = await seedLineItem(id, { totalPriceCents: b });
-  const item = (lineItemId: number, cents: number, account: string) => ({
+  const [b1, b2] = opts.buckets ?? [7, 100];
+  const item = (lineItemId: number, cents: number, account: string, bucketId: number | null) => ({
     lineItemId, description: "Widget", quantity: 1, unitPriceCents: cents, totalPriceCents: cents,
     allocatedTaxCents: 0, allocatedShippingCents: 0, allocatedDiscountCents: 0,
     isDelayed: false, isCapital: false, capitalOwnerId: null, depreciationYears: null, account,
+    ...(bucketId !== null && { bucketId }),
   });
   const payload = {
     schemaVersion: 1, id, vendorName, receiptDate: day, receiptTotalCents: a + b, orgId: ORG,
     needsReimbursement: opts.reimburseePersonId !== undefined, reimbursementFor: null,
     reimburseePersonId: opts.reimburseePersonId ?? null,
-    items: [item(l1, a, "60"), item(l2, b, "61")],
+    items: [item(l1, a, "60", b1), item(l2, b, "61", b2)],
   };
   await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id, payload: JSON.stringify(payload) } });
   await signAllLines(id);
@@ -172,7 +184,8 @@ describeDb("QB-2 posting — create", () => {
     });
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 500 });
     await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", isTestData: true, vendorName: "TEST-Acme" } });
-    await seedLineItem(id, { manualQbAccount: "60", totalPriceCents: 500 });
+    const line = await seedLineItem(id, { manualQbAccount: "60", totalPriceCents: 500 });
+    await seedApproval(id, line, { ownerId: 7, status: "approved" });
     await signAllLines(id);
 
     await checkAndProcessExpense(ORG, id);
@@ -370,6 +383,7 @@ describeDb("QB-2 posting — bounded retry", () => {
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 500 });
     await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", isTestData: true, vendorName: "TEST-Acme" } });
     const line = await seedLineItem(id, { manualQbAccount: account, totalPriceCents: 500 });
+    await seedApproval(id, line, { ownerId: 7, status: "approved" });
     await signAllLines(id);
     await checkAndProcessExpense(ORG, id);
     return { id, line };
@@ -566,7 +580,8 @@ describeDb("QB-2 posting — per-expense cap on the request path", () => {
     bindPorts({ catalog: catalogResolving({}), quickbooks: { posting: posting() } });
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: big });
     await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", isTestData: true, vendorName: "TEST-Acme" } });
-    await seedLineItem(id, { manualQbAccount: "60", totalPriceCents: big });
+    const line = await seedLineItem(id, { manualQbAccount: "60", totalPriceCents: big });
+    await seedApproval(id, line, { ownerId: 7, status: "approved" });
     await signAllLines(id);
     await checkAndProcessExpense(ORG, id);
     expect(qbo.posts).toHaveLength(0);
@@ -717,5 +732,96 @@ describeDb("QB-2 posting — a line's account after posting", () => {
     await setHeldLineAccount(finance, id, lines[0], "62");
     expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: lines[0] } })).manualQbAccount).toBe("62");
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "hold_account_set" } })).toBe(1);
+  });
+});
+
+describeDb("QB-2 posting — QuickBooks Class per line", () => {
+  const classesOf = (n: number) => qbo.posts[n].body.Line.map((l) => l.AccountBasedExpenseLineDetail.ClassRef?.value);
+
+  /** TEST_BUCKETS with bucket 100's Class taken away. */
+  async function bucket100Unclassed() {
+    const buckets = (await TEST_BUCKETS.list()).map((b) => (b.id === 100 ? { ...b, quickBooksClassId: null } : b));
+    bindPorts({ budgetOwners: { list: async () => buckets }, quickbooks: { posting: posting() } });
+  }
+
+  it("every Purchase and Bill line posts with its bucket's Class", async () => {
+    await handMatched("2026-08-01");
+    await db.expenseReimburseeVendor.create({ data: { orgId: ORG, reimburseePersonId: 42, qbVendorId: VENDOR } });
+    const purchase = await outboxed("2026-09-10");
+    const bill = await outboxed("2026-09-11", { reimburseePersonId: 42, buckets: [200, 7] });
+
+    expect(await postExpenseToQb(ORG, purchase.id)).toBe("posted");
+    expect(await postExpenseToQb(ORG, bill.id)).toBe("posted");
+    expect(classesOf(0)).toEqual(["97", "9100"]);
+    expect(qbo.posts[1].entity).toBe("Bill");
+    expect(classesOf(1)).toEqual(["9200", "97"]);
+  });
+
+  it("an event without bucketIds takes each line's current bucket", async () => {
+    await handMatched("2026-08-01");
+    const { id, lines } = await outboxed("2026-09-10", { buckets: [null, null] });
+    await seedApproval(id, lines[0], { ownerId: 101, status: "approved" });
+    await seedApproval(id, lines[1], { ownerId: 200, status: "approved" });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(classesOf(0)).toEqual(["9101", "9200"]);
+  });
+
+  it("a line whose bucket has no Class is not posted: state stays postable, no attempt counted, finance flagged", async () => {
+    await handMatched("2026-08-01");
+    await bucket100Unclassed();
+    const { id } = await outboxed("2026-09-10");
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, failed: 0, no_class: 1 });
+    expect(qbo.posts).toHaveLength(0);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "UNMATCHED", qbTxnId: null, qbPostAttempts: 0 });
+    const flags = await db.expenseFlag.findMany({ where: { expenseId: id } });
+    expect(flags.map((f) => [f.kind, f.audience, f.detail])).toEqual([
+      ["QB_NO_CLASS", "FINANCE", "Budget bucket 'bucket-100' has no QuickBooks Class; set it on the Budgets page"],
+    ]);
+  });
+
+  it("a line with no bucket at all is not posted and is flagged", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10", { buckets: [7, null] });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("no_class");
+    expect(qbo.posts).toHaveLength(0);
+    expect((await db.expenseFlag.findMany({ where: { expenseId: id } })).map((f) => f.kind)).toEqual(["QB_NO_CLASS"]);
+  });
+
+  it("an unclassed expense neither counts toward nor breaks the consecutive-failure stop", async () => {
+    await handMatched("2026-08-01");
+    await bucket100Unclassed();
+    qbo.mode = "down";
+    await outboxed("2026-09-10", { buckets: [7, 7] });
+    await outboxed("2026-09-11");
+    for (let d = 12; d < 12 + MAX_CONSECUTIVE_FAILURES; d++) await outboxed(`2026-09-${d}`, { buckets: [7, 7] });
+
+    expect(await drainExpenseOutbox()).toMatchObject({ failed: MAX_CONSECUTIVE_FAILURES, no_class: 1, stoppedAfterFailures: true });
+  });
+
+  it("an unclassed expense counts toward neither cap, so the rest of the run still posts", async () => {
+    await handMatched("2026-08-01");
+    await bucket100Unclassed();
+    const unclassed = await outboxed("2026-09-01", { amounts: [MAX_CREATE_CENTS_PER_RUN, 300] });
+    const classed = await outboxed("2026-09-10", { buckets: [7, 7] });
+
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, no_class: 1, overCap: 0, capped: null });
+    expect((await expenseRow(unclassed.id)).qbMatchState).toBe("UNMATCHED");
+    expect((await expenseRow(classed.id)).qbMatchState).toBe("CREATED");
+  });
+
+  it("setting the bucket's Class lets the next drain post it", async () => {
+    await handMatched("2026-08-01");
+    await bucket100Unclassed();
+    const { id } = await outboxed("2026-09-10");
+    expect(await drainExpenseOutbox()).toMatchObject({ no_class: 1 });
+    expect(await drainExpenseOutbox()).toMatchObject({ no_class: 1 });
+
+    bindQbo();
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 1, no_class: 0 });
+    expect(classesOf(0)).toEqual(["97", "9100"]);
+    expect((await expenseRow(id)).qbMatchState).toBe("CREATED");
   });
 });

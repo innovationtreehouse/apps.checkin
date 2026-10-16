@@ -36,6 +36,8 @@ export interface OwnerInfo {
   id: number;
   name: string;
   archivedAt: Date | null;
+  /** The bucket's QuickBooks Class; an expense line in a bucket without one is not posted. */
+  quickBooksClassId: string | null;
 }
 
 /** Read-only list of checkin's budget-owner buckets. Same port income and bulk donation declare. */
@@ -49,6 +51,8 @@ export const inertOwnerDirectory: OwnerDirectory = { list: async () => [] };
 export interface BucketApprovers {
   orgLevel: boolean;
   approvers: number[];
+  /** The program's leader, eligible to sign or not; null for an org-level bucket or a program without one. */
+  leader: number | null;
 }
 
 /**
@@ -65,13 +69,13 @@ export interface SignoffDirectory {
   householdOf(personIds: number[]): Promise<number[]>;
   /** Whether the id names a checkin Person. */
   personExists(personId: number): Promise<boolean>;
-  /** Whether the purchaser holds an org membership (a non-member's line takes a Board approver). */
+  /** Whether the person holds an org membership (reimbursing a non-member takes a Board approver). */
   isOrgMember(personId: number): Promise<boolean>;
 }
 
 /** Nobody approves, holds a role or is conflicted: no seat can be filled and nothing auto-approves. */
 export const inertSignoffDirectory: SignoffDirectory = {
-  bucketApprovers: async () => ({ orgLevel: false, approvers: [] }),
+  bucketApprovers: async () => ({ orgLevel: false, approvers: [], leader: null }),
   bucketsApprovedBy: async () => [],
   financeHolders: async () => [],
   boardMembers: async () => [],
@@ -146,17 +150,31 @@ export interface QbBillPayment {
   billIds: string[];
 }
 
-/** Windowed QuickBooks readers; nothing reads QuickBooks since a date. */
+/** A Bill's paid state: `balance` 0 means paid (null = not reported); `paymentIds` are its linked BillPayments. */
+export interface QbBillBalance {
+  id: string;
+  txnDate: string;
+  balance: number | null;
+  paymentIds: string[];
+}
+
+/** Windowed and by-id QuickBooks readers; nothing reads QuickBooks since a date. */
 export interface QbReader {
   purchasesBetween(from: string, to: string): Promise<QbTxn[]>;
   billsBetween(from: string, to: string): Promise<QbTxn[]>;
   billPaymentsBetween(from: string, to: string): Promise<QbBillPayment[]>;
+  purchasesByIds(ids: string[]): Promise<QbTxn[]>;
+  billsByIds(ids: string[]): Promise<QbBillBalance[]>;
+  billPaymentsByIds(ids: string[]): Promise<{ id: string; txnDate: string }[]>;
 }
 
 export const inertQbReader: QbReader = {
   purchasesBetween: async () => [],
   billsBetween: async () => [],
   billPaymentsBetween: async () => [],
+  purchasesByIds: async () => [],
+  billsByIds: async () => [],
+  billPaymentsByIds: async () => [],
 };
 
 /**
@@ -201,9 +219,12 @@ export interface ExpenseIntake {
 /** FINANCE names the Person owed a reimbursement whose receipt did not carry one. */
 export type SetReimbursee = (orgId: string, expenseId: string, personId: number, principal: ExpensePrincipal) => Promise<void>;
 
-/** X12 callee: when QuickBooks recorded each receipt's reimbursement as paid; null = not yet. */
+/**
+ * X12 callee: when QuickBooks recorded each receipt's reimbursement as paid; null = not yet.
+ * A backfilled receipt names the hand-booked transaction it matched (`qbEntity` + `qbTxnId`).
+ */
 export interface ReimbursementStatus {
-  forReceipts(receiptIds: unknown): Promise<Map<string, { paidOn: string | null }>>;
+  forReceipts(receipts: unknown): Promise<Map<string, { paidOn: string | null }>>;
 }
 
 /** The org's money thresholds, in cents. Read and updated through services/settingsService. */

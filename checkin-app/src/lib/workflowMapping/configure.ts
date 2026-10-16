@@ -4,15 +4,17 @@
  * lazy Org-registry accessor, so every library stamps the same org and person
  * ids, and boot stays DB-free.
  *
- * Bound crossings: X3 (CatalogReader → catalog reads), X4 (InventorySink →
- * local-inventory apply), X5 (ExpenseSink → expense intake) and the S5 replay
- * read (X2). Catalog submissions and donations (X9) keep the library's inert
- * adapters, so a receipt whose money leg cannot land waits in apply_failed.
+ * Bound crossings: X3 (CatalogReader → catalog reads), X8 (CatalogSubmissions →
+ * catalog proposals, conflicts and provisional GTINs), X4 (InventorySink →
+ * local-inventory apply), X5 (ExpenseSink → expense intake), X9 (DonationSink →
+ * donations ingestInKind) and the S5 replay read (X2).
  */
 import { configureWorkflowMapping, type ExpenseSink } from "@inventory/workflow-mapping";
 import { expenseIntake } from "@inventory/expense";
+import { ingestInKind } from "@inventory/bulk-donation";
 import { catalogEventsSince, getOrg, getPrincipal } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
+import { createCatalogSubmissions } from "@/lib/catalog/submissions";
 import { createLocalInventorySink } from "@/lib/workflowMapping/inventorySink";
 
 const HTTP_ERROR_NAME = "WorkflowMappingHttpError";
@@ -52,8 +54,10 @@ export function configureRuntime(): void {
     org: getOrg,
     httpError: (status, message) => new WorkflowMappingHttpError(status, message),
     catalogReader,
+    catalogSubmissions: createCatalogSubmissions(getOrg),
     inventorySink: createLocalInventorySink(getOrg),
     catalogEventSource: { eventsSince: catalogEventsSince },
     expenseSink,
+    donationSink: { ingestInKind },
   });
 }

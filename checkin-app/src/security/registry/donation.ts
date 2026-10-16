@@ -3,9 +3,11 @@ import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 
 // Reads admit FINANCE or BOARD (the board acts as finance's superuser); writes
 // admit FINANCE only. Both see donor identity (`pii`) and the amounts and
-// plumbing (`internal`); nobody else is admitted. No sysadmin view: Finance Ops
-// excludes sysadmins (docs/rules/finance-payments.md). No model has a scope
-// binding, so `everyones:` is the only scope.
+// plumbing (`internal`). Ops (OPERATIONS or INVENTORY_MANAGER) is admitted only
+// to the no-receipt in-kind routes, with no `pii`: it records donors but never
+// reads them back. No sysadmin view: Finance Ops excludes sysadmins
+// (docs/rules/finance-payments.md). No model has a scope binding, so
+// `everyones:` is the only scope.
 //
 // UploadedFile.fileBlob (the raw Benevity CSV) leaves only through the file
 // route below, which makes it file-only: every JSON route strips it.
@@ -15,6 +17,17 @@ const FINANCE_OR_BOARD_VIEW: readonly OrderedViewEntry[] = [
     ['isBoardMember', FINANCE_TOKENS],
 ];
 const FINANCE_VIEW: readonly OrderedViewEntry[] = [['isFinance', FINANCE_TOKENS]];
+const OPS_TOKENS = ['everyones:internal', 'public'] as const;
+const IN_KIND_READ_VIEW: readonly OrderedViewEntry[] = [
+    ...FINANCE_OR_BOARD_VIEW,
+    ['isOperations', OPS_TOKENS],
+    ['isInventoryManager', OPS_TOKENS],
+];
+const IN_KIND_WRITE_VIEW: readonly OrderedViewEntry[] = [
+    ...FINANCE_VIEW,
+    ['isOperations', OPS_TOKENS],
+    ['isInventoryManager', OPS_TOKENS],
+];
 
 // Reads — FINANCE or BOARD.
 defineRoute({ endpoint: 'GET /api/donations/uploaded-files', authorize: 'finance-or-board', envelope: null, returns: ['UploadedFile'], orderedView: FINANCE_OR_BOARD_VIEW });
@@ -28,6 +41,8 @@ defineRoute({ endpoint: 'GET /api/donations/disbursement-events', authorize: 'fi
 defineRoute({ endpoint: 'GET /api/donations/nav-counts', authorize: 'finance-or-board', envelope: null, returns: ['DonationNavCounts'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/donations/disbursement-events/[disbursementId]/qb-candidates', authorize: 'finance-or-board', envelope: null, returns: ['DonationQbCandidateView'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/donations/qb-exclusions', authorize: 'finance-or-board', envelope: null, returns: ['DonationQbMatchExclusion'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'GET /api/donations/in-kind/manual', authorize: { anyRole: ['isFinance', 'isBoardMember', 'isOperations', 'isInventoryManager'] }, envelope: null, returns: ['ManualInKindDonation', 'ManualInKindDonationLine'], orderedView: IN_KIND_READ_VIEW });
+defineRoute({ endpoint: 'GET /api/donations/in-kind/queue', authorize: 'finance-or-board', envelope: null, returns: ['InKindQueueItemView'], orderedView: FINANCE_OR_BOARD_VIEW });
 
 // The stored upload, served by fileHandler as a text/plain attachment.
 defineFileRoute({ endpoint: 'GET /api/donations/uploaded-files/[id]/blob', authorize: 'finance-or-board', orderedView: FINANCE_OR_BOARD_VIEW, file: { model: 'UploadedFile', field: 'fileBlob' } });
@@ -44,3 +59,7 @@ defineRoute({ endpoint: 'DELETE /api/donations/account-map/[id]', authorize: 'fi
 defineRoute({ endpoint: 'POST /api/donations/disbursement-holds/[disbursementId]/resubmit', authorize: 'finance', envelope: null, returns: ['DisbursementHold', 'DisbursementEvent'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/donations/disbursement-events/[disbursementId]/qb-resolve', authorize: 'finance', envelope: null, returns: ['DisbursementEvent'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/donations/qb-exclusions', authorize: 'finance', envelope: null, returns: ['DonationQbMatchExclusion'], orderedView: FINANCE_VIEW });
+
+// No-receipt in-kind entry — FINANCE or ops; never BOARD.
+defineRoute({ endpoint: 'POST /api/donations/in-kind/manual', authorize: { anyRole: ['isFinance', 'isOperations', 'isInventoryManager'] }, envelope: null, returns: ['ManualInKindRecordResult'], orderedView: IN_KIND_WRITE_VIEW });
+defineRoute({ endpoint: 'POST /api/donations/in-kind/manual/[id]/load-inventory', authorize: { anyRole: ['isFinance', 'isOperations', 'isInventoryManager'] }, envelope: null, orderedView: IN_KIND_WRITE_VIEW });

@@ -75,9 +75,8 @@ const ROUTES: Route[] = [
   ["DELETE", "/api/expense/qb-accounts/0", "finance"],
   ["PUT", "/api/expense/ownership-map", "finance", {}],
   ["POST", "/api/expense/capital-assets/seed", "finance", []],
-  ["GET", "/api/expense/line-items/0/qb-candidates", "finance"],
-  ["POST", "/api/expense/line-items/0/qb-match", "finance", {}],
-  ["POST", "/api/expense/line-items/0/qb-create", "finance", {}],
+  ["GET", `${E}/qb-candidates`, "finance"],
+  ["POST", `${E}/qb-match`, "finance", {}],
   ["POST", "/api/expense/qb-exclusions", "finance", {}],
 ];
 
@@ -275,12 +274,14 @@ describe("expense — FINANCE journey", () => {
     const open = await api<{ kind: string }[]>(f, "/api/expense/flags");
     expect(open.json.some((x) => x.kind === "REIMBURSEE_UNKNOWN")).toBe(false);
 
-    // Capital seed, then QuickBooks: no candidates while unbound, exclusions record, no writes.
+    // Capital seed, then QuickBooks: no candidates while unbound, exclusions record.
     const seed = await send(f, "POST", "/api/expense/capital-assets/seed", [{ assetNumber: `ITFA${String(stamp).slice(-4)}`, description: "Seed saw" }]);
     expect(seed.status).toBe(200);
     expect(seed.json).toMatchObject({ created: 1, errors: 0 });
     expect((await send(f, "POST", "/api/expense/qb-exclusions", { qbTxnId: `qb-${stamp}`, reason: "hand-booked" })).status).toBe(200);
-    expect((await send(f, "POST", `/api/expense/line-items/${hold.lineItemId}/qb-create`, {})).status).toBe(503);
+    const candidates = await send(f, "GET", `/api/expense/expenses/${hold.expenseId}/qb-candidates`);
+    expect(candidates.status).toBe(200);
+    expect(candidates.json).toEqual([]);
   });
 
   it("server-renders an expense page (proves the library tsx transpiles)", async () => {

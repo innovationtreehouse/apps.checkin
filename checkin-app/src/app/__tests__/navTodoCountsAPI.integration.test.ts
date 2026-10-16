@@ -318,6 +318,16 @@ describe('Nav todo-counts API', () => {
         expect(typeof data.admin.unclaimedHouseholds).toBe('number'); // households with an unclaimed account
     });
 
+    it('zeroes the finance counts for a sysadmin who is not on the Board', async () => {
+        const res = await callAs({ id: boardId, householdId: householdBId, isSysadmin: true });
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.admin).toBeDefined();
+        expect(data.admin.paymentPlanPending).toBe(0);
+        expect(data.admin.membershipPaymentPlanPending).toBe(0);
+        expect(data.admin.openPaymentExceptions).toBe(0);
+    });
+
     it('counts BLOCKED for the board but not the reviewer-owned review states', async () => {
         const boardMembershipCount = async () => {
             const res = await callAs({ id: boardId, householdId: householdBId, isBoardMember: true });

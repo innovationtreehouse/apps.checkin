@@ -13,8 +13,8 @@ import { setDepreciationCycle, seedCapitalAssets, submitCapitalReview } from "..
 import { checkOffFlag, listOpenFlags, raiseFlag } from "../../services/flagService";
 import { expenseOpsCounts } from "../../services/badgeCounts";
 import { financeAssign, raiseException } from "../../services/approvalService";
-import { claimQbTxn, excludeQbTxn, matchLineToQb, qbCandidates, qbMatchInputs } from "../../services/qbMatchService";
-import type { QbTxn } from "../../contract";
+import { claimQbTxn, excludeQbTxn, matchExpenseToQb, qbCandidates, qbMatchInputs } from "../../services/qbMatchService";
+import { inertQbReader, type QbTxn } from "../../contract";
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
@@ -141,6 +141,39 @@ describeDb("sign-off seats", () => {
 
     await signLine(principal(5), li, "PROGRAM_APPROVER");
     expect(await events(id)).toBe(1);
+  });
+
+  it("a FINANCE holder in the Program Leader's household does not sign as Treasurer; a Board member replaces them", async () => {
+    // leader 2 · 3 holds FINANCE and is 2's spouse · treasurer 7 approves · board 5
+    bindPorts({ signoff: directory({ approvers: { 100: [2, 7] }, leaders: { 100: 2 }, finance: [3], board: [5], households: [[2, 3]] }) });
+    const id = await seedExpense({ state: "qb_pending", needsReimbursement: true, reimburseePersonId: 1 });
+    const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await seedApproval(id, li, { ownerId: 100, status: "approved" });
+
+    await signLine(principal(1), li, "SUBMITTER");
+    await signLine(principal(7), li, "PROGRAM_APPROVER");
+    await expect(signLine(principal(3, { isFinance: true }), li, "TREASURER")).rejects.toMatchObject({ statusCode: 403 });
+
+    await signLine(principal(5, { isBoard: true }), li, "TREASURER");
+    expect(await events(id)).toBe(1);
+  });
+
+  it("the non-member rule follows the reimbursee, not the submitter, and skips card charges", async () => {
+    // submitter 11 is not a member; reimbursee 1 is; leader 2 · finance 3 · board 5
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5], nonMembers: [11, 12] }) });
+    const line = async (opts: { needsReimbursement: boolean; reimburseePersonId?: number }) => {
+      const id = await seedExpense({ state: "qb_pending", submitterId: 11, ...opts });
+      const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+      await seedApproval(id, li, { ownerId: 100, status: "approved" });
+      return li;
+    };
+
+    await signLine(principal(2), await line({ needsReimbursement: true, reimburseePersonId: 1 }), "PROGRAM_APPROVER");
+    await signLine(principal(2), await line({ needsReimbursement: false }), "PROGRAM_APPROVER");
+
+    const nonMember = await line({ needsReimbursement: true, reimburseePersonId: 12 });
+    await expect(signLine(principal(2), nonMember, "PROGRAM_APPROVER")).rejects.toMatchObject({ statusCode: 403 });
+    await signLine(principal(5, { isBoard: true }), nonMember, "PROGRAM_APPROVER");
   });
 
   describe("the reimbursee (reimburseePersonId)", () => {
@@ -353,6 +386,12 @@ describeDb("QuickBooks match inputs", () => {
     expect((await qbMatchInputs("Bill")).skipIds.sort()).toEqual(["qb-3", "qb-9"]);
   });
 
+  it("an expense matched by hand sets the takeover line too", async () => {
+    const id = await seedExpense();
+    await db.expense.update({ where: { id }, data: { receiptDate: "2026-06-01", qbMatchState: "MATCHED", qbTxnId: "qb-5", qbTxnEntity: "Purchase" } });
+    expect((await qbMatchInputs("Purchase")).takeoverDate).toBe("2026-06-01");
+  });
+
   it("with no hand-booked match there is no takeover line", async () => {
     expect(await qbMatchInputs("Purchase")).toEqual({ skipIds: [], takeoverDate: null });
   });
@@ -383,12 +422,12 @@ describeDb("QuickBooks match", () => {
   });
 
   /**
-   * A line of 100 cents dated 2026-05-01: a card charge, or a reimbursement owed to person 1.
+   * An expense of one 100-cent line dated 2026-05-01: a card charge, or a reimbursement owed to person 1.
    * QuickBooks holds the given Purchases and Bills; the card account is card-1 and person 1's
    * vendor is vendor-1 unless `refs` is false. The reader ignores the window, so the service's
    * own date check is what is tested.
    */
-  async function qbLine(
+  async function qbExpense(
     qb: { purchases?: Entry[]; bills?: Entry[] },
     opts: { signed?: boolean; reimbursement?: boolean; refs?: boolean } = {},
   ) {
@@ -396,6 +435,7 @@ describeDb("QuickBooks match", () => {
       signoff: directory({ finance: [3], board: [5] }),
       quickbooks: {
         reader: {
+          ...inertQbReader,
           purchasesBetween: async () => (qb.purchases ?? []).map(txn),
           billsBetween: async () => (qb.bills ?? []).map(txn),
           billPaymentsBetween: async () => [],
@@ -408,104 +448,139 @@ describeDb("QuickBooks match", () => {
     const reimbursement = opts.reimbursement ?? false;
     const id = await seedExpense({ state: "qb_pending", needsReimbursement: reimbursement, reimburseePersonId: reimbursement ? 1 : undefined });
     await db.expense.update({ where: { id }, data: { receiptDate: "2026-05-01" } });
-    const li = await seedLineItem(id);
+    await seedLineItem(id);
     if (opts.signed ?? true) await signAllLines(id);
-    return li;
+    return id;
   }
-  const linked = (li: number) => db.expenseLineItem.findUnique({ where: { id: li }, select: { qbTxnId: true, qbTxnEntity: true } });
+  const linked = (id: string) => db.expense.findUnique({ where: { id }, select: { qbTxnId: true, qbTxnEntity: true } });
 
-  it("links a signed line to one of its own candidates and records the entity type", async () => {
-    const li = await qbLine({ purchases: ["42"] });
-    await matchLineToQb(FINANCE, li, "42");
-    expect(await linked(li)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
+  it("links a signed expense to one of its own candidates and records the entity type", async () => {
+    const id = await qbExpense({ purchases: ["42"] });
+    await matchExpenseToQb(FINANCE, id, "42");
+    expect(await linked(id)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
   });
 
-  it("records the line's claim, so the entry is never offered again", async () => {
-    const li = await qbLine({ purchases: ["42"] });
-    await matchLineToQb(FINANCE, li, "42");
+  it("records the expense's claim, so the entry is never offered again", async () => {
+    const id = await qbExpense({ purchases: ["42"] });
+    await matchExpenseToQb(FINANCE, id, "42");
     expect(await db.expenseQbClaim.count({ where: { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: "42" } })).toBe(1);
-    const other = await qbLine({ purchases: ["42"] });
+    const other = await qbExpense({ purchases: ["42"] });
     expect(await qbCandidates(FINANCE, other)).toEqual([]);
   });
 
-  it("never offers or links an entry an expense already holds", async () => {
+  it("never offers or links an entry another expense already holds", async () => {
     const holder = await seedExpense({ state: "qb_complete" });
     await db.expense.update({ where: { id: holder }, data: { qbMatchState: "CREATED", qbTxnId: "42", qbTxnEntity: "Purchase" } });
     await db.expenseQbClaim.create({ data: { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: "42" } });
-    const li = await qbLine({ purchases: ["42"] });
-    expect(await qbCandidates(FINANCE, li)).toEqual([]);
-    await expect(matchLineToQb(FINANCE, li, "42")).rejects.toMatchObject({ statusCode: 409 });
-    expect(await linked(li)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+    const id = await qbExpense({ purchases: ["42"] });
+    expect(await qbCandidates(FINANCE, id)).toEqual([]);
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ statusCode: 409 });
+    expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
   it("a Bill claim with the same id does not block a Purchase", async () => {
     await db.expenseQbClaim.create({ data: { orgId: ORG, qbTxnEntity: "Bill", qbTxnId: "42" } });
-    const li = await qbLine({ purchases: ["42"] });
-    await matchLineToQb(FINANCE, li, "42");
-    expect(await linked(li)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
+    const id = await qbExpense({ purchases: ["42"] });
+    await matchExpenseToQb(FINANCE, id, "42");
+    expect(await linked(id)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
   });
 
-  it("two concurrent line matches on one entry: exactly one wins", async () => {
-    const a = await qbLine({ purchases: ["42"] });
-    const b = await qbLine({ purchases: ["42"] });
-    const results = await Promise.allSettled([matchLineToQb(FINANCE, a, "42"), matchLineToQb(FINANCE, b, "42")]);
+  it("two concurrent expense matches on one entry: exactly one wins", async () => {
+    const a = await qbExpense({ purchases: ["42"] });
+    const b = await qbExpense({ purchases: ["42"] });
+    const results = await Promise.allSettled([matchExpenseToQb(FINANCE, a, "42"), matchExpenseToQb(FINANCE, b, "42")]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(await db.expenseQbClaim.count({ where: { orgId: ORG, qbTxnId: "42" } })).toBe(1);
   });
 
-  it("refuses an id that is not among the line's candidates", async () => {
-    const li = await qbLine({ purchases: ["42"] });
-    await expect(matchLineToQb(FINANCE, li, "999")).rejects.toMatchObject({ statusCode: 409 });
-    expect(await linked(li)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+  it("refuses an id that is not among the expense's candidates", async () => {
+    const id = await qbExpense({ purchases: ["42"] });
+    await expect(matchExpenseToQb(FINANCE, id, "999")).rejects.toMatchObject({ statusCode: 409 });
+    expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
-  it("refuses a line that is missing a sign-off", async () => {
-    const li = await qbLine({ purchases: ["42"] }, { signed: false });
-    await expect(matchLineToQb(FINANCE, li, "42")).rejects.toMatchObject({ statusCode: 409 });
-    expect(await linked(li)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+  it("refuses an expense with a line missing a sign-off", async () => {
+    const id = await qbExpense({ purchases: ["42"] }, { signed: false });
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ statusCode: 409 });
+    expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
   it("refuses the same id under another entity type", async () => {
-    const li = await qbLine({ bills: ["42"] });
-    await expect(matchLineToQb(FINANCE, li, "42")).rejects.toMatchObject({ statusCode: 409 });
-    expect(await linked(li)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+    const id = await qbExpense({ bills: ["42"] });
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ statusCode: 409 });
+    expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
   it("refuses an entry whose amount is off by a cent", async () => {
-    const li = await qbLine({ purchases: [{ id: "42", totalCents: 101 }] });
-    await expect(matchLineToQb(FINANCE, li, "42")).rejects.toMatchObject({ statusCode: 409 });
-    expect(await linked(li)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+    const id = await qbExpense({ purchases: [{ id: "42", totalCents: 101 }] });
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ statusCode: 409 });
+    expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
   it("refuses an entry dated a day outside the match window", async () => {
-    const li = await qbLine({ purchases: [{ id: "42", txnDate: "2026-05-09" }, { id: "43", txnDate: "2026-04-23" }] });
-    await expect(matchLineToQb(FINANCE, li, "42")).rejects.toMatchObject({ statusCode: 409 });
-    await expect(matchLineToQb(FINANCE, li, "43")).rejects.toMatchObject({ statusCode: 409 });
-    expect(await linked(li)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+    const id = await qbExpense({ purchases: [{ id: "42", txnDate: "2026-05-09" }, { id: "43", txnDate: "2026-04-23" }] });
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(matchExpenseToQb(FINANCE, id, "43")).rejects.toMatchObject({ statusCode: 409 });
+    expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
   it("accepts an entry dated at the edge of the window", async () => {
-    const li = await qbLine({ purchases: [{ id: "42", txnDate: "2026-05-08" }] });
-    await matchLineToQb(FINANCE, li, "42");
-    expect(await linked(li)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
+    const id = await qbExpense({ purchases: [{ id: "42", txnDate: "2026-05-08" }] });
+    await matchExpenseToQb(FINANCE, id, "42");
+    expect(await linked(id)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
   });
 
   it("refuses a Purchase booked against another payment account", async () => {
-    const li = await qbLine({ purchases: [{ id: "42", accountRef: "card-2" }] });
-    await expect(matchLineToQb(FINANCE, li, "42")).rejects.toMatchObject({ statusCode: 409 });
-    expect(await linked(li)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+    const id = await qbExpense({ purchases: [{ id: "42", accountRef: "card-2" }] });
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ statusCode: 409 });
+    expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
   it("links a reimbursement to a Bill for the reimbursee's vendor, never another vendor's", async () => {
-    const li = await qbLine({ bills: ["42", { id: "43", vendorRef: "vendor-2" }] }, { reimbursement: true });
-    await expect(matchLineToQb(FINANCE, li, "43")).rejects.toMatchObject({ statusCode: 409 });
-    await matchLineToQb(FINANCE, li, "42");
-    expect(await linked(li)).toEqual({ qbTxnId: "42", qbTxnEntity: "Bill" });
+    const id = await qbExpense({ bills: ["42", { id: "43", vendorRef: "vendor-2" }] }, { reimbursement: true });
+    await expect(matchExpenseToQb(FINANCE, id, "43")).rejects.toMatchObject({ statusCode: 409 });
+    await matchExpenseToQb(FINANCE, id, "42");
+    expect(await linked(id)).toEqual({ qbTxnId: "42", qbTxnEntity: "Bill" });
   });
 
   it("matches nothing while the host has not bound the QuickBooks refs", async () => {
-    const li = await qbLine({ purchases: ["42"] }, { refs: false });
-    await expect(matchLineToQb(FINANCE, li, "42")).rejects.toMatchObject({ statusCode: 409 });
-    expect(await linked(li)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+    const id = await qbExpense({ purchases: ["42"] }, { refs: false });
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ statusCode: 409 });
+    expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+  });
+
+  it("matches an unprocessed expense on its tax, shipping and discount, with no line allocations yet", async () => {
+    const id = await qbExpense({ purchases: [{ id: "42", totalCents: 150 }, { id: "43", totalCents: 160 }] }, { signed: false });
+    await db.expense.update({ where: { id }, data: { state: "qb_on_hold", taxCents: 15, discountCents: 5 } });
+    await seedLineItem(id, { totalPriceCents: 50 });
+    await signAllLines(id);
+    expect(await db.expenseLineItem.count({ where: { expenseId: id, allocatedTaxCents: { not: null } } })).toBe(0);
+    expect((await qbCandidates(FINANCE, id)).map((t) => t.id)).toEqual(["43"]);
+    await matchExpenseToQb(FINANCE, id, "43");
+    expect(await linked(id)).toEqual({ qbTxnId: "43", qbTxnEntity: "Purchase" });
+  });
+
+  it("finance resolves an expense the poster left AMBIGUOUS", async () => {
+    const id = await qbExpense({ purchases: ["42"] });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "AMBIGUOUS" } });
+    await matchExpenseToQb(FINANCE, id, "42");
+    expect(await db.expense.findUnique({ where: { id }, select: { qbMatchState: true, qbTxnId: true } })).toEqual({ qbMatchState: "MATCHED", qbTxnId: "42" });
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_matched" } })).toBe(1);
+  });
+
+  it("refuses an expense already in QuickBooks, a backfill, or one held back as test data", async () => {
+    const created = await qbExpense({ purchases: ["42"] });
+    await db.expense.update({ where: { id: created }, data: { qbMatchState: "CREATED", qbTxnId: "7", qbTxnEntity: "Purchase" } });
+    await expect(matchExpenseToQb(FINANCE, created, "42")).rejects.toMatchObject({ statusCode: 409 });
+    const backfill = await qbExpense({ purchases: ["42"] });
+    await db.expense.update({ where: { id: backfill }, data: { backfill: true } });
+    await expect(matchExpenseToQb(FINANCE, backfill, "42")).rejects.toMatchObject({ statusCode: 409 });
+    const testData = await qbExpense({ purchases: ["42"] });
+    await db.expense.update({ where: { id: testData }, data: { qbMatchState: "NOT_TEST_DATA" } });
+    await expect(matchExpenseToQb(FINANCE, testData, "42")).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("refuses an expense outside the org", async () => {
+    await expect(qbCandidates(FINANCE, "no-such-expense")).rejects.toMatchObject({ statusCode: 404 });
   });
 });

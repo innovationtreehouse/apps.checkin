@@ -17,3 +17,8 @@ export function uniqueViolationFields(error: unknown): string[] | undefined {
     const raw = meta?.target ?? meta?.driverAdapterError?.cause?.constraint?.fields ?? [];
     return (Array.isArray(raw) ? raw : [raw]).map((f) => f.replace(/^"|"$/g, ""));
 }
+
+/** True when `error` is a Prisma known-request error with this code. Read by code, so it holds for any client instance. */
+export function isPrismaError(error: unknown, code: string): boolean {
+    return typeof error === "object" && error !== null && (error as { code?: unknown }).code === code;
+}

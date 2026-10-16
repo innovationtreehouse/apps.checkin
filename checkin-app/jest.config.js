@@ -100,6 +100,7 @@ const customJestConfig = {
         '^@inventory/receipt-types/(.*)$': '<rootDir>/../packages/receipt-types/src/$1',
         '^@inventory/receipt-types$': '<rootDir>/../packages/receipt-types/src/index.ts',
         '^@inventory/gtin$': '<rootDir>/../packages/gtin/src/index.ts',
+        '^@inventory/donations$': '<rootDir>/../packages/donations/src/index.ts',
         '^@inventory/workflow-mapping/(.*)$': '<rootDir>/../packages/workflow-mapping/src/$1',
         '^@inventory/workflow-mapping$': '<rootDir>/../packages/workflow-mapping/src/index.ts',
         '^@inventory/income/(.*)$': '<rootDir>/../packages/income/src/$1',

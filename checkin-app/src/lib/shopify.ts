@@ -245,6 +245,31 @@ export async function reportShopifyFailure(
     }
 }
 
+/** Stable Shopify handle for a program's product, so a retried sync finds what an earlier run created. */
+export function programProductHandle(program: { id: number; name: string }, kind: "public" | "claimant"): string {
+    const slug = program.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+    return `checkin-program-${program.id}-${slug}${kind === "claimant" ? "-reserved-seat" : ""}`;
+}
+
+/** The product already carrying `handle`, with its first variant; null when there is none. Throws on a failed lookup. */
+async function findProductByHandle(
+    storeDomain: string,
+    accessToken: string,
+    handle: string,
+): Promise<{ productId: string; variantId: string } | null> {
+    const res = await shopifyFetch(
+        `https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json?handle=${encodeURIComponent(handle)}&fields=id,variants`,
+        { method: 'GET', headers: { 'X-Shopify-Access-Token': accessToken } },
+        "Shopify find product by handle",
+    );
+    if (!res.ok) throw new Error(`Shopify product lookup responded with status: ${res.status}`);
+    const product = (await res.json()).products?.[0];
+    if (!product) return null;
+    const variantId = product.variants?.[0]?.id;
+    if (!product.id || !variantId) throw new Error(`Shopify product ${product.id ?? "?"} for handle ${handle} has no variant`);
+    return { productId: product.id.toString(), variantId: variantId.toString() };
+}
+
 /**
  * Single-pool model (product decision 2026-07-06): mints ONE Shopify variant
  * per program, priced at the base/non-member rate — inventory IS the whole
@@ -257,11 +282,14 @@ export async function reportShopifyFailure(
  * out); the caller lifts it to capacity with {@link adjustProgramInventory}
  * once the program row exists, so the initial stock takes the same locked path
  * as every other stock change.
+ *
+ * With a `handle`, a product already carrying it is returned instead of creating another.
  */
 export async function createShopifySingleVariantProgram(
     name: string,
     basePriceCents: number | null,
     maxParticipants: number | null = null,
+    handle?: string,
 ): Promise<{ shopifyProductId: string; shopifyVariantId: string } | null> {
     if (!basePriceCents || basePriceCents <= 0) return null; // free program: no Shopify object needed
 
@@ -303,6 +331,9 @@ export async function createShopifySingleVariantProgram(
         // 'Default Title' already exists"). Net effect of the old two-call
         // shape: no variant id ever stored, and the orphaned product kept its
         // physical $0 default variant so checkout demanded a shipping address.
+        const existing = handle ? await findProductByHandle(storeDomain, accessToken, handle) : null;
+        if (existing) return { shopifyProductId: existing.productId, shopifyVariantId: existing.variantId };
+
         const productRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json`, {
             method: 'POST',
             headers: {
@@ -312,6 +343,7 @@ export async function createShopifySingleVariantProgram(
             body: JSON.stringify({
                 product: {
                     title: `${name} Program Enrollment`,
+                    ...(handle && { handle }),
                     status: 'active',
                     product_type: "Educational Services",
                     variants: [{
@@ -375,10 +407,13 @@ export async function createShopifySingleVariantProgram(
  * DRAFT; GraphQL `productUpdate` then sets UNLISTED, a status the REST Product
  * resource does not have. If that second call fails the draft is reported as an
  * orphan and nothing is returned, so an untracked product is never left listed.
+ * With a `handle`, a product already carrying it is unlisted and returned instead
+ * of creating another.
  */
 export async function createClaimantProduct(
     name: string,
     basePriceCents: number | null,
+    handle?: string,
 ): Promise<{ claimantShopifyProductId: string; claimantShopifyVariantId: string } | null> {
     if (!basePriceCents || basePriceCents <= 0) return null;
 
@@ -401,30 +436,36 @@ export async function createClaimantProduct(
 
     let productId: string | null = null;
     try {
-        const productRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-                product: {
-                    title: `${name} Program Enrollment (reserved seat)`,
-                    status: 'draft',
-                    published: true,
-                    product_type: "Educational Services",
-                    variants: [{
-                        price: (basePriceCents / 100).toFixed(2),
-                        requires_shipping: false,
-                        inventory_management: null,
-                        inventory_policy: 'continue',
-                    }],
-                },
-            }),
-        }, "Shopify create claimant product");
-        if (!productRes.ok) {
-            throw new Error(`Shopify API responded with status: ${productRes.status} ${await productRes.text()}`);
+        const existing = handle ? await findProductByHandle(storeDomain, accessToken, handle) : null;
+        let variantId = existing?.variantId;
+        productId = existing?.productId ?? null;
+        if (!existing) {
+            const productRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    product: {
+                        title: `${name} Program Enrollment (reserved seat)`,
+                        ...(handle && { handle }),
+                        status: 'draft',
+                        published: true,
+                        product_type: "Educational Services",
+                        variants: [{
+                            price: (basePriceCents / 100).toFixed(2),
+                            requires_shipping: false,
+                            inventory_management: null,
+                            inventory_policy: 'continue',
+                        }],
+                    },
+                }),
+            }, "Shopify create claimant product");
+            if (!productRes.ok) {
+                throw new Error(`Shopify API responded with status: ${productRes.status} ${await productRes.text()}`);
+            }
+            const product = (await productRes.json()).product;
+            productId = product?.id?.toString() ?? null;
+            variantId = product?.variants?.[0]?.id?.toString();
         }
-        const product = (await productRes.json()).product;
-        productId = product?.id?.toString() ?? null;
-        const variantId = product?.variants?.[0]?.id?.toString();
         if (!productId || !variantId) throw new Error("Shopify claimant product response is missing the product or variant id");
 
         const mutation = `
@@ -481,8 +522,19 @@ const STOCK_LEASE_POLL_MS = 250;
  */
 export const programStockTiming = { capMs: 3 * 60_000, requestCapMs: 15_000, maxBackoffMs: 15_000 };
 
+/** A program's stock bookkeeping for a variant it no longer sells: cleared when `shopifyVariantId` changes. */
+export const STOCK_BOOKKEEPING_RESET = {
+    shopifyStockCarry: 0,
+    shopifyStockPendingWrite: null,
+    shopifyStockUnconfirmed: 0,
+    shopifyStockPushNeededAt: null,
+} satisfies Prisma.ProgramUpdateManyMutationInput;
+
 /** Shopify keeps an idempotency key 24 h; a pending write older than this is not resent (it could apply twice) but parked as unconfirmed. */
 const PENDING_WRITE_RESEND_LIMIT_MS = 23 * 60 * 60_000;
+
+/** In the IntegrationErrorLog message written when a stock change is parked as unconfirmed. */
+const UNCONFIRMED_LOG_MARK = "could not be confirmed";
 
 /** Codes that mean "not settled yet — resend the same request". */
 const TRANSIENT_CODES = new Set(["THROTTLED", "INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "IDEMPOTENCY_CONCURRENT_REQUEST"]);
@@ -555,7 +607,7 @@ function shopifyGraphql(storeDomain: string, accessToken: string): Gql {
             headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
             body: JSON.stringify({ query, variables }),
         }, "Shopify program stock");
-        // A 5xx gateway page is not JSON; its status alone marks it transient.
+        // An unreadable body (a 5xx gateway page, a 200 cut off mid-read) parses as {}; untilSettled treats it as unsettled.
         const body: unknown = await res.json().catch(() => ({}));
         return { status: res.status, body };
     };
@@ -594,9 +646,11 @@ const mockShopifyGraphql: Gql = async (query, variables) => {
 
 /**
  * Send one request until Shopify gives a settled answer: resend the SAME variables
- * (so the same idempotency key) on a transport failure, 5xx, 429 or a transient
- * GraphQL code, with capped exponential backoff, until `deadline`. Throws on a
- * hard error or when the deadline passes unsettled.
+ * (so the same idempotency key) on a transport failure, 5xx, 429, a transient
+ * GraphQL code or a reply with no readable body, with capped exponential backoff,
+ * until `deadline`. A 401/403 after an attempt that may have reached Shopify does
+ * not say whether that attempt landed, so it is resent too. Throws on a hard error
+ * or when the deadline passes unsettled.
  */
 async function untilSettled<T>(
     gql: Gql,
@@ -606,17 +660,20 @@ async function untilSettled<T>(
     stillRunning: (data: T) => boolean = () => false,
 ): Promise<T> {
     let lastError = "no reply";
+    let maybeSent = false;
     for (let attempt = 0; ; attempt++) {
         let reply: { status: number; body: GqlBody<T> } | null = null;
         try {
             const raw = await gql(query, variables);
-            reply = { status: raw.status, body: raw.body as GqlBody<T> };
+            reply = { status: raw.status, body: (raw.body ?? {}) as GqlBody<T> };
         } catch (err) {
             lastError = err instanceof Error ? err.message : String(err);
         }
         if (reply) {
             const { status, body } = reply;
-            const transient = status >= 500 || status === 429
+            const unreadable = status < 400 && body.data === undefined && !body.errors?.length;
+            const transient = status >= 500 || status === 429 || unreadable
+                || (maybeSent && (status === 401 || status === 403))
                 || (body.errors ?? []).some((e) => TRANSIENT_CODES.has(e.extensions?.code ?? ""))
                 || (body.data !== undefined && stillRunning(body.data));
             if (!transient) {
@@ -625,8 +682,9 @@ async function untilSettled<T>(
                 }
                 return body.data;
             }
-            lastError = `HTTP ${status} ${JSON.stringify(body.errors ?? "IDEMPOTENCY_CONCURRENT_REQUEST")}`;
+            lastError = `HTTP ${status} ${JSON.stringify(body.errors ?? (unreadable ? "unreadable body" : "IDEMPOTENCY_CONCURRENT_REQUEST"))}`;
         }
+        maybeSent = true;
         const wait = Math.min(1000 * 2 ** attempt, programStockTiming.maxBackoffMs);
         if (Date.now() + wait > deadline) {
             throw new StockWriteUnsettledError(`Shopify did not settle within ${programStockTiming.capMs}ms: ${lastError}`);
@@ -637,12 +695,14 @@ async function untilSettled<T>(
 
 async function readStock(gql: Gql, variantId: string, deadline: number) {
     const data = await untilSettled<ReadData>(gql, READ_STOCK, { variantId: `gid://shopify/ProductVariant/${variantId}` }, deadline);
-    // Fails closed: an inactive or unknown-state location rejects inventory writes.
-    const locationId = data.locations.nodes.find((l) => l.isActive)?.id;
-    if (!locationId) throw new Error("no active Shopify location");
     const item = data.productVariant?.inventoryItem;
     if (!item) throw new Error(`Shopify variant ${variantId} not found or has no inventory item`);
-    const level = item.inventoryLevels.nodes.find((n) => n.location.id === locationId);
+    // Fails closed: an inactive or unknown-state location rejects inventory writes.
+    const active = new Set(data.locations.nodes.filter((l) => l.isActive).map((l) => l.id));
+    // The location already stocking the item, so a multi-location store keeps one pool.
+    const level = item.inventoryLevels.nodes.find((n) => active.has(n.location.id));
+    const locationId = level?.location.id ?? [...active][0];
+    if (!locationId) throw new Error("no active Shopify location");
     // null = the item is not stocked at the location yet (a freshly created variant).
     return { inventoryItemId: item.id, locationId, available: level ? (level.quantities[0]?.quantity ?? 0) : null };
 }
@@ -740,11 +800,13 @@ async function drainStock(
     reason: string,
     token: string,
     deadline: number,
-    target?: number,
+    target?: () => Promise<number>,
 ): Promise<DrainResult> {
     const result: DrainResult = { error: null, expiredKey: null };
     try {
         for (;;) {
+            // Nothing is in flight here: whatever was sent is booked, so stopping leaves it for the next push.
+            if (Date.now() >= deadline) throw new StockWriteUnsettledError(`stock push for program ${programId} ran out of time`);
             const row = await prisma.program.findUnique({
                 where: { id: programId },
                 select: { shopifyStockCarry: true, shopifyStockPendingWrite: true, startAt: true, offSaleAt: true, saleEndedAt: true },
@@ -781,7 +843,8 @@ async function drainStock(
             }
             if (target !== undefined) {
                 // An absolute target replaces whatever was owed before it, as the delta from what Shopify shows now.
-                await bookStock(programId, token, { shopifyStockCarry: target - available });
+                // Counted under the lease, right before the carry is replaced.
+                await bookStock(programId, token, { shopifyStockCarry: (await target()) - available });
                 target = undefined;
                 continue;
             }
@@ -820,6 +883,14 @@ async function drainStock(
     return result;
 }
 
+/** The program-stock GraphQL client: the local mock, or the live store; null without credentials. */
+async function stockGql(): Promise<Gql | null> {
+    if (config.shopifyMockActive()) return mockShopifyGraphql;
+    const storeDomain = config.shopifyStoreDomain();
+    const accessToken = await getAccessToken();
+    return storeDomain && accessToken ? shopifyGraphql(storeDomain, accessToken) : null;
+}
+
 async function alertStockPush(programId: number, variantId: string, reason: string, error: unknown): Promise<void> {
     await reportShopifyFailure(
         "adjustProgramInventory",
@@ -841,22 +912,15 @@ async function pushProgramStock(
     reason: string,
     capMs: number,
     carryBefore: number,
-    target?: number,
+    target?: () => Promise<number>,
 ): Promise<boolean> {
     const deadline = Date.now() + capMs;
     try {
-        let gql: Gql;
-        if (config.shopifyMockActive()) {
-            gql = mockShopifyGraphql;
-        } else {
-            const storeDomain = config.shopifyStoreDomain();
-            const accessToken = await getAccessToken();
-            if (!storeDomain || !accessToken) {
-                await prisma.program.update({ where: { id: programId }, data: { shopifyStockPushNeededAt: new Date() } });
-                await alertStockPush(programId, variantId, reason, new Error("Shopify credentials missing or access token unavailable"));
-                return false;
-            }
-            gql = shopifyGraphql(storeDomain, accessToken);
+        const gql = await stockGql();
+        if (!gql) {
+            await prisma.program.update({ where: { id: programId }, data: { shopifyStockPushNeededAt: new Date() } });
+            await alertStockPush(programId, variantId, reason, new Error("Shopify credentials missing or access token unavailable"));
+            return false;
         }
 
         let token = await takeStockLease(programId, capMs);
@@ -900,14 +964,13 @@ async function pushProgramStock(
             );
         }
         if (result.expiredKey) {
-            // ponytail: no board screen settles an unconfirmed write yet. A person checks
-            // Shopify, then either adds shopifyStockUnconfirmed into shopifyStockCarry (it did
-            // not land) or zeroes it (it did). Build the button when this first happens.
+            // The board settles it on Revenue Ops > Unconfirmed Shopify stock (settleUnconfirmedStock);
+            // that screen dates each row by this log entry's message.
             await reportShopifyFailure(
                 "adjustProgramInventory",
-                new Error(`stock write ${result.expiredKey} for program ${programId} could not be confirmed`),
+                new Error(`stock write ${result.expiredKey} for program ${programId} ${UNCONFIRMED_LOG_MARK}`),
                 { programId, shopifyVariantId: variantId, idempotencyKey: result.expiredKey, unconfirmed: row?.shopifyStockUnconfirmed ?? null },
-                `A Shopify stock write for program ${programId} (key ${escapeHtml(result.expiredKey)}) stayed unsettled for a day, so Shopify could not say whether it landed. It will not be re-sent. Check the program's stock in Shopify by hand.`,
+                `A Shopify stock write for program ${programId} (key ${escapeHtml(result.expiredKey)}) stayed unsettled for a day, so Shopify could not say whether it landed. It will not be re-sent. Check the program's stock in Shopify by hand, then settle it on Revenue Ops &gt; Unconfirmed Shopify stock.`,
             );
         }
         return result.error === null && result.expiredKey === null;
@@ -1043,6 +1106,123 @@ export async function healProgramStock(): Promise<{ checked: number; settled: nu
     return { checked: programs.length, settled };
 }
 
+/** A program's parked stock change, as the board's settle screen shows it. */
+export interface UnconfirmedStockRow {
+    programId: number;
+    programName: string;
+    unconfirmed: number;
+    carry: number;
+    /** When the last write was parked (its IntegrationErrorLog row); null once that row is purged. */
+    unconfirmedSince: Date | null;
+    /** Shopify's `available` now; null when it can't be read within a few seconds. */
+    shopifyAvailable: number | null;
+}
+
+/** Bounds the board screen's Shopify read per program. */
+const UNCONFIRMED_READ_CAP_MS = 5_000;
+
+/** Every program with a parked (unconfirmed) stock change. Never writes. */
+export async function listUnconfirmedStock(): Promise<UnconfirmedStockRow[]> {
+    const programs = await prisma.program.findMany({
+        where: { shopifyStockUnconfirmed: { not: 0 } },
+        select: { id: true, name: true, shopifyVariantId: true, shopifyStockUnconfirmed: true, shopifyStockCarry: true },
+        orderBy: { id: "asc" },
+    });
+    if (programs.length === 0) return [];
+
+    const logs = await prisma.integrationErrorLog.findMany({
+        where: { source: "shopify", message: { contains: UNCONFIRMED_LOG_MARK } },
+        select: { timestamp: true, context: true },
+        orderBy: { timestamp: "desc" },
+    });
+    const since = new Map<number, Date>();
+    for (const { timestamp, context } of logs) {
+        const programId = context && typeof context === "object" && !Array.isArray(context) ? context.programId : undefined;
+        if (typeof programId === "number" && !since.has(programId)) since.set(programId, timestamp);
+    }
+
+    const gql = await stockGql().catch(() => null);
+    const available = async (variantId: string | null): Promise<number | null> => {
+        if (!gql || !variantId) return null;
+        try {
+            return (await readStock(gql, variantId, Date.now() + UNCONFIRMED_READ_CAP_MS)).available;
+        } catch {
+            return null;
+        }
+    };
+    return Promise.all(programs.map(async (p) => ({
+        programId: p.id,
+        programName: p.name,
+        unconfirmed: p.shopifyStockUnconfirmed,
+        carry: p.shopifyStockCarry,
+        unconfirmedSince: since.get(p.id) ?? null,
+        shopifyAvailable: await available(p.shopifyVariantId),
+    })));
+}
+
+/** "landed": Shopify has the change, so it is dropped. "notLanded": it goes back into the owed carry. */
+export type UnconfirmedStockChoice = "landed" | "notLanded";
+export type SettleUnconfirmedOutcome = { carry: number } | { refused: "notFound" | "busy" | "stale" };
+
+/** How long the settle step holds the program's stock lease (it makes no Shopify call). */
+const SETTLE_LEASE_MS = 10_000;
+
+/**
+ * A board member settles a program's unconfirmed stock change after checking
+ * Shopify by hand. Under the program's stock lease, in one transaction: refuses
+ * when the amount is no longer `expected` (stale page), else zeroes it, adds it
+ * to the carry for "notLanded", and writes the AuditLog row. "landed" makes no
+ * Shopify call; "notLanded" then nudges a push so the carry lands as a keyed delta.
+ */
+export async function settleUnconfirmedStock(
+    programId: number,
+    expected: number,
+    choice: UnconfirmedStockChoice,
+    actorId: number,
+): Promise<SettleUnconfirmedOutcome> {
+    const token = await takeStockLease(programId, SETTLE_LEASE_MS);
+    if (!token) {
+        return { refused: (await prisma.program.count({ where: { id: programId } })) === 0 ? "notFound" : "busy" };
+    }
+    let settled: { carry: number; variantId: string | null } | null;
+    try {
+        settled = await prisma.$transaction(async (tx) => {
+            const { count } = await tx.program.updateMany({
+                where: { id: programId, shopifyStockLeaseToken: token, shopifyStockUnconfirmed: expected },
+                data: choice === "landed"
+                    ? { shopifyStockUnconfirmed: 0 }
+                    : { shopifyStockUnconfirmed: 0, shopifyStockCarry: { increment: expected } },
+            });
+            if (count !== 1) return null;
+            const row = await tx.program.findUniqueOrThrow({
+                where: { id: programId },
+                select: { shopifyStockCarry: true, shopifyVariantId: true },
+            });
+            await tx.auditLog.create({
+                data: {
+                    actorId,
+                    action: "EDIT",
+                    tableName: "Program",
+                    affectedEntityId: programId,
+                    oldData: { shopifyStockUnconfirmed: expected },
+                    newData: { settledUnconfirmedStock: choice, amount: expected, shopifyStockUnconfirmed: 0, shopifyStockCarry: row.shopifyStockCarry },
+                },
+            });
+            return { carry: row.shopifyStockCarry, variantId: row.shopifyVariantId };
+        });
+    } finally {
+        await prisma.program.updateMany({
+            where: { id: programId, shopifyStockLeaseToken: token },
+            data: { shopifyStockLeaseUntil: null, shopifyStockLeaseToken: null },
+        });
+    }
+    if (!settled) return { refused: "stale" };
+    if (choice === "notLanded" && settled.variantId) {
+        await nudgeProgramStock({ id: programId, shopifyVariantId: settled.variantId });
+    }
+    return { carry: settled.carry };
+}
+
 /**
  * Sets the program's base price on every Shopify variant it sells — the public
  * one and the hidden claimant one. Both carry the base (non-member) price; members
@@ -1120,16 +1300,18 @@ export async function syncProgramPrice(
  * Sets a program's Shopify stock to an absolute quantity, for when relative
  * adjustments were skipped (a sale that ended and is re-armed). Same lease and
  * keyed-delta path as {@link adjustProgramInventory}: under the lease the carry
- * becomes `quantity − available`, replacing deltas owed before it, since the
- * caller computed `quantity` from the app's own seat count. Never throws.
+ * becomes `quantity() − available`, replacing deltas owed before it, since
+ * `quantity` counts from the app's own seats. `quantity` runs under the lease and
+ * may be negative: an over-capacity program holds Shopify at 0 and keeps the
+ * shortfall owed, so seats given back later pay it down before any goes on sale.
+ * Never throws.
  */
 export async function setProgramInventory(
     program: { id: number; shopifyVariantId?: string | null },
-    quantity: number,
+    quantity: () => Promise<number>,
     reason: string,
 ): Promise<boolean> {
     if (!program.shopifyVariantId) return true;
-    if (config.shopifyMockActive()) console.log(`[SHOPIFY] (mock) Would set inventory to ${quantity} for variant: ${program.shopifyVariantId}`);
     return pushProgramStock(program.id, program.shopifyVariantId, reason, programStockTiming.requestCapMs, Number.NEGATIVE_INFINITY, quantity);
 }
 

@@ -9,6 +9,7 @@ import { runExpenseCatchUp, runExpenseQbPosting } from "@inventory/expense";
 import { healProgramStock } from "@/lib/shopify";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@inventory/local-inventory";
 import { catchUpOrgEvents as catchUpWorkflowEvents } from "@inventory/workflow-mapping";
+import { repushUnpushed, resendDonorSync, sweepInterruptedOcr } from "@inventory/receipt";
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
@@ -48,6 +49,15 @@ import { catchUpOrgEvents as catchUpWorkflowEvents } from "@inventory/workflow-m
  *
  * Then replays catalog events that local-inventory and workflow-mapping missed (a consumer that
  * threw during the catalog's post-commit call-out). Each step is isolated; counts only.
+ *
+ * Then the receipt library's catch-up step moves receipts stranded mid-OCR to
+ * `ocr_failed`. Isolated the same way; the response carries its count only.
+ *
+ * Then re-sends finalized receipts that workflow-mapping has not received yet (S1). Isolated the
+ * same way; counts only.
+ *
+ * Last, it re-sends in-kind donor changes the receipt library has not yet delivered to
+ * donations (resendDonorSync). Isolated the same way; counts only, no donor data.
  */
 export const GET = withCron(async () => {
     const result = await runReconcile();
@@ -94,5 +104,29 @@ export const GET = withCron(async () => {
         workflowEvents = { status: "error" };
     }
     logger.info(`[reconcile] workflow-mapping events ${JSON.stringify(workflowEvents)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents });
+    let receipt: Awaited<ReturnType<typeof sweepInterruptedOcr>> | { status: "error" };
+    try {
+        receipt = await sweepInterruptedOcr();
+    } catch (err) {
+        logger.error("[reconcile] receipt catch-up failed:", err);
+        receipt = { status: "error" };
+    }
+    logger.info(`[reconcile] receipt ${JSON.stringify(receipt)}`);
+    let receiptPush: Awaited<ReturnType<typeof repushUnpushed>> | { status: "error" };
+    try {
+        receiptPush = await repushUnpushed();
+    } catch (err) {
+        logger.error("[reconcile] receipt re-push failed:", err);
+        receiptPush = { status: "error" };
+    }
+    logger.info(`[reconcile] receipt push ${JSON.stringify(receiptPush)}`);
+    let donorSync: Awaited<ReturnType<typeof resendDonorSync>> | { status: "error" };
+    try {
+        donorSync = await resendDonorSync();
+    } catch (err) {
+        logger.error("[reconcile] receipt donor re-send failed:", err);
+        donorSync = { status: "error" };
+    }
+    logger.info(`[reconcile] donor sync ${JSON.stringify(donorSync)}`);
+    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receipt, receiptPush, donorSync });
 });

@@ -162,7 +162,9 @@ export function withAuth<Ctx = unknown>(
             return apiError('Unauthorized', 401);
         }
 
-        if (auth.type === 'kiosk' && !options.allowKiosk) {
+        // The kiosk signature is checked here over an empty body, so it only
+        // authenticates a bodiless read: a kiosk write must verify its own body.
+        if (auth.type === 'kiosk' && (!options.allowKiosk || !['GET', 'HEAD'].includes(nreq.method))) {
             return apiError('Forbidden', 403);
         }
 
