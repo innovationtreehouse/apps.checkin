@@ -88,7 +88,7 @@ describeDb("seats follow the payee", () => {
     bindPorts({ signoff: directory({ finance: [3, 4] }) });
     const id = await seedExpense({ state: "owner_approval", needsReimbursement: true });
 
-    const results = await Promise.allSettled([setReimbursee(ORG, id, 7, FINANCE), setReimbursee(ORG, id, 9, principal(4, { isFinance: true }))]);
+    const results = await Promise.allSettled([setReimbursee(ORG, id, 1, FINANCE), setReimbursee(ORG, id, 1, principal(4, { isFinance: true }))]);
 
     expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
     expect(results.find((r) => r.status === "rejected")).toMatchObject({ reason: { statusCode: 409 } });
@@ -102,7 +102,7 @@ describeDb("seats follow the payee", () => {
     const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
     await seedApproval(id, li, { ownerId: 100, status: "approved" });
 
-    await setReimbursee(ORG, id, 7, FINANCE);
+    await setReimbursee(ORG, id, 1, FINANCE);
     expect((await db.expense.findFirst({ where: { id } }))!.reimbursementFor).toBe("Pat");
     await signLine(principal(1), li, "SUBMITTER");
     await signLine(principal(2), li, "PROGRAM_APPROVER");
@@ -118,7 +118,7 @@ describeDb("seats follow the payee", () => {
     const li = await seedLineItem(id);
     await seedApproval(id, li, { ownerId: 100 });
 
-    await setReimbursee(ORG, id, 7, FINANCE);
+    await setReimbursee(ORG, id, 1, FINANCE);
 
     await expect(signLine(principal(3, { isFinance: true, isBoard: true }), li, "TREASURER")).rejects.toMatchObject({ statusCode: 403 });
     await signLine(BOARD, li, "TREASURER");

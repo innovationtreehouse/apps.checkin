@@ -101,6 +101,12 @@ const signoff: SignoffDirectory = {
     return (await (await db()).person.count({ where: { id: personId, ...LIVE_PERSON } })) > 0;
   },
 
+  async livePersonFor(personId) {
+    const { resolveMergedPerson } = await import("@/lib/person/mergeChain");
+    const resolved = await resolveMergedPerson(personId);
+    return resolved.kind === "live" ? resolved.person.id : null;
+  },
+
   async isOrgMember(personId) {
     const { isActiveOrgMember } = await import("@/lib/orgMembership");
     return isActiveOrgMember(personId);

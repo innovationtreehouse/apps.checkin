@@ -6,7 +6,7 @@ import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
-import { filledSeatsByLine, lockExpense, signoffFactsByLine, unsignedLines, voidSignoffs } from "../lib/signoff-facts";
+import { conflictedParties, filledSeatsByLine, lockExpense, signoffFactsByLine, unsignedLines, voidSignoffs } from "../lib/signoff-facts";
 import { CLOSED_STATES, blockedSeats, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
@@ -84,7 +84,8 @@ async function snapshotCatalog(lineItemId: number, vendorName: string, expenseId
 const REIMBURSEE_KNOWN = "The reimbursee is already set and cannot be changed";
 
 /**
- * Names the Person owed a reimbursement whose reimbursee is unknown, clears REIMBURSEE_UNKNOWN,
+ * Names the uploader, or the live Person the uploader's id resolves to, as the Person owed a
+ * reimbursement whose reimbursee is unknown, clears REIMBURSEE_UNKNOWN,
  * and voids every non-submitter sign-off on the expense, so each seat is signed for that payee.
  * A known reimbursee is never changed.
  */
@@ -102,8 +103,13 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
   if (!reimburseeUnknown(expense)) throw new ServiceError(409, REIMBURSEE_KNOWN);
   const dir = getExpenseRuntime().signoff;
   if (!(await dir.personExists(personId))) throw new ServiceError(404, "Person not found");
-  const ownHousehold = [personId, ...(await dir.householdOf([personId]))];
-  if (ownHousehold.includes(actor.userId)) throw new ServiceError(403, "You cannot name yourself or your household as reimbursee");
+  // Only the uploader, who said they paid, is reimbursed.
+  if (personId !== (await dir.livePersonFor(expense.submitterId))) {
+    throw new ServiceError(403, "Only the person who uploaded the receipt can be named as reimbursee");
+  }
+  if ((await conflictedParties({ submitterId: expense.submitterId, reimburseePersonId: personId })).includes(actor.userId)) {
+    throw new ServiceError(403, "You cannot name the reimbursee on an expense that you or your household submitted or would be reimbursed for");
+  }
 
   const state = await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
