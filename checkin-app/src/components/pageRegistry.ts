@@ -13,7 +13,7 @@ import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
 import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
 import { membershipOpsRouteVisible } from '@/lib/membershipOpsNav';
 import { isLibraryVisible, type LibraryKey } from '@/lib/libraryRelease';
-import { canSeeReceiving } from '@/lib/libraryNav';
+import { canSeeManualInKind, canSeeReceiving } from '@/lib/libraryNav';
 import { canSeeCatalog, canSubmitReceipts, type VolunteerClaims } from '@/lib/volunteer';
 
 export type RegistryUser = VolunteerClaims & {
@@ -71,6 +71,7 @@ const released = (lib: LibraryKey, gate: Visible): Visible => (u, signedIn, coun
 // Bulk donation (#1280 §5): FINANCE or BOARD, like its routes, until the board releases it.
 const DONATIONS = released('bulk-donation', FINANCE_OR_BOARD);
 const RECEIVING: Visible = (u, signedIn) => signedIn && canSeeReceiving(u);
+const MANUAL_IN_KIND = released('bulk-donation', (u, signedIn) => signedIn && canSeeManualInKind(u));
 
 export type PageEntry = {
   href: string;
@@ -143,6 +144,8 @@ export const PAGES: PageEntry[] = [
   // Receiving (#1289) — receipt mapping. Mirrors the routes' read gate:
   // INVENTORY_MANAGER, FINANCE or BOARD; writes inside are manager-only.
   { href: '/inventory/receiving', label: 'Receiving', section: 'Inventory', keywords: 'receipt mapping proceed apply failed', visible: released('workflow-mapping', RECEIVING) },
+  // No-receipt in-kind gifts — FINANCE, BOARD, OPERATIONS or INVENTORY_MANAGER, like the list route.
+  { href: '/inventory/in-kind', label: 'In-kind Gifts', section: 'Inventory', keywords: 'donation donor gift no receipt', visible: MANUAL_IN_KIND },
   { href: '/inventory/receiving/audit-log', label: 'Receiving Audit Log', section: 'Inventory', keywords: 'receipt mapping history', visible: released('workflow-mapping', RECEIVING) },
 
   // Income — FINANCE works it, BOARD reads it (the routes' finance-or-board gate).

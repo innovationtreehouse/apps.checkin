@@ -89,6 +89,9 @@ POST /api/donations/disbursement-events/[disbursementId]/qb-resolve
 GET /api/donations/qb-exclusions
 POST /api/donations/qb-exclusions
 GET /api/donations/in-kind/queue
+GET /api/donations/in-kind/manual
+POST /api/donations/in-kind/manual
+POST /api/donations/in-kind/manual/[id]/load-inventory
 # Expense (#1272 L3 W) — library route factories via handler().
 GET /api/expense/local-owners
 GET /api/expense/flags

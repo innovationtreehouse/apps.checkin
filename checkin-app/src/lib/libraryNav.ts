@@ -52,6 +52,12 @@ export const canSeeReceiving = (
 ): boolean =>
   !!user?.isInventoryManager || !!user?.isFinance || !!user?.isBoardMember;
 
+/** No-receipt in-kind gifts' gate: the list route admits FINANCE, BOARD, OPERATIONS or INVENTORY_MANAGER. */
+export const canSeeManualInKind = (
+  user: Pick<SessionUser, "isFinance" | "isBoardMember" | "isOperations" | "isInventoryManager"> | undefined,
+): boolean =>
+  !!user?.isFinance || !!user?.isBoardMember || !!user?.isOperations || !!user?.isInventoryManager;
+
 // ---- Slots. Library wiring PRs append their tabs here. ----
 
 /**
@@ -70,6 +76,7 @@ export const INVENTORY_LIBRARY_TABS: LibraryTab[] = [
       return n > 0 ? { count: n, color: "red", label: `${n} receipts awaiting mapping or apply` } : null;
     },
   },
+  { name: "In-kind gifts", href: "/inventory/in-kind", icon: "🎁", library: "bulk-donation", visible: canSeeManualInKind },
 ];
 
 /** Income's gate: the income read routes admit FINANCE or BOARD (`finance-or-board`). */

@@ -7,14 +7,16 @@
  * route's module graph.
  */
 import { DonationHttpError } from "@inventory/bulk-donation";
-import type { DonationFileRouteHandler, DonationRouteHandler } from "@inventory/bulk-donation";
+import type { DonationBag, DonationFileRouteHandler, DonationRouteCtx } from "@inventory/bulk-donation";
 import { ApiResponseError } from "@/security/handler";
 
 function translate(err: unknown): unknown {
   return err instanceof DonationHttpError ? new ApiResponseError(err.status, err.message) : err;
 }
 
-export function donationRoute(factory: DonationRouteHandler): DonationRouteHandler {
+export function donationRoute<C extends DonationRouteCtx>(
+  factory: (ctx: C) => Promise<DonationBag>,
+): (ctx: C) => Promise<DonationBag> {
   return async (ctx) => {
     try {
       return await factory(ctx);
