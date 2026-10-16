@@ -2,6 +2,9 @@
 
 Fees, refunds, payment plans, and reconciliation.
 
+The file also covers money coming in through Shopify payouts (Income) and
+donations (Donations).
+
 ---
 
 ## Policy
@@ -63,6 +66,12 @@ Fees, refunds, payment plans, and reconciliation.
   SOC 2 and ISO 27001 compliant. — *Definitions Policy, Art. III, "Suitably
   Secure Electronic Means"*
 
+### Gifts
+
+- A gift is restricted only by the donor's own instructions, which are kept. A
+  restriction the donor gives in conversation needs the donor's written
+  confirmation. — *Financial Policy, Art. VI §VI.2*
+
 ---
 
 ## Assumptions
@@ -83,6 +92,12 @@ Things the app takes as true because they are handled outside it.
 - Program budgets live outside the app — their approval, the conflict-of-interest
   rule on that vote, and the requirement that program funds flow through the
   Treehouse are all handled there.
+
+- Benevity sends each batch of gifts whole, in one file. A gift that turns up
+  after its batch is finished is rare, and finance books it by hand.
+
+- Gifts of goods received before the app started recording them stay in
+  QuickBooks only.
 
 ---
 
@@ -219,3 +234,60 @@ Things the app takes as true because they are handled outside it.
   payment-plan request: when the grace period the board set runs out, the
   enrollment goes and the held seat is released. Nothing is sent when it does, so
   the board's own message has to have stated the deadline.  [Decision — *Principle: fail closed*]
+
+### Income
+
+Income checks each Shopify payout against the deposits in QuickBooks.
+
+- Finance and the board can see income. Only finance matches payouts and settles
+  problems.  [Decision]
+
+- Every payout must match one deposit in QuickBooks. Finance settles any the app
+  can't match, and records why.  [Decision]
+
+- Finance's own bookings come first. The app books only payouts newer than the
+  last one finance booked by hand, and a payout nobody books is raised for
+  finance.  [Decision]
+
+- The app never changes or deletes anything already in QuickBooks.  [Decision — deliberate limit]
+
+- Sales are booked to the program or fund they belong to. Sales finance hasn't
+  assigned are booked as general Treehouse income.  [Decision]
+
+- A payout or deposit that changes after it was matched goes back to finance.
+  The app never matches it again on its own.  [Decision]
+
+- Income keeps no record of who bought.  [Decision — *Principle: least privilege*]
+
+### Donations
+
+Donations covers gifts through Benevity (employee gifts and employer matches,
+paid in batches) and gifts of goods (in-kind).
+
+- Finance and the board can see donations, and finance manages them. The person
+  who submits a receipt for a gift of goods records its donor, and can say it
+  isn't a gift after all.  [Decision]
+
+- Only finance and the board can see who gave. Each look at a Benevity donor is
+  recorded.  [Decision — *Principle: least privilege*]
+
+- Donors are not linked to people or households in the app.  [Decision — deliberate limit]
+
+- Each gift goes to a program or fund, or is general Treehouse money. A gift
+  that comes with no instructions from the donor is general money.  [Decision — *Policy: Financial Policy, Art. VI §VI.2*]
+
+- Finance allocates each gift as the donor's instructions or policy direct. Once
+  recorded, the allocation can't be changed in the app.  [Decision]
+
+- A Benevity batch is finished only when every gift in it has a clear place in
+  the books. The app never guesses, and a finished batch can't be changed.  [Decision]
+
+- A gift of goods is handled as a donation, not as spending, even when it comes
+  with a receipt. In the books it is both a donation received and an expense of
+  the same value.  [Decision]
+
+- A gift of goods recorded without a receipt must name its donor, and the goods
+  go into inventory.  [Decision]
+
+- A gift of goods still missing its donor is raised for finance. Once its money
+  is recorded, the gift is never deleted.  [Decision]
