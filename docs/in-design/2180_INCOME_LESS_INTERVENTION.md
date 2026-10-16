@@ -84,13 +84,20 @@ finance; only finance settles problems. From `principles.md`: *Accountability*,
 This removes the need to rebook. A sale never books without a Class unless
 finance chose that, so there is nothing to move afterwards.
 
-### 2. A Class that goes away holds the payout
+### 2. A Class that goes away raises an alarm and holds what depends on it
 
 - Assigning an item to a Class that is not active in QuickBooks is refused.
-- If a Class is made inactive or removed in QuickBooks after items point at it,
-  a payout with those sales waits as *needs mapping*, naming the Class, instead
-  of failing. Finance reactivates the Class in QuickBooks or reassigns the items;
-  the next run books the payout.
+- Each run checks every assigned Class against QuickBooks. When a Class has been
+  archived (made inactive) or removed, the app raises an alarm for finance, the
+  same way it reports a cap being hit, and the items list marks every item
+  pointing at that Class. The alarm fires once per Class, not once per sale,
+  and does not wait for a payout to arrive.
+- Nothing that depends on that Class is booked until finance cleans it up: a
+  payout with a sale of such an item waits as *needs mapping*, naming the Class,
+  instead of failing. Finance reactivates the Class in QuickBooks or reassigns
+  the items; the next run books the payout.
+- The app never moves those items elsewhere on its own: the cleanup is
+  finance's decision.
 - The app does not book part of a payout. A payout is one deposit, so booking
   the good lines and holding the rest would break the one-to-one match.
 
@@ -138,7 +145,8 @@ old code. That window is minutes, and any such deposit is finance's to correct.
   next run; it does not become "no deposit" while held.
 - No Class: an item marked no Class books without a Class and is not held.
 - Class gap: assigning to an inactive Class is refused; a Class made inactive
-  holds the payout, and reactivating it releases.
+  raises one alarm and marks its items before any payout arrives, holds a payout
+  with those sales, and reactivating it or reassigning the items releases it.
 
 ## Open questions for the owner
 
@@ -150,9 +158,9 @@ old code. That window is minutes, and any such deposit is finance's to correct.
   until finance fixes it (owner, 2026-10-16).
 - **Q4.** Resolved: items store the QuickBooks Class id directly (owner,
   2026-10-16).
-- **Q5.** When a Class is made inactive in QuickBooks, should its items move to
-  no Class on their own, or wait for finance to reassign them? Proposed: wait,
-  so a decision about money stays with finance.
+- **Q5.** Resolved: an archived Class raises an alarm in the app naming what
+  points at it, and nothing that depends on it is booked until finance cleans it
+  up (owner, 2026-10-16).
 - **Q6.** Rebooking sales already booked without a Class before this ships:
   out of scope (proposed), or a one-off correction finance does in QuickBooks?
 - **Q7.** Should the app accept an assignment while it cannot reach QuickBooks
