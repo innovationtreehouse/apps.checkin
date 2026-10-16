@@ -6,6 +6,7 @@ import { apiError } from "@/lib/api-response";
 import type { Prisma } from "@/generated/prisma/client";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, type GrantSubject } from "@/lib/membership/selfGrantGuard";
 import { orderAttr, ordersByLegacyIds, type MirrorOrder } from "@/lib/shopifyRead/client";
+import { walkMergeChain } from "@/lib/person/mergeChain";
 
 /**
  * PATCH /api/finance-ops/payments/[id] — the board acknowledges or resolves one
@@ -140,21 +141,8 @@ function orderAccountIds(order: MirrorOrder): number[] {
     return raw.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
 }
 
-const MAX_MERGE_HOPS = 10;
-
 /** The person plus every record it was merged into, so a merged-away id still resolves to its survivor's household. */
 async function mergeChainSubjects(personId: number): Promise<GrantSubject[]> {
-    const subjects: GrantSubject[] = [];
-    const seen = new Set<number>();
-    let id: number | null = personId;
-    while (id !== null && !seen.has(id) && seen.size < MAX_MERGE_HOPS) {
-        seen.add(id);
-        const person: { householdId: number | null; mergedIntoId: number | null } | null = await prisma.person.findUnique({
-            where: { id },
-            select: { householdId: true, mergedIntoId: true },
-        });
-        subjects.push({ personId: id, householdId: person?.householdId ?? null });
-        id = person?.mergedIntoId ?? null;
-    }
-    return subjects;
+    const { chain } = await walkMergeChain(personId);
+    return chain.map((step) => ({ personId: step.id, householdId: step.person?.householdId ?? null }));
 }

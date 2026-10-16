@@ -38,6 +38,7 @@ beforeEach(() => {
         where.id in householdById ? { householdId: householdById[where.id], mergedIntoId: mergedIntoById[where.id] ?? null } : null,
     ) as jest.Mock;
     prisma.person.findMany = jest.fn().mockResolvedValue([]);
+    prisma.personMerge.findUnique = jest.fn().mockResolvedValue(null);
     prisma.paymentException.findUnique = jest.fn(async () => exception) as jest.Mock;
     prisma.paymentException.updateMany = jest.fn().mockResolvedValue({ count: 1 });
     prisma.orgMembershipProcess.findUnique = jest.fn().mockResolvedValue(null);
@@ -127,6 +128,19 @@ describe('PATCH /api/finance-ops/payments/[id] — own-household guard', () => {
         exception.personId = 22;
         mergedIntoById = { 22: 21 };
         expect((await call()).status).toBe(403);
+    });
+
+    it("refuses when the exception's person is gone and the merge archive names a survivor in the actor's household", async () => {
+        exception.personId = 30;
+        (prisma.personMerge.findUnique as jest.Mock).mockImplementation(async ({ where }: { where: { fromId: number } }) =>
+            where.fromId === 30 ? { toId: 21 } : null,
+        );
+        expect((await call()).status).toBe(403);
+    });
+
+    it("allows when the exception's person names no record and no merge", async () => {
+        exception.personId = 30;
+        expect((await call()).status).toBe(200);
     });
 
     it("refuses when any child the order names is in the actor's household, not just the recorded one", async () => {
