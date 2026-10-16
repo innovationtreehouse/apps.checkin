@@ -79,8 +79,10 @@ defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/set-depreciation-cycle/
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
 // Marks a card charge not Everyday (single-source or FINANCE's call); one-way.
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/not-everyday', authorize: 'finance', envelope: null, returns: ['ExpenseLineSignoffStatus'], orderedView: FINANCE_VIEW });
-defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/reimbursee-vendor', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeVendor'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/reimbursee-vendor', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeVendor', 'ExpenseReimburseeView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee-vendor', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeVendor'], orderedView: FINANCE_VIEW });
+// QuickBooks Vendors matching ?q=, offered for the link.
+defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/reimbursee-vendor/options', authorize: 'finance', envelope: null, returns: ['ExpenseQbVendorOption'], orderedView: FINANCE_VIEW });
 // Dev-only expense test-data toggle; the route 404s when CHECKIN_ENV=prod.
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/test-data', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/expense-holds/[expenseId]/line-items/[lineItemId]/account', authorize: 'finance', envelope: null, returns: ['ExpenseLineItem'], orderedView: FINANCE_VIEW });

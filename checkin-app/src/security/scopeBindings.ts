@@ -253,6 +253,10 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // settling stock is board bookkeeping, with no program-facing view.
     'UnconfirmedStockRow',
     'UnconfirmedStockSettlement',
+    // The reimbursee named on the QuickBooks Vendor link screen (registry/expense.ts).
+    // Its `personId` makes it scopable, but the only route is FINANCE with everyones
+    // grants, and the reimbursee never reads their own Vendor link.
+    'ExpenseReimburseeView',
 ]);
 
 /**
