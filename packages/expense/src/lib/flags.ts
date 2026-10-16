@@ -2,7 +2,7 @@
 import type { ExpenseSettings } from "../contract";
 import { reimburseeUnknown } from "./signoff";
 
-export const FLAG_KINDS = ["TAX_ATTACHED", "THRESHOLD_CROSSED", "CAPITAL_EQUIPMENT", "MISSING_RECEIPT", "NON_EVERYDAY", "COI", "REIMBURSEE_UNKNOWN", "QB_POST_FAILED", "QB_OVER_CAP"] as const;
+export const FLAG_KINDS = ["TAX_ATTACHED", "THRESHOLD_CROSSED", "CAPITAL_EQUIPMENT", "MISSING_RECEIPT", "NON_EVERYDAY", "COI", "REIMBURSEE_UNKNOWN", "QB_POST_FAILED", "QB_OVER_CAP", "QB_DRIFT"] as const;
 export type FlagKind = (typeof FLAG_KINDS)[number];
 export type FlagAudience = "FINANCE" | "BOARD";
 
@@ -17,6 +17,7 @@ export const FLAG_AUDIENCE: Record<FlagKind, FlagAudience> = {
   REIMBURSEE_UNKNOWN: "FINANCE",
   QB_POST_FAILED: "FINANCE",
   QB_OVER_CAP: "FINANCE",
+  QB_DRIFT: "FINANCE",
 };
 
 /** Flags that stay open while the hold they signal applies, with why a check-off is refused. */
