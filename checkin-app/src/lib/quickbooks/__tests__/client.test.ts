@@ -1,11 +1,6 @@
-import prisma from "@/lib/prisma";
 import { buildQuickBooks, lambdaAccessTokenSource } from "../client";
 
 jest.mock("@aws-sdk/client-lambda", () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
-jest.mock("@/lib/prisma", () => ({
-    __esModule: true,
-    default: { boardSettings: { findUnique: jest.fn() } },
-}));
 
 const SANDBOX = "1111";
 const PROD = "9999";
@@ -60,7 +55,6 @@ describe("lambdaAccessTokenSource", () => {
 });
 
 describe("buildQuickBooks", () => {
-    const findUnique = prisma.boardSettings.findUnique as jest.Mock;
     const env = (vars: Record<string, string | undefined>) => {
         for (const [k, v] of Object.entries(vars)) {
             if (v === undefined) delete process.env[k];
@@ -72,7 +66,6 @@ describe("buildQuickBooks", () => {
 
     beforeEach(() => {
         errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
-        findUnique.mockResolvedValue({ qboProductionRealmId: null });
         env({
             CHECKIN_ENV: "dev",
             QBO_ENVIRONMENT: "sandbox",
@@ -92,10 +85,9 @@ describe("buildQuickBooks", () => {
         expect(await buildQuickBooks()).not.toBeNull();
     });
 
-    it("is off with no realm configured, without touching the database", async () => {
+    it("is off with no realm configured", async () => {
         env({ QBO_REALM_ID: undefined });
         expect(await buildQuickBooks()).toBeNull();
-        expect(findUnique).not.toHaveBeenCalled();
     });
 
     it("is off when the guard refuses, and says why", async () => {
@@ -104,24 +96,20 @@ describe("buildQuickBooks", () => {
         expect(errorSpy).toHaveBeenCalledWith("QuickBooks is off:", expect.stringMatching(/allowlisted/));
     });
 
-    it("is inert on stg: a prod-copy database holding a Board realm, no QBO env", async () => {
+    it("is inert on stg with no QBO env", async () => {
         env({ CHECKIN_ENV: "stg", QBO_ENVIRONMENT: undefined, QBO_REALM_ID: undefined, QBO_SANDBOX_REALM_ALLOWED: undefined, QBO_REFRESHER_FN: undefined });
-        findUnique.mockResolvedValue({ qboProductionRealmId: PROD });
         expect(await buildQuickBooks()).toBeNull();
     });
 
     it("is off on stg even when configured like dev", async () => {
         env({ CHECKIN_ENV: "stg" });
-        findUnique.mockResolvedValue({ qboProductionRealmId: PROD });
         expect(await buildQuickBooks()).toBeNull();
     });
 
-    it("on prod, reaches only the Board-set realm and is off while it is unset", async () => {
+    it("on prod, reaches the configured realm only through the production API", async () => {
         env({ CHECKIN_ENV: "prod", QBO_ENVIRONMENT: "production", QBO_REALM_ID: PROD, QBO_SANDBOX_REALM_ALLOWED: undefined });
-        expect(await buildQuickBooks()).toBeNull();
-        findUnique.mockResolvedValue({ qboProductionRealmId: PROD });
         expect(await buildQuickBooks()).not.toBeNull();
-        findUnique.mockResolvedValue({ qboProductionRealmId: "8888" });
+        env({ QBO_ENVIRONMENT: "sandbox" });
         expect(await buildQuickBooks()).toBeNull();
     });
 

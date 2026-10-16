@@ -67,18 +67,17 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
 
 ## Which company a deployment reaches (`guard.ts`)
 
-The guard decides from our config and database only, never from anything QuickBooks returns.
+The guard decides from our config only, never from anything QuickBooks returns.
 
 - `assertQboTarget`: only `CHECKIN_ENV=prod` and `dev` (exactly) get a client. Prod uses the
-  production API and only the realm the Board set (`BoardSettings.qboProductionRealmId`); unset,
-  QuickBooks is off. Dev uses the sandbox API and only `QBO_SANDBOX_REALM_ALLOWED`, and refuses
-  the realm its own database names as production. stg, local and unset reach nothing.
+  production API and `QBO_REALM_ID`, set by infra when the refresher secret is seeded. Dev uses
+  the sandbox API and only `QBO_SANDBOX_REALM_ALLOWED`. stg, local and unset reach nothing.
 - `assertQboClientId`: off prod the token must come from Intuit's development keys
   (`QBO_DEV_CLIENT_ID`), which cannot open a production company; prod refuses them.
 - `assertPayloadMarked`, on every write's final body: sandbox writes carry `[checkin-test]` in
   `PrivateNote` (Vendors a `TEST-` name prefix) and never name the org; production writes never
   carry either marker. The client stamps the markers itself.
-- No realm id is ever committed: prod's lives in the Board setting, the sandbox's in deploy config.
+- No realm id is ever committed: both live in deploy config.
 
 checkin builds its one client in `checkin-app/src/lib/quickbooks/client.ts` (`getQuickBooks()`,
 null while off). Its token comes from the refresher Lambda (`QBO_REFRESHER_FN`): invoked with
@@ -96,7 +95,7 @@ null while off). Its token comes from the refresher Lambda (`QBO_REFRESHER_FN`):
 - [ ] Refresher: reserved concurrency 1; the refresh-token secret readable and writable by it
       alone; a weekly keepalive invoke; alarms on `invalid_grant`, and on `GetSecretValue` against the
       QBO secret by any principal other than the refresher Lambda's role.
-- [ ] Prod: the Board sets the realm on Settings → QuickBooks after consent.
+- [ ] Prod: `QBO_REALM_ID` set with the refresher secret after consent.
 - Binding a posting port (QB-2): set its `prod` flag from `CHECKIN_ENV === "prod"`, the same raw
   check the guard uses.
 - Binding expense posting: `QbRefs` (`refs.paymentAccountId`, `refs.vendorIdFor`) and the posting

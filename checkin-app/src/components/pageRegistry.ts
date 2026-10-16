@@ -36,7 +36,6 @@ const LEADS_PROGRAM: Visible = (_u, signedIn, counts) => signedIn && leadsAnyPro
 const EXPENSE_APPROVER: Visible = (u, signedIn, counts) =>
   LEADS_PROGRAM(u, signedIn, counts) || (signedIn && libraryCount(counts, 'expense', 'approver') > 0);
 const BOARD: Visible = (u) => !!u?.isSysadmin || !!u?.isBoardMember;
-const BOARD_MEMBER: Visible = (u) => !!u?.isBoardMember;
 // Participants is the one Membership Ops page operations can also reach (read-only
 // directory + add-contact) — see membership-ops/layout.tsx's nav gate. Outreach is
 // the one settings/* page operations can also reach (see settings/layout.tsx).
@@ -246,7 +245,6 @@ export const PAGES: PageEntry[] = [
   { href: '/settings/email', label: 'Email Settings', section: 'Settings', keywords: 'sender from reply-to identity', visible: BOARD },
   { href: '/settings/outreach', label: 'Outreach', section: 'Settings', keywords: 'renewal join campaign email template bulk send reminder opening', visible: BOARD_OR_OPS },
   { href: '/settings/shopify-webhook', label: 'Shopify Webhook', section: 'Settings', keywords: 'orders paid delivery test notification signature secret payment', visible: BOARD },
-  { href: '/settings/quickbooks', label: 'QuickBooks', section: 'Settings', keywords: 'quickbooks company realm accounting', visible: BOARD_MEMBER },
 ];
 
 // Routes that exist as page.tsx but are intentionally absent from the directory.

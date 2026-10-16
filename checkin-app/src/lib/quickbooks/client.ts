@@ -1,7 +1,7 @@
 /**
  * checkin's one QuickBooks connection, shared by every library with a QuickBooks port.
  * getQuickBooks() answers null (QuickBooks off) unless packages/quickbooks/src/guard.ts
- * admits the configured company; the guard's inputs are our config and our database only.
+ * admits the configured company; the guard's inputs are our config only.
  */
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import {
@@ -18,7 +18,7 @@ import { logger } from "@/lib/logger";
 
 /** Re-ask the refresher this long before the token it handed out expires. Must stay below the refresher's own 10-min refresh margin, or every call re-invokes it. */
 const TOKEN_MARGIN_MS = 5 * 60_000;
-/** How long a built client (and the Board's realm setting behind it) is reused. */
+/** How long a built client is reused. */
 const CLIENT_TTL_MS = 60_000;
 
 export type InvokeRefresher = (functionName: string) => Promise<unknown>;
@@ -77,12 +77,6 @@ export function lambdaAccessTokenSource(opts: {
   };
 }
 
-async function boardProductionRealm(): Promise<string | null> {
-  const { default: prisma } = await import("@/lib/prisma");
-  const row = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { qboProductionRealmId: true } });
-  return row?.qboProductionRealmId ?? null;
-}
-
 // Kept across client rebuilds, so a rebuild does not drop the cached access token.
 let lambdaSource: { key: string; source: AccessTokenSource } | null = null;
 
@@ -105,12 +99,7 @@ export async function buildQuickBooks(): Promise<QuickBooksClient | null> {
   try {
     const checkinEnv = process.env.CHECKIN_ENV;
     const realm: QboRealm = { env: qboEnvFromEnv(), realmId };
-    assertQboTarget({
-      checkinEnv,
-      realm,
-      sandboxRealmAllowed: process.env.QBO_SANDBOX_REALM_ALLOWED,
-      productionRealmId: await boardProductionRealm(),
-    });
+    assertQboTarget({ checkinEnv, realm, sandboxRealmAllowed: process.env.QBO_SANDBOX_REALM_ALLOWED });
     const tokens = tokenSource(checkinEnv, realmId);
     if (!tokens) {
       logger.error("QuickBooks is off: no token source (set QBO_REFRESHER_FN)");
