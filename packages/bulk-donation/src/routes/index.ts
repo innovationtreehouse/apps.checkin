@@ -6,3 +6,4 @@ export * as uploads from "./uploads";
 export * as transactions from "./transactions";
 export * as rules from "./rules";
 export * as disbursements from "./disbursements";
+export * as inKind from "./inKind";
