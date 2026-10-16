@@ -18,6 +18,7 @@ export const DONATION_NAV_LINKS: readonly DonationNavLink[] = [
   { name: "Unassigned", href: "/donations/unassigned", icon: "📥", badge: "unassignedQueue" },
   { name: "Gifts", href: "/donations/transactions", icon: "🎁" },
   { name: "Holds", href: "/donations/holds", icon: "⛔", badge: "disbursementHolds" },
+  { name: "In-kind Queue", href: "/donations/in-kind", icon: "📦" },
   { name: "Booking Batches", href: "/donations/events", icon: "📒" },
   { name: "Comment Rules", href: "/donations/comment-rules", icon: "💬" },
   { name: "Account Map", href: "/donations/account-map", icon: "🗺️" },
