@@ -292,7 +292,7 @@ Things the app takes as true because they are handled outside it.
 - After the off-sale date no seat goes back on sale: a withdrawal, a released
   hold, a raised capacity or a refund that restocks changes no store stock,
   though a cut still lowers it. The off-sale date wins over a refund going back
-  on sale.  [Decision]
+  on sale.  [Decision — owner]
 
 - Automatic changes only reduce visibility. Nothing opens enrollment, re-lists a
   product or reopens a sale on its own; the board reopens a sale by moving its

@@ -101,15 +101,16 @@ Things the app takes as true because they are handled outside it.
   from the refund case below it undoes nothing by itself.
   [Decision — *Principle: people decide about people*]
 
-- When the store reports that a program refund put seats back on sale, the app
-  removes the enrollment of each child the refund identifies: every child on the
-  order when it returns every seat the order bought, or the child named on a
-  fully refunded order line. Returned seats the app can't tie to a child are
-  taken off sale, and the board decides which children leave. Any other refund,
-  including one of reserved seats or one the store didn't report, is only raised
-  for the board. Every refund is raised for the board to settle the money.  [Decision]
+- When the store's refund notice says a program refund put seats back on sale,
+  the app removes the enrollment of each person the refund identifies: everyone
+  on the order when it returns every seat the order bought, or the person named
+  on a fully refunded order line. Returned seats the app can't tie to a person
+  are taken off sale, and the board decides who leaves. Any other refund,
+  including one of reserved seats or one the daily reconciliation found rather
+  than the refund notice, is only raised for the board. Every refund is raised
+  for the board to settle the money.  [Decision]
 
-- A refund removes only the children it refunds. A sibling on the same order
+- A refund removes only the people it refunds. A sibling on the same order
   stays enrolled.  [Decision]
 
 - The store decides what a discount comes to; the app decides who may use one and
@@ -120,9 +121,9 @@ Things the app takes as true because they are handled outside it.
 
 - A program order enrolls anyone only when it is paid and not refunded, voided
   or cancelled, is for that program (reserved seats count), and buys a seat for
-  every child it would enroll. The same test applies however the payment
-  arrives. An order that falls short enrolls nobody, because it cannot say which
-  children it was for, and is raised for the board.  [Decision]
+  every person it would enroll. The same test applies however the payment
+  arrives. An order that falls short enrolls nobody, because it cannot say who
+  it was for, and is raised for the board.  [Decision]
 
 - A paid program order with seats no waiting enrollment uses is raised for the
   board, which settles the money and the seat; the app changes neither. That
