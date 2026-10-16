@@ -8,7 +8,7 @@ import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { MAX_DRIFT_CHECKS_PER_RUN, checkQbDrift } from "../../lib/expense-qb-drift";
-import { runExpenseCatchUp } from "../../services/sweeps";
+import { runExpenseQbPosting } from "../../services/sweeps";
 import { raiseFlag } from "../../services/flagService";
 
 const line = (amount: number, account: string) => ({ Amount: amount, AccountBasedExpenseLineDetail: { AccountRef: { value: account } } });
@@ -176,11 +176,11 @@ describeDb("QB-3 drift", () => {
     expect(qbo.methods).toHaveLength(MAX_DRIFT_CHECKS_PER_RUN);
   });
 
-  it("is skipped while QuickBooks is unbound, and runs in the cron catch-up", async () => {
+  it("is skipped while QuickBooks is unbound, and runs in the QuickBooks cron step", async () => {
     const { entry } = await created("2026-09-10");
     entry.TotalAmt = 12;
 
-    expect((await runExpenseCatchUp()).qbDrift).toEqual({ checked: 1, drifted: 1, failed: 0 });
+    expect((await runExpenseQbPosting()).qbDrift).toEqual({ checked: 1, drifted: 1, failed: 0 });
     bindPorts({});
     expect(await checkQbDrift()).toBe("unbound");
   });

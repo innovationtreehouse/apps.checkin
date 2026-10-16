@@ -42,7 +42,7 @@ import { repushUnpushed, resendDonorSync, sweepInterruptedOcr } from "@inventory
  * reconcile, and the response carries its counts only, no payout ids or amounts.
  *
  * Then runs the expense library's catch-up (intake replay, catalog events) and its QuickBooks
- * posting (stranded QB recovery, the outbox drain). Their failure never fails checkin's reconcile; counts only.
+ * step (stranded QB recovery, the outbox drain, the drift check). Their failure never fails checkin's reconcile; counts only.
  *
  * Then re-pushes program stock the stock writer left owing (healProgramStock),
  * which needs no mirror. Isolated the same way.
