@@ -25,8 +25,10 @@ then finance's hand bookings can be matched against it.
 - **No spending sign-off.** No money leaves the organisation. The controls that
   already exist on recording the gift (donor named, recorder outside the donor's
   household) stay the controls.
-- **Same budget bucket on both sides.** Finance assigns the gift a bucket, as it
-  does a Benevity gift; revenue and expense carry that bucket's Class.
+- **Every in-kind gift has a budget bucket.** An expense never lands at the top
+  of the books without a Class, so an in-kind gift cannot be general money. Finance
+  assigns a bucket, which may be a part of the facility such as Facility or Shop
+  rather than a program; revenue and expense carry that bucket's Class.
 - **Withdrawal holds or flags, never undoes.** A gift withdrawn before booking
   never books. One withdrawn after booking is raised for finance to reverse by
   hand; the app never changes QuickBooks.
@@ -35,7 +37,7 @@ then finance's hand bookings can be matched against it.
   clearing account and a Purchase out of it, same date and amount. It ships with
   the donations drain, not before.
 - **What this does not build:** valuation rules beyond the recorded value,
-  capitalising donated equipment, donor acknowledgement letters.
+  capitalising donated equipment, donor acknowledgement letters (#2237).
 
 ---
 
@@ -59,7 +61,17 @@ then finance's hand bookings can be matched against it.
 
 ## Standing rules this would change
 
-None. It adds rules (see the end).
+`docs/rules/revenue.md`, Donations:
+
+> Each gift goes to a program or fund, or is general Treehouse money. A gift
+> that comes with no instructions from the donor is general money.
+
+**Replacement:** the rule stays for gifts of money. A gift of goods always goes
+to a budget bucket, because its expense side must carry a Class; a gift of goods
+with no instructions from the donor goes to the bucket finance chooses, which
+may be a part of the facility such as Facility or Shop. [Decision — owner]
+
+It also adds rules (see the end).
 
 ---
 
@@ -121,7 +133,7 @@ A gift books when all of these hold:
 - its money side arrived (receipt path) or it was recorded (no-receipt path);
 - its donor is recorded;
 - it has a value;
-- finance has assigned it a bucket, or marked it general money;
+- finance has assigned it a bucket;
 - it has not been withdrawn.
 
 Until then it waits, and the finance queue says what it waits on. Waiting is the
@@ -154,11 +166,13 @@ question Q2.
 
 ### Budget bucket and Class
 
-The in-kind tables gain the same allocation fields Benevity gifts have: a bucket
-or a general-money mark, who assigned it, and when. Finance assigns it, and it
+The in-kind tables gain a bucket, who assigned it, and when. Unlike a Benevity
+gift there is no general-money mark: an expense never lands at the top of the
+books, so every in-kind gift names a bucket. Where the donor gave no
+instructions, finance picks one; it may be an organisation-level bucket that is
+a part of the facility, such as Facility or Shop, not a program. The bucket
 cannot change once set (the existing donations rule). Both sides of the booking
-carry that bucket's QuickBooks Class; general money carries none, as for
-Benevity.
+carry its QuickBooks Class.
 
 Revenue and expense in one bucket net to zero in that bucket. That matches what
 happened: the program received goods it did not pay for. Whether the expense
@@ -236,6 +250,7 @@ the boundary rule.
 
 ## Rules to extract at merge
 
+- `revenue.md`, Donations: the general-money replacement above.
 - `revenue.md`, Donations: both sides of an in-kind gift come from one record
   and one value; the gift takes no spending sign-off; a gift withdrawn after
   booking is raised for finance to reverse by hand.
@@ -244,6 +259,6 @@ the boundary rule.
 
 ## Provenance
 
-- GitHub issue #2182; related #1270, #2143, #2192.
+- GitHub issue #2182; related #1270, #2143, #2192; follow-up #2237.
 - `docs/in-design/1280_BULK_DONATION_INTEGRATION.md` §2.4, §6, §7.
 - `docs/in-design/1272_EXPENSE_QB_INTEGRATION.md` (expense record and sign-off).
