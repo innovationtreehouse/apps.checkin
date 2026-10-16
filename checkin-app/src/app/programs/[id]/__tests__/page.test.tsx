@@ -592,9 +592,13 @@ describe("ProgramEnrollmentPage", () => {
         );
     });
 
-    // One order pays for one household: the server refuses a mixed checkout and the
-    // page shows its message instead of redirecting.
-    it("sends the checkout's children for the discount code and stops on a refusal", async () => {
+    // One order pays for one household, paid by its lead: the server refuses a mixed
+    // checkout (400) or a non-lead payer (403) and the page shows its message
+    // instead of redirecting.
+    it.each([
+        [400, "Everyone in one checkout must be from your household. Pay for each household separately."],
+        [403, "Only a household lead can pay for the household."],
+    ])("sends the checkout's children for the discount code and stops on a %i refusal", async (status, refusal) => {
         setSession({ id: 101 });
         setShopifyStoreDomain("shop.example.com");
         const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
@@ -606,10 +610,9 @@ describe("ProgramEnrollmentPage", () => {
             }),
             "/api/programs/10/participants": { ok: true },
         });
-        const refusal = "Everyone in one checkout must be from your household. Pay for each household separately.";
         const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
             String(input).includes("/discount-code")
-                ? ({ ok: false, status: 400, json: async () => ({ error: refusal }) } as Response)
+                ? ({ ok: false, status, json: async () => ({ error: refusal }) } as Response)
                 : routes(input, init),
         );
         global.fetch = fetchMock as unknown as typeof fetch;
