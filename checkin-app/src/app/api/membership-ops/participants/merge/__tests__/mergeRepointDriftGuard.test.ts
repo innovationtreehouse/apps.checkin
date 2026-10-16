@@ -102,7 +102,7 @@ const DISPOSITIONS: Record<string, string> = {
     'TrustedAdult.disclosedById': 'repointed (RESTRICT) — step 5 updateMany.',
     'TrustedAdult.trustedAdultPersonId': 'repointed (SET NULL) — step 5 updateMany.',
     'TrustedAdultReview.decidedById': 'repointed (SET NULL) — which board member decided the review, same audit-fact rationale.',
-    'Visit.personId': 'repointed (RESTRICT) — step 3 updateMany. Both-sides-open is pre-refused; the in-tx guard that leaves a tombstone open visit in place is defense-in-depth for a TOCTOU race, and the nightly/scan-service force-checkout sweeps drain it.',
+    'Visit.personId': 'repointed (RESTRICT) — step 3 updateMany. Both-sides-open is pre-refused; the in-tx guard that leaves a tombstone open visit in place is defense-in-depth for a TOCTOU race, and the nightly/lib/attendance force-checkout sweeps drain it.',
 
     // ── deduped: bare joins, where a duplicate carries no extra decision ──────
     'CorporationLead.personId': 'deduped (RESTRICT) — bare join, the duplicate is deleted.',

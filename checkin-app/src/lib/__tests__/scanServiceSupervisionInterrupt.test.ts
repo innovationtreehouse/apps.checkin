@@ -12,7 +12,7 @@
 import type { Person } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
-import { processCheckin, processCheckout, type ScanOutcome } from "@/lib/scan-service";
+import { processCheckin, processCheckout, type ScanOutcome } from "@/lib/attendance/scan";
 import { toResponse } from "@/app/api/scan/scanResponse";
 
 /** A scan service's outcome as the kiosk receives it. */

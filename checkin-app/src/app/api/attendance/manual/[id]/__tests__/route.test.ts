@@ -22,7 +22,7 @@ import prisma from "@/lib/prisma";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { visitSubject } from "@/lib/visit/scope";
-import { correctCloseTime } from "@/lib/scan-service";
+import { correctCloseTime } from "@/lib/attendance/close";
 import { PATCH, DELETE } from "@/app/api/attendance/manual/[id]/route";
 
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
@@ -36,8 +36,8 @@ jest.mock("@/lib/emailRecipients", () => ({ emailBoardMembers: jest.fn().mockRes
 // Scope resolution is exercised in lib/visit/__tests__/scope.test.ts; here the
 // default stands in for "self only", and the household-lead cases override it.
 jest.mock("@/lib/visit/scope", () => ({ visitSubject: jest.fn() }));
-jest.mock("@/lib/scan-service", () => ({
-    ...jest.requireActual("@/lib/scan-service"),
+jest.mock("@/lib/attendance/close", () => ({
+    ...jest.requireActual("@/lib/attendance/close"),
     correctCloseTime: jest.fn().mockResolvedValue(undefined),
 }));
 

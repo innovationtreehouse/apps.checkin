@@ -13,7 +13,7 @@
  */
 import prisma from '@/lib/prisma';
 import { getFullAttendance } from '@/lib/getFullAttendance';
-import { processCheckin, processCheckout, type ScanOutcome } from '@/lib/scan-service';
+import { processCheckin, processCheckout, type ScanOutcome } from '@/lib/attendance/scan';
 import { toResponse } from '@/app/api/scan/scanResponse';
 import { supervisingAdultCount, supervisingAdultVisits } from '@/lib/supervision';
 import type { Person } from '@/generated/prisma/client';

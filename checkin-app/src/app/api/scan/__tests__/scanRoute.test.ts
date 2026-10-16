@@ -5,7 +5,10 @@ import { POST } from '../route';
 import { authenticateRequest } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { logger } from '@/lib/logger';
-import { processCheckin, processCheckout, processCloseRequest, executePendingCloses, notifyScanOutcome, lastKeyholderGuard, finishCloseGuard, recordWebClose } from '@/lib/scan-service';
+import { processCheckin, processCheckout } from '@/lib/attendance/scan';
+import { processCloseRequest, executePendingCloses } from '@/lib/attendance/close';
+import { lastKeyholderGuard, finishCloseGuard, recordWebClose } from '@/lib/attendance/keyholderGuard';
+import { notifyScanOutcome } from '@/lib/attendance/scanNotify';
 import { config } from '@/lib/config';
 import { KIOSK_DEBOUNCE_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 
@@ -53,18 +56,24 @@ jest.mock('@/lib/logger', () => ({
     logBackendError: jest.fn(),
 }));
 
-jest.mock('@/lib/scan-service', () => ({
+jest.mock('@/lib/attendance/scan', () => ({
     processCheckin: jest.fn(),
     processCheckout: jest.fn(),
+    SUPERVISION_CONFIRM_MS: 15_000,
+    SUPERVISION_CONFIRM_DEADFRONT_MS: 1_000,
+}));
+jest.mock('@/lib/attendance/close', () => ({
     processCloseRequest: jest.fn(),
     executePendingCloses: jest.fn().mockResolvedValue(undefined),
+}));
+jest.mock('@/lib/attendance/keyholderGuard', () => ({
     closeActor: jest.fn((user: { id: string }) => ({ id: Number(user.id), isKeyholder: false, isBoardMember: false, isSysadmin: false })),
     lastKeyholderGuard: jest.fn().mockResolvedValue({ action: 'proceed', facilityClosed: false, choice: null }),
     finishCloseGuard: jest.fn().mockResolvedValue(undefined),
     recordWebClose: jest.fn().mockResolvedValue(true),
+}));
+jest.mock('@/lib/attendance/scanNotify', () => ({
     notifyScanOutcome: jest.fn().mockResolvedValue(undefined),
-    SUPERVISION_CONFIRM_MS: 15_000,
-    SUPERVISION_CONFIRM_DEADFRONT_MS: 1_000,
 }));
 
 // What the mocked scan services report.
