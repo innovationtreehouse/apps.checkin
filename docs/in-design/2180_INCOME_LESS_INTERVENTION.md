@@ -87,6 +87,8 @@ finance chose that, so there is nothing to move afterwards.
 ### 2. A Class that goes away raises an alarm and holds what depends on it
 
 - Assigning an item to a Class that is not active in QuickBooks is refused.
+  So is any assignment while QuickBooks cannot be reached to check the Class;
+  finance tries again later.
 - Each run checks every assigned Class against QuickBooks. When a Class has been
   archived (made inactive) or removed, the app raises an alarm for finance, the
   same way it reports a cap being hit, and the items list marks every item
@@ -163,9 +165,9 @@ old code. That window is minutes, and any such deposit is finance's to correct.
   up (owner, 2026-10-16).
 - **Q6.** Resolved: anything already in QuickBooks is out of scope (owner,
   2026-10-16).
-- **Q7.** Should the app accept an assignment while it cannot reach QuickBooks
-  to check the Class, or refuse? Proposed: refuse; the payout check catches a
-  bad Class anyway.
+- **Q7.** Resolved: an assignment is refused while QuickBooks cannot be reached
+  to check the Class; queuing it for later checking is more code than it saves
+  (owner, 2026-10-16).
 
 ## Alternatives considered
 
