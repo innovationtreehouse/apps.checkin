@@ -9,6 +9,7 @@ import PaymentPlanPage from "../payment-plan/page";
 import MembershipPaymentPlanPage from "../membership-payment-plan/page";
 import ShopifyHoldsPage from "../shopify-holds/page";
 import PaymentsPage from "../payments/page";
+import UnconfirmedShopifyStockPage from "../shopify-stock/page";
 
 beforeEach(() => resetRtl());
 
@@ -19,6 +20,7 @@ describe.each([
   ["/finance-ops/membership-payment-plan", MembershipPaymentPlanPage],
   ["/finance-ops/shopify-holds", ShopifyHoldsPage],
   ["/finance-ops/payments", PaymentsPage],
+  ["/finance-ops/shopify-stock", UnconfirmedShopifyStockPage],
 ])("%s", (href, Page) => {
   it("is a Revenue Ops legacy tab", () => {
     expect(FINANCE_NAV_LINKS.map((l) => l.href)).toContain(href);
