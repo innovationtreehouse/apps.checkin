@@ -73,7 +73,11 @@ describe("expense signer directory excludes people in a DENIED household", () =>
 });
 
 describe("the live person an id resolves to", () => {
-  const people: Record<number, { mergedIntoId: number | null }> = { 1: { mergedIntoId: 2 }, 2: { mergedIntoId: null }, 5: { mergedIntoId: 5 } };
+  const people: Record<number, { id: number; mergedIntoId: number | null }> = {
+    1: { id: 1, mergedIntoId: 2 },
+    2: { id: 2, mergedIntoId: null },
+    5: { id: 5, mergedIntoId: 5 },
+  };
   const archive: Record<number, { toId: number }> = { 3: { toId: 1 } };
   beforeEach(() => {
     personFindUnique.mockImplementation(async ({ where }: { where: { id: number } }) => people[where.id] ?? null);

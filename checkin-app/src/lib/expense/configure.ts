@@ -13,8 +13,6 @@ import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg, sessionUser } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
 
-const MAX_MERGE_HOPS = 5;
-
 async function db() {
   return (await import("@/lib/prisma")).default;
 }
@@ -104,17 +102,9 @@ const signoff: SignoffDirectory = {
   },
 
   async livePersonFor(personId) {
-    const prisma = await db();
-    let id = personId;
-    // A real merge is one hop; the cap stops a corrupt or cyclic chain.
-    for (let hop = 0; hop <= MAX_MERGE_HOPS; hop++) {
-      const person = await prisma.person.findUnique({ where: { id }, select: { mergedIntoId: true } });
-      if (person?.mergedIntoId === null) return id;
-      const next = person ? person.mergedIntoId : (await prisma.personMerge.findUnique({ where: { fromId: id }, select: { toId: true } }))?.toId;
-      if (next == null) return null;
-      id = next;
-    }
-    return null;
+    const { resolveMergedPerson } = await import("@/lib/person/mergeChain");
+    const resolved = await resolveMergedPerson(personId);
+    return resolved.kind === "live" ? resolved.person.id : null;
   },
 
   async isOrgMember(personId) {

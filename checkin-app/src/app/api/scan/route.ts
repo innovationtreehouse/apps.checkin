@@ -10,6 +10,7 @@ import { CLOSE_REQUEST_PROTOCOL_VERSION, KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_P
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { lockFacility } from "@/lib/facilityLock";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
+import { resolveMergedPerson } from "@/lib/person/mergeChain";
 import type { Prisma } from "@/generated/prisma/client";
 
 const isCheckout = async (res: Response) =>
@@ -22,12 +23,6 @@ async function noteCloseRefused(res: Response): Promise<Response> {
     if (!body) return res;
     return apiJson({ ...body, facilityClosed: false, closeRefused: true, message: "Only a keyholder can close the building." }, res.status);
 }
-
-// A merged-away badge should still get its owner through the door — an admin
-// tidying up dupes must not be the reason a member gets rejected at the
-// scanner. Chains this long are pathological (real merges are 1 hop); cap so
-// a corrupt/cyclic chain can't loop the lookup forever, and reissue instead.
-const MAX_MERGE_HOPS = 5;
 
 // docs/rules/attendance-checkin.md (kiosk resilience): a replayed scan older
 // than this still applies, and is also flagged for human review — state may
@@ -245,57 +240,17 @@ export const POST = withKiosk(
             return apiError("Forbidden: You are not authorized to scan this user.", 403);
         }
 
-        // 3. Lookup participant
-        const badgeRecord = await prisma.person.findUnique({
-            where: { id: participantId },
-        });
-
-        // A badge still encoding a merged-away id must not reject its owner at the
-        // door. Two ways such an id presents, since 2b archives before it deletes:
-        //   row is GONE      -> PersonMerge.fromId -> toId   (2b-3 onward)
-        //   tombstone exists -> mergedIntoId                 (today, and legacy)
-        // One loop, not two: an archive row's survivor may itself be a tombstone.
-        //
-        // Order is the trap. The archive lookup must run BEFORE the not-found 404 —
-        // once tombstones are deleted the findUnique above simply misses and the
-        // badge is rejected at the door, the exact failure this exists to prevent.
-        // Dormant till then; pinned by an integration test that deletes a row by hand.
-        //
-        // The archive arm cannot exceed one hop (toId is a RESTRICT FK the merge
-        // repoints), but shares MAX_MERGE_HOPS anyway: being wrong costs a member
-        // refused at the door, and a bad 2a backfill is all it would take.
-        let participant = badgeRecord;
-        let lookupId = participantId;
-        let mergeHops = 0;
-        while (participant == null || participant.mergedIntoId != null) {
-            const tombstonePointer = participant === null ? null : participant.mergedIntoId;
-            if (tombstonePointer === null) {
-                const archived = await prisma.personMerge.findUnique({
-                    where: { fromId: lookupId },
-                    select: { toId: true },
-                });
-                if (!archived) {
-                    // Before any hop the scanned id is simply unknown. After one, we got
-                    // here by following a merge pointer into a gap — a different fault,
-                    // and one the operator can act on by reissuing the badge.
-                    if (isDead || isReplay) return await parkUnresolvable();
-                    return mergeHops > 0
-                        ? apiError(`This badge belongs to a merged record; reissue it for participant ${lookupId}.`, 409)
-                        : apiError(`Participant ${participantId} not found.`, 404);
-                }
-                lookupId = archived.toId;
-            } else {
-                lookupId = tombstonePointer;
-            }
-            // Counted once the next id is known, so the cap message can name the
-            // record to reissue for — and so that id is never fetched.
-            mergeHops++;
-            if (mergeHops > MAX_MERGE_HOPS) {
-                if (isDead || isReplay) return await parkUnresolvable();
-                return apiError(`This badge belongs to a merged record; reissue it for participant ${lookupId}.`, 409);
-            }
-            participant = await prisma.person.findUnique({ where: { id: lookupId } });
+        // 3. Lookup participant. A badge still encoding a merged-away id must not
+        // reject its owner at the door: it resolves to the surviving record, and a
+        // broken chain asks the operator to reissue the badge.
+        const resolved = await resolveMergedPerson(participantId);
+        if (resolved.kind !== "live") {
+            if (isDead || isReplay) return await parkUnresolvable();
+            return resolved.kind === "broken"
+                ? apiError(`This badge belongs to a merged record; reissue it for participant ${resolved.lastId}.`, 409)
+                : apiError(`Participant ${participantId} not found.`, 404);
         }
+        const { person: participant, first: badgeRecord, hops: mergeHops } = resolved;
         if (mergeHops > 0) {
             logger.info("Scan forwarded from merged record", {
                 badgeId: participantId,
