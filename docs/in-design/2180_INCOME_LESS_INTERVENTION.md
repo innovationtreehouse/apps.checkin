@@ -144,9 +144,8 @@ old code. That window is minutes, and any such deposit is finance's to correct.
 
 - **Q1.** Withdrawn: the owner ruled out a takeover date; where booking starts
   is designed separately.
-- **Q2.** Holding a payout for an undecided item makes the books later instead
-  of wrong. Is that the trade you want, or should an undecided item still book
-  without a Class and finance correct it later?
+- **Q2.** Resolved: hold the payout. Late books are accepted to cut finance's
+  work, as receipts already do (owner, 2026-10-16).
 - **Q3.** Should a held payout ever book itself without a Class after some time
   (say 30 days), or wait for finance indefinitely? Proposed: wait.
 - **Q4.** Resolved: items store the QuickBooks Class id directly (owner,
