@@ -8,6 +8,7 @@ import { getExpenseRuntime } from "../runtime";
 import { MATCH_WINDOW_DAYS, claimQbTxn, claimedQbTxnIds } from "../services/qbMatchService";
 import { QbExpenseEventSchema, type QbExpenseEvent } from "../workflows/expense-event-schema";
 import { writeAudit } from "./audit";
+import { matchBaseline } from "./expense-qb-drift";
 import { logError, logWarn } from "./logger";
 import { reimburseeUnknown } from "./signoff";
 import { unsignedLines } from "./signoff-facts";
@@ -205,7 +206,7 @@ async function buildWrite(client: Db, orgId: string, payloadJson: string, postin
   };
 }
 
-type SettleData = { qbMatchState: string; qbTxnId?: string; qbTxnEntity?: string; qbVendorId?: string };
+type SettleData = { qbMatchState: string; qbTxnId?: string; qbTxnEntity?: string; qbVendorId?: string; qbMatchBaseline?: string | null };
 
 async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: SettleData, notes?: string): Promise<PostOutcome> {
   await tx.expense.update({ where: { id: before.id }, data: { ...data, qbClaimedAt: null } });
@@ -340,6 +341,8 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
     excludedIds,
   });
 
+  const qbMatchBaseline = result.kind === "found" && result.via === "amount" ? await matchBaseline(write.entity, result.id, date) : null;
+
   return withClaim(orgId, expenseId, claim, async (tx) => {
     switch (result.kind) {
       case "created":
@@ -352,7 +355,7 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
           return settle(tx, before, "queued", { qbMatchState: "AMBIGUOUS" }, note);
         }
         if (byAmount) {
-          return settle(tx, before, "matched", { qbMatchState: "MATCHED", qbTxnId: result.id, qbTxnEntity: write.entity });
+          return settle(tx, before, "matched", { qbMatchState: "MATCHED", qbTxnId: result.id, qbTxnEntity: write.entity, qbMatchBaseline });
         }
         for (const [id, accountId] of lineAccounts) {
           await tx.expenseLineItem.update({ where: { id }, data: { qbAccountId: accountId } });
