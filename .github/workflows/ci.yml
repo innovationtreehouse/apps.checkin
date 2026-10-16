@@ -263,23 +263,16 @@ jobs:
         if: needs.changes.outputs.app == 'true'
         run: npm -w checkin-app exec -- tsc --noEmit
 
-      # JUDGMENT CALL: relocated here from the old job's DB-preflight block
-      # (it used to run right after "Push Prisma Schema"). Read
-      # scripts/security-generator.js: the custom Prisma generator this step
-      # re-runs (`prisma generate` also runs the `generator security` block)
-      # operates purely on the parsed schema.prisma DMMF — `/// @sensitivity:`
-      # field comments — with zero DB I/O; the DATABASE_URL below is the same
-      # inert placeholder as "Generate Prisma Client" above. Unlike "Push
-      # Prisma Schema" (genuinely needs a live DB — stays in integration-tests
-      # below), this step's output is bit-identical with or without a real
-      # Postgres behind that URL, so it moved to the cheaper, DB-less job.
+      # Every classification map in generated/ must match its schema: checkin's
+      # (emitted by "Generate Prisma Client" above), each library's, and the
+      # Shopify mirror's. The security generator reads only `/// @sensitivity:`
+      # comments, so no database is needed.
       - name: Verify security classifications are up to date
         if: needs.changes.outputs.app == 'true'
-        env:
-          DATABASE_URL: "postgresql://testuser:testpassword@localhost:5432/checkmein_test"
         run: |
-          npm -w checkin-app exec -- prisma generate
-          git diff --exit-code checkin-app/src/security/generated/ || (echo 'checkin-app/src/security/generated/ is stale; run prisma generate locally and commit' && exit 1)
+          scripts/each-library.sh run db:generate
+          npm -w @inventory/s-ingest-core run db:generate:security
+          git diff --exit-code checkin-app/src/security/generated/ || (echo '::error::checkin-app/src/security/generated/ is stale; run prisma generate in checkin-app, scripts/each-library.sh run db:generate, and npm -w @inventory/s-ingest-core run db:generate:security, then commit' && exit 1)
 
       - name: Check route coverage (security policy lint)
         if: needs.changes.outputs.app == 'true'
