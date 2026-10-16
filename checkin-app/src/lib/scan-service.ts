@@ -122,6 +122,7 @@ export async function processCheckin(
             personId: participant.id,
             arrivedAt: arrivalTime,
             arrivedVia: "SCANNER",
+            arrivedLive: !visitTime,
             associatedEventId: eventId
         },
     });
@@ -174,6 +175,7 @@ async function fenceReplayedArrival(tx: TxClient, personId: number, arrivedAt: D
             personId,
             arrivedAt,
             arrivedVia: "SCANNER",
+            arrivedLive: false,
             departedAt: new Date(Math.min(
                 Math.max(fence.closedAt.getTime(), arrivedAt.getTime()),
                 arrivedAt.getTime() + MAX_VISIT_MS,
@@ -586,12 +588,14 @@ const closeMoment = (id: number, closedAt: Date) => Prisma.sql`t AS (
  *  exactly the arrival's time instead. */
 export const LIVE_ARRIVAL_WINDOW_MS = 15_000;
 
-/** A live badge at the kiosk began visit `v`: its badge log row was written in
- *  the scan, just before the server stamped the arrival. */
-const liveBadgeArrival = Prisma.sql`EXISTS (
+/** A live badge at the kiosk began visit `v`, as recorded in arrivedLive.
+ *  A SCANNER row older than that column falls back to its badge log row:
+ *  written in the scan, just before the server stamped the arrival.
+ *  ponytail: the fallback can go once no open visit predates arrivedLive. */
+const liveBadgeArrival = Prisma.sql`(v."arrivedVia" IS NOT DISTINCT FROM 'SCANNER'::"VisitSource" AND COALESCE(v."arrivedLive", EXISTS (
     SELECT 1 FROM "RawBadgeLog" r
     WHERE r."personId" = v."personId" AND r."timestamp" < v."arrivedAt"
-      AND r."timestamp" >= v."arrivedAt" - ${LIVE_ARRIVAL_WINDOW_MS}::double precision * interval '1 millisecond')`;
+      AND r."timestamp" >= v."arrivedAt" - ${LIVE_ARRIVAL_WINDOW_MS}::double precision * interval '1 millisecond')))`;
 
 /** The visits `v` a close at `t` departs: open, or machine-departed after it,
  *  and begun by then. Tombstoned visits are excluded: closing one would rewrite

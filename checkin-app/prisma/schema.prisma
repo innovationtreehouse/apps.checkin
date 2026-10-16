@@ -1345,6 +1345,11 @@ model Visit {
   arrivedVia        VisitSource?
   /// @sensitivity:public
   departedVia       VisitSource?
+  /// For a SCANNER arrival: true = live badge scan at the door (the server
+  /// stamped arrivedAt), false = replayed/queued scan (arrivedAt is the scan
+  /// time). Null = not a scan, or a row older than the column.
+  /// @sensitivity:public
+  arrivedLive       Boolean?
   /// @sensitivity:public
   associatedEventId Int?
 
