@@ -2,6 +2,7 @@ import inspect
 import io
 import json
 import os
+import re
 import subprocess
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -64,6 +65,13 @@ class TestLocalClockReadout(unittest.TestCase):
         self.assertIn('id="local-clock"', wrapper)
         self.assertIn('addEventListener("clock"', wrapper)
         self.assertIn("event: clock", inspect.getsource(KioskHandler._serve_sse))
+
+    def test_wrapper_posts_the_roster_only_to_its_own_origin(self):
+        wrapper = inspect.getsource(KioskHandler._serve_wrapper)
+        posts = re.findall(r"postMessage\(.*\);", wrapper)
+        self.assertEqual(len(posts), 2)
+        for post in posts:
+            self.assertTrue(post.endswith(", window.location.origin);"), post)
 
 
 class TestScanBannerName(unittest.TestCase):

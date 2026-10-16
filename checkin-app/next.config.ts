@@ -20,6 +20,11 @@ const nextConfig: NextConfig = {
     // size and stops reading there. It must fit the largest upload.
     proxyClientMaxBodySize: MAX_UPLOAD_BODY_BYTES,
   },
+  // Only this origin may frame a page: the kiosk wrapper frames the board from the
+  // same Pi proxy origin. API responses are left alone so a route's own CSP stands.
+  async headers() {
+    return [{ source: '/((?!api/).*)', headers: [{ key: 'Content-Security-Policy', value: "frame-ancestors 'self'" }] }];
+  },
 };
 
 export default nextConfig;

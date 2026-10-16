@@ -878,9 +878,9 @@ class KioskHandler(BaseHTTPRequestHandler):
       const iframe = document.querySelector("iframe");
       if (iframe && iframe.contentWindow) {{
         if (data.attendance) {{
-          iframe.contentWindow.postMessage({{type: "refresh-attendance", attendance: data.attendance, counts: data.counts, safety: data.safety}}, "*");
+          iframe.contentWindow.postMessage({{type: "refresh-attendance", attendance: data.attendance, counts: data.counts, safety: data.safety}}, window.location.origin);
         }} else {{
-          iframe.contentWindow.postMessage("refresh-attendance", "*");
+          iframe.contentWindow.postMessage("refresh-attendance", window.location.origin);
         }}
       }}
     }});
