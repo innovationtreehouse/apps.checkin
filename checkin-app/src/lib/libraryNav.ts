@@ -136,7 +136,7 @@ export const MY_PROGRAMS_LIBRARY_TABS: LibraryTab[] = [
   },
 ];
 
-// Expense Ops admits FINANCE or BOARD; sysadmin has no access (finance-payments.md).
+// Expense Ops admits FINANCE or BOARD; sysadmin has no access (revenue.md).
 export const EXPENSE_OPS_SECTION_ROLES: NavRole[] = ["isFinance", "isBoardMember"];
 
 export function expenseOpsTabs(user: SessionUser | undefined, counts: TodoCounts | null): NavTab[] {

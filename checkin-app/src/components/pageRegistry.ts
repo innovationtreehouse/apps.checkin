@@ -57,7 +57,7 @@ const MOPS = (href: string): Visible => (u) => membershipOpsRouteVisible(href, u
 // Global catalog (#1286 §7): the server 'catalog-viewer' predicate.
 const CATALOG_VIEWER: Visible = (u, signedIn) => signedIn && canSeeCatalog(u);
 
-// Expense Ops: FINANCE or BOARD, no sysadmin (docs/rules/finance-payments.md).
+// Expense Ops: FINANCE or BOARD, no sysadmin (docs/rules/revenue.md).
 const FINANCE_OR_BOARD: Visible = (u) => !!u?.isFinance || !!u?.isBoardMember;
 
 // Receipts: an adult member or a Treehouse Volunteer submits (canSubmitReceipts);

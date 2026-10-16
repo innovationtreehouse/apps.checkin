@@ -7,7 +7,7 @@
  *    drops `where: { x: undefined }`, so admitting it would widen per-caller
  *    filters to every row (INVENTORY_PARALLEL_PORT_PLAN boundary rule 6).
  * 2. No finance route lists `isSysadmin` in its orderedView: Finance Ops
- *    excludes sysadmins (docs/rules/finance-payments.md).
+ *    excludes sysadmins (docs/rules/revenue.md).
  */
 import { allRoutes, type Authorize, type RegisteredRoute } from '@/security/core';
 import { resolveAccess, type ResolverContext } from '@/security/access-resolvers';
