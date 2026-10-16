@@ -38,6 +38,9 @@ describe("dev seed-helpers (integration)", () => {
         // that reasons about global role counts fail on ambient fixtures, so truncate
         // back to empty rather than just disconnecting.
         await truncateAll();
+        // The truncate also wipes the Org row the org_registry migration inserts, which
+        // later suites in this worker resolve through getOrg(); restore that baseline.
+        await prisma.org.create({ data: { id: "treehouse", name: "Treehouse" } });
         await prisma.$disconnect();
     });
 
