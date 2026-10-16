@@ -25,6 +25,15 @@ top.
 
 ---
 
+## Assumptions
+
+Things every domain takes as true because they are handled outside the app.
+
+- Every Board member is an insider. If an outside Board member ever joins, every
+  rule that grants the Board access is reconsidered.
+
+---
+
 ## Self-scope and repair
 
 - **A person acts on their own records, and nobody else's.** Ownership is the

@@ -16,8 +16,7 @@ Income and donation rules are in `revenue.md`.
 ### Who may see and do what
 
 - Being on the Board is enough to view receipt and expense data, and to edit it
-  where the app allows an edit. Every Board member is an insider today; an
-  outside Board member joining would reopen this whole access model.
+  where the app allows an edit.
   [Decision — owner]
 
 - An adult member or a staff/role holder may submit a receipt and view, edit,
