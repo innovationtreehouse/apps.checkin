@@ -361,6 +361,47 @@ jobs:
           environment: prod
           network-config: ${{ vars.S_READ_NETWORK_CONFIG }}
 
+      # The QuickBooks token refresher Lambda (infra creates it from a stub and
+      # ignores code changes; this step owns its code). Runs on the deploy-role
+      # credentials assumed above. Skips while the function does not exist yet.
+      - name: Setup Node.js (qbo-refresher)
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Deploy qbo-refresher (prod)
+        env:
+          FUNCTION_NAME: qbo-refresher-prod
+        run: |
+          set -euo pipefail
+          if ! OUT=$(aws lambda get-function --function-name "$FUNCTION_NAME" 2>&1 >/dev/null); then
+            # Before infra provisions the function, the deploy role also lacks
+            # lambda:GetFunction on it, so AWS answers AccessDenied rather than
+            # ResourceNotFound.
+            if printf '%s' "$OUT" | grep -q ResourceNotFoundException; then
+              echo "::notice::Lambda $FUNCTION_NAME does not exist yet; skipping its code deploy."
+              exit 0
+            fi
+            if printf '%s' "$OUT" | grep -q AccessDeniedException; then
+              echo "::warning::No access to Lambda $FUNCTION_NAME (not provisioned yet, or the deploy role lacks its grant); skipping its code deploy."
+              exit 0
+            fi
+            echo "$OUT" >&2
+            exit 1
+          fi
+
+          npm ci
+          npm run build -w qbo-refresher-function
+          ZIP="$RUNNER_TEMP/qbo-refresher.zip"
+          zip -j "$ZIP" qbo-refresher-function/dist/handler.js
+
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --zip-file "fileb://$ZIP" >/dev/null
+          aws lambda wait function-updated --function-name "$FUNCTION_NAME"
+          echo "Deployed $FUNCTION_NAME."
+
       - name: Report result
         if: always()
         env:
