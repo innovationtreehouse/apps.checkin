@@ -516,11 +516,12 @@ describeDb("QuickBooks match", () => {
     expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
-  it("matches the total the poster would book: every line with its tax, shipping and discount", async () => {
-    const id = await qbExpense({ purchases: [{ id: "42", totalCents: 100 }, { id: "43", totalCents: 160 }] }, { signed: false });
-    const second = await seedLineItem(id, { totalPriceCents: 50 });
-    await db.expenseLineItem.update({ where: { id: second }, data: { allocatedTaxCents: 15, allocatedShippingCents: 0, allocatedDiscountCents: 5 } });
+  it("matches an unprocessed expense on its tax, shipping and discount, with no line allocations yet", async () => {
+    const id = await qbExpense({ purchases: [{ id: "42", totalCents: 150 }, { id: "43", totalCents: 160 }] }, { signed: false });
+    await db.expense.update({ where: { id }, data: { state: "qb_on_hold", taxCents: 15, discountCents: 5 } });
+    await seedLineItem(id, { totalPriceCents: 50 });
     await signAllLines(id);
+    expect(await db.expenseLineItem.count({ where: { expenseId: id, allocatedTaxCents: { not: null } } })).toBe(0);
     expect((await qbCandidates(FINANCE, id)).map((t) => t.id)).toEqual(["43"]);
     await matchExpenseToQb(FINANCE, id, "43");
     expect(await linked(id)).toEqual({ qbTxnId: "43", qbTxnEntity: "Purchase" });

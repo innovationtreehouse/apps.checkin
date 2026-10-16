@@ -92,12 +92,13 @@ async function loadExpense(expenseId: string) {
 /** Expense states that may still be linked to an existing QuickBooks entry. */
 const MATCHABLE_STATES = ["UNMATCHED", "AMBIGUOUS", "BEFORE_LINE", "POST_FAILED", "NEEDS_FINANCE"];
 
-/** The total the poster would book for the expense: each line with its allocated tax, shipping and discount. */
-function postedTotalCents(lines: Awaited<ReturnType<typeof loadExpense>>["lineItems"]): number {
-  return lines.reduce(
-    (sum, l) => sum + l.totalPriceCents + (l.allocatedTaxCents ?? 0) + (l.allocatedShippingCents ?? 0) - (l.allocatedDiscountCents ?? 0),
-    0,
-  );
+/**
+ * The total the poster would book: every line plus the expense's tax and shipping, less its discount.
+ * Read from the expense, since line allocations are set only once the expense is processed.
+ */
+function postedTotalCents(expense: Awaited<ReturnType<typeof loadExpense>>): number {
+  const lines = expense.lineItems.reduce((sum, l) => sum + l.totalPriceCents, 0);
+  return lines + expense.taxCents + expense.shippingCents - expense.discountCents;
 }
 
 async function candidatesFor(expense: Awaited<ReturnType<typeof loadExpense>>): Promise<{ entity: QbMatchEntity; txns: QbTxn[] }> {
@@ -113,7 +114,7 @@ async function candidatesFor(expense: Awaited<ReturnType<typeof loadExpense>>): 
   if (expectedRef === null) return { entity, txns: [] };
   const txns = entity === "Bill" ? await reader.billsBetween(from, to) : await reader.purchasesBetween(from, to);
   const skip = new Set((await qbMatchInputs(entity)).skipIds);
-  const totalCents = postedTotalCents(expense.lineItems);
+  const totalCents = postedTotalCents(expense);
   const matches = (t: QbTxn) =>
     t.totalCents === totalCents &&
     t.txnDate >= from &&
