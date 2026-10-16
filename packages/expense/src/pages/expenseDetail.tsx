@@ -4,7 +4,7 @@ import {
   Anchor, Badge, Button, Checkbox, Group, Modal, NumberInput, Paper, Select, Stack, Switch, Table, Text, TextInput, Textarea, Title,
 } from "@mantine/core";
 import { formatCents } from "@inventory/money";
-import { STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
+import { QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { CLOSED_STATES, reimburseeUnknown } from "../lib/signoff";
 import { send, useBuckets, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
@@ -96,6 +96,45 @@ function actionsFor(a: Approval, state: string, isFinance: boolean): Action[] {
   return [];
 }
 
+interface VendorLink {
+  ExpenseReimburseeVendor: { qbVendorId: string } | null;
+  ExpenseReimburseeView: { personId: number; name: string | null } | null;
+}
+interface VendorOption {
+  id: string;
+  displayName: string;
+}
+
+/** Finance searches QuickBooks Vendors by name and links one, or creates one from the search text. */
+function VendorPicker({ base, initial, onLinked }: { base: string; initial: string; onLinked: () => void }) {
+  const [text, setText] = useState(initial);
+  const [query, setQuery] = useState(initial.trim().length >= 2 ? initial.trim() : "");
+  const options = useLoad<VendorOption[]>(query ? `${base}/reimbursee-vendor/options?q=${encodeURIComponent(query)}` : null);
+  const link = async (body: unknown) => { if (await send(`${base}/reimbursee-vendor`, "PUT", body, "Vendor linked")) onLinked(); };
+
+  if (options.error === QB_OFF) return <Text size="sm" c="dimmed">{options.error}</Text>;
+  return (
+    <Stack gap="xs">
+      <Group>
+        <TextInput placeholder="Search QuickBooks Vendors" value={text} onChange={(ev) => setText(ev.currentTarget.value)}
+          onKeyDown={(ev) => { if (ev.key === "Enter") setQuery(text.trim()); }} />
+        <Button variant="light" disabled={text.trim().length < 2} onClick={() => setQuery(text.trim())}>Search</Button>
+      </Group>
+      {options.error && <Text size="sm" c="red">{options.error}</Text>}
+      {(options.data ?? []).map((v) => (
+        <Group key={v.id}>
+          <Text size="sm">{v.displayName}</Text>
+          <Button size="xs" onClick={() => link({ qbVendorId: v.id })}>Link</Button>
+        </Group>
+      ))}
+      {options.data && options.data.length === 0 && <Text size="sm" c="dimmed">No unlinked Vendor matches “{query}”.</Text>}
+      {query && (
+        <Button size="xs" variant="subtle" w="fit-content" onClick={() => link({ createName: query })}>Create “{query}” in QuickBooks</Button>
+      )}
+    </Stack>
+  );
+}
+
 /**
  * /expense/expenses/[id] — lines, bucket approvals, sign-off seats, and FINANCE's actions.
  * `testDataToggle` is the host's word that this is dev or local; the route 404s anywhere else.
@@ -106,7 +145,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const expense = useLoad<Expense>(base);
   const approvals = useLoad<Approval[] | { LineItemOwnerApproval: Approval[]; ExpenseBucketView: Bucket[] }>(`${base}/line-item-approvals`);
   const signoffs = useLoad<SignoffStatus[]>(`${base}/signoffs`);
-  const vendor = useLoad<{ qbVendorId: string } | null>(isFinance ? `${base}/reimbursee-vendor` : null);
+  const vendor = useLoad<VendorLink>(isFinance ? `${base}/reimbursee-vendor` : null);
   const bucketOptions = useBuckets(isFinance || isBoard);
   const [dialog, setDialog] = useState<{ action: Action; approval: Approval } | null>(null);
   const [text, setText] = useState("");
@@ -114,8 +153,6 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const [permanent, setPermanent] = useState(false);
   const [reimbursee, setReimbursee] = useState("");
   const [authorization, setAuthorization] = useState("");
-  const [vendorId, setVendorId] = useState("");
-  const [vendorName, setVendorName] = useState("");
   const [capital, setCapital] = useState<Record<number, { isCapital: boolean; years: number | ""; owner: string }>>({});
 
   const reloadAll = () => { expense.reload(); approvals.reload(); signoffs.reload(); vendor.reload(); };
@@ -291,7 +328,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
 
       {isFinance && e.needsReimbursement && !e.backfill && (
         <Paper withBorder p="sm">
-          <Text fw={600} mb="xs">Reimbursee {e.reimburseePersonId ? `(person #${e.reimburseePersonId})` : "(unknown — held)"}</Text>
+          <Text fw={600} mb="xs">
+            Reimbursee {e.reimburseePersonId ? (vendor.data?.ExpenseReimburseeView?.name ?? `person #${e.reimburseePersonId}`) : "(unknown — held)"}
+          </Text>
           {!e.reimburseePersonId && (
             <Group>
               <TextInput placeholder="Person id" value={reimbursee} onChange={(ev) => setReimbursee(ev.currentTarget.value)} />
@@ -301,27 +340,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
               >Set reimbursee</Button>
             </Group>
           )}
-          {!!e.reimburseePersonId && (vendor.data
-            ? <Text size="sm">QuickBooks Vendor #{vendor.data.qbVendorId}</Text>
-            : (
-              <Stack gap="xs">
-                <Group>
-                  <TextInput placeholder="QuickBooks Vendor id" value={vendorId} onChange={(ev) => setVendorId(ev.currentTarget.value)} />
-                  <Button
-                    disabled={!/^\d+$/.test(vendorId)}
-                    onClick={async () => { if (await send(`${base}/reimbursee-vendor`, "PUT", { qbVendorId: vendorId }, "Vendor linked")) reloadAll(); }}
-                  >Link Vendor</Button>
-                </Group>
-                <Group>
-                  <TextInput placeholder="Vendor name" value={vendorName} onChange={(ev) => setVendorName(ev.currentTarget.value)} />
-                  <Button
-                    variant="light"
-                    disabled={!vendorName.trim()}
-                    onClick={async () => { if (await send(`${base}/reimbursee-vendor`, "PUT", { createName: vendorName.trim() }, "Vendor linked")) reloadAll(); }}
-                  >Find or create in QuickBooks</Button>
-                </Group>
-              </Stack>
-            ))}
+          {!!e.reimburseePersonId && vendor.data && (vendor.data.ExpenseReimburseeVendor
+            ? <Text size="sm">QuickBooks Vendor #{vendor.data.ExpenseReimburseeVendor.qbVendorId}</Text>
+            : <VendorPicker base={base} initial={vendor.data.ExpenseReimburseeView?.name ?? ""} onLinked={reloadAll} />)}
         </Paper>
       )}
 

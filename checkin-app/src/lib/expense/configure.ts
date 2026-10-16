@@ -3,13 +3,13 @@
  * instrumentation.ts. Binding touches no database: every port below reads lazily, inside a
  * request. Bound crossings: X3 (catalog reads), the S5 replay read (X2) and X12's QuickBooks
  * reads (bound on the receipt side). The QuickBooks reader and finance's reimbursee Vendor
- * create go through checkin's one guarded client (off = no rows, no create). The posting writer
- * stays unbound (inert); it is a later crossing.
+ * search and create go through checkin's one guarded client (off = no rows, no Vendors).
+ * The posting writer stays unbound (inert); it is a later crossing.
  */
 import { configureExpense, reimburseeVendorId } from "@inventory/expense";
-import type { ExpensePrincipal, OwnerDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@inventory/expense";
+import type { ExpensePrincipal, OwnerDirectory, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@inventory/expense";
 import { dollarsToCents } from "@inventory/money";
-import { createVendor, type QboBill, type QboPurchase } from "@inventory/quickbooks";
+import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@inventory/quickbooks";
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg, sessionUser } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
@@ -167,13 +167,31 @@ const qbReader: QbReader = {
   },
 };
 
-/** Finance's find-or-create of a reimbursee's Vendor, through the guarded client (off = null). */
+/** Finance's Vendor search, verify and create, through the guarded client (off = null). */
 const qbVendors: QbVendors = {
-  async findOrCreate(name, key) {
+  async open() {
     const qb = await quickBooks();
     if (!qb) return null;
-    const { id, displayName } = await createVendor(qb, name, key);
-    return { id, displayName };
+    const option = (v: QboVendor) => ({ id: v.Id, displayName: v.DisplayName });
+    return {
+      search: async (text) => (await qb.vendorsMatching(text)).map(option),
+      byId: async (id) => {
+        const v = await qb.vendorById(id);
+        return v ? option(v) : null;
+      },
+      findOrCreate: async (name, key) => {
+        const { id, displayName } = await createVendor(qb, name, key);
+        return { id, displayName };
+      },
+    };
+  },
+};
+
+const people: PeopleDirectory = {
+  async nameOf(personId) {
+    const { LIVE_PERSON } = await import("@/lib/person/filters");
+    const person = await (await db()).person.findFirst({ where: { id: personId, ...LIVE_PERSON }, select: { name: true } });
+    return person?.name ?? null;
   },
 };
 
@@ -185,6 +203,7 @@ export function configureRuntime(): void {
     signoff,
     catalog: catalogReader,
     catalogEvents: { eventsAfter: async (afterId) => catalogEventsSince((await getOrg()).id, afterId) },
+    people,
     quickbooks: { reader: qbReader, refs: { paymentAccountId: async () => null, vendorIdFor: reimburseeVendorId }, vendors: qbVendors },
   });
 }

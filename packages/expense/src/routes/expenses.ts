@@ -19,7 +19,7 @@ import {
   resolveUnknown,
 } from "../services/approvalService";
 import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
-import { linkReimburseeVendor, reimburseeVendorFor } from "../services/reimburseeVendorService";
+import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
 import { markNotEveryday, recordBoardAuthorization, setReimbursee, signLine, signoffStatus } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
 import {
@@ -292,7 +292,18 @@ const vendorChoiceSchema = z.union([
 
 export const reimburseeVendor: ExpenseRouteHandler = async ({ params }) => {
   const orgId = await getOrgId();
-  return { ExpenseReimburseeVendor: await mapServiceErrors(() => reimburseeVendorFor(orgId, params.id)) };
+  const { link, reimbursee } = await mapServiceErrors(() => reimburseeVendorFor(orgId, params.id));
+  return { ExpenseReimburseeVendor: link, ExpenseReimburseeView: reimbursee };
+};
+
+export const reimburseeVendorOptions: ExpenseRouteHandler = async ({ req, params }) => {
+  const principal = await getPrincipal();
+  const orgId = await getOrgId();
+  const options = await mapServiceErrors(async () => {
+    const text = z.string().trim().min(2, "Type at least two letters").max(100).parse(query(req).get("q") ?? "");
+    return vendorOptions(orgId, params.id, text, principal);
+  });
+  return { ExpenseQbVendorOption: options };
 };
 
 export const linkVendor: ExpenseRouteHandler = async ({ req, params }) => {

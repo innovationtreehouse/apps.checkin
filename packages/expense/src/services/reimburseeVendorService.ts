@@ -2,23 +2,53 @@
 // person and one person per Vendor (both unique in reimbursee_vendor); a link is never changed.
 import { db, isUniqueConstraintError } from "../db";
 import type { ExpenseReimburseeVendor } from "../generated/prisma/client";
-import type { ExpensePrincipal } from "../contract";
+import type { ExpensePrincipal, QbVendorClient, QbVendorOption } from "../contract";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { conflictedParties } from "../lib/signoff-facts";
+import { QB_OFF } from "../lib/expense-constants";
 import { ServiceError } from "./serviceError";
 
 export type VendorChoice = { qbVendorId: string } | { createName: string };
 
-export const QB_OFF = "QuickBooks is off here, so a Vendor cannot be created; link an existing Vendor id instead";
+/** The reimbursee shown on an expense: their person id and name. */
+export interface ReimburseeView {
+  personId: number;
+  name: string | null;
+}
 
-/** The reimbursee's linked Vendor on a FINANCE-visible expense; null when none is linked. */
-export async function reimburseeVendorFor(orgId: string, expenseId: string): Promise<ExpenseReimburseeVendor | null> {
+/** On a FINANCE-visible expense: the reimbursee, when known, and their linked Vendor, when any. */
+export async function reimburseeVendorFor(
+  orgId: string,
+  expenseId: string,
+): Promise<{ link: ExpenseReimburseeVendor | null; reimbursee: ReimburseeView | null }> {
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId }, select: { reimburseePersonId: true } });
   if (!expense) throw new ServiceError(404, "Expense not found");
-  if (expense.reimburseePersonId === null) return null;
-  return db.expenseReimburseeVendor.findFirst({ where: { orgId, reimburseePersonId: expense.reimburseePersonId } });
+  const personId = expense.reimburseePersonId;
+  if (personId === null) return { link: null, reimbursee: null };
+  const [link, name] = await Promise.all([
+    db.expenseReimburseeVendor.findFirst({ where: { orgId, reimburseePersonId: personId } }),
+    getExpenseRuntime().people.nameOf(personId),
+  ]);
+  return { link, reimbursee: { personId, name } };
+}
+
+async function openQuickBooks(): Promise<QbVendorClient> {
+  const qb = await getExpenseRuntime().quickbooks.vendors.open();
+  if (!qb) throw new ServiceError(503, QB_OFF);
+  return qb;
+}
+
+/** QuickBooks Vendors matching the text, minus any already linked to someone. */
+export async function vendorOptions(orgId: string, expenseId: string, text: string, principal: ExpensePrincipal): Promise<QbVendorOption[]> {
+  await assertOrg(orgId);
+  if (!principal.isFinance) throw new ServiceError(403, "Only FINANCE searches QuickBooks Vendors");
+  if (!(await db.expense.findFirst({ where: { id: expenseId, orgId }, select: { id: true } }))) throw new ServiceError(404, "Expense not found");
+  const found = await (await openQuickBooks()).search(text);
+  const taken = await db.expenseReimburseeVendor.findMany({ where: { orgId, qbVendorId: { in: found.map((v) => v.id) } }, select: { qbVendorId: true } });
+  const takenIds = new Set(taken.map((t) => t.qbVendorId));
+  return found.filter((v) => !takenIds.has(v.id));
 }
 
 /** The QuickBooks Vendor id linked to a reimbursee; null when none is linked. Bound by the host as QbRefs.vendorIdFor. */
@@ -33,8 +63,8 @@ async function sameHousehold(personId: number, actorId: number): Promise<boolean
 }
 
 /**
- * Links the expense's reimbursee to a Vendor: a typed existing id, or one found or created in
- * QuickBooks by name. The setter may not be the submitter, the reimbursee, or in either one's
+ * Links the expense's reimbursee to a QuickBooks Vendor: one picked by id, which QuickBooks must
+ * know, or one found or created by name. The setter may not be the submitter, the reimbursee, or in either one's
  * household, nor land on a Vendor already linked to their own household; each such refusal is
  * audited on the expense. Expenses of the reimbursee parked for want of a Vendor go back to the
  * outbox.
@@ -66,14 +96,11 @@ export async function linkReimburseeVendor(
     await refuse("You cannot link a Vendor on an expense that you or your household submitted or would be reimbursed for");
   }
 
-  let qbVendorId: string;
-  if ("createName" in choice) {
-    const vendor = await getExpenseRuntime().quickbooks.vendors.findOrCreate(choice.createName, `reimbursee-vendor-${orgId}-${personId}`);
-    if (!vendor) throw new ServiceError(503, QB_OFF);
-    qbVendorId = vendor.id;
-  } else {
-    qbVendorId = choice.qbVendorId;
-  }
+  const qb = await openQuickBooks();
+  const vendor =
+    "createName" in choice ? await qb.findOrCreate(choice.createName, `reimbursee-vendor-${orgId}-${personId}`) : await qb.byId(choice.qbVendorId);
+  if (!vendor) throw new ServiceError(404, "QuickBooks has no Vendor with that id");
+  const qbVendorId = vendor.id;
 
   const holder = await db.expenseReimburseeVendor.findFirst({ where: { orgId, qbVendorId } });
   if (holder) {

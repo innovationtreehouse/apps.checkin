@@ -2,6 +2,7 @@ import {
   inertCatalogEventSource,
   inertCatalogReader,
   inertOwnerDirectory,
+  inertPeopleDirectory,
   inertQbReader,
   inertQbRefs,
   inertQbVendors,
@@ -12,6 +13,7 @@ import {
   type ExpensePrincipal,
   type OrgIdentity,
   type OwnerDirectory,
+  type PeopleDirectory,
   type QbReader,
   type QbRefs,
   type QbVendors,
@@ -37,6 +39,8 @@ export interface ExpenseConfig {
   signoff?: SignoffDirectory;
   catalog?: CatalogReader;
   catalogEvents?: CatalogEventSource;
+  /** Display names, for showing who a reimbursee is. */
+  people?: PeopleDirectory;
   quickbooks?: Partial<QuickBooksPorts>;
 }
 
@@ -47,6 +51,7 @@ export interface ExpenseRuntime {
   signoff: SignoffDirectory;
   catalog: CatalogReader;
   catalogEvents: CatalogEventSource;
+  people: PeopleDirectory;
   quickbooks: QuickBooksPorts;
 }
 
@@ -63,6 +68,7 @@ export function configureExpense(config: ExpenseConfig): void {
     signoff: config.signoff ?? inertSignoffDirectory,
     catalog: config.catalog ?? inertCatalogReader,
     catalogEvents: config.catalogEvents ?? inertCatalogEventSource,
+    people: config.people ?? inertPeopleDirectory,
     quickbooks: {
       reader: config.quickbooks?.reader ?? inertQbReader,
       refs: config.quickbooks?.refs ?? inertQbRefs,
