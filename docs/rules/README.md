@@ -44,6 +44,7 @@ qualify, and it belongs to the tracker alone. See `docs/DOCUMENTATION_STANDARD.m
 | `people-households.md` | households, leads, identity, age, emergency contacts, trusted adults |
 | `programs.md` | eligibility, enrollment, pricing, capacity, scholarships |
 | `revenue.md` | fees, refunds, payment plans, reconciliation |
+| `expenses.md` | receipts, expenses, budget buckets, spending sign-off |
 | `attendance-checkin.md` | opening and closing, supervision, the kiosk, visits |
 | `tools-certification.md` | certification levels, who may certify, shop access |
 | `inventory.md` | the shared catalog (what parts, tools, and consumables are), on-hand stock, and receiving |

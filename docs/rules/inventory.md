@@ -136,20 +136,6 @@ org identity, the own-database packaging — is described in
   because receipts show spending. Only inventory managers act on it.
   `[Decision — *Principle: least privilege*]`
 
-- An adult member or a staff/role holder may submit a receipt and view, edit,
-  and fetch their own receipts. An adult member is a person whose session age
-  band is adult and whose household membership is ACTIVE. A role holder or a
-  Treehouse staff account is admitted whatever their recorded age or
-  membership. A signed-in adult with no ACTIVE membership is refused, and so is
-  a youth or a person of unknown age without a role, because a self-declared
-  age alone is not proof of adulthood. No background check is needed. The submitter sees only their own receipts, without donor or
-  reimbursee names, and approval stays with FINANCE, so the audience exposes no
-  other person's data and moves no money on its own. The same audience may
-  reach an expense sign-off for the submitter seat, since that seat is filled
-  from the receipt. Widening it to any signed-in adult, narrowing it to the
-  catalog audience, or adding a background-check leg is a decision on the
-  record. `[Decision — owner]`
-
 - Being on the Board is enough to view receipt and inventory data, and to edit
   it where the app allows an edit. Every Board member is an insider today; an
   outside Board member joining would reopen this whole access model.

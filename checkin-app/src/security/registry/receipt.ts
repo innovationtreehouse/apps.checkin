@@ -2,7 +2,7 @@
 import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 
 // Submitters are adult members or Treehouse Volunteers (`receipt-submitter`,
-// docs/rules/inventory.md) and read only their own receipts: `their_own` resolves on the row's uploadedByUserId against
+// docs/rules/expenses.md) and read only their own receipts: `their_own` resolves on the row's uploadedByUserId against
 // the session id (plan rule 6), and grants no pii, so donor and reimbursee names
 // never come back to the uploader. FINANCE acts org-wide; BOARD reads alongside
 // FINANCE (finance's superuser) but takes no finance action. Sysadmins get
