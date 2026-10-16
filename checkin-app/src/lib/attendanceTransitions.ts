@@ -104,7 +104,7 @@ export async function processVisitCheckout(
 
     // Chunks recreated below are all segments of one physical visit: they keep
     // the original arrival's source and take `source` as their departure channel.
-    const { personId: participantId, arrivedAt, arrivedVia } = originalVisit;
+    const { personId: participantId, arrivedAt, arrivedVia, arrivalSource } = originalVisit;
 
     // Cap the whole span, before the event lookup, so every chunk boundary below
     // derives from the capped departure and the segments still sum to one visit.
@@ -175,6 +175,7 @@ export async function processVisitCheckout(
                             arrivedAt: currentIterStart,
                             departedAt: gapEnd,
                             arrivedVia,
+                            arrivalSource,
                             departedVia: source,
                             facilityCloseId,
                             associatedEventId: null
@@ -206,6 +207,7 @@ export async function processVisitCheckout(
                         arrivedAt: eventVisitStart,
                         departedAt: eventVisitEnd,
                         arrivedVia,
+                        arrivalSource,
                         departedVia: source,
                         facilityCloseId,
                         associatedEventId: event.id
@@ -223,6 +225,7 @@ export async function processVisitCheckout(
                     arrivedAt: currentIterStart,
                     departedAt: departure,
                     arrivedVia,
+                    arrivalSource,
                     departedVia: source,
                     facilityCloseId,
                     associatedEventId: null

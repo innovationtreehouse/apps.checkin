@@ -431,7 +431,7 @@ export const PATCH = withAuth({}, async (req: Request, auth, { params }: { param
                         return FACILITY_CLOSED;
                     }
                     const created = await tx.visit.create({
-                        data: { ...createTimes, personId: targetId, associatedEventId: eventId }
+                        data: { ...createTimes, arrivalSource: "EVENT_MARK", personId: targetId, associatedEventId: eventId }
                     });
                     await tx.auditLog.create({
                         data: {

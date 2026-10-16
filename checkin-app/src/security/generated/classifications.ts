@@ -325,6 +325,7 @@ export const classifications = {
         departedAt: 'personal',
         arrivedVia: 'public',
         departedVia: 'public',
+        arrivalSource: 'public',
         associatedEventId: 'public',
         deletedAt: 'internal',
         deletedById: 'internal',

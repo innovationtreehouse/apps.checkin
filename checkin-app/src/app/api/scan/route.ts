@@ -45,13 +45,17 @@ const REPLAY_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
 const isPersonId = (v: unknown): v is number =>
     typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 2147483647;
 
-// A live badge IN is stamped when it takes the facility lock, after the scan's
-// own badge log row; a replayed IN's row carries exactly its arrival time.
+// Whether the open visit began with a live badge IN, as its arrivalSource says.
+// A visit older than that column falls back to the badge log: a live IN is
+// stamped when it takes the facility lock, after the scan's own badge log row;
+// a replayed IN's row carries exactly its arrival time.
+// ponytail: the fallback can go once no open visit predates arrivalSource.
 async function openedByLiveBadge(tx: Prisma.TransactionClient, personId: number): Promise<boolean> {
     const open = await tx.visit.findFirst({
         where: { personId, departedAt: null, deletedAt: null, arrivedVia: "SCANNER" },
-        select: { arrivedAt: true },
+        select: { arrivedAt: true, arrivalSource: true },
     });
+    if (open?.arrivalSource) return open.arrivalSource === "LIVE_SCAN";
     return !!open && await tx.rawBadgeLog.count({
         where: {
             personId,
