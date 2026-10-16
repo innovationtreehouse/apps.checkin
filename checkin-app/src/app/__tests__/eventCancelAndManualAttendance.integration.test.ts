@@ -364,8 +364,8 @@ describe('PATCH /api/events/[id] — cancel, manual attendance, past-event guard
     // time is a typed clock). Stamping it unconditionally would relabel a real
     // badge-in on a departure-only edit, downgrading the trust weight that
     // correction significance reads for the people who did scan in.
-    // Only a badge at the door opens the building: an open Present mark for a
-    // keyholder needs a keyholder already inside.
+    // Only a badge at the door opens the building: an open Present mark needs a
+    // keyholder already inside, whoever is marked.
     describe('manualEditAttendance — Present must not open the building', () => {
         let keyholderId: number;
         let otherKeyholderId: number;
@@ -405,9 +405,16 @@ describe('PATCH /api/events/[id] — cancel, manual attendance, past-event guard
         it('refuses an open mark for a keyholder when no keyholder is in, writing nothing', async () => {
             const event = await makeEvent('kh-closed', -1 * HOUR);
             const res = await markPresent(event.id, keyholderId);
-            expect(res.status).toBe(400);
+            expect(res.status).toBe(403);
             expect(await prisma.visit.count({ where: { personId: keyholderId } })).toBe(0);
             expect((await getFullAttendance()).safety.facilityOpen).toBe(false);
+        });
+
+        it('refuses an open mark for a non-keyholder when no keyholder is in, writing nothing', async () => {
+            const event = await makeEvent('nonkh-closed', -1 * HOUR);
+            const res = await markPresent(event.id, participantId);
+            expect(res.status).toBe(403);
+            expect(await prisma.visit.count({ where: { personId: participantId } })).toBe(0);
         });
 
         it('records a closed mark for a keyholder when no keyholder is in', async () => {
@@ -416,15 +423,6 @@ describe('PATCH /api/events/[id] — cancel, manual attendance, past-event guard
             expect(res.status).toBe(200);
             const visit = await prisma.visit.findFirstOrThrow({ where: { personId: keyholderId } });
             expect(visit.departedAt).not.toBeNull();
-        });
-
-        it('records an open mark for a non-keyholder, marked no keyholder, without opening the building', async () => {
-            const event = await makeEvent('nonkh-closed', -1 * HOUR);
-            const res = await markPresent(event.id, participantId);
-            expect(res.status).toBe(200);
-            const att = await getFullAttendance();
-            expect(att.safety.facilityOpen).toBe(false);
-            expect(att.attendance.find(v => v.participant.id === participantId)?.noKeyholder).toBe(true);
         });
 
         it('records an open mark for a keyholder when another keyholder is already in', async () => {
