@@ -1,13 +1,7 @@
-import { describe } from "vitest";
+import { describeDb as gate } from "@inventory/pg-test-harness";
 import { prisma, initDb } from "../../db";
 
-/**
- * DB-gate for the integration + DB-backed service tiers. `describeDb` is `describe` when
- * CATALOG_DATABASE_URL is set (the harness publishes the container URL in
- * test/setupEnv.ts) and `describe.skip` otherwise — so suites that need a real Postgres run
- * against the throwaway container when Docker is up, and cleanly skip (not fail) without it.
- */
-export const describeDb = process.env.CATALOG_DATABASE_URL ? describe : describe.skip;
+export const describeDb = gate("CATALOG_DATABASE_URL");
 
 export async function resetDb(): Promise<void> {
   // No-op without a database URL so a `beforeAll(resetDb)` in a skipped suite (Docker absent)

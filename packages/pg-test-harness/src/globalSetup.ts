@@ -7,9 +7,8 @@
  *   3. `provide(provideKey, url)` so a worker-side setup file can publish it to env,
  *   4. teardown stops the container.
  *
- * If Docker is unreachable, this does NOT throw: it warns and provides `undefined`, so the
- * package's `describeDb`/`runIfDb` gate skips the integration suites (same behavior as a
- * machine with no DB). CI can layer a hard requirement on top via that gate.
+ * If Docker is unreachable, this does NOT throw: it warns and provides `undefined`, and the
+ * `describeDb` gate decides — skip locally, fail under CI / REQUIRE_DB=1.
  *
  * Each consuming package adds a 4-line `test/globalSetup.ts` that calls this with its own
  * `migrateCwd` / `envVar` / `provideKey`. That is the entire onboarding cost.
