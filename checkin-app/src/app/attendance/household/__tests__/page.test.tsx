@@ -28,6 +28,20 @@ describe("HouseholdCheckins", () => {
     });
 
 
+    it("defaults the lookup date to the org's day, not the UTC day, in the evening", async () => {
+        // 8 PM in Chicago on the 15th is already the 16th in UTC.
+        jest.useFakeTimers({ advanceTimers: true, now: new Date("2026-06-16T01:00:00.000Z") });
+        try {
+            setSession({ id: 1 });
+            mockFetchJson({ "/api/household/visits": { visits: [] } });
+            renderWithProviders(<HouseholdCheckins />);
+
+            expect(await screen.findByLabelText("Lookup Date")).toHaveValue("2026-06-15");
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("shows a loader while the session resolves", () => {
         setSession(null, "loading");
         renderWithProviders(<HouseholdCheckins />);
