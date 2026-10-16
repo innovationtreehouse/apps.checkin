@@ -1,15 +1,16 @@
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
-import { repushUnpushed, sweepInterruptedOcr } from "../../services/catchUp";
+import { MAX_CONSECUTIVE_PUSH_FAILURES, repushUnpushed, sweepInterruptedOcr } from "../../services/catchUp";
 import { importReceipts } from "../../services/importService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
 beforeEach(async () => {
   await clearAll();
+  actAs(ALICE);
   ports = recordingPorts();
   configure({ receiptSink: ports.receiptSink });
 });
@@ -19,9 +20,47 @@ describeDb("catch-up steps", () => {
     ports.fail.push = true;
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     ports.fail.push = false;
-    expect(await repushUnpushed()).toEqual({ pushed: 1, failed: 0 });
+    expect(await repushUnpushed()).toEqual({ pushed: 1, failed: 0, skipped: 0 });
     expect((await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).pushedAt).not.toBeNull();
-    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 0 });
+    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 0, skipped: 0 });
+  });
+
+  it("retries a failing receipt until MAX_CONSECUTIVE_PUSH_FAILURES catch-up failures, then skips it", async () => {
+    ports.fail.push = true;
+    await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) {
+      expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 1, skipped: 0 });
+    }
+    const attempts = ports.calls.pushes.length;
+    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 0, skipped: 1 });
+    expect(ports.calls.pushes).toHaveLength(attempts);
+  });
+
+  it("retries a skipped receipt again after a manual push, and delivers it once the push succeeds", async () => {
+    ports.fail.push = true;
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) await repushUnpushed();
+    expect(await repushUnpushed()).toMatchObject({ skipped: 1 });
+
+    actAs(FINANCE);
+    expect(await receiptService.push(r.id)).toEqual({ pushed: false });
+    expect(await repushUnpushed()).toEqual({ pushed: 0, failed: 1, skipped: 0 });
+
+    ports.fail.push = false;
+    expect(await repushUnpushed()).toEqual({ pushed: 1, failed: 0, skipped: 0 });
+    expect((await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).pushedAt).not.toBeNull();
+  });
+
+  it("retries a skipped receipt on the run after another receipt is delivered", async () => {
+    ports.fail.push = true;
+    const stuck = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) await repushUnpushed();
+    await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
+
+    ports.fail.push = false;
+    expect(await repushUnpushed()).toEqual({ pushed: 1, failed: 0, skipped: 1 });
+    expect(await repushUnpushed()).toEqual({ pushed: 1, failed: 0, skipped: 0 });
+    expect((await db.receipt.findUniqueOrThrow({ where: { id: stuck.id } })).pushedAt).not.toBeNull();
   });
 
   it("moves a receipt stuck in OCR for over ten minutes to ocr_failed", async () => {

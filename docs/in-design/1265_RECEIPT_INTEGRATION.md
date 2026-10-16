@@ -307,7 +307,8 @@ an endpoint today; the e2e plan's "no REJECT endpoint" finding is stale.
 **Push outcome is recorded.** New `Receipt.pushedAt`, stamped when S1 returns. A
 failed push leaves it null with an audit row; the daily catch-up step re-pushes
 every finalized, unpushed receipt, and the manual `push-to-inventory` button does
-one at once. Safe because S1 is idempotent on `receiptId` (§7).
+one at once. Catch-up skips a receipt after five of its own failures in a row, until
+a manual push of that receipt or any delivery in the org. Safe because S1 is idempotent on `receiptId` (§7).
 
 **Catch-up steps: no database at boot, no new schedules** (plan rule 5). The
 library reads nothing at app start. Every sweep is a `try/catch` step inside the
