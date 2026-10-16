@@ -107,6 +107,12 @@ org identity, the own-database packaging — is described in
 - Once a receipt is being counted or is done, its lines can't be edited.
   `[Decision]`
 
+- When part of a receipt was applied and the rest failed, an inventory manager
+  can still edit its lines, so the final record is accurate. Each such edit is
+  logged as late, and the receipt's screen warns inventory managers, finance and
+  the board that the part already applied needs fixing by hand.
+  `[Decision]`
+
 ### Access
 
 - The catalog is public reference data and carries no personal data: item,

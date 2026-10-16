@@ -151,7 +151,7 @@ const stock = async () =>
 const legs = (id: number) => wm.receivedReceipt.findUniqueOrThrow({ where: { id } });
 
 describe('X4 InventorySink → local-inventory apply', () => {
-    it('applies a proceeded receipt once, keyed receipt:<id>, then locks its lines', async () => {
+    it('applies a proceeded receipt once, keyed receipt:<id>; a late edit never re-sends it', async () => {
         const { id, lineIds } = await seedReceipt('x4-once');
         const before = await stock();
 
@@ -169,7 +169,14 @@ describe('X4 InventorySink → local-inventory apply', () => {
         expect(await li.receivedInventoryDelta.findMany({ where: { orgId: ORG.id, sourceKey: 'receipt:x4-once' } }))
             .toEqual([expect.objectContaining({ status: 'applied' })]);
 
-        await expect(lineItemService.markNonInventory(id, lineIds[0])).rejects.toMatchObject({ status: 409 });
+        // Inventory already applied: the edit is allowed, logged as late, and the retry leaves stock alone.
+        await lineItemService.markNonInventory(id, lineIds[0]);
+        expect(await wm.workflowAuditLog.count({ where: { receivedReceiptId: id, eventType: 'line_edited_late' } })).toBe(1);
+        expense.fails = false;
+        await receiptService.retryApply(id);
+        expect(await receiptService.apply(id)).toEqual({ state: 'resolved' });
+        expect(await stock()).toBe(before + 3 * 2);
+        expect(await li.receivedInventoryDelta.count({ where: { orgId: ORG.id, sourceKey: 'receipt:x4-once' } })).toBe(1);
     });
 
     it('replays idempotently when the inventory leg is pushed again', async () => {
