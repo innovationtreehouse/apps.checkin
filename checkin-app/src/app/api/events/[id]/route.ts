@@ -7,7 +7,8 @@ import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
 import { parseVisitTime, departureAfterArrival, withinMaxDuration } from "@/lib/visitTimes";
 import { LIVE_PERSON } from "@/lib/person/filters";
-import { LIVE_VISIT } from "@/lib/visit/filters";
+import { KEYHOLDER_IN_BUILDING, LIVE_KEYHOLDER, LIVE_VISIT } from "@/lib/visit/filters";
+import { lockFacility } from "@/lib/facilityLock";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 
@@ -279,6 +280,9 @@ export const PATCH = withAuth({}, async (req: Request, auth, { params }: { param
             // surface as a 400, or null on success.
             const failure = await prisma.$transaction(async (tx): Promise<string | null> => {
                 await tx.$executeRaw`SELECT pg_advisory_xact_lock(${targetId})`;
+                if (status === 'Present' && dep === null) {
+                    await lockFacility(tx);
+                }
 
                 if (status === 'Absent') {
                     // An open visit (departedAt = null) means they physically scanned in
@@ -418,6 +422,18 @@ export const PATCH = withAuth({}, async (req: Request, auth, { params }: { param
                         }
                     });
                 } else {
+                    // Only a badge at the door opens the building: an open mark for
+                    // a keyholder needs a keyholder already inside. A non-keyholder
+                    // is recorded and carries the no-keyholder mark.
+                    if (dep === null) {
+                        const [isKeyholder, keyholdersIn] = await Promise.all([
+                            tx.person.count({ where: { id: targetId, ...LIVE_KEYHOLDER } }),
+                            tx.visit.count({ where: KEYHOLDER_IN_BUILDING }),
+                        ]);
+                        if (isKeyholder > 0 && keyholdersIn === 0) {
+                            return "The facility is closed — only a badge at the door opens it. Set a departure time to record this visit as closed.";
+                        }
+                    }
                     const created = await tx.visit.create({
                         data: { ...createTimes, personId: targetId, associatedEventId: eventId }
                     });

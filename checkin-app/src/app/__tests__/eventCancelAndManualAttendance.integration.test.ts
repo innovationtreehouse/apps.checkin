@@ -17,6 +17,7 @@
 import { PATCH } from '@/app/api/events/[id]/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { getFullAttendance, invalidateAttendanceCache } from '@/lib/getFullAttendance';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -363,6 +364,79 @@ describe('PATCH /api/events/[id] — cancel, manual attendance, past-event guard
     // time is a typed clock). Stamping it unconditionally would relabel a real
     // badge-in on a departure-only edit, downgrading the trust weight that
     // correction significance reads for the people who did scan in.
+    // Only a badge at the door opens the building: an open Present mark for a
+    // keyholder needs a keyholder already inside.
+    describe('manualEditAttendance — Present must not open the building', () => {
+        let keyholderId: number;
+        let otherKeyholderId: number;
+        let keyholderHouseholdIds: number[];
+
+        beforeAll(async () => {
+            const [k1, k2] = await Promise.all([
+                prisma.person.create({ data: { name: 'KH Marked', email: `kh1-${TAG}@example.com`, isKeyholder: true, household: { create: { name: 'Test HH' } } } }),
+                prisma.person.create({ data: { name: 'KH Inside', email: `kh2-${TAG}@example.com`, isKeyholder: true, household: { create: { name: 'Test HH' } } } }),
+            ]);
+            keyholderId = k1.id;
+            otherKeyholderId = k2.id;
+            keyholderHouseholdIds = [k1.householdId, k2.householdId];
+        });
+
+        afterEach(async () => {
+            await prisma.visit.deleteMany({ where: { personId: { in: [keyholderId, otherKeyholderId] } } });
+            await prisma.auditLog.deleteMany({ where: { secondaryAffectedEntity: { in: [keyholderId, participantId] } } });
+            invalidateAttendanceCache();
+        });
+
+        afterAll(async () => {
+            await prisma.person.deleteMany({ where: { id: { in: [keyholderId, otherKeyholderId] } } });
+            await prisma.household.deleteMany({ where: { id: { in: keyholderHouseholdIds } } });
+        });
+
+        function markPresent(eventId: number, personId: number, departedAt?: Date) {
+            return patch(eventId, {
+                action: 'manualEditAttendance',
+                participantId: personId,
+                status: 'Present',
+                arrivedAt: new Date(Date.now() - 20 * MIN).toISOString(),
+                ...(departedAt ? { departedAt: departedAt.toISOString() } : {}),
+            });
+        }
+
+        it('refuses an open mark for a keyholder when no keyholder is in, writing nothing', async () => {
+            const event = await makeEvent('kh-closed', -1 * HOUR);
+            const res = await markPresent(event.id, keyholderId);
+            expect(res.status).toBe(400);
+            expect(await prisma.visit.count({ where: { personId: keyholderId } })).toBe(0);
+            expect((await getFullAttendance()).safety.facilityOpen).toBe(false);
+        });
+
+        it('records a closed mark for a keyholder when no keyholder is in', async () => {
+            const event = await makeEvent('kh-closed-record', -1 * HOUR);
+            const res = await markPresent(event.id, keyholderId, new Date(Date.now() - 5 * MIN));
+            expect(res.status).toBe(200);
+            const visit = await prisma.visit.findFirstOrThrow({ where: { personId: keyholderId } });
+            expect(visit.departedAt).not.toBeNull();
+        });
+
+        it('records an open mark for a non-keyholder, marked no keyholder, without opening the building', async () => {
+            const event = await makeEvent('nonkh-closed', -1 * HOUR);
+            const res = await markPresent(event.id, participantId);
+            expect(res.status).toBe(200);
+            const att = await getFullAttendance();
+            expect(att.safety.facilityOpen).toBe(false);
+            expect(att.attendance.find(v => v.participant.id === participantId)?.noKeyholder).toBe(true);
+        });
+
+        it('records an open mark for a keyholder when another keyholder is already in', async () => {
+            const event = await makeEvent('kh-open', -1 * HOUR);
+            await prisma.visit.create({ data: { personId: otherKeyholderId, arrivedAt: new Date(Date.now() - 30 * MIN), arrivedVia: 'SCANNER' } });
+            const res = await markPresent(event.id, keyholderId);
+            expect(res.status).toBe(200);
+            const visit = await prisma.visit.findFirstOrThrow({ where: { personId: keyholderId } });
+            expect(visit.departedAt).toBeNull();
+        });
+    });
+
     describe('manualEditAttendance — arrivedVia/departedVia', () => {
         it('stamps LEAD_MARKED on both fields of a visit it creates', async () => {
             const event = await makeEvent('source-create', -3 * HOUR);
