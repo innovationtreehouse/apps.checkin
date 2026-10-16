@@ -1,7 +1,7 @@
 # QuickBooks: closed books, open period, switch-on
 
-**Status: PROPOSED. Plan only; no code until the owner rules on the questions
-at the end.**
+**Status: PROPOSED. The owner has ruled on every question; implementation
+follows the PR split below.**
 
 The app stops deriving a "takeover line" from finance's newest hand-booked
 entry. Three facts replace it. QuickBooks' own books closing date is a hard
@@ -143,7 +143,7 @@ not rely on.
 
 ### 3. Switch-on timestamp
 
-Each lane holds one nullable timestamp, `qbPostingOnAt`, plus who set it. A
+Each lane holds one nullable timestamp, `qbPostingOnAt`. A
 record is created after switch-on when its own creation time in the app is later
 than the stamp:
 
@@ -157,9 +157,15 @@ than the stamp:
 The migration is additive: nullable columns and one new table. Old code never
 reads them. Null means not switched on, so the lane creates nothing on its own.
 
+**The lane switches itself on.** The stamp is written the first time the lane's
+posting job runs with QuickBooks connected, which is as soon as the lane is
+deployed and its QuickBooks settings are filled in. There is no switch-on route,
+screen or person: the deploy and the configuration change are the record. The
+job sets the stamp only while it is null, in one statement, so two overlapping
+runs cannot move it. (Owner, 2026-10-16.)
+
 Switching on is permanent: the stamp is set once and there is no "off".
-(Owner, 2026-10-16.) Setting it writes the lane's existing settings audit log.
-Who sets it is Q1.
+(Owner, 2026-10-16.)
 
 **Income must book payouts that arrive weeks late.** Shopify's mirror can hand
 the app a payout weeks after its date, and the owner requires those to reach
@@ -176,10 +182,12 @@ QuickBooks. Two changes make that work:
   search still uses the window around the payout's date (`matchWindow`), so a
   deposit finance booked by hand is still found first.
 
-For the same reason, switching income on first runs a reconcile, so every
-payout the mirror already holds has a row dated before the stamp and stays in
-the open period. Without it, the first run after switch-on would treat the
-mirror's whole history as new and book it unasked.
+For the same reason, income's first connected run reconciles before it writes
+the stamp, so every payout the mirror already holds has a row dated before the
+stamp and stays in the open period. Without that order, the first run would
+treat the mirror's whole history as new and book it unasked. The drain already
+runs reconcile first (`outbox.ts`, `drainIncomeOutbox`); the stamp goes between
+the two.
 
 Benevity needs nothing extra: a file uploaded after switch-on is new records,
 whatever the gift dates in it.
@@ -243,8 +251,7 @@ under the new rules; `NO_DEPOSIT` rows already open keep their state and gain
 
 One kind per PR. Registry entries first, each in its own PR based on `main`.
 
-1. **Security:** registry entries for `POST /api/expense/expenses/[id]/qb-resolve`,
-   and for the donation settings read and write if Q1 keeps switch-on in the app.
+1. **Security:** the registry entry for `POST /api/expense/expenses/[id]/qb-resolve`.
    No app code.
 2. **Shared gate:** `packages/quickbooks` replaces `takeoverLine` with
    `closedThrough` and `mayCreate`, and adds `bookCloseDate()`. It confirms the
@@ -252,12 +259,11 @@ One kind per PR. Registry entries first, each in its own PR based on `main`.
    as `closedThrough` with `mayCreate: true`, which behaves exactly as today
    (`closed` is today's `too-old`, and no line still creates nothing).
 3. **Expense:** gate wiring, `UNBOOKED` and `SKIPPED`, the `qb-resolve` route
-   and its screen, switch-on in its settings, and its migration (the switch-on
+   and its screen, the self-set stamp, and its migration (the switch-on
    column and the `BEFORE_LINE` rewrite).
 4. **Income:** gate wiring, immediate `NO_DEPOSIT`, the "book" action, the
    late-payout path (reconcile before the stamp, no window cut-off after it),
-   switch-on in its settings, the NEEDS_MAPPING ordering, and its switch-on
-   column.
+   the self-set stamp, the NEEDS_MAPPING ordering, and its switch-on column.
 5. **Donation:** gate wiring, `UNBOOKED`, the "book" action, switch-on for
    Benevity and in-kind, and its migration (`DonationOrgSettings` and the
    `BEFORE_LINE` rewrite). Lands after #2215.
@@ -289,9 +295,8 @@ have landed.
 
 ## Open questions for the owner
 
-- **Q1. Who switches a lane on, and where?** Proposed: finance, in the app, once
-  per lane, recorded with the person. The alternative is a deployment setting,
-  which needs no route but records no person.
+- **Q1.** Resolved: automatic. A lane switches on the first time its posting
+  job runs with QuickBooks connected (owner, 2026-10-16). Section 3.
 - **Q2.** Resolved: matching in the closed period is allowed (owner,
   2026-10-16). Section 1.
 - **Q3.** Resolved: switch-on is permanent, with no "off" (owner, 2026-10-16).
