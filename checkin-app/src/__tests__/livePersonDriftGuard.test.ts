@@ -157,6 +157,7 @@ const ALLOWLIST: Record<string, string> = {
     // to-one include, so the only available decision is whether the PARENT row
     // should exist at all, which belongs to the parent query.
     'app/api/membership/reviews/route.ts': 'The household-lead pull now filters LIVE_PERSON. `subjectPerson` is a to-one pinned by OrgMembershipProcess.subjectPersonId. NEEDS REVIEW: whether a PERSON_BG process whose subject has since been merged away should still sit in the reviewer queue is a lifecycle question about the PROCESS (cancel/retarget it), not a filter on this read — left as-is rather than guessed at.',
+    'app/api/events/[id]/route.ts': 'GET roster: `attendanceConfirmedBy` is a to-one Person pinned by Event.attendanceConfirmedById — it names who confirmed attendance, a historical record that must still resolve after a merge. The roster lists themselves filter LIVE_PERSON.',
     'lib/membership/review.ts': 'The BG stamp writes by explicit id (`where: { id: { in: cleared } }`), and every id reaches it through `liveHouseholdLeadIds`, which filters LIVE_PERSON — a tombstone can never be named as a check subject. The remaining hits are to-one relations selected for eligibility math, not display: `subjectPerson` (the process\'s own subject, for the conflict-of-interest household compare) and `reviewer` on an existing attestation (the actor who already voted — a historical record that must still resolve, or the same-household guard silently stops applying to it).',
 
     // ── person-scoped join reads (class 3, one already-identified person) ─────
@@ -167,7 +168,7 @@ const ALLOWLIST: Record<string, string> = {
     'lib/attendanceTransitions.ts': 'getRelevantProgramIds pins `personId: participantId` — the enrollment/volunteer rows of one already-identified person, used to pick their associated event on scan. Not a roster, not a count.',
 
     // ── authz target checks (class 3, never rendered or counted) ──────────────
-    'app/api/events/[id]/route.ts': 'IDOR guard on an attendance correction\'s target: two findFirsts pinned to `personId: targetId` asking "is this one target enrolled or volunteering in this event\'s program". One-row shape, no list, no count, never rendered.',
+    'lib/programs/events.ts': 'IDOR guard on an attendance correction\'s target: two findFirsts pinned to `personId: targetId` asking "is this one target enrolled or volunteering in this event\'s program". One-row shape, no list, no count, never rendered.',
 
     // ── historical / audit trail (showing a since-merged identity is correct) ──
     'app/api/membership-audit/bg-attestations/route.ts': 'BG attestation history: three FK-pinned to-one Person relations (reviewer, attestation.subjectPerson, process.subjectPerson) resolve names for historical attestation records. A reviewer or subject who has since been merged must still appear in the audit trail.',

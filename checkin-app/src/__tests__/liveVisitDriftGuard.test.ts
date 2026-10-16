@@ -29,7 +29,7 @@ const ALLOWLIST: Record<string, string> = {
     'app/api/facility/trends/route.ts': 'Scanner is textually blind to the variable-held where: the findMany passes `whereClause`, which is built a few lines up WITH `deletedAt: null`.',
     'app/api/membership-ops/participants/merge/analyze/route.ts': 'Merge PREVIEW: `_count.visits` counts the rows the merge will move, and a merge moves tombstoned visits with the person (provenance travels). Filtering would understate the preview against the actual move.',
     'app/api/membership-ops/participants/merge/route.ts': 'The merge itself: tombstoned visits travel with the person, same rule the PREVIEW counts by — filtering would strand them on the merged-away tombstone.',
-    'app/api/events/[id]/route.ts': 'Event cancel nulls `associatedEventId` on every visit pointing at the doomed event, tombstoned included — the FK must clear or the event delete fails, and the tombstone keeps its own times either way.',
+    'lib/programs/events.ts': 'Event cancel nulls `associatedEventId` on every visit pointing at the doomed event, tombstoned included — the FK must clear or the event delete fails, and the tombstone keeps its own times either way.',
 };
 
 function walk(dir: string, out: string[] = []): string[] {
