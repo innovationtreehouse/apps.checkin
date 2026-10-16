@@ -288,6 +288,37 @@ model DonationQbMatchExclusion {
   @@map("qb_match_exclusion")
 }
 
+// An in-kind donation that arrived with a receipt (FR5). The money side (X9) and the donor
+// (X13) arrive separately, in either order, and join on receiptId. Money without a donor is
+// "donor needed"; both present is ready to book.
+model InKindDonation {
+  /// @sensitivity:internal
+  id                     Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId                  String    @map("org_id")
+  /// @sensitivity:internal
+  receiptId              String    @map("receipt_id")
+  /// @sensitivity:internal
+  receiptTotalCents      Int?      @map("receipt_total_cents")
+  /// @sensitivity:internal
+  receiptDate            String?   @map("receipt_date")
+  /// @sensitivity:internal
+  moneyReceivedAt        DateTime? @map("money_received_at")
+  /// @sensitivity:pii
+  donorFirstName         String?   @map("donor_first_name")
+  /// @sensitivity:pii
+  donorLastName          String?   @map("donor_last_name")
+  /// @sensitivity:pii
+  donorCompanyName       String?   @map("donor_company_name")
+  /// @sensitivity:internal
+  donorRecordedAt        DateTime? @map("donor_recorded_at")
+  /// @sensitivity:internal
+  withdrawnAfterMoneyAt  DateTime? @map("withdrawn_after_money_at")
+
+  @@unique([orgId, receiptId])
+  @@map("in_kind_donations")
+}
+
 // An in-kind donation entered by ops with no receipt (FR5): each line is a catalog item with a
 // quantity and its total value. Its goods load into inventory under `donation:<id>` (X11);
 // inventoryLoadedAt is set once that load succeeds.

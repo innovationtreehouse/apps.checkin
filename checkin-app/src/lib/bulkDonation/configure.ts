@@ -4,9 +4,9 @@
  * lazy Org-registry accessor, and binds the owner directory to checkin's
  * BudgetOwner table, read per call. The no-receipt in-kind path's crossings are
  * bound in-process: the catalog lookup (X10) to the catalog's reads and the
- * inventory load (X11) to local-inventory's apply. Boot stays DB-free. The
- * QuickBooks writer and the in-kind receipt callees (X9, X13) stay unbound, so
- * they are inert.
+ * inventory load (X11) to local-inventory's apply. The in-kind receipt callees
+ * X9 and X13 are bound by their callers (workflow-mapping and receipt). Boot
+ * stays DB-free. The QuickBooks writer stays unbound, so it is inert.
  */
 import { configureBulkDonation } from "@inventory/bulk-donation";
 import type { OwnerInfo } from "@inventory/bulk-donation";

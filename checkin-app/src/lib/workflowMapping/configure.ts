@@ -6,12 +6,12 @@
  *
  * Bound crossings: X3 (CatalogReader → catalog reads), X8 (CatalogSubmissions →
  * catalog proposals, conflicts and provisional GTINs), X4 (InventorySink →
- * local-inventory apply), X5 (ExpenseSink → expense intake) and the S5 replay
- * read (X2). Donations (X9) keep the library's inert adapter, so an in-kind
- * receipt's money leg waits in apply_failed.
+ * local-inventory apply), X5 (ExpenseSink → expense intake), X9 (DonationSink →
+ * donations ingestInKind) and the S5 replay read (X2).
  */
 import { configureWorkflowMapping, type ExpenseSink } from "@inventory/workflow-mapping";
 import { expenseIntake } from "@inventory/expense";
+import { ingestInKind } from "@inventory/bulk-donation";
 import { catalogEventsSince, getOrg, getPrincipal } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createCatalogSubmissions } from "@/lib/catalog/submissions";
@@ -58,5 +58,6 @@ export function configureRuntime(): void {
     inventorySink: createLocalInventorySink(getOrg),
     catalogEventSource: { eventsSince: catalogEventsSince },
     expenseSink,
+    donationSink: { ingestInKind },
   });
 }

@@ -26,6 +26,7 @@ export { recordEvent, recordDonorDataRead, type EntityType, type WorkflowEventIn
 export { accountMapService } from "./services/accountMapService";
 export { commentRuleService } from "./services/commentRuleService";
 export { disbursementService } from "./services/disbursementService";
+export { inKindService, type InKindMoney } from "./services/inKindService";
 export {
   manualInKindService,
   ManualInKindInputSchema,

@@ -1,11 +1,12 @@
 // In-kind crossings (FR5). The callees (X9, X13) parse their input and assert the injected org,
-// then throw NotWiredError until the in-kind receipt domain lands; a throw tells the caller to retry.
-// The caller wrappers (X10) parse what the bound port returns. The no-receipt entry records a
-// donation for the current org and principal and loads its goods (X11).
+// then record it; a throw tells the caller to retry. The caller wrappers (X10) parse what the
+// bound port returns. The no-receipt entry records a donation for the current org and principal
+// and loads its goods (X11).
 import { z } from "zod";
 import { CompletedReceiptSchema, type CompletedReceipt } from "@inventory/receipt-types";
 import { CatalogItemSummarySchema, InKindDonorSchema, type CatalogItemSummary, type InKindDonor } from "./contract";
-import { NotWiredError, getCatalogLookup, getOrg, getOrgId, getPrincipal } from "./runtime";
+import { getCatalogLookup, getOrg, getOrgId, getPrincipal } from "./runtime";
+import { inKindService } from "./services/inKindService";
 import { manualInKindService, type ManualInKindInput } from "./services/manualInKindService";
 
 const receiptIdSchema = z.string().min(1);
@@ -18,28 +19,33 @@ async function thisOrg() {
 
 async function receiptInOrg() {
   const orgId = (await getOrg()).id;
-  return CompletedReceiptSchema.refine((r) => r.orgId === orgId, { message: "orgId is not this org", path: ["orgId"] });
+  return CompletedReceiptSchema.refine((r) => r.orgId === orgId, { message: "orgId is not this org", path: ["orgId"] }).refine(
+    (r) => r.isInKind,
+    { message: "not an in-kind receipt", path: ["isInKind"] },
+  );
 }
 
 /** X9 callee: an in-kind receipt's money side. Idempotent on `receiptId`. */
 export async function ingestInKind(receipt: CompletedReceipt): Promise<void> {
-  (await receiptInOrg()).parse(receipt);
-  throw new NotWiredError("ingestInKind (X9)");
+  const r = (await receiptInOrg()).parse(receipt);
+  await inKindService.recordMoney(r.orgId, receiptIdSchema.parse(r.receiptId), {
+    receiptTotalCents: r.receiptTotalCents,
+    receiptDate: r.receiptDate,
+  });
 }
 
 /** X13 callee: the donor entered at upload. Idempotent on `receiptId`; a later call replaces the donor. */
 export async function recordInKindDonor(orgId: string, receiptId: string, donor: InKindDonor): Promise<void> {
   (await thisOrg()).parse(orgId);
   receiptIdSchema.parse(receiptId);
-  InKindDonorSchema.parse(donor);
-  throw new NotWiredError("recordInKindDonor (X13)");
+  await inKindService.recordDonor(orgId, receiptId, InKindDonorSchema.parse(donor));
 }
 
 /** X13 callee: the uploader cleared the in-kind mark. Idempotent; an unknown receipt is a no-op. */
 export async function withdrawInKind(orgId: string, receiptId: string): Promise<void> {
   (await thisOrg()).parse(orgId);
   receiptIdSchema.parse(receiptId);
-  throw new NotWiredError("withdrawInKind (X13)");
+  await inKindService.withdraw(orgId, receiptId);
 }
 
 /** X10 caller: catalog search for the no-receipt picker. */
