@@ -356,8 +356,8 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         // date still equal to the start date moves with it, unless the sale has
         // ended: then moving the start leaves the sale ended.
         const { offSaleAt } = body;
-        if (offSaleAt !== undefined && !isSysAdminOrBoard) {
-            return apiError("Forbidden: Only administrators can change the off-sale date", 403);
+        if (offSaleAt !== undefined && !user.isBoardMember) {
+            return apiError("Forbidden: Only the board can change the off-sale date", 403);
         }
         if (offSaleAt != null && (typeof offSaleAt !== "string" || isNaN(Date.parse(offSaleAt)))) {
             return apiError("Invalid off-sale date", 400);
@@ -372,7 +372,7 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             : newStartAt;
         // Only the board reopens an ended sale, by moving the off-sale date itself
         // later: that re-arms the sweep. Enrollment stays closed unless this save opens it.
-        const rearmSale = isSysAdminOrBoard && saleEndedNow && offSaleAt !== undefined
+        const rearmSale = user.isBoardMember && saleEndedNow && offSaleAt !== undefined
             && !isSaleEnded({ startAt: newStartAt ?? currentProgram.startAt, offSaleAt: newOffSaleAt ?? null, saleEndedAt: null });
         if (enrollmentStatus === 'OPEN' && currentProgram.enrollmentStatus !== 'OPEN' && saleEndedNow && !rearmSale) {
             return apiError("Sales for this program have ended. To reopen enrollment, move the off-sale date later.", 409);

@@ -1216,7 +1216,7 @@ describe('Individual Program API Integration Tests', () => {
         });
 
         it('does not re-list a hidden public product when the board reopens the sale', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
             const ended = await prisma.program.create({
                 data: {
                     startAt: new Date('2026-01-01'),
@@ -1282,7 +1282,7 @@ describe('Individual Program API Integration Tests', () => {
         });
 
         it('refuses to reopen enrollment after the sale ended unless the off-sale date moves later', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
             const ended = await prisma.program.create({
                 data: {
                     startAt: new Date('2026-01-01'),
@@ -1313,8 +1313,36 @@ describe('Individual Program API Integration Tests', () => {
             }
         });
 
-        it('on reopening an ended sale, sets the absolute Shopify stock (capacity minus active and held seats)', async () => {
+        it('refuses a sysadmin who is not on the board: the off-sale date and reopening a sale are the board\'s', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            const ended = await prisma.program.create({
+                data: {
+                    startAt: new Date('2026-01-01'),
+                    endAt: new Date('2099-12-31'),
+                    name: 'Prog ID API Test Sale Ended Sysadmin',
+                    phase: 'RUNNING',
+                    leadMentorId: leadId,
+                    enrollmentStatus: 'CLOSED',
+                    saleEndedAt: new Date(),
+                },
+            });
+            try {
+                const res = await PATCH(
+                    new Request(`http://localhost:4000/api/programs/${ended.id}`, { method: 'PATCH', headers: { cookie: 'session=test' }, body: JSON.stringify({ enrollmentStatus: 'OPEN', offSaleAt: '2999-01-01' }) }) as unknown as import("next/server").NextRequest,
+                    createParams(ended.id) as unknown as never,
+                );
+                expect(res.status).toBe(403);
+                expect((await res.json()).error).toBe('Forbidden: Only the board can change the off-sale date');
+                const row = await prisma.program.findUniqueOrThrow({ where: { id: ended.id } });
+                expect(row.saleEndedAt).not.toBeNull();
+                expect(row.enrollmentStatus).toBe('CLOSED');
+            } finally {
+                await prisma.program.delete({ where: { id: ended.id } });
+            }
+        });
+
+        it('on reopening an ended sale, sets the absolute Shopify stock (capacity minus active and held seats)', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
             const ended = await prisma.program.create({
                 data: {
                     startAt: new Date('2026-01-01'),

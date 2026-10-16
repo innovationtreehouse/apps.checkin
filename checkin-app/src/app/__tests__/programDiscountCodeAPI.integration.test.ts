@@ -56,6 +56,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
     let settledPersonId: number;
     let settledHouseholdId: number;
     let nonMemberPersonId: number;
+    let youthPersonId: number;
     let coveredProgramId: number;
     let uncoveredProgramId: number;
 
@@ -90,7 +91,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         // through the upcoming boundary.
         const unsettled = await prisma.person.create({
             data: {
-                email: `unsettled-${TAG}@example.com`, name: 'Unsettled Member',
+                email: `unsettled-${TAG}@example.com`, name: 'Unsettled Member', isHouseholdLead: true,
                 household: { create: { name: `Unsettled HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE' } } } },
             },
             select: { id: true, householdId: true },
@@ -102,7 +103,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         // inside the current renewal window — valid one boundary further.
         const settled = await prisma.person.create({
             data: {
-                email: `settled-${TAG}@example.com`, name: 'Settled Member',
+                email: `settled-${TAG}@example.com`, name: 'Settled Member', isHouseholdLead: true,
                 household: { create: { name: `Settled HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE' } } } },
             },
             select: { id: true, householdId: true },
@@ -114,8 +115,18 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
             data: { orgMembershipId: settledMembership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date() },
         });
 
+        // A youth in the settled household — not its lead.
+        const youth = await prisma.person.create({
+            data: {
+                email: `youth-${TAG}@example.com`, name: 'Youth Member', householdId: settledHouseholdId,
+                dateOfBirth: new Date(Date.now() - 12 * 365 * DAY_MS),
+            },
+            select: { id: true },
+        });
+        youthPersonId = youth.id;
+
         const nonMember = await prisma.person.create({
-            data: { email: `nonmember-${TAG}@example.com`, name: 'Non Member', household: { create: { name: `Non Member HH ${TAG}` } } },
+            data: { email: `nonmember-${TAG}@example.com`, name: 'Non Member', isHouseholdLead: true, household: { create: { name: `Non Member HH ${TAG}` } } },
             select: { id: true },
         });
         nonMemberPersonId = nonMember.id;
@@ -212,6 +223,14 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         const res = await post(coveredProgramId, [settledPersonId, nonMemberPersonId]);
         expect(res.status).toBe(400);
         expect((await res.json()).error).toMatch(/must be from your household/);
+        expect(mintSpy).not.toHaveBeenCalled();
+    });
+
+    it('refuses a caller who is not a lead of their household (a youth)', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: youthPersonId } });
+        const res = await post(coveredProgramId, [settledPersonId]);
+        expect(res.status).toBe(403);
+        expect((await res.json()).error).toMatch(/household lead/);
         expect(mintSpy).not.toHaveBeenCalled();
     });
 
