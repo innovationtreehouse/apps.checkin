@@ -7,8 +7,9 @@ backordered receipt lines, and provisional items awaiting a catalog GTIN).
 
 It also covers receiving, where a manager matches each line of a purchase
 receipt to a catalog item before the goods are counted into stock. What a
-receipt costs and what a donated item is worth are covered by the expense and
-donation rules; this file covers only the goods.
+receipt costs and what a donated item is worth are covered by the expense rules
+(`expenses.md`) and the donation rules (`revenue.md`); this file covers only the
+goods.
 
 The architecture these rules sit on — the library-isolation seam, the injected
 org identity, the own-database packaging — is described in
