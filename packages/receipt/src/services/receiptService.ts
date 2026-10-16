@@ -1,6 +1,7 @@
 import type { ReceiptState } from "@inventory/receipt-types";
 import { z } from "zod";
 import { db } from "../db";
+import type { Prisma } from "../generated/prisma/client";
 import {
   OcrDataSchema,
   reimbursementStatusSchema,
@@ -208,15 +209,55 @@ async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
     });
     await runFullFlow(id, actor);
   } else {
-    assertExpectedState("auto_upload", { type: "OCR_FAILED" }, NEUTRAL_CONTEXT, "ocr_failed");
-    await db.$transaction(async (tx) => {
-      await tx.receiptDetail.updateMany({
-        where: { id, state: "auto_upload" },
-        data: { state: "ocr_failed", validationNotes: `OCR failed: ${result.error}` },
-      });
-      await audit(tx, id, actor, { action: "ocr_failed", valueAfter: result.error });
-    });
+    await failOcr(id, actor, result.error);
   }
+}
+
+async function failOcr(id: string, actor: ReceiptPrincipal, error: string): Promise<void> {
+  assertExpectedState("auto_upload", { type: "OCR_FAILED" }, NEUTRAL_CONTEXT, "ocr_failed");
+  await db.$transaction(async (tx) => {
+    await tx.receiptDetail.updateMany({
+      where: { id, state: "auto_upload" },
+      data: { state: "ocr_failed", validationNotes: `OCR failed: ${error}` },
+    });
+    await audit(tx, id, actor, { action: "ocr_failed", valueAfter: error });
+  });
+}
+
+/**
+ * A mailed file enters as an auto upload by its sender: the upload limits, duplicate check and
+ * audit of a manual upload, then OCR on the sender's daily allowance. `ledger` runs inside the
+ * insert, so the receipt and its mail-ledger row exist together or not at all. A file over the
+ * OCR allowance lands in `ocr_failed`, where its uploader types the details.
+ */
+export async function intakeMailedReceipt(
+  actor: ReceiptPrincipal,
+  file: Buffer,
+  mimeType: string,
+  ledger: (tx: Prisma.TransactionClient, receiptId: string) => Promise<unknown>,
+): Promise<string> {
+  const id = await insertReceipt({
+    orgId: (await getOrg()).id,
+    actor,
+    file,
+    mimeType,
+    core: { intakeSource: "email" },
+    detail: { state: "auto_upload", ocrStartedAt: new Date() },
+    lines: [],
+    auditAction: "mail_intake",
+    limits: limits(),
+    afterInsert: ledger,
+  });
+  try {
+    await reserveOcrCall(actor);
+  } catch (err) {
+    if (!(err instanceof ServiceError && err.statusCode === 429)) throw err;
+    await failOcr(id, actor, "daily limit reached");
+    return id;
+  }
+  // A failed read leaves the receipt in auto_upload, where the interrupted-OCR sweep finds it.
+  await applyOcr(id, actor).catch((err: unknown) => console.error(`[receipt] OCR failed for ${id}:`, err));
+  return id;
 }
 
 async function runFlowLogged(id: string, actor: ReceiptPrincipal): Promise<void> {

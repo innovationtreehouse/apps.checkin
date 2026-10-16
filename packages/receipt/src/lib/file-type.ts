@@ -21,6 +21,9 @@ const MAGIC: Record<string, (buf: Buffer) => boolean> = {
   },
 };
 
+/** Types a receipt file may have, each checked by its content. */
+export const ACCEPTED_TYPES: ReadonlySet<string> = new Set(Object.keys(MAGIC));
+
 export type FileCheck = { ok: true; mimeType: string } | { ok: false; error: string };
 
 export function checkReceiptFile(bytes: Buffer, declaredType: string): FileCheck {

@@ -3,7 +3,9 @@ import type {
   OcrProvider,
   OrgIdentity,
   ReceiptConfig,
+  MailboxReader,
   ReceiptHouseholds,
+  ReceiptPeople,
   ReceiptPrincipal,
   ReceiptSink,
   ReimbursementStatus,
@@ -45,6 +47,11 @@ export const inertHouseholds: ReceiptHouseholds = {
   householdOf: async () => [],
 };
 
+/** Knows nobody: every mailed receipt is held for finance. */
+export const inertPeople: ReceiptPeople = {
+  submitterByEmail: async () => null,
+};
+
 export const inertOcr: OcrProvider = {
   extract: async () => ({ success: false, error: "OCR is not configured" }),
 };
@@ -70,7 +77,7 @@ export function limits(): ReceiptLimits {
   return { ...DEFAULT_LIMITS, ...requireRuntime().limits };
 }
 
-export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits">> {
+export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox">> {
   const r = requireRuntime();
   return {
     receiptSink: r.receiptSink ?? inertReceiptSink,
@@ -78,7 +85,13 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits">
     reimbursementStatus: r.reimbursementStatus ?? inertReimbursementStatus,
     households: r.households ?? inertHouseholds,
     ocr: r.ocr ?? inertOcr,
+    people: r.people ?? inertPeople,
   };
+}
+
+/** The receipt mailbox, or null when mail intake is unbound. */
+export function mailbox(): MailboxReader | null {
+  return requireRuntime().mailbox ?? null;
 }
 
 /** The acting Person.id. Throws on anything but an integer. */
