@@ -27,10 +27,11 @@ then finance's hand bookings can be matched against it.
   step; ops may suggest a value but does not set it.
 - **No spending sign-off.** No money leaves the organisation. Finance setting
   the value is the look before a gift without a receipt books.
-- **Every in-kind gift has a budget bucket.** An expense never lands at the top
-  of the books without a Class, so an in-kind gift cannot be general money. Finance
-  assigns a bucket, which may be a part of the facility such as Facility or Shop
-  rather than a program; revenue and expense carry that bucket's Class.
+- **Every in-kind gift names a QuickBooks Class.** An expense never lands at the
+  top of the books without a Class, so an in-kind gift cannot be general money.
+  Finance picks the Class straight from QuickBooks, as income does (#2236), not
+  an app budget bucket; it may be a part of the facility such as Facility or
+  Shop rather than a program. Revenue and expense carry that one Class.
 - **Withdrawal holds or flags, never undoes.** A gift withdrawn before booking
   never books. One withdrawn after booking is raised for finance to reverse by
   hand; the app never changes QuickBooks.
@@ -73,16 +74,23 @@ then finance's hand bookings can be matched against it.
 > that comes with no instructions from the donor is general money.
 
 **Replacement:** the rule stays for gifts of money. A gift of goods always goes
-to a budget bucket, because its expense side must carry a Class; a gift of goods
-with no instructions from the donor goes to the bucket finance chooses, which
-may be a part of the facility such as Facility or Shop. [Decision — owner]
+to a QuickBooks Class, because its expense side must carry one; a gift of goods
+with no instructions from the donor goes to the Class finance chooses, which may
+be a part of the facility such as Facility or Shop. [Decision — owner]
+
+`docs/rules/revenue.md`, Donations: "Once recorded, the allocation can't be
+changed in the app." **Replacement for gifts of goods:** finance may change a
+gift's Class until the gift books, which is how a Class made inactive in
+QuickBooks gets cleaned up; once booked it cannot change. [Decision — owner, as
+for income in #2236]
 
 `docs/rules/revenue.md`, Donations and Ownership, which name finance and the
 board (plus operations and inventory managers for gifts without a receipt) as
 the only readers of gifts:
 
-**Addition:** a program bucket's approvers also see the in-kind gifts assigned
-to their program, without the donor, and do not approve them. [Decision — owner]
+**Addition:** a program's approvers also see the in-kind gifts given to their
+program, without the donor, and do not approve them. [Decision — owner; how a
+gift is tied to a program is open question Q8]
 
 `docs/rules/revenue.md`, Ownership: ops record a gift without a receipt;
 **addition:** finance sets its value, and ops' value is only a suggestion.
@@ -159,7 +167,7 @@ A gift books when all of these hold:
 - its money side arrived (receipt path) or it was recorded (no-receipt path);
 - its donor is recorded;
 - every line has a value (finance's, for a gift without a receipt);
-- finance has assigned it a bucket;
+- finance has assigned it a QuickBooks Class, and that Class is still active;
 - any line at or over the capital thresholds has been through capital review;
 - it has not been withdrawn.
 
@@ -187,35 +195,45 @@ None (owner ruling). The spending sign-off answers *who allowed this money to
 leave*, and none leaves. The question that does matter, *is this value honest*,
 is answered by the receipt where there is one, and otherwise by finance setting
 the value, recorded with who and when. That step is the look; there is no
-separate sign-off. Finance assigning the bucket is a second person-step before
+separate sign-off. Finance assigning the Class is a second person-step before
 anything books.
 
-### Budget bucket and Class
+### QuickBooks Class
 
-The in-kind tables gain a bucket, who assigned it, and when. Unlike a Benevity
-gift there is no general-money mark: an expense never lands at the top of the
-books, so every in-kind gift names a bucket. Where the donor gave no
-instructions, finance picks one; it may be an organisation-level bucket that is
-a part of the facility, such as Facility or Shop, not a program. The bucket
-cannot change once set (the existing donations rule). Both sides of the booking
-carry its QuickBooks Class.
+Each in-kind gift points straight at a QuickBooks Class (owner ruling), handled
+exactly as income handles a store item's Class (#2236):
 
-Revenue and expense always carry the same bucket (owner ruling), so the gift
-nets to zero there. That matches what happened: the bucket received goods it did
-not pay for.
+- Finance picks the Class from the active Classes read live from QuickBooks. The
+  gift keeps the Class's QuickBooks id, and who picked it and when. No app
+  budget bucket, no copy of the Class list, no link to a program.
+- There is no "no Class" choice: an expense never lands at the top of the books.
+  Where the donor gave no instructions, finance picks a Class that may be a part
+  of the facility, such as Facility or Shop.
+- Assigning a Class that is not active in QuickBooks is refused, and so is any
+  assignment while QuickBooks cannot be reached to check it.
+- A Class that goes inactive or disappears later raises one alarm for finance
+  and holds every unbooked gift pointing at it, as *needs mapping*. Finance
+  reactivates the Class or reassigns the gift; the next run books it. The app
+  never reassigns on its own.
+- The Class can change until the gift books, and not after.
+
+Revenue and expense always carry the same Class (owner ruling), so the gift nets
+to zero there. That matches what happened: that part of the organisation
+received goods it did not pay for.
 
 ### Who sees it
 
 Unchanged from the gift: finance and the board read in-kind gifts, finance
 manages them, only finance and the board see the donor. Operations and inventory
 managers, who record gifts without a receipt and read those gifts, do not assign
-buckets or see booking state.
+Classes or see booking state.
 
-A program bucket's approvers (its leader and treasurers) can see the in-kind
-gifts assigned to their program: what was given, its value and date, never the
-donor. They do not approve them (owner ruling). An organisation-level bucket
-such as Facility or Shop has no approvers, so only finance and the board see
-those. The expense side does not appear in the expense library's spending
+A program's approvers (its leader and treasurers) can see the in-kind gifts
+given to their program: what was given, its value and date, never the donor.
+They do not approve them (owner ruling). A gift to a part of the facility, such
+as Facility or Shop, has no approvers, so only finance and the board see it.
+With a Class in place of a bucket, the gift carries no link to a program, so
+how the app knows which program a gift went to is open question Q8. The expense side does not appear in the expense library's spending
 screens.
 
 ### Posting to QuickBooks
@@ -268,10 +286,12 @@ and depreciation are the expense library's, unchanged.
 
 When it is built, in this order, each its own PR off `main`:
 
-1. Registry entries for any new route (the finance valuation step, the approver
-   view), alone, per the boundary rule.
+1. Registry entries for any new route (the finance valuation step, Class
+   assignment, the approver view), alone, per the boundary rule. The finance
+   read of active Classes is income's route (#2236), reused.
 2. Donations: per-line values on receipt gifts, the finance valuation step and
-   ops' value as a suggestion, the bucket fields, approver visibility, the
+   ops' value as a suggestion, the Class fields and Class alarm, approver
+   visibility, the
    bookings table, readiness and queue states.
 3. Expense: capital review accepts a donated line, and the register records a
    gift as a source.
@@ -288,7 +308,7 @@ When it is built, in this order, each its own PR off `main`:
   Default: spread them across lines by value, as an asset's cost includes them.
 - **Q2. Sign-off on the value.** Resolved: none; finance setting the value is
   the look.
-- **Q3. Which bucket carries the expense.** Resolved: the same bucket as the
+- **Q3. Which Class carries the expense.** Resolved: the same Class as the
   revenue.
 - **Q4. Program approvers.** Resolved: they see, they do not approve.
 - **Q5. QuickBooks setup.** Resolved: in-kind goes through a clearing account
@@ -296,17 +316,25 @@ When it is built, in this order, each its own PR off `main`:
   expense and fixed-asset account references before switch-on.
 - **Q6. Donated equipment.** Resolved: books as an asset under the same rules
   as purchased assets.
-- **Q7. Bucket or QuickBooks Class.** Open, held by the coordinator: income now
-  targets a QuickBooks Class directly rather than an app bucket (#2236). Whether
-  in-kind does the same is with the owner. The doc says bucket until then.
+- **Q7. Bucket or QuickBooks Class.** Resolved: a QuickBooks Class directly, as
+  income does (#2236); every gift names one.
+- **Q8. Which program a gift went to.** Open. Approvers see gifts to their
+  program (Q4), but a Class is not linked to a program in the app. Default: ops
+  or finance may also name the program a gift went to, used only to show it to
+  that program's approvers; a gift naming none is seen by finance and the board
+  only. The alternative is to drop approver visibility until a Class-to-program
+  link exists somewhere.
 
 ---
 
 ## Rules to extract at merge
 
-- `revenue.md`, Donations: the general-money replacement above.
+- `revenue.md`, Donations: the general-money and allocation replacements above,
+  and the Class rules: an inactive Class is refused at assignment, an
+  assignment is refused while QuickBooks is unreachable, and a Class that goes
+  inactive holds booking and alerts finance.
 - `revenue.md`, Donations: both sides of an in-kind gift come from one record
-  and one value, in one bucket; the gift takes no spending sign-off; a gift
+  and one value, in one QuickBooks Class; the gift takes no spending sign-off; a gift
   withdrawn after booking is raised for finance to reverse by hand.
 - `revenue.md`, Donations: a gift with a receipt books at the receipt's values;
   one without is valued by finance, by someone outside the donor's household,
