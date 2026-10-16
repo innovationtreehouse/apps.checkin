@@ -146,16 +146,17 @@ Things the app takes as true because they are handled outside it.
   Apart from the refund case below, it does not undo anything by itself.
   [Decision — *Principle: people decide about people*]
 
-- When a program refund puts seats back in stock in the store, the app removes
-  the enrollment of each child the refund identifies. A refund identifies a child
-  when it returns every seat on the order, which removes every child on it, or
-  when it fully refunds an order line that names the child. While the program is
-  on sale, those seats stay on sale. Seats put back that the app can't tie to a
-  child are taken back off sale, and those children stay flagged for the board to
-  decide who leaves. A refund that returns nothing to stock, including a refund of
-  reserved seats (which have no stock of their own in the store), is only raised
-  for the board. Every refund is raised for the board to settle the money.
-  [Decision]
+- When the store's refund notice says a program refund put seats back in stock,
+  the app removes the enrollment of each child the refund identifies. A refund
+  identifies a child when it returns every seat the order bought for the program,
+  which removes every child on it, or when it fully refunds an order line that
+  names the child. Until the sale ends, those seats stay on sale. Seats put back
+  that the app can't tie to a child are taken back off sale, and those children
+  stay flagged for the board to decide who leaves. A refund that returns nothing
+  to stock, including a refund of reserved seats (which have no stock of their
+  own in the store), is only raised for the board. So is a refund that the daily
+  reconciliation finds rather than the refund notice. Every refund is raised for
+  the board to settle the money.  [Decision]
 
 - After a program's off-sale date, a refund that puts seats back in stock does not
   reopen the sale: the app takes every one of those seats back off sale. It still
