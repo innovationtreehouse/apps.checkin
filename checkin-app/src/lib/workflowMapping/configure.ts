@@ -1,5 +1,5 @@
 /**
- * Wire the workflow-mapping library into checkin (#1289 §6/§8), called once at
+ * Wire the workflow-mapping library into checkin, called once at
  * server boot from instrumentation.ts. It shares the catalog's principal and
  * lazy Org-registry accessor, so every library stamps the same org and person
  * ids, and boot stays DB-free.
@@ -39,7 +39,7 @@ export function isWorkflowMappingHttpError(err: unknown): err is WorkflowMapping
 }
 
 /**
- * X5 (#1289 §8b): the intake parses the receipt, asserts the org and dedupes on
+ * X5: the intake parses the receipt, asserts the org and dedupes on
  * receiptId itself; its errors propagate so the money leg lands in apply_failed.
  */
 export const expenseSink: ExpenseSink = {

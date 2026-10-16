@@ -1,5 +1,5 @@
 /**
- * Local-inventory dev/test seed (#1287 §12). Writes a baseline the screens and
+ * Local-inventory dev/test seed. Writes a baseline the screens and
  * flow tests exercise without the receipt pipeline: one location, one queued
  * receipt line, and one pending uom_mismatch merge conflict with the provisional
  * and real org items behind it. Idempotent, so a re-run is safe.

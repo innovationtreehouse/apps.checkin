@@ -1,5 +1,5 @@
 /**
- * Placement of the Inventory section nav in checkin (#1286 §7, #1287 §7). The
+ * Placement of the Inventory section nav in checkin. The
  * catalog and local-inventory libraries own their screen lists (their `/nav`
  * exports); this file supplies checkin's viewer predicate and the combined
  * section tabs the `/catalog` and `/inventory` layouts render. checkin owns
@@ -16,8 +16,8 @@ import { canSeeCatalog } from "@/lib/volunteer";
 export { CATALOG_TOP_NAV };
 
 /**
- * The Inventory section's tabs: the catalog's screens, then org inventory's
- * (#1287 §7), then the library tabs in INVENTORY_LIBRARY_TABS. Catalog and org
+ * The Inventory section's tabs: the catalog's screens, then org inventory's,
+ * then the library tabs in INVENTORY_LIBRARY_TABS. Catalog and org
  * inventory show only to a catalog viewer, once their library is released (or to
  * a board member); org inventory's manager-only screens only to an
  * INVENTORY_MANAGER, matching their routes' gate. Each library tab keeps its own
