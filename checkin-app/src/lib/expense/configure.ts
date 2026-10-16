@@ -57,12 +57,12 @@ const signoff: SignoffDirectory = {
         },
       },
     });
-    if (!bucket) return { orgLevel: false, approvers: [] };
-    if (bucket.programId === null || !bucket.program) return { orgLevel: true, approvers: [] };
+    if (!bucket) return { orgLevel: false, approvers: [], leader: null };
+    if (bucket.programId === null || !bucket.program) return { orgLevel: true, approvers: [], leader: null };
     const lead = bucket.program.leadMentor;
     const leadEligible = lead && lead.mergedIntoId === null && !orgMembershipStatusBlocksLogin(lead.household?.orgMembership?.status);
     const approvers = [...(leadEligible ? [lead.id] : []), ...bucket.program.volunteers.map((v) => v.personId)];
-    return { orgLevel: false, approvers: [...new Set(approvers)] };
+    return { orgLevel: false, approvers: [...new Set(approvers)], leader: lead ? (lead.mergedIntoId ?? lead.id) : null };
   },
 
   async bucketsApprovedBy(personId) {

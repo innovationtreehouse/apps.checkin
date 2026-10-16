@@ -11,6 +11,12 @@ type SignoffExpense = Pick<
   "id" | "orgId" | "submitterId" | "reimburseePersonId" | "needsReimbursement"
 >;
 
+/** Whether a reimbursement's payee is an org member; true for a card charge or an unknown payee. */
+async function reimburseeIsMember(expense: SignoffExpense): Promise<boolean> {
+  if (lineKind(expense) !== "reimbursement" || expense.reimburseePersonId === null) return true;
+  return getExpenseRuntime().signoff.isOrgMember(expense.reimburseePersonId);
+}
+
 /** The submitter, the reimbursee when known, and everyone in either one's household. */
 export async function conflictedParties(expense: { submitterId: number; reimburseePersonId: number | null }): Promise<number[]> {
   const parties = expense.reimburseePersonId === null ? [expense.submitterId] : [expense.submitterId, expense.reimburseePersonId];
@@ -32,20 +38,24 @@ export async function seatedHouseholds(db: Db, expenseId: string): Promise<numbe
 /** Sign-off facts for each line of an expense, read once through the SignoffDirectory port. */
 export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promise<Map<number, SignoffFacts>> {
   const dir = getExpenseRuntime().signoff;
-  const [lines, approvals, finance, board, conflicted, seated, purchaserIsMember, setterRow] = await Promise.all([
+  const [lines, approvals, finance, board, conflicted, seated, isMember, setterRow] = await Promise.all([
     db.expenseLineItem.findMany({ where: { expenseId: expense.id }, select: { id: true } }),
     db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true } }),
     dir.financeHolders(),
     dir.boardMembers(),
     conflictedParties(expense),
     seatedHouseholds(db, expense.id),
-    dir.isOrgMember(expense.submitterId),
+    reimburseeIsMember(expense),
     db.expenseAuditLog.findFirst({ where: { expenseId: expense.id, action: "reimbursee_set" }, orderBy: { id: "desc" }, select: { userId: true } }),
   ]);
   const bucketOf = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
   const bucketsById = new Map<number, BucketApprovers>();
+  const leaderHouseholds = new Map<number, number[]>();
   for (const bucket of new Set(approvals.map((a) => a.ownerId))) {
-    if (bucket !== null) bucketsById.set(bucket, await dir.bucketApprovers(bucket));
+    if (bucket === null) continue;
+    const b = await dir.bucketApprovers(bucket);
+    bucketsById.set(bucket, b);
+    if (b.leader !== null) leaderHouseholds.set(bucket, [...new Set([b.leader, ...(await dir.householdOf([b.leader]))])]);
   }
   const kind = lineKind(expense);
   return new Map(
@@ -57,10 +67,11 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
         submitterId: expense.submitterId,
         approvers: b?.approvers ?? [],
         orgLevel: b?.orgLevel ?? false,
-        purchaserIsMember,
+        reimburseeIsMember: isMember,
         finance,
         board,
         conflicted,
+        leaderHousehold: bucket === null ? [] : (leaderHouseholds.get(bucket) ?? []),
         reimburseeSetter: setterRow?.userId ?? null,
         seatedHouseholds: seated,
       };
