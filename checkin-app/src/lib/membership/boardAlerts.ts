@@ -39,6 +39,7 @@ const EXCEPTION_BLURB: Record<string, string> = {
     DUPLICATE_PAYMENT: "a paid program order bought a seat for someone already enrolled (paid, comped or approved) — a refund may be needed",
     UNCLAIMED_SEATS: "a paid program order bought seats no pending enrollment uses (withdrawn, expired or extra) — money taken, seat unused",
     MIXED_HOUSEHOLDS: "a paid program order names children from more than one household — nobody was activated",
+    UNVERIFIED_CHECKOUT: "a paid program order can't be shown to come from the named children's own household — nobody was activated",
 };
 
 /**

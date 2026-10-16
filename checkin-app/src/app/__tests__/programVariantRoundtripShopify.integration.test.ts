@@ -30,11 +30,19 @@ import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { DEV_MOCK_SHOPIFY_WEBHOOK_SECRET } from '@/lib/config';
 import { setMembershipYearBoundary } from '@/test-helpers/boardSettings';
+import { signCheckout } from '@/lib/programs/checkoutSignature';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/notifications', () => ({ sendNotification: jest.fn() }));
 
 const TAG = 'shopify-roundtrip-test';
+process.env.NEXTAUTH_SECRET ||= 'integration-test-nextauth-secret';
+
+/** The signature the program page's checkout puts on the link for the person's own household. */
+async function checkoutSig(programId: number, personId: number): Promise<string> {
+    const { householdId } = await prisma.person.findUniqueOrThrow({ where: { id: personId }, select: { householdId: true } });
+    return signCheckout(programId, [personId], householdId);
+}
 
 function programsReq(body: unknown) {
     // CHECKIN_ENV=local also arms the keyless-kiosk fallback in authenticateRequest,
@@ -152,6 +160,7 @@ describe('Shopify variant round-trip: create -> persist -> webhook match', () =>
             note_attributes: [
                 { name: 'CheckMeIn_Account_ID', value: String(participantId) },
                 { name: 'Program_ID', value: String(data.program.id) },
+                { name: 'CheckMeIn_Checkout_Sig', value: await checkoutSig(data.program.id, participantId) },
             ],
         });
         const hookRes = await webhookPOST(webhookReq(orderBody, DEV_MOCK_SHOPIFY_WEBHOOK_SECRET));

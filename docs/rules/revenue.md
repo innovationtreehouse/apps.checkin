@@ -165,6 +165,11 @@ Things the app takes as true because they are handled outside it.
   the enrollment itself and the store order behind it, never from a separate
   record of charges and payments.  [Decision — deliberate limit]
 
+- A store order enrolls only children in the buying household, shown by the
+  checkout link the app made for that household when it sent them to the store.
+  Any other order, including one without such a link, enrolls nobody and is
+  raised for the board.  [Decision — *Principle: fail closed*]
+
 - Reconciliation problems are raised in Finance Ops, not under membership or
   programs, because one payment can cover both.  [Decision]
 
