@@ -51,6 +51,18 @@ describeDb("catch-up steps", () => {
     expect((await db.receipt.findUniqueOrThrow({ where: { id: r.id } })).pushedAt).not.toBeNull();
   });
 
+  it("retries a skipped receipt on the run after another receipt is delivered", async () => {
+    ports.fail.push = true;
+    const stuck = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    for (let i = 0; i < MAX_CONSECUTIVE_PUSH_FAILURES; i++) await repushUnpushed();
+    await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
+
+    ports.fail.push = false;
+    expect(await repushUnpushed()).toEqual({ pushed: 1, failed: 0, skipped: 1 });
+    expect(await repushUnpushed()).toEqual({ pushed: 1, failed: 0, skipped: 0 });
+    expect((await db.receipt.findUniqueOrThrow({ where: { id: stuck.id } })).pushedAt).not.toBeNull();
+  });
+
   it("moves a receipt stuck in OCR for over ten minutes to ocr_failed", async () => {
     const stuck = await receiptService.upload(textFile(), "text/plain", {});
     await db.receiptDetail.update({ where: { id: stuck.id }, data: { state: "auto_upload", ocrStartedAt: new Date(Date.now() - 11 * 60_000) } });

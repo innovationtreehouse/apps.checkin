@@ -36,11 +36,17 @@ export const MAX_CONSECUTIVE_PUSH_FAILURES = 5;
 
 /**
  * Ids whose latest MAX_CONSECUTIVE_PUSH_FAILURES push attempts are all catch-up failures.
- * A success or a manual push (one with an acting user) ends the run.
+ * A success or a manual push (one with an acting user) ends the run, and so does any
+ * delivery in the org since: the receiver accepting a push means it may accept these too.
  */
-async function givenUp(ids: string[]): Promise<Set<string>> {
+async function givenUp(orgId: string, ids: string[]): Promise<Set<string>> {
+  const lastDelivery = await db.receiptAuditLog.findFirst({
+    where: { action: "pushed", receipt: { orgId } },
+    select: { id: true },
+    orderBy: { id: "desc" },
+  });
   const log = await db.receiptAuditLog.findMany({
-    where: { receiptId: { in: ids }, action: { in: ["pushed", "push_failed"] } },
+    where: { receiptId: { in: ids }, action: { in: ["pushed", "push_failed"] }, id: { gt: lastDelivery?.id ?? 0 } },
     select: { receiptId: true, action: true, userId: true },
     orderBy: { id: "desc" },
   });
@@ -56,12 +62,13 @@ async function givenUp(ids: string[]): Promise<Set<string>> {
 
 /** S1 re-push of finalized receipts not yet delivered, skipping ones catch-up has given up on. */
 export async function repushUnpushed(): Promise<{ pushed: number; failed: number; skipped: number }> {
+  const orgId = (await getOrg()).id;
   const rows = await db.receipt.findMany({
-    where: { orgId: (await getOrg()).id, pushedAt: null, details: { state: "receipt_finalized" } },
+    where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } },
     select: { id: true },
     orderBy: { uploadedAt: "asc" },
   });
-  const skip = await givenUp(rows.map((r) => r.id));
+  const skip = await givenUp(orgId, rows.map((r) => r.id));
   const due = rows.filter((r) => !skip.has(r.id)).slice(0, CATCH_UP_CAP);
   let pushed = 0;
   for (const { id } of due) if (await pushReceipt(id, null)) pushed++;
