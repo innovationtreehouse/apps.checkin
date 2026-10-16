@@ -142,13 +142,28 @@ Things the app takes as true because they are handled outside it.
   mirror's catch-up cadence, never by someone noticing.  [Decision — deliberate limit]
 
 - A reversal seen at the store — a refund, chargeback or cancellation — must
-  reach membership and enrollment state. The app raises it for the board to work;
-  it does not undo anything by itself.  [Decision — *Principle: people decide about people*]
+  reach membership and enrollment state. The app raises it for the board to work.
+  Apart from the refund case below, it does not undo anything by itself.
+  [Decision — *Principle: people decide about people*]
 
-- A program refund that restocks the seat puts that seat back on sale. The store
-  has already added it back, so the app removes the child's enrollment, still
-  raises the refund for the board to settle the money, and sends no inventory
-  change of its own. A refund without a restock is only raised.  [Decision]
+- When the store's refund notice says a program refund put seats back in stock,
+  the app removes the enrollment of each child the refund identifies. A refund
+  identifies a child when it returns every seat the order bought for the program,
+  which removes every child on it, or when it fully refunds an order line that
+  names the child. Until the sale ends, those seats stay on sale. Seats put back
+  that the app can't tie to a child are taken back off sale, and those children
+  stay flagged for the board to decide who leaves. A refund that returns nothing
+  to stock, including a refund of reserved seats (which have no stock of their
+  own in the store), is only raised for the board. So is a refund that the daily
+  reconciliation finds rather than the refund notice. Every refund is raised for
+  the board to settle the money.  [Decision]
+
+- After a program's off-sale date, a refund that puts seats back in stock does not
+  reopen the sale: the app takes every one of those seats back off sale. It still
+  removes the children the refund identifies.  [Decision — owner]
+
+- A refund removes only the children it refunds. A sibling on the same order
+  stays enrolled.  [Decision]
 
 - The store owns what a discount comes to; the app owns who may use one and until
   when. An order carrying the right item is correct whatever it totals — checking
@@ -173,8 +188,8 @@ Things the app takes as true because they are handled outside it.
   blocked. It is matched per child, so siblings paying on separate orders are
   never flagged.  [Decision]
 
-- An order that names someone outside the buyer's household is not checked
-  against household ownership; the seat and item checks are the control.  [Decision — deliberate limit]
+- One program order pays for one household. An order naming people from more
+  than one household enrolls nobody and is raised for the board.  [Decision]
 
 - There is no fee ledger. What a family owes and has paid for a program is the
   enrollment's own state and the store order behind it, never a separate record of
