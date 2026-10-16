@@ -1,5 +1,7 @@
 # Expenses
 
+Income and donation rules are in `revenue.md`.
+
 ---
 
 ## Assumptions
