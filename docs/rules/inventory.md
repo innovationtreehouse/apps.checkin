@@ -86,8 +86,9 @@ How the pieces are built is described in
 
 - A provisional item's stock merges into its real GTIN only when both counts use
   the same conversion factor. Otherwise the merge records a unit-mismatch
-  conflict for a person to resolve. The factor used is the one the catalog set
-  for the item, whatever order the updates arrive in. `[Decision]`
+  conflict for a person to resolve. The factor used is the one the catalog event
+  carried, even when the event arrives before the provisional item.
+  `[Decision]`
 
 ### Receiving
 
@@ -122,8 +123,10 @@ How the pieces are built is described in
 - Anyone holding any person role, or a Google-verified account on the org
   domain, may read the catalog with no membership needed; so may a program
   leader, program volunteer or Volunteer Family member, youth included, but only
-  while their household membership is ACTIVE. A volunteer designation by
-  itself does not let anyone read. Only inventory managers may write. Reading
+  while their household membership is ACTIVE. This is the shared catalog
+  audience. It is decided from the signed-in session only, never from an email
+  address, so a volunteer designation by itself admits no one. Only inventory
+  managers may write. Reading
   is deliberately wider than in the board-only operations areas because the
   data is non-personal reference data; keeping writing narrow is what makes
   that proportionate. Widening reading further, or widening writing
