@@ -7,7 +7,7 @@ import { it, expect, beforeEach } from "vitest";
 import type { CompletedReceipt } from "@inventory/receipt-types";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { ingestInKind, recordInKindDonor, withdrawInKind } from "../../inKind";
+import { ingestInKind, recordInKindDonor, recordReceiptDonorReads, withdrawInKind } from "../../inKind";
 import { inKindService } from "../../services/inKindService";
 import { configureTestRuntime, TEST_ORG_ID } from "../helpers/factories";
 
@@ -116,5 +116,27 @@ describeDb("in-kind audit", () => {
     const events = await db.workflowEvent.findMany({ where: { orgId, entityType: "in_kind" }, orderBy: { id: "asc" } });
     expect(events.map((e) => e.eventType)).toEqual(["IN_KIND_DONOR_RECORDED", "IN_KIND_MONEY_RECEIVED", "IN_KIND_WITHDRAWN_AFTER_MONEY"]);
     expect(JSON.stringify(events)).not.toMatch(/Jane|Doe|Acme/);
+  });
+});
+
+describeDb("receipt donor reads", () => {
+  const R2 = "22222222-2222-4222-8222-222222222222";
+  const R3 = "33333333-3333-4333-8333-333333333333";
+  const reader = { actorUserId: 7, actorUsername: "finance", route: "GET /api/receipts" };
+  const reads = () => db.workflowEvent.findMany({ where: { orgId, eventType: "DONOR_DATA_READ" }, orderBy: { id: "asc" } });
+
+  it("writes one row per receipt shown, naming the reader and route", async () => {
+    await recordReceiptDonorReads(reader, [R1, R2, R3]);
+    const events = await reads();
+    expect(events.map((e) => e.entityId)).toEqual([R1, R2, R3]);
+    for (const e of events) {
+      expect(e).toMatchObject({ entityType: "in_kind", actorUserId: 7, actorUsername: "finance" });
+      expect(JSON.parse(e.payload ?? "{}")).toEqual({ route: "GET /api/receipts" });
+    }
+  });
+
+  it("writes nothing for an empty read", async () => {
+    await recordReceiptDonorReads(reader, []);
+    expect(await reads()).toEqual([]);
   });
 });
