@@ -123,9 +123,9 @@ Things the app takes as true because they are handled outside it.
   household lead, who may also withdraw them while the place is unpaid. Neither a
   youth nor someone whose age is unknown withdraws themselves.  [Decision — *Principle: fail closed*]
 
-- A paid place is not the household's to withdraw. Today the board, a sysadmin
-  and the program's leader can remove it.  [Not yet enforced: code fix pending]
-  [Unsettled — who withdraws a paid
+- A paid place is not the household's to withdraw: neither the household lead
+  nor the enrolled adult can remove it. The board, a sysadmin and the program's
+  leader can.  [Unsettled — who withdraws a paid
   place is open with the board]
 
 - Being refused for an unknown age is not a dead end. Someone with no age on file
@@ -268,7 +268,7 @@ Things the app takes as true because they are handled outside it.
   price does not, because members pay through their discount code. A full price
   of zero or none is never sent, since a free store item would give places away;
   that case, or a price the store refuses, is reported to the admins and the
-  saved price stands.  [Not yet enforced: code fix pending]  [Decision]
+  saved price stands.  [Decision]
 
 - The store is never asked to show fewer than no places. Where the app holds more
   places than the store has stock, the difference stays owed; places that come

@@ -355,8 +355,8 @@ names are sent.
   and offline; a second badge within the countdown closes.
 - Only a keyholder closes on the web, a board member included (Arts. VI–VII).
 
-`docs/rules/principles.md` gains the trust principle (text in §3.1), in its own
-change.
+`docs/rules/attendance-checkin.md` gains the trust principle ("Trust, then
+review"; text in §3.1), in its own change.
 
 **Close record.** A facility close today is a bulk update that writes no
 per-visit audit and does not say which close set a departure. Correcting a close's
