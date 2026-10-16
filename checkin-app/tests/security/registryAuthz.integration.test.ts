@@ -28,6 +28,8 @@ import * as path from 'path';
 import { allRoutes, CRON_SECRET_ENV, getRoute, type Authorize, type SessionFlagRole } from '@/security/core';
 import type { AuthenticatedUser } from '@/types/auth';
 import prisma from '@/lib/prisma';
+import { configureRuntime as configureBulkDonationRuntime } from '@/lib/bulkDonation/configure';
+import { configureRuntime as configureExpenseRuntime } from '@/lib/expense/configure';
 import '@/security/registry';
 import libraries from '../../libraries.json';
 
@@ -133,6 +135,9 @@ describe('Registry route admission gates', () => {
         // Never let the local-kiosk fallback (auth.ts) treat a cookieless,
         // unsigned request as kiosk — that would turn our 401 cases into kiosk.
         process.env.CHECKIN_ENV = 'dev';
+        // Bind the library runtimes the routes call into, as server boot (instrumentation.ts) does.
+        configureBulkDonationRuntime();
+        configureExpenseRuntime();
 
         const plain = await prisma.person.create({
             data: {

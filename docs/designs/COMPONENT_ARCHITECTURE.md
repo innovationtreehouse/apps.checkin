@@ -113,6 +113,8 @@ implementation in the caller's `configure<Component>()`.
   what replaces a per-org bearer token's scoping now that the token is gone.
 - No polling, no new schedules. Any catch-up a crossing needs is an idempotent,
   capped, counts-only step inside the existing `/api/cron/reconcile-shopify`.
+  QuickBooks posting is the one exception: it runs from `/api/cron/qbo-posting`,
+  which answers only to its own secret.
 - JSON contract shapes are kept (the shared vocabulary); only the transport
   changes. A field is removed from a contract only when it genuinely dies.
 
