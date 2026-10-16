@@ -84,13 +84,19 @@ After the match, unchanged, the not-found branch becomes:
 
 | Not found, and | Result | Lane does |
 |---|---|---|
-| date on or before `closedThrough` | `closed` | to finance's queue; only skip is offered |
+| date on or before `closedThrough` | `closed` | to finance's queue with a message that its date is in closed books; only skip is offered |
 | `mayCreate` is false | `needs-finance` | to finance's queue; book it or skip |
 | otherwise | create, as today | marks it booked |
 
 A match is allowed in the closed period. Linking a record to an existing entry
 changes nothing in QuickBooks, so it falls outside the ruling's "never books or
-changes". (Owner question Q2.)
+changes". (Owner, 2026-10-16.)
+
+A record created after switch-on but dated in closed books should not happen in
+practice; it would take a late receipt for a closed year, say. If someone else's
+use of the app produces one, it is treated like any closed record and the lane
+tells finance: expense raises its existing finance flag, and income and donation
+put a note on the queue entry. (Owner, 2026-10-16.)
 
 `takeoverLine()`, `deriveTakeoverLine()`, `benevityTakeoverLine()`,
 `incomeTakeoverLine()`, `expenseTakeoverLine()`, `ExpensePosting.takeoverDate`,
@@ -144,17 +150,39 @@ than the stamp:
 | Lane | Stored on | Compared with |
 |---|---|---|
 | Expense | `ExpenseOrgSettings` (new column) | `Expense.submittedAt` |
-| Income | `IncomeOrgSettings` (new column) | `PayoutReconciliation.createdAt`; see Q4 |
+| Income | `IncomeOrgSettings` (new column) | `PayoutReconciliation.createdAt`, the time the app first saw the payout |
 | Donation, Benevity | new `DonationOrgSettings` row (the package has no settings model) | `DisbursementEvent.createdAt` |
 | Donation, in-kind (#2182) | same row, its own column | the in-kind record's creation time |
 
 The migration is additive: nullable columns and one new table. Old code never
 reads them. Null means not switched on, so the lane creates nothing on its own.
 
-Finance switches a lane on in the app. The stamp is set once and the app offers
-no way to clear it; posting stops the way it does today, by unbinding the
-lane in the deployment's configuration. Setting it writes the lane's existing
-settings audit log. (Q1, Q3.)
+Switching on is permanent: the stamp is set once and there is no "off".
+(Owner, 2026-10-16.) Setting it writes the lane's existing settings audit log.
+Who sets it is Q1.
+
+**Income must book payouts that arrive weeks late.** Shopify's mirror can hand
+the app a payout weeks after its date, and the owner requires those to reach
+QuickBooks. Two changes make that work:
+
+- A payout the app first sees after switch-on is "created after switch-on",
+  whatever its date, so it books automatically down to the closed line.
+  Comparing the payout's own date instead would send every late payout to
+  finance, which is the work this design removes.
+- Today reconcile opens a payout first seen after its match window as
+  `NO_DEPOSIT` at once (`reconcile.ts:257-261`), and the drain skips any payout
+  past its window (`outbox.ts:258`). For a payout first seen after switch-on,
+  both checks go: it waits in the outbox and the drain creates it. The deposit
+  search still uses the window around the payout's date (`matchWindow`), so a
+  deposit finance booked by hand is still found first.
+
+For the same reason, switching income on first runs a reconcile, so every
+payout the mirror already holds has a row dated before the stamp and stays in
+the open period. Without it, the first run after switch-on would treat the
+mirror's whole history as new and book it unasked.
+
+Benevity needs nothing extra: a file uploaded after switch-on is new records,
+whatever the gift dates in it.
 
 ### 4. Finance's queue: book it, skip
 
@@ -226,7 +254,8 @@ One kind per PR. Registry entries first, each in its own PR based on `main`.
 3. **Expense:** gate wiring, `UNBOOKED` and `SKIPPED`, the `qb-resolve` route
    and its screen, switch-on in its settings, and its migration (the switch-on
    column and the `BEFORE_LINE` rewrite).
-4. **Income:** gate wiring, immediate `NO_DEPOSIT`, the "book" action,
+4. **Income:** gate wiring, immediate `NO_DEPOSIT`, the "book" action, the
+   late-payout path (reconcile before the stamp, no window cut-off after it),
    switch-on in its settings, the NEEDS_MAPPING ordering, and its switch-on
    column.
 5. **Donation:** gate wiring, `UNBOOKED`, the "book" action, switch-on for
@@ -263,16 +292,11 @@ have landed.
 - **Q1. Who switches a lane on, and where?** Proposed: finance, in the app, once
   per lane, recorded with the person. The alternative is a deployment setting,
   which needs no route but records no person.
-- **Q2. Matching in the closed period.** Proposed: allowed, since a match
-  changes nothing in QuickBooks; a closed-period record with no match can only
-  be skipped.
-- **Q3. Switching off.** Proposed: the stamp is permanent; stopping posting means
-  unbinding the lane, and switching back on keeps the first stamp. Should
-  switching back on start a new open period instead?
-- **Q4. "Created after switch-on" for income.** Payout rows come from the
-  Shopify mirror, so a payout first seen after switch-on may be weeks old.
-  Proposed: compare the payout's own date with the switch-on date instead of the
-  row's creation time.
-- **Q5. A record created after switch-on but dated in the closed period** (a
-  late receipt for May 2026, say). Proposed: never created, matched if possible,
-  otherwise skip only, the same as any closed-period record.
+- **Q2.** Resolved: matching in the closed period is allowed (owner,
+  2026-10-16). Section 1.
+- **Q3.** Resolved: switch-on is permanent, with no "off" (owner, 2026-10-16).
+  Section 3.
+- **Q4.** Resolved: payouts Shopify delivers weeks late must reach QuickBooks
+  (owner, 2026-10-16). They count from when the app first sees them; section 3.
+- **Q5.** Resolved: does not happen in practice; if it does, the lane tells
+  finance (owner, 2026-10-16). Section 1.
