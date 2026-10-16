@@ -508,12 +508,12 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
             }
         }
 
-        // Both Shopify variants carry the base price (members pay via a discount code),
-        // so only a base-price change is pushed. Only admin/board can change prices.
-        const basePriceCents = (p: { nonOrgMemberPriceCents: number | null; orgMemberPriceCents: number | null }) =>
-            p.nonOrgMemberPriceCents ?? p.orgMemberPriceCents ?? null;
-        const newBase = basePriceCents(updatedProgram);
-        if (newBase !== basePriceCents(currentProgram)) {
+        // Both Shopify variants carry the full price (members pay via a discount code),
+        // so only a full-price change is pushed. The member price is never sent to the
+        // store: a cleared or $0 full price is reported to admins and Shopify keeps its
+        // old price. Only admin/board can change prices.
+        const newBase = updatedProgram.nonOrgMemberPriceCents;
+        if (newBase !== currentProgram.nonOrgMemberPriceCents) {
             const ok = await syncProgramPrice(updatedProgram, newBase);
             if (!ok) {
                 const priceWarning = "Program saved, but the Shopify price is out of date — admins have been emailed. Set the price by hand in Shopify on both the public and reserved-seat products.";

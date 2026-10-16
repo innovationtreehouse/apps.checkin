@@ -226,11 +226,9 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
         // Single-pool model: ONE Shopify variant, priced at the base/non-member
         // rate; member pricing is a checkout-time discount code, not a second
-        // variant. ponytail: falls back to the member
-        // price only when no non-member price is set (e.g. a members-only-priced
-        // program with no listed non-member tier) — normally sells at the
-        // non-member/base rate per the design.
-        const basePriceCents = nmPrice ?? mPrice ?? null;
+        // variant. The member price is never sent to the store: with no full
+        // price there is no store product (sync-shopify mints it once one is set).
+        const basePriceCents = nmPrice;
         if (basePriceCents && basePriceCents > 0) {
             shopifyData = await createShopifySingleVariantProgram(name, basePriceCents, maxPart);
             // Without it checkout falls back to the public variant; the board can mint it later via sync-shopify.

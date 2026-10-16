@@ -44,11 +44,15 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
     try {
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
 
-        const basePriceCents = program.nonOrgMemberPriceCents ?? program.orgMemberPriceCents ?? null;
+        // The store sells at the full price; the member price is never sent to it.
+        const basePriceCents = program.nonOrgMemberPriceCents;
         const needsPublic = isProgramCheckoutBroken(program);
         const needsClaimant = !!basePriceCents && basePriceCents > 0 && !program.claimantShopifyVariantId;
         if (!needsPublic && !needsClaimant) {
             return apiError("Program checkout is already configured (or the program is free).", 400);
+        }
+        if (!basePriceCents || basePriceCents <= 0) {
+            return apiError("Set a full (non-member) price before syncing to Shopify; the member price is never sent to the store.", 400);
         }
 
         const publicData = needsPublic && basePriceCents

@@ -1303,6 +1303,40 @@ describe('Program Participants API Integration Tests', () => {
             }
         });
 
+        it.each([
+            ['PENDING', 200],
+            ['ACTIVE', 403],
+        ] as const)('lets an adult withdraw their own %s place in a priced program only while unpaid (%i)', async (status, expected) => {
+            const priced = await prisma.program.create({
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Self Withdraw Priced ${status} Partic API Test`, enrollmentStatus: 'OPEN', nonOrgMemberPriceCents: 5000 },
+            });
+            try {
+                await prisma.programParticipant.create({ data: { programId: priced.id, personId: commonId, status } });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } }); // self-removal
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${priced.id}/participants`, {
+                        method: 'DELETE',
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(priced.id) as unknown as never,
+                );
+                expect(res.status).toBe(expected);
+                const row = await prisma.programParticipant.findUnique({
+                    where: { programId_personId: { programId: priced.id, personId: commonId } },
+                });
+                if (expected === 403) {
+                    expect((await res.json()).error).toMatch(/ask the board/i);
+                    expect(row).not.toBeNull();
+                } else {
+                    expect(row).toBeNull();
+                }
+            } finally {
+                await prisma.programParticipant.deleteMany({ where: { programId: priced.id } });
+                await prisma.program.delete({ where: { id: priced.id } });
+            }
+        });
+
         // The lead path's paid check lives in the delete itself, so a row that
         // turned ACTIVE after any earlier read is still refused, never deleted.
         it('refuses the unpaid-only delete once the row is ACTIVE, keeping the row', async () => {
