@@ -11,8 +11,12 @@ import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
 import { isRootClient, withTx } from '@/lib/db-client';
-import { processCloseRequest } from '@/lib/scan-service';
+import { processCloseRequest, type ScanOutcome } from '@/lib/scan-service';
+import { toResponse } from '@/app/api/scan/scanResponse';
 import { processPostEventEmails } from '@/lib/postEventEmails';
+
+/** A scan service's outcome as the kiosk receives it. */
+const wire = async (outcome: Promise<ScanOutcome>) => toResponse(await outcome, { signedRequest: true });
 
 jest.mock('@/lib/auth', () => ({
     authenticateRequest: jest.fn(),
@@ -121,7 +125,7 @@ describe('db-client root detection', () => {
         await arriveAll([k2, member]);
         const kh = await prisma.person.findUniqueOrThrow({ where: { id: k1 } });
         await prisma.$transaction(async (tx) => {
-            const res = await processCloseRequest(kh, tx, new Date(), null, true);
+            const res = await wire(processCloseRequest(kh, tx, new Date(), null, true));
             expect((await res.json()).facilityClosed).toBe(true);
             expect(await tx.visit.count({ where: { personId: { in: [k2, member] }, departedAt: null } })).toBe(2);
         });

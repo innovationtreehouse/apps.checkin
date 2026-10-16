@@ -4,7 +4,7 @@
  * (stamped with the scan's own event time, only for a toggle that happened).
  */
 import prisma from "@/lib/prisma";
-import { Prisma } from "@/generated/prisma/client";
+import { Prisma, type Person, type Visit } from "@/generated/prisma/client";
 import { executePendingCloses, notifyScanOutcome } from "@/lib/scan-service";
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { logBackendError } from "@/lib/logger";
@@ -19,7 +19,6 @@ jest.mock("@/lib/notifications", () => ({
 jest.mock("@/lib/logger", () => ({ logBackendError: jest.fn() }));
 jest.mock("@/lib/postEventEmails", () => ({ processPostEventEmails: jest.fn().mockResolvedValue(undefined) }));
 
-const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
 const tx = prisma.$transaction as jest.Mock;
 const findMany = prisma.facilityClose.findMany as jest.Mock;
 
@@ -138,23 +137,27 @@ describe("executePendingCloses", () => {
 describe("notifyScanOutcome", () => {
     const at = new Date("2026-10-01T14:05:00Z");
 
+    const person = { id: 7 } as Person;
+    const visit = { id: 70 } as Visit;
+    const checkin = { kind: "checkin", person, visit, supervisionShort: false, departedAtClose: false } as const;
+
     it("sends a check-in email stamped with the event time", async () => {
-        await notifyScanOutcome(json({ type: "checkin", participant: { id: 7 } }), at);
+        await notifyScanOutcome(checkin, at);
         expect(sendCheckinNotifications).toHaveBeenCalledWith(7, "checkin", "SCANNER", at);
     });
 
     it("sends a check-out email stamped with the event time", async () => {
-        await notifyScanOutcome(json({ type: "checkout", participant: { id: 7 } }), at);
+        await notifyScanOutcome({ kind: "checkout", person, visit, closed: false }, at);
         expect(sendCheckinNotifications).toHaveBeenCalledWith(7, "checkout", undefined, at);
     });
 
     it("sends nothing for a close-offer confirm, which departs no visit", async () => {
-        await notifyScanOutcome(json({ type: "checkout", participant: { id: 7 }, visit: null, facilityClosed: true }), at);
+        await notifyScanOutcome({ kind: "checkout", person, visit: null, closed: true }, at);
         expect(sendCheckinNotifications).not.toHaveBeenCalled();
     });
 
-    it.each(["duplicate_ignored", "ignored_debounce", "parked", "warning"])("sends nothing for %s", async (type) => {
-        await notifyScanOutcome(json({ type, participant: { id: 7 } }), at);
+    it("sends nothing for a replayed arrival that departed at a later close", async () => {
+        await notifyScanOutcome({ ...checkin, departedAtClose: true }, at);
         expect(sendCheckinNotifications).not.toHaveBeenCalled();
     });
 });

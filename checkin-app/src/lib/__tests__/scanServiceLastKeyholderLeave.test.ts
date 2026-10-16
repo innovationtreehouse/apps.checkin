@@ -13,8 +13,12 @@
  */
 import type { Person } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
-import { processCheckout, FORCE_CLOSE_CONFIRM_SECONDS, type LegacyKiosk } from "@/lib/scan-service";
+import { processCheckout, FORCE_CLOSE_CONFIRM_SECONDS, type LegacyKiosk, type ScanOutcome } from "@/lib/scan-service";
+import { toResponse } from "@/app/api/scan/scanResponse";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
+
+/** A scan service's outcome as the kiosk receives it. */
+const wire = async (outcome: Promise<ScanOutcome>) => toResponse(await outcome, { signedRequest: true });
 
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("@/lib/notifications", () => ({
@@ -51,7 +55,7 @@ function fakeDb(remaining: Array<{ name: string | null; email: string | null }>)
 
 /** processCheckout with only the kiosk generation and replay-ness varied. */
 const badge = (db: DbClient, legacy: LegacyKiosk | null, isReplay = false) =>
-    processCheckout(keyholder, 42, "kiosk", db, new Date(), isReplay, false, legacy);
+    wire(processCheckout(keyholder, 42, "kiosk", db, new Date(), isReplay, false, legacy));
 
 beforeEach(() => {
     jest.mocked(processVisitCheckout).mockResolvedValue([{ id: 77 }] as never);

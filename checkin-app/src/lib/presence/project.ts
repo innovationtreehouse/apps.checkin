@@ -1,8 +1,7 @@
 import type { Person, PresenceDirection } from "@/generated/prisma/client";
-import { apiJson } from "@/lib/api-response";
 import type { DbClient } from "@/lib/db-client";
 import { LIVE_VISIT } from "@/lib/visit/filters";
-import { type LegacyKiosk, processCheckin, processCheckout } from "@/lib/scan-service";
+import { type LegacyKiosk, type ScanOutcome, processCheckin, processCheckout } from "@/lib/scan-service";
 import {
     PresenceClass,
     appendPresenceEvent,
@@ -30,7 +29,7 @@ export async function applyPresenceIntent(
         /** A trusted replay's event id, for the close fence (processCheckin). */
         fenceClientEventId?: string | null;
     },
-): Promise<Response> {
+): Promise<ScanOutcome> {
     const event = await appendPresenceEvent(db, {
         personId: args.participant.id,
         occurredAt: args.occurredAt,
@@ -51,21 +50,21 @@ export async function applyPresenceIntent(
         if (openVisit) {
             await classifyPresenceEvent(db, event.id, PresenceClass.CONFLICT_DOUBLE_IN);
             await flagForReview(db, args.participant.id, args.clientEventId, "conflict_double_in");
-            return apiJson({ type: "parked", message: "Recorded for review." });
+            return { kind: "parked", reason: "conflict_double_in" };
         }
 
-        const res = await processCheckin(args.participant, args.authType, db, args.isReplay ? args.occurredAt : undefined, args.fenceClientEventId);
-        await classifyCheckin(db, event.id, res, args.participant.id, args.clientEventId);
-        return res;
+        const outcome = await processCheckin(args.participant, args.authType, db, args.isReplay ? args.occurredAt : undefined, args.fenceClientEventId);
+        await classifyCheckin(db, event.id, outcome, args.participant.id, args.clientEventId);
+        return outcome;
     }
 
     if (!openVisit) {
         await classifyPresenceEvent(db, event.id, PresenceClass.CONFLICT_OUT_NO_IN);
         await flagForReview(db, args.participant.id, args.clientEventId, "conflict_out_no_in");
-        return apiJson({ type: "parked", message: "Recorded for review." });
+        return { kind: "parked", reason: "conflict_out_no_in" };
     }
 
-    const res = await processCheckout(
+    const outcome = await processCheckout(
         args.participant,
         openVisit.id,
         args.authType,
@@ -78,10 +77,10 @@ export async function applyPresenceIntent(
     // Mirror the IN branch: PROJECTED only when someone actually left. A
     // supervision warning leaves the visit open — the confirming re-badge
     // writes its own event and projects then.
-    if (await checkoutConfirmed(res)) {
+    if (outcome.kind === "checkout") {
         await classifyPresenceEvent(db, event.id, PresenceClass.PROJECTED, openVisit.id);
     }
-    return res;
+    return outcome;
 }
 
 /** Puts a conflict park on the unsynced-scans review queue by setting
@@ -102,39 +101,21 @@ export async function flagForReview(
     }
 }
 
-async function checkoutConfirmed(res: Response): Promise<boolean> {
-    if (!res.ok) return false;
-    try {
-        const body = (await res.clone().json()) as { type?: string };
-        return body.type === "checkout";
-    } catch {
-        return false;
-    }
-}
-
 /** Classify an IN event from processCheckin's actual outcome, queueing a
- *  double_in park for review. An error response (e.g. a session check-in into
- *  a closed facility) stays unclassified. */
+ *  double_in park for review. A refusal (a session check-in into a closed
+ *  facility) stays unclassified. */
 async function classifyCheckin(
     db: DbClient,
     eventId: number,
-    res: Response,
+    outcome: ScanOutcome,
     personId: number,
     clientEventId: string | null | undefined,
 ): Promise<void> {
-    let body: { type?: string; reason?: string; visit?: { id?: number } } = {};
-    if (res.ok) {
-        try {
-            body = await res.clone().json();
-        } catch {
-            body = {};
-        }
-    }
-    if (body.type === "checkin" && typeof body.visit?.id === "number") {
-        await classifyPresenceEvent(db, eventId, PresenceClass.PROJECTED, body.visit.id);
-    } else if (body.type === "parked" && body.reason) {
-        await classifyPresenceEvent(db, eventId, parkReasonToClass(body.reason));
-        if (body.reason === "double_in") {
+    if (outcome.kind === "checkin") {
+        await classifyPresenceEvent(db, eventId, PresenceClass.PROJECTED, outcome.visit.id);
+    } else if (outcome.kind === "parked") {
+        await classifyPresenceEvent(db, eventId, parkReasonToClass(outcome.reason));
+        if (outcome.reason === "double_in") {
             await flagForReview(db, personId, clientEventId, "conflict_double_in");
         }
     }

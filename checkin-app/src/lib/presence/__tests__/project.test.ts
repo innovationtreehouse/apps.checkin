@@ -28,7 +28,7 @@ describe("applyPresenceIntent conflict parks", () => {
         const { db, client } = fakeDb({ id: 1 }, { id: 42 });
         const res = await applyPresenceIntent(client, { ...base, direction: "IN", clientEventId: "evt-1" });
 
-        expect((await res.json()).type).toBe("parked");
+        expect(res).toEqual({ kind: "parked", reason: "conflict_double_in" });
         expect(db.presenceEvent.update).toHaveBeenCalledWith({
             where: { id: 77 },
             data: { classification: PresenceClass.CONFLICT_DOUBLE_IN },
@@ -41,7 +41,7 @@ describe("applyPresenceIntent conflict parks", () => {
         const { db, client } = fakeDb(null, { id: 43 });
         const res = await applyPresenceIntent(client, { ...base, direction: "OUT" });
 
-        expect((await res.json()).type).toBe("parked");
+        expect(res).toEqual({ kind: "parked", reason: "conflict_out_no_in" });
         expect(db.rawBadgeLog.findFirst.mock.calls[0][0].where).toEqual({ personId: 5, reviewReason: null });
         expect(db.rawBadgeLog.update).toHaveBeenCalledWith({ where: { id: 43 }, data: { reviewReason: "conflict_out_no_in" } });
     });
@@ -50,7 +50,7 @@ describe("applyPresenceIntent conflict parks", () => {
         const { db, client } = fakeDb(null, null);
         const res = await applyPresenceIntent(client, { ...base, direction: "OUT", clientEventId: "evt-2" });
 
-        expect((await res.json()).type).toBe("parked");
+        expect(res).toEqual({ kind: "parked", reason: "conflict_out_no_in" });
         expect(db.rawBadgeLog.update).not.toHaveBeenCalled();
     });
 });
