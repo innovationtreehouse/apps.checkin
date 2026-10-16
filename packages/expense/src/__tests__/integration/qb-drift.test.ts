@@ -171,6 +171,44 @@ describeDb("QB-3 drift", () => {
     expect(await driftFlag(id)).toMatchObject({ detail: "amount, key", checkedOffAt: null });
   });
 
+  it("keeps a check-off while QuickBooks shows the same values, and reopens on a further change to the same field", async () => {
+    const { id, entry } = await created("2026-09-10");
+    entry.TotalAmt = 10.01;
+    await checkQbDrift();
+    await checkOff(id);
+
+    await checkQbDrift();
+    expect((await driftFlag(id))?.checkedOffAt).not.toBeNull();
+
+    entry.TotalAmt = 2010.01;
+    await checkQbDrift();
+    expect(await driftFlag(id)).toMatchObject({ detail: "amount", checkedOffAt: null });
+    expect(JSON.parse((await driftFlag(id))?.observed ?? "null")).toEqual({ amount: 201001 });
+  });
+
+  it("checks a check-off against the values last seen before it", async () => {
+    const { id, entry } = await created("2026-09-10");
+    entry.TotalAmt = 10.01;
+    await checkQbDrift();
+    entry.TotalAmt = 2010.01;
+    await checkQbDrift();
+    await checkOff(id);
+
+    await checkQbDrift();
+    expect((await driftFlag(id))?.checkedOffAt).not.toBeNull();
+  });
+
+  it("keeps a check-off when finance only re-classes a line", async () => {
+    const { id, entry } = await created("2026-09-10");
+    entry.TotalAmt = 12;
+    await checkQbDrift();
+    await checkOff(id);
+
+    entry.Line = entry.Line!.map((l) => ({ ...l, AccountBasedExpenseLineDetail: { ...l.AccountBasedExpenseLineDetail!, ClassRef: { value: "8" } } }));
+    await checkQbDrift();
+    expect((await driftFlag(id))?.checkedOffAt).not.toBeNull();
+  });
+
   it("keeps the stay-closed rule to QB_DRIFT: a re-raised COI flag still reopens", async () => {
     const { id } = await created("2026-09-10");
     await raiseFlag(id, "COI", "same detail");

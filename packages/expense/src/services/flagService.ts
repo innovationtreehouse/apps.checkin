@@ -9,9 +9,12 @@ import { CLOSED_STATES, reimburseeUnknown } from "../lib/signoff";
 import { conflictedParties } from "../lib/signoff-facts";
 import { ServiceError } from "./serviceError";
 
-/** Raises a flag; one row per expense and kind, so raising a checked-off flag reopens it. */
-export async function raiseFlag(expenseId: string, kind: FlagKind, detail: string | null = null, client: Db = db): Promise<void> {
-  const raised = { audience: FLAG_AUDIENCE[kind], detail, raisedAt: new Date() };
+/**
+ * Raises a flag; one row per expense and kind, so raising a checked-off flag reopens it.
+ * `observed` is what the raiser saw, for comparing a later raise against a check-off.
+ */
+export async function raiseFlag(expenseId: string, kind: FlagKind, detail: string | null = null, client: Db = db, observed: string | null = null): Promise<void> {
+  const raised = { audience: FLAG_AUDIENCE[kind], detail, observed, raisedAt: new Date() };
   const reopened = { ...raised, checkedOffAt: null, checkedOffByUserId: null, checkedOffByUsername: null, notes: null };
   const reopen = await client.expenseFlag.updateMany({ where: { expenseId, kind, checkedOffAt: { not: null } }, data: reopened });
   if (reopen.count > 0) return;

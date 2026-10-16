@@ -254,6 +254,7 @@ export const classifications = {
         kind: 'internal',
         audience: 'internal',
         detail: 'personal',
+        observed: 'internal',
         raisedAt: 'internal',
         checkedOffAt: 'internal',
         checkedOffByUserId: 'pii',
