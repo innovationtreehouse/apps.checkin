@@ -29,8 +29,8 @@ whether a reimbursement has been paid.
   duplicate and validation queues, all under the
   `FINANCE` role the expense port introduces.
 - **Operators** add one secret, `ANTHROPIC_API_KEY`, and no new service: OCR is a
-  direct API call from the app process, and receipt files are stored in the
-  receipt database (§3).
+  direct API call from the app process. Receipt files are stored in a private
+  S3 bucket per environment, which Infra provisions (§3).
 - **Not changed:** the receipt state machine, duplicate rules and the
   `CompletedReceipt` contract port verbatim, plus one optional in-kind mark
   (§4). In-kind donations as a whole belong to donations (§5).
@@ -275,9 +275,16 @@ dev seed), following `docs/ops/dev-instance.md`'s Zoho/Shopify pattern; `dev`/`p
 bind the real client, and a missing key there fails OCR into `ocr_failed` ("not
 configured") while manual entry keeps working.
 
-**File storage: `bytea` in the receipt database, as the source does.** Hundreds of
-files a year is under a gigabyte annually; lists already `omit` the blob. The file
-column (and a held mail item's file) is **`pii`** tier: it carries names and
+**File storage: a private S3 bucket, read and written only by the app**
+(amended; full design in `1265_RECEIPT_FILES_S3.md`). The first design stored
+files as `bytea` in the receipt database, on the assumption that only signed-in
+submitters upload. Gmail intake lets any sender store a held file, so files move
+to one private bucket per environment, keyed `receipts/<receiptId>` and
+`mail-items/<uuid>`, written once with a checksum, and read on the server only:
+the file route serves the bytes through `fileHandler` and no presigned URL is
+ever issued. Existing rows move by copy, verify, then switch; `file_blob` stays
+until the owner schedules its removal. The file (`file_blob`, and the new
+`file_key` that names its object) is **`pii`** tier: it carries names and
 delivery addresses. It is not `secret`, which `SECURITY-POLICY.md` reserves for
 cryptographic material that is never returned; a receipt file is returned, but only
 through the file route.
@@ -305,8 +312,8 @@ Every view or download writes an audit row (§6). A test asserts that no
 JSON route's response contains a receipt file column (`Receipt.fileBlob`,
 `ReceiptMailItem.fileBlob`). H6 is a boundary PR
 that lands before this lane's B and W.
-`ponytail:` ceiling is DB size and backup time; upgrade path is a private S3 bucket
-read with the task role, as `agreementDocument.ts` does.
+The S3 move in `1265_RECEIPT_FILES_S3.md` keeps this route and `fileHandler`
+unchanged: the route hands over bytes read from the bucket instead of the column.
 
 ---
 
@@ -631,6 +638,7 @@ All PRs are based on `main`; none stacks.
 | **B** boundary | `@sensitivity` on the receipt schema (file columns `pii`); after H6; `security/registry/receipt.ts` with every route, including file, import and the mail queue (list, assign, discard); one merge-list line. Maintainers, alone. |
 | **W** wiring | route and page stubs, `pageRegistry`, nav (Finance area for queues; "My receipts" where staff can reach it), `configureReceipt()`, harness list entries, `RECEIPT_DATABASE_URL` in Infra, `ANTHROPIC_API_KEY` in dev (prod only after Q5), flow test. Needs `FINANCE` on `main`. |
 | **G** Gmail intake | the mailbox adapter, the step in `reconcile-shopify`, the finance mail-queue page; Infra: the two secrets, the refresher, the consent runbook. After W. |
+| **F** files to S3 | four PRs (infra, library behind a flag, backfill, removal of `bytea` reads); `1265_RECEIPT_FILES_S3.md` §8. After G's mail queue (#2239). |
 | **X6** | bind `ReceiptSink` to `ingestReceipt`; pipeline flow test. After L7 W. |
 | **X13** | bind `DonorSink` to donations' `recordInKindDonor` and `withdrawInKind`. After L6 W and L8 W. |
 | **X7** | promote `receipt-types`, delete temporary shims. After X6. |
@@ -649,7 +657,7 @@ All PRs are based on `main`; none stacks.
 
 ### Assumptions
 
-- Receipt volume stays in the hundreds a year (drives synchronous OCR and `bytea`).
+- Receipt volume stays in the hundreds a year (drives synchronous OCR and buffered file reads).
 - A QuickBooks reimbursement can be tied back to its receipt (expense lane to confirm).
 - No receipt data is migrated from the source app; the library starts from its seed.
 
