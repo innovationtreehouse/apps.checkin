@@ -22,8 +22,9 @@ export interface WorkflowEventInput {
   payload?: unknown;
 }
 
-export async function recordEvent(handle: DbOrTx, e: WorkflowEventInput): Promise<void> {
-  await handle.workflowEvent.create({
+export async function recordEvent(handle: DbOrTx, e: WorkflowEventInput): Promise<{ id: number; occurredAt: Date }> {
+  return handle.workflowEvent.create({
+    select: { id: true, occurredAt: true },
     data: {
       orgId: e.orgId,
       disbursementId: e.disbursementId ?? null,

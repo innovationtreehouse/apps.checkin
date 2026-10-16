@@ -6,6 +6,7 @@
  * isolated, so no one step's failure fails checkin's reconcile. Every step is mocked; prisma.cronRunLog is stubbed for withCron's stamp.
  */
 import { runExpenseCatchUp, runExpenseQbPosting } from '@inventory/expense';
+import { runDonationQbPosting } from '@inventory/bulk-donation';
 import { catchUpOrgEvents as catchUpInventoryEvents } from '@inventory/local-inventory';
 import { catchUpOrgEvents as catchUpWorkflowEvents } from '@inventory/workflow-mapping';
 import { runReconcile as runIncomeReconcile } from '@inventory/income';
@@ -18,6 +19,7 @@ import { GET } from '../route';
 
 jest.mock('@/lib/finance/reconcile', () => ({ runReconcile: jest.fn() }));
 jest.mock('@inventory/expense', () => ({ runExpenseCatchUp: jest.fn(), runExpenseQbPosting: jest.fn() }));
+jest.mock('@inventory/bulk-donation', () => ({ runDonationQbPosting: jest.fn() }));
 jest.mock('@inventory/income', () => ({ runReconcile: jest.fn() }));
 jest.mock('@inventory/local-inventory', () => ({ catchUpOrgEvents: jest.fn() }));
 jest.mock('@inventory/workflow-mapping', () => ({ catchUpOrgEvents: jest.fn() }));
@@ -47,6 +49,7 @@ const QB_POSTING: Awaited<ReturnType<typeof runExpenseQbPosting>> = {
     qbDrift: 'unbound',
 };
 const EXPENSE = { ...CATCH_UP, ...QB_POSTING };
+const DONATION_QB = 'unbound' as const;
 const req = () =>
     new Request('http://localhost/api/cron/reconcile-shopify', { headers: { authorization: `Bearer ${SECRET}` } });
 
@@ -69,6 +72,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         jest.mocked(sweepInterruptedOcr).mockResolvedValue(RECEIPT);
         jest.mocked(repushUnpushed).mockResolvedValue(RECEIPT_PUSH);
         jest.mocked(resendDonorSync).mockResolvedValue(DONOR_SYNC);
+        jest.mocked(runDonationQbPosting).mockResolvedValue(DONATION_QB);
     });
 
     afterAll(() => {
@@ -81,7 +85,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
 
         expect(res.status).toBe(200);
         const body = await res.json();
-        expect(body).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receipt: RECEIPT, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC });
+        expect(body).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, donationQb: DONATION_QB, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receipt: RECEIPT, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC });
         expect(Object.keys(body.expense).sort()).toEqual(['catalogEvents', 'intake', 'qbDrift', 'qbPost', 'stranded']);
     });
 
@@ -93,8 +97,21 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
 
         expect(res.status).toBe(200);
         expect(runReconcile).toHaveBeenCalledTimes(1);
-        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: { status: 'error' }, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receipt: RECEIPT, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC });
+        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: { status: 'error' }, donationQb: DONATION_QB, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receipt: RECEIPT, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC });
         expect(logged).toHaveBeenCalledWith('[reconcile] expense catch-up failed:', expect.any(Error));
+        logged.mockRestore();
+    });
+
+    it('a throwing donation QuickBooks step still answers 200 with the reconcile result', async () => {
+        jest.mocked(runDonationQbPosting).mockRejectedValue(new Error('donation db down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = await GET(req());
+
+        expect(res.status).toBe(200);
+        expect(await res.json()).toMatchObject({ success: true, expense: EXPENSE, donationQb: { status: 'error' }, receipt: RECEIPT, donorSync: DONOR_SYNC });
+        expect(runDonationQbPosting).toHaveBeenCalledWith('org-1');
+        expect(logged).toHaveBeenCalledWith('[reconcile] donation QuickBooks posting failed:', expect.any(Error));
         logged.mockRestore();
     });
 
@@ -129,7 +146,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         const res = await GET(req());
 
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receipt: { status: 'error' }, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC });
+        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, donationQb: DONATION_QB, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receipt: { status: 'error' }, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC });
         expect(logged).toHaveBeenCalledWith('[reconcile] receipt catch-up failed:', expect.any(Error));
         logged.mockRestore();
     });
