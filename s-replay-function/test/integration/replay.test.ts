@@ -1,18 +1,16 @@
 /**
  * Integration tests against a real Postgres. Skipped unless SHOPIFY_READ_DATABASE_URL is set.
  *   SHOPIFY_READ_DATABASE_URL=postgresql://... npm test
- *
- * (The DB-availability guard in db-availability.test.ts fails CI loudly if this
- * coverage is silently skipped.)
  */
-import { describe, it, expect, beforeEach, afterAll } from "vitest";
+import { it, expect, beforeEach, afterAll } from "vitest";
+import { describeDb } from "@inventory/pg-test-harness";
 import { prisma, injectFixtures, setWatermark, ObjectType } from "@inventory/s-ingest-core";
 import { replay, resetWatermark } from "../../src/replay.js";
 import { handler } from "../../src/handler.js";
 import { wipeStore, orderNode, rawOrderEvent } from "./helpers.js";
 
 const STORE = "replay-test.myshopify.com";
-const run = process.env.SHOPIFY_READ_DATABASE_URL ? describe : describe.skip;
+const run = describeDb("SHOPIFY_READ_DATABASE_URL");
 
 const orderGid = (n: number | string) => `gid://shopify/Order/${n}`;
 const liveOrder = (gid: string) =>

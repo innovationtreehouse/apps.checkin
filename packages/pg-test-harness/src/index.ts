@@ -20,3 +20,4 @@ export { startPostgres, DEFAULT_PG_IMAGE, type StartedPg } from "./container.js"
 export { applyMigrations, type ApplyMigrationsOptions } from "./migrate.js";
 export { pgGlobalSetup, type PgHarnessOptions } from "./globalSetup.js";
 export { applyHarnessEnv, type SetupEnvOptions } from "./setupEnv.js";
+export { describeDb, dbGateMode, type DbGateMode } from "./describeDb.js";

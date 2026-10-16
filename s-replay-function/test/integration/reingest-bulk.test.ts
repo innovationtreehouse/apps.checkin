@@ -2,13 +2,14 @@
  * Integration test for reingestBulk() — re-reassembles + re-projects stored bulk
  * exports with no Shopify calls. Skipped unless SHOPIFY_READ_DATABASE_URL is set.
  */
-import { describe, it, expect, beforeEach, afterAll } from "vitest";
+import { it, expect, beforeEach, afterAll } from "vitest";
+import { describeDb } from "@inventory/pg-test-harness";
 import { prisma, ingestBulkOrders, EventSource } from "@inventory/s-ingest-core";
 import { reingestBulk } from "../../src/replay.js";
 import { wipeStore, orderNode } from "./helpers.js";
 
 const STORE = "reingest-test.myshopify.com";
-const run = process.env.SHOPIFY_READ_DATABASE_URL ? describe : describe.skip;
+const run = describeDb("SHOPIFY_READ_DATABASE_URL");
 
 run("s-replay-function reingestBulk", () => {
   beforeEach(() => wipeStore(prisma, STORE));

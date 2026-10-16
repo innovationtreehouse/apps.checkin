@@ -13,10 +13,10 @@
  * is proven in packages/monitoring-db/test/integration/lock.test.ts and the relay's unit
  * skip test, so it is not re-litigated here.
  */
-import { describe } from "vitest";
+import { describeDb } from "@inventory/pg-test-harness";
 import { prisma, IncidentKind } from "@inventory/monitoring-db";
 
-export const runIfDb = process.env.MONITORING_DATABASE_URL ? describe : describe.skip;
+export const runIfDb = describeDb("MONITORING_DATABASE_URL");
 
 export { prisma };
 
