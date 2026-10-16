@@ -4,4 +4,4 @@ import { handler } from "@/security/handler";
 import { expenseRoute } from "@/lib/expense/route";
 import { routes } from "@inventory/expense";
 
-export const POST = handler("POST /api/expense/line-items/[lineItemId]/qb-create", expenseRoute(routes.finance.create));
+export const POST = handler("POST /api/expense/expenses/[id]/qb-match", expenseRoute(routes.finance.match));

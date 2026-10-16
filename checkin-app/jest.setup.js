@@ -51,7 +51,8 @@ process.env.CHECKIN_ENV = 'dev';
   // scanFlushRace commits a racing visit from a second connection mid-scan.
   // cronNightlyLock holds a departure open on one connection while the sweep runs on another.
   // programStockLockConcurrency runs two stock writers on separate connections.
-  if (testPath && /(scanConcurrency|attendanceManualConcurrency|attendanceManualCheckinConcurrency|visitWriteLockConcurrency|programsParticipantsConcurrency|programsPublicRegisterConcurrency|trustedAdultConcurrency|householdLeadsConcurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programStockLockConcurrency)\.integration\.test\.[jt]sx?$/.test(testPath)) {
+  // certificationsConcurrency holds a level change open on one connection while a certifier writes on another.
+  if (testPath && /(scanConcurrency|attendanceManualConcurrency|attendanceManualCheckinConcurrency|visitWriteLockConcurrency|programsParticipantsConcurrency|programsPublicRegisterConcurrency|trustedAdultConcurrency|householdLeadsConcurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programStockLockConcurrency|certificationsConcurrency)\.integration\.test\.[jt]sx?$/.test(testPath)) {
     process.env.TEST_DB_POOL_MAX = '2';
   }
 }

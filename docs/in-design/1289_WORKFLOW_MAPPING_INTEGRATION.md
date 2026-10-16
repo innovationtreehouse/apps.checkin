@@ -55,7 +55,7 @@ design), inherited and not restated; this doc states only the delta. Lane L7 of
 vendored checkin copy is byte-identical to the source).
 
 **Domain rules relied on:** `docs/rules/principles.md` (least privilege, §6). No
-rule in `finance-payments.md` changes; this library books nothing itself.
+rule in `revenue.md` changes; this library books nothing itself.
 
 ---
 

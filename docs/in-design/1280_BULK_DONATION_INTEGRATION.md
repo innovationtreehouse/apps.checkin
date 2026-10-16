@@ -104,7 +104,7 @@ concurrency test verbatim.
 | FD3 part | In the source? | This port |
 |---|---|---|
 | Benevity (corporate) intake | Yes (FD1) | Ported |
-| Shopify online donations | No. checkin's reconciliation passes donations through untouched (`finance-payments.md`, Reconciliation) | Not built; FD4's income port is the natural home |
+| Shopify online donations | No. checkin's reconciliation passes donations through untouched (`revenue.md`, Reconciliation) | Not built; FD4's income port is the natural home |
 | Check / cash entry [board] | No | Net-new, not designed here |
 | In-kind entry [ops] | No. TOPDOWN GC-DONOR calls it its own intake that fans out to catalog, inventory, and donations | Net-new; designed in §2.4 with FR5, built after this port's three PRs |
 | Donation-receipt email | No | Net-new, not designed here |
@@ -246,7 +246,7 @@ identity, but the name is already `pii` behind the same gate, so it stays
 `['everyones:pii', 'everyones:internal', 'public']` to both; nobody else is
 authorized at all. `BOARD` is included because the board acts as the superuser
 for finance today (owner decision; Finance Ops is board-only for the same
-reason). Sysadmin is excluded, matching Finance Ops (`finance-payments.md`,
+reason). Sysadmin is excluded, matching Finance Ops (`revenue.md`,
 Ownership). Least-privilege note (`principles.md`): unlike the catalog this
 narrows access, and the narrowing applies to `pii` specifically.
 
@@ -501,7 +501,7 @@ correct #1272 §6, and decide the bucket ↔ QuickBooks Class sync direction.
 
 ## 11. Distillation at merge
 
-Rules worth extracting go to `docs/rules/finance-payments.md` (no new file):
+Rules worth extracting go to `docs/rules/revenue.md` (no new file):
 donor identity is `pii`, readable by the finance and board roles only; donors are
 not linked to members; every gift's owner is an accounting bucket, not a person; a Benevity gift is
 imported at most once per org; a disbursement is booked only when every gift has

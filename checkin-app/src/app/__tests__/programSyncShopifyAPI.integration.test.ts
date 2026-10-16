@@ -23,7 +23,6 @@
 import { POST } from '@/app/api/programs/[id]/sync-shopify/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
-import { Client } from 'pg';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -151,26 +150,33 @@ describe('POST /api/programs/[id]/sync-shopify', () => {
         }
     });
 
-    it('refuses (409) while another sync holds the program, creating nothing', async () => {
+    it('refuses (409) while another sync holds a fresh claim, creating nothing', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         const program = await makeBrokenProgram();
-        const holder = new Client({ connectionString: process.env.DATABASE_URL });
-        await holder.connect();
-        try {
-            await holder.query('BEGIN');
-            await holder.query('SELECT pg_advisory_xact_lock(7302, $1)', [program.id]);
+        await prisma.program.update({
+            where: { id: program.id },
+            data: { shopifySyncStartedAt: new Date(), shopifySyncToken: 'other-run' },
+        });
 
-            const res = await POST(req(), params(program.id));
-            expect(res.status).toBe(409);
-            const after = await prisma.program.findUnique({ where: { id: program.id } });
-            expect(after?.shopifyVariantId).toBeNull();
-        } finally {
-            await holder.query('ROLLBACK').catch(() => { });
-            await holder.end();
-        }
+        expect((await POST(req(), params(program.id))).status).toBe(409);
+        const after = await prisma.program.findUnique({ where: { id: program.id } });
+        expect(after?.shopifyVariantId).toBeNull();
+        expect(after?.shopifySyncToken).toBe('other-run');
+    });
 
-        // Released: the same request now repairs the program.
+    it('takes over a stale claim left by a run that died, and releases it on success', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const program = await makeBrokenProgram();
+        await prisma.program.update({
+            where: { id: program.id },
+            data: { shopifySyncStartedAt: new Date(Date.now() - 11 * 60_000), shopifySyncToken: 'dead-run' },
+        });
+
         expect((await POST(req(), params(program.id))).status).toBe(200);
+        const after = await prisma.program.findUnique({ where: { id: program.id } });
+        expect(after?.shopifyVariantId).toMatch(/^dev-mock-variant-/);
+        expect(after?.shopifySyncStartedAt).toBeNull();
+        expect(after?.shopifySyncToken).toBeNull();
     });
 
     it('backfills only the claimant product on a program that has its public variant', async () => {
