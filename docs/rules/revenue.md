@@ -290,7 +290,7 @@ paid in batches) and gifts of goods (in-kind).
   who submits a receipt for a gift of goods records its donor, and can say it
   isn't a gift after all.  [Decision]
 
-- Only finance and the board can see who gave. Each look at a Benevity donor is
+- Only finance and the board can see who gave. Each look at a donor is
   recorded.  [Decision — *Principle: least privilege*]
 
 - Donors are not linked to people or households in the app.  [Decision — deliberate limit]
