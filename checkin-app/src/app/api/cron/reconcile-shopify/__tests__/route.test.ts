@@ -36,7 +36,7 @@ const PROGRAM_STOCK = { checked: 0, settled: 0 };
 const INVENTORY_EVENTS = { processed: 1, duplicate: 0, failed: 0, skipped: 0 };
 const WORKFLOW_EVENTS = { applied: 1, failed: 0 };
 const RECEIPT = { swept: 2 };
-const RECEIPT_PUSH = { pushed: 2, failed: 0 };
+const RECEIPT_PUSH = { pushed: 2, failed: 0, skipped: 1 };
 const DONOR_SYNC = { resent: 1, failed: 0 };
 // The one expense result every case uses, catch-up and QuickBooks halves; a new step adds its key here.
 const CATCH_UP: Awaited<ReturnType<typeof runExpenseCatchUp>> = {

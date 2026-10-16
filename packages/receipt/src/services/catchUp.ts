@@ -31,17 +31,41 @@ export async function sweepInterruptedOcr(now = new Date()): Promise<{ swept: nu
   return { swept };
 }
 
-/** S1 re-push of finalized receipts not yet delivered. */
-export async function repushUnpushed(): Promise<{ pushed: number; failed: number }> {
+/** Catch-up stops retrying a receipt after this many system push failures in a row. */
+export const MAX_CONSECUTIVE_PUSH_FAILURES = 5;
+
+/**
+ * Ids whose latest MAX_CONSECUTIVE_PUSH_FAILURES push attempts are all catch-up failures.
+ * A success or a manual push (one with an acting user) ends the run.
+ */
+async function givenUp(ids: string[]): Promise<Set<string>> {
+  const log = await db.receiptAuditLog.findMany({
+    where: { receiptId: { in: ids }, action: { in: ["pushed", "push_failed"] } },
+    select: { receiptId: true, action: true, userId: true },
+    orderBy: { id: "desc" },
+  });
+  const run = new Map<string, number>();
+  const ended = new Set<string>();
+  for (const { receiptId, action, userId } of log) {
+    if (!receiptId || ended.has(receiptId)) continue;
+    if (action === "push_failed" && userId === null) run.set(receiptId, (run.get(receiptId) ?? 0) + 1);
+    else ended.add(receiptId);
+  }
+  return new Set([...run].filter(([, n]) => n >= MAX_CONSECUTIVE_PUSH_FAILURES).map(([id]) => id));
+}
+
+/** S1 re-push of finalized receipts not yet delivered, skipping ones catch-up has given up on. */
+export async function repushUnpushed(): Promise<{ pushed: number; failed: number; skipped: number }> {
   const rows = await db.receipt.findMany({
     where: { orgId: (await getOrg()).id, pushedAt: null, details: { state: "receipt_finalized" } },
     select: { id: true },
     orderBy: { uploadedAt: "asc" },
-    take: CATCH_UP_CAP,
   });
+  const skip = await givenUp(rows.map((r) => r.id));
+  const due = rows.filter((r) => !skip.has(r.id)).slice(0, CATCH_UP_CAP);
   let pushed = 0;
-  for (const { id } of rows) if (await pushReceipt(id, null)) pushed++;
-  return { pushed, failed: rows.length - pushed };
+  for (const { id } of due) if (await pushReceipt(id, null)) pushed++;
+  return { pushed, failed: due.length - pushed, skipped: skip.size };
 }
 
 /** X13 re-send for receipts whose donor change donations has not heard. */
