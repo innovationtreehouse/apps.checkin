@@ -19,7 +19,7 @@ import {
   resolveUnknown,
 } from "../services/approvalService";
 import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
-import { setReimbursee, signLine, signoffStatus } from "../services/signoffService";
+import { markNotEveryday, recordBoardAuthorization, setReimbursee, signLine, signoffStatus } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
 import {
   httpError,
@@ -240,6 +240,22 @@ export const sign: ExpenseRouteHandler = async ({ req, params }) => {
   await mapServiceErrors(() => signLine(principal, lineItemId, seat));
   const status = await signoffStatus(params.id);
   return { ExpenseLineSignoffStatus: seatsOnly(status.filter((s) => s.lineItemId === lineItemId)) };
+};
+
+/** The library decides who may record the Board authorization; the response is every line's status. */
+export const boardAuthorization: ExpenseRouteHandler = async ({ req, params }) => {
+  const { authorization } = await parseBody(req, z.object({ authorization: z.string().trim().min(1, "Say what the Board authorized") }));
+  const principal = await getPrincipal();
+  await mapServiceErrors(() => recordBoardAuthorization(principal, params.id, authorization));
+  return { ExpenseLineSignoffStatus: seatsOnly(await signoffStatus(params.id)) };
+};
+
+/** FINANCE marks a card charge not Everyday; there is no route to unmark it. */
+export const notEveryday: ExpenseRouteHandler = async ({ req, params }) => {
+  const { reason } = await parseBody(req, z.object({ reason: z.enum(["single_source", "finance_override"]) }));
+  const principal = await getPrincipal();
+  await mapServiceErrors(() => markNotEveryday(principal, params.id, reason));
+  return { ExpenseLineSignoffStatus: seatsOnly(await signoffStatus(params.id)) };
 };
 
 async function expenseWithLines(id: string) {
