@@ -102,6 +102,11 @@ export async function filledSeatsByLine(db: Db, expenseId: string): Promise<Map<
 
 export type LineHold = Seat | "BOARD_AUTHORIZATION";
 
+/** What still holds a line: its unfilled seats, then a missing Board authorization. */
+export function lineHolds(facts: SignoffFacts, filled: FilledSeat[]): LineHold[] {
+  return [...missingSeats(facts, filled), ...(facts.needsBoardAuthorization ? (["BOARD_AUTHORIZATION"] as const) : [])];
+}
+
 /**
  * Lines still missing a seat or the Board authorization. A held line keeps the whole expense out
  * of the QB outbox.
@@ -110,7 +115,7 @@ export async function unsignedLines(db: Db, expense: SignoffExpense): Promise<Ma
   const [facts, filled] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expense.id)]);
   const out = new Map<number, LineHold[]>();
   for (const [lineId, f] of facts) {
-    const missing: LineHold[] = [...missingSeats(f, filled.get(lineId) ?? []), ...(f.needsBoardAuthorization ? (["BOARD_AUTHORIZATION"] as const) : [])];
+    const missing = lineHolds(f, filled.get(lineId) ?? []);
     if (missing.length > 0) out.set(lineId, missing);
   }
   return out;

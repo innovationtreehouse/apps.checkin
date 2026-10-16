@@ -209,13 +209,14 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                   {s ? (
                     <Stack gap={2}>
                       {s.filled.map((seat) => <Text key={seat} size="xs">✓ {SEAT_LABEL[seat] ?? seat}</Text>)}
-                      {s.missing.map((seat) => (
+                      {s.missing.filter((seat) => seat !== "BOARD_AUTHORIZATION").map((seat) => (
                         <Button key={seat} size="compact-xs" variant="outline" disabled={held || (seat === "PROGRAM_APPROVER" && noBucket)} onClick={() => void sign(l.id, seat)}>
                           Sign as {SEAT_LABEL[seat] ?? seat}
                         </Button>
                       ))}
                       {held && s.missing.length > 0 && <Text size="xs" c="dimmed">Held until FINANCE sets the reimbursee</Text>}
                       {noBucket && s.missing.includes("PROGRAM_APPROVER") && <Text size="xs" c="dimmed">Waiting for Finance to assign a budget bucket</Text>}
+                      {s.missing.includes("BOARD_AUTHORIZATION") && <Text size="xs" c="dimmed">Held until the Treasurer records the Board authorization</Text>}
                       {s.blocked.length > 0 && <Text size="xs" c="red">Held: {s.blocked.map((x) => SEAT_LABEL[x] ?? x).join(", ")}</Text>}
                     </Stack>
                   ) : "—"}

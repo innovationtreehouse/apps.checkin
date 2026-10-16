@@ -7,7 +7,7 @@ import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
-import { conflictedParties, filledSeatsByLine, lockExpense, signoffFactsByLine, unsignedLines, voidSignoffs } from "../lib/signoff-facts";
+import { conflictedParties, filledSeatsByLine, lineHolds, lockExpense, signoffFactsByLine, unsignedLines, voidSignoffs } from "../lib/signoff-facts";
 import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, lineKind, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
@@ -174,28 +174,30 @@ export async function recordBoardAuthorization(principal: ExpensePrincipal, expe
   const actor = actorOf(principal);
   const text = authorization.trim();
   if (text === "") throw new ServiceError(400, "Say what the Board authorized");
-  const state = await db.$transaction(async (tx) => {
+  const { state, byFinance } = await db.$transaction(async (tx) => {
     const expense = await openCardCharge(tx, expenseId);
     if (expense.boardAuthorization !== null) throw new ServiceError(409, "The Board authorization is already recorded");
-    const refusal = boardAuthorizationRefusal([...(await signoffFactsByLine(tx, expense)).values()], actor.userId);
+    const facts = [...(await signoffFactsByLine(tx, expense)).values()];
+    const refusal = boardAuthorizationRefusal(facts, actor.userId);
     if (refusal) throw new ServiceError(403, refusal);
     await tx.expense.update({
       where: { id: expenseId },
       data: { boardAuthorization: text, boardAuthorizedByUserId: actor.userId, boardAuthorizedByUsername: actor.username, boardAuthorizedAt: new Date() },
     });
     await writeAudit(tx, actor, { expenseId, action: "board_authorization_recorded", fieldChanged: "boardAuthorization", valueAfter: text });
-    return expense.state;
+    return { state: expense.state, byFinance: facts[0].finance.includes(actor.userId) };
   });
+  if (!byFinance) await raiseFlag(expenseId, "COI", "no FINANCE holder could record it; a Board member recorded the Board authorization");
   if (state === "qb_pending") await drainExpense(await getOrgId(), expenseId);
 }
 
-/** Per line: the seats filled, still missing, and blocked (held until finance or the board acts). */
+/** Per line: the seats filled, what is still missing (seats, then a Board authorization), and the seats blocked (held until finance or the board acts). */
 export async function signoffStatus(expenseId: string) {
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
   if (!expense) throw new ServiceError(404, "Expense not found");
   const [facts, filled] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expenseId)]);
   return [...facts].map(([lineItemId, f]) => {
     const seats = filled.get(lineItemId) ?? [];
-    return { lineItemId, filled: seats, missing: missingSeats(f, seats), blocked: blockedSeats(f, seats) };
+    return { lineItemId, filled: seats, missing: lineHolds(f, seats), blocked: blockedSeats(f, seats) };
   });
 }

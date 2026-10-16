@@ -3,7 +3,7 @@ import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
-import { markNotEveryday, recordBoardAuthorization } from "../../services/signoffService";
+import { markNotEveryday, recordBoardAuthorization, signoffStatus } from "../../services/signoffService";
 import { unsignedLines } from "../../lib/signoff-facts";
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
 
@@ -31,6 +31,7 @@ describeDb("card charges", () => {
     const id = await signedCard({ receiptTotalCents: 50_000 });
     await checkAndProcessExpense(ORG, id);
     expect(await holds(id)).toEqual(["BOARD_AUTHORIZATION"]);
+    expect((await signoffStatus(id))[0].missing).toEqual(["BOARD_AUTHORIZATION"]);
     expect(await events(id)).toBe(0);
 
     await expect(recordBoardAuthorization(FINANCE, id, "  ")).rejects.toMatchObject({ statusCode: 400 });
@@ -65,6 +66,21 @@ describeDb("card charges", () => {
     await expect(recordBoardAuthorization(FINANCE, id, "Board vote")).rejects.toMatchObject({ statusCode: 403 });
     await recordBoardAuthorization(principal(4, { isFinance: true }), id, "Board vote");
     await expect(recordBoardAuthorization(principal(4, { isFinance: true }), id, "again")).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("a Board member records it only when every FINANCE holder is conflicted, and that raises a COI flag", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5], households: [[1, 3]] }) });
+    const id = await seedExpense({ receiptTotalCents: 60_000 });
+    await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await recordBoardAuthorization(principal(5, { isBoard: true }), id, "Board vote");
+    const flags = await db.expenseFlag.findMany({ where: { expenseId: id } });
+    expect(flags.map((f) => [f.kind, f.audience])).toEqual([["COI", "BOARD"]]);
+  });
+
+  it("a FINANCE holder recording it raises no flag", async () => {
+    const id = await signedCard({ receiptTotalCents: 60_000 });
+    await recordBoardAuthorization(FINANCE, id, "Board vote");
+    expect(await db.expenseFlag.count({ where: { expenseId: id, kind: "COI" } })).toBe(0);
   });
 
   it("a reimbursement takes no Board authorization", async () => {
