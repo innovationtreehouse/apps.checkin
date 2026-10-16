@@ -80,6 +80,8 @@ describe('certification level change racing a certifier grant (real DB)', () => 
 
             const deadline = Date.now() + 10_000;
             for (;;) {
+                // pg_stat_activity is snapshotted per transaction; clear it so each poll is fresh.
+                await tx.$queryRaw`SELECT pg_stat_clear_snapshot() IS NULL AS cleared`;
                 const [{ n }] = await tx.$queryRaw<{ n: number }[]>`
                     SELECT count(*)::int AS n FROM pg_stat_activity
                     WHERE datname = current_database() AND wait_event_type = 'Lock'`;
