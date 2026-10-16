@@ -1,15 +1,14 @@
 import prisma from "@/lib/prisma";
 import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
 import { sendCheckinNotifications } from "@/lib/notifications";
-import { apiError, apiJson } from "@/lib/api-response";
-import { Prisma, type FacilityCloseVia, type Person } from "@/generated/prisma/client";
+import { Prisma, type FacilityCloseVia, type Person, type Visit } from "@/generated/prisma/client";
 import type { DbClient, TxClient } from "@/lib/db-client";
 import { lockFacility, withFacilityLock } from "@/lib/facilityLock";
 import { KEYHOLDER_IN_BUILDING, LIVE_KEYHOLDER, LIVE_VISIT } from "@/lib/visit/filters";
 import { LATE_CLOSE_SKEW_MS, MAX_VISIT_MS } from "@/lib/visitTimes";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, youthIsPresent } from "@/lib/supervision";
 import { isYouth } from "@/lib/time";
-import { getKioskDisplayName, getKioskDisplayNames } from "@/lib/kiosk-names";
+import { getKioskDisplayNames } from "@/lib/kiosk-names";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { logBackendError } from "@/lib/logger";
@@ -17,19 +16,8 @@ import { type AuditActor, personActor, systemActor } from "@/lib/auditActor";
 import type { AuthenticatedUser } from "@/types/auth";
 import { sendEmail } from "@/lib/email";
 import { escapeHtml } from "@/lib/email-templates/base";
-import { formatDateTime, formatTime } from "@/lib/time";
+import { formatDateTime } from "@/lib/time";
 import { resolveDisplayTimezone } from "@/lib/appSettings";
-
-/**
- * What a scan response may say about who scanned: an id and the same
- * nickname-else-first-name label the kiosk roster shows. The kiosk renders this on
- * an unattended public screen and forwards it into an iframe with a wildcard
- * postMessage origin (client/client.py), so the raw Person — email, phone, date of
- * birth — never ships (docs/rules/attendance-checkin.md, "The kiosk").
- */
-function scanParticipant(participant: Person) {
-    return { id: participant.id, name: getKioskDisplayName(participant) };
-}
 
 /**
  * The "others are here" list on a force-close warning, labelled as the kiosk
@@ -38,7 +26,7 @@ function scanParticipant(participant: Person) {
  * badge path renders it on the public kiosk screen (docs/rules/attendance-checkin.md,
  * "The kiosk"). Keyed by visit id, which is unique per row.
  */
-function presentLabels(visits: { id: number; person: Pick<Person, "name" | "nickname" | "email"> }[]): string[] {
+export function presentLabels(visits: { id: number; person: Pick<Person, "name" | "nickname" | "email"> }[]): string[] {
     const labels = getKioskDisplayNames(visits.map(v => ({ ...v.person, id: v.id })));
     return visits.flatMap(v => labels.get(v.id) || []);
 }
@@ -62,6 +50,60 @@ export const SUPERVISION_CONFIRM_MS = 15_000;
  *  stamp already fresh. Below this age, treat it as the same physical badge. */
 export const SUPERVISION_CONFIRM_DEADFRONT_MS = 1_000;
 
+/** Someone recorded inside, as a close offer names them. */
+export type VisitInside = { id: number; arrivedAt: Date; person: Pick<Person, "name" | "nickname" | "email"> };
+
+/** Why the kiosk is offered a close after a keyholder's checkout. */
+export type CloseOffer =
+    /** No other keyholder is in; `othersInside` is everyone else still recorded inside. */
+    | { reason: "last_keyholder"; othersInside: VisitInside[] }
+    /** Other keyholders are recorded inside. */
+    | { reason: "keyholders_remain" }
+    /** A one-badge close held: these checked in after the kiosk's roster. */
+    | { reason: "unseen_checkins"; unseen: VisitInside[] };
+
+/** Why a scan was recorded without changing anyone's visit. */
+export type ParkReason =
+    /** A visit opened for the person between the route's read and the facility lock. */
+    | "double_in"
+    /** A displayed IN for someone already inside. */
+    | "conflict_double_in"
+    /** A displayed OUT for someone not inside. */
+    | "conflict_out_no_in"
+    /** Held for a reviewer: dead-lettered, stale, out of order or a doubtful clock. */
+    | "review";
+
+/**
+ * What a scan did, as domain facts. The scan route renders it to the kiosk and
+ * web wire (app/api/scan/scanResponse.ts); nothing here is a status, a message
+ * or a wire flag.
+ */
+export type ScanOutcome =
+    | {
+        kind: "checkin";
+        person: Person;
+        visit: Visit;
+        /** A youth arrived into a room short of supervising adults. */
+        supervisionShort: boolean;
+        /** A replayed arrival departed at a close that reached the server first. */
+        departedAtClose: boolean;
+    }
+    | {
+        kind: "checkout";
+        person: Person;
+        /** The departed visit; null when the checkout departed no row. */
+        visit: Visit | null;
+        closed: boolean;
+        /** Supervising adults this departure leaves, when the room is to be told. */
+        supervisorsRemaining?: number;
+        closeOffer?: CloseOffer;
+    }
+    /** A departure stopped until the person badges again: it leaves a youth short of supervision. */
+    | { kind: "confirm_departure"; supervisorsRemaining: number }
+    | { kind: "parked"; reason: ParkReason }
+    /** A check-in away from the door with no keyholder inside. */
+    | { kind: "refused"; reason: "facility_closed" };
+
 /**
  * Process a check-in for a participant who has no active visit.
  *
@@ -78,7 +120,7 @@ export async function processCheckin(
     visitTime?: Date,
     /** A trusted replay's event id: the arrival is fenced by any close after its scan time. */
     fenceClientEventId?: string | null,
-) {
+): Promise<ScanOutcome> {
     // Facility lock serializes the open-state read and the create against the
     // last-keyholder sweep: a check-in lands wholly before a close (and is swept)
     // or wholly after it. Same 2-arg lock space as the close sweep —
@@ -92,12 +134,12 @@ export async function processCheckin(
         select: { id: true },
     });
     if (openVisit) {
-        return apiJson({ type: "parked", reason: "double_in", message: "Recorded for review." });
+        return { kind: "parked", reason: "double_in" };
     }
 
     if (visitTime && fenceClientEventId) {
         const fenced = await fenceReplayedArrival(tx, participant.id, visitTime, fenceClientEventId);
-        if (fenced) return fenced;
+        if (fenced) return { kind: "checkin", person: participant, visit: fenced, supervisionShort: false, departedAtClose: true };
     }
 
     // A badge at the kiosk always checks in — someone scanning inside the
@@ -108,7 +150,7 @@ export async function processCheckin(
     if (authType !== "kiosk") {
         const activeKeyholders = await tx.visit.count({ where: KEYHOLDER_IN_BUILDING });
         if (activeKeyholders === 0) {
-            return apiError("Facility is closed. A keyholder must badge in at the door first.", 403);
+            return { kind: "refused", reason: "facility_closed" };
         }
     }
 
@@ -134,19 +176,10 @@ export async function processCheckin(
     // ordinary adult check-in still costs no extra query.
     const isYouthArrival = !participant.isDeclaredAdult
         && isYouth(participant.dateOfBirth, { unknownIs: "youth" });
-    const supervisionWarning = isYouthArrival
-        && supervisingAdultCount(await supervisingAdultVisits(tx)) < MIN_SUPERVISING_ADULTS
-        ? `Warning: fewer than ${MIN_SUPERVISING_ADULTS} supervising adults are in the building.`
-        : undefined;
+    const supervisionShort = isYouthArrival
+        && supervisingAdultCount(await supervisingAdultVisits(tx)) < MIN_SUPERVISING_ADULTS;
 
-    return apiJson({
-        message: "Checked in successfully",
-        type: "checkin" as const,
-        warning: supervisionWarning,
-        participant: scanParticipant(participant),
-        visit: newVisit,
-        signedRequest: authType === "kiosk",
-    });
+    return { kind: "checkin", person: participant, visit: newVisit, supervisionShort, departedAtClose: false };
     });
 }
 
@@ -186,7 +219,7 @@ async function fenceReplayedArrival(tx: TxClient, personId: number, arrivedAt: D
         },
     });
     await tx.rawBadgeLog.updateMany({ where: { clientEventId }, data: { reviewReason: "closed_before_delivery" } });
-    return apiJson({ type: "checkin" as const, message: "Checked in; departed at the close that followed", visit });
+    return visit;
 }
 
 /** A kiosk older than the close-request generation sends no close request, so
@@ -212,12 +245,12 @@ export async function processCheckout(
     db: DbClient = prisma,
     visitTime: Date = new Date(),
     isReplay: boolean = false,
-    /** A web checkout whose dialog chose close; reported in the response. */
+    /** A web checkout whose dialog chose close; reported as a close in the outcome. */
     webClose: boolean = false,
     legacy: LegacyKiosk | null = null,
-) {
+): Promise<ScanOutcome> {
     let facilityClosed = authType !== "kiosk" && webClose;
-    let closeOffer: { closePrompt: string; forceCloseToken: string; confirmSeconds: number } | null = null;
+    let closeOffer: CloseOffer | undefined;
     /** The last recorded keyholder's single-badge leave, with how many it left inside. */
     let leave: { othersInside: number } | null = null;
 
@@ -236,20 +269,12 @@ export async function processCheckout(
                 include: { person: true },
             })
             : [];
-        // An older kiosk echoes this token on the same badge's second scan; the
-        // route reads any echo as a confirmed close, so nothing stores it.
-        const offer = (closePrompt: string) => isReplay ? null
-            : { closePrompt, forceCloseToken: randomUUID(), confirmSeconds: FORCE_CLOSE_CONFIRM_SECONDS };
-
         if (remainingKeyholders === 0 && legacy && others.length === 0 && legacy.shownEmpty !== false) {
             facilityClosed = true;
         } else if (remainingKeyholders === 0) {
             leave = { othersInside: others.length };
             if (legacy) {
-                const inside = others.length > 0
-                    ? `, and others are still recorded inside: ${presentLabels(others).join(", ")}.`
-                    : ".";
-                closeOffer = offer(`No other keyholder is checked in${inside} Badge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to close the building and check everyone out.`);
+                if (!isReplay) closeOffer = { reason: "last_keyholder", othersInside: others };
                 if (isReplay && legacy.clientEventId) {
                     // Nobody confirmed a close: the leave applies, and a human
                     // checks who the server still records inside.
@@ -259,8 +284,8 @@ export async function processCheckout(
                     });
                 }
             }
-        } else if (legacy) {
-            closeOffer = offer(`Others are still recorded inside. Badge again within ${FORCE_CLOSE_CONFIRM_SECONDS} seconds to close the building and check everyone out.`);
+        } else if (legacy && !isReplay) {
+            closeOffer = { reason: "keyholders_remain" };
         }
     }
 
@@ -270,11 +295,11 @@ export async function processCheckout(
     // shape, so the queued departure would be dropped and the visit left open.
     // Skipped for a web checkout as well: the badge scanner is the only place
     // anyone can re-badge (docs/rules/attendance-checkin.md, Supervision).
-    let supervisionWarning: string | undefined;
+    let supervisorsRemaining: number | undefined;
     if (!facilityClosed && !isReplay && authType === "kiosk") {
         const interrupt = await supervisionInterrupt(activeVisitId, db);
-        if (interrupt?.confirmRequired) return interrupt.response;
-        supervisionWarning = interrupt?.warning;
+        if (interrupt?.confirm) return { kind: "confirm_departure", supervisorsRemaining: interrupt.remaining };
+        supervisorsRemaining = interrupt?.remaining;
     }
 
     const finalVisits = await processVisitCheckout(activeVisitId, visitTime, db, "SCANNER");
@@ -284,16 +309,7 @@ export async function processCheckout(
     }
     if (leave) await auditKioskLeave(db, participant.id, updatedVisit?.id ?? activeVisitId, isReplay, leave.othersInside);
 
-    return apiJson({
-        message: facilityClosed ? "Checked out and Facility closed" : "Checked out successfully",
-        type: "checkout" as const,
-        warning: supervisionWarning,
-        participant: scanParticipant(participant),
-        visit: updatedVisit,
-        facilityClosed,
-        ...closeOffer,
-        signedRequest: authType === "kiosk",
-    });
+    return { kind: "checkout", person: participant, visit: updatedVisit, closed: facilityClosed, supervisorsRemaining, closeOffer };
 }
 
 /** The last recorded keyholder's kiosk leave, audited like a web leave; the kiosk
@@ -338,7 +354,7 @@ export async function processCloseRequest(
     kind: CloseKind = "confirmed",
     /** Server time of the kiosk's last roster; null when it had none to send. */
     rosterAsOf: Date | null = null,
-) {
+): Promise<ScanOutcome> {
     const closedAt = clampToNow(closeTime);
     const unseen = rosterAsOf
         ? await db.visit.findMany({
@@ -378,18 +394,7 @@ export async function processCloseRequest(
         }
         const othersInside = await db.visit.count({ where: { departedAt: null, deletedAt: null, personId: { not: participant.id } } });
         if (visit) await auditKioskLeave(db, participant.id, visit.id, isReplay, othersInside);
-        const timeZone = await resolveDisplayTimezone();
-        const labels = getKioskDisplayNames(unseen.map(v => ({ ...v.person, id: v.id })));
-        const who = unseen.map(v => `${labels.get(v.id) || "Someone"} checked in at ${formatTime(v.arrivedAt, { timeZone })}`).join("; ");
-        return apiJson({
-            message: "Checked out successfully",
-            type: "checkout" as const,
-            participant: scanParticipant(participant),
-            visit,
-            facilityClosed: false,
-            closePrompt: `${who}. Badge again to close the building.`,
-            signedRequest: true,
-        });
+        return { kind: "checkout", person: participant, visit, closed: false, closeOffer: { reason: "unseen_checkins", unseen } };
     }
 
     const closeId = await recordClose(db, { closedById: participant.id, via: closeVia("kiosk", isReplay) }, closedAt, clientEventId);
@@ -415,14 +420,7 @@ export async function processCloseRequest(
         });
     }
 
-    return apiJson({
-        message: "Checked out and Facility closed",
-        type: "checkout" as const,
-        participant: scanParticipant(participant),
-        visit,
-        facilityClosed: true,
-        signedRequest: true,
-    });
+    return { kind: "checkout", person: participant, visit, closed: true };
 }
 
 /**
@@ -445,48 +443,31 @@ export async function processCloseRequest(
 async function supervisionInterrupt(
     activeVisitId: number,
     db: DbClient,
-): Promise<{ confirmRequired: true; response: Response } | { confirmRequired: false; warning?: string } | null> {
+): Promise<{ remaining: number; confirm: boolean } | null> {
     const supervising = await supervisingAdultVisits(db);
     const before = supervisingAdultCount(supervising);
     const remaining = supervisingAdultCount(supervising, activeVisitId);
     if (remaining >= before || remaining > MIN_SUPERVISING_ADULTS) return null;
 
-    if (remaining === MIN_SUPERVISING_ADULTS) {
-        return {
-            confirmRequired: false,
-            warning: `Warning: only ${MIN_SUPERVISING_ADULTS} supervising adults remain in the building.`,
-        };
-    }
-
-    const left = remaining === 1 ? "only 1 supervising adult" : "NO supervising adult";
+    if (remaining === MIN_SUPERVISING_ADULTS) return { remaining, confirm: false };
 
     // The confirm rung is youth-gated (#1436, 2026-08-19): policy's floor is two
     // adults whenever a youth is, so an adult-only room locking up warns and goes.
     // Probed on this rung only — every quieter departure pays nothing for it.
-    if (!(await youthIsPresent(db))) {
-        return { confirmRequired: false, warning: `Warning: checking out leaves ${left} in the building.` };
-    }
+    if (!(await youthIsPresent(db))) return { remaining, confirm: false };
 
     const ownVisit = await db.visit.findUnique({
         where: { id: activeVisitId },
         select: { supervisionWarnedAt: true },
     });
     const warnedAt = ownVisit?.supervisionWarnedAt;
-    if (warnedAt != null && Date.now() - warnedAt.getTime() <= SUPERVISION_CONFIRM_MS) {
-        return { confirmRequired: false };
-    }
+    if (warnedAt != null && Date.now() - warnedAt.getTime() <= SUPERVISION_CONFIRM_MS) return null;
 
     await db.visit.update({
         where: { id: activeVisitId },
         data: { supervisionWarnedAt: new Date() },
     });
-    return {
-        confirmRequired: true,
-        response: apiJson({
-            error: `Warning! Checking out leaves ${left} in the building.\n\nBadge again within ${SUPERVISION_CONFIRM_MS / 1000} seconds to confirm.`,
-            type: "warning" as const,
-        }, 400),
-    };
+    return { remaining, confirm: true };
 }
 
 export { LATE_CLOSE_SKEW_MS };
@@ -1044,25 +1025,19 @@ async function emailHandover(handoverToId: number, leaverId: number, othersInsid
  * (duplicate_ignored) scan can't send a second one. `at` is the scan's event
  * time, so a replayed or held scan reports when it happened.
  */
-export async function notifyScanOutcome(res: Response, at: Date): Promise<void> {
-    let body: { type?: string; participant?: { id?: number }; visit?: unknown } | null;
-    try {
-        body = await res.clone().json();
-    } catch {
-        return;
-    }
-    const personId = body?.participant?.id;
-    if (typeof personId !== "number") return;
-    // A close request for a keyholder already checked out departs nobody: the keyholder
-    // already left, and got their checkout email then.
-    if (body?.visit === null) return;
-    if (body?.type === "checkin") {
+export async function notifyScanOutcome(outcome: Extract<ScanOutcome, { kind: "checkin" | "checkout" }>, at: Date): Promise<void> {
+    const personId = outcome.person.id;
+    if (outcome.kind === "checkin") {
+        if (outcome.departedAtClose) return;
         sendCheckinNotifications(personId, "checkin", "SCANNER", at).catch(err =>
             console.error("Checkin notification error:", err)
         );
-    } else if (body?.type === "checkout") {
-        sendCheckinNotifications(personId, "checkout", undefined, at).catch(err =>
-            console.error("Checkout notification error:", err)
-        );
+        return;
     }
+    // A close request for a keyholder already checked out departs nobody: the keyholder
+    // already left, and got their checkout email then.
+    if (outcome.visit === null) return;
+    sendCheckinNotifications(personId, "checkout", undefined, at).catch(err =>
+        console.error("Checkout notification error:", err)
+    );
 }

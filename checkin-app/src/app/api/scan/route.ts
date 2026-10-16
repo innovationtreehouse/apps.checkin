@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
-import { apiError, apiJson } from "@/lib/api-response";
+import { apiError } from "@/lib/api-response";
 import { processCheckin, processCheckout, processCloseRequest, executePendingCloses, type CloseKind, type LegacyKiosk, closeActor, lastKeyholderGuard, finishCloseGuard, recordWebClose, type CloseGuardResult, notifyScanOutcome, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS, LIVE_ARRIVAL_WINDOW_MS } from "@/lib/scan-service";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
 import { applyPresenceIntent, flagForReview } from "@/lib/presence/project";
@@ -12,17 +12,7 @@ import { lockFacility } from "@/lib/facilityLock";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { resolveMergedPerson } from "@/lib/person/mergeChain";
 import type { Prisma } from "@/generated/prisma/client";
-
-const isCheckout = async (res: Response) =>
-    ((await res.clone().json().catch(() => null)) as { type?: string } | null)?.type === "checkout";
-
-// A live close from a badge that is not a keyholder: the scan went through as
-// itself, and the kiosk says why the building did not close.
-async function noteCloseRefused(res: Response): Promise<Response> {
-    const body = (await res.clone().json().catch(() => null)) as Record<string, unknown> | null;
-    if (!body) return res;
-    return apiJson({ ...body, facilityClosed: false, closeRefused: true, message: "Only a keyholder can close the building." }, res.status);
-}
+import { type ScanResult, toResponse } from "./scanResponse";
 
 // docs/rules/attendance-checkin.md (kiosk resilience): a replayed scan older
 // than this still applies, and is also flagged for human review — state may
@@ -210,6 +200,7 @@ export const POST = withKiosk(
         // A dead-lettered read that names no person can never project. It still
         // lands in the review queue -- the scan is never discarded -- keyed by
         // the raw value read, so the kiosk can stop retrying it.
+        const wire = { signedRequest: auth.type === 'kiosk' };
         const parkUnresolvable = async (): Promise<Response> => {
             const raw = body.participantId;
             const scannedValue = (typeof raw === 'string' ? raw : JSON.stringify(raw) ?? '').slice(0, 64);
@@ -226,9 +217,9 @@ export const POST = withKiosk(
                 });
             } catch (err) {
                 if (!uniqueViolationFields(err)?.includes("clientEventId")) throw err;
-                return apiJson({ type: 'duplicate_ignored', message: 'Event already recorded.' });
+                return toResponse({ kind: "duplicate" }, wire);
             }
-            return apiJson({ type: 'parked', message: 'Recorded for review.' });
+            return toResponse({ kind: "parked", reason: "review" }, wire);
         };
         if (participantId === null) {
             return await parkUnresolvable();
@@ -300,17 +291,17 @@ export const POST = withKiosk(
         // and acted on after it commits.
         const web: { guard: Extract<CloseGuardResult, { action: "proceed" }> | null; visitId: number } = { guard: null, visitId: 0 };
         // A web checkout's chosen close commits in the scan transaction, with the checkout.
-        const recordSessionClose = async (tx: Prisma.TransactionClient, res: Response): Promise<Response> => {
-            if (auth.type === 'session' && web.guard?.facilityClosed && await isCheckout(res)) {
+        const recordSessionClose = async (tx: Prisma.TransactionClient, result: ScanResult): Promise<ScanResult> => {
+            if (auth.type === 'session' && web.guard?.facilityClosed && result.kind === "checkout") {
                 await recordWebClose(tx, web.guard, { actorId: Number(auth.user.id), subjectId: participant.id, via: "WEB_CHECKOUT" });
             }
-            return res;
+            return result;
         };
         let closeRefused = false;
 
-        let res: Response;
+        let result: ScanResult;
         try {
-        res = await prisma.$transaction(async (tx) => {
+        result = await prisma.$transaction(async (tx): Promise<ScanResult> => {
             // Per-participant lock. Serializes only same-participant scans;
             // different participants get different lock keys and never block.
             // $executeRaw (not $queryRaw): pg_advisory_xact_lock returns `void`,
@@ -322,9 +313,7 @@ export const POST = withKiosk(
             // committed must dedup even once the 3s debounce window has passed.
             if (clientEventId) {
                 const seen = await tx.rawBadgeLog.findUnique({ where: { clientEventId } });
-                if (seen) {
-                    return apiJson({ type: 'duplicate_ignored', message: 'Event already recorded.' });
-                }
+                if (seen) return { kind: "duplicate" };
             }
 
             // Only a keyholder closes. Live, the server knows the badge's role now,
@@ -410,13 +399,8 @@ export const POST = withKiosk(
                 }
             });
 
-            if (recentScan) {
-                // Silently ignore to prevent accidental double-scans without disrupting UI
-                return new Response(JSON.stringify({ type: 'ignored_debounce', message: 'Scan ignored due to debounce.' }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' }
-                });
-            }
+            // Silently ignore to prevent accidental double-scans without disrupting UI
+            if (recentScan) return { kind: "debounced" };
 
             // Every other replay is trusted by default and applied at its scan
             // time; a stale, out-of-order or clock-suspect one is ALSO flagged for
@@ -507,7 +491,7 @@ export const POST = withKiosk(
                     classification: parkReasonToClass(reviewReason),
                     clockSuspect,
                 });
-                return apiJson({ type: 'parked', message: 'Recorded for review.' });
+                return { kind: "parked", reason: "review" };
             }
 
             if (pullBackVisitId !== null) {
@@ -525,7 +509,7 @@ export const POST = withKiosk(
                     clockSuspect,
                     visitId: pullBackVisitId,
                 });
-                return apiJson({ type: 'checkout', message: 'Checked out successfully', facilityClosed: false });
+                return { kind: "departure_pulled_back" };
             }
 
             // Live path. Direction: the displayed intent if the kiosk sent one,
@@ -550,8 +534,7 @@ export const POST = withKiosk(
                     activeVisit.id, participant, closeActor(auth.user),
                     { token: confirmToken, choice: body.closeChoice, handoverToId: body.handoverToId }, {}, tx,
                 );
-                if (guard.action === 'warn') return apiJson(guard.warning, 400);
-                if (guard.action === 'refuse') return apiError(guard.error, guard.status);
+                if (guard.action !== 'proceed') return { kind: "close_guard", guard };
                 web.guard = guard;
                 web.visitId = activeVisit.id;
             }
@@ -576,27 +559,17 @@ export const POST = withKiosk(
                 }));
             }
 
-            const res = activeVisit
+            const outcome = activeVisit
                 ? await processCheckout(participant, activeVisit.id, authType, tx, eventTime, isReplay, web.guard?.facilityClosed ?? false, legacyKiosk)
                 : await processCheckin(participant, authType, tx, isReplay ? eventTime : undefined);
 
             // Classification comes from the ACTUAL outcome. Only a confirmed
-            // toggle is PROJECTED; review parks keep their own class; warnings
-            // (visit still open) stay unclassified.
-            let classification: string | null = null;
-            let parkedDoubleIn = false;
-            try {
-                const body = (await res.clone().json()) as { type?: string; reason?: string };
-                if (body.type === "checkin" || body.type === "checkout") {
-                    classification = PresenceClass.PROJECTED;
-                } else if (body.type === "parked") {
-                    classification = body.reason ? parkReasonToClass(body.reason) : null;
-                    parkedDoubleIn = body.reason === "double_in";
-                }
-            } catch {
-                classification = null;
-            }
-            if (parkedDoubleIn) {
+            // toggle is PROJECTED; a park keeps its own class; a departure
+            // awaiting confirmation (visit still open) stays unclassified.
+            const classification = outcome.kind === "checkin" || outcome.kind === "checkout" ? PresenceClass.PROJECTED
+                : outcome.kind === "parked" ? parkReasonToClass(outcome.reason)
+                : null;
+            if (outcome.kind === "parked" && outcome.reason === "double_in") {
                 await flagForReview(tx, participant.id, clientEventId, "conflict_double_in");
             }
             await appendPresenceEvent(tx, {
@@ -607,7 +580,7 @@ export const POST = withKiosk(
                 clientEventId,
                 classification,
             });
-            return recordSessionClose(tx, res);
+            return recordSessionClose(tx, outcome);
         }, {
             // maxWait: time a racing scan waits to acquire a connection / start.
             // timeout: ceiling on the whole locked section, including time spent
@@ -624,7 +597,7 @@ export const POST = withKiosk(
             // instead of acking a scan whose rows just rolled back.
             if (clientEventId && uniqueViolationFields(err)?.includes("clientEventId")) {
                 await executePendingCloses();
-                return apiJson({ type: 'duplicate_ignored', message: 'Event already recorded.' });
+                return toResponse({ kind: "duplicate" }, wire);
             }
             throw err;
         }
@@ -634,19 +607,17 @@ export const POST = withKiosk(
         // never blocks scans for other participants. Unconditional: a resend of
         // a close whose sweep was cut off dedups above and is carried out here.
         await executePendingCloses();
-        if (auth.type === 'session' && web.guard) {
-            const outcome = (await res.clone().json().catch(() => null)) as { type?: string } | null;
-            if (outcome?.type === 'checkout') {
-                await finishCloseGuard(web.guard, { actorId: Number(auth.user.id), subjectId: participant.id, visitId: web.visitId, via: "WEB_CHECKOUT", recorded: true });
-            }
+        if (auth.type === 'session' && web.guard && result.kind === "checkout") {
+            await finishCloseGuard(web.guard, { actorId: Number(auth.user.id), subjectId: participant.id, visitId: web.visitId, via: "WEB_CHECKOUT", recorded: true });
         }
-        if (closeRefused) res = await noteCloseRefused(res);
-        await notifyScanOutcome(res, eventTime);
+        if (result.kind === "checkin" || result.kind === "checkout") await notifyScanOutcome(result, eventTime);
         // After the tx (+ optional facility sweep) commits, so a concurrent
         // GET cannot refill the cache from uncommitted rows.
         invalidateAttendanceCache();
 
-        return res;
+        // A live close from a badge that is not a keyholder went through as an
+        // ordinary scan; the kiosk is told why the building did not close.
+        return await toResponse(result, { ...wire, closeRefused });
     } finally {
         // Errors propagate to withKiosk's top-level catch/500; this finally only
         // records the metric. Times the handler body (post-auth), not rate-limit.

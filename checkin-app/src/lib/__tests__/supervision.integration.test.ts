@@ -13,9 +13,13 @@
  */
 import prisma from '@/lib/prisma';
 import { getFullAttendance } from '@/lib/getFullAttendance';
-import { processCheckin, processCheckout } from '@/lib/scan-service';
+import { processCheckin, processCheckout, type ScanOutcome } from '@/lib/scan-service';
+import { toResponse } from '@/app/api/scan/scanResponse';
 import { supervisingAdultCount, supervisingAdultVisits } from '@/lib/supervision';
 import type { Person } from '@/generated/prisma/client';
+
+/** A scan service's outcome as the kiosk receives it. */
+const wire = async (outcome: Promise<ScanOutcome>) => toResponse(await outcome, { signedRequest: true });
 
 jest.mock('@/lib/notifications', () => ({
     sendCheckinNotifications: jest.fn().mockResolvedValue(undefined),
@@ -200,7 +204,7 @@ describe('supervising adults (integration)', () => {
             await checkIn('ben');
             const cal = await checkIn('cal');
 
-            const res = await processCheckout(people.cal, cal.id, 'kiosk');
+            const res = await wire(processCheckout(people.cal, cal.id, 'kiosk'));
             const body = await res.json();
 
             expect(res.status).toBe(200);
@@ -213,14 +217,14 @@ describe('supervising adults (integration)', () => {
             await checkIn('fay');
             const ben = await checkIn('ben');
 
-            const first = await processCheckout(people.ben, ben.id, 'kiosk');
+            const first = await wire(processCheckout(people.ben, ben.id, 'kiosk'));
             expect(first.status).toBe(400);
             expect((await first.json()).type).toBe('warning');
             const stamped = await prisma.visit.findUnique({ where: { id: ben.id } });
             expect(stamped?.supervisionWarnedAt).not.toBeNull();
             expect(stamped?.departedAt).toBeNull();
 
-            const second = await processCheckout(people.ben, ben.id, 'kiosk');
+            const second = await wire(processCheckout(people.ben, ben.id, 'kiosk'));
             expect(second.status).toBe(200);
             expect((await prisma.visit.findUnique({ where: { id: ben.id } }))?.departedAt).not.toBeNull();
         });
@@ -229,7 +233,7 @@ describe('supervising adults (integration)', () => {
             await checkIn('ann');
             const ben = await checkIn('ben');
 
-            const res = await processCheckout(people.ben, ben.id, 'kiosk');
+            const res = await wire(processCheckout(people.ben, ben.id, 'kiosk'));
 
             expect(res.status).toBe(200);
             expect((await res.json()).warning).toMatch(/leaves only 1 supervising adult/i);
@@ -243,7 +247,7 @@ describe('supervising adults (integration)', () => {
             const al = await checkIn('al');
             await checkIn('ben');
 
-            const res = await processCheckout(people.al, al.id, 'kiosk');
+            const res = await wire(processCheckout(people.al, al.id, 'kiosk'));
 
             expect(res.status).toBe(200);
             expect((await res.json()).warning).toBeUndefined();
@@ -252,7 +256,7 @@ describe('supervising adults (integration)', () => {
         it('warns a youth checking in below two, and lets them in anyway', async () => {
             await checkIn('ann');
 
-            const res = await processCheckin(people.fay, 'kiosk');
+            const res = await wire(processCheckin(people.fay, 'kiosk'));
             const body = await res.json();
 
             expect(res.status).toBe(200);

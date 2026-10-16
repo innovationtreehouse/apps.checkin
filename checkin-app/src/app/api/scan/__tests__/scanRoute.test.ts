@@ -67,6 +67,10 @@ jest.mock('@/lib/scan-service', () => ({
     SUPERVISION_CONFIRM_DEADFRONT_MS: 1_000,
 }));
 
+// What the mocked scan services report.
+const checkedIn = { kind: 'checkin', person: { id: 1 }, visit: { id: 9 }, supervisionShort: false, departedAtClose: false };
+const checkedOut = (closed = false) => ({ kind: 'checkout', person: { id: 1 }, visit: { id: 9 }, closed });
+
 describe('POST /api/scan', () => {
     beforeEach(() => {
         jest.clearAllMocks();
@@ -145,7 +149,7 @@ describe('POST /api/scan', () => {
                 return r;
             });
             (notifyScanOutcome as jest.Mock).mockImplementationOnce(async () => { order.push('notify'); });
-            const checkin = new Response(JSON.stringify({ type: 'checkin', participant: { id: 1 } }), { status: 200 });
+            const checkin = checkedIn;
             (processCheckin as jest.Mock).mockResolvedValue(checkin);
 
             const scannedAt = new Date(Date.now() - 60_000).toISOString();
@@ -165,7 +169,7 @@ describe('POST /api/scan', () => {
                 throw new Error('Transaction already closed: timeout');
             });
             (processCheckin as jest.Mock).mockResolvedValue(
-                new Response(JSON.stringify({ type: 'checkin', participant: { id: 1 } }), { status: 200 })
+                checkedIn
             );
 
             const res = await POST(new Request('http://localhost/api/scan', {
@@ -195,7 +199,7 @@ describe('POST /api/scan', () => {
         });
         (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
         (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-        (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+        (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
 
         const res = await POST(req);
         expect(res.status).toBe(200);
@@ -222,7 +226,7 @@ describe('POST /api/scan', () => {
             (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'session', user: { id: '1', isSysadmin: true } });
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
         });
 
         it('follows the PersonMerge archive to the survivor and scans as them', async () => {
@@ -344,7 +348,7 @@ describe('POST /api/scan', () => {
         (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null });
         (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
         (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-        (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+        (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
 
         const res = await POST(req);
         expect(res.status).toBe(200);
@@ -392,7 +396,7 @@ describe('POST /api/scan', () => {
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue({ timestamp: new Date(Date.now() - 500) });
             (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
         });
 
         it('applies a current kiosk replay within 3 s of a prior row instead of dropping it', async () => {
@@ -500,7 +504,7 @@ describe('POST /api/scan', () => {
             (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
             (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
 
             const scannedAt = new Date(Date.now() - 60_000).toISOString();
             const res = await POST(replayReq({ scannedAt }));
@@ -552,7 +556,7 @@ describe('POST /api/scan', () => {
 
         it('a same-body legacy scan (no clientEventId) is unaffected — no dedup pre-read, no park branch', async () => {
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
 
             const res = await POST(replayReq({ clientEventId: undefined, scannedAt: undefined, replay: undefined }));
             expect(res.status).toBe(200);
@@ -563,7 +567,7 @@ describe('POST /api/scan', () => {
 
         it('an empty-string clientEventId normalizes to null and is treated as a live scan, not a replay', async () => {
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
 
             const res = await POST(replayReq({ clientEventId: '', replay: undefined }));
             expect(res.status).toBe(200);
@@ -729,7 +733,7 @@ describe('POST /api/scan', () => {
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
             (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
         });
 
         it('records the dedup key but stamps server-now, never the kiosk scannedAt', async () => {
@@ -754,7 +758,7 @@ describe('POST /api/scan', () => {
             (prisma.visit.aggregate as jest.Mock).mockResolvedValue({
                 _max: { arrivedAt: new Date(), departedAt: new Date() },
             });
-            (processCheckout as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkout' }), { status: 200 }));
+            (processCheckout as jest.Mock).mockResolvedValue(checkedOut());
 
             const res = await POST(liveReq());
             expect((await res.json()).type).toBe('checkout');
@@ -783,7 +787,7 @@ describe('POST /api/scan', () => {
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue({ timestamp: new Date() });
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue({ id: 7 });
             (processCheckout as jest.Mock).mockResolvedValue(
-                new Response(JSON.stringify({ type: 'checkout', facilityClosed: true }), { status: 200 }));
+                checkedOut(true));
         });
 
         it('lets a scan matching a live token through the debounce and forwards it', async () => {
@@ -847,7 +851,7 @@ describe('POST /api/scan', () => {
             method: 'POST',
             body: JSON.stringify({ participantId: 1, ...body }),
         }) as unknown as import('next/server').NextRequest;
-        const closed = () => new Response(JSON.stringify({ type: 'checkout', facilityClosed: true }), { status: 200 });
+        const closed = () => checkedOut(true);
 
         beforeEach(() => {
             (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
@@ -902,7 +906,7 @@ describe('POST /api/scan', () => {
             (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1, mergedIntoId: null, isKeyholder: false });
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue({ id: 7 });
-            (processCheckout as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkout', facilityClosed: false }), { status: 200 }));
+            (processCheckout as jest.Mock).mockResolvedValue(checkedOut());
 
             const res = await POST(kioskReq({ intent: 'OUT', close: 'alone', clientEventId: 'evt-nk', protocolVersion: 6 }));
             const body = await res.json();
@@ -948,7 +952,7 @@ describe('POST /api/scan', () => {
             beforeEach(() => {
                 (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
                 (prisma.visit.findFirst as jest.Mock).mockResolvedValue({ id: 7 });
-                (processCheckout as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkout' }), { status: 200 }));
+                (processCheckout as jest.Mock).mockResolvedValue(checkedOut());
             });
             const legacyArg = () => (processCheckout as jest.Mock).mock.calls[0][7];
 
@@ -992,7 +996,7 @@ describe('POST /api/scan', () => {
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue({ timestamp: new Date() });
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue({ id: 7 });
             (processCheckout as jest.Mock).mockResolvedValue(
-                new Response(JSON.stringify({ type: 'checkout' }), { status: 200 }));
+                checkedOut());
         });
 
         // Simulates a REAL supervisionWarnedAt of the given age against
@@ -1087,7 +1091,7 @@ describe('POST /api/scan', () => {
             (authenticateRequest as jest.Mock).mockResolvedValue(adminSession);
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
 
             const res = await POST(new Request('http://localhost/api/scan', {
                 method: 'POST',
@@ -1113,7 +1117,7 @@ describe('POST /api/scan', () => {
             });
             (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
         });
 
         afterEach(() => isProd.mockRestore());
@@ -1179,7 +1183,7 @@ describe('POST /api/scan', () => {
         it('toggles a replay only slightly ahead of server now (small skew)', async () => {
             (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
             (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
-            (processCheckin as jest.Mock).mockResolvedValue(new Response(JSON.stringify({ type: 'checkin' }), { status: 200 }));
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
 
             const res = await replay(new Date(Date.now() + 30_000));
             expect(res.status).toBe(200);
