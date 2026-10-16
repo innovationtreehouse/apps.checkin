@@ -1,96 +1,93 @@
 # Inventory
 
-The inventory domain: the shared catalog of what the organization's parts,
-tools, and consumables *are* (reference data), and the organization's on-hand
-holdings that draw on it (local inventory: stock counts, the receive queue for
-backordered receipt lines, and provisional items awaiting a catalog GTIN).
+Rules for the inventory domain: the shared catalog that says what the
+organization's parts, tools and consumables *are* (reference data), and the
+organization's own holdings drawn from it (local inventory: stock counts, the
+receive queue for backordered receipt lines, and provisional items waiting for a
+catalog GTIN, the item's barcode number).
 
 It also covers receiving, where a manager matches each line of a purchase
 receipt to a catalog item before the goods are counted into stock. What a
-receipt costs and what a donated item is worth are covered by the expense rules
+receipt costs and what a donated item is worth fall under the expense rules
 (`expenses.md`) and the donation rules (`revenue.md`); this file covers only the
 goods.
 
-The architecture these rules sit on — the library-isolation seam, the injected
-org identity, the own-database packaging — is described in
-`docs/designs/COMPONENT_ARCHITECTURE.md`, not here.
+How the pieces are built is described in
+`docs/designs/COMPONENT_ARCHITECTURE.md`.
 
 ## Assumptions
 
-- Who may curate the catalog is decided through checkin's role system: a
-  sysadmin or board member grants `INVENTORY_MANAGER`, and the flag represents
-  that grant. The catalog does not decide its own curators.
+- Checkin's role system decides who may curate the catalog: a sysadmin or board
+  member grants the inventory-manager role, and the role stands for that grant.
+  The catalog does not choose its own curators.
 
-- The initial production catalog is entered by hand through the UI from a
-  maintained source sheet. There is no bulk-import path, so first-load catalog
-  correctness rests on that manual entry, not on an import the app validates.
+- The first production catalog is entered by hand from a maintained source
+  sheet, so its accuracy rests on that entry, not on anything the app checks.
 
 ## Procedure
 
 ### Identity and codes
 
-- An item is identified by its GTIN-13, and the GTIN is the item's key: one
-  GTIN, one item, across the whole catalog. A change must not create a second
-  item for the same GTIN or reassign a GTIN to a different item. `[Decision]`
+- Each item is identified by its GTIN-13, and the GTIN is its key: one GTIN, one
+  item, across the whole catalog. A change must not create a second item for the
+  same GTIN or move a GTIN to a different item. `[Decision]`
 
-- Categories are keyed by a letter and subcategories by a number within their
-  category; an item carries category, subcategory, and a sequence. The letter
-  and number are part of how items are named and must stay stable once in use —
-  renumbering a category in use renames every item under it. `[Decision]`
+- A category is keyed by a letter, and a subcategory by a number within its
+  category; each item carries a category, a subcategory and a sequence number.
+  The letter and number are part of how items are named, so they must not
+  change once in use: renumbering a category in use renames every item in it.
+  `[Decision]`
 
 - An archived category keeps its letter, so no new category reuses it.
   `[Decision]`
 
-- A reference's conversion factor — inventory units per receipt-line unit — is a
-  whole number system-wide. There are no fractional packs; a change must not
-  introduce a non-integer factor. `[Decision]`
+- A reference's conversion factor (inventory units per receipt-line unit) is a
+  whole number everywhere. There are no fractional packs; a change must not
+  introduce a fractional factor. `[Decision]`
 
 - A changed conversion factor applies only to goods received after the change.
   Stock already counted is never recalculated. `[Decision]`
 
-### Proposals, provisionals, conflicts
+### Proposals, provisional items, conflicts
 
-- An item-reference proposal is pending until a manager reviews it, and a later
-  proposal may supersede an earlier one rather than overwrite it. A superseded
-  proposal is kept with its supersession recorded; a change must not delete the
-  superseded history to "clean up." `[Decision]`
+- An item-reference proposal stays pending until a manager reviews it. A later
+  proposal may supersede an earlier one instead of overwriting it; the earlier
+  one is kept, with a record that it was superseded. A change must not delete
+  that history to tidy up. `[Decision]`
 
 - A provisional item holds a provisional GTIN until it is approved and mapped to
-  a real GTIN. A provisional GTIN is allocated once and not reused, and the
-  mapping from provisional to real GTIN is recorded; a change must not recycle a
+  a real GTIN. A provisional GTIN is allocated once and never reused, and each
+  provisional-to-real mapping is recorded. A change must not recycle a
   provisional GTIN or drop the mapping log. `[Decision]`
 
 - A reference conflict records the existing and proposed GTINs for a receipt
-  line and is closed by resolving it (an outcome plus a resolution time), never
-  by deleting the row. `[Decision]`
+  line. It is closed by resolving it, which records an outcome and when it was
+  resolved, never by deleting it. `[Decision]`
 
 ### On-hand stock
 
 - A receipt or a donation of goods adds to stock once. Sending it again never
-  double-counts, and a resend with different lines is refused rather than
-  quietly changing stock. `[Decision]`
+  double-counts, and a resend with different lines is refused instead of
+  silently changing stock. `[Decision]`
 
 - Every change to an on-hand count, including removing an org item, writes an
-  inventory-log row in the same transaction as the change, naming the actor
-  (or none, for an automatic apply). Removing an org item logs a snapshot of
-  the removed row, so the count can be recovered. A change must not add a
-  stock write that skips the log. `[Decision]`
+  inventory-log entry together with the change, naming who made it (or no one,
+  for an automatic change); neither happens without the other. Removing an org
+  item logs a copy of the removed row, so the count can be recovered. A change
+  must not add a stock write that skips the log. `[Decision]`
 
-- A receive-queue line is never deleted. Cancelling it stamps who cancelled it
-  and when, and logs it; a cancelled line can no longer be fulfilled. A line is
-  fulfilled at most once, and its stock lands in the same transaction as the
+- A receive-queue line is never deleted. Cancelling it records who cancelled it
+  and when, and logs it; a cancelled line can't be fulfilled. A line is
+  fulfilled at most once, and its stock is added together with the
   fulfilment. `[Decision]`
 
-- Stock adds are increments applied in the database, and any write that
-  computes a new count from a read (a provisional merge, a conflict
-  resolution) locks the rows it read first. Concurrent receipts, fulfilments,
-  merges and resolutions on one GTIN must never lose an add. `[Decision]`
+- Receipts, fulfilments, merges and conflict resolutions that hit one GTIN at
+  the same time must never lose an add. `[Decision]`
 
-- A provisional item's stock merges into its real GTIN only when both counts
-  use the same conversion factor. Otherwise the merge parks a unit-mismatch
-  conflict for a person to resolve. The factor used is the one the catalog
-  event carried, including when the event arrives before the provisional row.
-  `[Decision]`
+- A provisional item's stock merges into its real GTIN only when both counts use
+  the same conversion factor. Otherwise the merge records a unit-mismatch
+  conflict for a person to resolve. The factor used is the one the catalog set
+  for the item, whatever order the updates arrive in. `[Decision]`
 
 ### Receiving
 
@@ -99,67 +96,60 @@ org identity, the own-database packaging — is described in
   inventory. Expense approval neither holds up nor repeats this. `[Decision]`
 
 - When a manager links a receipt line to a catalog item, the link takes effect
-  at once. If it also proposes a new reference (how a retailer names that item)
-  or reports a conflict with an existing one, the catalog reviews that
-  separately: the receipt does not wait for the review, and the review's outcome
-  never changes a receipt whose goods are already in stock.
+  at once. If the manager also proposes a new reference (a retailer's name for
+  that item) or reports a conflict with an existing one, the catalog reviews it
+  separately: the receipt does not wait for that review, and its outcome never
+  changes a receipt whose goods are already in stock.
   `[Decision — deliberate limit]`
 
 - Once a receipt is being counted or is done, its lines can't be edited.
   `[Decision]`
 
 - When part of a receipt was applied and the rest failed, an inventory manager
-  can still edit its lines, so the final record is accurate. Each such edit is
-  logged as late, and the receipt's screen warns inventory managers, finance and
-  the board that the part already applied needs fixing by hand.
-  `[Decision]`
+  can still edit its lines so the final record is accurate. Each such edit is
+  logged as late, and inventory managers, finance and the board are warned that
+  the part already applied needs fixing by hand. `[Decision]`
 
 ### Access
 
-- The catalog is public reference data and carries no personal data: item,
-  category, reference, and conversion fields are `public`; the only non-public
-  fields are actor attribution, free text, and cross-app plumbing, all
-  `internal`. A change that adds a field carrying personal data (email, DOB,
-  address) breaks this and needs its own tier decision, not a default to
-  `public`. `[Decision — *Principle: least privilege*]`
+- The catalog is public reference data with no personal data. Item, category,
+  reference and conversion fields are public tier; the only non-public fields
+  are who-did-what attribution, free text and cross-app linking fields, all
+  internal tier. A change that adds a field with personal data (email, date of
+  birth, address) breaks this and needs its own tier decision; it must not
+  default to public. `[Decision — *Principle: least privilege*]`
 
-- Read is admitted by the shared catalog audience (`canSeeCatalog`): anyone
-  holding any `PersonRoleKind` role, or a Google-verified account on the org
-  domain, with no membership needed; and a program leader, program volunteer,
-  or Volunteer Family member, youth included, only while their household
-  membership is ACTIVE. The grant reads session claims only and never keys on
-  an email address, so a volunteer designation on its own admits nothing.
-  Write is admitted for `INVENTORY_MANAGER` only, with no admin auto-admit on
-  the write path. The read audience is deliberately wider than the board-only
-  operations areas because the data is non-personal reference data; the narrow
-  write path is what keeps that proportionate. Widening read further, or
-  widening write, is a decision on the record, not a casual change.
+- Anyone holding any person role, or a Google-verified account on the org
+  domain, may read the catalog with no membership needed; so may a program
+  leader, program volunteer or Volunteer Family member, youth included, but only
+  while their household membership is ACTIVE. A volunteer designation by
+  itself does not let anyone read. Only inventory managers may write. Reading
+  is deliberately wider than in the board-only operations areas because the
+  data is non-personal reference data; keeping writing narrow is what makes
+  that proportionate. Widening reading further, or widening writing
+  at all, is a decision on the record.
   `[Decision — *Principle: least privilege*]`
 
-- On-hand stock is read by the same audience as the catalog and changed only by
-  inventory managers. `[Decision — *Principle: least privilege*]`
+- On-hand stock is read by the same audience as the catalog; only inventory
+  managers change it. `[Decision — *Principle: least privilege*]`
 
-- Receiving is visible only to inventory managers, finance and the board,
-  because receipts show spending. Only inventory managers act on it.
+- Only inventory managers, finance and the board may see receiving, because
+  receipts show spending. Only inventory managers act on it.
   `[Decision — *Principle: least privilege*]`
 
-- Being on the Board is enough to view receipt and inventory data, and to edit
-  it where the app allows an edit. Every Board member is an insider today; an
-  outside Board member joining would reopen this whole access model.
-  `[Decision — owner]`
+- Board membership is enough to view receipt and inventory data, and to edit it
+  wherever the app allows an edit. `[Decision — owner]`
 
-- `INVENTORY_MANAGER` is a single write role that collapses the two manager
-  tiers the catalog was ported from. Splitting it back into distinct
-  catalog-manager and org-manager roles is intended strategic work, not done;
-  until then one role governs all catalog writes. `[Decision — deliberate limit]`
+- One inventory-manager role covers all catalog writes. Splitting it into
+  separate catalog-manager and org-manager roles is planned.
+  `[Decision — deliberate limit]`
 
 ### Org stamping
 
-- Every org-scoped catalog row — proposals, provisional items, conversion
-  challenges, org events, and the provisional mapping log — carries the one
-  injected org identity (`org_id`, plus an `org_name` snapshot). The app is
-  single-org today and stamps every such row with the one registered org; a
-  change must not leave an org-scoped row unstamped or let it carry an org the
-  caller was not acting as. The `org_name` is a point-in-time snapshot that
-  travels with the row, because exported rows reach consumers that cannot look
-  the org up. `[Decision]`
+- Every org-scoped catalog row (proposals, provisional items, conversion
+  challenges, org events, and the provisional mapping log) carries its org's id
+  and a snapshot of its name. A change must not leave such a row unstamped or
+  let it carry an org the caller was not acting as. The name is kept as it was
+  when written, because exported rows reach consumers that cannot look the org
+  up.
+  `[Decision]`
