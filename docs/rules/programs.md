@@ -138,8 +138,8 @@ Things the app takes as true because they are handled outside it.
   the last seat. A confirmed admin override on another household is the one
   exception.  [Decision]
 
-- Enrollment is done by the person, their household lead, the board, or a
-  sysadmin — not by the program's lead.  [Decision — *Principle: least privilege*;
+- Enrollment is done only by the person, their household lead, the board, or a
+  sysadmin.  [Decision — *Principle: least privilege*;
   superuser scope unsettled]
 
 - The fee waiver applies only to an administrator acting on another household.

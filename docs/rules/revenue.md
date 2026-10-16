@@ -105,10 +105,9 @@ Things the app takes as true because they are handled outside it.
 
 ### Ownership
 
-- Finance Ops belongs to the board; sysadmins are excluded outright.  [Unsettled — which superuser]
+- Finance Ops belongs to the board alone.  [Unsettled — which superuser]
 
-- Membership and program payment plans are read by the board and finance only;
-  a sysadmin role alone does not admit.  [Decision — owner]
+- Only the board and finance read membership and program payment plans.  [Decision — owner]
 
 - The store is the source of truth for what was paid. The local mirror is a copy
   that reconciliation reads; no payment fact is authored here.  [Decision]
