@@ -22,9 +22,11 @@ then finance's hand bookings can be matched against it.
 - **It lives in the donations library**, beside the gift. The expense library's
   record assumes a submitter, a reimbursement or card charge, and three-seat
   sign-off; none of that applies to goods given to us.
-- **No spending sign-off.** No money leaves the organisation. The controls that
-  already exist on recording the gift (donor named, recorder outside the donor's
-  household) stay the controls.
+- **Value comes from the receipt, or from finance.** A gift with a receipt books
+  at the receipt's values. A gift without one is valued by finance in a later
+  step; ops may suggest a value but does not set it.
+- **No spending sign-off.** No money leaves the organisation. Finance setting
+  the value is the look before a gift without a receipt books.
 - **Every in-kind gift has a budget bucket.** An expense never lands at the top
   of the books without a Class, so an in-kind gift cannot be general money. Finance
   assigns a bucket, which may be a part of the facility such as Facility or Shop
@@ -36,8 +38,12 @@ then finance's hand bookings can be matched against it.
   design (§7 of `1280_BULK_DONATION_INTEGRATION.md`): a Deposit into an in-kind
   clearing account and a Purchase out of it, same date and amount. It ships with
   the donations drain, not before.
-- **What this does not build:** valuation rules beyond the recorded value,
-  capitalising donated equipment, donor acknowledgement letters (#2237).
+- **Donated equipment books as an asset** under the same rules as purchased
+  assets: the expense library's capital thresholds, capital review and capital
+  register.
+- **Program approvers can see** in-kind gifts to their program, without the
+  donor. They do not approve them.
+- **What this does not build:** donor acknowledgement letters (#2237).
 
 ---
 
@@ -97,15 +103,24 @@ receipt, and gifts recorded without one); both get the same treatment.
 
 ### Value and date
 
-Both sides use one value and one date, read from the gift:
+Both sides use one value and one date, read from the gift (owner ruling):
 
-- **With a receipt:** the receipt total and receipt date the money side carried.
-- **Without a receipt:** the sum of its lines' values, and the donation date ops
+- **With a receipt:** the gift books as the receipt says: its lines, its total
+  and its date. Nobody re-values it.
+- **Without a receipt:** finance sets each line's value in a step after ops
+  records the gift. Ops are not placed to judge value, so what ops enters is a
+  suggestion, useful when the donor roughly knows what was paid and the item is
+  fairly new; finance sees it and decides. The date is the donation date ops
   entered.
 
-A gift with no value (a receipt whose total could not be read) is not ready to
-book and sits in the finance queue. Whether a receipt total is the right measure
-of a gift's value, tax and shipping included, is open question Q1.
+A gift with no value (a receipt whose total could not be read, or a gift
+finance has not yet valued) is not ready to book and sits in the finance queue.
+Whoever values a gift must be outside the donor's household, as whoever records
+it already must be.
+
+This changes the no-receipt recording that shipped with #2192, where ops' line
+value is required and is the value: it becomes optional and a suggestion, and a
+finance-set value sits beside it.
 
 ### Linking the two sides: apply once
 
@@ -132,8 +147,9 @@ A gift books when all of these hold:
 
 - its money side arrived (receipt path) or it was recorded (no-receipt path);
 - its donor is recorded;
-- it has a value;
+- every line has a value (finance's, for a gift without a receipt);
 - finance has assigned it a bucket;
+- any line at or over the capital thresholds has been through capital review;
 - it has not been withdrawn.
 
 Until then it waits, and the finance queue says what it waits on. Waiting is the
@@ -156,13 +172,12 @@ design does not add that.
 
 ### Sign-off
 
-None. The issue already states it, and the reasoning is short: the spending
-sign-off answers *who allowed this money to leave*, and none leaves. The
-question that does matter, *is this value honest*, is answered at recording
-(donor named, recorder outside the donor's household) and again when finance
-assigns the bucket, which is a person looking at the gift before it can book.
-Whether that look should be an explicit recorded sign-off on the value is open
-question Q2.
+None (owner ruling). The spending sign-off answers *who allowed this money to
+leave*, and none leaves. The question that does matter, *is this value honest*,
+is answered by the receipt where there is one, and otherwise by finance setting
+the value, recorded with who and when. That step is the look; there is no
+separate sign-off. Finance assigning the bucket is a second person-step before
+anything books.
 
 ### Budget bucket and Class
 
@@ -174,9 +189,9 @@ a part of the facility, such as Facility or Shop, not a program. The bucket
 cannot change once set (the existing donations rule). Both sides of the booking
 carry its QuickBooks Class.
 
-Revenue and expense in one bucket net to zero in that bucket. That matches what
-happened: the program received goods it did not pay for. Whether the expense
-should instead sit with the bucket that uses the goods is open question Q3.
+Revenue and expense always carry the same bucket (owner ruling), so the gift
+nets to zero there. That matches what happened: the bucket received goods it did
+not pay for.
 
 ### Who sees it
 
@@ -185,10 +200,12 @@ manages them, only finance and the board see the donor. Operations and inventory
 managers, who record gifts without a receipt and read those gifts, do not assign
 buckets or see booking state.
 
-The expense side does not appear in the expense library's screens, and program
-approvers do not see it in their bucket's spending. It shows in QuickBooks under
-the bucket's Class. Whether approvers should see in-kind gifts to their program
-is open question Q4.
+A program bucket's approvers (its leader and treasurers) can see the in-kind
+gifts assigned to their program: what was given, its value and date, never the
+donor. They do not approve them (owner ruling). An organisation-level bucket
+such as Facility or Shop has no approvers, so only finance and the board see
+those. The expense side does not appear in the expense library's spending
+screens.
 
 ### Posting to QuickBooks
 
@@ -197,8 +214,10 @@ optional:
 
 - **Revenue side:** a Deposit into the in-kind clearing account, crediting
   in-kind contribution income.
-- **Expense side:** a Purchase out of the clearing account, debiting the in-kind
-  expense account.
+- **Expense side:** a Purchase out of the clearing account, one line per gift
+  line. An ordinary line debits the in-kind expense account; a line capital
+  review made an asset debits the fixed-asset account, as a purchased asset's
+  would.
 - Same date, amount and Class, so clearing nets to zero once both exist. A
   clearing balance that is not zero is a half-booked gift, and the queue shows
   which.
@@ -214,40 +233,61 @@ after switch-on it books on its own. In-kind is its own lane with its own
 switch-on. Until the drain ships, finance books by hand exactly as today and
 nothing in the app changes for them.
 
-What finance must confirm before the drain posts anything is open question Q5.
+In-kind already goes through a clearing account when finance books it by hand
+today (owner), so hand bookings are there to match against.
+
+### Donated equipment
+
+A gift of equipment is an asset, not an expense, under the same rules as a
+purchased one (owner ruling). The building has such gifts already, so this is a
+real case. Those rules already exist in the expense library: its capital
+thresholds decide which lines are candidates, finance's capital review decides
+which are assets and sets their depreciation cycle, and the capital register
+records them. There is one capital register, and it stays in the expense
+library; donations does not grow a second one.
+
+So a gift line at or over the expense library's capital thresholds goes to that
+library's capital review, through a new port, keyed by the gift line so a resend
+does nothing. The register entry records the gift as its source in place of an
+expense. The gift waits for the review, then books that line to the fixed-asset
+account if it became an asset, or to in-kind expense if not. Thresholds, review
+and depreciation are the expense library's, unchanged.
 
 ### What gets built, later
 
-No code until the owner rules. When it is built, it is one donations-library PR
-after the drain (D) lands: the allocation fields on both in-kind tables, the
-bookings table, the readiness check, the queue states, and the pair in the
-drain. A checkin-side registry change for any new route ships first, alone, per
-the boundary rule.
+When it is built, in this order, each its own PR off `main`:
+
+1. Registry entries for any new route (the finance valuation step, the approver
+   view), alone, per the boundary rule.
+2. Donations: per-line values on receipt gifts, the finance valuation step and
+   ops' value as a suggestion, the bucket fields, approver visibility, the
+   bookings table, readiness and queue states.
+3. Expense: capital review accepts a donated line, and the register records a
+   gift as a source.
+4. Donations: the pair in the drain (after D and the closed-books design), with
+   capital lines booked to the fixed-asset account.
 
 ---
 
 ## Open questions
 
-- **Q1. Valuation.** Is a donor's receipt total, tax and shipping included, the
-  value booked? Default: yes, the total as read, with finance free to correct the
-  value before it books. A gift with no receipt uses the values ops entered.
-- **Q2. A recorded sign-off on the value?** Default: no; finance assigning the
-  bucket is the look. The alternative is one finance sign-off on value, recorded
-  like an expense sign-off but with a single seat.
-- **Q3. Which bucket carries the expense.** Default: the same bucket as the
-  revenue, so the gift nets to zero there.
-- **Q4. Program approvers see in-kind gifts to their program?** Default: no;
-  finance and the board only, as today.
-- **Q5. Finance confirms the QuickBooks setup:** the clearing account (it must
-  be a type QuickBooks accepts as both a Deposit's destination and a Purchase's
-  paying account), the in-kind income account, and the in-kind expense account
-  (one account, or one per kind of goods). And: does finance book in-kind gifts
-  through a clearing account today? If not, matching finds nothing and every
-  gift before switch-on goes to finance to book or skip.
-- **Q6. Donated equipment.** Should a gift of equipment above the capitalisation
-  threshold book as an asset, not an expense, and enter the capital register?
-  Default: out of scope; finance handles those by hand and the app books them as
-  expense like any other gift.
+- **Q1. Valuation.** Resolved: a receipt gift books per the receipt; finance
+  values a gift without one, and ops may suggest. Residual: on a receipt, tax
+  and shipping are not on any one line, but the capital test is per line.
+  Default: spread them across lines by value, as an asset's cost includes them.
+- **Q2. Sign-off on the value.** Resolved: none; finance setting the value is
+  the look.
+- **Q3. Which bucket carries the expense.** Resolved: the same bucket as the
+  revenue.
+- **Q4. Program approvers.** Resolved: they see, they do not approve.
+- **Q5. QuickBooks setup.** Resolved: in-kind goes through a clearing account
+  today. Residual: finance supplies the clearing, in-kind income, in-kind
+  expense and fixed-asset account references before switch-on.
+- **Q6. Donated equipment.** Resolved: books as an asset under the same rules
+  as purchased assets.
+- **Q7. Bucket or QuickBooks Class.** Open, held by the coordinator: income now
+  targets a QuickBooks Class directly rather than an app bucket (#2236). Whether
+  in-kind does the same is with the owner. The doc says bucket until then.
 
 ---
 
@@ -255,10 +295,16 @@ the boundary rule.
 
 - `revenue.md`, Donations: the general-money replacement above.
 - `revenue.md`, Donations: both sides of an in-kind gift come from one record
-  and one value; the gift takes no spending sign-off; a gift withdrawn after
-  booking is raised for finance to reverse by hand.
+  and one value, in one bucket; the gift takes no spending sign-off; a gift
+  withdrawn after booking is raised for finance to reverse by hand.
+- `revenue.md`, Donations: a gift with a receipt books at the receipt's values;
+  one without is valued by finance, by someone outside the donor's household,
+  and ops' value is only a suggestion.
+- `revenue.md`, Donations: a program's approvers see in-kind gifts to their
+  program, without the donor, and do not approve them.
 - `expenses.md`: an in-kind gift is not an expense record and never enters
-  spending sign-off (pointer to `revenue.md`).
+  spending sign-off (pointer to `revenue.md`); donated equipment goes through
+  the same capital thresholds, review and register as purchased equipment.
 
 ## Provenance
 
