@@ -188,6 +188,8 @@ export async function seedBaseline(prisma: Db): Promise<void> {
             household: { create: { name: "Certified Adult Household" } },
         },
     });
+    // A solo adult is their own household's lead, as sign-up makes every new adult.
+    await addHouseholdLead(prisma, certifiedAdult.householdId, certifiedAdult.id);
 
     // No carte-blanche "may certify others" role exists. This persona is a plain
     // member who holds the MAY_CERTIFY_OTHERS certification on a single tool (granted

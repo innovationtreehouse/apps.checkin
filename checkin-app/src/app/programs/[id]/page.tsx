@@ -351,8 +351,8 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
 
       if (enrolledIds.length > 0) {
         notifyNavRefresh();
-        // Every checkout starts at the server: it refuses (400) a checkout naming
-        // someone outside the household, and mints the member discount code for
+        // Every checkout starts at the server: it refuses a checkout naming
+        // someone outside the household (400) or from a non-lead (403), and mints the member discount code for
         // single-pool programs when the household's dues cover the program. A
         // mint or network failure is non-fatal: an undiscounted link is always a
         // safe fallback, per lib/shopify.ts's mintMemberDiscountCode contract.
@@ -366,7 +366,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
               body: JSON.stringify({ participantIds: enrolledIds }),
             });
             if (discRes.ok) discountCode = pricingEligible ? (await discRes.json()).code ?? null : null;
-            else if (discRes.status === 400) refusal = (await discRes.json()).error ?? "This checkout can't go ahead.";
+            else if (discRes.status === 400 || discRes.status === 403) refusal = (await discRes.json()).error ?? "This checkout can't go ahead.";
           } catch { /* undiscounted link is an acceptable fallback */ }
           if (refusal) {
             setMessage(refusal);
