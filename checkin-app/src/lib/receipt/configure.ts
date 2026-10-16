@@ -55,8 +55,8 @@ function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincip
 /**
  * The one live, sign-in-verified person with this email who would pass the `receipt-submitter`
  * gate if signed in, else null. Claims come from the same derivation the session uses. The
- * caller has already checked DMARC alignment for the address, which stands in for the
- * provider's verified-email claim.
+ * caller vouches for the address in place of the provider's verified-email claim: mail intake
+ * by DMARC alignment, the finance mail queue by the finance holder who typed it.
  */
 async function submitterByEmail(address: string): Promise<ReceiptPrincipal | null> {
   const [{ default: prisma }, { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON }, { assignParticipantClaims }, { canSubmitReceipts }, { isKnownAdult }] =
