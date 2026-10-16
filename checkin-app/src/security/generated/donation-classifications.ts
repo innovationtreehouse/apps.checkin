@@ -93,6 +93,10 @@ export const classifications = {
         createdAt: 'internal',
         qbMatchState: 'internal',
         qbTxnId: 'internal',
+        qbDepositTotalCents: 'internal',
+        qbDepositTxnDate: 'internal',
+        qbDriftedTxnId: 'internal',
+        qbDriftCause: 'internal',
     },
     DisbursementSnapshot: {
         orgId: 'internal',
