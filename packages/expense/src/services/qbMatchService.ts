@@ -155,7 +155,7 @@ export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: s
       await lockExpense(tx, expenseId);
       const current = (await tx.expense.findUnique({ where: { id: expenseId } }))!;
       if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0) {
-        throw new ServiceError(409, "Expense is missing a required sign-off");
+        throw new ServiceError(409, "Expense is missing a required sign-off or Board authorization");
       }
       const linked = await tx.expense.updateMany({
         where: { id: expenseId, qbTxnId: null, qbMatchState: { in: MATCHABLE_STATES } },

@@ -9,6 +9,8 @@ export const classifications = {
         capitalEquipmentUnitCents: 'internal',
         boardReviewTotalCents: 'internal',
         noteInLieuLimitCents: 'internal',
+        everydayTotalLimitCents: 'internal',
+        everydayItemLimitCents: 'internal',
     },
     ExpenseOrgSettingsChange: {
         id: 'internal',
@@ -58,6 +60,12 @@ export const classifications = {
         qbPostAttempts: 'internal',
         qbClaimedAt: 'internal',
         isTestData: 'internal',
+        singleSource: 'internal',
+        financeNotEveryday: 'internal',
+        boardAuthorization: 'internal',
+        boardAuthorizedByUserId: 'pii',
+        boardAuthorizedByUsername: 'pii',
+        boardAuthorizedAt: 'internal',
     },
     ExpenseLineItem: {
         id: 'internal',

@@ -34,6 +34,11 @@ model ExpenseOrgSettings {
   // A note in lieu of a receipt at or over this takes a Board member in the program-approver seat.
   /// @sensitivity:internal
   noteInLieuLimitCents         Int    @default(5000) @map("note_in_lieu_limit_cents")
+  // A card charge is Everyday only when its receipt total is under this and no unit price is over the item limit.
+  /// @sensitivity:internal
+  everydayTotalLimitCents      Int    @default(50000) @map("everyday_total_limit_cents")
+  /// @sensitivity:internal
+  everydayItemLimitCents       Int    @default(25000) @map("everyday_item_limit_cents")
 
   @@map("org_settings")
 }
@@ -154,6 +159,22 @@ model Expense {
   // Set only outside prod (seed, FINANCE toggle). Outside prod only test data posts to QuickBooks; prod never posts it.
   /// @sensitivity:internal
   isTestData         Boolean   @default(false) @map("is_test_data")
+  // Set by FINANCE only, never cleared: a single-source purchase, or FINANCE's call that the
+  // expense is not Everyday. Either makes a card charge need Board authorization.
+  /// @sensitivity:internal
+  singleSource       Boolean   @default(false) @map("single_source")
+  /// @sensitivity:internal
+  financeNotEveryday Boolean   @default(false) @map("finance_not_everyday")
+  // What the Board authorized for a non-Everyday card charge, as recorded by the Treasurer seat.
+  // Null holds the card charge out of the QB outbox.
+  /// @sensitivity:internal
+  boardAuthorization            String?   @map("board_authorization")
+  /// @sensitivity:pii
+  boardAuthorizedByUserId       Int?      @map("board_authorized_by_user_id")
+  /// @sensitivity:pii
+  boardAuthorizedByUsername     String?   @map("board_authorized_by_username")
+  /// @sensitivity:internal
+  boardAuthorizedAt             DateTime? @map("board_authorized_at")
 
   lineItems          ExpenseLineItem[]
   approvals          LineItemOwnerApproval[]

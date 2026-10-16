@@ -54,6 +54,8 @@ describe('expense tiering', () => {
             .flatMap(([model, fields]) => Object.entries(fields).filter(([, t]) => t === 'pii').map(([f]) => `${model}.${f}`))
             .sort();
         expect(pii).toEqual([
+            'Expense.boardAuthorizedByUserId',
+            'Expense.boardAuthorizedByUsername',
             'Expense.reimburseePersonId',
             'Expense.reimbursementFor',
             'Expense.submitterId',

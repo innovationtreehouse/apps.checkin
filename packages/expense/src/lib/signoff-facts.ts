@@ -2,13 +2,22 @@ import type { Expense, Prisma } from "../generated/prisma/client";
 import type { Db } from "../db";
 import { getExpenseRuntime } from "../runtime";
 import type { BucketApprovers } from "../contract";
-import { lineKind, missingSeats, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
+import { isEveryday, lineKind, missingSeats, needsBoardAuthorization, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
+import { readExpenseSettings } from "../services/settingsService";
 import { writeAudit } from "./audit";
 import type { Actor } from "./workflow-engine";
 
 type SignoffExpense = Pick<
   Expense,
-  "id" | "orgId" | "submitterId" | "reimburseePersonId" | "needsReimbursement"
+  | "id"
+  | "orgId"
+  | "submitterId"
+  | "reimburseePersonId"
+  | "needsReimbursement"
+  | "receiptTotalCents"
+  | "singleSource"
+  | "financeNotEveryday"
+  | "boardAuthorization"
 >;
 
 /** Whether a reimbursement's payee is an org member; true for a card charge or an unknown payee. */
@@ -38,8 +47,8 @@ export async function seatedHouseholds(db: Db, expenseId: string): Promise<numbe
 /** Sign-off facts for each line of an expense, read once through the SignoffDirectory port. */
 export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promise<Map<number, SignoffFacts>> {
   const dir = getExpenseRuntime().signoff;
-  const [lines, approvals, finance, board, conflicted, seated, isMember, setterRow] = await Promise.all([
-    db.expenseLineItem.findMany({ where: { expenseId: expense.id }, select: { id: true } }),
+  const [lines, approvals, finance, board, conflicted, seated, isMember, setterRow, settings] = await Promise.all([
+    db.expenseLineItem.findMany({ where: { expenseId: expense.id }, select: { id: true, unitPriceCents: true } }),
     db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true } }),
     dir.financeHolders(),
     dir.boardMembers(),
@@ -47,6 +56,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
     seatedHouseholds(db, expense.id),
     reimburseeIsMember(expense),
     db.expenseAuditLog.findFirst({ where: { expenseId: expense.id, action: "reimbursee_set" }, orderBy: { id: "desc" }, select: { userId: true } }),
+    readExpenseSettings(db, expense.orgId),
   ]);
   const bucketOf = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
   const bucketsById = new Map<number, BucketApprovers>();
@@ -58,6 +68,8 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
     if (b.leader !== null) leaderHouseholds.set(bucket, [...new Set([b.leader, ...(await dir.householdOf([b.leader]))])]);
   }
   const kind = lineKind(expense);
+  const everyday = isEveryday({ ...expense, unitPricesCents: lines.map((l) => l.unitPriceCents) }, settings);
+  const authorizationNeeded = needsBoardAuthorization(kind, everyday, expense.boardAuthorization);
   return new Map(
     lines.map((l) => {
       const bucket = bucketOf.get(l.id) ?? null;
@@ -74,6 +86,7 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
         leaderHousehold: bucket === null ? [] : (leaderHouseholds.get(bucket) ?? []),
         reimburseeSetter: setterRow?.userId ?? null,
         seatedHouseholds: seated,
+        needsBoardAuthorization: authorizationNeeded,
       };
       return [l.id, facts];
     }),
@@ -87,12 +100,22 @@ export async function filledSeatsByLine(db: Db, expenseId: string): Promise<Map<
   return out;
 }
 
-/** Lines still missing a seat. A held line keeps the whole expense out of the QB outbox. */
-export async function unsignedLines(db: Db, expense: SignoffExpense): Promise<Map<number, Seat[]>> {
+export type LineHold = Seat | "BOARD_AUTHORIZATION";
+
+/** What still holds a line: its unfilled seats, then a missing Board authorization. */
+export function lineHolds(facts: SignoffFacts, filled: FilledSeat[]): LineHold[] {
+  return [...missingSeats(facts, filled), ...(facts.needsBoardAuthorization ? (["BOARD_AUTHORIZATION"] as const) : [])];
+}
+
+/**
+ * Lines still missing a seat or the Board authorization. A held line keeps the whole expense out
+ * of the QB outbox.
+ */
+export async function unsignedLines(db: Db, expense: SignoffExpense): Promise<Map<number, LineHold[]>> {
   const [facts, filled] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expense.id)]);
-  const out = new Map<number, Seat[]>();
+  const out = new Map<number, LineHold[]>();
   for (const [lineId, f] of facts) {
-    const missing = missingSeats(f, filled.get(lineId) ?? []);
+    const missing = lineHolds(f, filled.get(lineId) ?? []);
     if (missing.length > 0) out.set(lineId, missing);
   }
   return out;

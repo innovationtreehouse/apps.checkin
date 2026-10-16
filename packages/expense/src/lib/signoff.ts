@@ -25,6 +25,8 @@ export interface SignoffFacts {
   reimburseeSetter: number | null;
   /** Household members of the people already seated on this expense, other than those people. */
   seatedHouseholds: number[];
+  /** A card charge that is not Everyday and has no Board authorization recorded: held. */
+  needsBoardAuthorization: boolean;
 }
 
 export const CLOSED_STATES = new Set(["qb_complete", "qb_skipped", "rejected"]);
@@ -44,6 +46,51 @@ export function reimburseeUnknown(expense: { needsReimbursement: boolean; backfi
 
 export function lineKind(expense: { needsReimbursement: boolean }): LineKind {
   return expense.needsReimbursement ? "reimbursement" : "card_charge";
+}
+
+export interface EverydayFacts {
+  receiptTotalCents: number;
+  unitPricesCents: number[];
+  singleSource: boolean;
+  financeNotEveryday: boolean;
+}
+
+/**
+ * An Everyday purchase: the receipt total is under the total limit, no unit price is over the
+ * item limit, it is not single-source, and FINANCE has not marked it not Everyday.
+ */
+export function isEveryday(e: EverydayFacts, limits: { everydayTotalLimitCents: number; everydayItemLimitCents: number }): boolean {
+  return (
+    e.receiptTotalCents < limits.everydayTotalLimitCents &&
+    e.unitPricesCents.every((p) => p <= limits.everydayItemLimitCents) &&
+    !e.singleSource &&
+    !e.financeNotEveryday
+  );
+}
+
+/** A non-Everyday card charge needs a recorded Board authorization; a blank one counts as none. */
+export function needsBoardAuthorization(kind: LineKind, everyday: boolean, boardAuthorization: string | null): boolean {
+  return kind === "card_charge" && !everyday && !boardAuthorization?.trim();
+}
+
+/** People the Treasurer seat refuses whatever the seat's state: conflicted, the reimbursee's setter, the Program Leader's household. */
+function treasurerConflicted(facts: SignoffFacts): Set<number> {
+  const out = new Set([...facts.conflicted, ...facts.leaderHousehold]);
+  if (facts.reimburseeSetter !== null) out.add(facts.reimburseeSetter);
+  return out;
+}
+
+/**
+ * Why `userId` may not record the Board authorization, or null. It is the Treasurer's act: a
+ * FINANCE holder without a conflict on any line records it; with none, a Board member without one.
+ */
+export function boardAuthorizationRefusal(factsByLine: SignoffFacts[], userId: number): string | null {
+  if (factsByLine.length === 0) return "the expense has no lines";
+  const blocked = new Set(factsByLine.flatMap((f) => [...treasurerConflicted(f)]));
+  if (blocked.has(userId)) return "a conflicted Treasurer cannot record the Board authorization";
+  const { finance, board } = factsByLine[0];
+  if (finance.some((id) => !blocked.has(id))) return finance.includes(userId) ? null : "signer does not hold FINANCE";
+  return board.includes(userId) ? null : "signer is not a Board member";
 }
 
 /**
@@ -67,10 +114,7 @@ function eligible(facts: SignoffFacts, seat: Exclude<Seat, "SUBMITTER">): number
  */
 export function availableSigners(facts: SignoffFacts, filled: FilledSeat[], seat: Exclude<Seat, "SUBMITTER">): number[] {
   const blocked = new Set([...facts.conflicted, ...facts.seatedHouseholds, ...filled.filter((f) => f.seat !== seat).map((f) => f.signerUserId)]);
-  if (seat === "TREASURER") {
-    if (facts.reimburseeSetter !== null) blocked.add(facts.reimburseeSetter);
-    for (const id of facts.leaderHousehold) blocked.add(id);
-  }
+  if (seat === "TREASURER") for (const id of treasurerConflicted(facts)) blocked.add(id);
   return eligible(facts, seat).filter((id) => !blocked.has(id));
 }
 
