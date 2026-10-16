@@ -713,7 +713,7 @@ QuickBooks; the system creates the Bill and never pays it (§9 QB-2).
 
 **Conflicted Treasurer: replaced, not escalated.** A conflicted Treasurer does not
 sign; another `FINANCE` holder or a Board member fills the seat, and no Board
-seats are added. See `docs/rules/revenue.md`, "Spending sign-off".
+seats are added. See `docs/rules/expenses.md`, "Spending sign-off".
 
 **Exceptions carried from F2:**
 
@@ -1471,12 +1471,10 @@ This doc lives in `docs/in-design/` — **deleted at merge**. Planning the split
 keeps the extract step a file move, not a months-later judgement call over every
 paragraph (§4.2). Content splits three ways.
 
-**(1) Standing domain rules → the EXISTING `docs/rules/revenue.md`.**
-Unlike catalog and local-inventory (both in `docs/rules/inventory.md`), expense
-is **not** a new domain — `revenue.md` already
-covers *"fees, refunds, payment plans, and reconciliation,"* and expense→QB is
-reconciliation's core. So **add rules to that file, do not create a new one**
-(creating a near-duplicate finance file would fragment the register). Run the §3.9
+**(1) Standing domain rules → `docs/rules/expenses.md`.**
+Expense rules (receipts, buckets, sign-off, QuickBooks posting) go in
+`expenses.md`, beside catalog and local-inventory in `docs/rules/inventory.md`
+and fees and income in `docs/rules/revenue.md`. Run the §3.9
 test (*could a later change violate this?*) on each; seeds that qualify — decisions
 and invariants only, no mechanism:
 - **Flag / checkoff / audit:** the app **surfaces** procurement/finance flags

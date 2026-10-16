@@ -235,7 +235,7 @@ export type Authorize =
     | 'catalog-viewer'
     // Receipt submission (#1265 §6): an adult whose household membership is
     // ACTIVE, or a Treehouse Volunteer (role holder or staff account) whatever
-    // their age or membership. No background check (docs/rules/inventory.md).
+    // their age or membership. No background check (docs/rules/expenses.md).
     | 'receipt-submitter'
     // Catalog write admission (#1286 §6): INVENTORY_MANAGER only.
     | 'inventory-manager'

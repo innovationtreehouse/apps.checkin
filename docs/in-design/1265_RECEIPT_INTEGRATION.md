@@ -467,7 +467,7 @@ instead of expense. This lane's part is the mark and nothing else:
 
 | Action | Source guard | checkin |
 |---|---|---|
-| Upload; see own receipts; act on own receipt (submitter review, edit while editable, discard own, retry OCR) | any org role; `canActOnReceipt` = uploader | **an adult member, or a staff or role holder** (owner ruling 2026-10-13, superseding the 2026-10-12 ruling that admitted any signed-in adult: the age band rests on a self-declared adult flag anyone can set, so it cannot admit on its own): the `receipt-submitter` token, `isActiveOrgMember && ageBand === 'adult'` on the session, or `isTreehouseVolunteer` (role holder or staff account) whatever their age or membership. No background check; an adult with no ACTIVE membership, and any youth or unknown age without a role, is refused. Gates every submitter and shared route and the receipt file route. Rule: `docs/rules/inventory.md`. |
+| Upload; see own receipts; act on own receipt (submitter review, edit while editable, discard own, retry OCR) | any org role; `canActOnReceipt` = uploader | **an adult member, or a staff or role holder** (owner ruling 2026-10-13, superseding the 2026-10-12 ruling that admitted any signed-in adult: the age band rests on a self-declared adult flag anyone can set, so it cannot admit on its own): the `receipt-submitter` token, `isActiveOrgMember && ageBand === 'adult'` on the session, or `isTreehouseVolunteer` (role holder or staff account) whatever their age or membership. No background check; an adult with no ACTIVE membership, and any youth or unknown age without a role, is refused. Gates every submitter and shared route and the receipt file route. Rule: `docs/rules/expenses.md`. |
 | Review queue; approve / reject financial; see all receipts and files; clear duplicate; discard any; audit log; restart flow; import | `isFinance`, `isOrgManager` | **`FINANCE`** (org-manager collapses onto it, as #1272 did) |
 | Org receipt settings (tax-exempt, age limit) | `canEditOrg` | **`FINANCE`** |
 | `isAdmin` | blocked from receipts | `SYSADMIN` gets nothing extra (revenue.md excludes sysadmins from Finance Ops) |
@@ -643,7 +643,7 @@ All PRs are based on `main`; none stacks.
 
 ## 11. Distillation at merge
 
-Into `docs/rules/revenue.md`, if the owner accepts them: a receipt's
+Into `docs/rules/expenses.md`, if the owner accepts them: a receipt's
 financial-review sign-off is recorded with a reason, and a tax exception needs an
 explanation; nobody approves or rejects their own receipt; QuickBooks is the
 system of record for reimbursement and the app never authors a reimbursement fact;
