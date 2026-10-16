@@ -11,7 +11,8 @@ import type { OwnerInfo } from "../../contract";
 import { makeFile, makeTransaction, TEST_ORG_ID } from "../helpers/factories";
 import { QB_MATCHED_EVENT, QB_MATCH_STATE, benevityTakeoverLine, recordQbMatched } from "../../lib/qb-match";
 import {
-  MAX_CREATES_PER_DAY, MAX_CREATES_PER_RUN, MAX_CREATE_CENTS_PER_RUN, MAX_POST_ATTEMPTS, QB_EVENT, STALE_CLAIM_MS,
+  MAX_CREATES_PER_DAY, MAX_CREATES_PER_RUN, MAX_CREATE_CENTS_PER_RUN, MAX_DRIFT_CHECKS_PER_RUN, MAX_POST_ATTEMPTS, QB_DRIFT_CAUSE,
+  QB_EVENT, STALE_CLAIM_MS,
   donationClaimedDepositIds, postDisbursementToQb, runDonationQbPosting,
 } from "../../lib/qb-poster";
 
@@ -325,5 +326,145 @@ describeDb("donation QuickBooks drain: caps", () => {
     for (let i = 0; i < 5; i++) await completed(`TEST-D${i}`, "2026-09-10");
     qbo.mode = "down";
     expect(await runDonationQbPosting(orgId)).toMatchObject({ failed: 3, stoppedAfterFailures: true });
+  });
+});
+
+describeDb("donation QuickBooks drain: drift", () => {
+  /** A disbursement the drain created a deposit for, as booked. */
+  async function posted(disbursementId = "TEST-D1") {
+    await lined();
+    const e = await completed(disbursementId, "2026-09-10");
+    expect(await postDisbursementToQb(e.id)).toBe("posted");
+    const { qbTxnId } = await stateOf(e.id);
+    return { e, qbTxnId: qbTxnId! };
+  }
+
+  const deposit = (id: string) => qbo.deposits.find((d) => d.Id === id)!;
+
+  /** The hand-matched line, with its deposit still in QuickBooks so it never drifts itself. */
+  async function lined() {
+    await handMatched("2026-09-01");
+    qbo.deposits.push(handDeposit("920260901", "2026-09-01", 1450));
+  }
+
+  it("books the created deposit's total and date, and leaves an unchanged deposit alone", async () => {
+    const { e, qbTxnId } = await posted();
+    expect(await db.disbursementEvent.findUniqueOrThrow({ where: { id: e.id } })).toMatchObject({
+      qbDepositTotalCents: 1450,
+      qbDepositTxnDate: "2026-09-10",
+    });
+
+    const counts = await runDonationQbPosting(orgId);
+
+    expect(counts).toMatchObject({ drift: { drifted: 0, failed: 0 } });
+    expect(await stateOf(e.id)).toEqual({ qbMatchState: "CREATED", qbTxnId });
+    expect(await eventsOf("TEST-D1", QB_EVENT.DRIFT)).toHaveLength(0);
+  });
+
+  it("sends a record whose deposit is gone to finance as DRIFT, freeing the deposit id", async () => {
+    const { e, qbTxnId } = await posted();
+    qbo.deposits = qbo.deposits.filter((d) => d.Id !== qbTxnId);
+
+    expect(await runDonationQbPosting(orgId)).toMatchObject({ drift: { drifted: 1 } });
+
+    expect(await db.disbursementEvent.findUniqueOrThrow({ where: { id: e.id } })).toMatchObject({
+      qbMatchState: QB_MATCH_STATE.DRIFT,
+      qbTxnId: null,
+      qbDriftedTxnId: qbTxnId,
+      qbDriftCause: QB_DRIFT_CAUSE.MISSING,
+      qbDepositTotalCents: 1450,
+      qbDepositTxnDate: "2026-09-10",
+    });
+    const [drift] = await eventsOf("TEST-D1", QB_EVENT.DRIFT);
+    expect(JSON.parse(drift.payload!)).toEqual({
+      from: "CREATED",
+      to: "DRIFT",
+      cause: "deposit_missing",
+      qbTxnId,
+      booked: { totalCents: 1450, txnDate: "2026-09-10" },
+      now: null,
+    });
+    expect(await donationClaimedDepositIds(orgId)).not.toContain(qbTxnId);
+  });
+
+  it("sends a record whose deposit total changed to finance as DRIFT, never correcting QuickBooks", async () => {
+    const { e, qbTxnId } = await posted();
+    deposit(qbTxnId).TotalAmt = 99.99;
+    const posts = qbo.posts.length;
+
+    await runDonationQbPosting(orgId);
+
+    expect(await db.disbursementEvent.findUniqueOrThrow({ where: { id: e.id } })).toMatchObject({
+      qbMatchState: QB_MATCH_STATE.DRIFT,
+      qbDriftCause: QB_DRIFT_CAUSE.CHANGED,
+    });
+    const [drift] = await eventsOf("TEST-D1", QB_EVENT.DRIFT);
+    expect(JSON.parse(drift.payload!).now).toEqual({ totalCents: 9999, txnDate: "2026-09-10" });
+    expect(qbo.posts).toHaveLength(posts);
+    expect(deposit(qbTxnId).TotalAmt).toBe(99.99);
+  });
+
+  it("never matches or posts a drifted record again on its own", async () => {
+    const { e, qbTxnId } = await posted();
+    qbo.deposits = qbo.deposits.filter((d) => d.Id !== qbTxnId);
+    await runDonationQbPosting(orgId);
+    qbo.deposits.push(handDeposit("777", "2026-09-10", 1450));
+    const posts = qbo.posts.length;
+
+    await runDonationQbPosting(orgId);
+    expect(await postDisbursementToQb(e.id)).toBe("waiting");
+
+    expect(await stateOf(e.id)).toEqual({ qbMatchState: "DRIFT", qbTxnId: null });
+    expect(qbo.posts).toHaveLength(posts);
+    expect(await eventsOf("TEST-D1", QB_EVENT.DRIFT)).toHaveLength(1);
+  });
+
+  it("leaves the takeover line where it was when a matched record drifts", async () => {
+    await lined();
+    const e = await completed("TEST-D1", "2026-09-10");
+    qbo.deposits.push(handDeposit("501", "2026-09-12", 1450));
+    expect(await postDisbursementToQb(e.id)).toBe("matched");
+    expect(await benevityTakeoverLine(db, orgId)).toBe("2026-09-10");
+
+    qbo.deposits = [];
+    await runDonationQbPosting(orgId);
+
+    expect((await stateOf(e.id)).qbMatchState).toBe("DRIFT");
+    expect(await benevityTakeoverLine(db, orgId)).toBe("2026-09-10");
+  });
+
+  it("pins a matched deposit's date on the first check, then catches a later date change", async () => {
+    await lined();
+    const e = await completed("TEST-D1", "2026-09-10");
+    qbo.deposits.push(handDeposit("501", "2026-09-12", 1450));
+    expect(await postDisbursementToQb(e.id)).toBe("matched");
+    expect((await db.disbursementEvent.findUniqueOrThrow({ where: { id: e.id } })).qbDepositTxnDate).toBeNull();
+
+    await runDonationQbPosting(orgId);
+    expect(await db.disbursementEvent.findUniqueOrThrow({ where: { id: e.id } })).toMatchObject({
+      qbMatchState: "MATCHED",
+      qbDepositTxnDate: "2026-09-12",
+    });
+
+    deposit("501").TxnDate = "2026-09-13";
+    await runDonationQbPosting(orgId);
+    expect((await stateOf(e.id)).qbMatchState).toBe("DRIFT");
+  });
+
+  it("changes nothing when the QuickBooks read fails", async () => {
+    const { e, qbTxnId } = await posted();
+    qbo.mode = "down";
+    expect(await runDonationQbPosting(orgId)).toMatchObject({ drift: { checked: 0, failed: 2 } });
+    expect(await stateOf(e.id)).toEqual({ qbMatchState: "CREATED", qbTxnId });
+  });
+
+  it(`reads at most ${MAX_DRIFT_CHECKS_PER_RUN} deposits per run`, async () => {
+    await lined();
+    for (let i = 0; i < MAX_DRIFT_CHECKS_PER_RUN + 2; i++) {
+      const e = await completed(`TEST-D${i}`, "2026-09-10", [{ donation: 100 + i }]);
+      expect(await postDisbursementToQb(e.id)).toBe("posted");
+    }
+    const counts = await runDonationQbPosting(orgId);
+    expect(counts).toMatchObject({ drift: { checked: MAX_DRIFT_CHECKS_PER_RUN } });
   });
 });

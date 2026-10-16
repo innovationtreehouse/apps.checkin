@@ -1,8 +1,8 @@
 // The QuickBooks drain (design §7): one bank Deposit per completed Benevity disbursement,
 // match before create, through checkin's guarded client.
 import { DisbursementPayloadV1 } from "@inventory/donations";
-import { sumCents } from "@inventory/money";
-import { findOrCreate, qbKey, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@inventory/quickbooks";
+import { dollarsToCents, sumCents } from "@inventory/money";
+import { findOrCreate, qbKey, type FindOrCreateResult, type QboDeposit, type QuickBooksClient, type TxnWrite, type WriteLine } from "@inventory/quickbooks";
 import { db, type PrismaTransactionClient } from "../db";
 import type { DisbursementEvent } from "../generated/prisma/client";
 import { recordEvent } from "../repositories/audit";
@@ -21,6 +21,8 @@ export const MAX_POST_ATTEMPTS = 5;
 export const MAX_CONSECUTIVE_FAILURES = 3;
 /** A claim older than this belongs to a post that died between claim and settle; it may be taken over. */
 export const STALE_CLAIM_MS = 10 * 60_000;
+/** QuickBooks reads per run for the drift check: one read per checked disbursement. */
+export const MAX_DRIFT_CHECKS_PER_RUN = 25;
 /** Outside prod only these disbursements are sent; prod never sends one. */
 export const TEST_DISBURSEMENT_PREFIX = "TEST-";
 
@@ -39,7 +41,16 @@ export const QB_EVENT = {
   RETRIED: "QB_POST_RETRIED",
   CREATED: "QB_CREATED",
   STATE: "QB_MATCH_STATE",
+  /** The deposit a disbursement held is gone or changed in QuickBooks; the record went to finance. */
+  DRIFT: "QB_DRIFT",
 } as const;
+
+/** Why a booked deposit no longer stands. */
+export const QB_DRIFT_CAUSE = { MISSING: "deposit_missing", CHANGED: "deposit_changed" } as const;
+export type QbDriftCause = (typeof QB_DRIFT_CAUSE)[keyof typeof QB_DRIFT_CAUSE];
+
+/** The deposit as booked: its total, and its date once known. */
+export type Booked = { totalCents: number; txnDate: string | null };
 
 const SYSTEM = { actorUserId: null, actorUsername: "system:qb-drain", correlationId: null };
 
@@ -100,9 +111,16 @@ async function settle(
   before: DisbursementEvent,
   outcome: PostOutcome,
   to: QbMatchState,
-  opts: { qbTxnId?: string; note?: string } = {},
+  opts: { qbTxnId?: string; note?: string; booked?: Booked } = {},
 ): Promise<PostOutcome> {
-  await tx.disbursementEvent.update({ where: { id: before.id }, data: { qbMatchState: to, ...(opts.qbTxnId !== undefined && { qbTxnId: opts.qbTxnId }) } });
+  await tx.disbursementEvent.update({
+    where: { id: before.id },
+    data: {
+      qbMatchState: to,
+      ...(opts.qbTxnId !== undefined && { qbTxnId: opts.qbTxnId }),
+      ...(opts.booked && { qbDepositTotalCents: opts.booked.totalCents, qbDepositTxnDate: opts.booked.txnDate }),
+    },
+  });
   if (to === QB_MATCH_STATE.MATCHED && opts.qbTxnId) {
     const payload = parsePayload(before.payload);
     await recordQbMatched(tx, before.orgId, { disbursementId: before.disbursementId, disbursementDate: payload.disbursementDate, qbTxnId: opts.qbTxnId }, SYSTEM);
@@ -308,9 +326,14 @@ export async function postDisbursementToQb(id: number): Promise<PostOutcome | "u
             const note = `QuickBooks Deposit ${result.id} is already claimed by another disbursement${byAmount ? "" : "; the Deposit posted for this one needs voiding"}`;
             return settle(tx, before, "queued", QB_MATCH_STATE.AMBIGUOUS, { note });
           }
+          // A created deposit carries the write's date; a found one's date is pinned by the first drift check.
+          const booked: Booked = {
+            totalCents: sumCents(...write.fields.lines.map((l) => l.amountCents)),
+            txnDate: result.kind === "created" ? date : null,
+          };
           return byAmount
-            ? settle(tx, before, "matched", QB_MATCH_STATE.MATCHED, { qbTxnId: result.id })
-            : settle(tx, before, "posted", QB_MATCH_STATE.CREATED, { qbTxnId: result.id });
+            ? settle(tx, before, "matched", QB_MATCH_STATE.MATCHED, { qbTxnId: result.id, booked })
+            : settle(tx, before, "posted", QB_MATCH_STATE.CREATED, { qbTxnId: result.id, booked });
         }
         case "ambiguous":
           return settle(tx, before, "queued", QB_MATCH_STATE.AMBIGUOUS, { note: `candidates: ${result.ids.join(", ")}` });
@@ -331,18 +354,118 @@ export async function postDisbursementToQb(id: number): Promise<PostOutcome | "u
   }
 }
 
+export type DriftCounts = { checked: number; drifted: number; failed: number };
+
 export type DrainCounts = Record<Exclude<PostOutcome, "day_capped">, number> & {
   capped: "count" | "cents" | "day" | null;
   stoppedAfterFailures: boolean;
+  drift: DriftCounts;
 };
 
+/** Why a held deposit no longer agrees with what was booked, or null while it does. */
+export function driftCause(booked: Booked, deposit: QboDeposit | undefined): QbDriftCause | null {
+  if (!deposit) return QB_DRIFT_CAUSE.MISSING;
+  if (dollarsToCents(deposit.TotalAmt) !== booked.totalCents) return QB_DRIFT_CAUSE.CHANGED;
+  if (booked.txnDate !== null && deposit.TxnDate !== booked.txnDate) return QB_DRIFT_CAUSE.CHANGED;
+  return null;
+}
+
 /**
- * The drain, run from the daily cron: every completed disbursement not yet in QuickBooks, oldest
+ * The slice of `rows` to check today. The start moves by the cap each UTC day, so every row is
+ * checked within ceil(n / cap) days without storing a cursor.
+ */
+function todaysSlice<T>(rows: T[], cap: number, now: Date): T[] {
+  if (rows.length <= cap) return rows;
+  const start = (Math.floor(now.getTime() / 86_400_000) * cap) % rows.length;
+  return [...rows, ...rows].slice(start, start + cap);
+}
+
+/**
+ * Re-reads the deposit each MATCHED or CREATED disbursement holds. A deposit gone from its booked
+ * day or bank account, or whose total or date moved, sends the record to finance as DRIFT: the
+ * deposit id moves to qbDriftedTxnId, which frees it from the claimed set, and DRIFT is never
+ * posted or matched again automatically. QuickBooks is only read. A deposit with no booked date is
+ * read across its match window and, while its total still agrees, its date is pinned as booked.
+ * A failed read changes nothing. Capped at MAX_DRIFT_CHECKS_PER_RUN reads.
+ */
+export async function checkDonationQbDrift(
+  orgId: string,
+  client: QuickBooksClient,
+  bankAccountId: string,
+  now = new Date(),
+): Promise<DriftCounts> {
+  const held = await db.disbursementEvent.findMany({
+    where: { orgId, qbTxnId: { not: null }, qbMatchState: { in: [QB_MATCH_STATE.MATCHED, QB_MATCH_STATE.CREATED] } },
+    orderBy: { id: "asc" },
+    select: { id: true },
+  });
+  const counts: DriftCounts = { checked: 0, drifted: 0, failed: 0 };
+  for (const { id } of todaysSlice(held, MAX_DRIFT_CHECKS_PER_RUN, now)) {
+    try {
+      const row = await db.disbursementEvent.findUniqueOrThrow({ where: { id } });
+      const booked: Booked = { totalCents: row.qbDepositTotalCents ?? payloadNetCents(row.payload), txnDate: row.qbDepositTxnDate };
+      const day = booked.txnDate ?? parsePayload(row.payload).disbursementDate;
+      if (!day || !row.qbTxnId) continue;
+      const [from, to] = booked.txnDate ? [day, day] : [shiftDate(day, -MATCH_WINDOW_DAYS), shiftDate(day, MATCH_WINDOW_DAYS)];
+      const deposit = (await client.depositsBetween(from, to)).find(
+        (d) => d.Id === row.qbTxnId && d.DepositToAccountRef?.value === bankAccountId,
+      );
+      counts.checked++;
+      if (await settleDriftCheck(id, row.qbTxnId, booked, deposit)) counts.drifted++;
+    } catch (err) {
+      counts.failed++;
+      console.warn(`[bulk-donation] drift check of disbursement event ${id} failed`, err);
+    }
+  }
+  return counts;
+}
+
+/** Settle one drift check under the row lock, only while the record still holds `qbTxnId`. True when it drifted. */
+function settleDriftCheck(id: number, qbTxnId: string, booked: Booked, deposit: QboDeposit | undefined): Promise<boolean> {
+  return db.$transaction(async (tx) => {
+    const current = await lockedEvent(tx, id);
+    const holds = current.qbMatchState === QB_MATCH_STATE.MATCHED || current.qbMatchState === QB_MATCH_STATE.CREATED;
+    if (!holds || current.qbTxnId !== qbTxnId) return false;
+    const cause = driftCause(booked, deposit);
+    if (!cause) {
+      if (deposit && current.qbDepositTxnDate === null) {
+        await tx.disbursementEvent.update({ where: { id }, data: { qbDepositTotalCents: booked.totalCents, qbDepositTxnDate: deposit.TxnDate } });
+      }
+      return false;
+    }
+    await tx.disbursementEvent.update({
+      where: { id },
+      data: { qbMatchState: QB_MATCH_STATE.DRIFT, qbTxnId: null, qbDriftedTxnId: qbTxnId, qbDriftCause: cause, qbDepositTotalCents: booked.totalCents },
+    });
+    await recordEvent(tx, {
+      ...eventWhere(current),
+      disbursementId: current.disbursementId,
+      eventType: QB_EVENT.DRIFT,
+      ...SYSTEM,
+      payload: {
+        from: current.qbMatchState,
+        to: QB_MATCH_STATE.DRIFT,
+        cause,
+        qbTxnId,
+        booked,
+        now: deposit ? { totalCents: dollarsToCents(deposit.TotalAmt), txnDate: deposit.TxnDate } : null,
+      },
+    });
+    return true;
+  });
+}
+
+/**
+ * The drain, run from the daily cron. First the drift check over the deposits already held; then
+ * every completed disbursement not yet in QuickBooks, oldest
  * first. Stops at the per-run count and cents caps (measured on what it creates), the daily cap,
  * or MAX_CONSECUTIVE_FAILURES failures in a row; the rest waits for the next run. Counts only.
  */
-export async function runDonationQbPosting(orgId: string): Promise<DrainCounts | "unbound"> {
-  if (!(await getQbPosting()?.client())) return "unbound";
+export async function runDonationQbPosting(orgId: string, now = new Date()): Promise<DrainCounts | "unbound"> {
+  const posting = getQbPosting();
+  const client = await posting?.client();
+  if (!posting || !client) return "unbound";
+  const drift = await checkDonationQbDrift(orgId, client, posting.bankAccountId, now);
   const due = await db.disbursementEvent.findMany({
     where: { orgId, qbTxnId: null, qbMatchState: { in: [...POSTABLE, QB_MATCH_STATE.POSTING] } },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -351,7 +474,7 @@ export async function runDonationQbPosting(orgId: string): Promise<DrainCounts |
 
   const counts: DrainCounts = {
     posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0,
-    capped: null, stoppedAfterFailures: false,
+    capped: null, stoppedAfterFailures: false, drift,
   };
   let postedCents = 0;
   let failuresInARow = 0;

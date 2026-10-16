@@ -197,9 +197,11 @@ model DisbursementHold {
   @@map("disbursement_holds")
 }
 
-// qbMatchState: UNMATCHED | MATCHED | CREATED | AMBIGUOUS | BEFORE_LINE | WAITING | POST_FAILED.
+// qbMatchState: one of QB_MATCH_STATE in src/lib/qb-match.ts.
 // qbTxnId is the QuickBooks entry this event is tied to (MATCHED or CREATED); an entry is
-// claimed by at most one event per org.
+// claimed by at most one event per org. qbDepositTotalCents/qbDepositTxnDate are the deposit as
+// booked, which the drift check compares against. On DRIFT, qbTxnId is cleared and the deposit
+// that was booked moves to qbDriftedTxnId, with qbDriftCause saying why.
 model DisbursementEvent {
   /// @sensitivity:internal
   id             Int      @id @default(autoincrement())
@@ -215,6 +217,14 @@ model DisbursementEvent {
   qbMatchState   String   @default("UNMATCHED") @map("qb_match_state")
   /// @sensitivity:internal
   qbTxnId        String?  @map("qb_txn_id")
+  /// @sensitivity:internal
+  qbDepositTotalCents Int?    @map("qb_deposit_total_cents")
+  /// @sensitivity:internal
+  qbDepositTxnDate    String? @map("qb_deposit_txn_date")
+  /// @sensitivity:internal
+  qbDriftedTxnId      String? @map("qb_drifted_txn_id")
+  /// @sensitivity:internal
+  qbDriftCause        String? @map("qb_drift_cause")
 
   @@unique([orgId, disbursementId])
   @@unique([orgId, qbTxnId])
