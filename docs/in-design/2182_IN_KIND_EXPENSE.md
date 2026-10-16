@@ -22,11 +22,18 @@ then finance's hand bookings can be matched against it.
 - **It lives in the donations library**, beside the gift. The expense library's
   record assumes a submitter, a reimbursement or card charge, and three-seat
   sign-off; none of that applies to goods given to us.
-- **Value comes from the receipt, or from finance.** A gift with a receipt books
-  at the receipt's values. A gift without one is valued by finance in a later
-  step; ops may suggest a value but does not set it.
-- **No spending sign-off.** No money leaves the organisation. Finance setting
-  the value is the look before a gift without a receipt books.
+- **Finance accepts every gift before anything happens.** Every in-kind gift,
+  with or without a receipt, goes through a finance *accept donation* step:
+  accept, refuse or return. Nothing books to QuickBooks and no donor letter goes
+  out until a finance holder accepts it; under charity law the letter is an act
+  of the organisation. Nobody accepts a gift where they or their household is
+  the donor or the recorder; if every finance holder is conflicted, a Board
+  member accepts. The screen warns; it does not decide.
+- **Value comes from the receipt, or from the accepter.** A gift with a receipt
+  books at the receipt's values. A gift without one is valued by finance as part
+  of accepting it; ops may suggest a value but does not set it.
+- **No spending sign-off.** No money leaves the organisation. Acceptance is the
+  one person-step a gift needs.
 - **Every in-kind gift names a budget bucket.** An expense never lands at the
   top of the books without a Class, so an in-kind gift cannot be general money.
   Finance assigns a bucket, which may be a part of the facility such as Facility
@@ -44,7 +51,8 @@ then finance's hand bookings can be matched against it.
   register.
 - **Program approvers can see** in-kind gifts to their program, without the
   donor. They do not approve them.
-- **What this does not build:** donor acknowledgement letters (#2237).
+- **What this does not build:** donor acknowledgement letters (#2237), which go
+  out only for an accepted gift.
 
 ---
 
@@ -93,8 +101,14 @@ program, without the donor, and do not approve them. The program is the one
 the gift's bucket belongs to. [Decision — owner]
 
 `docs/rules/revenue.md`, Ownership: ops record a gift without a receipt;
-**addition:** finance sets its value, and ops' value is only a suggestion.
-[Decision — owner]
+**addition:** finance sets its value when accepting it, and ops' value is only a
+suggestion. [Decision — owner]
+
+`docs/rules/revenue.md`, Donations; **addition:** every gift of goods is accepted,
+refused or returned by a finance holder before it books or any letter goes out.
+Nobody decides on a gift where they or their household is the donor or the
+recorder; a Board member decides when every finance holder is conflicted.
+[Decision — owner; *Policy: Ethics Policy, Art. III §III.5*]
 
 It also adds rules (see the end).
 
@@ -126,23 +140,55 @@ Both sides use one value and one date, read from the gift (owner ruling):
 
 - **With a receipt:** the gift books as the receipt says: its lines, its total
   and its date. Nobody re-values it.
-- **Without a receipt:** finance sets each line's value in a step after ops
-  records the gift. Ops are not placed to judge value, so what ops enters is a
+- **Without a receipt:** finance sets each line's value when accepting the
+  gift (below). Ops are not placed to judge value, so what ops enters is a
   suggestion, useful when the donor roughly knows what was paid and the item is
   fairly new; finance sees it and decides. The date is the donation date ops
   entered.
 
-A gift with no value (a receipt whose total could not be read, or a gift
-finance has not yet valued) is not ready to book and sits in the finance queue.
+A gift with no value (a receipt whose total could not be read) cannot be
+accepted until finance resolves the total; it sits in the finance queue.
 
-**Finance's valuation is also the independence check on a gift without a
-receipt, and the gift does not book without it.** The household check at
-recording compares surnames, and a spelling variant, a maiden name or a company
-name walks past it. So the check that counts is a person: the finance valuer
-must be someone other than whoever recorded the gift, and confirms, recorded
-with who and when, that they are not in the donor's household. The surname
-comparison stays, but only as an early warning shown to the valuer; it never
-clears a gift on its own (*fail closed*).
+### Accepting a gift
+
+Every in-kind gift, with or without a receipt, waits for a finance holder to
+decide it (owner ruling). Taking a gift, and thanking its donor for it in
+writing, are acts of the organisation, so a person makes them. Until then
+nothing books and no letter goes out (#2237).
+
+**Outcomes.** One decision per gift, recorded with who and when:
+
+- **Accept.** The accepter sets the value of a gift without a receipt (a gift
+  with one keeps the receipt's values) and assigns the bucket. The gift can then
+  book and its letter can go out.
+- **Refuse.** We do not take the gift. Nothing books and no letter goes out.
+- **Return.** We give the goods back. Nothing books and no letter goes out.
+
+What refusal and return do to goods already loaded into inventory is open
+question Q9.
+
+**Who may decide.** A finance holder, but not one who is, or shares a household
+with, the donor, or whoever uploaded the receipt or recorded the gift. The app
+knows the uploader and recorder and their households, so it enforces those. It
+does not know the donor's household, because donors are not linked to people,
+so the accepter confirms they are outside it, and that confirmation is recorded.
+A finance holder who is conflicted steps aside on that gift. When every finance
+holder is conflicted, a Board member without a conflict decides instead: the
+same substitution the spending sign-off uses for the Treasurer seat.
+
+**Warnings, not gates.** The surname comparison at recording is beaten by a
+spelling variant, a maiden name or a company name, so it cannot clear a gift on
+its own. The accept screen shows it, with the others, as warnings for the
+person deciding:
+
+- the donor's surname matches someone in the accepter's household;
+- the donor is the uploader or recorder;
+- the value is over a threshold (open question Q10);
+- the donor was replaced after the gift was recorded.
+
+None of these blocks a decision; the decider reads them and decides (*a financial
+control is a flag a person signs off*). The check that counts is the
+independent person.
 
 This changes the no-receipt recording that shipped with #2192, where ops' line
 value is required and is the value: it becomes optional and a suggestion, and a
@@ -173,9 +219,8 @@ A gift books when all of these hold:
 
 - its money side arrived (receipt path) or it was recorded (no-receipt path);
 - its donor is recorded;
-- every line has a value (finance's, for a gift without a receipt);
-- finance has assigned it a bucket, and the bucket is not archived and still has
-  its Class;
+- it has been accepted, which gives every line a value and assigns a bucket;
+- its bucket is not archived and still has its Class;
 - any line at or over the capital thresholds has been through capital review;
 - it has not been withdrawn.
 
@@ -199,12 +244,11 @@ design does not add that.
 
 ### Sign-off
 
-None (owner ruling). The spending sign-off answers *who allowed this money to
-leave*, and none leaves. The question that does matter, *is this value honest*,
-is answered by the receipt where there is one, and otherwise by finance setting
-the value, recorded with who and when. That step is the look; there is no
-separate sign-off. Finance assigning the bucket is a second person-step before
-anything books.
+No spending sign-off (owner ruling). That sign-off answers *who allowed this
+money to leave*, and none leaves. The questions that do matter for a gift, *do we
+take it* and *is its value honest*, are answered by acceptance: one independent
+finance holder, or a Board member when finance is conflicted, recorded with who
+and when.
 
 ### Budget bucket and Class
 
@@ -213,7 +257,7 @@ Classes are one to one, and the bucket already carries its Class, so the bucket
 is how a gift reaches a Class:
 
 - The in-kind tables gain a bucket, who assigned it, and when. Finance assigns
-  it from the existing bucket list.
+  it from the existing bucket list when accepting the gift.
 - There is no general-money choice: an expense never lands at the top of the
   books. Where the donor gave no instructions, finance picks a bucket that may
   be a part of the facility, such as Facility or Shop, not a program.
@@ -304,12 +348,14 @@ Requirements the build carries, from a security review of what is on `main`:
 
 In this order, each its own PR off `main`:
 
-1. Registry entries for any new route (the finance valuation step, bucket
-   assignment, the approver view), alone, per the boundary rule.
-2. Donations: per-line values on receipt gifts, the finance valuation step and
-   ops' value as a suggestion, the bucket fields and bucket alarm, approver
-   visibility, the bookings table, readiness and queue states, and the three
-   requirements above.
+1. Registry entries for any new route (the accept step, the approver view),
+   alone, per the boundary rule.
+2. Donations: per-line values on receipt gifts; the accept step with its three
+   outcomes, its conflict rule, Board substitution and four warnings (which
+   needs the gift to record when its donor was replaced); ops' value as a
+   suggestion; the bucket fields and bucket alarm; approver visibility; the
+   bookings table, readiness and queue states; and the three requirements
+   above.
 3. Expense: capital review accepts a donated line, and the register records a
    gift as a source.
 4. Donations: the pair in the drain (after D and the closed-books design), with
@@ -323,8 +369,10 @@ In this order, each its own PR off `main`:
   values a gift without one, and ops may suggest. Residual: on a receipt, tax
   and shipping are not on any one line, but the capital test is per line.
   Default: spread them across lines by value, as an asset's cost includes them.
-- **Q2. Sign-off on the value.** Resolved: none; finance setting the value is
-  the look.
+- **Q2. Sign-off on the value.** Resolved: no spending sign-off; every gift is
+  accepted, refused or returned by an independent finance holder (or a Board
+  member when finance is conflicted), and accepting sets the value of a gift
+  without a receipt.
 - **Q3. Which bucket carries the expense.** Resolved: the same bucket as the
   revenue.
 - **Q4. Program approvers.** Resolved: they see, they do not approve.
@@ -337,6 +385,16 @@ In this order, each its own PR off `main`:
   Classes are one to one, and the bucket carries the Class. Every gift names
   one.
 - **Q8. Which program a gift went to.** Resolved by Q7: the bucket's program.
+- **Q9. Goods of a refused or returned gift.** Open. A gift with a receipt is
+  loaded into inventory automatically, and one without is loaded when recorded,
+  both before anyone accepts it. Default: a refusal or return takes those goods
+  back out of inventory under the same source key, so a repeat does nothing;
+  physically handing goods back is outside the app.
+- **Q10. The value warning's threshold.** Open. Default: a finance-set amount,
+  starting at the expense library's $500 awareness level.
+- **Q11. Donor details after a refusal or return.** Open. Default: cleared once
+  finance closes the gift, as for a withdrawal after the money; the gift record
+  stays.
 
 ---
 
@@ -348,10 +406,11 @@ In this order, each its own PR off `main`:
 - `revenue.md`, Donations: both sides of an in-kind gift come from one record
   and one value, in one bucket; the gift takes no spending sign-off; a gift
   withdrawn after booking is raised for finance to reverse by hand.
-- `revenue.md`, Donations: a gift with a receipt books at the receipt's values;
-  one without is valued by finance and does not book until then. The valuer is
-  not whoever recorded it and confirms they are outside the donor's household;
-  the surname comparison only warns. Ops' value is only a suggestion.
+- `revenue.md`, Donations: the accept-step addition above. A gift with a
+  receipt books at the receipt's values; one without is valued by its accepter,
+  and ops' value is only a suggestion. The accept screen's surname, uploader,
+  value and replaced-donor checks only warn. No donor letter goes out before
+  acceptance.
 - `revenue.md`, Donations: once finance settles a gift withdrawn after its
   money arrived, its donor details are cleared.
 - `revenue.md`, Donations: a program bucket's approvers see in-kind gifts in
