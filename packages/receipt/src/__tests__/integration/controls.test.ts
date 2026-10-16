@@ -126,39 +126,60 @@ describeDb("OCR output is a proposal", () => {
 });
 
 describeDb("the tax and date fields", () => {
-  it("a submitter cannot change the tax; finance can", async () => {
+  const audited = async (id: string, field: string) =>
+    db.receiptAuditLog.findFirst({ where: { receiptId: id, action: "field_edit", fieldChanged: field } });
+
+  it("a submitter can correct the tax, audited before and after; finance can too", async () => {
     actAs(ALICE);
     const r = await receiptService.upload(textFile(), "text/plain", {});
     expect(r.state).toBe("submitter_review");
-    await expect(receiptService.edit(r.id, "submitter", { tax: 1 })).rejects.toMatchObject({ status: 403 });
-    await receiptService.edit(r.id, "submitter", { tax: 0, retailer: "Fixed" });
+    await receiptService.edit(r.id, "submitter", { tax: 1 });
+    expect(await audited(r.id, "taxCents")).toMatchObject({ userId: ALICE.id, valueBefore: "0", valueAfter: "100" });
     actAs(FINANCE);
-    await receiptService.edit(r.id, "finance", { tax: 1 });
-    expect((await db.receiptDetail.findUnique({ where: { id: r.id } }))?.taxCents).toBe(100);
+    await receiptService.edit(r.id, "finance", { tax: 2 });
+    expect((await db.receiptDetail.findUnique({ where: { id: r.id } }))?.taxCents).toBe(200);
   });
 
-  it("a submitter cannot change the date; finance can", async () => {
+  it("a submitter can correct the date, audited before and after; finance can too", async () => {
     actAs(ALICE);
     const r = await receiptService.upload(textFile(), "text/plain", {});
-    await expect(receiptService.edit(r.id, "submitter", { receiptDate: "2020-01-01" })).rejects.toMatchObject({ status: 403 });
-    expect(await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "decision_refused" } })).toMatchObject({
-      userId: ALICE.id,
-      valueAfter: "edit receiptDate",
-    });
+    await receiptService.edit(r.id, "submitter", { receiptDate: "2020-01-01" });
+    expect(await audited(r.id, "receiptDate")).toMatchObject({ userId: ALICE.id, valueBefore: r.receiptDate, valueAfter: "2020-01-01" });
     actAs(FINANCE);
-    await receiptService.edit(r.id, "finance", { receiptDate: "2020-01-01" });
-    expect((await db.receiptDetail.findUnique({ where: { id: r.id } }))?.receiptDate).toBe("2020-01-01");
+    await receiptService.edit(r.id, "finance", { receiptDate: "2020-01-02" });
+    expect((await db.receiptDetail.findUnique({ where: { id: r.id } }))?.receiptDate).toBe("2020-01-02");
   });
 
-  it("finance on its own receipt edits as its submitter: tax and date are refused, other fields save", async () => {
+  it("a submitter's correction of a misread tax sends the receipt to financial_review", async () => {
+    actAs(ALICE);
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ tax: "1.00" }) });
+    expect(r.state).toBe("validation_failed");
+    await receiptService.edit(r.id, "submitter", { tax: 0 });
+    await receiptService.resubmit(r.id, "submitter");
+    expect(await stateOf(r.id)).toBe("financial_review");
+    expect(ports.calls.pushes).toHaveLength(0);
+    actAs(FINANCE);
+    expect((await receiptService.get(r.id, "finance")).financialReviewReasons).toEqual(["submitter_correction"]);
+    await receiptService.approveFinancial(r.id);
+    expect(await stateOf(r.id)).toBe("receipt_finalized");
+  });
+
+  it("a finance correction alone does not send the receipt to financial_review", async () => {
+    actAs(ALICE);
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ tax: "1.00" }) });
+    actAs(FINANCE);
+    await receiptService.edit(r.id, "finance", { tax: 0 });
+    await receiptService.resubmit(r.id, "finance");
+    expect(await stateOf(r.id)).toBe("receipt_finalized");
+  });
+
+  it("finance on its own receipt edits as its submitter: a tax or date correction goes to another finance user", async () => {
     actAs(FINANCE);
     const r = await receiptService.upload(textFile(), "text/plain", {});
-    await expect(receiptService.edit(r.id, "finance", { tax: 1 })).rejects.toMatchObject({ status: 403 });
-    await expect(receiptService.edit(r.id, "finance", { receiptDate: "2020-01-01" })).rejects.toMatchObject({ status: 403 });
-    await receiptService.edit(r.id, "finance", { retailer: "Typo fixed" });
-    const line = await db.receiptLineItem.findFirstOrThrow({ where: { receiptId: r.id } });
-    await receiptService.editLine(r.id, "finance", line.id, { description: "Washer" });
-    expect(await db.receiptDetail.findUnique({ where: { id: r.id } })).toMatchObject({ retailer: "Typo fixed", taxCents: 0 });
+    await receiptService.edit(r.id, "finance", { receiptDate: "2020-01-01", retailer: "Typo fixed" });
+    await receiptService.submitterConfirm(r.id);
+    expect(await stateOf(r.id)).toBe("financial_review");
+    await expect(receiptService.approveFinancial(r.id)).rejects.toMatchObject({ status: 403 });
   });
 });
 

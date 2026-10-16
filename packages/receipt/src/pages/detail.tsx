@@ -45,7 +45,7 @@ export default function ReceiptDetailPage() {
   const receipt = useLoad<Receipt>(`/${id}`);
   const audit = useLoad<AuditRow[]>(isFinance || isBoard ? `/${id}/audit-logs` : null);
   const [note, setNote] = useState("");
-  const [edit, setEdit] = useState<{ retailer?: string; receiptDate?: string; receiptTotal?: string }>({});
+  const [edit, setEdit] = useState<{ retailer?: string; receiptDate?: string; tax?: string; receiptTotal?: string }>({});
 
   const r = receipt.data;
   if (receipt.error) return <Alert color="red">{receipt.error}</Alert>;
@@ -62,7 +62,16 @@ export default function ReceiptDetailPage() {
     }
   };
   const saveEdit = () =>
-    act("", "PATCH", { ...edit, ...(edit.receiptTotal === undefined ? {} : { receiptTotal: Number(edit.receiptTotal) }) }, "Saved");
+    act(
+      "",
+      "PATCH",
+      {
+        ...edit,
+        ...(edit.tax === undefined ? {} : { tax: Number(edit.tax) }),
+        ...(edit.receiptTotal === undefined ? {} : { receiptTotal: Number(edit.receiptTotal) }),
+      },
+      "Saved",
+    );
 
   return (
     <Stack>
@@ -109,7 +118,9 @@ export default function ReceiptDetailPage() {
               <Stack gap="xs">
                 <Text fw={500} size="sm">Correct the details</Text>
                 <TextInput label="Retailer" value={edit.retailer ?? r.retailer ?? ""} onChange={(e) => setEdit({ ...edit, retailer: e.currentTarget.value })} />
-                <TextInput label="Date" disabled={own || !isFinance} value={edit.receiptDate ?? r.receiptDate ?? ""} onChange={(e) => setEdit({ ...edit, receiptDate: e.currentTarget.value })} />
+                <TextInput label="Date" value={edit.receiptDate ?? r.receiptDate ?? ""} onChange={(e) => setEdit({ ...edit, receiptDate: e.currentTarget.value })} />
+                <TextInput label="Tax ($)" value={edit.tax ?? ((r.taxCents ?? 0) / 100).toFixed(2)} onChange={(e) => setEdit({ ...edit, tax: e.currentTarget.value })} />
+                {own && <Text size="xs" c="dimmed">Changing the tax or date sends this receipt to finance review.</Text>}
                 <TextInput label="Total ($)" value={edit.receiptTotal ?? ((r.receiptTotalCents ?? 0) / 100).toFixed(2)} onChange={(e) => setEdit({ ...edit, receiptTotal: e.currentTarget.value })} />
                 <Button size="xs" w="fit-content" disabled={Object.keys(edit).length === 0} onClick={() => void saveEdit()}>Save</Button>
               </Stack>
