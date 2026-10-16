@@ -148,6 +148,29 @@ principle being decided, usually without anyone noticing they decided it.
 
 ---
 
+## Apply once
+
+Anything that changes money, stock, standing or attendance takes effect once,
+however many times it is sent.
+
+- **A repeat of the same thing is recognised and does nothing.**
+
+- **A repeat that differs is refused, not merged.**
+
+- **A retry or catch-up only finishes what is missing.** It never replays what
+  already happened.
+
+- **Where the system cannot tell a repeat from a new event, it holds the event
+  for a person.**
+
+Holding follows *fail closed*; catching up late is allowed by *urgency of
+consistency follows risk*.
+
+The tell is a retry, resend or catch-up that does the work again instead of
+finishing what is missing.
+
+---
+
 ## A non-production capability is absent in production
 
 Distinct from *fail closed*, which decides what a check does when it lacks an
