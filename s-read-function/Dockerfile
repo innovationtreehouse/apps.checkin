@@ -38,6 +38,7 @@ COPY packages/monitoring-db/package.json packages/monitoring-db/
 COPY packages/pg-test-harness/package.json packages/pg-test-harness/
 COPY packages/s-ingest-core/package.json packages/s-ingest-core/
 COPY packages/telemetry/package.json packages/telemetry/
+COPY packages/utils/package.json packages/utils/
 
 # Scoped install: s-read-function + the two DB packages it imports (their devDeps
 # carry the prisma CLI needed for generate + the migrate task's `db:deploy`).

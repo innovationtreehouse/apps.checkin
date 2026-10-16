@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { redactSecrets } from "../../src/redact.js";
+import { redactSecrets } from "./index";
 
 describe("redactSecrets", () => {
   it("strips URLs with a query string, keeping plain ones", () => {
@@ -14,6 +14,7 @@ describe("redactSecrets", () => {
   });
 
   it("strips auth headers, key=value secrets and token prefixes", () => {
+    expect(redactSecrets("Authorization: Zoho-oauthtoken 1000.abcdef.123456")).toBe("Authorization: [redacted] [redacted]");
     expect(redactSecrets("X-Shopify-Access-Token: shpat_0123456789abcdef")).toBe("X-Shopify-Access-Token: [redacted]");
     expect(redactSecrets('{"client_secret":"s3cr3t","ok":true}')).toBe('{"client_secret":"[redacted]","ok":true}');
     expect(redactSecrets("used key shpat_0123456789abcdef0123")).toBe("used key [redacted]");

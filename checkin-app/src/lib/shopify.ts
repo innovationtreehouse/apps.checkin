@@ -7,7 +7,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { sendEmail } from "@/lib/email";
 import { escapeHtml } from "@/lib/email-templates/base";
 import { logIntegrationError } from "@/lib/logger";
-import { redactSecrets } from "@/lib/redact";
+import { redactSecrets } from "@inventory/utils";
 import { config } from "@/lib/config";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { householdMemberCodePrefix } from "@/lib/programs/memberDiscountCode";

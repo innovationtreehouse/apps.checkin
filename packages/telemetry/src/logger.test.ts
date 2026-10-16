@@ -98,6 +98,26 @@ describe("logger — Error serialization", () => {
     expect(line.attempt).toBe(3);
     expect(line.err.message).toBe("x");
   });
+
+  it("redacts secrets in an Error's message and stack", () => {
+    const c = capture();
+    const err = new Error("GET https://shop.example.com/orders.json?access_token=abc123 as jane@example.org");
+    logger.error("failed", { err });
+    const raw = String(vi.mocked(console.error).mock.calls[0][0]);
+    expect(raw).not.toContain("abc123");
+    expect(raw).not.toContain("jane@example.org");
+    const [line] = c.error();
+    expect(line.err.message).toBe("GET [url] as [email]");
+    expect(line.err.stack).toContain("GET [url] as [email]");
+  });
+
+  it("omits the stack when the Error has none", () => {
+    const c = capture();
+    const err = new Error("no stack");
+    err.stack = undefined;
+    logger.error("failed", { err });
+    expect(c.error()[0].err).toEqual({ name: "Error", message: "no stack" });
+  });
 });
 
 describe("newCorrelationId", () => {

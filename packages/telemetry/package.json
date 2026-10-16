@@ -15,6 +15,9 @@
     "build": "tsc",
     "test": "vitest run --coverage"
   },
+  "dependencies": {
+    "@inventory/utils": "*"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^6.0.3",

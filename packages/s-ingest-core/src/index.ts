@@ -15,7 +15,7 @@ export { prisma, getPrisma } from "./db/client.js";
 
 // Plumbing
 export * from "./config.js";
-export * from "./logger.js";
+export { logger, newCorrelationId, type Fields } from "@inventory/telemetry";
 export * from "./dates.js";
 export * from "./money.js";
 

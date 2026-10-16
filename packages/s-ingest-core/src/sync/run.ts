@@ -5,8 +5,8 @@
 import type { PrismaClient } from "../db/client.js";
 import { SyncKind, SyncStatus } from "../generated/prisma/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
-import { logger } from "../logger.js";
-import { redactSecrets } from "../redact.js";
+import { logger } from "@inventory/telemetry";
+import { redactSecrets } from "@inventory/utils";
 import { withAdvisoryLock } from "./locks.js";
 
 /** Default staleness cutoff (~Lambda max timeout): older RUNNING runs must be dead. */
