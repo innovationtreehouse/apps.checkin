@@ -114,7 +114,7 @@ routes, auth, and DB together.
   is a thin JSON `fetch` wrapper.
 - **In CI:** the `Flow tests` workflow (`.github/workflows/flow-tests.yml`) brings
   up `deploy/docker-compose.flow.yml` — Postgres + a **dev-mode** app container
-  (`next dev`) — installs, `prisma db push`, seeds, then runs the flow tests
+  (`next dev`) — installs, `prisma migrate deploy`, seeds, then runs the flow tests
   inside that container.
 
 **Gotchas (why it's built this way):**
