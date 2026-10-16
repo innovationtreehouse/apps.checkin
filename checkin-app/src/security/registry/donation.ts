@@ -6,7 +6,7 @@ import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 // plumbing (`internal`). Ops (OPERATIONS or INVENTORY_MANAGER) is admitted only
 // to the no-receipt in-kind routes, with no `pii`: it records donors but never
 // reads them back. No sysadmin view: Finance Ops excludes sysadmins
-// (docs/rules/finance-payments.md). No model has a scope binding, so
+// (docs/rules/revenue.md). No model has a scope binding, so
 // `everyones:` is the only scope.
 //
 // UploadedFile.fileBlob (the raw Benevity CSV) leaves only through the file

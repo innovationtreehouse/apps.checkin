@@ -348,7 +348,7 @@ export async function resolveAccess(
                 return { allowed: auth.type === 'session' && auth.user.isInventoryManager === true };
             case 'finance':
                 // #1272 §6: FINANCE only; sysadmins are not auto-admitted
-                // (finance-payments.md: Finance Ops excludes sysadmins).
+                // (revenue.md: Finance Ops excludes sysadmins).
                 return { allowed: auth.type === 'session' && auth.user.isFinance === true };
             case 'finance-or-board':
                 // #1272 §6 / #1280 §4: FINANCE or BOARD; still no sysadmin.

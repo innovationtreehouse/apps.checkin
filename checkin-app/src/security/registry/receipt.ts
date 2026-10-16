@@ -6,7 +6,7 @@ import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 // the session id (plan rule 6), and grants no pii, so donor and reimbursee names
 // never come back to the uploader. FINANCE acts org-wide; BOARD reads alongside
 // FINANCE (finance's superuser) but takes no finance action. Sysadmins get
-// nothing extra (finance-payments.md). A route shared by both audiences lists
+// nothing extra (revenue.md). A route shared by both audiences lists
 // isFinance first; the route passes `access: "finance"` to the library exactly
 // when that view matched, else `"submitter"`.
 const FINANCE = ['everyones:pii', 'everyones:personal', 'everyones:internal'] as const;

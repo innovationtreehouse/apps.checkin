@@ -28,7 +28,7 @@ defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts/counts', authorize: 
 defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts/[id]', authorize: WORKFLOW_READ, envelope: null, returns: ['ReceivedReceipt', 'WorkflowReceiptView', 'WorkflowReceiptLineView', 'ReceivedReceiptLineStatus'], orderedView: WORKFLOW_VIEW });
 defineRoute({ endpoint: 'GET /api/workflow-mapping/audit-log', authorize: WORKFLOW_READ, envelope: null, returns: ['WorkflowAuditLog'], orderedView: WORKFLOW_VIEW });
 
-// Writes — receipt transitions, then line edits (409 once any leg has applied,
+// Writes — receipt transitions, then line edits (409 while the receipt is applying or resolved,
 // enforced in the library).
 defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/proceed', authorize: 'inventory-manager', envelope: null, returns: ['ReceivedReceipt'], orderedView: WORKFLOW_MANAGER_VIEW });
 defineRoute({ endpoint: 'POST /api/workflow-mapping/receipts/[id]/apply', authorize: 'inventory-manager', envelope: null, returns: ['ReceivedReceipt'], orderedView: WORKFLOW_MANAGER_VIEW });

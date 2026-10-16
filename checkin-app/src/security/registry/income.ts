@@ -5,7 +5,7 @@ import { defineRoute, type OrderedViewEntry } from '../core';
 // mapping and exclusion writes are FINANCE-only. The library, not the gate, lets
 // FINANCE only lower a settings cap; raising one takes BOARD. Every income field
 // except a row's `id` is `internal` (§7), so both roles get the full internal view. No sysadmin view: Finance Ops
-// excludes sysadmins (docs/rules/finance-payments.md).
+// excludes sysadmins (docs/rules/revenue.md).
 //
 // QB exclusions are GET + POST only — an exclusion is permanent, so there is no
 // DELETE. No audit-log route: nothing reads the audit log yet (§6).
