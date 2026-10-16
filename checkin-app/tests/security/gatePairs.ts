@@ -5,7 +5,7 @@
  * security/access-resolvers.ts. gateEquality.test.ts asserts each pair admits
  * the same GATE_PERSONAS. A new library adds one line to GATE_PAIRS.
  */
-import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
+import type { TodoCounts } from '@/lib/nav/todoCounts';
 import { PAGES } from '@/components/pageRegistry';
 import { isCatalogViewerClient } from '@/lib/catalogNav';
 import { EXPENSE_OPS_SECTION_ROLES, INVENTORY_LIBRARY_TABS, REVENUE_OPS_LIBRARY_TABS, hasAnyRole, type LibraryTab } from '@/lib/libraryNav';

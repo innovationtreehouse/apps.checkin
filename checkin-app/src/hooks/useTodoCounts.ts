@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { NAV_COUNTS_EVENT } from "@/lib/nav-refresh";
-import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 
 // One shared snapshot for every consumer (nav badge, sub-nav tabs, todo card).
 // Each hook instance used to own its own state + fetch, so two badges reading the

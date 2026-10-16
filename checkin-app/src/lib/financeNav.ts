@@ -4,7 +4,7 @@
  * REVENUE_OPS_LIBRARY_TABS (Income, Donations). Rendered as the persistent top
  * tabs by finance-ops/layout.tsx, which /income and /donations share.
  */
-import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 import type { NavRole, SessionUser } from "@/types/auth";
 import type { NavLink } from "@/lib/nav/types";
 import { REVENUE_OPS_LIBRARY_TABS, hasAnyRole, visibleLibraryTabs, type NavTab } from "@/lib/libraryNav";

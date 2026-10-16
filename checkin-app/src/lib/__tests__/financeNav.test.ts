@@ -1,6 +1,6 @@
 import { FINANCE_NAV_LINKS, revenueOpsTabs } from "../financeNav";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
-import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 
 describe("FINANCE_NAV_LINKS", () => {
   it("is a non-empty list of nav links with name, href, and icon", () => {

@@ -6,7 +6,7 @@
  *
  * Paths never move: a slot only groups existing routes under a section.
  */
-import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 import type { NavBadge } from "@/components/navBadges";
 import type { NavRole, SessionUser } from "@/types/auth";
 import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";

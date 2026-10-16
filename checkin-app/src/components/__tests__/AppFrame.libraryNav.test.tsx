@@ -6,7 +6,7 @@ import { screen } from "@testing-library/react";
 import { renderWithProviders, setSession, setPathname, resetRtl } from "@/test-helpers/rtl";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
-import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 import AppFrame from "../AppFrame";
 
 const mockedUseTodoCounts = useTodoCounts as jest.Mock;

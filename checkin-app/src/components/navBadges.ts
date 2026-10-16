@@ -1,7 +1,7 @@
 // Pure nav-badge derivation, split out of AppFrame so it can be unit-tested
 // without pulling in React/Mantine. AppFrame imports navBadgeFor for rendering
 // and leadsAnyProgram for the staff "My Programs" visibility gate.
-import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
+import type { TodoCounts } from '@/lib/nav/todoCounts';
 import type { LibraryKey, NavTab } from '@/lib/libraryNav';
 
 export type NavBadge = { count: number; color: string; label: string };

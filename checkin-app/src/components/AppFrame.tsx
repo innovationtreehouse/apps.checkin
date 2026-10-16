@@ -50,7 +50,7 @@ import { useIsDevInstance } from '@/components/EnvProvider';
 import { BuildInfoFooter } from '@/components/BuildInfoFooter';
 import { useTodoCounts } from '@/hooks/useTodoCounts';
 import { useConfirmNav } from '@/components/UnsavedChangesProvider';
-import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
+import type { TodoCounts } from '@/lib/nav/todoCounts';
 import { sectionBadges, leadsAnyProgram } from '@/components/navBadges';
 import { CountBadge, badgeIntentFor } from '@/components/ui/CountBadge';
 import type { SessionUser } from '@/types/auth';
