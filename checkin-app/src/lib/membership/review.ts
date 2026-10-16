@@ -61,7 +61,8 @@ export class ReviewError extends Error {
             | "same_household_applicant"
             | "same_household_reviewer"
             | "already_attested"
-            | "invalid_subject",
+            | "invalid_subject"
+            | "not_undoable",
         message: string,
     ) {
         super(message);
@@ -366,6 +367,48 @@ export async function attest(
 
     if ("approvals" in result) return { status: result.status, approvals: result.approvals };
     return { status: result.status };
+}
+
+/**
+ * A reviewer withdraws their own APPROVE while the review still waits on its
+ * second reviewer. Deleting the row also drops the subject it named, so the
+ * review is back to plain "waiting for review". A REJECT is not undoable — it
+ * blocked the application, and moving that on is a board reset.
+ */
+export async function undoOwnApproval(reviewerId: number, processId: number, reason: string) {
+    await prisma.$transaction(async (tx) => {
+        // Same lock as attest(): a concurrent second approval either clears first (and this refuses) or waits.
+        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
+        const process = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, include: { attestations: true } });
+        if (!process) throw new ReviewError("not_found", "Application not found.");
+        const own = process.attestations.find((a) => a.reviewerId === reviewerId);
+        if (!own) throw new ReviewError("not_undoable", "You have no attestation on this application to undo.");
+        if (own.result !== "APPROVE") throw new ReviewError("not_undoable", "A rejection cannot be undone. Ask the board to reset the review.");
+        if (process.bgClearedAt) throw new ReviewError("not_undoable", "This background check has already cleared, so the approval cannot be undone.");
+        if (!awaitingBgReview.has({ status: process.status, bgConsentAt: !!process.bgConsentAt, bgClearedAt: false })) {
+            throw new ReviewError("wrong_phase", "This application is no longer awaiting background-check review.");
+        }
+        await tx.backgroundCheckAttestation.delete({ where: { id: own.id } });
+        await tx.auditLog.create({
+            data: {
+                ...personActor(reviewerId),
+                action: "DELETE",
+                tableName: "BackgroundCheckAttestation",
+                affectedEntityId: own.id,
+                secondaryAffectedEntity: processId,
+                oldData: {
+                    processId: own.processId,
+                    reviewerId: own.reviewerId,
+                    subjectPersonId: own.subjectPersonId,
+                    result: own.result,
+                    note: own.note,
+                    isMarkedVolunteer: own.isMarkedVolunteer,
+                    createdAt: own.createdAt,
+                },
+                newData: { reason, action: "reviewer undo" },
+            },
+        });
+    });
 }
 
 /**
