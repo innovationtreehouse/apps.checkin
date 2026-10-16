@@ -7,7 +7,7 @@ import { notifications } from "@mantine/notifications";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
-import { formatDateOnly, toDatetimeLocal } from "@/lib/time";
+import { formatDateOnly, orgCalendarDay, toDatetimeLocal } from "@/lib/time";
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { AttendanceTabs } from "../AttendanceTabs";
 import { isCloseChoiceWarning, useCloseChoice } from "@/components/CloseChoiceDialog";
@@ -111,7 +111,7 @@ export default function HouseholdCheckins() {
           type="date"
           label="Lookup Date"
           size="xs"
-          value={filterDate || new Date().toISOString().split('T')[0]}
+          value={filterDate || orgCalendarDay().toISOString().slice(0, 10)}
           onChange={(e) => setFilterDate(e.currentTarget.value)}
         />
       </Group>
