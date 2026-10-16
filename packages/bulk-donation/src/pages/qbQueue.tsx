@@ -72,7 +72,10 @@ function RowActions({ row, onDone }: { row: HeldRow; onDone: () => void }) {
           </Table>
         )}
       <Group gap="xs" align="end">
-        <TextInput size="xs" label="Reason (exclude, or match a deposit whose amount differs)" value={reason} onChange={(e) => setReason(e.currentTarget.value)} w={340} />
+        <TextInput size="xs" label="Reason (dismiss, exclude, or match a deposit whose amount differs)" value={reason} onChange={(e) => setReason(e.currentTarget.value)} w={340} />
+        <Button size="xs" variant="default" disabled={busy || !reason.trim()} onClick={() => run(() => post(`${base}/qb-resolve`, { action: "dismiss", reason }), "Dismissed")}>
+          Dismiss
+        </Button>
         {QB_RETRYABLE_STATES.some((s) => s === row.qbMatchState) && (
           <Button size="xs" variant="default" disabled={busy} onClick={() => run(() => post(`${base}/qb-resolve`, { action: "retry" }), "Handed back to the drain")}>
             Retry

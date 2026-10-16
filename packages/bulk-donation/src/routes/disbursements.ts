@@ -20,6 +20,7 @@ const exclusionSchema = z.object({
 
 const resolveSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("match"), qbTxnId: z.string().trim().min(1, "qbTxnId is required"), reason: z.string().optional() }),
+  z.object({ action: z.literal("dismiss"), reason: z.string().trim().min(1, "reason is required") }),
   z.object({ action: z.literal("retry") }),
 ]);
 

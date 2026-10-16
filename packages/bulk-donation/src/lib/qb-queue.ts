@@ -1,5 +1,5 @@
 // Finance's QuickBooks queue (design §7): the disbursements the drain holds, their live
-// candidate Deposits, and the two resolutions — pick a Deposit, or re-arm for the drain.
+// candidate Deposits, and the resolutions — pick a Deposit, dismiss, or re-arm for the drain.
 import { appKeyOf, depositCandidate, qbKey } from "@inventory/quickbooks";
 import { db, isUniqueConstraintError, type PrismaTransactionClient } from "../db";
 import type { DisbursementEvent } from "../generated/prisma/client";
@@ -19,7 +19,10 @@ export interface QbCandidate {
   memo: string | null;
 }
 
-export type QbResolveAction = { action: "match"; qbTxnId: string; reason?: string } | { action: "retry" };
+export type QbResolveAction =
+  | { action: "match"; qbTxnId: string; reason?: string }
+  | { action: "dismiss"; reason: string }
+  | { action: "retry" };
 
 const isState = (list: readonly QbMatchState[], state: string) => list.some((s) => s === state);
 
@@ -145,8 +148,35 @@ async function retry(orgId: string, disbursementId: string, actor: AuditContext)
   return db.disbursementEvent.findUniqueOrThrow({ where: { id: e.id } });
 }
 
+/** Settle a held disbursement with no QuickBooks deposit to tie it to; the drain never touches it again. */
+async function dismiss(orgId: string, disbursementId: string, reason: string, actor: AuditContext): Promise<DisbursementEvent> {
+  const why = reason.trim();
+  if (!why) throw new ServiceError(400, "A reason is required");
+  const e = await heldEvent(orgId, disbursementId);
+  return db.$transaction(async (tx) => {
+    const current = await lockedEvent(tx, e.id);
+    if (!isState(QB_HELD_STATES, current.qbMatchState)) throw new ServiceError(409, "Only a held disbursement can be dismissed");
+    const saved = await tx.disbursementEvent.update({ where: { id: e.id }, data: { qbMatchState: QB_MATCH_STATE.DISMISSED } });
+    await recordEvent(tx, {
+      orgId,
+      disbursementId,
+      entityType: "disbursement",
+      entityId: disbursementId,
+      eventType: QB_EVENT.STATE,
+      ...actor,
+      payload: { from: current.qbMatchState, to: QB_MATCH_STATE.DISMISSED, manual: true, reason: why },
+    });
+    return saved;
+  });
+}
+
 export async function resolveQbHold(orgId: string, disbursementId: string, req: QbResolveAction, actor: AuditContext): Promise<DisbursementEvent> {
-  return req.action === "match"
-    ? pick(orgId, disbursementId, req.qbTxnId, req.reason, actor)
-    : retry(orgId, disbursementId, actor);
+  switch (req.action) {
+    case "match":
+      return pick(orgId, disbursementId, req.qbTxnId, req.reason, actor);
+    case "dismiss":
+      return dismiss(orgId, disbursementId, req.reason, actor);
+    case "retry":
+      return retry(orgId, disbursementId, actor);
+  }
 }

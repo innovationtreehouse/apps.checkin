@@ -592,6 +592,27 @@ describeDb("donation QuickBooks finance queue", () => {
     expect((await stateOf(e.id)).qbMatchState).toBe("CREATED");
   });
 
+  it("dismiss needs a reason, settles the record with an audit event, and the drain never posts it again", async () => {
+    await handMatched("2026-09-01");
+    const e = await held("TEST-A", "NEEDS_FINANCE");
+    qbo.deposits.push(handDeposit("501", "2026-09-10", 1450));
+
+    await expect(resolve("TEST-A", { action: "dismiss", reason: " " })).rejects.toMatchObject({ status: 400 });
+    const out = await resolve("TEST-A", { action: "dismiss", reason: "Deposit deleted in QuickBooks; booked by journal entry" });
+
+    expect(out.DisbursementEvent).toMatchObject({ qbMatchState: "DISMISSED", qbTxnId: null });
+    const [event] = await eventsOf("TEST-A", QB_EVENT.STATE);
+    expect(event.actorUserId).toBe(1);
+    expect(JSON.parse(event.payload ?? "{}")).toMatchObject({ from: "NEEDS_FINANCE", to: "DISMISSED", reason: "Deposit deleted in QuickBooks; booked by journal entry" });
+
+    expect(await postDisbursementToQb(e.id)).toBe("waiting");
+    await runDonationQbPosting(orgId);
+    expect(qbo.posts).toHaveLength(0);
+    expect(await stateOf(e.id)).toEqual({ qbMatchState: "DISMISSED", qbTxnId: null });
+    await expect(resolve("TEST-A", { action: "retry" })).rejects.toMatchObject({ status: 409 });
+    await expect(resolve("TEST-A", { action: "dismiss", reason: "again" })).rejects.toMatchObject({ status: 409 });
+  });
+
   it("refuses to exclude a deposit a disbursement already holds", async () => {
     const e = await held("TEST-A", "MATCHED");
     await db.disbursementEvent.update({ where: { id: e.id }, data: { qbTxnId: "501" } });
