@@ -35,6 +35,15 @@ describe("driftOf", () => {
     expect(driftOf(posted, entry({ TotalAmt: 12, VendorRef: undefined }))).toEqual(["amount", "vendor"]);
   });
 
+  it("ignores a line's Class, which finance may re-class in QuickBooks", () => {
+    const classed = (amount: number, account: string, classId: string) => ({
+      Amount: amount,
+      AccountBasedExpenseLineDetail: { AccountRef: { value: account }, ClassRef: { value: classId } },
+    });
+    expect(driftOf(posted, entry({ Line: [classed(3, "61", "8"), classed(7, "60", "9")] }))).toEqual([]);
+    expect(driftOf(posted, entry({ TotalAmt: 11, Line: [classed(3, "61", "8"), classed(7, "60", "9")] }))).toEqual(["amount"]);
+  });
+
   it("checks no vendor on a Purchase", () => {
     expect(driftOf({ ...posted, vendorId: null }, entry({ VendorRef: undefined }))).toEqual([]);
   });
