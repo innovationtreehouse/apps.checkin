@@ -243,7 +243,7 @@ means say nothing, or approve.
 Read these before changing the relevant area — start here, then follow links.
 
 **Domain rules — read first** (`docs/rules/`)
-- The register of board and operations decisions, and the invariants a change must not violate: `membership.md`, `programs.md`, `people-households.md`, `revenue.md`, `attendance-checkin.md`, `tools-certification.md`, plus `principles.md` for the cross-cutting ones. **Before changing behaviour in a domain, read its file.** If a change contradicts a rule there, raise it — do not quietly proceed. A **Policy**-tier rule is not negotiable in a PR at all: stop and escalate.
+- The register of board and operations decisions, and the invariants a change must not violate: `membership.md`, `programs.md`, `people-households.md`, `revenue.md`, `expenses.md`, `attendance-checkin.md`, `tools-certification.md`, plus `principles.md` for the cross-cutting ones. **Before changing behaviour in a domain, read its file.** If a change contradicts a rule there, raise it — do not quietly proceed. A **Policy**-tier rule is not negotiable in a PR at all: stop and escalate.
 - `docs/DOCUMENTATION_STANDARD.md` — how documentation is organised, written, and retired: the document classes, what belongs in the register and what does not, the citation and format rules, and the working-doc lifecycle (write it in `docs/in-design/`, extract standing rules and delete it at merge). Read before writing or moving any doc.
 - `docs/conventions.md` — how we build, independent of any domain.
 
