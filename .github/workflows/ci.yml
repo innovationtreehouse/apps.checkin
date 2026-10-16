@@ -253,7 +253,23 @@ jobs:
           # to resolve syntactically in schema.prisma's datasource block — it
           # never opens a connection. This job has no postgres service.
           DATABASE_URL: "postgresql://testuser:testpassword@localhost:5432/checkmein_test"
-        run: npm -w checkin-app exec -- prisma generate
+        # The committed classification maps are deleted first, so the verify
+        # step below sees any map that no generator writes as a deleted file.
+        run: |
+          rm checkin-app/src/security/generated/*.ts
+          npm -w checkin-app exec -- prisma generate
+
+      # Every classification map in generated/ must match its schema: checkin's
+      # (emitted by "Generate Prisma Client" above), each library's, and the
+      # Shopify mirror's. The security generator reads only `/// @sensitivity:`
+      # comments, so no database is needed. Runs before anything that imports
+      # the maps.
+      - name: Verify security classifications are up to date
+        if: needs.changes.outputs.app == 'true'
+        run: |
+          scripts/each-library.sh run db:generate
+          npm -w @inventory/s-ingest-core run db:generate:security
+          git diff --exit-code checkin-app/src/security/generated/ || (echo '::error::checkin-app/src/security/generated/ is stale or missing a map; run prisma generate in checkin-app, scripts/each-library.sh run db:generate, and npm -w @inventory/s-ingest-core run db:generate:security, then commit' && exit 1)
 
       # Fast type feedback. NOTE: tsc does NOT resolve bundler imports, so it
       # misses failures that only `next build` catches (e.g. importing a deleted
@@ -262,17 +278,6 @@ jobs:
       - name: Type check
         if: needs.changes.outputs.app == 'true'
         run: npm -w checkin-app exec -- tsc --noEmit
-
-      # Every classification map in generated/ must match its schema: checkin's
-      # (emitted by "Generate Prisma Client" above), each library's, and the
-      # Shopify mirror's. The security generator reads only `/// @sensitivity:`
-      # comments, so no database is needed.
-      - name: Verify security classifications are up to date
-        if: needs.changes.outputs.app == 'true'
-        run: |
-          scripts/each-library.sh run db:generate
-          npm -w @inventory/s-ingest-core run db:generate:security
-          git diff --exit-code checkin-app/src/security/generated/ || (echo '::error::checkin-app/src/security/generated/ is stale; run prisma generate in checkin-app, scripts/each-library.sh run db:generate, and npm -w @inventory/s-ingest-core run db:generate:security, then commit' && exit 1)
 
       - name: Check route coverage (security policy lint)
         if: needs.changes.outputs.app == 'true'
