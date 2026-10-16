@@ -61,6 +61,7 @@ jobs:
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       app: ${{ steps.detect.outputs.app }}
       client: ${{ steps.detect.outputs.client }}
@@ -810,6 +811,7 @@ jobs:
     name: Deploy build (no deploy)
     needs: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write      # mint the GitHub OIDC token to assume the AWS role (no stored creds)

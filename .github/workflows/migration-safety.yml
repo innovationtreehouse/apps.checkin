@@ -54,6 +54,7 @@ jobs:
   migrate-populated:
     name: Migrations apply to populated DB
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     permissions:
       contents: read
@@ -271,6 +272,7 @@ jobs:
   migrate-populated-libraries:
     name: Library migrations apply to populated DB
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     permissions:
       contents: read
@@ -398,6 +400,7 @@ jobs:
   history:
     name: Released migrations immutable (+ accumulation warning)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
         with:
@@ -433,3 +436,39 @@ jobs:
           done
           [ "$FAILED" -eq 0 ]
           echo "Released history intact."
+
+  # Deploy rule 5: every migration.sql this PR adds opens with BEGIN; and
+  # closes with COMMIT; (blank and comment lines ignored). Applied history is
+  # immutable (rule 6), so only added files are checked. Escapes: a
+  # `-- no-transaction: <reason>` line for SQL Postgres refuses inside a
+  # transaction (CREATE INDEX CONCURRENTLY), and a coalesce baseline (its dir
+  # holds reconcile.sql), which only ever runs on an empty database.
+  transaction-lint:
+    name: New migrations wrap in a transaction
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check migrations added by this PR
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin "$BASE_REF"
+          BASE=$(git merge-base "origin/$BASE_REF" HEAD)
+          FAILED=0
+          while read -r f; do
+            [ -f "$(dirname "$f")/reconcile.sql" ] && continue
+            grep -qE '^[[:space:]]*--[[:space:]]*no-transaction:[[:space:]]*[^[:space:]]' "$f" && continue
+            SQL=$(grep -vE '^[[:space:]]*(--.*)?$' "$f" || true)
+            if ! head -n1 <<<"$SQL" | grep -qxE '[[:space:]]*BEGIN;[[:space:]]*' ||
+               ! tail -n1 <<<"$SQL" | grep -qxE '[[:space:]]*COMMIT;[[:space:]]*'; then
+              echo "::error file=$f::$f must open with BEGIN; and close with COMMIT; (deploy rule 5). For SQL that cannot run in a transaction, add '-- no-transaction: <reason>' and make each statement retry-safe."
+              FAILED=1
+            fi
+          done < <(git diff --no-renames --diff-filter=A --name-only "$BASE" HEAD \
+            | grep -E '^(checkin-app|packages/[^/]+)/prisma/migrations/[^/]+/migration\.sql$' || true)
+          exit "$FAILED"
