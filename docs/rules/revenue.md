@@ -242,11 +242,12 @@ Income checks each Shopify payout against the deposits in QuickBooks.
 - Finance and the board can see income. Only finance matches payouts and settles
   problems.  [Decision]
 
-- Every payout must match one deposit in QuickBooks, or finance is told why it
-  doesn't.  [Decision]
+- Every payout must match one deposit in QuickBooks. Finance settles any the app
+  can't match, and records why.  [Decision]
 
-- The app books a payout only when it is newer than the last one finance booked
-  by hand. A payout nobody has booked within about a week is raised for finance.  [Decision]
+- Finance's own bookings come first. The app books only payouts newer than the
+  last one finance booked by hand, and a payout nobody books is raised for
+  finance.  [Decision]
 
 - The app never changes or deletes anything already in QuickBooks.  [Decision — deliberate limit]
 
@@ -256,10 +257,6 @@ Income checks each Shopify payout against the deposits in QuickBooks.
 - A payout or deposit that changes after it was matched goes back to finance.
   The app never matches it again on its own.  [Decision]
 
-- Finance can match a payout by hand, and gives a reason when the amounts
-  differ. Finance can also mark a QuickBooks entry as unrelated to any payout,
-  with a reason, and that can't be undone.  [Decision]
-
 - Income keeps no record of who bought.  [Decision — *Principle: least privilege*]
 
 ### Donations
@@ -267,9 +264,11 @@ Income checks each Shopify payout against the deposits in QuickBooks.
 Donations covers gifts through Benevity (employee gifts and employer matches,
 paid in batches) and gifts of goods (in-kind).
 
-- Finance and the board can see donations. Only finance can change them.  [Decision]
+- Finance and the board can see donations, and finance manages them. The person
+  who submits a receipt for a gift of goods records its donor, and can say it
+  isn't a gift after all.  [Decision]
 
-- Only finance and the board can see who gave, and every time someone looks is
+- Only finance and the board can see who gave. Each look at a Benevity donor is
   recorded.  [Decision — *Principle: least privilege*]
 
 - Donors are not linked to people or households in the app.  [Decision — deliberate limit]
@@ -290,6 +289,5 @@ paid in batches) and gifts of goods (in-kind).
 - A gift of goods recorded without a receipt must name its donor, and the goods
   go into inventory.  [Decision]
 
-- A gift of goods that came with a receipt but has no donor yet is listed for
-  finance. If the in-kind mark is taken off after the money is recorded, finance
-  is told; nothing is deleted.  [Decision]
+- A gift of goods still missing its donor is raised for finance. Once its money
+  is recorded, the gift is never deleted.  [Decision]
