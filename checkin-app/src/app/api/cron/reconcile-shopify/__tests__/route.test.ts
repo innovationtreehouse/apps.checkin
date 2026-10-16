@@ -9,7 +9,7 @@ import { runExpenseCatchUp } from '@inventory/expense';
 import { catchUpOrgEvents as catchUpInventoryEvents } from '@inventory/local-inventory';
 import { catchUpOrgEvents as catchUpWorkflowEvents } from '@inventory/workflow-mapping';
 import { runReconcile as runIncomeReconcile } from '@inventory/income';
-import { repushUnpushed, resendDonorSync, sweepInterruptedOcr } from '@inventory/receipt';
+import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } from '@inventory/receipt';
 import { runReconcile } from '@/lib/finance/reconcile';
 import { runSaleSweep } from '@/lib/programs/saleSweep';
 import { healProgramStock } from '@/lib/shopify';
@@ -21,7 +21,7 @@ jest.mock('@inventory/expense', () => ({ runExpenseCatchUp: jest.fn() }));
 jest.mock('@inventory/income', () => ({ runReconcile: jest.fn() }));
 jest.mock('@inventory/local-inventory', () => ({ catchUpOrgEvents: jest.fn() }));
 jest.mock('@inventory/workflow-mapping', () => ({ catchUpOrgEvents: jest.fn() }));
-jest.mock('@inventory/receipt', () => ({ sweepInterruptedOcr: jest.fn(), repushUnpushed: jest.fn(), resendDonorSync: jest.fn() }));
+jest.mock('@inventory/receipt', () => ({ sweepInterruptedOcr: jest.fn(), repushUnpushed: jest.fn(), resendDonorSync: jest.fn(), readMailbox: jest.fn() }));
 jest.mock('@/lib/programs/saleSweep', () => ({ runSaleSweep: jest.fn() }));
 jest.mock('@/lib/shopify', () => ({ healProgramStock: jest.fn() }));
 jest.mock('@/lib/catalog/configure', () => ({ getOrg: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Org' }) }));
@@ -36,6 +36,7 @@ const WORKFLOW_EVENTS = { applied: 1, failed: 0 };
 const RECEIPT = { swept: 2 };
 const RECEIPT_PUSH = { pushed: 2, failed: 0, skipped: 1 };
 const DONOR_SYNC = { resent: 1, failed: 0 };
+const RECEIPT_MAIL = { status: 'unbound' as const };
 // The one expense result every case uses; a new catch-up step adds its key here.
 const EXPENSE: Awaited<ReturnType<typeof runExpenseCatchUp>> = {
     intake: { applied: 0, failed: 0 },
@@ -62,6 +63,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         jest.mocked(sweepInterruptedOcr).mockResolvedValue(RECEIPT);
         jest.mocked(repushUnpushed).mockResolvedValue(RECEIPT_PUSH);
         jest.mocked(resendDonorSync).mockResolvedValue(DONOR_SYNC);
+        jest.mocked(readMailbox).mockResolvedValue(RECEIPT_MAIL);
     });
 
     afterAll(() => {
@@ -74,7 +76,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
 
         expect(res.status).toBe(200);
         const body = await res.json();
-        expect(body).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receipt: RECEIPT, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC });
+        expect(body).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receipt: RECEIPT, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC, receiptMail: RECEIPT_MAIL });
         expect(Object.keys(body.expense).sort()).toEqual(['catalogEvents', 'intake']);
     });
 
@@ -86,7 +88,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
 
         expect(res.status).toBe(200);
         expect(runReconcile).toHaveBeenCalledTimes(1);
-        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: { status: 'error' }, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receipt: RECEIPT, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC });
+        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: { status: 'error' }, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receipt: RECEIPT, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC, receiptMail: RECEIPT_MAIL });
         expect(logged).toHaveBeenCalledWith('[reconcile] expense catch-up failed:', expect.any(Error));
         logged.mockRestore();
     });
@@ -122,7 +124,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         const res = await GET(req());
 
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receipt: { status: 'error' }, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC });
+        expect(await res.json()).toEqual({ success: true, ...RECONCILED, saleSweep: SALE_SWEEP, income: INCOME, expense: EXPENSE, programStock: PROGRAM_STOCK, inventoryEvents: INVENTORY_EVENTS, workflowEvents: WORKFLOW_EVENTS, receipt: { status: 'error' }, receiptPush: RECEIPT_PUSH, donorSync: DONOR_SYNC, receiptMail: RECEIPT_MAIL });
         expect(logged).toHaveBeenCalledWith('[reconcile] receipt catch-up failed:', expect.any(Error));
         logged.mockRestore();
     });
@@ -148,6 +150,18 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         expect(res.status).toBe(200);
         expect((await res.json()).donorSync).toEqual({ status: 'error' });
         expect(logged).toHaveBeenCalledWith('[reconcile] receipt donor re-send failed:', expect.any(Error));
+        logged.mockRestore();
+    });
+
+    it('a throwing mail intake still answers 200 with every other step', async () => {
+        jest.mocked(readMailbox).mockRejectedValue(new Error('gmail down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = await GET(req());
+
+        expect(res.status).toBe(200);
+        expect(await res.json()).toMatchObject({ success: true, donorSync: DONOR_SYNC, receiptMail: { status: 'error' } });
+        expect(logged).toHaveBeenCalledWith('[reconcile] receipt mail intake failed:', expect.any(Error));
         logged.mockRestore();
     });
 });

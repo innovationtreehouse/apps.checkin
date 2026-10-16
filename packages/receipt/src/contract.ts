@@ -115,6 +115,44 @@ export interface OcrProvider {
   extract(file: Buffer, mimeType: string): Promise<OcrResult>;
 }
 
+// ── Mail intake (phase G) ────────────────────────────────────────────────────
+
+/** The host's people, for attributing a mailed receipt to its sender. */
+export interface ReceiptPeople {
+  /** The one live person allowed to submit receipts whose sign-in email is exactly this address, else null. */
+  submitterByEmail(address: string): Promise<ReceiptPrincipal | null>;
+}
+
+export const MailPartSchema: z.ZodType<MailPart> = z.lazy(() =>
+  z.object({
+    mimeType: z.string(),
+    filename: z.string().optional(),
+    headers: z.array(z.object({ name: z.string(), value: z.string() })).optional(),
+    body: z.object({ data: z.string().optional(), attachmentId: z.string().optional(), size: z.number().optional() }).optional(),
+    parts: z.array(MailPartSchema).optional(),
+  }),
+);
+
+/** One MIME part as the Gmail API's `format=full` returns it; `body.data` is base64url. */
+export interface MailPart {
+  mimeType: string;
+  filename?: string;
+  headers?: { name: string; value: string }[];
+  body?: { data?: string; attachmentId?: string; size?: number };
+  parts?: MailPart[];
+}
+
+export const MailMessageSchema = z.object({ id: z.string().min(1), internalDate: z.string().regex(/^\d+$/), payload: MailPartSchema });
+export type MailMessage = z.infer<typeof MailMessageSchema>;
+
+/** Read-only access to the receipt mailbox. */
+export interface MailboxReader {
+  /** Ids of messages received in the last `days` days. */
+  listRecent(days: number): Promise<string[]>;
+  getMessage(id: string): Promise<MailMessage>;
+  getAttachment(messageId: string, attachmentId: string): Promise<Buffer>;
+}
+
 export interface ReceiptConfig {
   auth: ReceiptAuth;
   /** Async accessor, resolved per call: the host may read the org from its own store. */
@@ -124,6 +162,9 @@ export interface ReceiptConfig {
   reimbursementStatus?: ReimbursementStatus;
   households?: ReceiptHouseholds;
   ocr?: OcrProvider;
+  people?: ReceiptPeople;
+  /** Unset means mail intake is unbound and the step does nothing. */
+  mailbox?: MailboxReader;
   /** Overrides for the daily intake limits; unset ones keep DEFAULT_LIMITS. */
   limits?: Partial<ReceiptLimits>;
 }

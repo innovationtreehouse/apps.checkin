@@ -130,12 +130,15 @@ intake (owner decision). Nothing in the source does this, so it is designed here
 **Mailbox access, on the QuickBooks pattern (#1272 §9).** One Google mailbox
 at an address in the organization's own domain (owner decision; the name is a
 deploy-time value, `RECEIPT_MAILBOX_ADDRESS`) and one OAuth grant with the `gmail.readonly` scope only: the app never
-labels, moves or deletes mail. An operator runs the consent once from a CLI with
-the write grant; the resulting refresh token is seeded into a secret only an
-**Infra-owned refresher** can read and write; the refresher publishes a
-short-lived access token to a second secret, and the app has read-only IAM on that
-one. No OAuth route in the app, no token in Postgres. Static client credentials are
-Infra env for the refresher and consent tool, not the app.
+labels, moves or deletes mail. An operator runs the consent once from a CLI;
+the resulting refresh token is seeded into a secret only an **Infra-owned
+refresher Lambda** can read and write. The app invokes that Lambda, as it does the
+QuickBooks refresher, and gets back a short-lived access token with its expiry and
+the mailbox it belongs to; the app refuses a token for any other mailbox and never
+refreshes. No OAuth route in the app, no token in Postgres. Static client
+credentials are Infra env for the refresher and consent tool, not the app. The
+step is bound only on a deployed instance with both `GMAIL_REFRESHER_FN` and
+`RECEIPT_MAILBOX_ADDRESS` set; otherwise it reports "unbound" and does nothing.
 
 **Trigger: a step inside the existing daily `/api/cron/reconcile-shopify`
 handler, not Pub/Sub push.**
@@ -149,7 +152,7 @@ handler, not Pub/Sub push.**
 
 A day's latency is fine for receipts; nobody is waiting on one at the door. The
 step runs in its own `try/catch`, so a Gmail failure never fails the reconcile, and
-it is skipped when the access-token secret is unset (local, flow tests). The
+it is skipped when the refresher or mailbox is unset (local, flow tests). The
 constraint to state plainly: no machine-facing route can be added to checkin
 today, so push is not an option without first changing that rule.
 
@@ -165,7 +168,10 @@ whose file is the body**:
   there (§3 shows text only as escaped text).
 - The ledger hash for a body is the hash of that stored text.
 - When a message has attachments, its body is ignored; it is usually covering
-  text.
+  text. An attachment is a part with a filename that is not marked `inline`, so
+  logos embedded in an HTML order confirmation are not receipts.
+- A file whose content fails the §2 type check is skipped and counted, as a
+  manual upload would be refused.
 
 The 3-day
 window plus the dedupe ledger makes a missed run harmless with no stored cursor.
@@ -191,8 +197,12 @@ happens.
     "From:" lines in the body) are never read for identity.
 - **Sender to person:** the authenticated `From` address must match a `Person`
   email, and that person must be in the submitter audience (§6). Then the
-  attachment enters the **same upload pipeline** in auto mode (OCR, the duplicate
-  check including the §2 lock) with that person as uploader.
+  attachment enters the **same upload pipeline** in auto mode (the daily upload
+  limits, OCR on the sender's daily allowance, the duplicate check including the
+  §2 lock) with that person as uploader. A file over the sender's upload limit is
+  held; one over the OCR allowance lands in `ocr_failed`, where its uploader types
+  the details. The ledger row is written in the receipt's own insert, so a receipt
+  never exists without it.
 - **Anything else goes to a `FINANCE` queue, never dropped:** unknown sender,
   sender outside the audience, failed or missing DMARC alignment. The item keeps its file until
   finance assigns an uploader (then it enters the pipeline as above) or discards it.

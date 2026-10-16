@@ -9,7 +9,7 @@ import { runExpenseCatchUp } from "@inventory/expense";
 import { healProgramStock } from "@/lib/shopify";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@inventory/local-inventory";
 import { catchUpOrgEvents as catchUpWorkflowEvents } from "@inventory/workflow-mapping";
-import { repushUnpushed, resendDonorSync, sweepInterruptedOcr } from "@inventory/receipt";
+import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } from "@inventory/receipt";
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
@@ -56,8 +56,11 @@ import { repushUnpushed, resendDonorSync, sweepInterruptedOcr } from "@inventory
  * Then re-sends finalized receipts that workflow-mapping has not received yet (S1). Isolated the
  * same way; counts only.
  *
- * Last, it re-sends in-kind donor changes the receipt library has not yet delivered to
+ * Then it re-sends in-kind donor changes the receipt library has not yet delivered to
  * donations (resendDonorSync). Isolated the same way; counts only, no donor data.
+ *
+ * Last, it reads the receipt mailbox (readMailbox), the only slow step: one OCR call per new
+ * file, capped per run. Isolated the same way; counts only, "unbound" when no mailbox is set.
  */
 export const GET = withCron(async () => {
     const result = await runReconcile();
@@ -128,5 +131,13 @@ export const GET = withCron(async () => {
         donorSync = { status: "error" };
     }
     logger.info(`[reconcile] donor sync ${JSON.stringify(donorSync)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receipt, receiptPush, donorSync });
+    let receiptMail: Awaited<ReturnType<typeof readMailbox>> | { status: "error" };
+    try {
+        receiptMail = await readMailbox();
+    } catch (err) {
+        logger.error("[reconcile] receipt mail intake failed:", err);
+        receiptMail = { status: "error" };
+    }
+    logger.info(`[reconcile] receipt mail ${JSON.stringify(receiptMail)}`);
+    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receipt, receiptPush, donorSync, receiptMail });
 });

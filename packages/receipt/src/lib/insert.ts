@@ -43,6 +43,8 @@ export interface NewReceipt {
   auditAction: string;
   /** Enforce the daily upload limits for this insert (every upload; the FINANCE import has its own caps). */
   limits?: ReceiptLimits;
+  /** Runs inside the insert's transaction, so a failure rolls the receipt back with it. */
+  afterInsert?: (tx: Prisma.TransactionClient, id: string) => Promise<unknown>;
 }
 
 /**
@@ -76,6 +78,7 @@ export async function insertReceipt(r: NewReceipt): Promise<string> {
       },
     });
     await audit(tx, id, r.actor, { action: r.auditAction });
+    await r.afterInsert?.(tx, id);
   });
   return id;
 }
