@@ -4,6 +4,7 @@ client.py's other background threads."""
 
 import logging
 import os
+from collections import namedtuple
 import random
 import sqlite3
 import threading
@@ -43,6 +44,13 @@ def now_iso():
 
 def new_event_id():
     return str(uuid.uuid4())
+
+
+# One undelivered scan; the field names are also the SELECT's column list.
+PendingRow = namedtuple("PendingRow", (
+    "client_event_id participant_id scanned_at attempts force_close_token intent "
+    "clock_suspect force_close_confirmed close roster_as_of shown_empty"
+))
 
 
 class Outbox:
@@ -204,12 +212,12 @@ class Outbox:
         roster does not show them yet. The drain skips them."""
         with self._lock:
             clause, args = self._not_inflight() if skip_inflight else ("", ())
-            return self._conn.execute(
-                "SELECT client_event_id, participant_id, scanned_at, attempts, force_close_token, "
-                "intent, clock_suspect, force_close_confirmed, close, roster_as_of, shown_empty "
+            rows = self._conn.execute(
+                f"SELECT {', '.join(PendingRow._fields)} "
                 "FROM outbox WHERE state='pending'" + clause + " ORDER BY scanned_at ASC",
                 args,
             ).fetchall()
+            return [PendingRow(*r) for r in rows]
 
     def mark_clock_suspect(self):
         """A large wall-clock step: queued scans may carry a wrong scannedAt."""
@@ -290,8 +298,7 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok
             sleep_fn(DRAIN_PACE_SECONDS)
             continue
 
-        (client_event_id, participant_id, scanned_at, _attempts, force_close_token, intent,
-         clock_suspect, force_close_confirmed, close, roster_as_of, shown_empty) = rows[0]
+        row = rows[0]
         # replay=True is what tells the server this is a redelivery: the live
         # attempt may already have sent this clientEventId (the row is written
         # before it), so only the drain may trip the replay-only guards. `close`
@@ -301,28 +308,28 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok
         # instead, which the server reads the same way. Intent is the direction the kiosk
         # displayed; the server must not re-toggle from live state.
         body, status, retry_after = send_fn(
-            participant_id,
-            force_close_token=force_close_token,
-            client_event_id=client_event_id,
-            scanned_at=scanned_at,
+            row.participant_id,
+            force_close_token=row.force_close_token,
+            client_event_id=row.client_event_id,
+            scanned_at=row.scanned_at,
             replay=True,
-            intent=intent,
-            clock_suspect=bool(clock_suspect),
-            force_close_confirmed=bool(force_close_confirmed),
-            close=close,
-            roster_as_of=roster_as_of,
-            shown_empty=None if shown_empty is None else bool(shown_empty),
+            intent=row.intent,
+            clock_suspect=bool(row.clock_suspect),
+            force_close_confirmed=bool(row.force_close_confirmed),
+            close=row.close,
+            roster_as_of=row.roster_as_of,
+            shown_empty=None if row.shown_empty is None else bool(row.shown_empty),
         )
         outcome = classify_response(status, body)
 
         if outcome == "ack":
-            outbox.ack(client_event_id)
+            outbox.ack(row.client_event_id)
             backoff = MIN_BACKOFF_SECONDS
             if push_fn:
                 push_fn({"html": "", "queued": outbox.pending_count()})
             sleep_fn(DRAIN_PACE_SECONDS)
         else:
-            outbox.bump_attempt(client_event_id, status)
+            outbox.bump_attempt(row.client_event_id, status)
             wait = _backoff_seconds(retry_after, backoff)
             backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
             sleep_fn(wait)

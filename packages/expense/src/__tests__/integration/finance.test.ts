@@ -143,6 +143,39 @@ describeDb("sign-off seats", () => {
     expect(await events(id)).toBe(1);
   });
 
+  it("a FINANCE holder in the Program Leader's household does not sign as Treasurer; a Board member replaces them", async () => {
+    // leader 2 · 3 holds FINANCE and is 2's spouse · treasurer 7 approves · board 5
+    bindPorts({ signoff: directory({ approvers: { 100: [2, 7] }, leaders: { 100: 2 }, finance: [3], board: [5], households: [[2, 3]] }) });
+    const id = await seedExpense({ state: "qb_pending", needsReimbursement: true, reimburseePersonId: 1 });
+    const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await seedApproval(id, li, { ownerId: 100, status: "approved" });
+
+    await signLine(principal(1), li, "SUBMITTER");
+    await signLine(principal(7), li, "PROGRAM_APPROVER");
+    await expect(signLine(principal(3, { isFinance: true }), li, "TREASURER")).rejects.toMatchObject({ statusCode: 403 });
+
+    await signLine(principal(5, { isBoard: true }), li, "TREASURER");
+    expect(await events(id)).toBe(1);
+  });
+
+  it("the non-member rule follows the reimbursee, not the submitter, and skips card charges", async () => {
+    // submitter 11 is not a member; reimbursee 1 is; leader 2 · finance 3 · board 5
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5], nonMembers: [11, 12] }) });
+    const line = async (opts: { needsReimbursement: boolean; reimburseePersonId?: number }) => {
+      const id = await seedExpense({ state: "qb_pending", submitterId: 11, ...opts });
+      const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+      await seedApproval(id, li, { ownerId: 100, status: "approved" });
+      return li;
+    };
+
+    await signLine(principal(2), await line({ needsReimbursement: true, reimburseePersonId: 1 }), "PROGRAM_APPROVER");
+    await signLine(principal(2), await line({ needsReimbursement: false }), "PROGRAM_APPROVER");
+
+    const nonMember = await line({ needsReimbursement: true, reimburseePersonId: 12 });
+    await expect(signLine(principal(2), nonMember, "PROGRAM_APPROVER")).rejects.toMatchObject({ statusCode: 403 });
+    await signLine(principal(5, { isBoard: true }), nonMember, "PROGRAM_APPROVER");
+  });
+
   describe("the reimbursee (reimburseePersonId)", () => {
     // submitter 1 · reimbursee 9 · 10 in the reimbursee's household · leader 2 · finance 3 · board 5, 6
     async function reimburseeLine(seat: { approvers?: number[]; finance?: number[]; board?: number[] }, reimburseePersonId?: number) {

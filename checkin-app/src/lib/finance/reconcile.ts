@@ -8,6 +8,7 @@ import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
 import { fromWhere } from "@/lib/programs/enrollmentState";
 import { programVariantIds } from "@/lib/programs/variants";
 import { adjustProgramInventory } from "@/lib/shopify";
+import { isSaleEnded, type SaleRow } from "@/lib/programs/saleState";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
 
@@ -584,7 +585,7 @@ export async function raiseReversalByOrderId(
     }
     const enrolls = await prisma.programParticipant.findMany({
         where: { shopifyOrderId: orderLegacyId },
-        select: { programId: true, personId: true, program: { select: { shopifyVariantId: true, claimantShopifyVariantId: true } } },
+        select: { programId: true, personId: true, program: { select: { shopifyVariantId: true, claimantShopifyVariantId: true, startAt: true, offSaleAt: true, saleEndedAt: true } } },
     });
     for (const e of enrolls) {
         await raisePaymentException(kind, { shopifyOrderId: orderLegacyId, programId: e.programId, personId: e.personId });
@@ -640,11 +641,13 @@ async function claimRefundSettlement(refundId: string, orderLegacyId: string, pr
  * seat the order bought for the program came back, or a fully restocked line
  * names its children. Seats nobody can be matched to are taken back off sale
  * with -k, and the children stay enrolled under their REFUND flags for the board.
+ * After the program's sale has ended every restocked seat is taken back off sale:
+ * the off-sale rule wins over putting a refunded seat back on sale.
  */
 async function settleRestockedSeats(
     orderLegacyId: string,
     programId: number,
-    program: { shopifyVariantId: string | null; claimantShopifyVariantId: string | null },
+    program: { shopifyVariantId: string | null; claimantShopifyVariantId: string | null } & Pick<SaleRow, 'startAt' | 'offSaleAt' | 'saleEndedAt'>,
     personIds: number[],
     restocked: RestockedLine[],
 ): Promise<void> {
@@ -658,23 +661,28 @@ async function settleRestockedSeats(
     const seats = (await mirror.orderLines(`gid://shopify/Order/${orderLegacyId}`))
         .filter((l) => variantIds.has(l.variantId))
         .reduce((n, l) => n + l.quantity, 0);
+    let unmatched = 0;
     if (seats > 0 && k >= seats && personIds.length <= k) {
         for (const personId of personIds) await removeRefundedEnrollment(programId, personId, orderLegacyId);
-        return;
-    }
-
-    let unmatched = 0;
-    for (const l of lines) {
-        const named = [...new Set(l.personIds ?? [])].filter((id) => personIds.includes(id));
-        if (l.quantity === l.lineQuantity && named.length === l.quantity) {
-            for (const personId of named) await removeRefundedEnrollment(programId, personId, orderLegacyId);
-        } else {
-            unmatched += l.quantity;
+    } else {
+        for (const l of lines) {
+            const named = [...new Set(l.personIds ?? [])].filter((id) => personIds.includes(id));
+            if (l.quantity === l.lineQuantity && named.length === l.quantity) {
+                for (const personId of named) await removeRefundedEnrollment(programId, personId, orderLegacyId);
+            } else {
+                unmatched += l.quantity;
+            }
         }
+    }
+    const variant = { id: programId, shopifyVariantId: program.shopifyVariantId };
+    if (isSaleEnded(program)) {
+        logger.warn(`[reconcile] refund on order ${orderLegacyId} restocked ${k} seat(s) of program ${programId} after its sale ended: taking them back off sale`);
+        await adjustProgramInventory(variant, -k, "refund-after-sale", { deferred: true });
+        return;
     }
     if (unmatched === 0) return;
     logger.warn(`[reconcile] refund on order ${orderLegacyId} restocked ${unmatched} seat(s) of program ${programId} that no child can be matched to: taking them back off sale, the board decides who leaves`);
-    await adjustProgramInventory({ id: programId, shopifyVariantId: program.shopifyVariantId }, -unmatched, "refund-unmatched", { deferred: true });
+    await adjustProgramInventory(variant, -unmatched, "refund-unmatched", { deferred: true });
 }
 
 /**

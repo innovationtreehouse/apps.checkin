@@ -3,7 +3,7 @@
  * caller class on every web path (docs/rules/attendance-checkin.md).
  */
 import type { DbClient } from "@/lib/db-client";
-import { lastKeyholderGuard, FORCE_CLOSE_CONFIRM_SECONDS, type CloseActor } from "@/lib/scan-service";
+import { lastKeyholderGuard, FORCE_CLOSE_CONFIRM_SECONDS, WEB_CLOSE_CHOICE_TTL_MS, type CloseActor } from "@/lib/scan-service";
 
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("@/lib/notifications", () => ({
@@ -27,7 +27,7 @@ const lead = actor({ id: 4 });
 function fakeDb(opts: {
     remainingKeyholders?: number;
     others?: Array<{ name: string | null; email: string | null }>;
-    stored?: { forceCloseToken: string | null; forceCloseActorId: number | null };
+    stored?: { forceCloseToken: string | null; forceCloseActorId: number | null; forceCloseWarnedAt?: Date | null };
     candidates?: Array<{ id: number; name: string }>;
     named?: { id: number } | null;
     consumed?: number;
@@ -48,7 +48,7 @@ function fakeDb(opts: {
     } as unknown as DbClient;
 }
 
-const confirmedBy = (id: number) => ({ forceCloseToken: "tok", forceCloseActorId: id });
+const confirmedBy = (id: number, warnedAt = new Date()) => ({ forceCloseToken: "tok", forceCloseActorId: id, forceCloseWarnedAt: warnedAt });
 const proceed = (facilityClosed: boolean) => ({ action: "proceed", facilityClosed, choice: null });
 
 describe("lastKeyholderGuard", () => {
@@ -144,6 +144,13 @@ describe("lastKeyholderGuard", () => {
         expect(await lastKeyholderGuard(42, KEYHOLDER, self, { token: "tok", choice: "close" }, {}, db))
             .toEqual({ action: "refuse", error: expect.any(String), status: 409 });
         expect(db.visit.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses with 409, and does not consume, a token answered after the dialog went stale", async () => {
+        const db = fakeDb({ others: [{ name: "Bob", email: null }], stored: confirmedBy(7, new Date(Date.now() - WEB_CLOSE_CHOICE_TTL_MS - 1000)) });
+        expect(await lastKeyholderGuard(42, KEYHOLDER, self, { token: "tok", choice: "close" }, {}, db))
+            .toEqual({ action: "refuse", error: expect.any(String), status: 409 });
+        expect(db.visit.updateMany).not.toHaveBeenCalled();
     });
 
     it("refuses with 409 a token replayed after its confirm spent it", async () => {

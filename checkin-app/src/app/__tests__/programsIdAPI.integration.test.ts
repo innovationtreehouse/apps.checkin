@@ -416,6 +416,28 @@ describe('Individual Program API Integration Tests', () => {
              expect(Array.isArray(data.participants)).toBe(true);
              expect(data.participants.some((p: { personId: number }) => p.personId === enrolledId)).toBe(true);
         });
+
+        it('shows payment status by the household in the DB, not a stale session claim', async () => {
+             const enrolledHh = (await prisma.person.findUniqueOrThrow({ where: { id: enrolledId } })).householdId;
+             const movedLead = await prisma.person.create({
+                 data: { email: 'moved-lead-prog-id-api-test@example.com', name: 'Moved Lead', isHouseholdLead: true, isDeclaredAdult: true, household: { create: { name: 'Moved HH' } } },
+             });
+             try {
+                 // The session still claims the household the lead has left.
+                 (getServerSession as jest.Mock).mockResolvedValue({ user: { id: movedLead.id, householdId: enrolledHh } });
+
+                 const req = new Request(`http://localhost:4000/api/programs/${publicProgramId}`, { method: 'GET' });
+                 const res = await GET(req as unknown as import("next/server").NextRequest, createParams(publicProgramId) as unknown as never);
+                 expect(res.status).toBe(200);
+
+                 const row = (await res.json()).participants.find((p: { personId: number }) => p.personId === enrolledId);
+                 expect(row).toBeDefined();
+                 expect(row).not.toHaveProperty('status');
+             } finally {
+                 await prisma.person.delete({ where: { id: movedLead.id } });
+                 await prisma.household.delete({ where: { id: movedLead.householdId } });
+             }
+        });
     });
 
     // ── ops-stg ACCESS GATE regression (the defect that killed the prior staging
@@ -1324,7 +1346,7 @@ describe('Individual Program API Integration Tests', () => {
                 );
                 expect(res.status).toBe(200);
                 expect((await res.json()).warning).toBeUndefined();
-                expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Would set inventory to 18 for variant: dev-mock-variant-sale-reopen'));
+                expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/\(mock\) Adjusted available for .*dev-mock-variant-sale-reopen: 0 -> 18 /));
                 expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory'));
             } finally {
                 logSpy.mockRestore();

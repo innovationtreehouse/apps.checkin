@@ -946,9 +946,9 @@ defineOutbound({
 defineOutbound({
     surface: 'quickbooks.vendor',
     // packages/quickbooks/src/client.ts → (sandbox-)quickbooks.api.intuit.com.
-    // Vendor create and Vendor/Customer lookup by DisplayName only: a business
-    // name ('public') or a reimbursee's name ('pii'). Never an email, address or phone.
-    tiers: ['public', 'pii'],
+    // Vendor create and Vendor/Customer lookup carry the vendor display name only
+    // ('public'). Never an email, address or phone.
+    tiers: ['public'],
 });
 
 defineOutbound({
@@ -978,4 +978,12 @@ defineOutbound({
     // The receipt file's bytes (Receipt.fileBlob, 'pii'): a receipt can show a
     // purchaser's name, address and partial card number. Bytes only, never a URL.
     tiers: ['pii'],
+});
+
+defineOutbound({
+    surface: 'gmail.read',
+    // packages/receipt/src/lib/gmail.ts → gmail.googleapis.com, gmail.readonly scope.
+    // List/get requests only: a date-window query string and message/attachment ids;
+    // no model data. Mail read back is tiered by the receipt models that store it.
+    tiers: [],
 });

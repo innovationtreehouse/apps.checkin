@@ -14,6 +14,7 @@ export const FINANCE_NAV_LINKS: NavLink[] = [
   { name: "Membership Payment Plan", href: "/finance-ops/membership-payment-plan", icon: "⏳" },
   { name: "Shopify Hold Reconciliation", href: "/finance-ops/shopify-holds", icon: "🪑" },
   { name: "Payment problems", href: "/finance-ops/payments", icon: "⚠️" },
+  { name: "Unconfirmed Shopify stock", href: "/finance-ops/shopify-stock", icon: "📦" },
 ];
 
 // Gate of the FINANCE_NAV_LINKS tools — board-only; sysadmin has no access

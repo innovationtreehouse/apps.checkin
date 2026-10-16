@@ -4,6 +4,18 @@ import prisma from "@/lib/prisma";
 import { adjustProgramInventory, type StockWriteOptions } from "@/lib/shopify";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { isSaleEnded } from "@/lib/programs/saleState";
+import { STATES as ENROLLMENT_STATES } from "@/lib/programs/enrollmentState";
+
+/** Seats Shopify counts as taken out of public stock: every ACTIVE seat and every held PENDING seat. */
+export function countStockTakenSeats(programId: number): Promise<number> {
+    return prisma.programParticipant.count({
+        where: {
+            programId,
+            person: LIVE_PERSON,
+            OR: [ENROLLMENT_STATES.ACTIVE.where, ENROLLMENT_STATES.PENDING_HELD.where, ENROLLMENT_STATES.PENDING_HELD_DENIED.where],
+        },
+    });
+}
 
 /** Thrown by {@link lockProgramAndCheckCapacity} when a program is full. */
 export class ProgramCapacityError extends Error {

@@ -111,6 +111,56 @@ export default function MembershipReviewPage() {
       onConfirm: () => resetReview(item.id),
     });
 
+  const undoApproval = async (processId: number, reason: string) => {
+    setBusyId(processId);
+    try {
+      const res = await fetch("/api/membership/reviews/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ processId, reason }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        notifications.show({ message: "Your approval was withdrawn. The review is waiting for reviewers again." });
+        notifyNavRefresh();
+      } else {
+        notifications.show({ color: "red", message: data.error || "Could not undo your approval.", autoClose: 4000 });
+      }
+      await Promise.all([load(), loadMine()]);
+    } catch {
+      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const confirmUndo = (item: QueueItem) => {
+    let reason = "";
+    const modalId = modals.openConfirmModal({
+      title: "Undo your approval?",
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            This withdraws your approval of <strong>{applicantLabel(item)}</strong>. The review goes back
+            to waiting for two approvals, and anyone it named is cleared with it.
+          </Text>
+          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
+        </Stack>
+      ),
+      labels: { confirm: "Undo my approval", cancel: "Cancel" },
+      confirmProps: { color: "orange" },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (!reason.trim()) {
+          notifications.show({ color: "red", message: "A reason is required to undo an approval.", autoClose: 4000 });
+          return;
+        }
+        modals.close(modalId);
+        undoApproval(item.id, reason.trim());
+      },
+    });
+  };
+
   const submit = async (processId: number, result: "APPROVE" | "REJECT") => {
     if (result === "REJECT" && !reviewNotes[processId]?.trim()) return;
     setBusyId(processId);
@@ -266,15 +316,18 @@ export default function MembershipReviewPage() {
                     An approval here names nobody, so it can never count toward clearance. Start the review over.
                   </Text>
                 )}
-                {canReset ? (
-                  <Group mt="sm">
+                <Group mt="sm">
+                  <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmUndo(item)}>
+                    Undo my approval
+                  </Button>
+                  {canReset ? (
                     <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmReset(item)}>
                       Start review over
                     </Button>
-                  </Group>
-                ) : (
-                  <Text size="xs" c="dimmed" mt="sm">A board member can start this review over.</Text>
-                )}
+                  ) : (
+                    <Text size="xs" c="dimmed">A board member can start this review over.</Text>
+                  )}
+                </Group>
               </Card>
             );
           })}

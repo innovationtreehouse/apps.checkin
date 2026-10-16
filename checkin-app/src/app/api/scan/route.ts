@@ -8,6 +8,7 @@ import { config } from "@/lib/config";
 import { withKiosk } from "@/lib/kioskAuth";
 import { CLOSE_REQUEST_PROTOCOL_VERSION, KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_PROTOCOL_VERSION, TRUSTED_REPLAY_PROTOCOL_VERSION } from "@/lib/scanProtocol";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { lockFacility } from "@/lib/facilityLock";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -581,8 +582,11 @@ export const POST = withKiosk(
 
 
             // A web checkout runs the shared close choice, not the kiosk's badge
-            // confirm (docs/rules/attendance-checkin.md, Opening and closing).
+            // confirm (docs/rules/attendance-checkin.md, Opening and closing),
+            // under the facility lock so no check-in or close lands between the
+            // choice and the checkout.
             if (auth.type === 'session' && activeVisit && intent !== 'IN') {
+                await lockFacility(tx);
                 const guard = await lastKeyholderGuard(
                     activeVisit.id, participant, closeActor(auth.user),
                     { token: confirmToken, choice: body.closeChoice, handoverToId: body.handoverToId }, {}, tx,

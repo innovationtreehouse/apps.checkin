@@ -16,6 +16,7 @@ const STATUS_FOR: Record<ReviewError["code"], number> = {
     same_household_applicant: 403,
     same_household_reviewer: 403,
     already_attested: 409,
+    not_undoable: 409,
     invalid_subject: 400,
 };
 

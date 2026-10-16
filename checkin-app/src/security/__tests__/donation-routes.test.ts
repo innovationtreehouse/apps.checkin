@@ -3,7 +3,8 @@
  *
  * Admission and file-only coverage for the bulk-donation registry (#1280 §5,
  * registry/donation.ts). Reads admit FINANCE or BOARD, writes FINANCE only;
- * sysadmin, a plain session, an id-less session and no session are refused on
+ * ops (OPERATIONS, INVENTORY_MANAGER) reaches only the no-receipt in-kind
+ * routes, and never sees a donor. Sysadmin, a plain session, an id-less session and no session are refused on
  * every route. UploadedFile.fileBlob leaves only through the file route.
  *
  * Callers sign in through the real authenticateRequest: only getServerSession
@@ -21,7 +22,7 @@ import '@/security/registry';
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 const mockSession = getServerSession as jest.MockedFunction<typeof getServerSession>;
 
-type Flags = { isFinance?: boolean; isBoardMember?: boolean; isSysadmin?: boolean };
+type Flags = { isFinance?: boolean; isBoardMember?: boolean; isSysadmin?: boolean; isOperations?: boolean; isInventoryManager?: boolean };
 function user(id: unknown, flags: Flags = {}) {
     return {
         id,
@@ -45,6 +46,8 @@ const uploadedFile = () => ({ id: 1, orgId: 'treehouse', originalFilename: 'bene
 const endpoints = [...allRoutes()].map(([e]) => e).filter(e => e.includes(' /api/donations/'));
 const reads = endpoints.filter(e => e.startsWith('GET '));
 const writes = endpoints.filter(e => !e.startsWith('GET '));
+const IN_KIND_MANUAL = endpoints.filter(e => e.includes('/api/donations/in-kind/manual'));
+const OPS = [{ isOperations: true }, { isInventoryManager: true }];
 
 async function callJson(endpoint: string) {
     const impl = jest.fn(async () => ({ UploadedFile: uploadedFile() }));
@@ -57,10 +60,11 @@ async function callJson(endpoint: string) {
 beforeEach(() => mockSession.mockReset());
 
 describe('donation registry — shape', () => {
-    it('registers 22 JSON routes (11 reads, 11 writes) and the blob file route', () => {
-        expect(endpoints).toHaveLength(22);
-        expect(reads).toHaveLength(11);
-        expect(writes).toHaveLength(11);
+    it('registers 26 JSON routes (13 reads, 13 writes) and the blob file route', () => {
+        expect(endpoints).toHaveLength(26);
+        expect(reads).toHaveLength(13);
+        expect(writes).toHaveLength(13);
+        expect(IN_KIND_MANUAL).toHaveLength(3);
         expect(getFileRoute(FILE_ENDPOINT)?.file).toEqual({ model: 'UploadedFile', field: 'fileBlob' });
     });
 
@@ -119,6 +123,59 @@ describe('donation registry — admission', () => {
             expect(allowed).toBe(false);
         }
     });
+});
+
+describe('no-receipt in-kind routes — ops', () => {
+    it.each(IN_KIND_MANUAL)('%s admits OPERATIONS and INVENTORY_MANAGER', async endpoint => {
+        for (const flags of OPS) {
+            signIn(7, flags);
+            expect((await callJson(endpoint)).status).toBe(200);
+        }
+    });
+
+    it.each(endpoints.filter(e => !IN_KIND_MANUAL.includes(e)))('%s refuses ops (403)', async endpoint => {
+        for (const flags of OPS) {
+            signIn(7, flags);
+            const { status, impl } = await callJson(endpoint);
+            expect(status).toBe(403);
+            expect(impl).not.toHaveBeenCalled();
+        }
+    });
+
+    async function listAs(flags: Flags) {
+        signIn(7, flags);
+        const impl = jest.fn(async () => ({
+            ManualInKindDonation: [{
+                id: 1,
+                donorFirstName: 'Pat',
+                donorLastName: 'Doe',
+                donorCompanyName: 'Acme',
+                donationDate: '2026-10-01',
+                lines: [{ id: 2, gtin13: '0000000000017', quantity: 3, valueCents: 900 }],
+            }],
+        }));
+        const res = await handler('GET /api/donations/in-kind/manual', impl)(
+            new NextRequest('http://localhost/api/donations/in-kind/manual'),
+            { params: Promise.resolve({}) },
+        );
+        expect(res.status).toBe(200);
+        return (await res.json())[0] as Record<string, unknown>;
+    }
+
+    it.each(OPS)('the list shows %p the goods with the donor stripped', async flags => {
+        const row = await listAs(flags);
+        expect(row).toMatchObject({ id: 1, donationDate: '2026-10-01', lines: [{ gtin13: '0000000000017', quantity: 3, valueCents: 900 }] });
+        expect(row).not.toHaveProperty('donorFirstName');
+        expect(row).not.toHaveProperty('donorLastName');
+        expect(row).not.toHaveProperty('donorCompanyName');
+    });
+
+    it.each([{ isFinance: true }, { isBoardMember: true }, { isFinance: true, isOperations: true }])(
+        'the list shows %p the donor',
+        async flags => {
+            expect(await listAs(flags)).toMatchObject({ donorFirstName: 'Pat', donorLastName: 'Doe', donorCompanyName: 'Acme' });
+        },
+    );
 });
 
 describe('UploadedFile.fileBlob is file-only', () => {

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
-import { adjustProgramInventory, createClaimantProduct, createShopifySingleVariantProgram } from "@/lib/shopify";
+import { createClaimantProduct, createShopifySingleVariantProgram, setProgramInventory, STOCK_BOOKKEEPING_RESET } from "@/lib/shopify";
+import { countStockTakenSeats } from "@/lib/program/capacity";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
@@ -50,7 +51,8 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             if (!publicData && !claimantData) {
                 return apiError("Shopify reserved-seat product creation failed or is not configured. Check Shopify credentials.", 502);
             }
-            const updateData = { ...publicData, ...claimantData };
+            // A new public variant starts its stock bookkeeping afresh.
+            const updateData = { ...publicData, ...claimantData, ...(publicData && STOCK_BOOKKEEPING_RESET) };
 
             const updated = await tx.program.update({
                 where: { id: programId },
@@ -74,9 +76,10 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         const { updated, publicCreated, claimantFailed } = synced;
 
         // After the sync's transaction commits: the stock writer updates this Program row itself.
-        // A new capped variant starts sold out (0 available); lift it to capacity.
-        const stockOk = !publicCreated || updated.maxParticipants === null
-            || await adjustProgramInventory(updated, updated.maxParticipants, "initial-stock", { inRequest: true });
+        // A new capped variant starts sold out (0 available); lift it to capacity less the seats already taken.
+        const max = updated.maxParticipants;
+        const stockOk = !publicCreated || max === null
+            || await setProgramInventory(updated, async () => max - await countStockTakenSeats(programId), "initial-stock");
 
         const warning = claimantFailed
             ? "Public product created, but the reserved-seat product failed; checkout uses the public variant until you retry."

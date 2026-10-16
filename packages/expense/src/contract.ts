@@ -49,6 +49,8 @@ export const inertOwnerDirectory: OwnerDirectory = { list: async () => [] };
 export interface BucketApprovers {
   orgLevel: boolean;
   approvers: number[];
+  /** The program's leader, eligible to sign or not; null for an org-level bucket or a program without one. */
+  leader: number | null;
 }
 
 /**
@@ -65,13 +67,13 @@ export interface SignoffDirectory {
   householdOf(personIds: number[]): Promise<number[]>;
   /** Whether the id names a checkin Person. */
   personExists(personId: number): Promise<boolean>;
-  /** Whether the purchaser holds an org membership (a non-member's line takes a Board approver). */
+  /** Whether the person holds an org membership (reimbursing a non-member takes a Board approver). */
   isOrgMember(personId: number): Promise<boolean>;
 }
 
 /** Nobody approves, holds a role or is conflicted: no seat can be filled and nothing auto-approves. */
 export const inertSignoffDirectory: SignoffDirectory = {
-  bucketApprovers: async () => ({ orgLevel: false, approvers: [] }),
+  bucketApprovers: async () => ({ orgLevel: false, approvers: [], leader: null }),
   bucketsApprovedBy: async () => [],
   financeHolders: async () => [],
   boardMembers: async () => [],

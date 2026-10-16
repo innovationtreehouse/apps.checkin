@@ -217,6 +217,32 @@ describe("membership-ops/review page", () => {
     });
   });
 
+  it("lets a reviewer undo their own approval, with a reason", async () => {
+    setSession({ id: 1, isBackgroundCheckReviewer: true });
+    const fetchMock = mockFetchJson({
+      "/api/membership/reviews/undo": {},
+      "/api/membership/reviews?mine=1": { queue: [{ ...queue.queue[0], id: 302 }] },
+      "/api/membership/reviews": { queue: [] },
+    });
+    renderPage();
+    await screen.findByText("Nothing awaiting your review right now.");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show incomplete reviews I've already approved" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Undo my approval" }));
+    const dialog = await screen.findByRole("dialog");
+    // No reason: the dialog stays open and nothing is sent.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Undo my approval" }));
+    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "A reason is required to undo an approval." }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/undo"))).toBe(false);
+
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: "  wrong report  " } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Undo my approval" }));
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/undo"));
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ processId: 302, reason: "wrong report" });
+    });
+  });
+
   it("does not offer a reset to a reviewer who is not on the board", async () => {
     setSession({ id: 1, isBackgroundCheckReviewer: true });
     mockFetchJson({

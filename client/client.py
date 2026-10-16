@@ -623,19 +623,19 @@ def _overlay_pending(present, pending, arrivals=None):
     presence set: the last intent per person wins. `arrivals` collects each
     queued IN's scan time."""
     for row in pending:
-        if len(row) > 8 and row[8]:
+        if row.close:
             # A queued close: everyone shown before it has left.
             present.clear()
             continue
         try:
-            pid = int(row[1])
+            pid = int(row.participant_id)
         except (TypeError, ValueError):
             continue
-        if row[5] == "IN":
+        if row.intent == "IN":
             present.add(pid)
             if arrivals is not None:
-                arrivals[pid] = row[2]
-        elif row[5] == "OUT":
+                arrivals[pid] = row.scanned_at
+        elif row.intent == "OUT":
             present.discard(pid)
 
 # ---------------------------------------------------------------------------

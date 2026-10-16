@@ -260,7 +260,7 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         const res = await PATCH(req("PATCH", { departedAt: "2026-07-20T17:00:00Z" }), ctx as never);
 
         expect(res.status).toBe(200);
-        // In a transaction of its own, which also records a close the caller chose.
+        // In the edit's transaction, which also records a close the caller chose.
         expect(processVisitCheckout).toHaveBeenCalledWith(42, new Date("2026-07-20T17:00:00Z"), expect.anything(), "TYPED");
         // The lock-scoped update must not have closed it first.
         expect(tx.visit.update).toHaveBeenCalledWith(expect.objectContaining({

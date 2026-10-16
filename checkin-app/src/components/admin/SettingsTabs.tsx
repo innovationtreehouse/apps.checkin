@@ -9,15 +9,14 @@ import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { settingsMisconfigBadge } from "@/components/navBadges";
 import { CountBadge } from "@/components/ui/CountBadge";
 
-export type SettingsTab = "membership" | "localization" | "email" | "shopify-webhook" | "outreach" | "quickbooks";
+export type SettingsTab = "membership" | "localization" | "email" | "shopify-webhook" | "outreach";
 
-// sysadminOnly tabs are hidden from board members, boardOnly tabs from sysadmins (the /settings layout admits both).
-const TABS: { value: SettingsTab; label: string; href: string; sysadminOnly?: boolean; boardOnly?: boolean }[] = [
+// sysadminOnly tabs are hidden from board members (the /settings layout admits both).
+const TABS: { value: SettingsTab; label: string; href: string; sysadminOnly?: boolean }[] = [
   { value: "membership", label: "Membership Settings", href: "/settings/membership" },
   { value: "email", label: "Email", href: "/settings/email" },
   { value: "outreach", label: "Outreach", href: "/settings/outreach" },
   { value: "shopify-webhook", label: "Shopify Webhook", href: "/settings/shopify-webhook" },
-  { value: "quickbooks", label: "QuickBooks", href: "/settings/quickbooks", boardOnly: true },
   { value: "localization", label: "Localization", href: "/settings/localization", sysadminOnly: true },
 ];
 
@@ -31,8 +30,7 @@ export function SettingsTabs({ active }: { active: SettingsTab }) {
   const confirmNav = useConfirmNav();
   const { data: session } = useSession();
   const isSysadmin = !!session?.user?.isSysadmin;
-  const isBoardMember = !!session?.user?.isBoardMember;
-  const tabs = TABS.filter((t) => (!t.sysadminOnly || isSysadmin) && (!t.boardOnly || isBoardMember));
+  const tabs = TABS.filter((t) => !t.sysadminOnly || isSysadmin);
   // Red pill on Membership Settings when a required membership setting is unset. Same
   // shared counts as the nav badge, so tab and nav can't diverge.
   const misconfig = settingsMisconfigBadge(useTodoCounts(!!session));

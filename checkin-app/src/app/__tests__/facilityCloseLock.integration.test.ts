@@ -205,4 +205,36 @@ describe('POST /api/scan facility-close lock (#254)', () => {
             await prisma.facilityClose.delete({ where: { id: closeId } });
         }
     });
+
+    it('a dashboard checkout decides the close under the facility lock: a check-in committed while it waits is seen', async () => {
+        const kh = await prisma.person.findUniqueOrThrow({ where: { id: keyholderId } });
+        const user = { id: kh.id, email: kh.email, name: kh.name, isKeyholder: true, isBoardMember: false, isSysadmin: false, householdId: kh.householdId };
+        (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'session', user });
+        (getServerSession as jest.Mock).mockResolvedValue({ user });
+        await prisma.visit.updateMany({ where: { departedAt: null }, data: { departedAt: new Date(0) } });
+        const kv = await prisma.visit.create({ data: { personId: keyholderId, arrivedAt: new Date(Date.now() - 3_600_000) } });
+        const closesBefore = await prisma.facilityClose.count();
+
+        // A check-in holds the facility lock while the dashboard checkout starts.
+        let dashboard!: Promise<Response>;
+        await prisma.$transaction(async (tx) => {
+            await lockFacility(tx);
+            dashboard = dashboardDELETE(new Request('http://localhost:4000/api/attendance', {
+                method: 'DELETE', body: JSON.stringify({ visitId: kv.id }),
+            }) as unknown as import('next/server').NextRequest);
+            for (let i = 0; i < 100; i++) {
+                const [{ waiting }] = await tx.$queryRaw<{ waiting: number }[]>`
+                    SELECT count(*)::int AS waiting FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`;
+                if (waiting > 0) break;
+                await new Promise(r => setTimeout(r, 20));
+            }
+            await tx.visit.create({ data: { personId: otherId, arrivedAt: new Date() } });
+        }, { timeout: 10_000 });
+        const res = await dashboard;
+
+        expect(res.status).toBe(400);
+        expect(await res.json()).toMatchObject({ type: 'close_choice', othersInside: 1 });
+        expect((await prisma.visit.findUniqueOrThrow({ where: { id: kv.id } })).departedAt).toBeNull();
+        expect(await prisma.facilityClose.count()).toBe(closesBefore);
+    });
 });

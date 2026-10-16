@@ -28,7 +28,7 @@ describe("runtime", () => {
     expect(await rt.catalog.listCategories()).toEqual([]);
     expect(await rt.catalogEvents.eventsAfter(0)).toEqual([]);
     expect(await inertOwnerDirectory.list()).toEqual([]);
-    expect(await rt.signoff.bucketApprovers(1)).toEqual({ orgLevel: false, approvers: [] });
+    expect(await rt.signoff.bucketApprovers(1)).toEqual({ orgLevel: false, approvers: [], leader: null });
     expect(await rt.quickbooks.reader.purchasesBetween("2026-01-01", "2026-01-31")).toEqual([]);
     expect(rt.quickbooks.posting).toBeNull();
   });

@@ -56,19 +56,20 @@ export const PACKAGE_EGRESS_FILES: ReadonlyMap<string, readonly string[]> = new 
     ['packages/quickbooks/src/client.ts', ['quickbooks.query', 'quickbooks.create', 'quickbooks.vendor']],
     ['packages/quickbooks/src/oauth.ts', ['quickbooks.oauth']],
     ['packages/receipt/src/lib/ocr.ts', ['anthropic.receipt-ocr']],
+    ['packages/receipt/src/lib/gmail.ts', ['gmail.read']],
     // Builds the endpoint; s-read-function makes the call.
     ['packages/s-ingest-core/src/config.ts', ['shopify.admin-read']],
     ['s-read-function/src/shopify/token.ts', ['shopify.oauth']],
 ]);
 
 export const THIRD_PARTY_HOST_RE =
-    /(shopify\.com|myshopify\.com|resend\.com|SHOPIFY_STORE_DOMAIN|intuit\.com|api\.anthropic\.com)/;
+    /(shopify\.com|myshopify\.com|resend\.com|SHOPIFY_STORE_DOMAIN|intuit\.com|api\.anthropic\.com|gmail\.googleapis\.com)/;
 /** An absolute URL with a host (literal, `${…}` or `[ipv6]`), except loopback. A bare
  *  scheme prefix (`"https://" + host`) is not a fixed destination and does not match. */
 const NON_LOOPBACK_URL_RE = /\bhttps?:\/\/(?!(?:localhost|127\.0\.0\.1|\[::1\])(?![\w.-]))[\w$[]/;
 /** An API SDK hides its host (the Anthropic SDK defaults to api.anthropic.com, resend to
  *  api.resend.com). @aws-sdk/* is absent: it reaches only AWS, the platform the code runs on. */
-const THIRD_PARTY_SDK_RE = /['"](@anthropic-ai\/sdk|resend)['"]/;
+const THIRD_PARTY_SDK_RE = /['"](@anthropic-ai\/sdk|resend|googleapis|@googleapis\/gmail)['"]/;
 const PACKAGE_SKIP_DIR_RE = /^(node_modules|dist|generated|__tests__|__fixtures__|fixtures|test|tests)$/;
 const PACKAGE_SOURCE_FILE_RE = /\.(tsx?|[cm]?js)$/;
 const PACKAGE_SKIP_FILE_RE = /\.(test|spec)\.(tsx?|[cm]?js)$/;

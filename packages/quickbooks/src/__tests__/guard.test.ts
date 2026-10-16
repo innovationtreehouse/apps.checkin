@@ -8,7 +8,6 @@ const nonProd = (over: Partial<QboTargetConfig> = {}): QboTargetConfig => ({
   checkinEnv: "dev",
   realm: { env: "sandbox", realmId: SANDBOX },
   sandboxRealmAllowed: SANDBOX,
-  productionRealmId: null,
   ...over,
 });
 
@@ -16,7 +15,6 @@ const prod = (over: Partial<QboTargetConfig> = {}): QboTargetConfig => ({
   checkinEnv: "prod",
   realm: { env: "production", realmId: PROD },
   sandboxRealmAllowed: undefined,
-  productionRealmId: PROD,
   ...over,
 });
 
@@ -29,8 +27,8 @@ describe("assertQboTarget off prod", () => {
       expect(() => assertQboTarget(nonProd({ checkinEnv }))).toThrow(/only on CHECKIN_ENV=prod or dev/);
     }
   });
-  it("keeps a stg prod-copy off its Board-set realm even when it is configured like dev", () => {
-    const stg = nonProd({ checkinEnv: "stg", realm: { env: "production", realmId: PROD }, sandboxRealmAllowed: undefined, productionRealmId: PROD });
+  it("keeps stg off a production realm even when it is configured like prod", () => {
+    const stg = nonProd({ checkinEnv: "stg", realm: { env: "production", realmId: PROD }, sandboxRealmAllowed: undefined });
     expect(() => assertQboTarget(stg)).toThrow(/only on CHECKIN_ENV=prod or dev/);
   });
   it("refuses the production API", () => {
@@ -42,37 +40,20 @@ describe("assertQboTarget off prod", () => {
   it("refuses a realm the allowlist does not name", () => {
     expect(() => assertQboTarget(nonProd({ realm: { env: "sandbox", realmId: "2222" } }))).toThrow(/allowlisted/);
   });
-  it("refuses its own database's production realm even when allowlisted (a prod-data copy)", () => {
-    const cfg = nonProd({ realm: { env: "sandbox", realmId: PROD }, sandboxRealmAllowed: PROD, productionRealmId: PROD });
-    expect(() => assertQboTarget(cfg)).toThrow(/production realm; refused off prod/);
-  });
-  it("allows the sandbox when the database names a different production realm", () => {
-    expect(() => assertQboTarget(nonProd({ productionRealmId: PROD }))).not.toThrow();
-  });
 });
 
 describe("assertQboTarget on prod", () => {
-  it("allows the Board-set production realm", () => {
+  it("allows the configured realm through the production API", () => {
     expect(() => assertQboTarget(prod())).not.toThrow();
-  });
-  it("is off while the Board has not set a realm", () => {
-    expect(() => assertQboTarget(prod({ productionRealmId: null }))).toThrow(/has not set/);
-    expect(() => assertQboTarget(prod({ productionRealmId: "" }))).toThrow(/has not set/);
-  });
-  it("refuses any other realm", () => {
-    expect(() => assertQboTarget(prod({ realm: { env: "production", realmId: "8888" } }))).toThrow(/not the Board-set/);
   });
   it("refuses the sandbox API", () => {
     expect(() => assertQboTarget(prod({ realm: { env: "sandbox", realmId: PROD } }))).toThrow(/must use the production/);
-  });
-  it("ignores the sandbox allowlist", () => {
-    expect(() => assertQboTarget(prod({ sandboxRealmAllowed: "8888", realm: { env: "production", realmId: "8888" } }))).toThrow(/not the Board-set/);
   });
 });
 
 it("refuses a non-numeric realm everywhere", () => {
   expect(() => assertQboTarget(nonProd({ realm: { env: "sandbox", realmId: "1 OR 1" }, sandboxRealmAllowed: "1 OR 1" }))).toThrow(/numeric/);
-  expect(() => assertQboTarget(prod({ realm: { env: "production", realmId: "x" }, productionRealmId: "x" }))).toThrow(/numeric/);
+  expect(() => assertQboTarget(prod({ realm: { env: "production", realmId: "x" } }))).toThrow(/numeric/);
 });
 
 describe("assertQboClientId", () => {
