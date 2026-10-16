@@ -216,7 +216,7 @@ describeDb("sign-off seats", () => {
 
     // A reimbursement whose reimbursee is unknown: the expense id and its line, with REIMBURSEE_UNKNOWN raised.
     async function unknownReimbursee(opts: { backfill?: boolean } = {}) {
-      bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3, 9, 10], board: [5, 6], households: [[9, 10]] }) });
+      bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3, 9, 10], board: [5, 6], households: [[9, 10], [1, 11]] }) });
       const id = await seedExpense({ state: "qb_pending", needsReimbursement: true, backfill: opts.backfill });
       const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
       await seedApproval(id, li, { ownerId: 100, status: "approved" });
@@ -267,6 +267,16 @@ describeDb("sign-off seats", () => {
       await expect(setReimbursee(ORG, id, 9, principal(10, { isFinance: true }))).rejects.toMatchObject({ statusCode: 403 });
       await expect(setReimbursee("org-other", id, 7, FINANCE)).rejects.toThrow(/not this org/);
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
+    });
+
+    it("the submitter and the submitter's household cannot name the reimbursee; an outside FINANCE holder can", async () => {
+      const { id } = await unknownReimbursee();
+      await expect(setReimbursee(ORG, id, 7, principal(1, { isFinance: true }))).rejects.toMatchObject({ statusCode: 403 });
+      await expect(setReimbursee(ORG, id, 7, principal(11, { isFinance: true }))).rejects.toMatchObject({ statusCode: 403 });
+      expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
+
+      await setReimbursee(ORG, id, 7, FINANCE);
+      expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBe(7);
     });
 
     it("FINANCE cannot name a reimbursee who is not a Person", async () => {
