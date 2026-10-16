@@ -368,13 +368,15 @@ How soon a copy of the app's data has to agree with its source depends on what a
 gap between them would put at risk. A gap that can only make a record late is
 allowed to close over time.
 
-- **Who is in the building agrees now.** Supervision and safety depend on it, so
-  a gap there is never left to close later.
+- **Who is in the building agrees as soon as a scan can reach the server.** The
+  only accepted lag is a kiosk that is offline, and it replays every scan at the
+  time it was read and never loses one.
 
 - **The finances are eventually consistent.** Income and spending take time to
-  reach QuickBooks in full. They wait on people, because finance reviews, matches
-  and signs off on each entry, and on the app, which works at its own pace, on its
-  own schedule and within its own safety limits.
+  reach QuickBooks in full. They wait on people, because each entry is reviewed,
+  matched and signed off by the people the expense rules require, and on the app,
+  which works at its own pace, on its own schedule and within its own safety
+  limits.
 
 - **The books are complete once everything is matched, not the moment money
   moves.** An entry still waiting to reach QuickBooks is late, not lost; waiting
