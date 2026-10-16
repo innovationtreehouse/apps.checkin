@@ -161,8 +161,8 @@ old code. That window is minutes, and any such deposit is finance's to correct.
 - **Q5.** Resolved: an archived Class raises an alarm in the app naming what
   points at it, and nothing that depends on it is booked until finance cleans it
   up (owner, 2026-10-16).
-- **Q6.** Rebooking sales already booked without a Class before this ships:
-  out of scope (proposed), or a one-off correction finance does in QuickBooks?
+- **Q6.** Resolved: anything already in QuickBooks is out of scope (owner,
+  2026-10-16).
 - **Q7.** Should the app accept an assignment while it cannot reach QuickBooks
   to check the Class, or refuse? Proposed: refuse; the payout check catches a
   bad Class anyway.
