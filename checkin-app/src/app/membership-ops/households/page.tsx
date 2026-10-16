@@ -35,6 +35,9 @@ const fmtDate = (s?: string | null) =>
 
 export default function AdminHouseholdsPage() {
   const { user: me, ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
+  // A coming-year grant always certifies a payment, which only the Board may do
+  // (the server 403s a sysadmin), so that button is Board-only.
+  const isBoard = me?.isBoardMember === true;
   const router = useRouter();
 
   const [households, setHouseholds] = useState<Household[]>([]);
@@ -361,7 +364,7 @@ export default function AdminHouseholdsPage() {
                         stale BG, staff, COI, out of season all hide); a settled cycle shows a
                         disabled "Granted for coming year" as positive confirmation (#1047); a
                         grantable renewal (PENDING_PAYMENT + cleared, fresh BG) shows it live. */}
-                    {renewalSeason && !isDenied && !isStaffHousehold && !ownHouseholdConflict && (household.renewalGrantable || settledForComingYear) && (
+                    {renewalSeason && isBoard && !isDenied && !isStaffHousehold && !ownHouseholdConflict && (household.renewalGrantable || settledForComingYear) && (
                       <Button
                         size="xs" fz={15}
                         variant="light"

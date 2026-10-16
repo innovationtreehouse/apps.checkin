@@ -1,5 +1,5 @@
 import type { TxClient } from "@/lib/db-client";
-import type { ProgramParticipant, ProgramParticipantStatus } from "@/generated/prisma/client";
+import type { Prisma, ProgramParticipant, ProgramParticipantStatus } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { adjustProgramInventory, type StockWriteOptions } from "@/lib/shopify";
 import { LIVE_PERSON } from "@/lib/person/filters";
@@ -88,11 +88,11 @@ export async function withdrawAndReleaseHold(
     programId: number,
     personId: number,
     program: { shopifyVariantId?: string | null },
-    onlyStatus?: ProgramParticipantStatus,
+    only?: ProgramParticipantStatus | Prisma.ProgramParticipantWhereInput,
     stockOptions: StockWriteOptions = {},
 ): Promise<{ enrollment: ProgramParticipant; released: boolean; shopifyOk: boolean }> {
     const enrollment = await prisma.programParticipant.delete({
-        where: { programId_personId: { programId, personId }, ...(onlyStatus && { status: onlyStatus }) },
+        where: { programId_personId: { programId, personId }, ...(typeof only === "string" ? { status: only } : only) },
     });
 
     const unsoldPlace = enrollment.status === "ACTIVE" && enrollment.seatTakenWithoutSaleAt !== null;

@@ -380,5 +380,29 @@ describe('Admin Households API Integration Tests', () => {
             });
             expect(activeMembership).toBeNull(); // Should be deactivated
         });
+
+        it('refuses a coming-year grant from a sysadmin who is not on the Board (403, nothing certified)', async () => {
+            const membership = await prisma.orgMembership.findUniqueOrThrow({ where: { householdId: testHousehold2Id } });
+            const renewal = await prisma.orgMembershipProcess.create({
+                data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() },
+            });
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+
+            const req = new Request('http://localhost:4000/api/membership-ops/households', {
+                method: 'POST',
+                body: JSON.stringify({ householdId: testHousehold2Id, comingYear: true, reason: 'Paid by check' })
+            });
+
+            const res = await POST(req as unknown as import("next/server").NextRequest);
+            expect(res.status).toBe(403);
+
+            const after = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: renewal.id } });
+            expect(after.status).toBe('PENDING_PAYMENT');
+            expect(after.paidAt).toBeNull();
+            expect(after.manualPaymentById).toBeNull();
+            expect(after.certificationNote).toBeNull();
+        });
     });
 });
