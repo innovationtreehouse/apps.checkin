@@ -53,10 +53,10 @@ type Leg = "inventory" | "expense" | "donation";
 
 type Form = "associate" | "propose" | null;
 
-const LATE_EDIT_FIX: Record<Leg, string> = {
+// The donation leg records only the receipt's total and date, which a line edit never changes.
+const LATE_EDIT_FIX: Partial<Record<Leg, string>> = {
   inventory: "Stock was loaded from the old lines. Adjust it by hand in Inventory.",
   expense: "The expense was sent with the old lines. Correct it by hand in Expenses.",
-  donation: "The donation was recorded from the old lines. Correct it by hand in Donations.",
 };
 
 /** Lines edited after a leg applied, grouped by the leg that still holds the old lines. */
@@ -65,7 +65,7 @@ function lateEdits(rows: AuditRow[] | null): Map<Leg, Set<number>> {
   for (const row of rows ?? []) {
     if (row.eventType !== "line_edited_late" || row.lineStatusId == null) continue;
     const legs = (row.details as { appliedLegs?: Leg[] } | null)?.appliedLegs ?? [];
-    for (const leg of legs) byLeg.set(leg, (byLeg.get(leg) ?? new Set<number>()).add(row.lineStatusId));
+    for (const leg of legs.filter((l) => LATE_EDIT_FIX[l])) byLeg.set(leg, (byLeg.get(leg) ?? new Set<number>()).add(row.lineStatusId));
   }
   return byLeg;
 }
@@ -102,12 +102,12 @@ export default function ReceiptPage() {
   if (detail.error) return <Alert color="red" title="Couldn't load the receipt">{detail.error}</Alert>;
   if (!detail.data) return <Text c="dimmed">Loading…</Text>;
   const { ReceivedReceipt: receipt, WorkflowReceiptView: parsed, ReceivedReceiptLineStatus: lines } = detail.data;
-  const anyLegApplied = !!(receipt.inventoryAppliedAt || receipt.expenseAppliedAt || receipt.donationAppliedAt);
+  const lineLegApplied = !!(receipt.inventoryAppliedAt || receipt.expenseAppliedAt);
   const editable = canManage && ["pending_review", "apply_failed"].includes(receipt.state);
   const late = lateEdits(audit.data);
   // An edit after a leg applied never reaches that leg, so the manager confirms the manual fix first.
   const editLine = (path: string, body?: unknown, message?: string) =>
-    (!anyLegApplied || window.confirm("Part of this receipt was already applied. This change won't reach it; you'll need to fix that part by hand. Save anyway?"))
+    (!lineLegApplied || window.confirm("Part of this receipt was already applied. This change won't reach it; you'll need to fix that part by hand. Save anyway?"))
       ? act(path, body, message)
       : Promise.resolve(false);
   const base = `/receipts/${receipt.id}`;

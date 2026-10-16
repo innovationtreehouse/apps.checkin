@@ -83,6 +83,12 @@ describeDb("per-leg applied state", () => {
     ]);
   });
 
+  it("a late edit after only the donation leg applied is still logged, naming that leg", async () => {
+    const { r, ls } = await failedAfterPartialApply("inventory", true);
+    await lineItemService.markNonInventory(r.id, ls.id);
+    expect(await lateRows(r.id)).toEqual([expect.objectContaining({ appliedLegs: ["donation"] })]);
+  });
+
   it("a retry after a late edit sends the new lines to the failed leg only, never re-sending the applied one", async () => {
     const { r, ls } = await failedAfterPartialApply("inventory");
     await lineItemService.associateGtin(r.id, ls.id, { gtin13: "0000000000024" });
