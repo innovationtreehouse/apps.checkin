@@ -340,6 +340,37 @@ reusability in the abstract, and this principle never asks for a plugin system.
 
 ---
 
+## QuickBooks is finance's book
+
+QuickBooks is where finance keeps the books, and the app works alongside finance
+there, never over it. These hold wherever the app touches QuickBooks: expenses,
+income and donations. Catching up late follows *urgency of consistency follows
+risk*, and no double booking follows *apply once*.
+
+- **The app only adds to QuickBooks.** It never pays, voids, edits or deletes
+  anything there. A correction is finance's to make, in QuickBooks.
+
+- **Finance's own bookings come first.** The app books only what is newer than
+  what finance has booked by hand. Anything older is matched to finance's entry,
+  never booked again.
+
+- **Nothing is booked twice, and the app never guesses a match.** When the app
+  cannot tell which entry something matches, finance decides.
+
+- **A later change in QuickBooks goes back to finance.** If an entry the app
+  booked or matched changes or disappears afterwards, finance is told. The app
+  never corrects it or matches it again on its own.
+
+- **Only production reaches the real company.** Development uses only the
+  QuickBooks test company, and staging has none. The production company is set
+  in infrastructure configuration, never in code or an in-app setting, and the
+  app never holds the QuickBooks client secret.
+
+The tell is the app reaching into QuickBooks to fix something. Whatever it
+would fix, finance fixes.
+
+---
+
 ## Capture a fact where it is known
 
 - **Record something at the point someone can verify it, not the point it is
