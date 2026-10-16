@@ -43,7 +43,7 @@ top.
 
 *Which* superuser is not settled by this principle, and today it varies — some
 surfaces admit the board and a sysadmin, others only the board. That inconsistency
-is a live question, not an application of this rule.
+is a live question (issue #1551), not an application of this rule.
 
 The two halves are load-bearing together. Scope without repair produces states
 nobody can fix; repair without scope is just an absence of access control.

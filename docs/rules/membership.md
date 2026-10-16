@@ -239,7 +239,7 @@ Procedure below is built on them.
 
 - The duplicate-attestation cleanup is the Board's alone. When a person merge
   finds the same review recorded under two identities, only a board member may
-  remove the duplicate; a sysadmin off the board may not.  [Decision]
+  remove the duplicate.  [Decision]
 
 - Every background-check decision and every payment certification records a
   written reason — wider than the policy, which requires documentation only for a
