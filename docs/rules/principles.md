@@ -350,9 +350,10 @@ risk*, and no double booking follows *apply once*.
 - **The app only adds to QuickBooks.** It never pays, voids, edits or deletes
   anything there. A correction is finance's to make, in QuickBooks.
 
-- **Finance's own bookings come first.** The app books only what is newer than
-  what finance has booked by hand. Anything older is matched to finance's entry,
-  never booked again.
+- **Finance's books come first.** Nothing is booked into a year QuickBooks has
+  closed. Until the app starts posting in an area, it only matches what finance
+  has booked; anything it cannot match goes to finance to book or skip. After
+  that it books on its own, matching finance's entries first.
 
 - **Nothing is booked twice, and the app never guesses a match.** When the app
   cannot tell which entry something matches, finance decides.
