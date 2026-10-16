@@ -90,8 +90,9 @@ flowchart TD
 4. **Web:** a keyholder confirms against the list of who is recorded IN; the
    close happens at that moment. Times are corrected afterwards on the visit
    edit screen.
-5. **The server never second-guesses a close:** no comparison against its own
-   records, no freshness window, no server-issued token.
+5. **The server never second-guesses a close:** no freshness window, no
+   server-issued token, and a comparison against its own records and clock only
+   as `docs/rules/attendance-checkin.md` states.
 6. **The web cannot stop a kiosk close.** No web action (checking the keyholder
    out, removing their visit, checking in another keyholder, changing roles)
    prevents or undoes a close confirmed at the kiosk, live or queued.

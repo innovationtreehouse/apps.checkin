@@ -121,6 +121,9 @@ Things the app takes as true because they are handled outside it.
   a member family, and cannot add members to its own household. The board and
   sysadmin path for adding someone to any household is unaffected.  [Decision]
 
+- Nobody is moved into or out of a denied household, by the board's household
+  move or by import. The move is refused and goes to the board.  [Decision — *Principle: identity is not authorisation*]
+
 ### Identity and age
 
 - Every household member has a date of birth or an over-25 declaration, never
@@ -149,9 +152,11 @@ Things the app takes as true because they are handled outside it.
 - Where someone signs in with Google, the address they sign in with is the
   address they are contacted at. There is no second one to diverge from it.  [Decision]
 
-- A signed-in member's email is their sign-in address and is not edited from the
-  household card, by them or by a lead. The board changes it; the locked field
-  says how to ask. A household member who has never signed in stays editable.  [Decision]
+- A member's email is not edited from the household card, by them or by a lead,
+  once they have signed in or hold anything the board granted: a role, a program
+  they lead or volunteer on, or a background check on file. The board changes it,
+  and the refusal says how to ask. A member with neither stays editable, and
+  resending the unchanged address is not a change.  [Decision]
 
 - A Google account must have a verified email before it is first linked to a
   person record; an account already linked keeps signing in unchanged.  [Decision]
@@ -187,9 +192,20 @@ Things the app takes as true because they are handled outside it.
   program's treasurer, or any other — for themself or for anyone in their own
   household. A sysadmin may grant roles in general; this binds them like anyone
   else. The board and sysadmin household-move paths refuse to move anyone out of
-  or into the actor's own household, which would get around it.  [Decision — *Principle: self-scope and repair*]
+  or into the actor's own household, which would get around it.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
-- A program's treasurer is set by the board alone.  [Decision]
+- A merge moves the merged-away record's roles under the same checks as a hand
+  grant. It is refused when either record is in the actor's household, or when
+  the merged-away record holds the board role and the actor is not on the board.
+  An import that updates an existing person is refused for the actor's own
+  household in the same way.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
+- Only a board member removes someone's board role, and the last board member
+  cannot be removed. A sysadmin may add a board member but not remove one.  [Decision]
+
+- Signing in never grants a role, with one exception: an address on the
+  deployment's bootstrap list becomes sysadmin only while the system has no
+  sysadmin, and never if that person's sysadmin role was once removed.  [Decision — *Principle: least privilege*]
 
 ### Who may see what
 
