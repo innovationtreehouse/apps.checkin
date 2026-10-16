@@ -39,6 +39,9 @@ const WRITES: Array<[string, string, unknown?]> = [
   ["POST", "/api/donations/disbursement-events/SEED-D1/qb-resolve", { action: "retry" }],
   ["POST", "/api/donations/qb-exclusions", { qbTxnId: "denied", reason: "denied" }],
 ];
+// The live QuickBooks read: QuickBooks is unbound in the flow env, so admitted callers get 503.
+const QB_CANDIDATES = "/api/donations/disbursement-events/SEED-D1/qb-candidates";
+const admittedStatus = (path: string) => (path === QB_CANDIDATES ? 503 : 200);
 // Id-bearing reads, filled in from the seeded rows.
 const idReads = (txId: number, fileId: number) => [
   `/api/donations/transactions/${txId}`,
@@ -113,7 +116,7 @@ describe("bulk donation — route auth", () => {
     for (const email of [FINANCE, BOARD]) {
       const s = await loginAs(email);
       for (const path of [...READS, ...idReads(txId, fileId)]) {
-        expect([email, path, (await api(s, path)).status]).toEqual([email, path, 200]);
+        expect([email, path, (await api(s, path)).status]).toEqual([email, path, admittedStatus(path)]);
       }
       const gift = await api<GiftRow>(s, `/api/donations/transactions/${txId}`);
       expect(typeof gift.json.donorFirstName).toBe("string");
@@ -132,7 +135,7 @@ describe("bulk donation — route auth", () => {
     const { txId } = await seededIds(finance);
     for (const path of [...READS, `/api/donations/transactions/${txId}`]) {
       const { status, json } = await api(finance, path);
-      expect(status).toBe(200);
+      expect([path, status]).toEqual([path, admittedStatus(path)]);
       expect([path, JSON.stringify(json).includes("fileBlob")]).toEqual([path, false]);
     }
   });
@@ -237,11 +240,12 @@ describe("bulk donation — finance journey", () => {
     expect(dropped.json).toMatchObject({ id: again.json.id, blobDeleted: true });
     expect((await api(f, `/api/donations/uploaded-files/${again.json.id}/blob`)).status).toBe(404);
 
-    // The QuickBooks queue: exclusions persist once; resolving waits for the drain.
+    // The QuickBooks queue: exclusions persist once; candidates need QuickBooks; only a held disbursement resolves.
     const exclusion = { qbTxnId: `qb-${stamp}`, reason: "hand-booked twice" };
     expect((await send(f, "POST", "/api/donations/qb-exclusions", exclusion)).status).toBe(200);
     expect((await send(f, "POST", "/api/donations/qb-exclusions", exclusion)).status).toBe(409);
-    expect((await api<unknown[]>(f, `/api/donations/disbursement-events/${disbursement}/qb-candidates`)).json).toEqual([]);
-    expect((await send(f, "POST", `/api/donations/disbursement-events/${disbursement}/qb-resolve`, { action: "retry" })).status).toBe(503);
+    const candidates = await api(f, `/api/donations/disbursement-events/${disbursement}/qb-candidates`);
+    expect([candidates.status, candidates.json]).toEqual([503, { error: "QuickBooks is not connected" }]);
+    expect((await send(f, "POST", `/api/donations/disbursement-events/${disbursement}/qb-resolve`, { action: "retry" })).status).toBe(409);
   });
 });

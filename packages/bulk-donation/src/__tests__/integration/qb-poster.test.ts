@@ -557,6 +557,17 @@ describeDb("donation QuickBooks finance queue", () => {
     expect(JSON.parse(manual.payload ?? "{}")).toMatchObject({ manual: true, reason: "Benevity short-paid by $0.50" });
   });
 
+  it("refuses a deposit created for another record, and retry before the line", async () => {
+    const e = await held("TEST-A", "BEFORE_LINE");
+    const other = qbKey("donation", `${orgId}:TEST-Z`);
+    qbo.deposits.push({ ...handDeposit("701", "2026-09-10", 1450), PrivateNote: `Benevity [checkin:${other}]` });
+
+    await expect(resolve("TEST-A", { action: "match", qbTxnId: "701" })).rejects.toMatchObject({ status: 409 });
+    await expect(resolve("TEST-A", { action: "retry" })).rejects.toMatchObject({ status: 409 });
+    expect(await stateOf(e.id)).toEqual({ qbMatchState: "BEFORE_LINE", qbTxnId: null });
+    expect(await eventsOf("TEST-A", QB_MATCHED_EVENT)).toHaveLength(0);
+  });
+
   it("refuses to match or retry a disbursement that is not held", async () => {
     await held("TEST-A", "MATCHED");
     qbo.deposits.push(handDeposit("501", "2026-09-12", 1450));

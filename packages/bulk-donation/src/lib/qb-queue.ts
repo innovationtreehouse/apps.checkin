@@ -85,8 +85,8 @@ export async function qbCandidates(orgId: string, disbursementId: string): Promi
 
 /**
  * Tie a held disbursement to a Deposit finance picked. A Deposit carrying this disbursement's
- * key is the app's own (CREATED, no match event); any other is a hand entry (MATCHED, which
- * moves the takeover line). A Deposit whose amount differs from the net needs a reason.
+ * key is the app's own (CREATED, no match event); one carrying another key is refused; any other
+ * is a hand entry (MATCHED, which moves the takeover line). A differing amount needs a reason.
  */
 async function pick(orgId: string, disbursementId: string, qbTxnId: string, reason: string | undefined, actor: AuditContext) {
   const why = reason?.trim() || null;
@@ -98,6 +98,7 @@ async function pick(orgId: string, disbursementId: string, qbTxnId: string, reas
     throw new ServiceError(400, "A reason is required when the deposit amount differs from the disbursement");
   }
   const own = deposit.appKey === donationKey(e);
+  if (deposit.appKey !== undefined && !own) throw new ServiceError(409, "Deposit was created for another record; void or exclude it in QuickBooks");
   const to = own ? QB_MATCH_STATE.CREATED : QB_MATCH_STATE.MATCHED;
 
   try {
