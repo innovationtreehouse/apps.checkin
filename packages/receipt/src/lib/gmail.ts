@@ -28,13 +28,14 @@ export function createGmailReader(mailboxAddress: string, accessToken: () => Pro
       const ids: string[] = [];
       let pageToken: string | undefined;
       do {
-        const q = new URLSearchParams({ q: `newer_than:${days}d`, maxResults: "500" });
+        const q = new URLSearchParams({ q: `newer_than:${days}d -in:sent -in:drafts`, maxResults: "500" });
         if (pageToken) q.set("pageToken", pageToken);
         const page = await get(`${base}?${q}`, ListSchema);
         ids.push(...(page.messages ?? []).map((m) => m.id));
         pageToken = page.nextPageToken;
       } while (pageToken);
-      return ids;
+      // Gmail lists newest first.
+      return ids.reverse();
     },
     getMessage: (id) => get(`${base}/${encodeURIComponent(id)}?format=full`, MailMessageSchema),
     async getAttachment(messageId, attachmentId) {

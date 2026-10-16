@@ -175,8 +175,11 @@ whose file is the body**:
 
 The 3-day
 window plus the dedupe ledger makes a missed run harmless with no stored cursor.
-`ponytail:` ceiling is a cron outage longer than 3 days; widen the window if one
-happens.
+Each run reads oldest first and its cap (§4) counts only receipts, the OCR spend;
+held items are not capped, so untrusted mail can never push a member's receipt
+out of the window. Mail the mailbox sent itself is not read.
+`ponytail:` ceiling is a cron outage longer than 3 days, or more than 30 mailed
+receipts in one window; widen the window or the cap if either happens.
 
 **Message to receipt.**
 

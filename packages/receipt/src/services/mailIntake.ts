@@ -8,9 +8,10 @@ import { getOrg, mailbox, ports } from "../runtime";
 import { intakeMailedReceipt } from "./receiptService";
 import { ServiceError } from "./serviceError";
 
-// ponytail: no stored cursor; the ledger makes re-reads free. Ceiling is a cron outage longer than the window.
+// ponytail: no stored cursor; the ledger makes re-reads free. Ceiling is a cron outage longer than the
+// window, or more than MAIL_WINDOW_DAYS × MAIL_CAP mailed receipts inside one window; widen either then.
 export const MAIL_WINDOW_DAYS = 3;
-/** New mail items per run; the rest wait for the next run, inside the window. */
+/** New receipts (OCR calls) per run, oldest mail first; the rest wait for the next run, inside the window. Held items are not capped. */
 export const MAIL_CAP = 10;
 
 export type MailIntakeResult =
@@ -90,7 +91,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
   if (!reader) return { status: "unbound" };
   const orgId = (await getOrg()).id;
   const counts = { messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0 };
-  const capped = () => counts.receipts + counts.held >= MAIL_CAP;
+  const capped = () => counts.receipts >= MAIL_CAP;
 
   async function readMessage(msg: MailMessage, reader: MailboxReader): Promise<void> {
     const headers = msg.payload.headers;

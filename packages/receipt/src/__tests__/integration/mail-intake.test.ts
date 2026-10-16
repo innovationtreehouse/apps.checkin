@@ -120,10 +120,21 @@ describeDb("mail intake", () => {
     expect(await readMailbox()).toMatchObject({ receipts: 0, held: 0, rejected: 1 });
   });
 
-  it("stops at the per-run cap and takes the rest next run", async () => {
+  it("stops at the per-run cap, oldest mail first, and takes the rest next run", async () => {
     for (let i = 0; i <= MAIL_CAP; i++) send(`m${i}`);
     expect(await readMailbox()).toMatchObject({ receipts: MAIL_CAP });
+    const read = (await db.receiptMailItem.findMany()).map((m) => m.gmailMessageId);
+    expect(read).toContain("m0");
+    expect(read).not.toContain(`m${MAIL_CAP}`);
     expect(await readMailbox()).toMatchObject({ receipts: 1 });
+  });
+
+  it("holds any number of untrusted messages without starving a member's receipt", async () => {
+    for (let i = 0; i < MAIL_CAP; i++) send(`spam${i}`, { from: [`stranger${i}@example.org`] });
+    send("member");
+    for (let i = 0; i < MAIL_CAP; i++) send(`later${i}`, { from: [`other${i}@example.org`] });
+    expect(await readMailbox()).toMatchObject({ receipts: 1, held: 2 * MAIL_CAP });
+    expect((await db.receipt.findFirstOrThrow()).uploadedByUserId).toBe(ALICE.id);
   });
 });
 
