@@ -77,6 +77,17 @@ to a budget bucket, because its expense side must carry a Class; a gift of goods
 with no instructions from the donor goes to the bucket finance chooses, which
 may be a part of the facility such as Facility or Shop. [Decision — owner]
 
+`docs/rules/revenue.md`, Donations and Ownership, which name finance and the
+board (plus operations and inventory managers for gifts without a receipt) as
+the only readers of gifts:
+
+**Addition:** a program bucket's approvers also see the in-kind gifts assigned
+to their program, without the donor, and do not approve them. [Decision — owner]
+
+`docs/rules/revenue.md`, Ownership: ops record a gift without a receipt;
+**addition:** finance sets its value, and ops' value is only a suggestion.
+[Decision — owner]
+
 It also adds rules (see the end).
 
 ---
