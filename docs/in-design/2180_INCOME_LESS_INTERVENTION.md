@@ -146,8 +146,8 @@ old code. That window is minutes, and any such deposit is finance's to correct.
   is designed separately.
 - **Q2.** Resolved: hold the payout. Late books are accepted to cut finance's
   work, as receipts already do (owner, 2026-10-16).
-- **Q3.** Should a held payout ever book itself without a Class after some time
-  (say 30 days), or wait for finance indefinitely? Proposed: wait.
+- **Q3.** Resolved: a held payout never books itself without a Class; it waits
+  until finance fixes it (owner, 2026-10-16).
 - **Q4.** Resolved: items store the QuickBooks Class id directly (owner,
   2026-10-16).
 - **Q5.** When a Class is made inactive in QuickBooks, should its items move to
