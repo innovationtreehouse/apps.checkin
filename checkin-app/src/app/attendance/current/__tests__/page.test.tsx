@@ -45,6 +45,12 @@ function columnFor(label: string) {
   return screen.getByText(label).closest("div")!.parentElement!.parentElement!;
 }
 
+// A message as the kiosk wrapper sends it: from the parent window, on the page's own origin.
+// At the top level of jsdom, window.parent is window itself.
+function postFromWrapper(data: unknown) {
+  fireEvent(window, new MessageEvent("message", { data, origin: window.location.origin, source: window.parent }));
+}
+
 // The admin (id 1, sysadmin + keyholder) is not checked in and has a household,
 // so both the self check-in button and the household check-in row render.
 function setAdminSession() {
@@ -402,7 +408,7 @@ describe("attendance/current page", () => {
       renderWithProviders(<KioskDisplay />);
       expect(await screen.findByText("Failed to load attendance")).toBeInTheDocument();
 
-      window.postMessage("refresh-attendance", "*");
+      postFromWrapper("refresh-attendance");
 
       expect(await screen.findByText("Kiosk resting — zzz. Badge in to wake it.")).toBeInTheDocument();
       expect(screen.queryByText("Failed to load attendance")).not.toBeInTheDocument();
@@ -414,7 +420,7 @@ describe("attendance/current page", () => {
       renderWithProviders(<KioskDisplay />);
       expect(await screen.findByText("People Present: 3")).toBeInTheDocument();
 
-      window.postMessage("refresh-attendance", "*");
+      postFromWrapper("refresh-attendance");
       await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
 
       expect(screen.getByText("People Present: 3")).toBeInTheDocument();
@@ -488,25 +494,43 @@ describe("attendance/current page", () => {
     expect(screen.queryByRole("button", { name: "Check Me In" })).not.toBeInTheDocument();
   });
 
-  it("applies a pushed attendance snapshot from a postMessage event", async () => {
+  const emptySnapshot = {
+    type: "refresh-attendance",
+    attendance: [],
+    counts: { keyholders: 0, volunteers: 0, students: 0, total: 0 },
+    safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
+    signedRequest: true,
+  };
+
+  it("applies a pushed attendance snapshot from the framing wrapper, without entering kiosk mode", async () => {
     setAdminSession();
     mockRoutes();
     renderWithProviders(<KioskDisplay />);
     await screen.findByText("People Present: 3");
 
-    fireEvent(window, new MessageEvent("message", {
-      data: {
-        type: "refresh-attendance",
-        attendance: [],
-        counts: { keyholders: 0, volunteers: 0, students: 0, total: 0 },
-        safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false },
-        building: { reachable: true, lastSeenAt: null },
-        signedRequest: true,
-      },
-    }));
+    postFromWrapper(emptySnapshot);
 
-    expect(await screen.findByText("The facility is currently empty.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Check Me In" })).not.toBeInTheDocument();
+    // Off the kiosk a pushed roster carries no building link, so it reads as unconfirmed.
+    expect(await screen.findByText("No open visits recorded.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check Me In" })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["another origin", { origin: "https://evil.example", source: window }],
+    ["a window other than the parent", { origin: window.location.origin, source: null }],
+  ])("ignores a pushed snapshot from %s", async (_label, from) => {
+    setAdminSession();
+    const fetchMock = mockRoutes();
+    renderWithProviders(<KioskDisplay />);
+    await screen.findByText("People Present: 3");
+    const callsBefore = fetchMock.mock.calls.length;
+
+    fireEvent(window, new MessageEvent("message", { data: emptySnapshot, ...from }));
+    fireEvent(window, new MessageEvent("message", { data: "refresh-attendance", ...from }));
+
+    expect(screen.getByText("People Present: 3")).toBeInTheDocument();
+    expect(screen.queryByText("The facility is currently empty.")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.length).toBe(callsBefore);
   });
 
   it("re-fetches attendance on a string postMessage refresh signal", async () => {
@@ -516,7 +540,7 @@ describe("attendance/current page", () => {
     await screen.findByText("People Present: 3");
     const callsBefore = fetchMock.mock.calls.filter(([u]) => u === "/api/attendance").length;
 
-    fireEvent(window, new MessageEvent("message", { data: "refresh-attendance" }));
+    postFromWrapper("refresh-attendance");
 
     await waitFor(() =>
       expect(fetchMock.mock.calls.filter(([u]) => u === "/api/attendance").length).toBeGreaterThan(callsBefore),
@@ -543,7 +567,7 @@ describe("attendance/current page", () => {
     renderWithProviders(<KioskDisplay />);
     await screen.findByText("Karen");
 
-    fireEvent(window, new MessageEvent("message", { data: "refresh-attendance" }));
+    postFromWrapper("refresh-attendance");
 
     expect(await screen.findByText(/^Not up to date — as of /)).toBeInTheDocument();
     expect(screen.getByText("Karen")).toBeInTheDocument();
@@ -585,7 +609,7 @@ describe("attendance/current page", () => {
     renderWithProviders(<KioskDisplay />);
     await screen.findByText("Karen Keyholder");
 
-    fireEvent(window, new MessageEvent("message", { data: "refresh-attendance" }));
+    postFromWrapper("refresh-attendance");
 
     expect(await screen.findByText("Failed to load attendance")).toBeInTheDocument();
     expect(screen.queryByText("Karen Keyholder")).not.toBeInTheDocument();

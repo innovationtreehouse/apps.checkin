@@ -196,11 +196,12 @@ function KioskDisplayInner() {
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      // Only the kiosk wrapper that frames this page, served from the same Pi proxy origin, may push a roster.
+      if (event.source !== window.parent || event.origin !== window.location.origin) return;
       if (typeof event.data === "object" && event.data?.type === "refresh-attendance" && event.data.attendance) {
         setData({ access: "full", attendance: event.data.attendance, counts: event.data.counts, safety: event.data.safety });
         setAsOf(new Date().toISOString());
         setLoading(false);
-        if (event.data.signedRequest) setIsKioskMode(true);
       } else if (event.data === "refresh-attendance") {
         fetchAttendance();
       }
