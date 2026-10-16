@@ -185,8 +185,7 @@ person deciding:
 
 - the donor's surname matches someone in the accepter's household;
 - the donor is the uploader or recorder;
-- the value is over a threshold finance sets, starting at the expense library's
-  $500 awareness level;
+- the value is over a threshold (open question Q10);
 - the donor was replaced after the gift was recorded.
 
 None of these blocks a decision; the decider reads them and decides (*a financial
@@ -390,8 +389,8 @@ In this order, each its own PR off `main`:
 - **Q8. Which program a gift went to.** Resolved by Q7: the bucket's program.
 - **Q9. Goods of a refused or returned gift.** Resolved: handled outside the
   app; no automatic inventory removal, stock adjusted by hand if ever needed.
-- **Q10. The value warning's threshold.** Resolved: finance-set, starting at the
-  expense library's $500 awareness level.
+- **Q10. The value warning's threshold.** Open. Default: a finance-set amount,
+  starting at the expense library's $500 awareness level.
 - **Q11. Donor details after a refusal or return.** Resolved: cleared once
   finance closes the gift; the gift record stays.
 
