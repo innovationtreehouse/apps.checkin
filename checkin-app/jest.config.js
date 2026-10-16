@@ -106,6 +106,10 @@ const customJestConfig = {
         '^@inventory/income/(.*)$': '<rootDir>/../packages/income/src/$1',
         '^@inventory/income$': '<rootDir>/../packages/income/src/index.ts',
         '^@inventory/quickbooks$': '<rootDir>/../packages/quickbooks/src/index.ts',
+        '^@inventory/telemetry$': '<rootDir>/../packages/telemetry/src/index.ts',
+        // Telemetry's NodeNext sibling imports (`./x.js`) point at `.ts` files. The mapper sees
+        // only the specifier, so it names telemetry's modules; a new one must be added here.
+        '^\\./(logger|metrics|redact)\\.js$': '<rootDir>/../packages/telemetry/src/$1.ts',
     },
     // The worktree ignore lives at the repo root (.claude/worktrees/), one level
     // up now that rootDir is checkin-app/. testPathIgnorePatterns matches the

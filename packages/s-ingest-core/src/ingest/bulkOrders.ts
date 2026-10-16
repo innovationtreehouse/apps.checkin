@@ -13,7 +13,7 @@
 import type { PrismaClient } from "../db/client.js";
 import { EventSource, ObjectType } from "../generated/prisma/client.js";
 import { legacyIdFromGid } from "../dates.js";
-import { logger } from "../logger.js";
+import { logger } from "@inventory/telemetry";
 import type { OrderNode } from "../shopify/schemas.js";
 import { ingestNode } from "./ingestNode.js";
 

@@ -36,11 +36,11 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "html", "lcov"],
       // Measure the hand-written source only. The generated Prisma client, the barrel
-      // re-export, the type-only logger shim, and the connection singleton (pure plumbing;
+      // re-export, and the connection singleton (pure plumbing;
       // its env-read wiring is covered by test/unit/client.construction.test.ts) carry no
       // logic worth a threshold.
       include: ["src/**/*.ts"],
-      exclude: ["src/generated/**", "src/index.ts", "src/logger.ts", "src/db/client.ts"],
+      exclude: ["src/generated/**", "src/index.ts", "src/db/client.ts"],
       // Thresholds are only meaningful when the SHOPIFY_READ_DATABASE_URL-gated integration suites
       // actually run — otherwise a no-DB run would fail purely from skipped tests, not
       // from real regressions. CI sets SHOPIFY_READ_DATABASE_URL, so the floor is enforced there.

@@ -1,9 +1,8 @@
 /**
- * Strips credentials and personal data from sync error text before it is stored
- * on sync_run or sent in the heartbeat (and from there into alerts): URLs
- * carrying a query string, email addresses, auth headers and key=value secrets,
- * provider token prefixes, and long opaque strings that look like keys. Keep in
- * step with checkin-app/src/lib/redact.ts.
+ * Strips credentials and personal data from error text before it leaves a
+ * service (log lines, stored run errors, alert emails): URLs carrying a query
+ * string, email addresses, auth headers and key=value secrets, provider token
+ * prefixes, and long opaque strings that look like keys.
  */
 const PATTERNS: [RegExp, string][] = [
   [/\bhttps?:\/\/[^\s"'<>]*\?[^\s"'<>]*/gi, "[url]"],
