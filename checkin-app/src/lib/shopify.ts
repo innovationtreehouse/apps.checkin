@@ -245,6 +245,31 @@ export async function reportShopifyFailure(
     }
 }
 
+/** Stable Shopify handle for a program's product, so a retried sync finds what an earlier run created. */
+export function programProductHandle(program: { id: number; name: string }, kind: "public" | "claimant"): string {
+    const slug = program.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+    return `checkin-program-${program.id}-${slug}${kind === "claimant" ? "-reserved-seat" : ""}`;
+}
+
+/** The product already carrying `handle`, with its first variant; null when there is none. Throws on a failed lookup. */
+async function findProductByHandle(
+    storeDomain: string,
+    accessToken: string,
+    handle: string,
+): Promise<{ productId: string; variantId: string } | null> {
+    const res = await shopifyFetch(
+        `https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json?handle=${encodeURIComponent(handle)}&fields=id,variants`,
+        { method: 'GET', headers: { 'X-Shopify-Access-Token': accessToken } },
+        "Shopify find product by handle",
+    );
+    if (!res.ok) throw new Error(`Shopify product lookup responded with status: ${res.status}`);
+    const product = (await res.json()).products?.[0];
+    if (!product) return null;
+    const variantId = product.variants?.[0]?.id;
+    if (!product.id || !variantId) throw new Error(`Shopify product ${product.id ?? "?"} for handle ${handle} has no variant`);
+    return { productId: product.id.toString(), variantId: variantId.toString() };
+}
+
 /**
  * Single-pool model (product decision 2026-07-06): mints ONE Shopify variant
  * per program, priced at the base/non-member rate — inventory IS the whole
@@ -257,11 +282,14 @@ export async function reportShopifyFailure(
  * out); the caller lifts it to capacity with {@link adjustProgramInventory}
  * once the program row exists, so the initial stock takes the same locked path
  * as every other stock change.
+ *
+ * With a `handle`, a product already carrying it is returned instead of creating another.
  */
 export async function createShopifySingleVariantProgram(
     name: string,
     basePriceCents: number | null,
     maxParticipants: number | null = null,
+    handle?: string,
 ): Promise<{ shopifyProductId: string; shopifyVariantId: string } | null> {
     if (!basePriceCents || basePriceCents <= 0) return null; // free program: no Shopify object needed
 
@@ -303,6 +331,9 @@ export async function createShopifySingleVariantProgram(
         // 'Default Title' already exists"). Net effect of the old two-call
         // shape: no variant id ever stored, and the orphaned product kept its
         // physical $0 default variant so checkout demanded a shipping address.
+        const existing = handle ? await findProductByHandle(storeDomain, accessToken, handle) : null;
+        if (existing) return { shopifyProductId: existing.productId, shopifyVariantId: existing.variantId };
+
         const productRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json`, {
             method: 'POST',
             headers: {
@@ -312,6 +343,7 @@ export async function createShopifySingleVariantProgram(
             body: JSON.stringify({
                 product: {
                     title: `${name} Program Enrollment`,
+                    ...(handle && { handle }),
                     status: 'active',
                     product_type: "Educational Services",
                     variants: [{
@@ -375,10 +407,13 @@ export async function createShopifySingleVariantProgram(
  * DRAFT; GraphQL `productUpdate` then sets UNLISTED, a status the REST Product
  * resource does not have. If that second call fails the draft is reported as an
  * orphan and nothing is returned, so an untracked product is never left listed.
+ * With a `handle`, a product already carrying it is unlisted and returned instead
+ * of creating another.
  */
 export async function createClaimantProduct(
     name: string,
     basePriceCents: number | null,
+    handle?: string,
 ): Promise<{ claimantShopifyProductId: string; claimantShopifyVariantId: string } | null> {
     if (!basePriceCents || basePriceCents <= 0) return null;
 
@@ -401,30 +436,36 @@ export async function createClaimantProduct(
 
     let productId: string | null = null;
     try {
-        const productRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-                product: {
-                    title: `${name} Program Enrollment (reserved seat)`,
-                    status: 'draft',
-                    published: true,
-                    product_type: "Educational Services",
-                    variants: [{
-                        price: (basePriceCents / 100).toFixed(2),
-                        requires_shipping: false,
-                        inventory_management: null,
-                        inventory_policy: 'continue',
-                    }],
-                },
-            }),
-        }, "Shopify create claimant product");
-        if (!productRes.ok) {
-            throw new Error(`Shopify API responded with status: ${productRes.status} ${await productRes.text()}`);
+        const existing = handle ? await findProductByHandle(storeDomain, accessToken, handle) : null;
+        let variantId = existing?.variantId;
+        productId = existing?.productId ?? null;
+        if (!existing) {
+            const productRes = await shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    product: {
+                        title: `${name} Program Enrollment (reserved seat)`,
+                        ...(handle && { handle }),
+                        status: 'draft',
+                        published: true,
+                        product_type: "Educational Services",
+                        variants: [{
+                            price: (basePriceCents / 100).toFixed(2),
+                            requires_shipping: false,
+                            inventory_management: null,
+                            inventory_policy: 'continue',
+                        }],
+                    },
+                }),
+            }, "Shopify create claimant product");
+            if (!productRes.ok) {
+                throw new Error(`Shopify API responded with status: ${productRes.status} ${await productRes.text()}`);
+            }
+            const product = (await productRes.json()).product;
+            productId = product?.id?.toString() ?? null;
+            variantId = product?.variants?.[0]?.id?.toString();
         }
-        const product = (await productRes.json()).product;
-        productId = product?.id?.toString() ?? null;
-        const variantId = product?.variants?.[0]?.id?.toString();
         if (!productId || !variantId) throw new Error("Shopify claimant product response is missing the product or variant id");
 
         const mutation = `
