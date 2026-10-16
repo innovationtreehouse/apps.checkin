@@ -14,6 +14,8 @@ const ITEM_FIELDS = { id: true, receivedAt: true, senderAddress: true, status: t
 const AssignSchema = z.object({ email: z.string().trim().min(1).max(320) }).strict();
 const DiscardSchema = z.object({ reason: z.string().trim().min(1, "A reason is required").max(500) }).strict();
 
+export const CANNOT_ASSIGN = "This receipt can't be assigned to that email";
+
 type Tx = Prisma.TransactionClient | typeof db;
 
 /** One audit row about a mail item; it belongs to no receipt, so the item id rides in valueBefore. */
@@ -78,7 +80,8 @@ export const mailQueueService = {
     const { email } = parse(AssignSchema, rawInput);
     const item = await heldItem(id);
     const assignee = await ports().people.submitterByEmail(email.toLowerCase());
-    if (!assignee) throw new ServiceError(404, "No one who may submit receipts signs in with that email");
+    // One answer for every unusable email (no one, several, unverified, not a submitter): no existence oracle.
+    if (!assignee) throw new ServiceError(404, CANNOT_ASSIGN);
     const conflicted = [actor.id, ...(await ports().households.householdOf([actor.id]))];
     if (conflicted.includes(assignee.id)) {
       await auditItem(db, actor, id, "mail_assign_refused");

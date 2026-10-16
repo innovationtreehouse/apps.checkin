@@ -1,6 +1,6 @@
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
-import { mailQueueService } from "../../services/mailQueueService";
+import { CANNOT_ASSIGN, mailQueueService } from "../../services/mailQueueService";
 import { describeDb } from "../helpers/db";
 import { actAs, ALICE, BOB, clearAll, configure, FINANCE, okOcr, stateOf, TEST_ORG_ID } from "../helpers/setup";
 
@@ -82,9 +82,12 @@ describeDb("finance mail queue", () => {
     expect(await db.receiptAuditLog.count({ where: { action: "mail_assign_refused", valueBefore: String(id) } })).toBe(1);
   });
 
-  it("refuses an email that names no submitter", async () => {
+  it("answers one status and message for every email it cannot assign to", async () => {
     const id = await holdItem();
-    await expect(mailQueueService.assign(id, { email: "nobody@example.org" })).rejects.toMatchObject({ statusCode: 404 });
+    // The host port answers null alike for no one, several people, unverified sign-in and a failed submitter gate.
+    for (const email of ["nobody@example.org", "unverified@example.org"]) {
+      await expect(mailQueueService.assign(id, { email })).rejects.toMatchObject({ statusCode: 404, message: CANNOT_ASSIGN });
+    }
     await expect(mailQueueService.assign(id, {})).rejects.toMatchObject({ statusCode: 400 });
     expect(await db.receipt.count()).toBe(0);
   });
