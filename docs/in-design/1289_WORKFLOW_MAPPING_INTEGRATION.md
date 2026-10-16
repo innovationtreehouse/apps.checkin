@@ -127,7 +127,11 @@ A receipt may proceed when no line is `unrecognized`.
 The source lets a line change after its receipt was pushed, rewriting the record
 of what was applied with no re-push, against `BYDESIGN.md`'s forward-only model.
 Edits stay allowed on `pending_review` and `apply_failed`. Owner decision, for
-now; a correction path for pushed receipts is future work (§12).
+now; a correction path for pushed receipts is future work (§12). On an
+`apply_failed` receipt with a leg already applied, an edit is written as a
+`line_edited_late` audit row (applied legs, line before and after) and the
+receipt screen warns that the applied leg needs a manual fix; a retry never
+re-sends an applied leg (owner ruling, 2026-10-15).
 
 ## 4. Database and renames
 

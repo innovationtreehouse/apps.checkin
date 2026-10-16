@@ -59,7 +59,7 @@ model ReceivedReceipt {
   receiptJson     String   @map("receipt_json")
   /// @sensitivity:internal
   validationNotes String?  @map("validation_notes")
-  // When each downstream leg accepted the push; once any is set the lines are frozen.
+  // When each downstream leg accepted the push; a retry never re-sends a stamped leg.
   /// @sensitivity:public
   inventoryAppliedAt DateTime? @map("inventory_applied_at")
   /// @sensitivity:public
