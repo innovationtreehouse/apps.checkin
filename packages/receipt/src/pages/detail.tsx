@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Alert, Badge, Button, Group, Image, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
+import { Alert, Badge, Button, Group, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
+import ReceiptFile from "../components/ReceiptFile";
 import { BASE, dollars, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
 
 interface Line {
@@ -35,22 +36,6 @@ interface AuditRow {
 
 const EDITABLE = new Set(["validation_failed", "submitter_review"]);
 const TERMINAL = new Set(["receipt_finalized", "discarded", "rejected"]);
-
-/**
- * The file, as the route serves it: an image or PDF displays from the file route; text is
- * fetched and shown as escaped text, never rendered as a page.
- */
-function ReceiptFile({ id, mimeType }: { id: string; mimeType: string }) {
-  const src = `${BASE}/${id}/file`;
-  const [text, setText] = useState<string | null>(null);
-  useEffect(() => {
-    if (mimeType !== "text/plain") return;
-    void fetch(src).then((r) => (r.ok ? r.text() : `Couldn't load the file (HTTP ${r.status})`)).then(setText);
-  }, [src, mimeType]);
-  if (mimeType === "application/pdf") return <iframe src={src} title="Receipt" style={{ width: "100%", height: 600, border: 0 }} />;
-  if (mimeType === "text/plain") return <pre style={{ whiteSpace: "pre-wrap", maxHeight: 600, overflow: "auto" }}>{text ?? "Loading…"}</pre>;
-  return <Image src={src} alt="Receipt" mah={600} fit="contain" />;
-}
 
 /** /receipts/[id] — one receipt: its file, details and lines, and the actions its state allows the caller. */
 export default function ReceiptDetailPage() {
@@ -93,7 +78,7 @@ export default function ReceiptDetailPage() {
 
       <Group align="flex-start" grow wrap="wrap">
         <Paper withBorder p="sm" miw={280}>
-          <ReceiptFile id={r.id} mimeType={r.mimeType} />
+          <ReceiptFile src={`${BASE}/${r.id}/file`} mimeType={r.mimeType} />
         </Paper>
         <Stack miw={280}>
           <Text>Date: {r.receiptDate ?? "—"}</Text>

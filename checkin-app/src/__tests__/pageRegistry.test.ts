@@ -135,3 +135,24 @@ describe('Inventory directory agrees with the catalog-viewer gate', () => {
     for (const entry of inventoryEntries) expect(entry.visible(youthVolunteer, true, counts)).toBe(true);
   });
 });
+
+// The mail queue shows sender addresses, which FINANCE alone reads; BOARD reads the rest of the review side.
+describe('Receipt mail queue is listed to FINANCE only', () => {
+  const entryFor = (href: string) => PAGES.find((p) => p.href === href)!;
+  const counts = {
+    member: { household: [], programs: [], programsAwaitingFinance: 0 },
+    building: 0,
+    buildingHousehold: 0,
+    buildingReachable: true,
+    activePrograms: 0,
+    releasedLibraries: [...LIBRARY_KEYS],
+  };
+
+  it('lists /receipts/mail to finance and not to board or sysadmin', () => {
+    const entry = entryFor('/receipts/mail');
+    expect(entry.visible({ isFinance: true }, true, counts)).toBe(true);
+    expect(entry.visible({ isBoardMember: true }, true, counts)).toBe(false);
+    expect(entry.visible({ isSysadmin: true }, true, counts)).toBe(false);
+    expect(entryFor('/receipts/review').visible({ isBoardMember: true }, true, counts)).toBe(true);
+  });
+});

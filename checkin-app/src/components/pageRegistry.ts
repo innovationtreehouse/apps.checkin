@@ -61,8 +61,10 @@ const CATALOG_VIEWER: Visible = (u, signedIn) => signedIn && canSeeCatalog(u);
 const FINANCE_OR_BOARD: Visible = (u) => !!u?.isFinance || !!u?.isBoardMember;
 
 // Receipts: an adult member or a Treehouse Volunteer submits (canSubmitReceipts);
-// the review side is FINANCE or BOARD (the routes' finance-or-board gate).
+// the review side is FINANCE or BOARD (the routes' finance-or-board gate); the mail
+// queue is FINANCE alone (the sender address is read by FINANCE only).
 const RECEIPT_SUBMITTER: Visible = (u, signedIn) => signedIn && canSubmitReceipts(u);
+const RECEIPT_FINANCE: Visible = (u) => !!u?.isFinance;
 
 const INVENTORY_MANAGER: Visible = (u, signedIn) => signedIn && !!u?.isInventoryManager;
 // A library's pages stay listed for board members only until the board releases it.
@@ -160,6 +162,7 @@ export const PAGES: PageEntry[] = [
   { href: '/receipts', label: 'My Receipts', section: 'Receipts', keywords: 'receipt reimbursement upload purchase', visible: released('receipt', RECEIPT_SUBMITTER) },
   { href: '/receipts/upload', label: 'Upload Receipt', section: 'Receipts', keywords: 'receipt photo pdf purchase donation', visible: released('receipt', RECEIPT_SUBMITTER) },
   { href: '/receipts/review', label: 'Receipts Review', section: 'Receipts', keywords: 'receipt finance tax duplicate', visible: released('receipt', FINANCE_OR_BOARD) },
+  { href: '/receipts/mail', label: 'Receipt Mail Queue', section: 'Receipts', keywords: 'receipt email gmail held assign discard', visible: released('receipt', RECEIPT_FINANCE) },
   { href: '/receipts/settings', label: 'Receipt Settings', section: 'Receipts', keywords: 'tax exempt age limit', visible: released('receipt', FINANCE_OR_BOARD) },
 
   // Facility Ops — board, plus operations on the two aggregate tools (#1633:

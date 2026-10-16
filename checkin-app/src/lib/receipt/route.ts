@@ -81,6 +81,12 @@ export function sessionId(ctx: HandlerContext<Record<string, string>>): number {
   return ctx.auth.user.id;
 }
 
+export function mailItemId(raw: string): number {
+  const id = Number(raw);
+  if (!Number.isInteger(id) || id <= 0) throw badRequest("Invalid mail item id");
+  return id;
+}
+
 export function lineItemId(raw: string): number {
   const id = Number(raw);
   if (!Number.isInteger(id) || id <= 0) throw badRequest("Invalid line item id");

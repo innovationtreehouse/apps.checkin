@@ -1,7 +1,8 @@
 /**
  * Nav descriptors for the receipt screens (#1265 §6). The library declares them; the host
  * places them. `RECEIPT_SUBMITTER_NAV` is "My receipts" (anyone who may upload);
- * `RECEIPT_FINANCE_NAV` is the review side (FINANCE works it, BOARD reads it).
+ * `RECEIPT_FINANCE_NAV` is the review side (FINANCE works it, BOARD reads it);
+ * `RECEIPT_MAIL_NAV` is the held-mail queue, FINANCE only.
  */
 
 export interface ReceiptNavLink {
@@ -20,3 +21,5 @@ export const RECEIPT_FINANCE_NAV: readonly ReceiptNavLink[] = [
   { name: "Receipts review", href: "/receipts/review", icon: "🔎" },
   { name: "Receipt settings", href: "/receipts/settings", icon: "⚙️" },
 ];
+
+export const RECEIPT_MAIL_NAV: readonly ReceiptNavLink[] = [{ name: "Mail queue", href: "/receipts/mail", icon: "📬" }];
