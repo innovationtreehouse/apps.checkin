@@ -134,8 +134,15 @@ Both sides use one value and one date, read from the gift (owner ruling):
 
 A gift with no value (a receipt whose total could not be read, or a gift
 finance has not yet valued) is not ready to book and sits in the finance queue.
-Whoever values a gift must be outside the donor's household, as whoever records
-it already must be.
+
+**Finance's valuation is also the independence check on a gift without a
+receipt, and the gift does not book without it.** The household check at
+recording compares surnames, and a spelling variant, a maiden name or a company
+name walks past it. So the check that counts is a person: the finance valuer
+must be someone other than whoever recorded the gift, and confirms, recorded
+with who and when, that they are not in the donor's household. The surname
+comparison stays, but only as an early warning shown to the valuer; it never
+clears a gift on its own (*fail closed*).
 
 This changes the no-receipt recording that shipped with #2192, where ops' line
 value is required and is the value: it becomes optional and a suggestion, and a
@@ -281,13 +288,28 @@ and depreciation are the expense library's, unchanged.
 
 ### What gets built, later
 
-When it is built, in this order, each its own PR off `main`:
+Requirements the build carries, from a security review of what is on `main`:
+
+- **Cap a gift without a receipt.** Recording one today limits each line's
+  quantity and value but not how many lines there are or what they total. Add a
+  ceiling on both.
+- **A receipt replay never changes a gift's value.** The money side's resend
+  today overwrites the stored total and date. A repeat with the same values does
+  nothing; one that differs is refused and raised for finance, not merged
+  (*apply once*).
+- **Donor details do not outlive a withdrawal.** A gift withdrawn after its money
+  arrived keeps its donor details today. Once finance settles that anomaly
+  (reversing any booking by hand), the donor details are cleared; the gift
+  record and its money stay, since a gift with money recorded is never deleted.
+
+In this order, each its own PR off `main`:
 
 1. Registry entries for any new route (the finance valuation step, bucket
    assignment, the approver view), alone, per the boundary rule.
 2. Donations: per-line values on receipt gifts, the finance valuation step and
    ops' value as a suggestion, the bucket fields and bucket alarm, approver
-   visibility, the bookings table, readiness and queue states.
+   visibility, the bookings table, readiness and queue states, and the three
+   requirements above.
 3. Expense: capital review accepts a donated line, and the register records a
    gift as a source.
 4. Donations: the pair in the drain (after D and the closed-books design), with
@@ -327,8 +349,11 @@ When it is built, in this order, each its own PR off `main`:
   and one value, in one bucket; the gift takes no spending sign-off; a gift
   withdrawn after booking is raised for finance to reverse by hand.
 - `revenue.md`, Donations: a gift with a receipt books at the receipt's values;
-  one without is valued by finance, by someone outside the donor's household,
-  and ops' value is only a suggestion.
+  one without is valued by finance and does not book until then. The valuer is
+  not whoever recorded it and confirms they are outside the donor's household;
+  the surname comparison only warns. Ops' value is only a suggestion.
+- `revenue.md`, Donations: once finance settles a gift withdrawn after its
+  money arrived, its donor details are cleared.
 - `revenue.md`, Donations: a program bucket's approvers see in-kind gifts in
   their bucket, without the donor, and do not approve them.
 - `expenses.md`: an in-kind gift is not an expense record and never enters
