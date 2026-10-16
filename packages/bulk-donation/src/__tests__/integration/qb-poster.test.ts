@@ -15,6 +15,7 @@ import {
   QB_EVENT, STALE_CLAIM_MS,
   donationClaimedDepositIds, postDisbursementToQb, runDonationQbPosting,
 } from "../../lib/qb-poster";
+import { disbursements } from "../../routes";
 
 const orgId = TEST_ORG_ID;
 const BANK = "35";
@@ -466,5 +467,136 @@ describeDb("donation QuickBooks drain: drift", () => {
     }
     const counts = await runDonationQbPosting(orgId);
     expect(counts).toMatchObject({ drift: { checked: MAX_DRIFT_CHECKS_PER_RUN } });
+  });
+});
+
+const route = (path: string, body?: unknown) =>
+  new Request(`http://test/api/donations${path}`, body === undefined ? {} : { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
+
+const resolve = (disbursementId: string, body: unknown) =>
+  disbursements.qbResolve({ req: route(`/disbursement-events/${disbursementId}/qb-resolve`, body), params: { disbursementId } });
+
+const candidatesOf = async (disbursementId: string) =>
+  (await disbursements.qbCandidates({ req: route(`/disbursement-events/${disbursementId}/qb-candidates`), params: { disbursementId } })).DonationQbCandidateView;
+
+/** A completed disbursement the drain left in `state`. */
+async function held(disbursementId: string, state: string, date = "2026-09-10") {
+  const e = await completed(disbursementId, date);
+  await db.disbursementEvent.update({ where: { id: e.id }, data: { qbMatchState: state } });
+  return e;
+}
+
+describeDb("donation QuickBooks finance queue", () => {
+  it("lists only the requested match states and rejects an unknown one", async () => {
+    await held("TEST-A", "AMBIGUOUS");
+    await held("TEST-B", "MATCHED");
+    const out = await disbursements.listEvents({ req: route(`/disbursement-events?qbState=AMBIGUOUS,NEEDS_FINANCE`), params: {} });
+    expect((out.DisbursementEvent as { disbursementId: string }[]).map((r) => r.disbursementId)).toEqual(["TEST-A"]);
+    await expect(disbursements.listEvents({ req: route(`/disbursement-events?qbState=NOPE`), params: {} })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("offers unclaimed, unexcluded deposits in the bank account within the window, with no key leaking into the shape", async () => {
+    await held("TEST-A", "AMBIGUOUS");
+    qbo.deposits.push(
+      { ...handDeposit("501", "2026-09-12", 1450), PrivateNote: "hand note" },
+      handDeposit("502", "2026-09-12", 1450, "99"),
+      handDeposit("503", "2026-08-01", 1450),
+      handDeposit("504", "2026-09-11", 1450),
+      handDeposit("505", "2026-09-11", 1450),
+    );
+    foreignClaims = ["504"];
+    await db.donationQbMatchExclusion.create({ data: { orgId, qbTxnId: "505", reason: "payroll", excludedByUserId: 1 } });
+
+    expect(await candidatesOf("TEST-A")).toEqual([{ id: "501", type: "Deposit", date: "2026-09-12", amountCents: 1450, memo: "hand note" }]);
+  });
+
+  it("answers 503 for candidates while QuickBooks is off", async () => {
+    await held("TEST-A", "AMBIGUOUS");
+    bind({ qb: "off" });
+    await expect(candidatesOf("TEST-A")).rejects.toMatchObject({ status: 503 });
+  });
+
+  it("matches a picked hand deposit as MATCHED, records the finance actor, and moves the line", async () => {
+    const e = await held("TEST-A", "AMBIGUOUS");
+    qbo.deposits.push(handDeposit("501", "2026-09-12", 1450), handDeposit("502", "2026-09-12", 1450));
+
+    const out = await resolve("TEST-A", { action: "match", qbTxnId: "502" });
+
+    expect(out.DisbursementEvent).toMatchObject({ qbMatchState: "MATCHED", qbTxnId: "502" });
+    expect(await stateOf(e.id)).toEqual({ qbMatchState: "MATCHED", qbTxnId: "502" });
+    const [matched] = await eventsOf("TEST-A", QB_MATCHED_EVENT);
+    expect(matched.actorUserId).toBe(1);
+    expect(await benevityTakeoverLine(db, orgId)).toBe("2026-09-10");
+    await expect(resolve("TEST-A", { action: "match", qbTxnId: "501" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("takes a deposit carrying this disbursement's own key as CREATED, which never moves the line", async () => {
+    const e = await held("TEST-A", "AMBIGUOUS");
+    const key = qbKey("donation", `${orgId}:TEST-A`);
+    qbo.deposits.push({ ...handDeposit("601", "2026-09-10", 1450), PrivateNote: `Benevity [checkin:${key}]` });
+
+    await resolve("TEST-A", { action: "match", qbTxnId: "601" });
+
+    expect(await stateOf(e.id)).toEqual({ qbMatchState: "CREATED", qbTxnId: "601" });
+    expect(await eventsOf("TEST-A", QB_MATCHED_EVENT)).toHaveLength(0);
+    expect(await benevityTakeoverLine(db, orgId)).toBeNull();
+  });
+
+  it("needs a reason for a deposit whose amount differs, and refuses a deposit that is not a free candidate", async () => {
+    const e = await held("TEST-A", "BEFORE_LINE");
+    qbo.deposits.push(handDeposit("501", "2026-09-12", 1400), handDeposit("502", "2026-09-12", 1450));
+    foreignClaims = ["502"];
+
+    await expect(resolve("TEST-A", { action: "match", qbTxnId: "501" })).rejects.toMatchObject({ status: 400 });
+    await expect(resolve("TEST-A", { action: "match", qbTxnId: "502" })).rejects.toMatchObject({ status: 422 });
+    expect((await stateOf(e.id)).qbMatchState).toBe("BEFORE_LINE");
+
+    await resolve("TEST-A", { action: "match", qbTxnId: "501", reason: "Benevity short-paid by $0.50" });
+    expect(await stateOf(e.id)).toEqual({ qbMatchState: "MATCHED", qbTxnId: "501" });
+    const [manual] = await eventsOf("TEST-A", QB_EVENT.STATE);
+    expect(JSON.parse(manual.payload ?? "{}")).toMatchObject({ manual: true, reason: "Benevity short-paid by $0.50" });
+  });
+
+  it("refuses to match or retry a disbursement that is not held", async () => {
+    await held("TEST-A", "MATCHED");
+    qbo.deposits.push(handDeposit("501", "2026-09-12", 1450));
+    await expect(resolve("TEST-A", { action: "match", qbTxnId: "501" })).rejects.toMatchObject({ status: 409 });
+    await expect(resolve("TEST-A", { action: "retry" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("retry while QuickBooks posting is off only re-arms the record: nothing reaches QuickBooks", async () => {
+    await handMatched("2026-09-01");
+    await held("TEST-A", "NEEDS_FINANCE");
+    bind({ qb: "off" });
+
+    const out = await resolve("TEST-A", { action: "retry" });
+
+    expect(out.DisbursementEvent).toMatchObject({ qbMatchState: "UNMATCHED", qbTxnId: null });
+    expect(qbo.posts).toHaveLength(0);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+    expect(await eventsOf("TEST-A", QB_EVENT.RETRIED)).toHaveLength(1);
+    expect(await eventsOf("TEST-A", QB_EVENT.CLAIMED)).toHaveLength(0);
+  });
+
+  it("retry with QuickBooks on resets the attempt count and posts once through the drain", async () => {
+    await handMatched("2026-09-01");
+    const e = await completed("TEST-A", "2026-09-10");
+    qbo.mode = "down";
+    for (let i = 0; i < MAX_POST_ATTEMPTS; i++) await postDisbursementToQb(e.id);
+    expect((await stateOf(e.id)).qbMatchState).toBe("NEEDS_FINANCE");
+
+    qbo.mode = "ok";
+    await resolve("TEST-A", { action: "retry" });
+
+    expect(qbo.posts).toHaveLength(1);
+    expect((await stateOf(e.id)).qbMatchState).toBe("CREATED");
+  });
+
+  it("refuses to exclude a deposit a disbursement already holds", async () => {
+    const e = await held("TEST-A", "MATCHED");
+    await db.disbursementEvent.update({ where: { id: e.id }, data: { qbTxnId: "501" } });
+    const req = route("/qb-exclusions", { qbTxnId: "501", reason: "not ours" });
+    await expect(disbursements.createExclusion({ req, params: {} })).rejects.toMatchObject({ status: 409 });
+    expect(await db.donationQbMatchExclusion.count()).toBe(0);
   });
 });

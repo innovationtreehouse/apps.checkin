@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
-import { Badge, Button, Group, Modal, Table, Text, Title } from "@mantine/core";
-import { act, api, cents, paged, useCanWrite, useLoad, when } from "../components/api";
+import { Badge, Button, Modal, Table, Text, Title } from "@mantine/core";
+import { cents, paged, useLoad, when } from "../components/api";
 import LoadError from "../components/LoadError";
 import Pager from "../components/Pager";
 
@@ -19,7 +19,6 @@ function summary(payload: string): string {
 
 /** /donations/events — completed disbursements (booking batches) and their QuickBooks match state. */
 export default function EventsPage() {
-  const canWrite = useCanWrite();
   const [page, setPage] = useState(1);
   const events = useLoad<EventRow[]>(paged("/disbursement-events", page));
   const [open, setOpen] = useState<string | null>(null);
@@ -51,14 +50,7 @@ export default function EventsPage() {
         {(candidates.data ?? []).map((c) => (
           <Text key={c.id} size="sm">{c.date} · {c.type} · {cents(c.amountCents)} · {c.memo ?? ""}</Text>
         ))}
-        {canWrite && open && (
-          <Group mt="md">
-            <Button size="xs" onClick={() => act(
-              () => api(`/disbursement-events/${encodeURIComponent(open)}/qb-resolve`, { method: "POST", body: JSON.stringify({ action: "retry" }) }),
-              "Resolved", events.reload,
-            )}>Retry match</Button>
-          </Group>
-        )}
+        <Text size="xs" c="dimmed" mt="md">Held disbursements are resolved on the QB Queue tab.</Text>
       </Modal>
       <Pager page={page} onChange={setPage} rows={events.data} />
     </>
