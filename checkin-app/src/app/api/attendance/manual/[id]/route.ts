@@ -6,6 +6,7 @@ import type { FacilityCloseVia, Prisma } from "@/generated/prisma/client";
 import { parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTime } from "@/lib/visitTimes";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { lockFacility } from "@/lib/facilityLock";
 import { closeActor, correctCloseTime, finishCloseGuard, lastKeyholderGuard, recordWebClose } from "@/lib/scan-service";
 import type { CloseGuardResult } from "@/lib/scan-service";
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
@@ -20,7 +21,8 @@ import { resolveDisplayTimezone } from "@/lib/appSettings";
 // Side channel: handler() returns through stripBag, so the guard result
 // can't ride the bag. A WeakMap keyed on the request lets the wrapper
 // intercept a warning or run the facility close after the handler commits.
-const guardResults = new WeakMap<Request, { guard: CloseGuardResult; actorId: number; subjectId: number; visitId: number; closeTime?: Date; recorded?: boolean }>();
+type CloseGuardContext = { actorId: number; subjectId: number; visitId: number; closeTime?: Date; recorded?: boolean };
+const guardResults = new WeakMap<Request, CloseGuardContext & { guard: CloseGuardResult }>();
 
 // Self-correction of a member's own visits, and a household lead's correction
 // of their household members' (trust-first, see
@@ -107,32 +109,23 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
         const significance = editSignificance(visit, { arrivedAt: nextArrived, departedAt: nextDeparted }, { byProxy });
 
         const closingOpenVisit = !visit.departedAt && !!nextDeparted;
-
-        if (closingOpenVisit) {
-            const person = await prisma.person.findUnique({
-                where: { id: visit.personId },
-                select: { id: true, isKeyholder: true },
-            });
-            if (person) {
-                const guard = await lastKeyholderGuard(visitId, person, closeActor(auth.user),
-                    { token: body.forceCloseToken, choice: body.closeChoice, handoverToId: body.handoverToId });
-                // A close departs everyone at the typed departure, as a late kiosk close does.
-                guardResults.set(req, { guard, actorId: userId, subjectId: person.id, visitId, closeTime: nextDeparted! });
-                if (guard.action !== 'proceed') return {};
-            }
-        }
+        const subject = closingOpenVisit
+            ? await prisma.person.findUnique({ where: { id: visit.personId }, select: { id: true, isKeyholder: true } })
+            : null;
 
         // Same per-person advisory lock as every other visit write: an edit
         // must not race the kiosk, the sweep, or a concurrent submit. The lock
         // is keyed on the visit's PERSON, not the actor — that is the key the
         // one-open-visit invariant is per, so a lead's edit serializes against
-        // the member's own kiosk scan. When the edit CLOSES an open visit, only
-        // the arrival is written here — the departure goes through
-        // processVisitCheckout below, in its own transaction under the same
-        // lock; it refuses already-closed or tombstoned visits, and it owns
-        // the back-to-back event chunking.
+        // the member's own kiosk scan. An edit that CLOSES an open visit also
+        // takes the facility lock, so the last-keyholder guard decides on the
+        // building as this checkout leaves it, and the close it chose commits
+        // with the checkout. The departure goes through processVisitCheckout,
+        // which refuses already-closed or tombstoned visits and owns the
+        // back-to-back event chunking.
         const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(${Number(visit.personId)})`;
+            if (closingOpenVisit) await lockFacility(tx);
             // Scope and liveness re-asserted under the lock: a DELETE that
             // landed since the pre-check must not have its tombstone overwritten.
             const live = await tx.visit.findFirst({
@@ -151,6 +144,15 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
             }
             if (nextDeparted && !withinMaxDuration(nextArrived, nextDeparted)) {
                 throw badRequest("A visit cannot be longer than 24 hours.");
+            }
+            let pending: (CloseGuardContext & { guard: CloseGuardResult }) | undefined;
+            if (subject) {
+                const guard = await lastKeyholderGuard(visitId, subject, closeActor(auth.user),
+                    { token: body.forceCloseToken, choice: body.closeChoice, handoverToId: body.handoverToId }, {}, tx);
+                // A close departs everyone at the typed departure, as a late kiosk close does.
+                pending = { guard, actorId: userId, subjectId: subject.id, visitId, closeTime: nextDeparted! };
+                guardResults.set(req, pending);
+                if (guard.action !== 'proceed') return "guarded" as const;
             }
             // A corrected time becomes a typed clock: an edited arrival stamps
             // arrivedVia TYPED, an edited departure stamps departedVia TYPED.
@@ -173,30 +175,21 @@ const _PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]', asyn
                 });
                 if (close) await correctCloseTime(tx, close, userId, nextDeparted!);
             }
-            return edited;
-        });
+            if (!closingOpenVisit) return edited;
+            // The checkout chunks a program-enrolled stay into per-event rows,
+            // replacing the original: the audit row and the response must name a
+            // row that survives.
+            const chunks = await processVisitCheckout(visitId, nextDeparted!, tx, "TYPED");
+            if (chunks.length === 0) throw notFound("Visit not found.");
+            if (pending?.guard.action === "proceed") {
+                pending.recorded = await recordWebClose(tx, pending.guard, { ...pending, via: "WEB_CORRECTION" });
+            }
+            return chunks[chunks.length - 1];
+        }, { maxWait: 5000, timeout: 15000 });
+        if (updated === "guarded") return {};
         if (!updated) throw notFound("Visit not found.");
         invalidateAttendanceCache();
-
-        // The checkout chunks a program-enrolled stay into per-event rows,
-        // replacing the original: the audit row and the response must name a row
-        // that survives. Empty means the close lost a race — nothing applied.
-        let surviving = updated;
-        if (closingOpenVisit) {
-            const pending = guardResults.get(req);
-            // The close the caller chose commits with the checkout, under the
-            // person lock, so a kiosk departure that won the race is kept.
-            const chunks = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-                await tx.$executeRaw`SELECT pg_advisory_xact_lock(${Number(visit.personId)})`;
-                const departed = await processVisitCheckout(visitId, nextDeparted!, tx, "TYPED");
-                if (departed.length > 0 && pending?.guard.action === "proceed") {
-                    pending.recorded = await recordWebClose(tx, pending.guard, { ...pending, via: "WEB_CORRECTION" });
-                }
-                return departed;
-            });
-            if (chunks.length === 0) throw notFound("Visit not found.");
-            surviving = chunks[chunks.length - 1];
-        }
+        const surviving = updated;
 
         await prisma.auditLog.create({
             data: {

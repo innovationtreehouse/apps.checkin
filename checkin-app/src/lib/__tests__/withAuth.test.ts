@@ -90,6 +90,20 @@ describe('withAuth', () => {
         expect(handler).not.toHaveBeenCalled();
     });
 
+    it('returns 403 for a kiosk request that is not a GET, even on an allowKiosk route', async () => {
+        mockPubKeys.mockReturnValue(['key']);
+        mockVerify.mockReturnValue({ ok: true });
+        const route = withAuth({ allowKiosk: true }, handler);
+        const res = await route(new Request('http://localhost/api/whatever', {
+            method: 'POST',
+            headers: { 'x-kiosk-signature': 'sig' },
+            body: JSON.stringify({ any: 'thing' }),
+        }) as never);
+
+        expect(res.status).toBe(403);
+        expect(handler).not.toHaveBeenCalled();
+    });
+
     it('returns 403 for a session lacking all required roles', async () => {
         mockSession.mockResolvedValue({ user: user({ isSysadmin: false, isBoardMember: false }) });
         const route = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, handler);
