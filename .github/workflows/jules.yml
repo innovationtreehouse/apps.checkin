@@ -26,6 +26,7 @@ jobs:
           (contains(github.event.issue.labels.*.name, 'jules') || contains(github.event.comment.body, '@jules')))
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       issues: read

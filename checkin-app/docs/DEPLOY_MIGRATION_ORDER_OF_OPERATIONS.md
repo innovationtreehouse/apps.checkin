@@ -44,6 +44,11 @@ This is exactly what happened 2026-07-02: three generated "rename" migrations pa
 ### 5. Wrap multi-statement migrations in `BEGIN;` / `COMMIT;`
 Prisma does not wrap a migration file in a transaction on Postgres ([prisma/prisma#15295](https://github.com/prisma/prisma/issues/15295)) — a multi-statement migration can **partially apply**. The 2026-07-02 incident hit this directly: one table's `ALTER` committed, the sibling table's rolled back in the same migration file, requiring manual surgical repair before the automated fix (#791) could even be deployed. If a migration touches more than one statement that needs to succeed or fail together, wrap it in explicit `BEGIN;` / `COMMIT;` — a failure becomes a clean atomic retry instead of a wedge.
 
+Every new migration wraps, single-statement ones included. CI enforces this for every `migration.sql` a PR **adds**, in checkin's chain and in every `packages/*/prisma/migrations` chain: `migration-safety.yml` → "New migrations wrap in a transaction" fails a file whose first SQL line is not `BEGIN;` or whose last is not `COMMIT;` (blank and comment lines ignored). Migrations already on the base branch are never checked; editing one to satisfy the lint would break rule 6's checksum. Two explicit escapes:
+
+- **SQL Postgres refuses inside a transaction** — `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, and the like. Add a comment line `-- no-transaction: <reason>` and make every statement retry-safe (`IF NOT EXISTS` / `IF EXISTS`), since a failure can leave some statements applied. `20260818140000_raw_badge_log_client_event_id` is the model.
+- **A coalesce baseline** (its directory holds `reconcile.sql`) is exempt: it only ever runs on an empty database, which recovers by being recreated.
+
 ### 6. A failed migration wedges every future deploy until a human intervenes
 A failed migration leaves a row in `_prisma_migrations` with no success recorded. Every subsequent `migrate deploy` — meaning every subsequent deploy of any kind, unrelated PRs included — fails fast with `P3009` ("migrate found failed migrations in the target database") until someone runs:
 

@@ -79,6 +79,7 @@ concurrency:
 jobs:
   isolation:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Skip on merge queue (already enforced on the PR)
         if: github.event_name == 'merge_group'
