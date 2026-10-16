@@ -32,7 +32,7 @@ export interface QbMatchInputs {
   /** QuickBooks ids of the entity type already claimed by an expense or a line, or excluded by finance: never a candidate. */
   skipIds: string[];
   /**
-   * Receipt date of the newest line matched to a QuickBooks entry the app did not create.
+   * Receipt date of the newest expense, or expense with a line, matched to a QuickBooks entry the app did not create.
    * Null when there is none yet: then nothing is created (fail closed).
    */
   takeoverDate: string | null;
@@ -44,7 +44,11 @@ export async function qbMatchInputs(entity: QbMatchEntity): Promise<QbMatchInput
     claimedQbTxnIds(orgId, entity),
     db.expenseQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
     db.expense.findFirst({
-      where: { orgId, receiptDate: { not: null }, lineItems: { some: { qbMatchState: "MATCHED" } } },
+      where: {
+        orgId,
+        receiptDate: { not: null },
+        OR: [{ qbMatchState: "MATCHED" }, { lineItems: { some: { qbMatchState: "MATCHED" } } }],
+      },
       orderBy: { receiptDate: "desc" },
       select: { receiptDate: true },
     }),
@@ -79,33 +83,40 @@ function shiftDate(isoDate: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-async function loadLine(lineItemId: number) {
-  const line = await db.expenseLineItem.findFirst({
-    where: { id: lineItemId, expense: { orgId: await getOrgId() } },
-    include: { expense: true },
-  });
-  if (!line) throw new ServiceError(404, "Line item not found");
-  return line;
+async function loadExpense(expenseId: string) {
+  const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() }, include: { lineItems: true } });
+  if (!expense) throw new ServiceError(404, "Expense not found");
+  return expense;
 }
 
-/** Line states that may still be linked to an existing QuickBooks entry. */
-const MATCHABLE_STATES = new Set(["UNMATCHED", "AMBIGUOUS", "BEFORE_LINE", "POST_FAILED"]);
+/** Expense states that may still be linked to an existing QuickBooks entry. */
+const MATCHABLE_STATES = ["UNMATCHED", "AMBIGUOUS", "BEFORE_LINE", "POST_FAILED", "NEEDS_FINANCE"];
 
-async function candidatesFor(line: Awaited<ReturnType<typeof loadLine>>): Promise<{ entity: QbMatchEntity; txns: QbTxn[] }> {
-  const entity: QbMatchEntity = line.expense.needsReimbursement ? "Bill" : "Purchase";
-  const date = line.expense.receiptDate;
+/**
+ * The total the poster would book: every line plus the expense's tax and shipping, less its discount.
+ * Read from the expense, since line allocations are set only once the expense is processed.
+ */
+function postedTotalCents(expense: Awaited<ReturnType<typeof loadExpense>>): number {
+  const lines = expense.lineItems.reduce((sum, l) => sum + l.totalPriceCents, 0);
+  return lines + expense.taxCents + expense.shippingCents - expense.discountCents;
+}
+
+async function candidatesFor(expense: Awaited<ReturnType<typeof loadExpense>>): Promise<{ entity: QbMatchEntity; txns: QbTxn[] }> {
+  const entity: QbMatchEntity = expense.needsReimbursement ? "Bill" : "Purchase";
+  const date = expense.receiptDate;
   if (!date) return { entity, txns: [] };
   const from = shiftDate(date, -MATCH_WINDOW_DAYS);
   const to = shiftDate(date, MATCH_WINDOW_DAYS);
   const { reader, refs } = getExpenseRuntime().quickbooks;
-  const personId = line.expense.reimburseePersonId;
+  const personId = expense.reimburseePersonId;
   const expectedRef =
     entity === "Bill" ? (personId === null ? null : await refs.vendorIdFor(personId)) : await refs.paymentAccountId();
   if (expectedRef === null) return { entity, txns: [] };
   const txns = entity === "Bill" ? await reader.billsBetween(from, to) : await reader.purchasesBetween(from, to);
   const skip = new Set((await qbMatchInputs(entity)).skipIds);
+  const totalCents = postedTotalCents(expense);
   const matches = (t: QbTxn) =>
-    t.totalCents === line.totalPriceCents &&
+    t.totalCents === totalCents &&
     t.txnDate >= from &&
     t.txnDate <= to &&
     (entity === "Bill" ? t.vendorRef : t.accountRef) === expectedRef &&
@@ -114,47 +125,54 @@ async function candidatesFor(line: Awaited<ReturnType<typeof loadLine>>): Promis
 }
 
 /**
- * QuickBooks entries a line may match: a Bill for a reimbursement, else a Purchase, of the
- * line's amount, inside the window around its receipt date, booked against the expected vendor
- * or payment account, never claimed or excluded.
+ * QuickBooks entries an expense may match: a Bill for a reimbursement, else a Purchase, of the
+ * total the poster would book, inside the window around its receipt date, booked against the
+ * expected vendor or payment account, never claimed or excluded.
  */
-export async function qbCandidates(principal: ExpensePrincipal, lineItemId: number): Promise<QbTxn[]> {
+export async function qbCandidates(principal: ExpensePrincipal, expenseId: string): Promise<QbTxn[]> {
   requireFinance(principal);
-  return (await candidatesFor(await loadLine(lineItemId))).txns;
+  return (await candidatesFor(await loadExpense(expenseId))).txns;
 }
 
 /**
- * Finance links a line to an existing QuickBooks entry; an entry is claimed once across expenses and lines.
- * The entry must be one of the line's own candidates, and the line fully signed off.
+ * Finance links an expense to an existing QuickBooks entry; an entry is claimed once across expenses and lines.
+ * The entry must be one of the expense's own candidates, and every line fully signed off.
+ * A matched expense holds a qbTxnId, so the poster never books it again.
  */
-export async function matchLineToQb(principal: ExpensePrincipal, lineItemId: number, qbTxnId: string): Promise<void> {
+export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: string, qbTxnId: string): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
-  const line = await loadLine(lineItemId);
-  if (line.qbTxnId) throw new ServiceError(409, "Line is already linked to QuickBooks");
-  if (!MATCHABLE_STATES.has(line.qbMatchState) || line.expense.state === "rejected") {
-    throw new ServiceError(409, "Line is not in a state that can be matched");
+  const expense = await loadExpense(expenseId);
+  if (expense.qbTxnId) throw new ServiceError(409, "Expense is already linked to QuickBooks");
+  if (!MATCHABLE_STATES.includes(expense.qbMatchState) || expense.state === "rejected" || expense.backfill) {
+    throw new ServiceError(409, "Expense is not in a state that can be matched");
   }
-  const { entity, txns } = await candidatesFor(line);
-  if (!txns.some((t) => t.id === qbTxnId)) throw new ServiceError(409, "That QuickBooks entry is not a candidate for this line");
+  const { entity, txns } = await candidatesFor(expense);
+  if (!txns.some((t) => t.id === qbTxnId)) throw new ServiceError(409, "That QuickBooks entry is not a candidate for this expense");
   try {
     await db.$transaction(async (tx) => {
       // Sign-offs are read under the expense lock, so a concurrent void cannot slip past the check.
-      await lockExpense(tx, line.expenseId);
-      const expense = (await tx.expense.findUnique({ where: { id: line.expenseId } }))!;
-      if (!expense.backfill && (reimburseeUnknown(expense) || (await unsignedLines(tx, expense)).has(lineItemId))) {
-        throw new ServiceError(409, "Line is missing a required sign-off");
+      await lockExpense(tx, expenseId);
+      const current = (await tx.expense.findUnique({ where: { id: expenseId } }))!;
+      if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0) {
+        throw new ServiceError(409, "Expense is missing a required sign-off");
       }
-      const linked = await tx.expenseLineItem.updateMany({
-        where: { id: lineItemId, qbTxnId: null, qbMatchState: { in: [...MATCHABLE_STATES] } },
+      const linked = await tx.expense.updateMany({
+        where: { id: expenseId, qbTxnId: null, qbMatchState: { in: MATCHABLE_STATES } },
         data: { qbMatchState: "MATCHED", qbTxnId, qbTxnEntity: entity },
       });
-      if (linked.count === 0) throw new ServiceError(409, "Line is already linked to QuickBooks");
-      if (!(await claimQbTxn(tx, expense.orgId, entity, qbTxnId))) throw new ServiceError(409, "That QuickBooks entry is already claimed");
-      await writeAudit(tx, actor, { expenseId: line.expenseId, action: "qb_matched", lineItemId, fieldChanged: "qbTxnId", valueAfter: qbTxnId });
+      if (linked.count === 0) throw new ServiceError(409, "Expense is already linked to QuickBooks");
+      if (!(await claimQbTxn(tx, current.orgId, entity, qbTxnId))) throw new ServiceError(409, "That QuickBooks entry is already claimed");
+      await writeAudit(tx, actor, {
+        expenseId,
+        action: "qb_matched",
+        fieldChanged: "qbMatchState",
+        valueBefore: current.qbMatchState,
+        valueAfter: `MATCHED:${qbTxnId}`,
+      });
     });
   } catch (err) {
-    if (isUniqueConstraintError(err)) throw new ServiceError(409, "That QuickBooks entry is already claimed by another line");
+    if (isUniqueConstraintError(err)) throw new ServiceError(409, "That QuickBooks entry is already claimed by another expense");
     throw err;
   }
 }

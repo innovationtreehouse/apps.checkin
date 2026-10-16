@@ -14,7 +14,7 @@ import { requireFinance } from "../services/approvalService";
 import { CapitalSeedSchema, seedCapitalAssets } from "../services/capitalService";
 import { checkOffFlag, listOpenFlags } from "../services/flagService";
 import { resubmitHeldExpense, setHeldLineAccount } from "../services/holdService";
-import { excludeQbTxn, matchLineToQb, qbCandidates } from "../services/qbMatchService";
+import { excludeQbTxn, matchExpenseToQb, qbCandidates } from "../services/qbMatchService";
 import { getExpenseSettings, updateExpenseSettings } from "../services/settingsService";
 import { httpError, mapServiceErrors, pageArgs, parseBody, parseId, query } from "./_shared";
 
@@ -280,22 +280,13 @@ export const capitalSeed: ExpenseRouteHandler = async ({ req }) => {
 };
 
 export const candidates: ExpenseRouteHandler = async ({ params }) => {
-  const lineItemId = parseId(params.lineItemId, "lineItemId");
   const principal = await getPrincipal();
-  return { ExpenseQbCandidateView: await mapServiceErrors(() => qbCandidates(principal, lineItemId)) };
+  return { ExpenseQbCandidateView: await mapServiceErrors(() => qbCandidates(principal, params.id)) };
 };
 
 export const match: ExpenseRouteHandler = async ({ req, params }) => {
-  const lineItemId = parseId(params.lineItemId, "lineItemId");
   const { qbTxnId } = await parseBody(req, z.object({ qbTxnId: z.string().trim().min(1) }));
   const principal = await getPrincipal();
-  await mapServiceErrors(() => matchLineToQb(principal, lineItemId, qbTxnId));
-  return { ExpenseLineItem: await db.expenseLineItem.findFirst({ where: { id: lineItemId } }) };
-};
-
-/** Creating in QuickBooks is QB-2's writer; until it is bound, the route refuses and writes nothing. */
-export const create: ExpenseRouteHandler = async ({ params }) => {
-  parseId(params.lineItemId, "lineItemId");
-  await asFinance();
-  throw httpError(503, "QuickBooks writes are not enabled yet");
+  await mapServiceErrors(() => matchExpenseToQb(principal, params.id, qbTxnId));
+  return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId: await getOrgId() } }) };
 };

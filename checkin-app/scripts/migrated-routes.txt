@@ -92,9 +92,8 @@ POST /api/donations/qb-exclusions
 GET /api/expense/local-owners
 GET /api/expense/flags
 POST /api/expense/flags/[id]/check-off
-GET /api/expense/line-items/[lineItemId]/qb-candidates
-POST /api/expense/line-items/[lineItemId]/qb-match
-POST /api/expense/line-items/[lineItemId]/qb-create
+GET /api/expense/expenses/[id]/qb-candidates
+POST /api/expense/expenses/[id]/qb-match
 GET /api/expense/expenses
 GET /api/expense/expenses/count
 PUT /api/expense/qb-accounts/[id]
