@@ -182,6 +182,8 @@ export function directory(d: {
   households?: number[][];
   nonMembers?: number[];
   unknownPeople?: number[];
+  /** Merged-away person id → the survivor it resolves to. */
+  merged?: Record<number, number>;
 }): SignoffDirectory {
   return {
     bucketApprovers: async (b) => ({ orgLevel: (d.orgLevel ?? []).includes(b), approvers: d.approvers?.[b] ?? [], leader: d.leaders?.[b] ?? null }),
@@ -189,7 +191,8 @@ export function directory(d: {
     financeHolders: async () => d.finance ?? [],
     boardMembers: async () => d.board ?? [],
     householdOf: async (ids) => (d.households ?? []).filter((h) => h.some((id) => ids.includes(id))).flat(),
-    personExists: async (id) => !(d.unknownPeople ?? []).includes(id),
+    personExists: async (id) => !(d.unknownPeople ?? []).includes(id) && d.merged?.[id] === undefined,
+    livePersonFor: async (id) => d.merged?.[id] ?? ((d.unknownPeople ?? []).includes(id) ? null : id),
     isOrgMember: async (id) => !(d.nonMembers ?? []).includes(id),
   };
 }

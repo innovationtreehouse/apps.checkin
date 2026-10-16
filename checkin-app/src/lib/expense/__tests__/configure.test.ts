@@ -3,11 +3,15 @@ import type { QbReader, SignoffDirectory } from "@inventory/expense";
 const personRoleFindMany = jest.fn();
 const budgetOwnerFindUnique = jest.fn();
 const budgetOwnerFindMany = jest.fn();
+const personFindUnique = jest.fn();
+const personMergeFindUnique = jest.fn();
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: {
     personRole: { findMany: personRoleFindMany },
     budgetOwner: { findUnique: budgetOwnerFindUnique, findMany: budgetOwnerFindMany },
+    person: { findUnique: personFindUnique },
+    personMerge: { findUnique: personMergeFindUnique },
   },
 }));
 
@@ -65,6 +69,27 @@ describe("expense signer directory excludes people in a DENIED household", () =>
     const [lead, treasurer] = budgetOwnerFindMany.mock.calls[0][0].where.program.OR;
     expect(lead.leadMentor).toEqual({ mergedIntoId: null, ...NOT_DENIED });
     expect(treasurer.volunteers.some.person).toEqual({ mergedIntoId: null, ...NOT_DENIED });
+  });
+});
+
+describe("the live person an id resolves to", () => {
+  const people: Record<number, { mergedIntoId: number | null }> = { 1: { mergedIntoId: 2 }, 2: { mergedIntoId: null }, 5: { mergedIntoId: 5 } };
+  const archive: Record<number, { toId: number }> = { 3: { toId: 1 } };
+  beforeEach(() => {
+    personFindUnique.mockImplementation(async ({ where }: { where: { id: number } }) => people[where.id] ?? null);
+    personMergeFindUnique.mockImplementation(async ({ where }: { where: { fromId: number } }) => archive[where.fromId] ?? null);
+  });
+
+  it("is the person when live, the survivor through a tombstone or an archived merge, else null", async () => {
+    const dir = await signoff();
+    await expect(dir.livePersonFor(2)).resolves.toBe(2);
+    await expect(dir.livePersonFor(1)).resolves.toBe(2);
+    await expect(dir.livePersonFor(3)).resolves.toBe(2);
+    await expect(dir.livePersonFor(4)).resolves.toBeNull();
+  });
+
+  it("stops on a cyclic merge chain", async () => {
+    await expect((await signoff()).livePersonFor(5)).resolves.toBeNull();
   });
 });
 

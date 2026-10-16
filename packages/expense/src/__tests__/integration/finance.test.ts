@@ -215,9 +215,9 @@ describeDb("sign-off seats", () => {
     });
 
     // A reimbursement whose reimbursee is unknown: the expense id and its line, with REIMBURSEE_UNKNOWN raised.
-    async function unknownReimbursee(opts: { backfill?: boolean } = {}) {
+    async function unknownReimbursee(opts: { backfill?: boolean; submitterId?: number } = {}) {
       bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3, 9, 10], board: [5, 6], households: [[9, 10], [1, 11]] }) });
-      const id = await seedExpense({ state: "qb_pending", needsReimbursement: true, backfill: opts.backfill });
+      const id = await seedExpense({ state: "qb_pending", needsReimbursement: true, backfill: opts.backfill, submitterId: opts.submitterId });
       const li = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
       await seedApproval(id, li, { ownerId: 100, status: "approved" });
       await raiseFlag(id, "REIMBURSEE_UNKNOWN");
@@ -255,28 +255,44 @@ describeDb("sign-off seats", () => {
     it("setting the reimbursee voids seats signed before it, so they are signed again for the payee", async () => {
       const { id, li } = await unknownReimbursee();
       await signAll(id, li);
-      await setReimbursee(ORG, id, 7, FINANCE);
+      await setReimbursee(ORG, id, 1, FINANCE);
       expect(await events(id)).toBe(0);
       expect((await signoffStatus(id))[0].missing).toEqual(["PROGRAM_APPROVER", "TREASURER"]);
     });
 
     it("only FINANCE sets the reimbursee, never to themself or their own household", async () => {
-      const { id } = await unknownReimbursee();
-      await expect(setReimbursee(ORG, id, 7, principal(2))).rejects.toMatchObject({ statusCode: 403 });
+      const { id } = await unknownReimbursee({ submitterId: 9 });
+      await expect(setReimbursee(ORG, id, 9, principal(2))).rejects.toMatchObject({ statusCode: 403 });
       await expect(setReimbursee(ORG, id, 9, principal(9, { isFinance: true }))).rejects.toMatchObject({ statusCode: 403 });
       await expect(setReimbursee(ORG, id, 9, principal(10, { isFinance: true }))).rejects.toMatchObject({ statusCode: 403 });
-      await expect(setReimbursee("org-other", id, 7, FINANCE)).rejects.toThrow(/not this org/);
+      await expect(setReimbursee("org-other", id, 9, FINANCE)).rejects.toThrow(/not this org/);
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
     });
 
     it("the submitter and the submitter's household cannot name the reimbursee; an outside FINANCE holder can", async () => {
       const { id } = await unknownReimbursee();
-      await expect(setReimbursee(ORG, id, 7, principal(1, { isFinance: true }))).rejects.toMatchObject({ statusCode: 403 });
-      await expect(setReimbursee(ORG, id, 7, principal(11, { isFinance: true }))).rejects.toMatchObject({ statusCode: 403 });
+      await expect(setReimbursee(ORG, id, 1, principal(1, { isFinance: true }))).rejects.toMatchObject({ statusCode: 403 });
+      await expect(setReimbursee(ORG, id, 1, principal(11, { isFinance: true }))).rejects.toMatchObject({ statusCode: 403 });
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
 
-      await setReimbursee(ORG, id, 7, FINANCE);
-      expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBe(7);
+      await setReimbursee(ORG, id, 1, FINANCE);
+      expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBe(1);
+    });
+
+    it("only the uploader is named as reimbursee, never anyone else", async () => {
+      const { id } = await unknownReimbursee();
+      // 7 sits outside every conflicted household; 11 shares the uploader's household.
+      await expect(setReimbursee(ORG, id, 7, FINANCE)).rejects.toMatchObject({ statusCode: 403 });
+      await expect(setReimbursee(ORG, id, 11, FINANCE)).rejects.toMatchObject({ statusCode: 403 });
+      expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
+    });
+
+    it("a merged-away uploader is named through the person record they resolve to", async () => {
+      const { id } = await unknownReimbursee();
+      bindPorts({ signoff: directory({ finance: [3], merged: { 1: 12 } }) });
+      await expect(setReimbursee(ORG, id, 1, FINANCE)).rejects.toMatchObject({ statusCode: 404 });
+      await setReimbursee(ORG, id, 12, FINANCE);
+      expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBe(12);
     });
 
     it("FINANCE cannot name a reimbursee who is not a Person", async () => {
