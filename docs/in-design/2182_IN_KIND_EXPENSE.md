@@ -112,9 +112,9 @@ of a gift's value, tax and shipping included, is open question Q1.
 Each gift gets at most two bookings, one per side, kept in one small table keyed
 by the gift and the side: `(org, source, gift id, side)` unique, where `source`
 is *receipt* or *manual* and `side` is *revenue* or *expense*. Each booking
-carries the match state the donations design already defines (`UNMATCHED`,
-`MATCHED`, `CREATED`, `AMBIGUOUS`, `BEFORE_LINE`, `POST_FAILED`) and the
-QuickBooks entry it claimed, which is unique per org.
+carries a match state, the same set every QuickBooks lane uses (see the
+closed-books design below), and the QuickBooks entry it claimed, which is unique
+per org.
 
 That gives apply once without extra code:
 
@@ -205,11 +205,14 @@ optional:
 
 Matching follows the donations design: from our records outward, one narrow
 search per booking in the clearing account, each QuickBooks entry claimed once.
-The in-kind stream has its own takeover line; with no matched record it has no
-line and creates nothing. So nothing posts until finance has hand-booked at
-least one gift through the clearing account and the app has matched it. Until
-the drain ships, finance books by hand exactly as today and nothing in the app
-changes for them.
+When the app may create entries follows the closed-books model shared by every
+QuickBooks lane, designed separately ("Replace QuickBooks takeover lines with
+closed books + switch-on"), not here. In short: nothing is booked on or before
+QuickBooks' books closing date; between that date and in-kind's switch-on the
+app only matches, and a gift it cannot match goes to finance to book or skip;
+after switch-on it books on its own. In-kind is its own lane with its own
+switch-on. Until the drain ships, finance books by hand exactly as today and
+nothing in the app changes for them.
 
 What finance must confirm before the drain posts anything is open question Q5.
 
@@ -239,8 +242,8 @@ the boundary rule.
   be a type QuickBooks accepts as both a Deposit's destination and a Purchase's
   paying account), the in-kind income account, and the in-kind expense account
   (one account, or one per kind of goods). And: does finance book in-kind gifts
-  through a clearing account today? If not, matching finds nothing and the stream
-  never gets a takeover line until finance books one that way.
+  through a clearing account today? If not, matching finds nothing and every
+  gift before switch-on goes to finance to book or skip.
 - **Q6. Donated equipment.** Should a gift of equipment above the capitalisation
   threshold book as an asset, not an expense, and enter the capital register?
   Default: out of scope; finance handles those by hand and the app books them as
