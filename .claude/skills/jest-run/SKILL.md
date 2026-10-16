@@ -30,8 +30,7 @@ npm test -- --testPathPatterns scopeBindings
 ```
 
 Why: `--testPathIgnorePatterns` is variadic and **replaces** jest's entire config ignore
-array. The config excludes the integration, flow, and `.claude/worktrees/` tests on
-purpose; replacing it pulls them back in, and they hang 5–16 min against a DB/dev-server
+array. The config excludes the integration and flow tests on purpose; replacing it pulls them back in, and they hang 5–16 min against a DB/dev-server
 that isn't up. The hook blocks the raw flag; the fix is `--testPathPatterns`, not a
 "corrected" ignore list. A bare positional path (`jest src/foo.test.ts`) also narrows but
 is easy to get wrong — prefer `--testPathPatterns`.
@@ -61,4 +60,4 @@ Without it a *finished* run looks like a hang — don't misread that as slow and
 
 This repo uses `.claude/worktrees/`. A worktree has no `node_modules` — run a real
 `npm install` in `checkin-app/` (not a symlink) before any test or dev server. Jest's
-config ignores the worktree rootDir, so a naive full run inside a worktree can find 0 tests.
+`rootDir` is the worktree's own `checkin-app/`, so a run collects only that worktree's tests.

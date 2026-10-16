@@ -107,23 +107,8 @@ const customJestConfig = {
         '^@inventory/income$': '<rootDir>/../packages/income/src/index.ts',
         '^@inventory/quickbooks$': '<rootDir>/../packages/quickbooks/src/index.ts',
     },
-    // The worktree ignore lives at the repo root (.claude/worktrees/), one level
-    // up now that rootDir is checkin-app/. testPathIgnorePatterns matches the
-    // absolute path, so the bare substring still works; modulePathIgnorePatterns
-    // is <rootDir>-anchored and must reach up to the repo root.
     testPathIgnorePatterns: [
         '/node_modules/',
-        // Stop the PRIMARY checkout's jest from descending into sibling worktree
-        // dirs. But when jest itself runs FROM inside a worktree, every test path
-        // contains /.claude/worktrees/ -> this ignore matches ALL of them ->
-        // "No tests found" -> exit 1 -> the pre-commit hook false-blocks every
-        // worktree commit. So only apply the ignore when our own cwd is NOT in a
-        // worktree; from within a worktree, rootDir already scopes collection to
-        // this worktree's own tests, so dropping the pattern is safe.
-        // (Detect via cwd, not an env flag: core.hooksPath points at the PRIMARY
-        // checkout's .husky, so a worktree commit runs main's pre-commit — a
-        // hook-exported flag wouldn't reach here until merged+deployed to main.)
-        ...(process.cwd().includes('/.claude/worktrees/') ? [] : ['/.claude/worktrees/']),
         '\\.integration\\.test\\.[jt]sx?$',
         // Flow tests drive a running dev server over HTTP — excluded from the
         // default/unit run; run with `npm run test:flow` (see AGENTS.md).
