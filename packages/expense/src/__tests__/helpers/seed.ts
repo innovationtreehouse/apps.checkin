@@ -148,8 +148,12 @@ export async function seedPartOwner(opts: {
   });
 }
 
-/** Fills the three base sign-off seats on every line of an expense with distinct people. */
+/**
+ * Fills the three base sign-off seats on every line of an expense with distinct people and
+ * records a Board authorization, so the expense is postable whatever its size.
+ */
 export async function signAllLines(expenseId: string): Promise<void> {
+  await db.expense.update({ where: { id: expenseId }, data: { boardAuthorization: "test: authorized" } });
   const lines = await db.expenseLineItem.findMany({ where: { expenseId }, select: { id: true } });
   for (const { id } of lines) {
     await db.expenseLineSignoff.createMany({

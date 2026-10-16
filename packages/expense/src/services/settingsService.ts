@@ -13,6 +13,8 @@ export const DEFAULT_EXPENSE_SETTINGS: ExpenseSettings = {
   capitalLineItemThresholdCents: 0,
   capitalEquipmentUnitCents: 50_000,
   boardReviewTotalCents: 200_000,
+  everydayTotalLimitCents: 50_000,
+  everydayItemLimitCents: 25_000,
 };
 
 /** A sanity ceiling on every threshold ($1,000,000), for everyone. */
@@ -24,6 +26,8 @@ export const ExpenseSettingsPatchSchema = z.object({
   capitalLineItemThresholdCents: cents.nonnegative(),
   capitalEquipmentUnitCents: cents.positive(),
   boardReviewTotalCents: cents.positive(),
+  everydayTotalLimitCents: cents.positive(),
+  everydayItemLimitCents: cents.positive(),
 }).partial().strict();
 
 /**
@@ -35,6 +39,8 @@ export const ExpenseSettingsPatchSchema = z.object({
 export const THRESHOLD_RULES: Record<keyof ExpenseSettings, { loosens: "up" | "up-or-off"; policyCents?: number }> = {
   capitalEquipmentUnitCents: { loosens: "up", policyCents: 50_000 },
   boardReviewTotalCents: { loosens: "up", policyCents: 200_000 },
+  everydayTotalLimitCents: { loosens: "up", policyCents: 50_000 },
+  everydayItemLimitCents: { loosens: "up", policyCents: 25_000 },
   capitalTotalThresholdCents: { loosens: "up-or-off" },
   capitalLineItemThresholdCents: { loosens: "up-or-off" },
 };
@@ -59,6 +65,8 @@ const SELECT = {
   capitalLineItemThresholdCents: true,
   capitalEquipmentUnitCents: true,
   boardReviewTotalCents: true,
+  everydayTotalLimitCents: true,
+  everydayItemLimitCents: true,
 } as const;
 
 /** Reads without an org assertion, for in-library callers that already hold a row's orgId. */

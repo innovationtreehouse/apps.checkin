@@ -1,5 +1,6 @@
 // Sign-off seats on reimbursement and card-charge lines (F2 / F2-COI). The signer is always the
 // principal; a line with an unfilled seat holds its expense out of the QB outbox.
+import type { Prisma } from "../generated/prisma/client";
 import { db, isUniqueConstraintError } from "../db";
 import type { ExpensePrincipal, SetReimbursee } from "../contract";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
@@ -7,7 +8,7 @@ import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
 import { conflictedParties, filledSeatsByLine, lockExpense, signoffFactsByLine, unsignedLines, voidSignoffs } from "../lib/signoff-facts";
-import { CLOSED_STATES, blockedSeats, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
+import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, lineKind, missingSeats, reimburseeUnknown, signoffRefusal, type Seat } from "../lib/signoff";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
 import { raiseFlag } from "./flagService";
@@ -136,6 +137,57 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, personId, p
 
   if (state === "qb_pending") await drainExpense(orgId, expenseId);
 };
+
+/** The expense, locked and open to change, or the refusal. */
+async function openCardCharge(tx: Prisma.TransactionClient, expenseId: string) {
+  await lockExpense(tx, expenseId);
+  const expense = await tx.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
+  if (!expense) throw new ServiceError(404, "Expense not found");
+  if (expense.backfill) throw new ServiceError(400, "A backfilled expense is already booked");
+  if (CLOSED_STATES.has(expense.state)) throw new ServiceError(400, `Expense is ${expense.state}`);
+  if (lineKind(expense) !== "card_charge") throw new ServiceError(400, "Expense is a reimbursement, not a card charge");
+  return expense;
+}
+
+/**
+ * FINANCE marks a card charge not Everyday: single-source, or its own call. The mark is one-way;
+ * nobody marks an expense back to Everyday.
+ */
+export async function markNotEveryday(principal: ExpensePrincipal, expenseId: string, reason: "single_source" | "finance_override"): Promise<void> {
+  const actor = actorOf(principal);
+  if (!principal.isFinance) throw new ServiceError(403, "Only FINANCE marks an expense not Everyday");
+  const field = reason === "single_source" ? "singleSource" : "financeNotEveryday";
+  await db.$transaction(async (tx) => {
+    const expense = await openCardCharge(tx, expenseId);
+    if (expense[field]) return;
+    await tx.expense.update({ where: { id: expenseId }, data: { [field]: true } });
+    await writeAudit(tx, actor, { expenseId, action: "not_everyday_marked", fieldChanged: field, valueBefore: "false", valueAfter: "true" });
+  });
+}
+
+/**
+ * The Treasurer seat records what the Board authorized for a non-Everyday card charge. The text
+ * is required, a conflicted Treasurer is refused (another FINANCE holder, else a Board member,
+ * records it), and once recorded it is not changed.
+ */
+export async function recordBoardAuthorization(principal: ExpensePrincipal, expenseId: string, authorization: string): Promise<void> {
+  const actor = actorOf(principal);
+  const text = authorization.trim();
+  if (text === "") throw new ServiceError(400, "Say what the Board authorized");
+  const state = await db.$transaction(async (tx) => {
+    const expense = await openCardCharge(tx, expenseId);
+    if (expense.boardAuthorization !== null) throw new ServiceError(409, "The Board authorization is already recorded");
+    const refusal = boardAuthorizationRefusal([...(await signoffFactsByLine(tx, expense)).values()], actor.userId);
+    if (refusal) throw new ServiceError(403, refusal);
+    await tx.expense.update({
+      where: { id: expenseId },
+      data: { boardAuthorization: text, boardAuthorizedByUserId: actor.userId, boardAuthorizedByUsername: actor.username, boardAuthorizedAt: new Date() },
+    });
+    await writeAudit(tx, actor, { expenseId, action: "board_authorization_recorded", fieldChanged: "boardAuthorization", valueAfter: text });
+    return expense.state;
+  });
+  if (state === "qb_pending") await drainExpense(await getOrgId(), expenseId);
+}
 
 /** Per line: the seats filled, still missing, and blocked (held until finance or the board acts). */
 export async function signoffStatus(expenseId: string) {
