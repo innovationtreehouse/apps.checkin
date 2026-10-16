@@ -7,7 +7,7 @@
  * their message and stack passed through `redactSecrets`.
  */
 import crypto from "node:crypto";
-import { redactSecrets } from "./redact.js";
+import { redactSecrets } from "@inventory/utils";
 
 export function newCorrelationId(): string {
   return crypto.randomUUID();

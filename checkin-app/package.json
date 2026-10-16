@@ -43,7 +43,6 @@
     "@inventory/receipt-types": "*",
     "@inventory/workflow-mapping": "*",
     "@inventory/s-ingest-core": "*",
-    "@inventory/telemetry": "*",
     "@mantine/core": "^7.17.8",
     "@mantine/form": "^7.17.8",
     "@mantine/hooks": "^7.17.8",

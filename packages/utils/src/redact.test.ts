@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { redactSecrets } from "./redact.js";
+import { redactSecrets } from "./index";
 
 describe("redactSecrets", () => {
   it("strips URLs with a query string, keeping plain ones", () => {

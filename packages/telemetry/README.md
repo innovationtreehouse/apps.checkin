@@ -9,9 +9,7 @@ health the same *shape*.
 
 - **`logger`** — minimal structured-JSON logger + `newCorrelationId()`. The fleet-wide
   canonical version; `@inventory/s-ingest-core` re-exports it. An `Error` in the fields
-  is logged with its message and stack passed through `redactSecrets`.
-- **`redactSecrets`** — strips credentials and personal data (query-string URLs, emails,
-  auth headers, key=value secrets, token prefixes, opaque keys) from error text.
+  is logged with its message and stack passed through `redactSecrets` from `@inventory/utils`.
 - **`metrics`** — CloudWatch metric emission via **Embedded Metric Format (EMF)**: one
   JSON line to stdout, extracted into a metric by CloudWatch Logs. No `PutMetricData`
   call, no extra IAM, works even when only the log stream is reachable.
