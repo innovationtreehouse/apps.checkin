@@ -7,7 +7,7 @@
  * permitted change writes the flag and one audit row together. A merged-away
  * (tombstoned) person is refused as not found.
  */
-import { setProgramTreasurer, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
+import { createBudgetOwner, setProgramTreasurer, updateBudgetOwner, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
 
 const households: Record<number, number> = { 1: 10, 2: 10, 3: 20, 4: 30 };
 const mergedInto: Record<number, number> = { 4: 3 };
@@ -67,6 +67,14 @@ describe('setProgramTreasurer', () => {
     test('an unchanged flag writes nothing', async () => {
         await setProgramTreasurer(1, 7, 3, false);
         expect(tx.programVolunteer.update).not.toHaveBeenCalled();
+        expect(tx.auditLog.create).not.toHaveBeenCalled();
+    });
+});
+
+describe('QuickBooks Class id', () => {
+    test.each(['abc', '12a', 'class-7', '1 2'])('refuses a non-numeric id %p on create and update', async (classId) => {
+        await expect(createBudgetOwner(1, { name: 'Robotics', quickBooksClassId: classId })).rejects.toMatchObject({ status: 400 });
+        await expect(updateBudgetOwner(1, 5, { quickBooksClassId: classId })).rejects.toMatchObject({ status: 400 });
         expect(tx.auditLog.create).not.toHaveBeenCalled();
     });
 });

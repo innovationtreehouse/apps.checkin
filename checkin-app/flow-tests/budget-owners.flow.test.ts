@@ -51,7 +51,7 @@ describe("budget-owner buckets", () => {
     const bucket = created.json as Bucket;
     expect(bucket).toMatchObject({ name, programId, archivedAt: null, quickBooksClassId: null });
 
-    const classId = `flow-class-${Date.now()}`;
+    const classId = String(Date.now());
     const edited = await send(finance, "PATCH", `/api/budget-owners/${bucket.id}`, { name: `${name} (renamed)`, quickBooksClassId: classId });
     expect(edited.status).toBe(200);
     expect(edited.json).toMatchObject({ name: `${name} (renamed)`, quickBooksClassId: classId });

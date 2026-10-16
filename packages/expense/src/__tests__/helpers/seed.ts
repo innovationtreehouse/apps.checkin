@@ -5,11 +5,11 @@ import type { ExpensePrincipal, OwnerDirectory, SignoffDirectory } from "../../c
 
 export const ORG = "org-1";
 
-/** Live buckets 7, 100, 101 and 200, and archived bucket 999: the buckets tests assign lines to. */
+/** Live buckets 7, 100, 101 and 200, and archived bucket 999: the buckets tests assign lines to. Bucket N's Class is "9N". */
 export const TEST_BUCKETS: OwnerDirectory = {
   list: async () => [
-    ...[7, 100, 101, 200].map((id) => ({ id, name: `bucket-${id}`, archivedAt: null })),
-    { id: 999, name: "bucket-999", archivedAt: new Date("2026-01-01") },
+    ...[7, 100, 101, 200].map((id) => ({ id, name: `bucket-${id}`, archivedAt: null, quickBooksClassId: `9${id}` })),
+    { id: 999, name: "bucket-999", archivedAt: new Date("2026-01-01"), quickBooksClassId: "9999" },
   ],
 };
 
