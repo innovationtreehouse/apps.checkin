@@ -66,3 +66,29 @@ export async function recordDonorDataRead(
     payload: { route: reader.route, ...read },
   });
 }
+
+/** Audit donor names shown on individual records: one DONOR_DATA_READ row per record, written in one batch. */
+export async function recordDonorDataReads(
+  handle: DbOrTx,
+  orgId: string,
+  entityType: EntityType,
+  reader: DonorReadContext,
+  entityIds: string[],
+): Promise<void> {
+  if (entityIds.length === 0) return;
+  const occurredAt = new Date();
+  const payload = JSON.stringify({ route: reader.route });
+  await handle.workflowEvent.createMany({
+    data: entityIds.map((entityId) => ({
+      orgId,
+      entityType,
+      entityId,
+      eventType: "DONOR_DATA_READ",
+      actorUserId: reader.actorUserId,
+      actorUsername: reader.actorUsername ?? null,
+      correlationId: reader.correlationId ?? null,
+      payload,
+      occurredAt,
+    })),
+  });
+}
