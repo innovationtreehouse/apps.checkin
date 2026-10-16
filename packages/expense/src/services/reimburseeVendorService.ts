@@ -10,7 +10,8 @@ import { conflictedParties } from "../lib/signoff-facts";
 import { QB_OFF } from "../lib/expense-constants";
 import { ServiceError } from "./serviceError";
 
-export type VendorChoice = { qbVendorId: string } | { createName: string };
+/** A Vendor QuickBooks already has, by id, or one found or created under the reimbursee's own name. */
+export type VendorChoice = { qbVendorId: string } | { createForReimbursee: true };
 
 /** The reimbursee shown on an expense: their person id and name. */
 export interface ReimburseeView {
@@ -64,7 +65,7 @@ async function sameHousehold(personId: number, actorId: number): Promise<boolean
 
 /**
  * Links the expense's reimbursee to a QuickBooks Vendor: one picked by id, which QuickBooks must
- * know, or one found or created by name. The setter may not be the submitter, the reimbursee, or in either one's
+ * know, or one found or created under the name on the reimbursee's Person record, never free text. The setter may not be the submitter, the reimbursee, or in either one's
  * household, nor land on a Vendor already linked to their own household; each such refusal is
  * audited on the expense. Expenses of the reimbursee parked for want of a Vendor go back to the
  * outbox.
@@ -97,10 +98,16 @@ export async function linkReimburseeVendor(
   }
 
   const qb = await openQuickBooks();
-  const vendor =
-    "createName" in choice ? await qb.findOrCreate(choice.createName, `reimbursee-vendor-${orgId}-${personId}`) : await qb.byId(choice.qbVendorId);
-  if (!vendor) throw new ServiceError(404, "QuickBooks has no Vendor with that id");
-  const qbVendorId = vendor.id;
+  let vendor: QbVendorOption | null;
+  if ("createForReimbursee" in choice) {
+    const name = await getExpenseRuntime().people.nameOf(personId);
+    if (!name?.trim()) throw new ServiceError(409, "The reimbursee has no name to give a new Vendor");
+    vendor = await qb.findOrCreate(name, `reimbursee-vendor-${orgId}-${personId}`);
+  } else {
+    vendor = await qb.byId(choice.qbVendorId);
+    if (!vendor) throw new ServiceError(404, "QuickBooks has no Vendor with that id");
+  }
+  const { id: qbVendorId, displayName } = vendor;
 
   const holder = await db.expenseReimburseeVendor.findFirst({ where: { orgId, qbVendorId } });
   if (holder) {
@@ -111,7 +118,13 @@ export async function linkReimburseeVendor(
   return db
     .$transaction(async (tx) => {
       const row = await tx.expenseReimburseeVendor.create({ data: { orgId, reimburseePersonId: personId, qbVendorId } });
-      await writeAudit(tx, actor, { expenseId, action: "reimbursee_vendor_set", fieldChanged: "qbVendorId", valueAfter: qbVendorId });
+      await writeAudit(tx, actor, {
+        expenseId,
+        action: "reimbursee_vendor_set",
+        fieldChanged: "qbVendorId",
+        valueAfter: qbVendorId,
+        notes: `QuickBooks Vendor "${displayName}"`,
+      });
       // ponytail: re-arms every AMBIGUOUS reimbursement of this person; one ambiguous on QuickBooks candidates just parks again.
       const parked = await tx.expense.findMany({
         where: { orgId, reimburseePersonId: personId, needsReimbursement: true, backfill: false, qbTxnId: null, qbMatchState: "AMBIGUOUS" },

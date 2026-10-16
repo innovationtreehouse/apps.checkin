@@ -105,14 +105,30 @@ interface VendorOption {
   displayName: string;
 }
 
-/** Finance searches QuickBooks Vendors by name and links one, or creates one from the search text. */
-function VendorPicker({ base, initial, onLinked }: { base: string; initial: string; onLinked: () => void }) {
+/**
+ * Finance searches QuickBooks Vendors and links one after confirming its name, or creates one
+ * under the reimbursee's recorded name.
+ */
+function VendorPicker({ base, reimbursee, onLinked }: { base: string; reimbursee: string | null; onLinked: () => void }) {
+  const initial = reimbursee ?? "";
   const [text, setText] = useState(initial);
   const [query, setQuery] = useState(initial.trim().length >= 2 ? initial.trim() : "");
+  const [picked, setPicked] = useState<VendorOption | null>(null);
   const options = useLoad<VendorOption[]>(query ? `${base}/reimbursee-vendor/options?q=${encodeURIComponent(query)}` : null);
   const link = async (body: unknown) => { if (await send(`${base}/reimbursee-vendor`, "PUT", body, "Vendor linked")) onLinked(); };
 
   if (options.error === QB_OFF) return <Text size="sm" c="dimmed">{options.error}</Text>;
+  if (picked) {
+    return (
+      <Stack gap="xs">
+        <Text size="sm">Link QuickBooks Vendor “{picked.displayName}” (#{picked.id}) as {reimbursee ?? "the reimbursee"}’s Vendor? Their Bills will be paid to it.</Text>
+        <Group>
+          <Button size="xs" onClick={() => link({ qbVendorId: picked.id })}>Confirm link</Button>
+          <Button size="xs" variant="default" onClick={() => setPicked(null)}>Cancel</Button>
+        </Group>
+      </Stack>
+    );
+  }
   return (
     <Stack gap="xs">
       <Group>
@@ -124,12 +140,12 @@ function VendorPicker({ base, initial, onLinked }: { base: string; initial: stri
       {(options.data ?? []).map((v) => (
         <Group key={v.id}>
           <Text size="sm">{v.displayName}</Text>
-          <Button size="xs" onClick={() => link({ qbVendorId: v.id })}>Link</Button>
+          <Button size="xs" onClick={() => setPicked(v)}>Link</Button>
         </Group>
       ))}
       {options.data && options.data.length === 0 && <Text size="sm" c="dimmed">No unlinked Vendor matches “{query}”.</Text>}
-      {query && (
-        <Button size="xs" variant="subtle" w="fit-content" onClick={() => link({ createName: query })}>Create “{query}” in QuickBooks</Button>
+      {reimbursee && (
+        <Button size="xs" variant="subtle" w="fit-content" onClick={() => link({ createForReimbursee: true })}>Create “{reimbursee}” in QuickBooks</Button>
       )}
     </Stack>
   );
@@ -342,7 +358,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
           )}
           {!!e.reimburseePersonId && vendor.data && (vendor.data.ExpenseReimburseeVendor
             ? <Text size="sm">QuickBooks Vendor #{vendor.data.ExpenseReimburseeVendor.qbVendorId}</Text>
-            : <VendorPicker base={base} initial={vendor.data.ExpenseReimburseeView?.name ?? ""} onLinked={reloadAll} />)}
+            : <VendorPicker base={base} reimbursee={vendor.data.ExpenseReimburseeView?.name ?? null} onLinked={reloadAll} />)}
         </Paper>
       )}
 

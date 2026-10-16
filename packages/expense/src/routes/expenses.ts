@@ -287,7 +287,7 @@ export const reimbursee: ExpenseRouteHandler = async ({ req, params }) => {
 
 const vendorChoiceSchema = z.union([
   z.object({ qbVendorId: z.string().trim().regex(/^\d+$/, "qbVendorId is a QuickBooks id") }).strict(),
-  z.object({ createName: z.string().trim().min(1).max(100) }).strict(),
+  z.object({ createForReimbursee: z.literal(true) }).strict(),
 ]);
 
 export const reimburseeVendor: ExpenseRouteHandler = async ({ params }) => {

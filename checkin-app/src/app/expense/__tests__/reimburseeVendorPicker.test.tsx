@@ -62,10 +62,23 @@ describe("reimbursee Vendor picker", () => {
     expect(screen.getByText("Reimbursee Pat Lee")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Search QuickBooks Vendors")).toHaveValue("Pat Lee");
 
-    fireEvent.click(screen.getByRole("button", { name: "Link" }));
-    expect(mockSend).toHaveBeenCalledWith("/expenses/e1/reimbursee-vendor", "PUT", { qbVendorId: "55" }, "Vendor linked");
     fireEvent.click(screen.getByRole("button", { name: "Create “Pat Lee” in QuickBooks" }));
-    expect(mockSend).toHaveBeenCalledWith("/expenses/e1/reimbursee-vendor", "PUT", { createName: "Pat Lee" }, "Vendor linked");
+    expect(mockSend).toHaveBeenCalledWith("/expenses/e1/reimbursee-vendor", "PUT", { createForReimbursee: true }, "Vendor linked");
+  });
+
+  it("shows a picked Vendor's name for confirmation before linking it", () => {
+    load(null);
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Link" }));
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(screen.getByText(/Link QuickBooks Vendor “Pat Lee” \(#55\) as Pat Lee’s Vendor\?/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByPlaceholderText("Search QuickBooks Vendors")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Link" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm link" }));
+    expect(mockSend).toHaveBeenCalledWith("/expenses/e1/reimbursee-vendor", "PUT", { qbVendorId: "55" }, "Vendor linked");
   });
 
   it("offers nothing to link while QuickBooks is off", () => {
