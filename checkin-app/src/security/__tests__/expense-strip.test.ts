@@ -141,6 +141,12 @@ describe('expense stripper', () => {
         });
     });
 
+    it('an internal-only view keeps the QuickBooks vendor link and strips the reimbursee', () => {
+        const link = { id: 4, orgId: 'treehouse', reimburseePersonId: 8, qbVendorId: '81', createdAt: '2026-10-15' };
+        expect(strip('ExpenseReimburseeVendor', link, INTERNAL_ONLY)).toEqual({ id: 4, orgId: 'treehouse', qbVendorId: '81', createdAt: '2026-10-15' });
+        expect(strip('ExpenseReimburseeVendor', link, FINANCE_VIEW)).toEqual(link);
+    });
+
     it('a public-only view sees nothing, settings included', () => {
         const settings = { orgId: 'treehouse', boardReviewTotalCents: 200000, noteInLieuLimitCents: 5000 };
         expect(strip('ExpenseOrgSettings', settings, ['public'])).toEqual({});
