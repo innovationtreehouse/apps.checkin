@@ -64,6 +64,10 @@ defineRoute({ endpoint: 'GET /api/expense/org-settings', authorize: 'finance-or-
 defineRoute({ endpoint: 'PUT /api/expense/org-settings', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseOrgSettings'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/flags', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseFlag'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/flags/[id]/check-off', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseFlag'], orderedView: FINANCE_OR_BOARD_VIEW });
+// Records what the Board authorized for a non-Everyday card charge. The library
+// refuses a conflicted caller, and a Board member while a FINANCE holder without
+// a conflict exists.
+defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/board-authorization', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseLineSignoffStatus'], orderedView: FINANCE_OR_BOARD_VIEW });
 
 // FINANCE only.
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/reject', authorize: 'finance', envelope: null, returns: ['LineItemOwnerApproval'], orderedView: FINANCE_VIEW });
@@ -73,6 +77,8 @@ defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[ap
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/capital-review/submit', authorize: 'finance', envelope: null, returns: ['Expense', 'ExpenseLineItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/set-depreciation-cycle/submit', authorize: 'finance', envelope: null, returns: ['Expense', 'ExpenseLineItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
+// Marks a card charge not Everyday (single-source or FINANCE's call); one-way.
+defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/not-everyday', authorize: 'finance', envelope: null, returns: ['ExpenseLineSignoffStatus'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/reimbursee-vendor', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeVendor'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee-vendor', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeVendor'], orderedView: FINANCE_VIEW });
 // Dev-only expense test-data toggle; the route 404s when CHECKIN_ENV=prod.

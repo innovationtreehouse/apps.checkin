@@ -35,6 +35,7 @@ const ORACLES = [
     'donation-strip.test.ts',
     'eligible-candidate-strip.test.ts',
     'emergency-contact-program-scope.test.ts',
+    'expense-card-charge-routes.test.ts',
     'expense-strip.test.ts',
     'expense-test-data-route.test.ts',
     'file-route.test.ts',
