@@ -38,19 +38,110 @@ export function fromAddress(headers: Headers | undefined): string | null {
   return trimmed && ADDR_SPEC.test(trimmed) ? trimmed : null;
 }
 
+type AuthResToken = { word: string } | { sep: ";" | "=" };
+
+/**
+ * RFC 8601 lexer. Comments are dropped and act as whitespace; a quoted string joins its word as
+ * plain text, so a `;` or `=` inside it never separates. Outside quotes `;` separates, and so
+ * does the first `=` of each whitespace-delimited run: later ones stay literal, as in a base64
+ * `header.b` value. Null when a comment or quoted string is unterminated.
+ */
+function lexAuthResults(value: string): AuthResToken[] | null {
+  const tokens: AuthResToken[] = [];
+  let word: string | null = null;
+  let sawEq = false;
+  const flush = () => {
+    if (word !== null) tokens.push({ word });
+    word = null;
+  };
+  const space = () => {
+    flush();
+    sawEq = false;
+  };
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i];
+    if (c === "(") {
+      space();
+      for (let depth = 1; depth > 0; ) {
+        i++;
+        if (i >= value.length) return null;
+        if (value[i] === "\\") i++;
+        else if (value[i] === "(") depth++;
+        else if (value[i] === ")") depth--;
+      }
+    } else if (c === '"') {
+      let text = "";
+      for (i++; value[i] !== '"'; i++) {
+        if (value[i] === "\\") i++;
+        if (i >= value.length) return null;
+        text += value[i];
+      }
+      word = (word ?? "") + text;
+    } else if (c === ";") {
+      space();
+      tokens.push({ sep: c });
+    } else if (c === "=" && !sawEq) {
+      flush();
+      sawEq = true;
+      tokens.push({ sep: c });
+    } else if (/\s/.test(c)) space();
+    else word = (word ?? "") + c;
+  }
+  flush();
+  return tokens;
+}
+
+type ResInfo = { method: string; result: string; props: [string, string][] };
+
+/**
+ * The authserv-id and method results of one `Authentication-Results` value; null when it does
+ * not parse. A clause's token shape is matched as a string: `w` a word, separators as themselves.
+ */
+function parseAuthResults(value: string): { authservId: string; results: ResInfo[] } | null {
+  const tokens = lexAuthResults(value);
+  if (!tokens) return null;
+  const clauses: AuthResToken[][] = [[]];
+  for (const t of tokens) {
+    if ("sep" in t && t.sep === ";") clauses.push([]);
+    else clauses[clauses.length - 1].push(t);
+  }
+  const shape = (c: AuthResToken[]) => c.map((t) => ("word" in t ? "w" : t.sep)).join("");
+  const words = (c: AuthResToken[]) => c.flatMap((t) => ("word" in t ? [t.word] : []));
+
+  const [head, ...rest] = clauses;
+  const [authservId, version] = words(head);
+  // authserv-id [authres-version]
+  if (!/^ww?$/.test(shape(head)) || (version !== undefined && !/^\d+$/.test(version))) return null;
+  // no-result
+  if (rest.length === 1 && shape(rest[0]) === "w" && words(rest[0])[0].toLowerCase() === "none") {
+    return { authservId, results: [] };
+  }
+  const results: ResInfo[] = [];
+  for (const clause of rest) {
+    // method[/version]=result, then key=value pairs (reasonspec and propspecs)
+    if (!/^w=w(w=w)*$/.test(shape(clause))) return null;
+    const [methodspec, result, ...pairs] = words(clause);
+    const props: [string, string][] = [];
+    for (let i = 0; i < pairs.length; i += 2) props.push([pairs[i], pairs[i + 1]]);
+    results.push({ method: methodspec.replace(/\/\d+$/, ""), result, props });
+  }
+  return { authservId, results };
+}
+
 /**
  * True when Google's own verdict says the `From` domain passed DMARC. Only the topmost
  * `Authentication-Results` header counts, and only when Google wrote it: a sender can write
- * any header below it.
+ * any header below it. Anything ambiguous (unparseable, two dmarc results, two header.from
+ * properties) fails closed.
  */
 export function dmarcAligned(headers: Headers | undefined, address: string): boolean {
   const topmost = headerValues(headers, "Authentication-Results")[0];
-  if (!topmost) return false;
-  const [servId, ...results] = topmost.split(";").map((s) => s.trim());
-  if (servId.split(/\s+/)[0].toLowerCase() !== "mx.google.com") return false;
-  const dmarc = results.find((r) => /^dmarc=/i.test(r));
-  if (!dmarc || !/^dmarc=pass\b/i.test(dmarc)) return false;
-  return /\bheader\.from=([^\s;]+)/i.exec(dmarc)?.[1].toLowerCase() === address.split("@")[1];
+  const parsed = topmost === undefined ? null : parseAuthResults(topmost);
+  if (!parsed || parsed.authservId.toLowerCase() !== "mx.google.com") return false;
+  const dmarc = parsed.results.filter((r) => r.method.toLowerCase() === "dmarc");
+  if (dmarc.length !== 1 || dmarc[0].result.toLowerCase() !== "pass") return false;
+  const from = dmarc[0].props.filter(([key]) => key.toLowerCase() === "header.from");
+  return from.length === 1 && from[0][1].toLowerCase() === address.split("@")[1];
 }
 
 /** Every part outside a forwarded message: an attached message's headers and parts are never read. */
