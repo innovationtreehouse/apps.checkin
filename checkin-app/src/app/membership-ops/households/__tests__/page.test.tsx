@@ -203,6 +203,27 @@ describe("membership-ops/households page", () => {
       expect(screen.queryByRole("button", { name: "Grant for coming year" })).not.toBeInTheDocument();
     });
 
+    // The Joneses' application awaits payment: a current-year Grant would certify it.
+    const awaiting = { households: households.households.map((h) => h.id === 2 ? { ...h, awaitingPayment: true } : h) };
+
+    it("hides Grant Membership from a non-Board sysadmin when the application awaits payment", async () => {
+      setSession({ id: 1, isSysadmin: true });
+      mockFetchJson({ "/api/membership-ops/households": awaiting });
+      renderWithProviders(<AdminHouseholdsPage />);
+      await screen.findByText("The Joneses");
+
+      expect(screen.queryByRole("button", { name: "Grant Membership" })).not.toBeInTheDocument();
+    });
+
+    it("keeps Grant Membership for the Board when the application awaits payment", async () => {
+      setSession({ id: 1, isBoardMember: true });
+      mockFetchJson({ "/api/membership-ops/households": awaiting });
+      renderWithProviders(<AdminHouseholdsPage />);
+      await screen.findByText("The Joneses");
+
+      expect(screen.getByRole("button", { name: "Grant Membership" })).toBeInTheDocument();
+    });
+
     it("opens a modal requiring a reason, then posts comingYear + reason when confirmed", async () => {
       setSession({ id: 1, isBoardMember: true });
       const fetchMock = mockFetchJson({ "/api/membership-ops/households": inSeason });

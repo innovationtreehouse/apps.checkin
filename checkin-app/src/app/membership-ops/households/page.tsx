@@ -25,6 +25,8 @@ type Household = {
   validUntil?: string | null;
   householdMembers?: { id: number; name?: string | null; email?: string | null; isBoardMember?: boolean; emailUndeliverableAt?: string | null }[] | null;
   renewalGrantable?: boolean;
+  // An application (initial or renewal) is at PENDING_PAYMENT: granting certifies it.
+  awaitingPayment?: boolean;
   bgValidUntil?: string | null;
 };
 
@@ -35,8 +37,9 @@ const fmtDate = (s?: string | null) =>
 
 export default function AdminHouseholdsPage() {
   const { user: me, ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
-  // A coming-year grant always certifies a payment, which only the Board may do
-  // (the server 403s a sysadmin), so that button is Board-only.
+  // Certifying a payment is Board-only (the server 403s a sysadmin), so a Grant that
+  // would certify — coming-year always, current-year at PENDING_PAYMENT — is hidden
+  // from anyone else. A current-year Grant that only opens an application stays.
   const isBoard = me?.isBoardMember === true;
   const router = useRouter();
 
@@ -331,7 +334,7 @@ export default function AdminHouseholdsPage() {
                         </Button>
                       ) : (
                         <>
-                          <Button
+                          {(hasActiveMembership || isBoard || !household.awaitingPayment) && <Button
                             size="xs" fz={15}
                             variant="light"
                             color={hasActiveMembership ? 'red' : 'treehouseGreen'}
@@ -346,7 +349,7 @@ export default function AdminHouseholdsPage() {
                             onClick={() => hasActiveMembership ? revokeMembership(household.id) : openGrant(household.id, "current")}
                           >
                             {hasActiveMembership ? "Revoke Membership" : "Grant Membership"}
-                          </Button>
+                          </Button>}
                           <Button
                             size="xs" fz={15}
                             variant="outline"
