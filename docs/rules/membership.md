@@ -237,6 +237,10 @@ Procedure below is built on them.
   application never holds the second approval that would identify a subject, so
   an override naming nobody would date a clearance against no one.  [Decision]
 
+- The duplicate-attestation cleanup is the Board's alone. When a person merge
+  finds the same review recorded under two identities, only a board member may
+  remove the duplicate; a sysadmin off the board may not.  [Decision]
+
 - Every background-check decision and every payment certification records a
   written reason — wider than the policy, which requires documentation only for a
   disqualifying offence.  [Decision — *Policy: Membership Policy, Art. IX*]
