@@ -122,7 +122,7 @@ export async function processCheckin(
             personId: participant.id,
             arrivedAt: arrivalTime,
             arrivedVia: "SCANNER",
-            arrivalSource: visitTime ? "REPLAYED_SCAN" : "LIVE_SCAN",
+            arrivedLive: !visitTime,
             associatedEventId: eventId
         },
     });
@@ -175,7 +175,7 @@ async function fenceReplayedArrival(tx: TxClient, personId: number, arrivedAt: D
             personId,
             arrivedAt,
             arrivedVia: "SCANNER",
-            arrivalSource: "REPLAYED_SCAN",
+            arrivedLive: false,
             departedAt: new Date(Math.min(
                 Math.max(fence.closedAt.getTime(), arrivedAt.getTime()),
                 arrivedAt.getTime() + MAX_VISIT_MS,
@@ -588,16 +588,14 @@ const closeMoment = (id: number, closedAt: Date) => Prisma.sql`t AS (
  *  exactly the arrival's time instead. */
 export const LIVE_ARRIVAL_WINDOW_MS = 15_000;
 
-/** A live badge at the kiosk began visit `v`, as recorded in arrivalSource.
- *  A row older than that column falls back to its badge log row: written in the
- *  scan, just before the server stamped the arrival.
- *  ponytail: the fallback can go once no open visit predates arrivalSource. */
-const liveBadgeArrival = Prisma.sql`(CASE WHEN v."arrivalSource" IS NOT NULL
-    THEN v."arrivalSource" = 'LIVE_SCAN'::"VisitArrivalSource"
-    ELSE EXISTS (
+/** A live badge at the kiosk began visit `v`, as recorded in arrivedLive.
+ *  A SCANNER row older than that column falls back to its badge log row:
+ *  written in the scan, just before the server stamped the arrival.
+ *  ponytail: the fallback can go once no open visit predates arrivedLive. */
+const liveBadgeArrival = Prisma.sql`(v."arrivedVia" IS NOT DISTINCT FROM 'SCANNER'::"VisitSource" AND COALESCE(v."arrivedLive", EXISTS (
     SELECT 1 FROM "RawBadgeLog" r
     WHERE r."personId" = v."personId" AND r."timestamp" < v."arrivedAt"
-      AND r."timestamp" >= v."arrivedAt" - ${LIVE_ARRIVAL_WINDOW_MS}::double precision * interval '1 millisecond') END)`;
+      AND r."timestamp" >= v."arrivedAt" - ${LIVE_ARRIVAL_WINDOW_MS}::double precision * interval '1 millisecond')))`;
 
 /** The visits `v` a close at `t` departs: open, or machine-departed after it,
  *  and begun by then. Tombstoned visits are excluded: closing one would rewrite

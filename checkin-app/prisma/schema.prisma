@@ -63,19 +63,6 @@ enum VisitSource {
   SYSTEM
 }
 
-/// Which code path created a Visit. Unlike arrivedVia, tells a live badge (the
-/// server stamped arrivedAt) from a replayed one (arrivedAt is the kiosk's scan time).
-enum VisitArrivalSource {
-  LIVE_SCAN     // processCheckin, stamped by the server
-  REPLAYED_SCAN // kiosk outbox replay, stamped with the scan time
-  WEB_CHECKIN   // POST /api/attendance
-  WEB_MANUAL    // member's own typed visit (/api/attendance/manual)
-  STAFF_INSERT  // staff-typed visit (/api/facility/visits/insert)
-  EVENT_MARK    // event lead marks attendance (/api/events/[id])
-  REVIEW_PANEL  // an unsynced scan resolved from system-status
-  SEED          // dev seed data
-}
-
 enum ProgramPhase {
   PLANNING
   UPCOMING
@@ -1358,9 +1345,11 @@ model Visit {
   arrivedVia        VisitSource?
   /// @sensitivity:public
   departedVia       VisitSource?
-  /// How the visit was started; null on rows older than the column.
+  /// For a SCANNER arrival: true = live badge scan at the door (the server
+  /// stamped arrivedAt), false = replayed/queued scan (arrivedAt is the scan
+  /// time). Null = not a scan, or a row older than the column.
   /// @sensitivity:public
-  arrivalSource     VisitArrivalSource?
+  arrivedLive       Boolean?
   /// @sensitivity:public
   associatedEventId Int?
 

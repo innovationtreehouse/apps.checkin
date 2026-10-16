@@ -281,7 +281,6 @@ export const POST = withAuth({}, async (req, auth) => {
                         personId: participant.id,
                         arrivedAt: arrivalTime,
                         arrivedVia: "TYPED",
-                        arrivalSource: "WEB_CHECKIN",
                         associatedEventId: eventId
                     }
                 });

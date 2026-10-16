@@ -62,7 +62,6 @@ export const POST = handler('POST /api/facility/visits/insert', async ({ req, au
                 // actor vs subject (#1624). Not LEAD_MARKED (that is an event
                 // window, no clock).
                 arrivedVia: "TYPED",
-                arrivalSource: "STAFF_INSERT",
                 departedVia: "TYPED",
                 associatedEventId: eventId,
             },

@@ -399,19 +399,19 @@ describe('close as one recorded event (real DB)', () => {
         });
 
         // A badge log row just before arrivedAt is the fallback for a visit older
-        // than arrivalSource; once the column is set it decides alone.
+        // than arrivedLive; once the column is set it decides alone.
         const badgeLogBefore = (v: Visit) => prisma.rawBadgeLog.create({
             data: { personId: v.personId, timestamp: new Date(v.arrivedAt.getTime() - 1000), location: 'Front Door' },
         });
 
         it.each([
-            ['LIVE_SCAN, no badge log: kept', 'LIVE_SCAN', false, null],
-            ['REPLAYED_SCAN, despite a badge log just before: swept', 'REPLAYED_SCAN', true, 'FACILITY_CLOSE'],
+            ['live, no badge log: kept', true, false, null],
+            ['replayed, despite a badge log just before: swept', false, true, 'FACILITY_CLOSE'],
             ['unset, a badge log just before: kept (fallback)', null, true, null],
             ['unset, no badge log: swept (fallback)', null, false, 'FACILITY_CLOSE'],
-        ] as const)('a stalled close reads arrivalSource for an arrival after it was recorded, inside the skew: %s', async (_, arrivalSource, logged, departedVia) => {
+        ] as const)('a stalled close reads arrivedLive for an arrival after it was recorded, inside the skew: %s', async (_, arrivedLive, logged, departedVia) => {
             await prisma.facilityClose.create({ data: { closedAt: at(60_000), createdAt: at(30_000), closedById: k.id, via: 'KIOSK', executedAt: null } });
-            const mv = await open(m, at(10_000), { arrivalSource });
+            const mv = await open(m, at(10_000), { arrivedLive });
             if (logged) await badgeLogBefore(mv);
 
             await executePendingCloses();
@@ -420,11 +420,11 @@ describe('close as one recorded event (real DB)', () => {
         });
 
         it.each([
-            ['REPLAYED_SCAN, despite a badge log just before: held', 'REPLAYED_SCAN', false],
+            ['replayed, despite a badge log just before: held', false, false],
             ['unset, a badge log just before: departs (fallback)', null, true],
-        ] as const)('a queued OUT behind a later open visit reads its arrivalSource: %s', async (_, arrivalSource, departs) => {
+        ] as const)('a queued OUT behind a later open visit reads its arrivedLive: %s', async (_, arrivedLive, departs) => {
             await open(k2, at(3 * HOUR), { departedAt: at(2 * HOUR), departedVia: 'SCANNER' });
-            const kv = await open(k2, at(30_000), { arrivalSource });
+            const kv = await open(k2, at(30_000), { arrivedLive });
             await badgeLogBefore(kv);
 
             await scan({ participantId: k2.id, clientEventId: `${TAG}-src-out`, scannedAt: at(60_000).toISOString(), replay: true, intent: 'OUT', ...v7 });

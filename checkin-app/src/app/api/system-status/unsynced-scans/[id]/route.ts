@@ -146,7 +146,7 @@ export const POST = handler<{ id: string }>(
                     arrivedAt: row.timestamp,
                     departedAt: parsedDeparted,
                     arrivedVia: "SCANNER",
-                    arrivalSource: "REVIEW_PANEL",
+                    arrivedLive: false,
                     departedVia: parsedDeparted ? "TYPED" : null,
                     associatedEventId,
                 },

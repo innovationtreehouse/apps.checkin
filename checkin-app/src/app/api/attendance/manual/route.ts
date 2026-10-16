@@ -135,7 +135,6 @@ export const POST = withAuth({}, async (req, auth) => {
                     arrivedAt: arrivalTime,
                     departedAt: departureTime,
                     arrivedVia: "TYPED",
-                    arrivalSource: "WEB_MANUAL",
                     departedVia: departureTime ? "TYPED" : null,
                     associatedEventId: eventId
                 }
