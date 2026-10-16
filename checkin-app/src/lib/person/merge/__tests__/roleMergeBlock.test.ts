@@ -1,4 +1,4 @@
-import { roleMergeBlock } from "../membershipGuard";
+import { roleMergeBlock } from "../guard";
 
 describe("roleMergeBlock", () => {
     const board = { isBoardMember: true };

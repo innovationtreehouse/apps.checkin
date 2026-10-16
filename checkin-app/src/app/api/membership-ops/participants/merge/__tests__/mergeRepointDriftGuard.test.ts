@@ -7,7 +7,7 @@ import { join } from 'node:path';
  * unlisted, nothing stale).
  *
  * A participant merge has to decide something about EVERY foreign key pointing
- * at `Person`. The list of those decisions lived only in `merge/route.ts`'s
+ * at `Person`. The list of those decisions lived only in the merge's
  * control flow, hand-maintained, and it drifted: #1456 slice 2b-0 found SIX
  * relations the merge had never touched at all — including `RawBadgeLog`
  * (RESTRICT, so the tombstone could never be deleted) and `PersonRole`
@@ -78,7 +78,7 @@ function personForeignKeys(): string[] {
 }
 
 /**
- * What `merge/route.ts` does with each Person FK. Every entry names the FK's
+ * What the merge (`lib/person/merge/execute.ts`) does with each Person FK. Every entry names the FK's
  * `onDelete` too, because that is what decides how bad "do nothing" is: RESTRICT
  * blocks a later delete outright, CASCADE destroys the row silently, SET NULL
  * quietly erases whichever fact the column recorded.
@@ -134,7 +134,7 @@ describe('merge repoint drift guard', () => {
     });
 
     it('every Person foreign key has a merge disposition', () => {
-        // A new one of these must be handled in merge/route.ts and recorded above.
+        // A new one of these must be handled in lib/person/merge/execute.ts and recorded above.
         // "It does not need handling" is itself a disposition — write it down as
         // deliberately-left with the reason, so the next reader inherits it.
         expect(keys.filter((k) => !(k in DISPOSITIONS))).toEqual([]);

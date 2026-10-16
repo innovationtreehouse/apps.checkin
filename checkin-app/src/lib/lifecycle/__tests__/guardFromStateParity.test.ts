@@ -196,7 +196,7 @@ describe('CAS guard ↔ TRANSITIONS from-state parity (#1080)', () => {
         // An existence set, not a from-state (the PERSON_BG edge is ∅→PENDING_BG_REVIEW),
         // so it is a StateSet rather than fromWhere — and both sites read the SAME one:
         // the create-idempotency guard and the merge's duplicate resolution.
-        for (const file of ['lib/membership/personBgTriggers.ts', 'app/api/membership-ops/participants/merge/route.ts']) {
+        for (const file of ['lib/membership/personBgTriggers.ts', 'lib/person/merge/execute.ts']) {
             expect({ file, spreads: /\.\.\.personBgOpen\.where/.test(read(file)) }).toEqual({ file, spreads: true });
         }
         expect(read('lib/membership/personBgTriggers.ts')).not.toMatch(/fromWhere\(/);

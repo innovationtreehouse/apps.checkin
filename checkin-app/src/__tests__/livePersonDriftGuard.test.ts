@@ -51,7 +51,7 @@ import { join, relative, sep } from 'node:path';
  *      join table carries no `person:` key at all —
  *        prisma.programParticipant.count({ where: { programId } })
  *      matches neither pattern above, yet a tombstone's left-behind enrollment row
- *      (merge/route.ts leaves colliding rows on the tombstone) inflates that number
+ *      (lib/person/merge/execute.ts leaves colliding rows on the tombstone) inflates that number
  *      and can trip a capacity gate, without any Person data ever being read. So a
  *      join-table list/count is a site in its own right: it must filter through the
  *      `person` relation (`where: { person: LIVE_PERSON }`) or be allowlisted.
@@ -68,9 +68,9 @@ import { join, relative, sep } from 'node:path';
  *   resolved, so they carry the same reasoning (only `updateMany`/`deleteMany`,
  *   whose where is an unrestricted filter, can sweep tombstones in unnoticed).
  *   This is also exactly the shape merge/analyze/
- *   scan (app/api/membership-ops/participants/merge{,/analyze}/route.ts,
+ *   scan (lib/person/merge/execute.ts, app/api/membership-ops/participants/merge/analyze/route.ts,
  *   app/api/scan/route.ts) use to load the specific record they operate ON —
- *   which is why none of those three routes needs an ALLOWLIST entry: they
+ *   which is why none of those three files needs an ALLOWLIST entry: they
  *   never appear as a scanner hit in the first place. `findFirst` is NOT
  *   excluded by function name — even when it happens to carry an `id:` equality
  *   clause (functionally the same one-row shape) it still needs a human
@@ -131,16 +131,16 @@ const PERSON_RELATION_NAMES = [
  */
 const ALLOWLIST: Record<string, string> = {
     // ── sweeps / reconcilers (rule: "must still see tombstone rows") ──────────
-    'lib/lifecycleDrift.ts': 'I1 auto-heal (releases stranded inventoryHeldAt). It never reads Person data — scanLifecycleViolations/runLifecycleReconcile read and update programParticipant fields (personId, status, inventoryHeldAt) directly — but its programParticipant.findMany calls are class-3 sites. Filtering them would be a REGRESSION, not a fix: a merge deliberately leaves colliding enrollment rows on the tombstone (merge/route.ts step 4), and those are exactly the rows whose holds need releasing. Hidden from this sweep they become immortal and leak held Shopify inventory forever. Same sweep rationale as the two cron entries below.',
+    'lib/lifecycleDrift.ts': 'I1 auto-heal (releases stranded inventoryHeldAt). It never reads Person data — scanLifecycleViolations/runLifecycleReconcile read and update programParticipant fields (personId, status, inventoryHeldAt) directly — but its programParticipant.findMany calls are class-3 sites. Filtering them would be a REGRESSION, not a fix: a merge deliberately leaves colliding enrollment rows on the tombstone (lib/person/merge/execute.ts moveJoinTables), and those are exactly the rows whose holds need releasing. Hidden from this sweep they become immortal and leak held Shopify inventory forever. Same sweep rationale as the two cron entries below.',
     'app/api/cron/pending-participants/route.ts': '7-day clock → withdrawAndReleaseHold — must see a tombstoned participant to release its hold.',
     'app/api/cron/scholarship-grace-expiry/route.ts': 'Grace cutoff sweep — must see a tombstoned participant to release its held seat.',
-    'lib/finance/reconcile/program.ts': 'Payment reconciler: a Shopify order must still settle a PENDING programParticipant "left" on a tombstone by a merge collision (merge/route.ts step 4) — that row has no other owner to settle it.',
-    'lib/finance/reconcile/reversals.ts': 'Payment reconciler: a Shopify order must still settle a PENDING programParticipant "left" on a tombstone by a merge collision (merge/route.ts step 4) — that row has no other owner to settle it.',
+    'lib/finance/reconcile/program.ts': 'Payment reconciler: a Shopify order must still settle a PENDING programParticipant "left" on a tombstone by a merge collision (lib/person/merge/execute.ts moveJoinTables) — that row has no other owner to settle it.',
+    'lib/finance/reconcile/reversals.ts': 'Payment reconciler: a Shopify order must still settle a PENDING programParticipant "left" on a tombstone by a merge collision (lib/person/merge/execute.ts moveJoinTables) — that row has no other owner to settle it.',
     'lib/finance/reconcile/membership.ts': 'Payment reconciler, membership pass: the order-email → household-lead fallback for orders that carry no Membership_Process_ID, under the same rationale as reconcile/program.ts.',
     'app/api/finance-ops/s-read/match-audit/track/route.ts': 'Order-claim reconciliation check: `programParticipant.findFirst({ where: { shopifyOrderId } })` asks "has any enrollment already claimed this order". A merge-collision row left on a tombstone still holds the order — filtering it would falsely report the order unmatched and raise a spurious payment exception.',
-    'lib/attendance/scan.ts': 'Facility force-checkout sweep (last keyholder leaving): must see every open visit, including a merge-orphaned tombstone\'s (merge/route.ts leaves a concurrently-open visit in place), or it never gets force-closed.',
-    'lib/attendance/close.ts': 'Facility force-checkout sweep (last keyholder leaving): must see every open visit, including a merge-orphaned tombstone\'s (merge/route.ts leaves a concurrently-open visit in place), or it never gets force-closed.',
-    'lib/attendance/keyholderGuard.ts': 'Facility force-checkout sweep (last keyholder leaving): must see every open visit, including a merge-orphaned tombstone\'s (merge/route.ts leaves a concurrently-open visit in place), or it never gets force-closed.',
+    'lib/attendance/scan.ts': 'Facility force-checkout sweep (last keyholder leaving): must see every open visit, including a merge-orphaned tombstone\'s (lib/person/merge/execute.ts leaves a concurrently-open visit in place), or it never gets force-closed.',
+    'lib/attendance/close.ts': 'Facility force-checkout sweep (last keyholder leaving): must see every open visit, including a merge-orphaned tombstone\'s (lib/person/merge/execute.ts leaves a concurrently-open visit in place), or it never gets force-closed.',
+    'lib/attendance/keyholderGuard.ts': 'Facility force-checkout sweep (last keyholder leaving): must see every open visit, including a merge-orphaned tombstone\'s (lib/person/merge/execute.ts leaves a concurrently-open visit in place), or it never gets force-closed.',
     'app/api/cron/nightly/route.ts': 'Nightly force-checkout sweep: must see every open visit, including a merge-orphaned tombstone\'s, or a stranded open visit is never released (same rationale as lifecycleDrift.ts\'s I1 heal).',
 
     // ── structural mass writes (the write rule\'s second exception) ────────────
@@ -192,7 +192,7 @@ const ALLOWLIST: Record<string, string> = {
     'app/api/shop/certifications/route.ts': 'Scanner is textually blind to a VARIABLE-held where. The "All Assignments" grid — the only many-person list here — spells out `where: { person: LIVE_PERSON }` inline; the second findMany passes `whereClause`, whose two branches are `{ toolId, person: LIVE_PERSON }` (list) and `{ personId: targetUserId }` (one already-identified person). Both covered, neither visible in the captured argument object.',
 
     // ── dev-only tooling (no production / user-facing effect) ─────────────────
-    'app/api/auth/dev-personas/route.ts': 'Dev-only persona picker (config.isDevInstance() gated), scoped to `email: { endsWith: "@example.com" }` — a merge tombstone\'s email is always rewritten to merged-*@deleted.invalid (merge/route.ts step 1 CAS), so it can never match this domain filter.',
+    'app/api/auth/dev-personas/route.ts': 'Dev-only persona picker (config.isDevInstance() gated), scoped to `email: { endsWith: "@example.com" }` — a merge tombstone\'s email is always rewritten to merged-*@deleted.invalid (lib/person/merge/execute.ts clearTombstoneIdentity), so it can never match this domain filter.',
     'app/api/dev/shopify/orders-paid/route.ts': 'Dev-only mock-webhook firer (config.isDevInstance() gated). Both join reads pin `personId: { in: participantIds }` from the request body and are echoed back to the dev UI — no production or user-facing effect.',
     'lib/dev/seed-helpers.ts': 'Dev seed helper: picks an arbitrary sample of existing persons for local macro/demo flows. No production or user-facing effect.',
 };
