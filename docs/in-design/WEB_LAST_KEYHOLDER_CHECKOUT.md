@@ -244,8 +244,9 @@ close offer the kiosk already shows when another keyholder is recorded: the ambe
 reserved for errors and the supervision confirm. The one change is copy: the
 close offer for the last keyholder states that no other keyholder is checked in.
 
-**The trust principle.** Agreed text for `docs/rules/principles.md`, shipped as
-its own change:
+**The trust principle.** Agreed text, now kept in
+`docs/rules/attendance-checkin.md` ("Trust, then review"), shipped as its own
+change:
 
 > ## Trust, then review
 >

@@ -119,8 +119,14 @@ Things the app takes as true because they are handled outside it.
 
 - Nobody under 18 enrolls themselves, and nobody whose age is unknown does
   either; only a known adult may. The bar is the guardian-consent line and is
-  separate from the ages a program targets. A youth is enrolled, and withdrawn,
-  by their household lead.  [Decision — *Principle: fail closed*]
+  separate from the ages a program targets. A youth is enrolled by their
+  household lead, who may also withdraw them while the place is unpaid. Neither a
+  youth nor someone whose age is unknown withdraws themselves.  [Decision — *Principle: fail closed*]
+
+- A paid place is not the household's to withdraw. Today the board, a sysadmin
+  and the program's leader can remove it.  [Not yet enforced: code fix pending]
+  [Unsettled — who withdraws a paid
+  place is open with the board]
 
 - Being refused for an unknown age is not a dead end. Someone with no age on file
   is asked to record one and may then enroll themselves; a brand-new adult is
@@ -203,7 +209,8 @@ Things the app takes as true because they are handled outside it.
 - A member discount code is minted for one household's unpaid claims, names that
   household, and is good for one order. On anyone else's order, or once that
   household's membership no longer covers the program, it activates nobody and
-  goes to the board.  [Decision]
+  goes to the board. What "covers the program" means rests on the candidate
+  below, which is not settled.  [Decision]
 
 - A program priced on a tier with nothing wired to sell it is broken and is
   reported as such. A free tier has nothing to wire and is never reported, and a
@@ -257,8 +264,19 @@ Things the app takes as true because they are handled outside it.
   back on sale; only a public-item refund restocks.  [Decision — deliberate limit]
 
 - The public item keeps its counted stock for people buying straight from the
-  store. A price change is made on both items by hand; the app does not push
-  prices to the store.  [Decision — deliberate limit]
+  store. A change to a program's full price goes to both store items. A member
+  price does not, because members pay through their discount code. A full price
+  of zero or none is never sent, since a free store item would give places away;
+  that case, or a price the store refuses, is reported to the admins and the
+  saved price stands.  [Not yet enforced: code fix pending]  [Decision]
+
+- The store is never asked to show fewer than no places. Where the app holds more
+  places than the store has stock, the difference stays owed; places that come
+  back pay it down before any goes back on sale, and the board is told when it
+  grows.  [Decision]
+
+- A stock change the store can no longer confirm is never resent, because it
+  could apply twice. A board member settles it against the store.  [Decision — *Principle: fail closed*]
 
 - Each program has an off-sale date, set by the board, defaulting to its start
   date; it may fall before or after the start. On that date new claims stop, and
@@ -272,8 +290,9 @@ Things the app takes as true because they are handled outside it.
   admins are emailed to create one.  [Decision — deliberate limit]
 
 - After the off-sale date no seat goes back on sale: a withdrawal, a released
-  hold or a raised capacity changes no store stock, though a cut still lowers
-  it.  [Decision]
+  hold, a raised capacity or a refund that restocks changes no store stock,
+  though a cut still lowers it. The off-sale date wins over a refund going back
+  on sale.  [Decision]
 
 - Automatic changes only reduce visibility. Nothing opens enrollment, re-lists a
   product or reopens a sale on its own; the board reopens a sale by moving its
@@ -341,7 +360,12 @@ Things the app takes as true because they are handled outside it.
 - A program leader sees whether a participant has paid, never how. Method,
   scholarship, and payment plan are not theirs.  [Decision — *Principle: least privilege*]
 
-- Only the board and sysadmins set a program's store variant.  [Decision — *Principle: least privilege*]
+- Only the board and sysadmins set a program's price or its store variant. A
+  program leader cannot: a price change can make their own family's place
+  free.  [Decision — *Principle: least privilege*]
+
+- The people running a program reach a family through its household leads and
+  emergency contacts. A participant's own phone number is not given to them.  [Decision — *Principle: least privilege*]
 
 - A program leader cannot remove the program's treasurer from its volunteers.
   The treasurer comes from the budget agreed between the board and the program

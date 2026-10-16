@@ -205,9 +205,6 @@ Procedure below is built on them.
   new approvals, or a board override clears it. Denying the household is a
   household action and leaves the application blocked.  [Decision — *Principle: people decide about people*]
 
-- Applications already blocked when this rule took effect are not backfilled.
-  Each one blocks a new start until the board resets or overrides it.  [Decision]
-
 - The background-check result is never stored. The record is that reviewers saw
   it and what they judged — stricter than the policy, which permits the board to
   hold it.  [Decision — *Policy: Membership Policy, Art. VI §VI.2*]
@@ -241,15 +238,16 @@ Procedure below is built on them.
   finds the same review recorded under two identities, only a board member may
   remove the duplicate; a sysadmin off the board may not.  [Decision]
 
-- Every background-check decision and every payment certification records a
-  written reason — wider than the policy, which requires documentation only for a
-  disqualifying offence.  [Decision — *Policy: Membership Policy, Art. IX*]
+- Every background-check decision that refuses, blocks or denies, and every
+  payment certification, records a written reason — wider than the policy, which
+  requires documentation only for a disqualifying offence. An approval needs
+  none.  [Decision — *Policy: Membership Policy, Art. IX*]
 
-- The board closes a long-idle, unpaid application ("Close application"); it is
-  never destroyed, and "Reopen" returns it to the step it was closed from. A paid,
-  blocked, clearance-waiting or active application cannot be closed. Reopening
-  refuses a denied household, or one with another open application. The word
-  "archive" is reserved for archiving a household.  [Decision —
+- The board may close an unpaid application ("Close application"); there is no
+  minimum wait. It is never destroyed, and "Reopen" returns it to the step it
+  was closed from. A paid, blocked, clearance-waiting or active application
+  cannot be closed. Reopening refuses a denied household, or one with another
+  open application. The word "archive" is reserved for archiving a household.  [Decision —
   *Principle: decisions are reversible*]
 
 - A refund made in Shopify is recorded by the board ("Record refund"), with a
@@ -293,9 +291,20 @@ Procedure below is built on them.
   household never becomes active again by any route; the board's restore
   returns it to no membership, and the family starts over.  [Decision]
 
-- Anything that reaches a denied household after the denial — a payment, an
-  approval, a grant, an application — changes nothing and goes to the board's
-  payment-problems queue with an email.  [Decision — *Principle: people decide about people*]
+- Anything that reaches a denied household after the denial — a family's
+  payment, an approval that would clear its check, a start or renewal, a board
+  grant, an import or a household move — changes nothing and goes to the board's
+  payment-problems queue with an email. Any other board action on a denied
+  household is refused and tells the person acting why.  [Decision — *Principle: people decide about people*]
+
+- A denied household is sent no outreach. Denial is checked again as each
+  message goes out.  [Decision]
+
+- One household lead signs the membership agreement, and the record names who
+  signed. While one lead's signing request is open, another lead cannot start a
+  second; the board resets signing, with a reason, which withdraws the open
+  request. A signed agreement cannot be reset.  [Decision — superuser scope
+  unsettled, issue #1551]
 
 - Deny, restore, grant and revoke are each refused for the acting person's own
   household, and each applies only if the household is still in the status the
@@ -329,7 +338,14 @@ Procedure below is built on them.
   it.  [Decision — *Principle: fail closed*]
 
 - The board can activate a household with no payment by certifying a payment
-  plan.  [Decision — *Policy: Membership Policy, Art. XIII*]
+  plan. Only the board certifies a payment; a sysadmin cannot.
+  [Not yet enforced: code fix pending]  [Decision — *Policy: Membership Policy, Art. XIII*]
+
+- A membership order the app cannot apply settles nothing and is raised for the
+  board: a second order on an application already paid, one arriving after the
+  board certified or closed the application or before payment was due, and one
+  without the membership item. A store test order never settles a
+  membership.  [Decision — *Principle: people decide about people*]
 
 - A board member declines a membership scholarship or payment-plan request in the
   app, and the decline sends nothing: the request clears and the household returns
@@ -337,8 +353,8 @@ Procedure below is built on them.
   the family is not the app's job.  [Decision — deliberate limit; *Principle: people decide about people*]
 
 - A household that has settled its dues but is still waiting on its background
-  check is a member for program pricing and for reaching members-only programs,
-  and for nothing else. Mailing audiences, outreach, the store's member list,
+  check, and is not denied, is a member for program pricing and for reaching
+  members-only programs, and for nothing else. Mailing audiences, outreach, the store's member list,
   people search and payment-plan eligibility all continue to ask whether the
   membership is active. The narrowness is the rule: widening the shared question
   would hand every other benefit to a household that has not cleared.  [Decision]
@@ -355,10 +371,12 @@ Procedure below is built on them.
 
 - A membership stays active while its renewal is in progress.  [Decision]
 
-- Renewals open when the board presses its yearly "open renewals" button, and
-  only inside the renewal window. The button skips every household already
-  handled this cycle — renewed, granted the coming year, joined in-window, or
-  closed by the board — so no family is billed twice.  [Decision]
+- Renewals open only inside the renewal window, and opening skips every
+  household already handled this cycle — renewed, granted the coming year,
+  joined in-window, or closed by the board — so no family is billed twice.  [Decision]
+
+- Who starts renewals each year.  [Unsettled — open: Board B6; today the board's
+  "open renewals" button, and a scheduled run exists but is not run]
 
 - Coverage is what was bought, not what the calendar says. A household settled
   for the membership year now in effect — by joining, renewing, or a granted
