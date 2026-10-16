@@ -12,7 +12,7 @@ import { defineRoute, type OrderedViewEntry, type Token } from '../core';
 // bucket approver, FINANCE or BOARD (`expense-approver`). That is wider than the
 // seat holders; the library refuses a caller who holds no seat on the line.
 // No view lists isSysadmin: Finance Ops excludes sysadmins
-// (docs/rules/finance-payments.md). Finance-only actions are `finance`.
+// (docs/rules/revenue.md). Finance-only actions are `finance`.
 //
 // NOT registered here, deliberately:
 //   • the org-bearer intake POST /api/expenses — checkin cannot gate a

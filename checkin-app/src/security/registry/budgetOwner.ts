@@ -4,7 +4,7 @@ import { defineRoute, type OrderedViewEntry } from '../core';
 
 // Every BudgetOwner field is `internal`, as is ProgramVolunteer.isTreasurer; a
 // treasurer's name is `public`. No view grants pii or personal, and no view lists
-// isSysadmin: Finance Ops excludes sysadmins (docs/rules/finance-payments.md).
+// isSysadmin: Finance Ops excludes sysadmins (docs/rules/revenue.md).
 // FINANCE creates, renames and archives buckets and sets their QuickBooks Class;
 // the BOARD alone sets or clears a program treasurer, because a treasurer comes
 // from the Board-approved program budget. There is no DELETE on a bucket: archive

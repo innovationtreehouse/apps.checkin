@@ -240,7 +240,7 @@ export type Authorize =
     // Catalog write admission (#1286 §6): INVENTORY_MANAGER only.
     | 'inventory-manager'
     // FINANCE only (#1272 §6). No sysadmin auto-admit: Finance Ops excludes
-    // sysadmins (docs/rules/finance-payments.md).
+    // sysadmins (docs/rules/revenue.md).
     | 'finance'
     // FINANCE or BOARD (#1272 §6, #1280 §4): the board acts as finance's
     // superuser. No sysadmin auto-admit, as above.

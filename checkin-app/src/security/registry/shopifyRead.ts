@@ -3,7 +3,7 @@
 import { defineRoute, type Authorize, type OrderedViewEntry } from '../core';
 
 // Every route admits BOARD only. No sysadmin view: payment and match-audit data
-// is the board's (docs/rules/finance-payments.md). The mirror's raw payloads and
+// is the board's (docs/rules/revenue.md). The mirror's raw payloads and
 // bulk exports are `secret` and never leave; the buyer columns (`personal`) leave
 // only through the match audit, which the board uses to trace unclaimed orders.
 const BOARD: Authorize = { anyRole: ['isBoardMember'] };
