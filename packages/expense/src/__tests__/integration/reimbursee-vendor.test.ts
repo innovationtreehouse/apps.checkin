@@ -6,13 +6,14 @@ import { bindPorts, directory, principal, seedExpense, ORG } from "../helpers/se
 import { linkReimburseeVendor, reimburseeVendorFor, reimburseeVendorId, QB_OFF } from "../../services/reimburseeVendorService";
 
 // finance 3 · finance 4 shares a household with reimbursee 7 · 9 is another reimbursee
+// · every expense is submitted by 1, who shares a household with 6
 const FINANCE = principal(3, { isFinance: true });
 const KIN = principal(4, { isFinance: true });
 
 describeDb("reimbursee QuickBooks Vendor", () => {
   function bind(findOrCreate: (name: string, key: string) => Promise<{ id: string; displayName: string } | null> = async () => null) {
     const vendors = { findOrCreate: vi.fn(findOrCreate) };
-    bindPorts({ signoff: directory({ finance: [3, 4], households: [[4, 7]] }), quickbooks: { vendors } });
+    bindPorts({ signoff: directory({ finance: [3, 4], households: [[4, 7], [1, 6]] }), quickbooks: { vendors } });
     return vendors;
   }
   const reimbursement = (personId: number | undefined, extra: { qbMatchState?: string } = {}) =>
@@ -58,6 +59,16 @@ describeDb("reimbursee QuickBooks Vendor", () => {
     const id = await reimbursement(7);
     await expect(linkReimburseeVendor(ORG, id, { qbVendorId: "55" }, KIN)).rejects.toMatchObject({ statusCode: 403 });
     expect(await refusals(id)).toHaveLength(1);
+    expect(await db.expenseReimburseeVendor.count()).toBe(0);
+  });
+
+  it("refuses the submitter and the submitter's household, with an audit row each", async () => {
+    bind();
+    const id = await reimbursement(9);
+    for (const p of [principal(1, { isFinance: true }), principal(6, { isFinance: true })]) {
+      await expect(linkReimburseeVendor(ORG, id, { qbVendorId: "55" }, p)).rejects.toMatchObject({ statusCode: 403 });
+    }
+    expect(await refusals(id)).toHaveLength(2);
     expect(await db.expenseReimburseeVendor.count()).toBe(0);
   });
 

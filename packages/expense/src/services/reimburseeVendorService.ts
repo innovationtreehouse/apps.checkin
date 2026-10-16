@@ -6,6 +6,7 @@ import type { ExpensePrincipal } from "../contract";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
+import { conflictedParties } from "../lib/signoff-facts";
 import { ServiceError } from "./serviceError";
 
 export type VendorChoice = { qbVendorId: string } | { createName: string };
@@ -33,9 +34,10 @@ async function sameHousehold(personId: number, actorId: number): Promise<boolean
 
 /**
  * Links the expense's reimbursee to a Vendor: a typed existing id, or one found or created in
- * QuickBooks by name. The setter may not link themself or their household, either directly or
- * through a Vendor already linked to them; each such refusal is audited on the expense. Expenses
- * of the reimbursee parked for want of a Vendor go back to the outbox.
+ * QuickBooks by name. The setter may not be the submitter, the reimbursee, or in either one's
+ * household, nor land on a Vendor already linked to their own household; each such refusal is
+ * audited on the expense. Expenses of the reimbursee parked for want of a Vendor go back to the
+ * outbox.
  */
 export async function linkReimburseeVendor(
   orgId: string,
@@ -60,7 +62,9 @@ export async function linkReimburseeVendor(
     await writeAudit(db, actor, { expenseId, action: "reimbursee_vendor_refused", notes: reason });
     throw new ServiceError(403, reason);
   };
-  if (await sameHousehold(personId, actor.userId)) await refuse("You cannot link yourself or your household to a QuickBooks Vendor");
+  if ((await conflictedParties(expense)).includes(actor.userId)) {
+    await refuse("You cannot link a Vendor on an expense that you or your household submitted or would be reimbursed for");
+  }
 
   let qbVendorId: string;
   if ("createName" in choice) {
