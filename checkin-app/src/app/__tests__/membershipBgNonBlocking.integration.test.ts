@@ -112,7 +112,7 @@ async function setBgPolicy() {
 }
 
 describe('background check is non-blocking', () => {
-    let revA: number, revB: number;
+    let revA: number, revB: number, board: number;
     let restoreBoardSettings: () => Promise<void> = async () => {};
 
     beforeAll(async () => {
@@ -122,7 +122,7 @@ describe('background check is non-blocking', () => {
         restoreBoardSettings = await snapshotBoardSettings();
         revA = await makeReviewer('RevA');
         revB = await makeReviewer('RevB');
-        await makeBoardMember(); // recipient for the paid-reject refund alert
+        board = await makeBoardMember(); // certifies payments (Board only) and receives the paid-reject refund alert
     });
     afterAll(async () => {
         await wipe();
@@ -143,7 +143,7 @@ describe('background check is non-blocking', () => {
         await markContractSigned(processId);
         await markBgConsent(processId, revA);
         // Pay first.
-        await certifyPaymentPlan(processId, revA);
+        await certifyPaymentPlan(processId, board);
         expect(await statusOf(processId)).toBe('PENDING_BG_CLEARANCE');
         expect(await membershipStatusOf(orgMembershipId)).toBe('NONE'); // NOT active without a valid check
 
@@ -167,7 +167,7 @@ describe('background check is non-blocking', () => {
         await attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT'); // cleared, but unpaid → not active
         expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
-        await certifyPaymentPlan(processId, revA);
+        await certifyPaymentPlan(processId, board);
         expect(await statusOf(processId)).toBe('ACTIVE');
         expect(await membershipStatusOf(orgMembershipId)).toBe('ACTIVE');
     });
@@ -181,7 +181,7 @@ describe('background check is non-blocking', () => {
         let certify!: Promise<unknown>;
         await prisma.$transaction(async (tx) => {
             await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
-            certify = certifyPaymentPlan(processId, revA).catch((e: unknown) => e);
+            certify = certifyPaymentPlan(processId, board).catch((e: unknown) => e);
             // Let certify take the process lock and block on the household row.
             await new Promise((r) => setTimeout(r, 500));
             await tx.orgMembership.update({ where: { id: orgMembershipId }, data: { status: 'DENIED' } });
@@ -196,7 +196,7 @@ describe('background check is non-blocking', () => {
         const { processId, orgMembershipId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
         await markBgConsent(processId, revA);
-        await certifyPaymentPlan(processId, revA); // paid → PENDING_BG_CLEARANCE
+        await certifyPaymentPlan(processId, board); // paid → PENDING_BG_CLEARANCE
         await attest(revA, processId, { result: 'REJECT' });
         expect(await statusOf(processId)).toBe('BLOCKED');
         expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
@@ -246,7 +246,7 @@ describe('background check is non-blocking', () => {
         // Contract alone advances (no BG consent needed), and paying activates immediately.
         await markContractSigned(processId);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
-        await certifyPaymentPlan(processId, revA); // certifier must be outside the applicant household (conflict-of-interest guard)
+        await certifyPaymentPlan(processId, board); // certifier must be outside the applicant household (conflict-of-interest guard)
         expect(await statusOf(processId)).toBe('ACTIVE');
         expect(await membershipStatusOf(orgMembershipId)).toBe('ACTIVE');
     });
@@ -307,7 +307,7 @@ describe('background check is non-blocking', () => {
         await markBgConsent(processId, revA);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
 
-        await certifyPaymentPlan(processId, revA);
+        await certifyPaymentPlan(processId, board);
         expect(await statusOf(processId)).toBe('PENDING_BG_CLEARANCE'); // paid first, check still open
     });
 
@@ -346,7 +346,7 @@ describe('background check is non-blocking', () => {
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
     });
 
-    it('conflict of interest: a certifier in the applicant household is blocked, sysadmin flag or not', async () => {
+    it('conflict of interest: a certifier in the applicant household is blocked, Board/sysadmin flags or not', async () => {
         const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
         await markBgConsent(processId, revA);
@@ -358,7 +358,7 @@ describe('background check is non-blocking', () => {
 
         // Promoting that same lead to sysadmin does not buy a way through: the guard
         // reads the household relationship, not the actor's roles.
-        await prisma.person.update({ where: { id: leadId }, data: { isSysadmin: true } });
+        await prisma.person.update({ where: { id: leadId }, data: { isSysadmin: true, isBoardMember: true } });
         await expect(certifyPaymentPlan(processId, leadId)).rejects.toMatchObject({ code: 'forbidden' });
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
     });

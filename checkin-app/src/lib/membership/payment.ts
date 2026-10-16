@@ -280,10 +280,17 @@ export async function activate(
 
 /**
  * Board override: certify a payment plan and activate without a Shopify payment.
- * Rejects (403) for the actor's own household; activate() rejects (409) under the
- * row lock unless the process is awaiting payment.
+ * Rejects (403) an actor who is not a Board member (a sysadmin is not enough) and
+ * the actor's own household; activate() rejects (409) under the row lock unless
+ * the process is awaiting payment.
  */
 export async function certifyPaymentPlan(processId: number, actorId: number, opts?: { reason?: string }) {
+    // Only the Board certifies a payment (owner ruling 10-15). Checked here so every
+    // caller (grant, renewal grant, payment-plan approve, certify-payment) is covered.
+    const actor = await prisma.person.findUnique({ where: { id: actorId }, select: { isBoardMember: true } });
+    if (!actor?.isBoardMember) {
+        throw new PaymentError("forbidden", "Only a Board member can certify a payment.");
+    }
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, select: { orgMembership: { select: { householdId: true } } } });
     if (!process) throw new PaymentError("not_found", "Application not found.");
     // No actor may certify (mark paid + activate) their own household's membership. No role bypasses this.

@@ -129,6 +129,17 @@ describe('PATCH /api/programs/[id] — Shopify price sync', () => {
         expect((await prisma.program.findUniqueOrThrow({ where: { id: program.id } })).nonOrgMemberPriceCents).toBe(0);
     });
 
+    it('never sends the member price when the full price is cleared', async () => {
+        const program = await createProgram('cleared');
+
+        const res = await patch(program.id, { memberPrice: '80', nonMemberPrice: '' });
+
+        expect(res.status).toBe(200);
+        expect((await res.json()).warning).toContain('Shopify price is out of date');
+        expect(variantPuts()).toEqual([]); // no store write at all, so not the $80 member price
+        expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ operation: 'syncProgramPrice', programId: program.id }));
+    });
+
     it('keeps the save and warns when Shopify rejects the update', async () => {
         const program = await createProgram('rejected');
         fetchMock.mockImplementation(async (url: string) => String(url).includes('oauth')

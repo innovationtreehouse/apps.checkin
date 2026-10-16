@@ -339,7 +339,7 @@ Procedure below is built on them.
 
 - The board can activate a household with no payment by certifying a payment
   plan. Only the board certifies a payment; a sysadmin cannot.
-  [Not yet enforced: code fix pending]  [Decision — *Policy: Membership Policy, Art. XIII*]
+  [Decision — *Policy: Membership Policy, Art. XIII*]
 
 - A membership order the app cannot apply settles nothing and is raised for the
   board: a second order on an application already paid, one arriving after the

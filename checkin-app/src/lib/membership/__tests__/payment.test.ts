@@ -19,7 +19,7 @@ jest.mock('@/lib/prisma', () => {
         orgMembershipProcess: { findUnique: jest.fn(), updateMany: jest.fn() },
         boardSettings: { findUnique: jest.fn() },
         auditLog: { create: jest.fn() },
-        person: { findMany: jest.fn().mockResolvedValue([]) },
+        person: { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn() },
         $queryRaw: jest.fn(),
         $transaction: jest.fn(),
     };
@@ -53,6 +53,7 @@ const MEMBERSHIP_ID = 9;
 
 beforeEach(() => {
     jest.clearAllMocks();
+    prisma.person.findUnique.mockResolvedValue({ isBoardMember: true });
     prisma.boardSettings.findUnique.mockResolvedValue({ standardMembershipFeeCents: 10000, volunteerMembershipFeeCents: 2500 });
     household = { householdId: 3, status: 'NONE' };
     prisma.$queryRaw.mockImplementation((sql: TemplateStringsArray) =>
@@ -203,6 +204,13 @@ describe('certifyPaymentPlan checks under the row lock', () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'ARCHIVED', paidAt: null, orgMembershipId: MEMBERSHIP_ID });
         await expect(certifyPaymentPlan(PROCESS_ID, 1)).rejects.toMatchObject({ code: 'wrong_phase' });
         expect(prisma.$queryRaw).toHaveBeenCalled();
+        expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses an actor who is not a Board member, even a sysadmin', async () => {
+        prisma.person.findUnique.mockResolvedValue({ isBoardMember: false });
+        await expect(certifyPaymentPlan(PROCESS_ID, 1)).rejects.toMatchObject({ code: 'forbidden' });
+        expect(prisma.person.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 1 } }));
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 

@@ -318,6 +318,11 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         // conditional delete below, not a separate read, so a payment landing
         // mid-request cannot slip through.
         const isHouseholdLeadPath = !isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard;
+        // Same for an adult removing themselves from a priced program: a paid place is
+        // not the household's to withdraw — the board, a sysadmin or the program's
+        // leader removes it. A free program's place was never paid, so it stays theirs.
+        const isFree = (currentProgram.orgMemberPriceCents ?? 0) === 0 && (currentProgram.nonOrgMemberPriceCents ?? 0) === 0;
+        const unpaidOnly = isHouseholdLeadPath || (isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard && !isFree);
         if (isHouseholdLeadPath && !(await isLeadOfParticipant(currentUserId, participantId))) {
             return apiError("Forbidden: Not authorized to remove this participant", 403);
         }
@@ -340,15 +345,17 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         // exactly once (see withdrawAndReleaseHold).
         let withdrawal: Awaited<ReturnType<typeof withdrawAndReleaseHold>>;
         try {
-            withdrawal = await withdrawAndReleaseHold(programId, participantId, currentProgram, isHouseholdLeadPath ? 'PENDING' : undefined, { inRequest: true });
+            withdrawal = await withdrawAndReleaseHold(programId, participantId, currentProgram, unpaidOnly ? 'PENDING' : undefined, { inRequest: true });
         } catch (error) {
-            if (isHouseholdLeadPath && isPrismaError(error, 'P2025')) {
+            if (unpaidOnly && isPrismaError(error, 'P2025')) {
                 const row = await prisma.programParticipant.findUnique({
                     where: { programId_personId: { programId, personId: participantId } },
                     select: { status: true },
                 });
                 if (row?.status === 'ACTIVE') {
-                    return apiError("This child has paid; ask the board to withdraw them.", 403);
+                    return apiError(isSelfRemoval
+                        ? "Your place is paid; ask the board to withdraw you."
+                        : "This child has paid; ask the board to withdraw them.", 403);
                 }
             }
             throw error;
