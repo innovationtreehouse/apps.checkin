@@ -1052,6 +1052,32 @@ describe('Program Participants API Integration Tests', () => {
             }
         });
 
+        it('does not advise a +1 restock when the program is over capacity (the seat pays its shortfall)', async () => {
+            const shopifyProgram = await prisma.program.create({
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2099-12-31'), name: 'Notice Over Capacity Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, shopifyVariantId: 'dev-mock-variant-notice-over', shopifyStockCarry: -2 },
+            });
+            try {
+                await prisma.programParticipant.create({
+                    data: { programId: shopifyProgram.id, personId: commonId, status: 'ACTIVE' },
+                });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
+                        method: 'DELETE',
+                        headers: { cookie: 'session=test' },
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(shopifyProgram.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                expect((await res.json()).notice).toBeUndefined();
+            } finally {
+                await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
+                await prisma.program.delete({ where: { id: shopifyProgram.id } });
+            }
+        });
+
         // Removing a place returns its seat (+1) only when the app recorded taking it
         // without a sale. A comp or approval with no record (its -1 failed, or it
         // joined while the program was free) and a paid place (B8) return nothing.

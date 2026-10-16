@@ -481,6 +481,14 @@ const STOCK_LEASE_POLL_MS = 250;
  */
 export const programStockTiming = { capMs: 3 * 60_000, requestCapMs: 15_000, maxBackoffMs: 15_000 };
 
+/** A program's stock bookkeeping for a variant it no longer sells: cleared when `shopifyVariantId` changes. */
+export const STOCK_BOOKKEEPING_RESET = {
+    shopifyStockCarry: 0,
+    shopifyStockPendingWrite: null,
+    shopifyStockUnconfirmed: 0,
+    shopifyStockPushNeededAt: null,
+} satisfies Prisma.ProgramUpdateManyMutationInput;
+
 /** Shopify keeps an idempotency key 24 h; a pending write older than this is not resent (it could apply twice) but parked as unconfirmed. */
 const PENDING_WRITE_RESEND_LIMIT_MS = 23 * 60 * 60_000;
 
@@ -555,7 +563,7 @@ function shopifyGraphql(storeDomain: string, accessToken: string): Gql {
             headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
             body: JSON.stringify({ query, variables }),
         }, "Shopify program stock");
-        // A 5xx gateway page is not JSON; its status alone marks it transient.
+        // An unreadable body (a 5xx gateway page, a 200 cut off mid-read) parses as {}; untilSettled treats it as unsettled.
         const body: unknown = await res.json().catch(() => ({}));
         return { status: res.status, body };
     };
@@ -594,9 +602,11 @@ const mockShopifyGraphql: Gql = async (query, variables) => {
 
 /**
  * Send one request until Shopify gives a settled answer: resend the SAME variables
- * (so the same idempotency key) on a transport failure, 5xx, 429 or a transient
- * GraphQL code, with capped exponential backoff, until `deadline`. Throws on a
- * hard error or when the deadline passes unsettled.
+ * (so the same idempotency key) on a transport failure, 5xx, 429, a transient
+ * GraphQL code or a reply with no readable body, with capped exponential backoff,
+ * until `deadline`. A 401/403 after an attempt that may have reached Shopify does
+ * not say whether that attempt landed, so it is resent too. Throws on a hard error
+ * or when the deadline passes unsettled.
  */
 async function untilSettled<T>(
     gql: Gql,
@@ -606,17 +616,20 @@ async function untilSettled<T>(
     stillRunning: (data: T) => boolean = () => false,
 ): Promise<T> {
     let lastError = "no reply";
+    let maybeSent = false;
     for (let attempt = 0; ; attempt++) {
         let reply: { status: number; body: GqlBody<T> } | null = null;
         try {
             const raw = await gql(query, variables);
-            reply = { status: raw.status, body: raw.body as GqlBody<T> };
+            reply = { status: raw.status, body: (raw.body ?? {}) as GqlBody<T> };
         } catch (err) {
             lastError = err instanceof Error ? err.message : String(err);
         }
         if (reply) {
             const { status, body } = reply;
-            const transient = status >= 500 || status === 429
+            const unreadable = status < 400 && body.data === undefined && !body.errors?.length;
+            const transient = status >= 500 || status === 429 || unreadable
+                || (maybeSent && (status === 401 || status === 403))
                 || (body.errors ?? []).some((e) => TRANSIENT_CODES.has(e.extensions?.code ?? ""))
                 || (body.data !== undefined && stillRunning(body.data));
             if (!transient) {
@@ -625,8 +638,9 @@ async function untilSettled<T>(
                 }
                 return body.data;
             }
-            lastError = `HTTP ${status} ${JSON.stringify(body.errors ?? "IDEMPOTENCY_CONCURRENT_REQUEST")}`;
+            lastError = `HTTP ${status} ${JSON.stringify(body.errors ?? (unreadable ? "unreadable body" : "IDEMPOTENCY_CONCURRENT_REQUEST"))}`;
         }
+        maybeSent = true;
         const wait = Math.min(1000 * 2 ** attempt, programStockTiming.maxBackoffMs);
         if (Date.now() + wait > deadline) {
             throw new StockWriteUnsettledError(`Shopify did not settle within ${programStockTiming.capMs}ms: ${lastError}`);
@@ -637,12 +651,14 @@ async function untilSettled<T>(
 
 async function readStock(gql: Gql, variantId: string, deadline: number) {
     const data = await untilSettled<ReadData>(gql, READ_STOCK, { variantId: `gid://shopify/ProductVariant/${variantId}` }, deadline);
-    // Fails closed: an inactive or unknown-state location rejects inventory writes.
-    const locationId = data.locations.nodes.find((l) => l.isActive)?.id;
-    if (!locationId) throw new Error("no active Shopify location");
     const item = data.productVariant?.inventoryItem;
     if (!item) throw new Error(`Shopify variant ${variantId} not found or has no inventory item`);
-    const level = item.inventoryLevels.nodes.find((n) => n.location.id === locationId);
+    // Fails closed: an inactive or unknown-state location rejects inventory writes.
+    const active = new Set(data.locations.nodes.filter((l) => l.isActive).map((l) => l.id));
+    // The location already stocking the item, so a multi-location store keeps one pool.
+    const level = item.inventoryLevels.nodes.find((n) => active.has(n.location.id));
+    const locationId = level?.location.id ?? [...active][0];
+    if (!locationId) throw new Error("no active Shopify location");
     // null = the item is not stocked at the location yet (a freshly created variant).
     return { inventoryItemId: item.id, locationId, available: level ? (level.quantities[0]?.quantity ?? 0) : null };
 }
@@ -740,11 +756,13 @@ async function drainStock(
     reason: string,
     token: string,
     deadline: number,
-    target?: number,
+    target?: () => Promise<number>,
 ): Promise<DrainResult> {
     const result: DrainResult = { error: null, expiredKey: null };
     try {
         for (;;) {
+            // Nothing is in flight here: whatever was sent is booked, so stopping leaves it for the next push.
+            if (Date.now() >= deadline) throw new StockWriteUnsettledError(`stock push for program ${programId} ran out of time`);
             const row = await prisma.program.findUnique({
                 where: { id: programId },
                 select: { shopifyStockCarry: true, shopifyStockPendingWrite: true, startAt: true, offSaleAt: true, saleEndedAt: true },
@@ -781,7 +799,8 @@ async function drainStock(
             }
             if (target !== undefined) {
                 // An absolute target replaces whatever was owed before it, as the delta from what Shopify shows now.
-                await bookStock(programId, token, { shopifyStockCarry: target - available });
+                // Counted under the lease, right before the carry is replaced.
+                await bookStock(programId, token, { shopifyStockCarry: (await target()) - available });
                 target = undefined;
                 continue;
             }
@@ -841,7 +860,7 @@ async function pushProgramStock(
     reason: string,
     capMs: number,
     carryBefore: number,
-    target?: number,
+    target?: () => Promise<number>,
 ): Promise<boolean> {
     const deadline = Date.now() + capMs;
     try {
@@ -1120,16 +1139,18 @@ export async function syncProgramPrice(
  * Sets a program's Shopify stock to an absolute quantity, for when relative
  * adjustments were skipped (a sale that ended and is re-armed). Same lease and
  * keyed-delta path as {@link adjustProgramInventory}: under the lease the carry
- * becomes `quantity − available`, replacing deltas owed before it, since the
- * caller computed `quantity` from the app's own seat count. Never throws.
+ * becomes `quantity() − available`, replacing deltas owed before it, since
+ * `quantity` counts from the app's own seats. `quantity` runs under the lease and
+ * may be negative: an over-capacity program holds Shopify at 0 and keeps the
+ * shortfall owed, so seats given back later pay it down before any goes on sale.
+ * Never throws.
  */
 export async function setProgramInventory(
     program: { id: number; shopifyVariantId?: string | null },
-    quantity: number,
+    quantity: () => Promise<number>,
     reason: string,
 ): Promise<boolean> {
     if (!program.shopifyVariantId) return true;
-    if (config.shopifyMockActive()) console.log(`[SHOPIFY] (mock) Would set inventory to ${quantity} for variant: ${program.shopifyVariantId}`);
     return pushProgramStock(program.id, program.shopifyVariantId, reason, programStockTiming.requestCapMs, Number.NEGATIVE_INFINITY, quantity);
 }
 

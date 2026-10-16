@@ -131,6 +131,26 @@ describe('POST /api/programs/[id]/sync-shopify', () => {
         expect(errLogsAfter).toBe(errLogsBefore);
     });
 
+    it('starts the new variant at capacity less the seats already taken, dropping bookkeeping owed to the old one', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const program = await makeBrokenProgram();
+        await prisma.program.update({ where: { id: program.id }, data: { maxParticipants: 5, shopifyStockCarry: -3, offSaleAt: new Date("2999-01-01") } });
+        await prisma.programParticipant.create({ data: { programId: program.id, personId: commonId, status: 'ACTIVE' } });
+        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+        try {
+            const res = await POST(req(), params(program.id));
+            expect(res.status).toBe(200);
+            expect((await res.json()).warning).toBeUndefined();
+
+            expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/\(mock\) Adjusted available for .*: 0 -> 4 /));
+            const after = await prisma.program.findUniqueOrThrow({ where: { id: program.id } });
+            expect(after.shopifyStockCarry).toBe(0);
+        } finally {
+            logSpy.mockRestore();
+            await prisma.programParticipant.deleteMany({ where: { programId: program.id } });
+        }
+    });
+
     it('refuses (409) while another sync holds the program, creating nothing', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         const program = await makeBrokenProgram();
