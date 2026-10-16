@@ -166,8 +166,8 @@ nothing books and no letter goes out (#2237).
 
 Refusal and return are rare and handled outside the app (owner ruling). The
 app does not take goods back out of inventory; if stock needs adjusting, finance
-or ops does it by hand. Once finance closes a refused or returned gift, its
-donor details are cleared; the gift record stays.
+or ops does it by hand. The app does nothing special with a refused or returned
+gift's record or donor details.
 
 **Who may decide.** A finance holder, but not one who is, or shares a household
 with, the donor, or whoever uploaded the receipt or recorded the gift. The app
@@ -389,10 +389,10 @@ In this order, each its own PR off `main`:
 - **Q8. Which program a gift went to.** Resolved by Q7: the bucket's program.
 - **Q9. Goods of a refused or returned gift.** Resolved: handled outside the
   app; no automatic inventory removal, stock adjusted by hand if ever needed.
-- **Q10. The value warning's threshold.** Open. Default: a finance-set amount,
-  starting at the expense library's $500 awareness level.
-- **Q11. Donor details after a refusal or return.** Resolved: cleared once
-  finance closes the gift; the gift record stays.
+- **Q10. The value warning's threshold.** Open, with the owner: tie it to the
+  expense library's capital threshold, or a finance setting starting at $500.
+- **Q11. Donor details after a refusal or return.** Resolved: outside the app;
+  the app does nothing special with them.
 
 ---
 
@@ -410,9 +410,8 @@ In this order, each its own PR off `main`:
   value and replaced-donor checks only warn. No donor letter goes out before
   acceptance.
 - `revenue.md`, Donations: once finance settles a gift withdrawn after its
-  money arrived, or closes a refused or returned one, its donor details are
-  cleared. A refused or returned gift's goods are adjusted out of stock by hand,
-  never by the app.
+  money arrived, its donor details are cleared. A refused or returned gift's
+  goods are adjusted out of stock by hand, never by the app.
 - `revenue.md`, Donations: a program bucket's approvers see in-kind gifts in
   their bucket, without the donor, and do not approve them.
 - `expenses.md`: an in-kind gift is not an expense record and never enters
