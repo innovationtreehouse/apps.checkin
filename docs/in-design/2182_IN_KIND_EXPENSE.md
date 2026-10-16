@@ -52,7 +52,9 @@ then finance's hand bookings can be matched against it.
 - **Program approvers can see** in-kind gifts to their program, without the
   donor. They do not approve them.
 - **What this does not build:** donor acknowledgement letters (#2237), which go
-  out only for an accepted gift.
+  out only for an accepted gift. A letter for a gift of goods describes the
+  goods and never states a value; the value the app records is for the books
+  only.
 
 ---
 
@@ -149,6 +151,11 @@ Both sides use one value and one date, read from the gift (owner ruling):
 A gift with no value (a receipt whose total could not be read) cannot be
 accepted until finance resolves the total; it sits in the finance queue.
 
+The value is for the books only. It never appears in the donor's
+acknowledgement: under federal rules for nonprofits, a letter for a gift of
+goods describes the goods and states no value, which is between the donor and
+their tax advisor. Only a gift of money states its amount (owner ruling).
+
 ### Accepting a gift
 
 Every in-kind gift, with or without a receipt, waits for a finance holder to
@@ -160,7 +167,7 @@ nothing books and no letter goes out (#2237).
 
 - **Accept.** The accepter sets the value of a gift without a receipt (a gift
   with one keeps the receipt's values) and assigns the bucket. The gift can then
-  book and its letter can go out.
+  book, and its letter, which describes the goods without a value, can go out.
 - **Refuse.** We do not take the gift. Nothing books and no letter goes out.
 - **Return.** We give the goods back. Nothing books and no letter goes out.
 
@@ -185,7 +192,8 @@ person deciding:
 
 - the donor's surname matches someone in the accepter's household;
 - the donor is the uploader or recorder;
-- the value is over a threshold (open question Q10);
+- the value is at or over the expense library's large-spend amount (its $500
+  awareness setting, reused, not a new one);
 - the donor was replaced after the gift was recorded.
 
 None of these blocks a decision; the decider reads them and decides (*a financial
@@ -389,8 +397,8 @@ In this order, each its own PR off `main`:
 - **Q8. Which program a gift went to.** Resolved by Q7: the bucket's program.
 - **Q9. Goods of a refused or returned gift.** Resolved: handled outside the
   app; no automatic inventory removal, stock adjusted by hand if ever needed.
-- **Q10. The value warning's threshold.** Open, with the owner: tie it to the
-  expense library's capital threshold, or a finance setting starting at $500.
+- **Q10. The value warning's threshold.** Resolved: the expense library's
+  large-spend amount (its $500 awareness setting), reused.
 - **Q11. Donor details after a refusal or return.** Resolved: outside the app;
   the app does nothing special with them.
 
@@ -409,6 +417,8 @@ In this order, each its own PR off `main`:
   and ops' value is only a suggestion. The accept screen's surname, uploader,
   value and replaced-donor checks only warn. No donor letter goes out before
   acceptance.
+- `revenue.md`, Donations: an acknowledgement for a gift of goods describes the
+  goods and states no value; a gift of money states its amount.
 - `revenue.md`, Donations: once finance settles a gift withdrawn after its
   money arrived, its donor details are cleared. A refused or returned gift's
   goods are adjusted out of stock by hand, never by the app.
