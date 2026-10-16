@@ -417,7 +417,7 @@ describe('Individual Program API Integration Tests', () => {
              expect(data.participants.some((p: { personId: number }) => p.personId === enrolledId)).toBe(true);
         });
 
-        it('shows payment status by the household in the DB, not a stale session claim', async () => {
+        it('gates the roster by the household in the DB, not a stale session claim', async () => {
              const enrolledHh = (await prisma.person.findUniqueOrThrow({ where: { id: enrolledId } })).householdId;
              const movedLead = await prisma.person.create({
                  data: { email: 'moved-lead-prog-id-api-test@example.com', name: 'Moved Lead', isHouseholdLead: true, isDeclaredAdult: true, household: { create: { name: 'Moved HH' } } },
@@ -430,9 +430,9 @@ describe('Individual Program API Integration Tests', () => {
                  const res = await GET(req as unknown as import("next/server").NextRequest, createParams(publicProgramId) as unknown as never);
                  expect(res.status).toBe(200);
 
-                 const row = (await res.json()).participants.find((p: { personId: number }) => p.personId === enrolledId);
-                 expect(row).toBeDefined();
-                 expect(row).not.toHaveProperty('status');
+                 const data = await res.json();
+                 expect(data.participants).toBeUndefined();
+                 expect(data.volunteers).toBeUndefined();
              } finally {
                  await prisma.person.delete({ where: { id: movedLead.id } });
                  await prisma.household.delete({ where: { id: movedLead.householdId } });

@@ -602,6 +602,8 @@ export async function raiseReversalByOrderId(
 }
 
 const REFUND_SETTLEMENT_TABLE = "ShopifyRefundSettlement";
+/** Two-argument advisory-lock class, apart from per-person 1-arg locks and FACILITY_ADVISORY_CLASS. */
+export const REFUND_SETTLEMENT_ADVISORY_CLASS = 2;
 
 /**
  * Record that this refund's restock is being settled for this program; false when
@@ -611,7 +613,7 @@ const REFUND_SETTLEMENT_TABLE = "ShopifyRefundSettlement";
 async function claimRefundSettlement(refundId: string, orderLegacyId: string, programId: number): Promise<boolean> {
     const key = `${refundId}:${programId}`;
     return prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${REFUND_SETTLEMENT_ADVISORY_CLASS}::int, hashtext(${key}))`;
         const seen = await tx.auditLog.findFirst({
             where: { tableName: REFUND_SETTLEMENT_TABLE, secondaryAffectedEntity: programId, newData: { path: ["key"], equals: key } },
             select: { id: true },

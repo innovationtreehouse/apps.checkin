@@ -188,9 +188,13 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     // (_count.participants), not names — a count is fine, the names are the leak.
     // The registry orderedView tiers remain as defense-in-depth, stripping
     // pii/personal on the rows for non-staff-but-enrolled callers.
+    // The household is read from the DB, not the session, so a move applies at once.
+    const viewerHouseholdId = sessionUser && !isPrivileged
+        ? (await prisma.person.findFirst({ where: { id: sessionUser.id, ...LIVE_PERSON }, select: { householdId: true } }))?.householdId
+        : undefined;
     const isOwnHousehold = (p: { personId: number; person: { householdId: number } | null }) => !!sessionUser && (
         p.personId === sessionUser.id ||
-        (sessionUser.householdId != null && p.person?.householdId === sessionUser.householdId)
+        (viewerHouseholdId != null && p.person?.householdId === viewerHouseholdId)
     );
     const isEnrolled = program.participants.some(isOwnHousehold);
     if (!isPrivileged && !isEnrolled) {
