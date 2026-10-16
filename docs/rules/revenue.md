@@ -115,6 +115,14 @@ Things the app takes as true because they are handled outside it.
 
 - Nobody decides a scholarship or payment plan for their own household.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- Only finance, operations and inventory managers record in-kind gifts that
+  arrive without a receipt, and every such gift names its donor. Only those three
+  and the board read the gifts; only finance and the board read the donor.  [Decision — owner]
+
+- An in-kind gift is recorded by someone outside the donor's household. A donor
+  who shares a last name with anyone in a recorder's household counts as that
+  recorder's household.  [Decision — owner; *Principle: fail closed*]
+
 - A financial control is a flag a person signs off, with the sign-off recorded.
   It is not a gate that decides on its own.  [Decision — *Principle: people decide about people*]
 

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { db } from "../db";
 import { InKindDonorSchema, inventorySourceKey } from "../contract";
 import { getCatalogLookup, getInventoryApply } from "../runtime";
-import { recordEvent } from "../repositories/audit";
+import { recordDonorDataRead, recordEvent, type DonorReadContext } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { ServiceError } from "./serviceError";
 
@@ -27,7 +27,34 @@ export const ManualInKindInputSchema = z.object({
 });
 export type ManualInKindInput = z.infer<typeof ManualInKindInputSchema>;
 
+const LIST_SELECT = {
+  id: true,
+  donationDate: true,
+  recordedByUserId: true,
+  recordedByUsername: true,
+  recordedAt: true,
+  inventoryLoadedAt: true,
+  lines: { select: { id: true, gtin13: true, quantity: true, valueCents: true }, orderBy: { id: "asc" } },
+} as const;
+
+const DONOR_SELECT = { donorFirstName: true, donorLastName: true, donorCompanyName: true } as const;
+
 export const manualInKindService = {
+  /**
+   * Newest first. Donor fields are selected, and the read audited, only when `reader` is given:
+   * the caller passes one only for a viewer allowed to see donor identity.
+   */
+  async list(orgId: string, reader: DonorReadContext | null, page?: { skip: number; take: number }) {
+    const rows = await db.manualInKindDonation.findMany({
+      where: { orgId },
+      select: reader ? { ...LIST_SELECT, ...DONOR_SELECT } : LIST_SELECT,
+      orderBy: [{ recordedAt: "desc" }, { id: "desc" }],
+      ...page,
+    });
+    if (reader) await recordDonorDataRead(db, orgId, "manual_in_kind", reader, { count: rows.length });
+    return rows;
+  },
+
   /**
    * Record the donation, then load its goods. The record commits first, so a failed load leaves a
    * donation with inventoryLoadedAt unset for loadInventory to retry; it never re-records.
