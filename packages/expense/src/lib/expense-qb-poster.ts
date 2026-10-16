@@ -38,10 +38,18 @@ function notSendable(posting: ExpensePosting, e: { isTestData: boolean; vendorNa
 // ponytail: fixed per-run caps; move to ExpenseOrgSettings when finance needs to tune them.
 export const MAX_CREATES_PER_RUN = 25;
 export const MAX_CREATE_CENTS_PER_RUN = 2_500_000;
+export const MAX_CREATES_PER_DAY = 50;
 /** Failed posts before the drain stops retrying and hands the expense to finance. */
 export const MAX_POST_ATTEMPTS = 5;
 
 export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "not_sent" | "needs_finance" | "no_class";
+
+/** QuickBooks entries created since UTC midnight, counted from the audit rows settle() writes. */
+export async function qbCreatesToday(client: Db = db): Promise<number> {
+  const midnight = new Date();
+  midnight.setUTCHours(0, 0, 0, 0);
+  return client.expenseAuditLog.count({ where: { action: "qb_created", changedAt: { gte: midnight } } });
+}
 
 function shiftDate(isoDate: string, days: number): string {
   const d = new Date(`${isoDate}T00:00:00Z`);
@@ -227,7 +235,8 @@ export type PostOptions = {
  * whose bucket has no QuickBooks Class → no_class, state unchanged, flagged QB_NO_CLASS, re-checked each
  * run. An
  * expense whose lines sum past MAX_CREATE_CENTS_PER_RUN is left for the drain's run-alone slot and
- * flagged QB_OVER_CAP. With no takeover date configured nothing is posted.
+ * flagged QB_OVER_CAP. At MAX_CREATES_PER_DAY the expense waits for the next UTC day, nothing
+ * recorded. With no takeover date configured nothing is posted.
  *
  * Claim, call, settle: the payload and sign-off seats are re-read under the row lock and the row is
  * claimed (POSTING); the QuickBooks call runs outside any transaction; the outcome is settled in a
@@ -301,6 +310,8 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
       await raiseFlag(expenseId, "QB_OVER_CAP", "queued for the drain: over the per-expense cap", tx);
       return "queued";
     }
+    // ponytail: concurrent posts can each see the count under the ceiling, so a day may overshoot by the in-flight posts.
+    if ((await qbCreatesToday(tx)) >= MAX_CREATES_PER_DAY) return "waiting";
 
     const at = new Date();
     await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: POSTING, qbClaimedAt: at } });
@@ -361,14 +372,14 @@ async function callAndSettle(orgId: string, expenseId: string, posting: ExpenseP
   });
 }
 
-export type DrainCounts = Record<PostOutcome, number> & { overCap: number; capped: "count" | "cents" | null; stoppedAfterFailures: boolean };
+export type DrainCounts = Record<PostOutcome, number> & { overCap: number; capped: "count" | "cents" | "day" | null; stoppedAfterFailures: boolean };
 
 /** Consecutive failed posts after which a drain run stops: QuickBooks is likely down. */
 export const MAX_CONSECUTIVE_FAILURES = 3;
 
 /**
  * The catch-up drain: every outboxed expense not yet in QuickBooks, oldest receipt first, plus any
- * claim gone stale. Stops at the count and cents caps (measured on the posted line sum) and logs
+ * claim gone stale. Stops at the daily, count and cents caps (measured on the posted line sum) and logs
  * the hit (the alarm hook); the rest waits for the next run. An expense over the cents cap on its
  * own is posted alone, as the first post of a run, and flagged for finance. Stops after
  * MAX_CONSECUTIVE_FAILURES failures in a row. Returns counts only.
@@ -395,7 +406,13 @@ export async function drainExpenseOutbox(): Promise<DrainCounts | "unbound" | "n
   };
   let postedCents = 0;
   let failuresInARow = 0;
+  const createdBefore = await qbCreatesToday();
   for (const [i, e] of due.entries()) {
+    if (createdBefore + counts.posted >= MAX_CREATES_PER_DAY) {
+      counts.capped = "day";
+      logWarn("qb_daily_cap", { cap: MAX_CREATES_PER_DAY, remaining: due.length - i });
+      break;
+    }
     let cents: number;
     try {
       cents = payloadLineCents(payloads.get(e.id)!);

@@ -5,7 +5,7 @@ import { runReconcile } from "@/lib/finance/reconcile";
 import { runSaleSweep } from "@/lib/programs/saleSweep";
 import { runReconcile as runIncomeReconcile } from "@inventory/income";
 import { getOrg } from "@/lib/catalog/configure";
-import { runExpenseCatchUp } from "@inventory/expense";
+import { runExpenseCatchUp, runExpenseQbPosting } from "@inventory/expense";
 import { healProgramStock } from "@/lib/shopify";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@inventory/local-inventory";
 import { catchUpOrgEvents as catchUpWorkflowEvents } from "@inventory/workflow-mapping";
@@ -41,8 +41,8 @@ import { repushUnpushed, resendDonorSync, sweepInterruptedOcr } from "@inventory
  * same fresh mirror. That step is isolated: its failure never fails checkin's
  * reconcile, and the response carries its counts only, no payout ids or amounts.
  *
- * Then runs the expense library's catch-up (intake replay, stranded QB recovery, catalog
- * events, the QuickBooks outbox drain). Its failure never fails checkin's reconcile; counts only.
+ * Then runs the expense library's catch-up (intake replay, catalog events) and its QuickBooks
+ * step (stranded QB recovery, the outbox drain, the drift check). Their failure never fails checkin's reconcile; counts only.
  *
  * Then re-pushes program stock the stock writer left owing (healProgramStock),
  * which needs no mirror. Isolated the same way.
@@ -72,9 +72,9 @@ export const GET = withCron(async () => {
         income = { status: "error" };
     }
     logger.info(`[reconcile] income ${JSON.stringify(income)}`);
-    let expense: Awaited<ReturnType<typeof runExpenseCatchUp>> | { status: "error" };
+    let expense: Awaited<ReturnType<typeof runExpenseCatchUp>> & Awaited<ReturnType<typeof runExpenseQbPosting>> | { status: "error" };
     try {
-        expense = await runExpenseCatchUp();
+        expense = { ...(await runExpenseCatchUp()), ...(await runExpenseQbPosting()) };
     } catch (err) {
         logger.error("[reconcile] expense catch-up failed:", err);
         expense = { status: "error" };
