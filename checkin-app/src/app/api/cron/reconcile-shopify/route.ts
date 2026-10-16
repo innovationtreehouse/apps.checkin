@@ -9,7 +9,7 @@ import { runExpenseCatchUp } from "@inventory/expense";
 import { healProgramStock } from "@/lib/shopify";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@inventory/local-inventory";
 import { catchUpOrgEvents as catchUpWorkflowEvents } from "@inventory/workflow-mapping";
-import { sweepInterruptedOcr } from "@inventory/receipt";
+import { repushUnpushed, sweepInterruptedOcr } from "@inventory/receipt";
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's
@@ -50,8 +50,11 @@ import { sweepInterruptedOcr } from "@inventory/receipt";
  * Then replays catalog events that local-inventory and workflow-mapping missed (a consumer that
  * threw during the catalog's post-commit call-out). Each step is isolated; counts only.
  *
- * Last, the receipt library's catch-up step moves receipts stranded mid-OCR to
+ * Then the receipt library's catch-up step moves receipts stranded mid-OCR to
  * `ocr_failed`. Isolated the same way; the response carries its count only.
+ *
+ * Last, re-sends finalized receipts that workflow-mapping has not received yet (S1). Isolated the
+ * same way; counts only.
  */
 export const GET = withCron(async () => {
     const result = await runReconcile();
@@ -106,5 +109,13 @@ export const GET = withCron(async () => {
         receipt = { status: "error" };
     }
     logger.info(`[reconcile] receipt ${JSON.stringify(receipt)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receipt });
+    let receiptPush: Awaited<ReturnType<typeof repushUnpushed>> | { status: "error" };
+    try {
+        receiptPush = await repushUnpushed();
+    } catch (err) {
+        logger.error("[reconcile] receipt re-push failed:", err);
+        receiptPush = { status: "error" };
+    }
+    logger.info(`[reconcile] receipt push ${JSON.stringify(receiptPush)}`);
+    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receipt, receiptPush });
 });

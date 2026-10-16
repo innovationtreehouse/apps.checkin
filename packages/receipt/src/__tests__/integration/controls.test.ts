@@ -14,6 +14,12 @@ beforeEach(async () => {
   configure({ receiptSink: ports.receiptSink, donorSink: ports.donorSink, ocr: okOcr() });
 });
 
+/** A receipt that hit a flow error before workflow-mapping received it: the restart case. */
+async function stuckBeforeDelivery(id: string) {
+  await db.receiptDetail.update({ where: { id }, data: { state: "flow_error" } });
+  await db.receipt.update({ where: { id }, data: { pushedAt: null } });
+}
+
 describeDb("finance decisions on one's own receipt", () => {
   it("refuses clearing the duplicate flag on one's own receipt", async () => {
     actAs(FINANCE);
@@ -28,17 +34,57 @@ describeDb("finance decisions on one's own receipt", () => {
   it("refuses restarting the flow of one's own receipt", async () => {
     actAs(FINANCE);
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    await db.receiptDetail.update({ where: { id: r.id }, data: { state: "flow_error" } });
+    await stuckBeforeDelivery(r.id);
     await expect(receiptService.restartFlow(r.id)).rejects.toMatchObject({ statusCode: 403 });
     expect(await stateOf(r.id)).toBe("flow_error");
   });
 
   it("still lets finance restart someone else's receipt", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    await db.receiptDetail.update({ where: { id: r.id }, data: { state: "flow_error" } });
+    await stuckBeforeDelivery(r.id);
     actAs(FINANCE);
     await receiptService.restartFlow(r.id);
     expect(await stateOf(r.id)).toBe("receipt_finalized");
+  });
+});
+
+describeDb("a receipt already sent to receiving", () => {
+  async function pushedThenReopened(state: string) {
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    expect(ports.calls.pushes).toHaveLength(1);
+    await db.receiptDetail.update({ where: { id: r.id }, data: { state } });
+    return r.id;
+  }
+
+  it("refuses a restart, so no changed copy is re-sent", async () => {
+    const id = await pushedThenReopened("flow_error");
+    actAs(FINANCE);
+    await expect(receiptService.restartFlow(id)).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/already sent to receiving/) });
+    expect(await stateOf(id)).toBe("flow_error");
+    expect(ports.calls.pushes).toHaveLength(1);
+  });
+
+  it("refuses edits to the receipt and its lines", async () => {
+    const id = await pushedThenReopened("validation_failed");
+    const [line] = await db.receiptLineItem.findMany({ where: { receiptId: id } });
+    for (const attempt of [
+      () => receiptService.edit(id, "submitter", { retailer: "Changed" }),
+      () => receiptService.addLine(id, "submitter", { description: "Extra", quantity: 1, unitPrice: 1 }),
+      () => receiptService.editLine(id, "submitter", line.id, { description: "Changed" }),
+      () => receiptService.deleteLine(id, "submitter", line.id),
+      () => receiptService.resubmit(id, "submitter"),
+    ]) {
+      await expect(attempt()).rejects.toMatchObject({ statusCode: 409 });
+    }
+    expect((await db.receiptDetail.findUniqueOrThrow({ where: { id } })).retailer).not.toBe("Changed");
+    expect(ports.calls.pushes).toHaveLength(1);
+  });
+
+  it("still lets finance re-send it, which the receiver answers as a replay", async () => {
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    actAs(FINANCE);
+    expect(await receiptService.push(r.id)).toEqual({ pushed: true });
+    expect(ports.calls.pushes.map((p) => p.receiptId)).toEqual([r.id, r.id]);
   });
 });
 
@@ -160,7 +206,7 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
 
   it("refuses restarting the flow; an independent finance user restarts it", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    await db.receiptDetail.update({ where: { id: r.id }, data: { state: "flow_error" } });
+    await stuckBeforeDelivery(r.id);
     actAs(HOUSEMATE);
     await expect(receiptService.restartFlow(r.id)).rejects.toMatchObject({ statusCode: 403 });
     actAs(FINANCE);
