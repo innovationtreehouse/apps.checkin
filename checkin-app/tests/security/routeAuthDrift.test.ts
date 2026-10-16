@@ -411,26 +411,43 @@ const FIX_1 =
 // service auth). Keys are the route dir (no /route.ts). Adding a row here is a
 // reviewed assertion that the edge is protected.
 const EDGE_INCLUDE_ALLOWLIST: Record<string, string> = {
+    'attendance':
+        'caller-shaped — Visit via getFullAttendance. Anonymous: 401 (keyless kiosk view on CHECKIN_ENV=local only). ' +
+        'Signed-in member: aggregate counts + safety flags, own visit, own household\'s visits — no other names ' +
+        '(attendance-checkin.md: names only to keyholders/board/sysadmins, a household lead sees a count). ' +
+        'Keyholder/board/sysadmin: full roster (the pickup/emergency-contact grant). Signed kiosk: display-only ' +
+        'roster, no last names or contact fields (attendance-checkin.md "The kiosk")',
+    'cron/lifecycle-reconcile': 'cron-gated — withCron (shared CRON_SECRET); response is the run summary counts (scanned/violations/healed/reported), no rows or person ids',
     'cron/nightly': 'cron-gated — withCron, no user-facing response',
     'cron/pending-participants': 'cron-gated — withCron, no user-facing response',
+    'cron/post-event': 'cron-gated — withCron (shared CRON_SECRET); response is the run summary counts (processedEvents/emailsSent), no rows or person ids',
+    'cron/reconcile-shopify': 'cron-gated — withCron (shared CRON_SECRET); response is per-sweep summary counts/status, no rows or person ids',
     'cron/scholarship-grace-expiry': 'cron-gated — withCron, no user-facing response',
     'events/[id]': 'admission-gated — handler GET throws forbidden() unless staff (sysadmin/board/leadMentor/coreVol)',
     'events/mine': 'query-shaped — self + own household only (activityMembers → where participantId in memberIds)',
     'facility/trends': 'admin-role-gated — sysadmin/board',
     'facility/visits': 'admin-role-gated — sysadmin/board',
     'finance-ops/payment-plans': 'admin-role-gated — registry authorize finance-or-board',
+    'finance-ops/s-read/match-audit': 'admin-role-gated — registry authorize BOARD; Board ops screen, Board may see enrollment match rows',
     'household/visits': "query-shaped — own household only (where householdId = caller's)",
+    'kioskdisplay/certifications':
+        'in-building display — withAuth roles [sysadmin, board, keyholder] + signed kiosk; Visit limits the grid to who is present. ' +
+        'Presence and tool levels are posted in the building by design (attendance-checkin.md "The kiosk": the kiosk shows ' +
+        'everyone inside, kiosk labels only; tools-certification.md: levels displayed in the shop area, matrix readable by keyholders)',
     'membership-audit/compliance': 'admin-role-gated — withAuth roles [sysadmin, board]; reads ProgramParticipant/Volunteer to flag people needing a background check',
     'membership-audit/turning-18': 'admin-role-gated — registry authorize anyRole [sysadmin, board]; reads ProgramParticipant to mark which 18-year-olds are enrolled in a program',
     'membership-ops/households': 'admin-role-gated — withAuth roles [sysadmin, board]; ?id= branch includes each member ProgramParticipant for the household detail view',
     'membership-ops/participants/merge/analyze': 'admin-role-gated — sysadmin/board',
+    'my-programs/conflicts': "query-shaped — any session, but getLeadConflicts reads only visits anchored to events in programs the caller leads (program.leadMentorId); a non-leader gets []",
     'nav/todo-counts': 'query-shaped — counts scoped to caller (own household + programs the caller leads)',
     'profile': "query-shaped — authorize 'self'; visits are the caller's own",
     'profile/visits': 'query-shaped — self only (where participantId = caller)',
-    'programs/[id]': 'query-shaped — participants/volunteers included only for staff/enrolled (#575)',
-    'programs/mine': 'query-shaped — self + household only (where participantId in memberIds)',
     'programs': 'query-shaped — public catalog exposes _count of participants/volunteers (roster SIZE only, no identities/rows); member-only + draft visibility is gated',
+    'programs/[id]': 'query-shaped — participants/volunteers included only for staff/enrolled (#575)',
+    'programs/[id]/treasurers': "admin-role-gated — registry authorize finance-or-board; returns the program's ProgramVolunteer roster (id, name, isTreasurer) to pick treasurers from",
+    'programs/mine': 'query-shaped — self + household only (where participantId in memberIds)',
     'safety/emergency-contacts': 'admin-role-gated — sysadmin/board/keyholder',
+    'system-status/lifecycle': 'admin-role-gated — withAuth roles [sysadmin, board]; lifecycle-violation scan over enrollments',
     'trusted-adults/operational': "admission-gated + query-shaped — authorize 'authenticated'; leads scoped to own-program households (where householdId in [...])",
 };
 
