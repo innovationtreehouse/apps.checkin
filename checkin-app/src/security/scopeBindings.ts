@@ -4,11 +4,10 @@
  * Each entry says: "the caller holds <scope> on a <Model> row when <Match>
  * holds." The engine (scopes.ts) seeds `everyones` and applies these.
  *
- * Field names follow the LIVE generated map (./generated/classifications.ts),
- * not the table in docs/security/auth-consistency-analysis.md §7.4, which
- * differs: the model is `RawBadgeLog` (the doc writes `RawBadgeEvent`), and RSVP
- * has no `programId` column of its own, so its program-lead grant resolves via
- * eventId → Event.programId (see the RSVP binding below).
+ * Field names follow the LIVE generated map (./generated/classifications.ts).
+ * RSVP has no `programId` column of its own, so its program-lead grant resolves
+ * via eventId → Event.programId (see the RSVP binding below).
+ * Background: docs/security/auth-consistency-analysis.md §7.4.
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
@@ -165,8 +164,8 @@ export const ROW_SCOPE_KEY: Record<string, string> = {
  * actor FK) are auto-exempt by isScopable() in validateBindings; "never leaves,
  * even to admins" content is tiered `secret`.
  *
- * EmergencyContact is bound (the ROW_SCOPE_KEY case), so it is not listed here
- * although docs/security/auth-consistency-analysis.md §7.5.1 names it.
+ * EmergencyContact is bound (the ROW_SCOPE_KEY case), so it is not listed here.
+ * See docs/security/auth-consistency-analysis.md §7.5.1.
  */
 export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // Append-only projection source; no route returns it — the review panel reads

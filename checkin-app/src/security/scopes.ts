@@ -59,10 +59,9 @@ export type ScopeBindings = Record<string, Partial<Record<Scope, Match>>>;
 /**
  * Evaluate one Match against a row + caller context.
  *
- * The `typeof v === 'number'` guards on eqCtx/inCtx are load-bearing: they
- * encode the old switch's `x !== undefined` checks. Without them an anonymous
- * caller (selfId === undefined) would spuriously match a row whose field is
- * also absent (undefined === undefined).
+ * The `typeof v === 'number'` guards on eqCtx/inCtx are load-bearing: without
+ * them an anonymous caller (selfId === undefined) would spuriously match a row
+ * whose field is also absent (undefined === undefined).
  */
 export function evalMatch(m: Match, row: Record<string, unknown>, ctx: CallerContext): boolean {
     if ('flag' in m) return ctx[m.flag] === true;
