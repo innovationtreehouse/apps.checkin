@@ -179,11 +179,13 @@ the new stint to the old money:
 | `wasOrgMemberAtApproval` | `null` | stale approval-time membership snapshot |
 | `shopifyOrderId` | `null` | `reconcile.ts` ([:345/:450](../../checkin-app/src/lib/finance/reconcile.ts)) joins a later refund/chargeback on the **old** order to the new stint; `memberDiscountCode.ts` ([:64](../../checkin-app/src/lib/finance/memberDiscountCode.ts)) re-lends the old discount |
 
-Open question for the board: is a **late refund on a withdrawn row's order**
-meant to match back to that (now `WITHDRAWN`) row, or be treated as orphaned? The
-reconciler currently finds the row by `shopifyOrderId`; keeping the row means that
-join now lands on a `WITHDRAWN` row instead of finding nothing. Decide before the
-reconciler ships against kept rows.
+**A late refund or chargeback attaches to the withdrawn record.** A withdrawn row
+keeps its `shopifyOrderId`, so the reconciler's match by order lands on the
+`WITHDRAWN` row and records the refund or chargeback there, not as an orphan.
+The row stays `WITHDRAWN`: the refund-restocked exit applies to `ACTIVE` rows
+only, so a late refund never deletes the record it attaches to. Once the person
+re-enrols, the reset above clears the old order from the row, and a refund on
+that old order no longer matches the new stint.
 
 <!-- ponytail: one row per (person, program) keeps only the LAST stint's exit.
      Multi-stint history (enrolled, withdrew, came back across years) would need a

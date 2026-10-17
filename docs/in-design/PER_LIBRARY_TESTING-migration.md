@@ -26,18 +26,20 @@ none of them changes CI.
 3. **Adopt the script.** Add `"test:affected": "node scripts/test-affected.mjs"`
    to the root `package.json`, and remove the DRAFT header from the script.
    Check `--dry-run` against the three sample diffs.
-4. **Prove `--db`, with an explicit go-ahead.** Run one small area against a
+4. **Prove `--db`.** The owner approves this run once the tests make sense; it
+   runs on the coordinator's heavy-job go, within its load limits. Run one small area against a
    throwaway Postgres. Record the template-migrate time against the file time,
    and confirm the 15-file cap is the right size.
-5. **Prove `--flow`, with an explicit go-ahead.** Run
+5. **Prove `--flow`,** under the same approval and load limits as step 4. Run
    `flow-tests/catalog.flow.test.ts` alone on the standalone stack, then take it
    down with `down -v`. Record stack start-up time against test time, and
    confirm a single file passes on a fresh seed. If it does not, record what it
    depends on.
 6. **Agent rule.** Paste the "Agent rule" block from the design doc into
    `AGENTS.md` as "Local testing for agents", and point the jest-run skill at
-   it.
-7. **After H2b merges,** take the key and package columns of the ownership map
-   from `checkin-app/libraries.json`, and re-check the `--flow` stack notes.
+   it. This does not wait for step 7.
+7. **When a library is next added,** take the key and package columns of the
+   ownership map from `checkin-app/libraries.json`, and re-check the `--flow`
+   stack notes. None is planned for a while.
 8. **Retire.** Move the ownership map and tier description into `docs/ops/` as
    operational reference, and delete both working docs.
