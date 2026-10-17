@@ -54,8 +54,12 @@ New columns on both `receipts` and `receipt_mail_items`:
 
 - `file_key TEXT NULL`, tier **`pii`**. The key is opaque, but it is the handle
   to `pii` bytes, and when the file column is eventually dropped the file route's
-  per-row tier check will key on it (§7). Tagging it `pii` now keeps that check at
-  today's tier and keeps the key out of JSON responses.
+  per-row tier check will key on it (§4). Tagging it `pii` now keeps that check at
+  today's tier. The tag does not keep the key out of JSON: the stripper drops
+  only fields a file route serves, and finance and the Board hold `pii` on the
+  receipt routes. So every select that omits `fileBlob` today (the list shape,
+  the mail-queue select) omits `fileKey` too, and the test that no JSON route
+  returns a receipt file column covers `fileKey` as well.
 - `file_size INT NULL`, tier `internal`. The daily byte limits sum
   `octet_length(file_blob)` today; with the bytes gone they sum this instead.
 
@@ -69,7 +73,7 @@ and `delete`. The host binds it; `packages/receipt` takes no AWS dependency.
 
 | `CHECKIN_ENV` | Binding |
 |---|---|
-| `dev`, `stg`, `prod` | S3, bucket from `RECEIPT_FILES_S3_BUCKET`. Unset bucket: uploads and intake fail with 503, as the agreement sign endpoint does; the config-health page shows the gap. |
+| `dev`, `prod` (staging deploys with `CHECKIN_ENV=stg`, which reads as `prod`) | S3, bucket from `RECEIPT_FILES_S3_BUCKET`. Unset bucket: uploads and intake fail with 503, as the agreement sign endpoint does; the config-health page shows the gap. |
 | `local` (dev server, flow tests) | a directory under the OS temp dir |
 | vitest | an in-memory fake |
 
@@ -89,7 +93,7 @@ that lists keys with no row is the upgrade if anyone ever measures it. The cheap
 pre-check of the daily limits runs before the put, so a refused upload stores
 nothing in the common case.
 
-**Mail items.** Holding an item puts `mail-items/<uuid>`. Assigning one (#2239)
+**Mail items.** Holding an item puts `mail-items/<uuid>`. Assigning one
 runs the normal receipt insert, which puts `receipts/<newId>` from the same
 bytes, and clears the item's `file_key` in the claim. Discarding clears it too.
 After either commits, the app deletes the `mail-items/` object. Versioning keeps
@@ -100,7 +104,7 @@ for a mistaken discard.
 receipt; it's held in `mail-items/` until finance acts, so spam stays in the one
 prefix the app already deletes from. Three things clear it:
 
-- Finance discards an item on the mail-queue page (#2239), which deletes its file.
+- Finance discards an item on the mail-queue page, which deletes its file.
 - Held items nobody acts on are discarded by the daily mail step after a set age
   (Q-S3-2), with an audit row, exactly as a finance discard is. So a flood clears
   itself without anyone working the queue. This is app code, not an S3 lifecycle
@@ -191,13 +195,17 @@ lifecycle rule expires every object 30 days after it was written, so dev's
 storage bill stays flat however hard it's tested. A dev receipt older than that
 shows its details but its file answers 404; the dev reset reseeds anyway.
 
-**Staging, on its existing pattern.** Staging is a scrubbed copy of prod's
-databases, rebuilt per deploy, whose job is catching a bad migration. Its copied
-rows carry prod's `file_key` values, which name objects that exist only in the
-prod bucket. The copy task does not copy objects: that would put prod's `pii`
-files into a disposable environment, and the migration staging exists to test
-never reads a file. So in staging a copied receipt's file route answers 404, and
-files uploaded in staging land in staging's bucket and work normally.
+**Staging, on its existing pattern.** Staging is a scrubbed copy of prod,
+rebuilt per deploy, whose job is catching a bad migration. Today the copy task
+copies only checkin's own database, so staging's receipt database holds only
+receipts uploaded in staging, and every file opens from staging's bucket.
+
+Once the copy covers library databases, staging's receipt rows will carry prod's
+`file_key` values, which name objects that exist only in the prod bucket. The
+copy task will not copy objects: that would put prod's `pii` files into a
+disposable environment, and the migration staging exists to test never reads a
+file. So from then on a copied receipt's file route answers 404 in staging, and
+files uploaded in staging still work normally.
 
 **Self-hosted compose stack** (`deploy/docker-compose.prod.yml`) has no task
 role. See Q-S3-4.
@@ -284,7 +292,7 @@ Each PR is based on `main`; none stacks.
 | # | PR | Contents | After |
 |---|---|---|---|
 | 1 | **Infra** (infra repo) | three buckets, policies, lifecycle, task-role grants, the two env vars set with the flag off | owner ruling |
-| 2 | **Library** | the migration (§4 step 1, with `@sensitivity` tags and regenerated classifications), the file-store port, the S3, temp-directory and fake adapters, the flagged write path, the falling-back read path, limits on `file_size`, the mail-item deletes, the config-health row, tests. No boundary file changes. | #2239 merged (it writes `mailQueueService`); PR 1 applied in dev |
+| 2 | **Library** | the migration (§4 step 1, with `@sensitivity` tags and regenerated classifications), the file-store port, the S3, temp-directory and fake adapters, the flagged write path, the falling-back read path, limits on `file_size`, the mail-item deletes, the config-health row, tests. No boundary file changes. | PR 1 applied in dev |
 | - | flag on, dev then staging then prod | env change only | PR 2 rolled out there |
 | 3 | **Backfill** | the copy and `--verify` script, its one-off task command, a runbook entry in `docs/ops/` | flag on in that environment |
 | 4 | **Remove `bytea` reads** | read `file_key` only, drop the flag, stop selecting `file_blob` | verify clean in prod, in a release after PR 3's run |
