@@ -478,9 +478,8 @@ Procedure below is built on them.
 
 - The one-year window is what stops the request repeating. An attachment is never
   cleared when a program ends, so without it someone who took a single class at 18
-  would be asked again every year until they aged out. The window only bounds
-  programs that carry an end date; one left undated reads as still running, and its
-  members stay in the population.  [Decision — deliberate limit]
+  would be asked again every year until they aged out. Every program carries an
+  end date, so the window bounds them all.  [Decision — deliberate limit]
 
 - Never opened for a household lead, who signs the household's agreement. An open
   individual agreement on a lead would take the place of the household one in the
