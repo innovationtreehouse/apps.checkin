@@ -286,7 +286,7 @@ export default function AdminHouseholdsPage() {
                     {isDenied ? (
                       <Text c="red" fw={700}>Denied</Text>
                     ) : hasActiveMembership && isMembershipLapsed(household.validUntil) ? (
-                      <Tooltip label="Active, but no dues for the current membership year are recorded here">
+                      <Tooltip label="Active, but no membership fee for the current membership year is recorded here">
                         <Text c="orange" fw={700} style={{ cursor: "default" }}>Lapsed</Text>
                       </Tooltip>
                     ) : hasActiveMembership ? (

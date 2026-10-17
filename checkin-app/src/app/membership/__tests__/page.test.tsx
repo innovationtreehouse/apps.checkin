@@ -234,7 +234,7 @@ describe("membership page", () => {
     expect(screen.queryByRole("button", { name: "Renew now" })).not.toBeInTheDocument();
   });
 
-  it("hides the dues and the checkout link from a non-lead household member", async () => {
+  it("hides the membership fee and the checkout link from a non-lead household member", async () => {
     setSession({ id: 2 });
     const fetchMock = mockFetchJson({
       "/api/membership/payment": { amountCents: 12500, checkoutUrl: "https://shop.example/checkout" },
@@ -363,7 +363,7 @@ describe("membership page", () => {
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining("Signature received — finalizing.") })));
   });
 
-  // ── PENDING_PAYMENT dues fetch branches ──────────────────────────────────────
+  // ── PENDING_PAYMENT membership fee fetch branches ──────────────────────
   it("hides the bg-check alert once cleared and shows a not-yet-available checkout link", async () => {
     setSession({ id: 1 });
     mockFetchJson({
@@ -380,7 +380,7 @@ describe("membership page", () => {
     expect(screen.queryByText("Your background check is being reviewed", { exact: false })).not.toBeInTheDocument();
   });
 
-  it("keeps the preparing-invoice placeholder when the dues request fails", async () => {
+  it("keeps the preparing-invoice placeholder when the membership fee request fails", async () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/api/membership/payment")) return { ok: false, json: async () => ({}) } as Response;
@@ -395,7 +395,7 @@ describe("membership page", () => {
     expect(await screen.findByText("Preparing your invoice…")).toBeInTheDocument();
   });
 
-  it("keeps the preparing-invoice placeholder when the dues request throws", async () => {
+  it("keeps the preparing-invoice placeholder when the membership fee request throws", async () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/api/membership/payment")) throw new Error("boom");

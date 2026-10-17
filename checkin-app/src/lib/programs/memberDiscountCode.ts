@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { isDuesSettledThrough, programCoverageDate } from "@/lib/orgMembership";
+import { isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
@@ -44,23 +44,23 @@ export function memberCodeHousehold(discountCodes: string[], programId: number):
 /**
  * Member-code entitlement, judged AT THE MONEY EVENT: true iff the paid order carries
  * this program's minted member code and the household the code was minted for does
- * not cover every enrollee, or is not dues-settled through the program's coverage
+ * not cover every enrollee, or is not fee-settled through the program's coverage
  * date. A code minted before codes named a household falls back to "some enrollee's
  * household is settled". Callers (the orders/paid webhook, and the reconciler's
  * forward pass recovering a missed one) flag DISCOUNT_UNAUTHORIZED and do not activate.
  *
  * `personIds` may come straight off the customer-controlled CheckMeIn_Account_ID cart
  * attribute, so it is intersected with this program's real ProgramParticipant rows
- * FIRST: otherwise stuffing any dues-settled person's id into the permalink buys the
+ * FIRST: otherwise stuffing any fee-settled person's id into the permalink buys the
  * member price for an unentitled enrollee. Believe the DB about who is enrolled.
  * The intersect keeps only rows THIS order is paying for — PENDING, or already
  * stamped with this same shopifyOrderId (a webhook redelivery must recognize its own
  * rows and stay quiet) — so a co-enrollee activated by some OTHER order cannot lend
- * their household's dues to this checkout.
+ * their household's membership fee to this checkout.
  *
  * Asked once, when the money moves, and never re-derived afterwards — an ordinary
  * deactivation must not retro-flag orders that were honest when they were paid. The
- * PaymentException row is the durable judgement. Inherits isDuesSettledThrough's
+ * PaymentException row is the durable judgement. Inherits isMembershipFeeSettledThrough's
  * fail-open when no membership-year boundary is configured.
  *
  * ACCEPTED WINDOW (named, not engineered away): a minted code lives 48h, so
@@ -77,9 +77,9 @@ export async function unentitledMemberCodeUse(
     if (!usesProgramMemberCode(discountCodes, programId)) return false;
     // Only rows THIS order pays for carry entitlement: PENDING (about to be activated
     // by it) or already stamped with this order id (redelivery). An id enrolled-ACTIVE
-    // via some OTHER order clears neither arm, so it cannot lend its household's dues.
+    // via some OTHER order clears neither arm, so it cannot lend its household's membership fee.
     // LIVE_PERSON: a merge leaves the tombstone's enrollment row behind, and a
-    // tombstone must not lend its old household's dues to someone else's checkout.
+    // tombstone must not lend its old household's membership fee to someone else's checkout.
     const enrolled = await prisma.programParticipant.findMany({
         where: {
             programId,
@@ -96,11 +96,11 @@ export async function unentitledMemberCodeUse(
     if (boundHousehold !== null) {
         const [first] = enrolled;
         if (!first || enrolled.some((e) => e.person.householdId !== boundHousehold)) return true;
-        return !(await isDuesSettledThrough(first.personId, through));
+        return !(await isMembershipFeeSettledThrough(first.personId, through));
     }
     // ponytail: per-person loop, not a batched query — one order enrols one household.
     for (const { personId } of enrolled) {
-        if (await isDuesSettledThrough(personId, through)) return false;
+        if (await isMembershipFeeSettledThrough(personId, through)) return false;
     }
     return true;
 }

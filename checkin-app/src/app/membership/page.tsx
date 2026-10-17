@@ -39,7 +39,7 @@ export default function MembershipPage() {
   const isActive = state?.membershipStatus === "ACTIVE";
   const isRenewal = state?.process?.kind === "RENEWAL";
   // Steps whose every action is the lead's — household details, contract signing,
-  // background-check consent, dues and checkout. Each backing route refuses a
+  // background-check consent, membership fee and checkout. Each backing route refuses a
   // non-lead, so rendering the controls for one would only produce a 403.
   const isLeadOnlyStep = isIntake || inStatus === "PENDING_EXTERNAL_ACTION" || inStatus === "PENDING_PAYMENT";
 
@@ -159,7 +159,7 @@ export default function MembershipPage() {
               <Card withBorder radius="md" padding="lg">
                 <Title order={2} mb="sm">Payment received 🎉</Title>
                 <Text c="dimmed">
-                  Thanks — your dues are paid. We&apos;re just finishing your background check. Your
+                  Thanks — your membership fee is paid. We&apos;re just finishing your background check. Your
                   membership activates automatically the moment it clears, and we&apos;ll email you
                   then. Nothing else to do.
                 </Text>

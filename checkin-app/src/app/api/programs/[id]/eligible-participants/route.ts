@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
-import { DUES_SETTLED_PERSON_WHERE } from "@/lib/orgMembership";
+import { MEMBERSHIP_FEE_SETTLED_PERSON_WHERE } from "@/lib/orgMembership";
 import { handler, notFound, badRequest } from "@/security/handler";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
@@ -44,11 +44,11 @@ export const GET = handler<{ id: string }>('GET /api/programs/[id]/eligible-part
         });
     }
 
-    // A household whose dues are paid and whose background check is still with the
+    // A household whose membership fee is paid and whose background check is still with the
     // board is eligible for members-only programs — same rule as the catalog,
     // detail, and enrollment gates.
     if (currentProgram.orgMemberOnly) {
-        andClauses.push(DUES_SETTLED_PERSON_WHERE);
+        andClauses.push(MEMBERSHIP_FEE_SETTLED_PERSON_WHERE);
     }
 
     const members = await prisma.person.findMany({

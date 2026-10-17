@@ -103,7 +103,7 @@ export interface MirrorOrder {
      * Coupon codes applied at checkout, mirrored since #1048. Empty [] for orders
      * synced before that shipped (until a backfill re-pull) AND for genuinely
      * un-couponed orders — absence is not distinguishable, so treat non-empty as
-     * "a coupon explains a sub-dues total", never empty as "definitely no coupon".
+     * "a coupon explains a sub-fee total", never empty as "definitely no coupon".
      */
     discountCodes: string[];
     cancelledAt: Date | null;

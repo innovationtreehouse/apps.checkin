@@ -144,7 +144,7 @@ export function membershipYearCycle(
 }
 
 /**
- * How far a household's dues reach in the live cycle: the boundary that closes it
+ * How far a household's membership fee reaches in the live cycle: the boundary that closes it
  * when the household settled for it, else the boundary that opened it — which is
  * already past off season, so an un-renewed household reads as lapsed from the
  * boundary on. Status is untouched; only a person revokes.

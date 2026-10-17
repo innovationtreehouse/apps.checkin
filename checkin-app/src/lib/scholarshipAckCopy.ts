@@ -9,7 +9,7 @@ import { escapeHtml } from "@/lib/email-templates/base";
 
 export const DEFAULT_ACK_SUBJECT = "We received your scholarship / payment-plan request";
 export const DEFAULT_ACK_MEMBERSHIP_BODY =
-    "Hi — we've received your household's scholarship / payment-plan request for your Treehouse membership dues. "
+    "Hi — we've received your household's scholarship / payment-plan request for your Treehouse membership fee. "
     + "The Scholarship Review Team will review it and follow up.";
 export const DEFAULT_ACK_PROGRAM_BODY =
     "Hi — we've received your scholarship / payment-plan request for {{programName}}. "

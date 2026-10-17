@@ -535,7 +535,7 @@ model OrgMembershipProcess {
   /// When the background-check requirement was satisfied for this cycle — either
   /// two reviewers approved, or a still-valid prior check was detected at intake.
   /// The single source of truth for "BG cleared", independent of the payment
-  /// track; the membership only goes ACTIVE once this is set AND dues are paid.
+  /// track; the membership only goes ACTIVE once this is set AND the membership fee is paid.
   /// @sensitivity:internal
   bgClearedAt           DateTime?
   /// @sensitivity:internal
@@ -701,7 +701,7 @@ model BoardSettings {
   /// in lib/scholarshipEmails.ts. Set on Settings → Email, same section as
   /// scholarshipNotifyEmail. @sensitivity:internal
   scholarshipAckSubject      String?
-  /// ACK body for a membership-dues request (POST /api/membership/request-payment-plan).
+  /// ACK body for a membership-fee request (POST /api/membership/request-payment-plan).
   /// Plain text: rendered by HTML-escaping then splitting into `<p>` paragraphs — never
   /// interpreted as HTML (see scholarshipAckProgramBody re: the outreach preview XSS
   /// history this deliberately avoids). NULL/blank = the default copy.

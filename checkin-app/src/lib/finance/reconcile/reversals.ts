@@ -204,7 +204,7 @@ export async function reconcileReversals(): Promise<number> {
     const byLegacy = new Map(orders.map((o) => [o.legacyId ?? "", o]));
     const disputed = await mirror.disputedOrderGids(orders.map((o) => o.orderGid));
 
-    // Expected dues per membership (for the "order edited down below dues" case).
+    // Expected membership fee per membership (for the "order edited down below the membership fee" case).
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
         select: { standardMembershipFeeCents: true, volunteerMembershipFeeCents: true, volunteerDiscountCode: true },
@@ -221,10 +221,10 @@ export async function reconcileReversals(): Promise<number> {
         if (!o) continue; // pre-cutover / not yet mirrored — can't judge.
         let kind = classifyReversal(o, disputed.has(o.orderGid));
         if (!kind) {
-            // Not reversed — but was the order edited down below dues after activation?
+            // Not reversed — but was the order edited down below the membership fee after activation?
             // Discount-aware: add the coupon back so an ordinary couponed order (volunteer
             // rate, promo) isn't mistaken for a post-activation edit-down — only a real
-            // shortfall below GROSS dues counts. Keeps the "edited down" purpose intact.
+            // shortfall below the GROSS membership fee counts. Keeps the "edited down" purpose intact.
             const expected = isVolunteerById.get(proc.orgMembershipId ?? -1) ? settings?.volunteerMembershipFeeCents ?? 0 : settings?.standardMembershipFeeCents ?? 0;
             if (expected > 0 && o.totalCents + o.discountCents + AMOUNT_TOLERANCE_CENTS < expected) kind = "AMOUNT_MISMATCH";
         }

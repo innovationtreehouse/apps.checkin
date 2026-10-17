@@ -16,7 +16,7 @@ import type { Prisma } from "@/generated/prisma/client";
  * Every household pays through the same Shopify membership product (its
  * checkout permalink is set in BoardSettings). Volunteer households get the
  * board's discount code appended to that link so Shopify applies their discount
- * at checkout — our dues figures are only what applicants *see*. The membership
+ * at checkout — our membership fee figures are only what applicants *see*. The membership
  * process id rides along as a cart attribute so the orders/paid webhook can
  * match the payment back to this application. Payment (orders/paid webhook) OR a
  * board manual-payment override both converge on activate(): one place
@@ -51,7 +51,7 @@ export function buildMembershipCheckoutUrl(
 }
 
 /**
- * Resolve the dues amount and the Shopify checkout link for a process in
+ * Resolve the membership fee amount and the Shopify checkout link for a process in
  * PENDING_PAYMENT. The link is built from SHOPIFY_STORE_DOMAIN +
  * BoardSettings.orgMembershipVariantId, with the volunteer discount code appended
  * for volunteer households. If the store domain or variant isn't configured,

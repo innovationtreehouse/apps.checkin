@@ -250,7 +250,7 @@ describe('advanceExternalIfComplete', () => {
 
         const result = await advanceExternalIfComplete(20);
 
-        // Allowlist matched now — dues are read at PENDING_PAYMENT, before clearance.
+        // Allowlist matched now — the membership fee is read at PENDING_PAYMENT, before clearance.
         expect(applyVolunteerStatus).toHaveBeenCalledWith(prisma, 42, 7, false);
         expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
         expect(notifyReviewers).toHaveBeenCalledTimes(1); // check not yet cleared → review still needed

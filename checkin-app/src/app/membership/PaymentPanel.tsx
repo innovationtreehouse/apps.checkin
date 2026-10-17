@@ -6,7 +6,7 @@ import { useIsLocalInstance } from "@/components/EnvProvider";
 import { SCHOLARSHIP_REQUEST_KIND_OPTIONS } from "@/lib/scholarshipRequestKind";
 import type { PaymentControls } from "./useMembershipPage";
 
-/** The PENDING_PAYMENT step: dues, Shopify checkout and the scholarship/payment-plan request. */
+/** The PENDING_PAYMENT step: membership fee, Shopify checkout and the scholarship/payment-plan request. */
 export default function PaymentPanel({ processId, bgCleared, saving, setSaving, controls }: {
   processId: number;
   bgCleared: boolean;
@@ -22,11 +22,11 @@ export default function PaymentPanel({ processId, bgCleared, saving, setSaving, 
 
   return (
     <Card withBorder radius="md" padding="lg">
-      <Title order={2} mb="sm">Membership dues</Title>
+      <Title order={2} mb="sm">Membership fee</Title>
       {payment ? (
         <>
           <Text c="dimmed">
-            Your annual household dues are <strong>${(payment.amountCents / 100).toFixed(2)}</strong>.
+            Your annual household membership fee is <strong>${(payment.amountCents / 100).toFixed(2)}</strong>.
           </Text>
           {awaitingPayment ? (
             <Stack gap="xs" mt="md" align="flex-start">
@@ -50,7 +50,7 @@ export default function PaymentPanel({ processId, bgCleared, saving, setSaving, 
           <Modal opened={confirmPlanOpened} onClose={closeConfirmPlan} title="Request a scholarship or payment plan?" centered>
             <Text size="sm">
               This sends your request to the board&apos;s Scholarship Review Team, who will review
-              your household&apos;s dues and follow up with you. You won&apos;t be charged
+              your household&apos;s membership fee and follow up with you. You won&apos;t be charged
               anything now, and you can still pay online at any time.
             </Text>
             <Radio.Group

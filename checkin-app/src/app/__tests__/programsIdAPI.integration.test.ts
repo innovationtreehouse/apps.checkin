@@ -578,7 +578,7 @@ describe('Individual Program API Integration Tests', () => {
             expect(data.viewerMemberPricingEligible).toBeUndefined();
         });
 
-        // #1397: dues paid, background check still with the board. Not a member
+        // #1397: membership fee paid, background check still with the board. Not a member
         // (nothing else in the app treats them as one), but priced as one and
         // admitted to members-only programs. Paid BEFORE the renewal window opened
         // (#1811: an in-window payment buys the coming year), so coverage stops at

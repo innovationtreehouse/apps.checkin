@@ -182,7 +182,7 @@ describe('Nav todo-counts API', () => {
         // Items carry a label + a deep link so the UI can show *what* is due.
         expect(data.member.household).toEqual(
             expect.arrayContaining([
-                expect.objectContaining({ label: 'Pay your membership dues', href: '/membership' }),
+                expect.objectContaining({ label: 'Pay your membership fee', href: '/membership' }),
                 expect.objectContaining({ key: 'household-address', href: '/my-household' }),
             ]),
         );

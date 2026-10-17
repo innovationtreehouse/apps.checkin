@@ -7,7 +7,7 @@ import type { MirrorOrder } from "@/lib/shopifyRead/client";
 import { raisePaymentException, type PaymentExceptionKind } from "./exceptions";
 import { isPaid, isReversed } from "./orderStatus";
 
-// A recovered payment may come in a cent or two under the recorded dues (rounding,
+// A recovered payment may come in a cent or two under the recorded membership fee (rounding,
 // a stale settings copy). Only a shortfall beyond this is a real mismatch.
 export const AMOUNT_TOLERANCE_CENTS = 100;
 
@@ -153,7 +153,7 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
     // membershipVariantIdSet the webhook builds — mirrored
     // onto order lines since #1048. A variant id is stable and can't drift; the old
     // total-price gate false-raised AMOUNT_MISMATCH on every couponed order (volunteer
-    // rate, promo), whose sub-dues total is indistinguishable from an underpayment by
+    // rate, promo), whose sub-fee total is indistinguishable from an underpayment by
     // amount alone. See the H2 note in payment.ts and the webhook route.
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
@@ -167,7 +167,7 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
     const membershipVariantIds = membershipVariantIdSet(settings ?? null);
     const lineVariantIds = await mirror.orderLineVariantIds(order.orderGid);
     // Both branches below need the membership's volunteer flag: the amount-gate
-    // fallback for expected dues, the coupon entitlement check for volunteerOnly.
+    // fallback for the expected membership fee, the coupon entitlement check for volunteerOnly.
     const membership = proc.orgMembershipId
         ? await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId }, select: { isVolunteer: true } })
         : null;
@@ -183,9 +183,9 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
     } else {
         // TRANSITIONAL (remove once the #1048 backfill re-pull is universal): rows
         // synced before #1048 carry no line variant ids, so the item check is
-        // impossible — fall back to the old dues amount gate, made discount-aware by
+        // impossible — fall back to the old membership fee amount gate, made discount-aware by
         // adding the coupon back so a couponed pre-backfill order compares its GROSS
-        // figure to gross dues and no longer false-raises AMOUNT_MISMATCH.
+        // figure to the gross membership fee and no longer false-raises AMOUNT_MISMATCH.
         const expected = membership?.isVolunteer ? settings?.volunteerMembershipFeeCents ?? 0 : settings?.standardMembershipFeeCents ?? 0;
         if (expected > 0 && order.totalCents + order.discountCents + AMOUNT_TOLERANCE_CENTS < expected) {
             await raisePaymentException("AMOUNT_MISMATCH", { shopifyOrderId: order.legacyId, processId: proc.id });
@@ -205,7 +205,7 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
     }
 
     // Recover: advance past the paid checkpoint. hasMembershipItem=true — the order
-    // contains a known membership variant (or, for a pre-backfill order, covers dues)
+    // contains a known membership variant (or, for a pre-backfill order, covers the membership fee)
     // and is matched to this specific pending process (honest missed-webhook
     // assumption; the reconciler is not the attack surface the public webhook is, and
     // it leaves a full AuditLog trail via activate()).

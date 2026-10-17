@@ -4,7 +4,7 @@
  * Designating an address that belongs to a sign-in-verified person already in the
  * app shows the Board that person's household, and only the Board's explicit
  * confirm sets the household's OrgMembership.isVolunteer (audited). Any other
- * address is stored as a designation (the dues preload). Every response lists
+ * address is stored as a designation (the membership fee preload). Every response lists
  * every person on file with the address.
  */
 

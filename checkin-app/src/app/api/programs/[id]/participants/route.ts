@@ -9,7 +9,7 @@ import { lockProgramAndCheckCapacity, ProgramCapacityError, withdrawAndReleaseHo
 import { checkProgramAge, isKnownAdult } from "@/lib/programAge";
 import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest";
 import { householdLeadship } from "@/lib/household/leads";
-import { isDuesSettled } from "@/lib/orgMembership";
+import { isMembershipFeeSettled } from "@/lib/orgMembership";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
 import { changeProgramStock } from "@/lib/shopify";
 import { isSaleEnded } from "@/lib/programs/saleState";
@@ -128,9 +128,9 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             // enrolling a dependent is judged on the dependent's household). This is
             // the authoritative join gate: a publiclyVisible members-only program is
             // shown to non-members, so a non-member can reach the enroll button and
-            // must be refused here. Dues-settled, not ACTIVE — it admits a paid
+            // must be refused here. Fee-settled, not ACTIVE — it admits a paid
             // household awaiting background clearance, matching the read gates.
-            if (currentProgram.orgMemberOnly && !(await isDuesSettled(participantId))) {
+            if (currentProgram.orgMemberOnly && !(await isMembershipFeeSettled(participantId))) {
                 return NextResponse.json({ error: "This program is for Treehouse Members only.", requiresOverride: true }, { status: 400 });
             }
 

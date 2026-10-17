@@ -67,7 +67,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         // endAt "now": membership coverage always reaches it, whatever
         // orgMembershipYearBoundary a concurrently-running suite has installed
         // on the shared BoardSettings row (a boundary's next occurrence is
-        // never in the past, so the dues-settled test can't lose that race).
+        // never in the past, so the fee-settled test can't lose that race).
         const program = await prisma.program.create({
             data: { startAt: new Date('2026-01-01'), endAt: new Date(), name: `Webhook Test Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: PROGRAM_VARIANT_ID },
         });
@@ -445,7 +445,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
     it('flags DISCOUNT_UNAUTHORIZED and does NOT activate when the order redeems the program member code from an unentitled household', async () => {
         // Member-code entitlement is judged HERE, at the money event — seconds after
         // checkout, against the household's state at the sale. h1 holds no
-        // OrgMembership, so it is not dues-settled through the program's dates.
+        // OrgMembership, so it is not fee-settled through the program's dates.
         await setPending(p1);
         const body = programPayload(String(p1), PROGRAM_VARIANT_ID, [`PRG${programId}-ABCD1234`]);
         try {
@@ -498,7 +498,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         }
     });
 
-    it('activates as usual when the same member code comes from a dues-settled household', async () => {
+    it('activates as usual when the same member code comes from a fee-settled household', async () => {
         // The entitled half of the same judgement: the code is only evidence when the
         // paying family has no membership behind it.
         await setPending(p1);
@@ -518,7 +518,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         }
     });
 
-    it('activates with a member code minted for this household when it is dues-settled', async () => {
+    it('activates with a member code minted for this household when it is fee-settled', async () => {
         await setPending(p1);
         const membership = await prisma.orgMembership.create({ data: { householdId: h1, status: 'ACTIVE' } });
         const body = programPayload(String(p1), PROGRAM_VARIANT_ID, [`PRG${programId}-H${h1}-ABCD1234`]);
