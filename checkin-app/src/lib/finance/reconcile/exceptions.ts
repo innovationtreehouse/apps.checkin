@@ -94,7 +94,7 @@ const UNMATCHED_REVERSAL_TABLE = "ShopifyOrderReversal";
 export async function recordUnmatchedReversal(shopifyOrderId: string, kind: PaymentExceptionKind): Promise<void> {
     await prisma.auditLog.create({
         data: {
-            ...systemActor("webhook:shopify-reversal"),
+            ...systemActor("webhook:shopify-refund"),
             action: "CREATE",
             tableName: UNMATCHED_REVERSAL_TABLE,
             affectedEntityId: 0,
