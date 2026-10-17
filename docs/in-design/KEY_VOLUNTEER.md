@@ -83,7 +83,7 @@ Volunteer agreement"** list holds everyone who owes one, from two sources:
    donor PII, both carrying risk beyond the base membership agreement by the
    same reasoning. Granting any of these roles opens the obligation.
 
-2. **The Board.** A board member or sysadmin adds a person to the list for a
+2. **The Board.** A board member adds a person to the list for a
    reason no role captures (card holder, procurement participant, donor-PII
    access). The reason is free text, with no picklist of subtypes. The app
    does not know who holds a card or takes part in procurement; the Board does,

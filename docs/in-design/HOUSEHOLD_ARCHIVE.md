@@ -85,7 +85,7 @@ legitimately need archived rows opt in explicitly, per transaction.
 | **Why not per-query filters** | `LIVE_PERSON` proved the convention does not hold: 13 defects from one sweep, and the drift guard that existed missed all three bugs that shipped. |
 | **What board members see** | A new "Archive" action on a household, available to the Board only and refused while the household has an active member. Archived households and their members disappear from every active surface, search and pickers included. Historical reports and audit trails still show them. |
 | **What developers stop doing** | Nothing — they never start. No filter to remember on any of the 116 sites, no drift guard to maintain. New code that joins to Household inherits the exclusion for free. |
-| **The cost** | RLS must bind every role that reads the table. The app's DML role owns no tables, so RLS binds it already; `FORCE` binds the owner role that migrations and integration tests use. Opt-in reads must run inside a transaction, and the integration-test DB must carry the policy or it passes vacuously. See [Costs and how they are handled](#costs-and-how-they-are-handled). |
+| **The cost** | RLS must bind every role that reads the table. The app's DML role owns no tables, so RLS binds it already; `FORCE` binds a non-superuser owner. The roles that migrate and run integration tests are superusers, which RLS never binds, so the archive's RLS tests connect as a dedicated non-superuser test role. Opt-in reads must run inside a transaction, and the test DB must carry the policy or the tests pass vacuously. See [Costs and how they are handled](#costs-and-how-they-are-handled). |
 | **Done when** | Archived households are invisible on every active surface including relation traversals (#1232), enforced structurally by the database, not by convention. |
 
 ## What "archived" means
@@ -255,8 +255,8 @@ Added by migration (Prisma migrations run arbitrary SQL). The column is
 ```sql
 ALTER TABLE "Household" ENABLE ROW LEVEL SECURITY;
 -- The table owner bypasses RLS unless forced. The app connects as a non-owner
--- DML role, which RLS binds regardless; FORCE also binds the owner role that
--- migrations and integration tests connect as.
+-- DML role, which RLS binds regardless; FORCE also binds a non-superuser owner.
+-- No setting binds a superuser.
 ALTER TABLE "Household" FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY household_hide_archived ON "Household"
@@ -320,27 +320,34 @@ been bitten by before. Each is a required step, not an afterthought.
    stack, created by `deploy/prod-initdb/05-checkin-roles.sh` as a plain login
    role, and `checkin_<env>_dml` in AWS, created by the infra repo's cluster
    bootstrap (`DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` §9). RLS binds a
-   non-owner role as soon as it is enabled. Migrations connect as the table
-   owner, which bypasses its own RLS unless the table is `FORCE`d, so the
-   `FORCE` line stays: it binds the owner role, which integration tests also
-   use. The one way left to fail open is a role with `BYPASSRLS` or superuser;
-   Decision #6 names that check.
+   non-owner role as soon as it is enabled. `FORCE` binds a non-superuser table
+   owner as well, so it stays as defence in depth. It does not bind a superuser,
+   and the roles that migrate and test are superusers: the compose migrate role
+   `prisma` is the image's bootstrap user (`deploy/docker-compose.prod.yml`), and
+   CI's integration Postgres runs as `testuser`, also the bootstrap user
+   (`.github/workflows/ci.yml`). Neither reads Household in production, so
+   neither is a production leak, but a test that connects as either sees every
+   row whatever the policy says. The one production way to fail open is an app
+   role with `BYPASSRLS` or superuser; Decision #6 names that check.
 2. **Opt-in reads must be transactional.** The ~5 opt-in surfaces (admin detail,
    unarchive, historical/audit reports) must run through
    `withArchivedHouseholds`. Non-transactional opt-in via session `SET` is
    forbidden because the pool reuses connections. This is a small, bounded set
    and each site is deliberate.
-3. **The test DB must force RLS too, or coverage is vacuous.** Integration tests
-   connect as the owner. If the test DB is not `FORCE`d, an archived household
-   stays visible in tests and every "archived rows are hidden" assertion passes
-   for the wrong reason — the same trap as a `db push` test DB missing a
-   partial-unique index it cannot express: the constraint is absent, so its
-   tests pass vacuously. The migration that adds the policy is the
-   single source, so `migrate deploy` against the test DB carries the `FORCE`;
-   `db push` does not run migration SQL and must not be used to build the DB
-   that exercises this. A dedicated test asserts the fail-open case is closed:
-   query as the app role with no opt-in and confirm an archived seed row is
-   *absent*, so a missing `FORCE` fails the suite loudly.
+3. **The RLS tests must connect as a role RLS binds, or coverage is vacuous.**
+   Integration tests connect as `testuser`, a superuser, which bypasses RLS
+   even on a `FORCE`d table. Run as that role, an archived household stays
+   visible and every "archived rows are hidden" assertion passes for the wrong
+   reason, the same trap as a `db push` test DB missing a partial-unique index
+   it cannot express. So the archive's RLS suites connect as a non-superuser,
+   non-owner role shaped like the app's DML role (see
+   [Test role](#test-role-a-dml-like-connection-for-the-rls-suites)). The
+   policy still comes from the migration, so the test DB is built with
+   `migrate deploy`; `db push` does not run migration SQL and must not be used
+   to build the DB that exercises this. A dedicated test asserts the fail-open
+   case is closed: as the test DML role, with no opt-in, an archived seed row is
+   *absent*, and a guard asserts that role is neither superuser nor
+   `BYPASSRLS`, so a test that quietly fell back to `testuser` fails loudly.
 
 Two smaller notes:
 
@@ -398,9 +405,10 @@ stated as a testing property: the verification surface collapses from
 **The four-test contract** (these, not per-site coverage, are what make the
 design safe — see [Test plan](#test-plan) for the full list):
 
-1. **Fail-open probe.** As the app role, seed one archived + one active
-   household; `household.findMany()` with no opt-in returns only the active one.
-   Fails loudly if `FORCE` is missing or the role bypasses RLS. Load-bearing.
+1. **Fail-open probe.** Seed one archived + one active household; reading as
+   a non-superuser, non-owner role (the test DML role), `household.findMany()`
+   with no opt-in returns only the active one. Fails loudly if the policy is
+   missing or the role bypasses RLS. Load-bearing.
 2. **Opt-in works.** The same query in `withArchivedHouseholds` returns both.
 3. **No leak.** An opt-in transaction, then a plain query on the same pool,
    confirms archived rows are not visible afterward — catches any session-`SET`
@@ -618,6 +626,15 @@ implementation.
    `checkin_<env>_dml` `BYPASSRLS` or superuser. If it does, removing that
    grant is the fix; the design does not change.
 
+   **The roles that migrate and test are superusers, and RLS does not bind
+   them.** The compose migrate role `prisma` and CI's integration role
+   `testuser` are each their container's bootstrap superuser, and a superuser
+   bypasses RLS even on a `FORCE`d table. That is harmless in production, where
+   neither role serves reads, but it means a test connecting as `testuser` can
+   never see the policy work. The archive's RLS tests therefore connect as a
+   non-superuser, non-owner test role (see
+   [Test role](#test-role-a-dml-like-connection-for-the-rls-suites)).
+
 ## Test plan
 
 The safety of this design rests on the **enforcement contract**, not on covering
@@ -628,9 +645,10 @@ non-negotiable; the functional tests below assume them.
 
 **Enforcement contract (the four load-bearing tests):**
 
-1. **Fail-open probe.** As the app role, seed one archived + one active
-   household; `household.findMany()` with no opt-in returns only the active one.
-   Fails loudly if `FORCE` is missing or the role bypasses RLS.
+1. **Fail-open probe.** Seed one archived + one active household (as
+   `testuser` is fine; seeding is a write). Then, connected as the test DML
+   role, `household.findMany()` with no opt-in returns only the active one.
+   Fails loudly if the policy is missing or the role bypasses RLS.
 2. **Opt-in works.** The same query wrapped in `withArchivedHouseholds` returns
    both rows.
 3. **No leak across the pool.** Run an opt-in transaction, then a plain query on
@@ -642,7 +660,41 @@ non-negotiable; the functional tests below assume them.
 
 **Test-DB integrity (the precondition for the four above):** the DB under test is
 built with `migrate deploy`, not `db push`, so the raw policy SQL and `FORCE` are
-actually present; without this the four tests pass vacuously.
+actually present, and tests 1–3 read as the test DML role, never as `testuser`.
+Without both, the four tests pass vacuously. A fifth assertion guards the
+second: the role the RLS suites read as has `rolsuper` and `rolbypassrls` both
+false in `pg_roles`.
+
+### Test role: a DML-like connection for the RLS suites
+
+The smallest change keeps every other suite as it is and adds one role, created
+by the integration harness:
+
+1. **Create the role once per run.** In `checkin-app/test/integrationGlobalSetup.js`,
+   after `migrate deploy` on the template, run as the admin connection:
+   `CREATE ROLE checkin_test_dml LOGIN PASSWORD '…' NOSUPERUSER NOBYPASSRLS`,
+   wrapped in a `DO` block that ignores `duplicate_object`. Roles are
+   cluster-wide, and concurrent jest runs from other worktrees share the
+   cluster, so creation must tolerate the role already existing.
+2. **Grant on the template, so the clones inherit it.** On the template DB:
+   `GRANT USAGE ON SCHEMA public`, `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL
+   TABLES IN SCHEMA public` and `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA
+   public` to `checkin_test_dml`. This mirrors what
+   `deploy/prod-initdb/05-checkin-roles.sh` grants `checkin_dml`. Per-worker
+   DBs are cloned from the template after this step, so they carry the grants
+   with no per-worker work. The role owns nothing, so it is subject to RLS
+   exactly as the app's role is.
+3. **Publish its URL.** Set `TEST_DML_BASE_URL` to the base URL with the user
+   and password swapped, next to the existing `TEST_BASE_URL`. `jest.setup.js`
+   already rewrites the database name per worker; it does the same for this URL
+   and exposes it as `DML_DATABASE_URL`.
+4. **Read through it only in the RLS suites.** The archive's RLS integration
+   files build their own Prisma client (or a plain `pg` client for the raw-SQL
+   and pool-leak tests) from `DML_DATABASE_URL`. Every other integration suite
+   keeps connecting as `testuser`; nothing else changes.
+
+The teardown leaves the role in place. It holds no data, and dropping it would
+race the other runs that share the cluster.
 
 **Functional tests:**
 
@@ -650,7 +702,7 @@ actually present; without this the four tests pass vacuously.
   { household: { … } } })` excludes members of the archived household with no
   per-site filter; `include: { household: true }` returns `null` for the
   archived household's relation and the caller tolerates it.
-- **Raw SQL:** a raw `SELECT` against `Household` from the app role honours the
+- **Raw SQL:** a raw `SELECT` against `Household` as the test DML role honours the
   policy (proves coverage the client extension could never give).
 - **Archive action:** PATCH sets `archivedAt`, household disappears from the
   standard list; PATCH nulling it (through the opt-in lookup) restores it.

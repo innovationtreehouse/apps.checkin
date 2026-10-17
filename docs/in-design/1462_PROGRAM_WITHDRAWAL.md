@@ -182,10 +182,26 @@ the new stint to the old money:
 **A late refund or chargeback attaches to the withdrawn record.** A withdrawn row
 keeps its `shopifyOrderId`, so the reconciler's match by order lands on the
 `WITHDRAWN` row and records the refund or chargeback there, not as an orphan.
-The row stays `WITHDRAWN`: the refund-restocked exit applies to `ACTIVE` rows
-only, so a late refund never deletes the record it attaches to. Once the person
-re-enrols, the reset above clears the old order from the row, and a refund on
-that old order no longer matches the new stint.
+The row stays `WITHDRAWN`.
+
+That needs a change to the refund path, because today it would delete the
+row. `removeRefundedEnrollment`
+([reversals.ts](../../checkin-app/src/lib/finance/reconcile/reversals.ts))
+deletes by `programId`, `personId` and `shopifyOrderId` with no status filter, so
+a late restocking refund on a withdrawn row's order would delete the record it
+should attach to. The build must:
+
+- add `status: 'ACTIVE'` to that function's `where`, so the refund-restocked exit
+  (main's `ACTIVE → UNENROLLED`) only ever removes an `ACTIVE` row; and
+- route a refund or chargeback that matches a `WITHDRAWN` row to attach to it,
+  with an audit entry against the row and no delete. If the refund restocked,
+  Shopify has put a unit back on sale for a seat the withdrawal may already
+  have returned; the build checks that case and takes the extra unit back off
+  sale, the same way the reconciler already handles restocked seats it cannot
+  match to a child.
+
+Once the person re-enrols, the reset above clears the old order from the row,
+and a refund on that old order no longer matches the new stint.
 
 <!-- ponytail: one row per (person, program) keeps only the LAST stint's exit.
      Multi-stint history (enrolled, withdrew, came back across years) would need a

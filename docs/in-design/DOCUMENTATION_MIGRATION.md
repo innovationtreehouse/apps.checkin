@@ -151,7 +151,8 @@ touches that file, or in a small one.
   The PR that moves the target tells the coordinator the new path and waits
   until the owning doc is repointed or retired.
 - **Nothing new lands in a `designs/` folder.** A working doc that plans a
-  reference file names its home under the standard (`docs/ops/`, or Q4's answer).
+  reference file names its home under the standard (`docs/ops/` or
+  `docs/architecture/`).
 - **Extraction follows the register's rules.** Verify each candidate rule
   against the current tree, enforcement path included; write it as a
   constraint, with no PR or issue numbers; present the candidates to the owner,
@@ -211,6 +212,7 @@ IDs are stable; a resolved question keeps its number.
    `docs/ops/`, unfinished follow-ups are filed as issues, and the launch
    checklist is dropped (PR 3).
 8. **Has every domain file had its owner review?** Decided: no file can count an
-   earlier review. All ten files in `docs/rules/` have changed since 2026-10-14,
-   and `expenses.md` and `revenue.md` are new, so each gets a fresh owner review
-   before the close-out.
+   earlier review. All nine domain files in `docs/rules/` (counting
+   `principles.md`), and its README, have changed since 2026-10-14;
+   `expenses.md` is new, and `revenue.md` is `finance-payments.md` renamed and
+   extended. Each gets a fresh owner review before the close-out.
