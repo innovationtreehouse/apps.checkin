@@ -182,7 +182,7 @@ describe("expense reimbursee Vendor ports", () => {
     await expect(vendors.search("Pat")).resolves.toEqual([{ id: "3", displayName: "Pat Lee" }]);
     await expect(vendors.byId("3")).resolves.toEqual({ id: "3", displayName: "Pat Lee" });
     await expect(vendors.byId("4")).resolves.toBeNull();
-    await expect(vendors.findOrCreate("Pat Lee", "k")).resolves.toEqual({ id: "61", displayName: "Pat Lee (Vendor)" });
+    await expect(vendors.findOrCreate("Pat Lee", "k")).resolves.toEqual({ id: "61", displayName: "Pat Lee (Vendor)", created: false });
     expect(createVendor).toHaveBeenCalledWith(qb, "Pat Lee", "k");
   });
 

@@ -65,7 +65,8 @@ async function sameHousehold(personId: number, actorId: number): Promise<boolean
 
 /**
  * Links the expense's reimbursee to a QuickBooks Vendor: one picked by id, which QuickBooks must
- * know, or one found or created under the name on the reimbursee's Person record, never free text. The setter may not be the submitter, the reimbursee, or in either one's
+ * know, or one created under the name on the reimbursee's Person record, never free text. A create
+ * that finds an unlinked Vendor already holding that name links nothing: finance picks it instead. The setter may not be the submitter, the reimbursee, or in either one's
  * household, nor land on a Vendor already linked to their own household; each such refusal is
  * audited on the expense. Expenses of the reimbursee parked for want of a Vendor go back to the
  * outbox.
@@ -99,10 +100,13 @@ export async function linkReimburseeVendor(
 
   const qb = await openQuickBooks();
   let vendor: QbVendorOption | null;
+  let foundByName = false;
   if ("createForReimbursee" in choice) {
     const name = await getExpenseRuntime().people.nameOf(personId);
     if (!name?.trim()) throw new ServiceError(409, "The reimbursee has no name to give a new Vendor");
-    vendor = await qb.findOrCreate(name, `reimbursee-vendor-${orgId}-${personId}`);
+    const result = await qb.findOrCreate(name, `reimbursee-vendor-${orgId}-${personId}`);
+    vendor = result;
+    foundByName = !result.created;
   } else {
     vendor = await qb.byId(choice.qbVendorId);
     if (!vendor) throw new ServiceError(404, "QuickBooks has no Vendor with that id");
@@ -113,6 +117,10 @@ export async function linkReimburseeVendor(
   if (holder) {
     if (await sameHousehold(holder.reimburseePersonId, actor.userId)) await refuse("That QuickBooks Vendor is linked to you or your household");
     throw new ServiceError(409, "That QuickBooks Vendor is already linked to another person");
+  }
+  // A same-name Vendor may be someone else; finance confirms it through a pick instead.
+  if (foundByName) {
+    throw new ServiceError(409, `QuickBooks already has a Vendor named "${displayName}" (#${qbVendorId}); pick it from the search to confirm it is this person`);
   }
 
   return db

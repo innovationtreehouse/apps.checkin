@@ -180,8 +180,8 @@ const qbVendors: QbVendors = {
         return v ? option(v) : null;
       },
       findOrCreate: async (name, key) => {
-        const { id, displayName } = await createVendor(qb, name, key);
-        return { id, displayName };
+        const v = await createVendor(qb, name, key);
+        return { id: v.id, displayName: v.displayName, created: v.kind === "created" };
       },
     };
   },

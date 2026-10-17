@@ -206,8 +206,8 @@ export interface QbVendorClient {
   /** Active Vendors whose name contains the text. */
   search(text: string): Promise<QbVendorOption[]>;
   byId(id: string): Promise<QbVendorOption | null>;
-  /** An existing Vendor with that name is returned, not created again. */
-  findOrCreate(name: string, key: string): Promise<QbVendorOption>;
+  /** An existing Vendor with that name is returned (`created: false`), not created again. */
+  findOrCreate(name: string, key: string): Promise<QbVendorOption & { created: boolean }>;
 }
 
 /** The connection, or null while QuickBooks is off for this deployment. */

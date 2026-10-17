@@ -8,7 +8,7 @@ import { QB_OFF } from "../../lib/expense-constants";
 import type { QbVendorClient } from "../../contract";
 
 // finance 3 · finance 4 shares a household with reimbursee 7 · 9 is another reimbursee
-// · every expense is submitted by 1, who shares a household with 6 · person 10 is named "Kin", 11 has no name
+// · every expense is submitted by 1, who shares a household with 6 · person 10 is named "Kin", 11 has no name, 12 is named "Pat Lee"
 const FINANCE = principal(3, { isFinance: true });
 const KIN = principal(4, { isFinance: true });
 
@@ -22,14 +22,14 @@ describeDb("reimbursee QuickBooks Vendor", () => {
       byId: async (id) => (vendors.has(id) ? option(id) : null),
       findOrCreate: vi.fn(async (name: string) => {
         const found = [...vendors.keys()].find((id) => vendors.get(id) === name);
-        if (found) return option(found);
+        if (found) return { ...option(found), created: false };
         vendors.set("61", name);
-        return option("61");
+        return { ...option("61"), created: true };
       }),
     };
     bindPorts({
       signoff: directory({ finance: [3, 4], households: [[4, 7], [1, 6]] }),
-      people: { nameOf: async (id) => ({ 9: "Ann Ray", 10: "Kin" } as Record<number, string>)[id] ?? null },
+      people: { nameOf: async (id) => ({ 9: "Ann Ray", 10: "Kin", 12: "Pat Lee" } as Record<number, string>)[id] ?? null },
       quickbooks: { vendors: { open: async () => (opts.off ? null : qb) } },
     });
     return qb;
@@ -83,6 +83,18 @@ describeDb("reimbursee QuickBooks Vendor", () => {
     expect(qb.findOrCreate).toHaveBeenCalledWith("Ann Ray", `reimbursee-vendor-${ORG}-9`);
     expect(await reimburseeVendorId(9)).toBe("61");
     expect((await db.expenseAuditLog.findFirst({ where: { expenseId: id, action: "reimbursee_vendor_set" } }))!.notes).toBe('QuickBooks Vendor "Ann Ray"');
+  });
+
+  it("links nothing when a create finds an unlinked Vendor already holding the reimbursee's name", async () => {
+    bind();
+    const id = await reimbursement(12);
+    await expect(linkReimburseeVendor(ORG, id, { createForReimbursee: true }, FINANCE)).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining("#55"),
+    });
+    expect(await reimburseeVendorId(12)).toBeNull();
+    await linkReimburseeVendor(ORG, id, { qbVendorId: "55" }, FINANCE);
+    expect(await reimburseeVendorId(12)).toBe("55");
   });
 
   it("creates nothing for a reimbursee with no recorded name", async () => {
