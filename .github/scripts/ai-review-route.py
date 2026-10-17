@@ -33,6 +33,7 @@ ORDER = [r[0] for r in LADDER]
 PROFILE_THRESHOLD = 0.5
 COMPLETE_THRESHOLD = 0.5
 LARGE_LINES, LARGE_FILES, VERY_LARGE_LINES = 800, 25, 2500
+# Shared by both repos: the last two are infra.aws profile names.
 HIGH_PROFILES = {"migrations", "security-boundary", "iam-and-secrets", "state-safety"}
 DIFF_BYTES = 200_000  # over ~32 KB Jev uses its slower long-context mode
 
@@ -210,4 +211,7 @@ def adjudicate():
 
 
 if __name__ == "__main__":
+    if not os.environ.get("OPENROUTER_API_KEY"):
+        print("::error::OPENROUTER_API_KEY is empty: add the org or repository Actions secret. No AI review ran.")
+        sys.exit(1)
     adjudicate() if sys.argv[1:] == ["adjudicate"] else route()

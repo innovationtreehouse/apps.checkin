@@ -33,13 +33,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # Jev Router picks the review profiles and the tier; see .github/scripts/ai-review-route.py.
+      # Routing and judging never fail the check; a failure skips or ends the review instead.
       - id: route
+        continue-on-error: true
         run: python3 .github/scripts/ai-review-route.py
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       - id: review
+        if: steps.route.outputs.model != ''
         continue-on-error: true
         uses: FlyOverCoderKY/openrouter-pr-review-action@f0803a825cbd65f8c27ed4d551bdfdca3c03a193 # v1.3.0
         with:
@@ -54,7 +57,8 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       # Jev judges whether the posted review is complete; if not, it picks a higher tier to rerun once.
       - id: judge
-        if: always() && steps.route.outcome == 'success'
+        if: always() && steps.route.outputs.model != ''
+        continue-on-error: true
         run: python3 .github/scripts/ai-review-route.py adjudicate
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
