@@ -149,6 +149,13 @@ export const classifications = {
         updatedAt: 'internal',
         qboProductionRealmId: 'internal',
     },
+    EmailTemplate: {
+        key: 'public',
+        subject: 'internal',
+        body: 'internal',
+        updatedBy: 'internal',
+        updatedAt: 'internal',
+    },
     AppSettings: {
         id: 'public',
         timezone: 'public',
@@ -556,6 +563,8 @@ export const relations = {
     VolunteerDesignation: {
     },
     BoardSettings: {
+    },
+    EmailTemplate: {
     },
     AppSettings: {
     },

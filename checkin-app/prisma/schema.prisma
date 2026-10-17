@@ -752,6 +752,23 @@ model BoardSettings {
   qboProductionRealmId       String?
 }
 
+/// Board-edited override of one email's copy (docs/designs/1333-EMAIL_TEMPLATES.md).
+/// A missing row means the email sends its code default.
+model EmailTemplate {
+  /// Stable email-type key, e.g. `membership.congrats`. @sensitivity:public
+  key       String   @id
+  /// Subject with `{{token}}` placeholders. @sensitivity:internal
+  subject   String
+  /// Plain text with `{{token}}` placeholders; a blank line starts a paragraph.
+  /// Never interpreted as HTML. @sensitivity:internal
+  body      String
+  /// Person who last saved the row. Plain Int like PresenceEvent.reviewedBy.
+  /// @sensitivity:internal
+  updatedBy Int?
+  /// @sensitivity:internal
+  updatedAt DateTime @updatedAt
+}
+
 /// App-wide localization config (singleton, id=1). Distinct from BoardSettings,
 /// which holds membership/money policy — this holds deployment-region settings
 /// (timezone, locale) that govern how the whole app reads dates and times.
