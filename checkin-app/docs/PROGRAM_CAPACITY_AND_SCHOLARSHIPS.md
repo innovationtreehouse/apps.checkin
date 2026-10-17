@@ -85,7 +85,7 @@ planned upgrade — segment-gated automatic discounts, once checkout identity (t
 
 An earlier design gave each program two variants with separate inventory pools kept in
 step by a sibling-adjustment on every seat-consuming event. All of that code is gone
-and the four legacy columns are `@ignore`d (pending drop):
+and the four legacy columns are dropped:
 `shopifyVariantId` is the only variant any program has, and `adjustProgramInventory`
 writes exactly that one pool.
 
