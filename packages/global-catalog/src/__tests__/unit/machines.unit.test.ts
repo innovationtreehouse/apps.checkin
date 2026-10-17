@@ -3,7 +3,7 @@ import { itemReferenceProposalMachine, assertItemReferenceProposalTransition } f
 import { provisionalProposalMachine, assertProvisionalProposalTransition } from "../../workflows/provisional-proposal.machine";
 import { conversionChallengeMachine, assertConversionChallengeTransition } from "../../workflows/conversion-challenge.machine";
 import { conflictResolutionMachine, assertConflictResolutionTransition } from "../../workflows/conflict-resolution.machine";
-import { WorkflowTransitionError } from '@inventory/workflows';
+import { WorkflowTransitionError } from '@checkin/workflows';
 
 // Helper: resolve a machine snapshot from a state value string
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

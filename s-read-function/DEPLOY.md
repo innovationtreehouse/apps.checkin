@@ -74,7 +74,7 @@ ECS injects these natively via the task definitions' `secrets` blocks as
 `SHOPIFY_READ_DATABASE_URL` (DML for the sync task, DDL for the migrate task),
 `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` — the code reads only `process.env`
 (no AWS SDK calls; see [README "Where to put credentials"](README.md#where-to-put-credentials)).
-The migrate task runs `npm run db:deploy -w @inventory/s-ingest-core`, which is
+The migrate task runs `npm run db:deploy -w @checkin/s-ingest-core`, which is
 container-safe: prisma resolves the URL from `process.env`; a package-local
 `.env` is optional (local-dev convenience via `prisma.config.ts`'s dotenv import).
 

@@ -7,7 +7,7 @@
  */
 import type { SessionUser } from "@/types/auth";
 import type { NavLink } from "@/lib/nav/types";
-import { RECEIPT_FINANCE_NAV, RECEIPT_MAIL_NAV, RECEIPT_SUBMITTER_NAV } from "@inventory/receipt/nav";
+import { RECEIPT_FINANCE_NAV, RECEIPT_MAIL_NAV, RECEIPT_SUBMITTER_NAV } from "@checkin/receipt/nav";
 import { canSubmitReceipts } from "@/lib/volunteer";
 
 export function isReceiptReviewerClient(user: SessionUser | undefined): boolean {

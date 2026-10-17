@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { WorkflowTransitionError } from "@inventory/workflows";
+import { WorkflowTransitionError } from "@checkin/workflows";
 import {
   assertWorkflowMappingTransition,
   isWorkflowMappingTransitionLegal,

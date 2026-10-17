@@ -4,7 +4,7 @@
  * Bulk operations run asynchronously on Shopify's side: start one, then poll
  * `currentBulkOperation` on later invocations until COMPLETED, then download the JSONL
  * result. The reassembly of that JSONL into nested order nodes — and its durable, verbatim
- * pre-transform capture — lives in @inventory/s-ingest-core so the same code path can also
+ * pre-transform capture — lives in @checkin/s-ingest-core so the same code path can also
  * drive recovery (reingestBulkExports). `reassembleOrders` / `parseBulkJsonl` are re-exported
  * here for callers and tests that import them from this module.
  *
@@ -12,7 +12,7 @@
  * payouts/balance-transactions are NOT bulk-exportable as a top-level query — the
  * backfill pulls those via the paginated cursor fetchers instead (see sync/backfill).
  */
-import { logger } from "@inventory/s-ingest-core";
+import { logger } from "@checkin/s-ingest-core";
 import type { ShopifyClient } from "./client.js";
 import { jitteredBackoffMs } from "./client.js";
 import {
@@ -58,7 +58,7 @@ export function assertAllowedBulkUrl(url: string): URL {
   return parsed;
 }
 
-export { reassembleOrders, parseBulkJsonl } from "@inventory/s-ingest-core";
+export { reassembleOrders, parseBulkJsonl } from "@checkin/s-ingest-core";
 
 export interface BulkOperation {
   id: string;

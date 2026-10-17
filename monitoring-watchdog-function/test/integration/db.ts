@@ -6,15 +6,15 @@
  * path runs end to end, including the transactional health_event+outbox write and the
  * renotify-window alert dedup that the mocked orchestration test can only simulate.
  *
- * We reuse @inventory/monitoring-db's `prisma` singleton (the client runWatchdog uses) for
+ * We reuse @checkin/monitoring-db's `prisma` singleton (the client runWatchdog uses) for
  * seeding and assertions, so there is one DB session in play. runWatchdog holds a
  * SESSION-scoped advisory lock across the run; keeping all traffic on the one pooled
  * connection (every query awaited) keeps that lock valid between tests. Cross-session lock
  * exclusion is proven in packages/monitoring-db/test/integration/lock.test.ts and the
  * watchdog's unit skip test, so it is not re-litigated here.
  */
-import { describeDb } from "@inventory/pg-test-harness";
-import { prisma, recordHeartbeat } from "@inventory/monitoring-db";
+import { describeDb } from "@checkin/pg-test-harness";
+import { prisma, recordHeartbeat } from "@checkin/monitoring-db";
 
 export const runIfDb = describeDb("MONITORING_DATABASE_URL");
 

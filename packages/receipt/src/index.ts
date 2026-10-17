@@ -1,4 +1,4 @@
-// Public surface of the @inventory/receipt library. Pages and nav are the ./pages/* and ./nav
+// Public surface of the @checkin/receipt library. Pages and nav are the ./pages/* and ./nav
 // subpath exports; the host mounts the services behind its own routes.
 export * from "./contract";
 export * from "./runtime";

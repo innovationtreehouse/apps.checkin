@@ -1,4 +1,4 @@
-// @inventory/monitoring-db — the dedicated monitoring Postgres.
+// @checkin/monitoring-db — the dedicated monitoring Postgres.
 //
 // A separate database from any watched service (its own MONITORING_DATABASE_URL). It
 // holds the durable incident record, the transactional outbox, and the push-based

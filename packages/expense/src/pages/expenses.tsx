@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Anchor, Badge, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
-import { formatCents } from "@inventory/money";
+import { formatCents } from "@checkin/money";
 import { STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { PAGE_SIZE, useLoad } from "../components/api";
 import LoadError from "../components/LoadError";

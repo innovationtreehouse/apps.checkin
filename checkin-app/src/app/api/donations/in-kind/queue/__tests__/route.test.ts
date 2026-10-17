@@ -7,11 +7,11 @@
  */
 import type { NextRequest } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { routes } from '@inventory/bulk-donation';
+import { routes } from '@checkin/bulk-donation';
 import { GET } from '../route';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
-jest.mock('@inventory/bulk-donation', () => ({
+jest.mock('@checkin/bulk-donation', () => ({
     DonationHttpError: class DonationHttpError extends Error {},
     routes: { inKind: { listQueue: jest.fn() } },
 }));

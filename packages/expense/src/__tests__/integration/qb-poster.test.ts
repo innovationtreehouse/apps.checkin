@@ -3,7 +3,7 @@
  * in-memory QBO company. One entry per expense; match before create; the key makes a retry safe.
  */
 import { it, expect, beforeEach, afterEach, vi } from "vitest";
-import { QuickBooksClient, qbKey, type QboBill, type QboPurchase } from "@inventory/quickbooks";
+import { QuickBooksClient, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { TEST_BUCKETS, bindPorts, catalogResolving, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";

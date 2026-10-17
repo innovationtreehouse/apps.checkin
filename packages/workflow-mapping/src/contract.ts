@@ -13,7 +13,7 @@ import type {
   CatalogReferenceConflict,
   CompletedReceipt,
   ResolvedInventoryDelta,
-} from "@inventory/receipt-types";
+} from "@checkin/receipt-types";
 
 /** The acting host user. `id` is the host Person.id. */
 export interface WorkflowPrincipal {

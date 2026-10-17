@@ -1,6 +1,6 @@
 // Finance's QuickBooks queue (design §7): the disbursements the drain holds, their live
 // candidate Deposits, and the resolutions — pick a Deposit, dismiss, or re-arm for the drain.
-import { appKeyOf, depositCandidate, qbKey } from "@inventory/quickbooks";
+import { appKeyOf, depositCandidate, qbKey } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type PrismaTransactionClient } from "../db";
 import type { DisbursementEvent } from "../generated/prisma/client";
 import { recordEvent } from "../repositories/audit";

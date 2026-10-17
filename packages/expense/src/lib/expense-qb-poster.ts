@@ -1,6 +1,6 @@
 // QB-2 write path: drains the ExpenseEvent outbox into QuickBooks, one entry per expense
 // (a Bill to the reimbursee's Vendor, else a Purchase from the payment account), match before create.
-import { findOrCreate, qbKey, takeoverLine, type FindOrCreateResult, type TxnWrite } from "@inventory/quickbooks";
+import { findOrCreate, qbKey, takeoverLine, type FindOrCreateResult, type TxnWrite } from "@checkin/quickbooks";
 import { db, type Db } from "../db";
 import type { ExpensePosting } from "../contract";
 import type { Expense } from "../db/schema";

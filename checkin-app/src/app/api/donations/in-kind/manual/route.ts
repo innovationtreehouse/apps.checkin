@@ -4,7 +4,7 @@ import { handler } from "@/security/handler";
 import { donationRoute } from "@/lib/bulkDonation/route";
 import { refuseOwnHouseholdDonor } from "@/lib/bulkDonation/donorSelfGuard";
 import prisma from "@/lib/prisma";
-import { routes } from "@inventory/bulk-donation";
+import { routes } from "@checkin/bulk-donation";
 
 // Only these views carry donor `pii`; ops gets the list without donor fields selected.
 const DONOR_VIEWS = new Set(["isFinance", "isBoardMember"]);

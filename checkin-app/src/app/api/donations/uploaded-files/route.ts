@@ -3,7 +3,7 @@
 // its src/security/registry/donation.ts entry.
 import { handler } from "@/security/handler";
 import { donationRoute } from "@/lib/bulkDonation/route";
-import { routes } from "@inventory/bulk-donation";
+import { routes } from "@checkin/bulk-donation";
 
 export const GET = handler("GET /api/donations/uploaded-files", donationRoute(routes.uploads.list));
 export const POST = handler("POST /api/donations/uploaded-files", donationRoute(routes.uploads.upload));

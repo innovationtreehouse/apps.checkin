@@ -6,7 +6,7 @@
  * advisory acquire/release and the like land on one session. Mirrors the convention in
  * `packages/s-ingest-core/test/integration`.
  */
-import { describeDb } from "@inventory/pg-test-harness";
+import { describeDb } from "@checkin/pg-test-harness";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../../src/generated/prisma/client.js";
 

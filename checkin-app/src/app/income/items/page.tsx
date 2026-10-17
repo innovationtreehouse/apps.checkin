@@ -1,2 +1,2 @@
 // The screen lives in the income library.
-export { default } from "@inventory/income/pages/items";
+export { default } from "@checkin/income/pages/items";

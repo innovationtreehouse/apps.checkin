@@ -3,8 +3,8 @@
  * error's status only when it is `instanceof` its own ApiResponseError, so the library's HTTP
  * error is translated here, in the route's module graph.
  */
-import { ExpenseHttpError } from "@inventory/expense";
-import type { ExpenseRouteHandler } from "@inventory/expense";
+import { ExpenseHttpError } from "@checkin/expense";
+import type { ExpenseRouteHandler } from "@checkin/expense";
 import { ApiResponseError } from "@/security/handler";
 
 export function expenseRoute(factory: ExpenseRouteHandler): ExpenseRouteHandler {

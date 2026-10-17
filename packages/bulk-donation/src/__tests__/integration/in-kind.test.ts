@@ -4,7 +4,7 @@
  * arrives; a withdrawal after money is an anomaly, never a delete.
  */
 import { it, expect, beforeEach } from "vitest";
-import type { CompletedReceipt } from "@inventory/receipt-types";
+import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { ingestInKind, recordInKindDonor, recordReceiptDonorReads, withdrawInKind } from "../../inKind";

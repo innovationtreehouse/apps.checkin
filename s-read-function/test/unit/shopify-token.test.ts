@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { getShopifyToken, invalidateShopifyToken, resetShopifyTokenCache } from "../../src/shopify/token.js";
-import type { ShopifyConfig } from "@inventory/s-ingest-core";
+import type { ShopifyConfig } from "@checkin/s-ingest-core";
 
 const baseCfg = {
   shop: "shop.myshopify.com",

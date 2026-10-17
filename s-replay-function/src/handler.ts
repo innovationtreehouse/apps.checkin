@@ -19,7 +19,7 @@
  * explicitly in the event.
  */
 import { z } from "zod";
-import { prisma, loadDbConfig, ObjectType, logger, ConcurrentRunError } from "@inventory/s-ingest-core";
+import { prisma, loadDbConfig, ObjectType, logger, ConcurrentRunError } from "@checkin/s-ingest-core";
 import { replay, resetWatermark, reingestBulk } from "./replay.js";
 
 // The filters that keep each mode from acting on the whole store.

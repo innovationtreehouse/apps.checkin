@@ -3,7 +3,7 @@
 // its src/security/registry/inventory.ts entry.
 import { handler } from "@/security/handler";
 import { inventoryRoute } from "@/lib/localInventory/route";
-import { routes } from "@inventory/local-inventory";
+import { routes } from "@checkin/local-inventory";
 
 export const GET = handler("GET /api/inventory/org-items/[gtin13]", inventoryRoute(routes.orgItems.get));
 export const PUT = handler("PUT /api/inventory/org-items/[gtin13]", inventoryRoute(routes.orgItems.update));

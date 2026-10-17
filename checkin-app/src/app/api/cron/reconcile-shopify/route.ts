@@ -3,13 +3,13 @@ import { logger } from "@/lib/logger";
 import { withCron } from "@/lib/cronAuth";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { runSaleSweep } from "@/lib/programs/saleSweep";
-import { runReconcile as runIncomeReconcile } from "@inventory/income";
+import { runReconcile as runIncomeReconcile } from "@checkin/income";
 import { getOrg } from "@/lib/catalog/configure";
-import { runExpenseCatchUp } from "@inventory/expense";
+import { runExpenseCatchUp } from "@checkin/expense";
 import { healProgramStock } from "@/lib/shopify";
-import { catchUpOrgEvents as catchUpInventoryEvents } from "@inventory/local-inventory";
-import { catchUpOrgEvents as catchUpWorkflowEvents } from "@inventory/workflow-mapping";
-import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } from "@inventory/receipt";
+import { catchUpOrgEvents as catchUpInventoryEvents } from "@checkin/local-inventory";
+import { catchUpOrgEvents as catchUpWorkflowEvents } from "@checkin/workflow-mapping";
+import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } from "@checkin/receipt";
 
 /**
  * Daily Shopify reconciler — schedule at 09:15 UTC, ~15 min behind s-read's

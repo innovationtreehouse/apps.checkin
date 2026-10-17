@@ -1,7 +1,7 @@
 /**
  * Orchestration tests for runWatchdog — the layer between the pure deciders (covered in
  * watchdog.test.ts) and their side effects: metric emission, the transactional incident
- * write, the advisory lock, and the liveness heartbeat. The two @inventory packages are
+ * write, the advisory lock, and the liveness heartbeat. The two @checkin packages are
  * mocked so these run with no database, matching the fleet's no-DB unit-test convention.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -18,7 +18,7 @@ const m = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("@inventory/monitoring-db", () => ({
+vi.mock("@checkin/monitoring-db", () => ({
   prisma: { __brand: "prisma" },
   recordIncident: m.recordIncident,
   readServiceHeartbeats: m.readServiceHeartbeats,
@@ -35,7 +35,7 @@ vi.mock("@inventory/monitoring-db", () => ({
   Severity: { CRITICAL: "CRITICAL", WARNING: "WARNING" },
 }));
 
-vi.mock("@inventory/telemetry", () => ({
+vi.mock("@checkin/telemetry", () => ({
   logger: m.logger,
   newCorrelationId: m.newCorrelationId,
   emitServiceError: m.emitServiceError,
@@ -44,9 +44,9 @@ vi.mock("@inventory/telemetry", () => ({
 }));
 
 import { runWatchdog } from "./watchdog.js";
-import { ConcurrentRunError, prisma } from "@inventory/monitoring-db";
+import { ConcurrentRunError, prisma } from "@checkin/monitoring-db";
 import type { WatchdogConfig } from "./registry.js";
-import type { ServiceFreshness } from "@inventory/monitoring-db";
+import type { ServiceFreshness } from "@checkin/monitoring-db";
 
 const NOW = Date.now();
 const secsAgo = (s: number) => new Date(NOW - s * 1000);

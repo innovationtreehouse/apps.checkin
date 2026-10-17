@@ -6,7 +6,7 @@
  * re-run is safe.
  */
 import * as dotenv from "dotenv";
-import type { CompletedReceipt } from "@inventory/receipt-types";
+import type { CompletedReceipt } from "@checkin/receipt-types";
 import { getPrisma } from "../src/db";
 
 dotenv.config();

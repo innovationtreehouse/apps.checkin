@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
-import type { PrismaClient, Prisma } from "@inventory/s-ingest-core/client";
+import type { PrismaClient, Prisma } from "@checkin/s-ingest-core/client";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 
@@ -10,7 +10,7 @@ import { logger } from "@/lib/logger";
  * The reconciler (lib/finance/reconcile/) reads it to align Shopify order truth
  * with membership/program truth.
  *
- * Reads go through @inventory/s-ingest-core's Prisma client, so rows come back in
+ * Reads go through @checkin/s-ingest-core's Prisma client, so rows come back in
  * the camelCase model shapes the security layer classifies (security/generated/
  * shopify-read-classifications.ts). The mirror's own DDL owner (s-read) migrates
  * it; we only ever read.
@@ -74,7 +74,7 @@ async function getClient(): Promise<PrismaClient | null> {
     const url = config.shopifyReadDatabaseUrl();
     if (!url) return null;
     if (!client) {
-        const { PrismaClient } = await import("@inventory/s-ingest-core/client");
+        const { PrismaClient } = await import("@checkin/s-ingest-core/client");
         client = new PrismaClient({ adapter: new PrismaPg(getPool(url)) });
     }
     return client;
@@ -410,7 +410,7 @@ export async function minRealOrderLegacyId(): Promise<bigint | null> {
     return v == null ? null : BigInt(v);
 }
 
-// ── income reads (the @inventory/income PayoutMirror port) ───────────────────
+// ── income reads (the @checkin/income PayoutMirror port) ───────────────────
 //
 // Income reconciles payouts against QuickBooks, so it reads the hand-loaded
 // history too: these reads skip only TEST_LOADED rows, unlike the reconciler's

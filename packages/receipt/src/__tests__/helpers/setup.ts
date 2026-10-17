@@ -1,4 +1,4 @@
-import type { CompletedReceipt } from "@inventory/receipt-types";
+import type { CompletedReceipt } from "@checkin/receipt-types";
 import { db } from "../../db";
 import type { InKindDonor, OcrProvider, ReceiptConfig, ReceiptPrincipal } from "../../contract";
 import { configureReceipt } from "../../runtime";

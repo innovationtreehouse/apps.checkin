@@ -4,7 +4,7 @@
  * handler() renders an error's status only when it is `instanceof` its own
  * ApiResponseError, so the library's HTTP error is translated here.
  */
-import type { WorkflowRouteHandler } from "@inventory/workflow-mapping";
+import type { WorkflowRouteHandler } from "@checkin/workflow-mapping";
 import { ApiResponseError } from "@/security/handler";
 import { isWorkflowMappingHttpError } from "@/lib/workflowMapping/configure";
 

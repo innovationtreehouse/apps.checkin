@@ -24,7 +24,7 @@
  * `serviceError` metric (it stays alive/heartbeating); an operator clears them with
  * `requeueDead` once the cause is fixed.
  */
-import { logger, newCorrelationId, emitMonitorHeartbeat, emitDbUnreachable, emitServiceError } from "@inventory/telemetry";
+import { logger, newCorrelationId, emitMonitorHeartbeat, emitDbUnreachable, emitServiceError } from "@checkin/telemetry";
 import {
   prisma,
   claimPending,
@@ -33,7 +33,7 @@ import {
   countDead,
   withAdvisoryLock,
   ConcurrentRunError,
-} from "@inventory/monitoring-db";
+} from "@checkin/monitoring-db";
 import { publishAlert, isPermanentSnsError } from "./sns.js";
 import type { RelayConfig } from "./config.js";
 

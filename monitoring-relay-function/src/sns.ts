@@ -14,7 +14,7 @@
  *    timeout, so a hung SNS connection fails fast instead of starving the rest of the batch.
  */
 import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
-import type { PendingAlert } from "@inventory/monitoring-db";
+import type { PendingAlert } from "@checkin/monitoring-db";
 
 /** Per-publish client-side deadline. Must stay well under the Lambda timeout. */
 export const SNS_PUBLISH_TIMEOUT_MS = 5_000;

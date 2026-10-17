@@ -15,9 +15,9 @@ import {
     getPrisma as getWorkflowPrisma,
     lineItemService,
     receiptService,
-} from '@inventory/workflow-mapping';
-import type { CompletedReceipt } from '@inventory/receipt-types';
-import { getPrisma as getInventoryPrisma } from '@inventory/local-inventory';
+} from '@checkin/workflow-mapping';
+import type { CompletedReceipt } from '@checkin/receipt-types';
+import { getPrisma as getInventoryPrisma } from '@checkin/local-inventory';
 import { createLocalInventorySink } from '../inventorySink';
 
 // The integration global setup's database helpers (CommonJS, untyped).

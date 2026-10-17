@@ -1,7 +1,7 @@
 import { setup } from "xstate";
 import type { ConflictResolution } from "../db/schema";
 import type { ConflictResolutionEvent } from "./conflict-resolution.events";
-import { makeWorkflowInvariants } from '@inventory/workflows';
+import { makeWorkflowInvariants } from '@checkin/workflows';
 
 export type ConflictResolutionStatus = "open" | ConflictResolution;
 

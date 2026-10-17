@@ -1,4 +1,4 @@
-import { CompletedReceiptSchema, type CompletedReceipt } from "@inventory/receipt-types";
+import { CompletedReceiptSchema, type CompletedReceipt } from "@checkin/receipt-types";
 
 export type ParseStoredReceiptResult =
   | { ok: true; receipt: CompletedReceipt }

@@ -1,4 +1,4 @@
-# @inventory/telemetry
+# @checkin/telemetry
 
 Fleet-wide **emission core** — the "standardize emission" layer from
 [`MONITORING-PRD.md`](../../s-read-function/MONITORING-PRD.md) §6.1. Stateless and
@@ -8,8 +8,8 @@ health the same *shape*.
 ## What's here
 
 - **`logger`** — minimal structured-JSON logger + `newCorrelationId()`. The fleet-wide
-  canonical version; `@inventory/s-ingest-core` re-exports it. An `Error` in the fields
-  is logged with its message and stack passed through `redactSecrets` from `@inventory/utils`.
+  canonical version; `@checkin/s-ingest-core` re-exports it. An `Error` in the fields
+  is logged with its message and stack passed through `redactSecrets` from `@checkin/utils`.
 - **`metrics`** — CloudWatch metric emission via **Embedded Metric Format (EMF)**: one
   JSON line to stdout, extracted into a metric by CloudWatch Logs. No `PutMetricData`
   call, no extra IAM, works even when only the log stream is reachable.
@@ -27,7 +27,7 @@ health the same *shape*.
   text (PRD §4.2).
 
 ```ts
-import { emitServiceError, emitMonitorHeartbeat, logger } from "@inventory/telemetry";
+import { emitServiceError, emitMonitorHeartbeat, logger } from "@checkin/telemetry";
 
 emitServiceError("shopify-read", "prod");        // service is unhealthy
 emitMonitorHeartbeat("monitoring-watchdog", "prod"); // I'm alive

@@ -7,7 +7,7 @@ import type { PrismaClient } from "../db/client.js";
 import { EventSource, ObjectType } from "../generated/prisma/client.js";
 import { appendRawEvent } from "./rawLog.js";
 import { projectNode } from "../loader/index.js";
-import { logger } from "@inventory/telemetry";
+import { logger } from "@checkin/telemetry";
 
 export interface IngestNodeArgs {
   storeId: string;

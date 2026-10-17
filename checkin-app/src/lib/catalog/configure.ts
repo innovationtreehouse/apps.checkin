@@ -8,8 +8,8 @@
  * test boots the image (placeholder env, no Google creds). So every checkin-side
  * dependency is loaded lazily, off the boot path; the app must boot without them.
  */
-import { configureCatalog, orgEventService } from "@inventory/global-catalog";
-import type { CatalogPrincipal, OrgEventConsumer, OrgEventRecord, OrgIdentity } from "@inventory/global-catalog";
+import { configureCatalog, orgEventService } from "@checkin/global-catalog";
+import type { CatalogPrincipal, OrgEventConsumer, OrgEventRecord, OrgIdentity } from "@checkin/global-catalog";
 import type { Session } from "next-auth";
 
 /**
@@ -75,18 +75,18 @@ export function catalogEventsSince(orgId: string, afterId: number): Promise<OrgE
 const orgEventConsumers: Record<string, OrgEventConsumer> = {
   localInventory: {
     async onOrgEvents(events) {
-      await (await import("@inventory/local-inventory")).orgEventConsumer.onOrgEvents(events);
+      await (await import("@checkin/local-inventory")).orgEventConsumer.onOrgEvents(events);
     },
   },
   expense: {
     async onOrgEvents(events) {
-      const { consumeCatalogEvent } = await import("@inventory/expense");
+      const { consumeCatalogEvent } = await import("@checkin/expense");
       for (const event of events) await consumeCatalogEvent(event);
     },
   },
   workflowMapping: {
     async onOrgEvents(events) {
-      await (await import("@inventory/workflow-mapping")).orgEventConsumer.onOrgEvents(events);
+      await (await import("@checkin/workflow-mapping")).orgEventConsumer.onOrgEvents(events);
     },
   },
 };

@@ -3,8 +3,8 @@
  *   SHOPIFY_READ_DATABASE_URL=postgresql://... npm test
  */
 import { it, expect, beforeEach, afterAll } from "vitest";
-import { describeDb } from "@inventory/pg-test-harness";
-import { prisma, injectFixtures, setWatermark, ObjectType } from "@inventory/s-ingest-core";
+import { describeDb } from "@checkin/pg-test-harness";
+import { prisma, injectFixtures, setWatermark, ObjectType } from "@checkin/s-ingest-core";
 import { replay, resetWatermark } from "../../src/replay.js";
 import { handler } from "../../src/handler.js";
 import { wipeStore, orderNode, rawOrderEvent } from "./helpers.js";

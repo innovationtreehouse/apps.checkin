@@ -1,4 +1,4 @@
-export { WorkflowTransitionError } from '@inventory/workflows';
+export { WorkflowTransitionError } from '@checkin/workflows';
 
 export {
   provisionalItemMachine,

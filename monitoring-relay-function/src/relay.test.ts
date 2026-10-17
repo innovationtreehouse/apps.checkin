@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { PendingAlert } from "@inventory/monitoring-db";
+import type { PendingAlert } from "@checkin/monitoring-db";
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 // The relay's three collaborators are all side-effecting (Postgres, SNS, CloudWatch
 // EMF), so we stub them and assert the orchestration: what gets published, what gets
 // acked, and which metrics fire on every exit path.
 
-vi.mock("@inventory/monitoring-db", () => {
+vi.mock("@checkin/monitoring-db", () => {
   // Real-enough class so relay.ts's `err instanceof ConcurrentRunError` works.
   class ConcurrentRunError extends Error {
     lockKey: string;
@@ -33,7 +33,7 @@ vi.mock("./sns.js", async (importActual) => {
   return { ...actual, publishAlert: vi.fn() };
 });
 
-vi.mock("@inventory/telemetry", () => ({
+vi.mock("@checkin/telemetry", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   newCorrelationId: vi.fn(() => "corr-test"),
   emitMonitorHeartbeat: vi.fn(),
@@ -50,9 +50,9 @@ import {
   countDead,
   withAdvisoryLock,
   ConcurrentRunError,
-} from "@inventory/monitoring-db";
+} from "@checkin/monitoring-db";
 import { publishAlert } from "./sns.js";
-import { emitMonitorHeartbeat, emitDbUnreachable, emitServiceError } from "@inventory/telemetry";
+import { emitMonitorHeartbeat, emitDbUnreachable, emitServiceError } from "@checkin/telemetry";
 
 const cfg = {
   snsTopicArn: "arn:aws:sns:us-east-1:123456789012:monitoring-alerts",

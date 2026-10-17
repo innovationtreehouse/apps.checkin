@@ -1,5 +1,5 @@
 {
-  "name": "@inventory/telemetry",
+  "name": "@checkin/telemetry",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -16,7 +16,7 @@
     "test": "vitest run --coverage"
   },
   "dependencies": {
-    "@inventory/utils": "*"
+    "@checkin/utils": "*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

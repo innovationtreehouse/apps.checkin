@@ -1,20 +1,20 @@
 /**
  * @jest-environment node
  */
-import type { BulkDonationConfig } from "@inventory/bulk-donation";
+import type { BulkDonationConfig } from "@checkin/bulk-donation";
 
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
 const configureBulkDonation = jest.fn<void, [BulkDonationConfig]>();
-jest.mock("@inventory/bulk-donation", () => ({ configureBulkDonation }));
+jest.mock("@checkin/bulk-donation", () => ({ configureBulkDonation }));
 const ORG = { id: "treehouse", name: "Treehouse" };
 jest.mock("@/lib/catalog/configure", () => ({ getOrg: async () => ORG, getPrincipal: jest.fn() }));
 const searchItems = jest.fn();
 const getItem = jest.fn();
-jest.mock("@inventory/global-catalog", () => ({ readService: { searchItems, getItem }, referenceMatchingService: {} }));
+jest.mock("@checkin/global-catalog", () => ({ readService: { searchItems, getItem }, referenceMatchingService: {} }));
 const applyDonation = jest.fn();
 jest.mock("@/lib/workflowMapping/inventorySink", () => ({ inventoryReceipts: () => ({ applyDonation }) }));
 const incomeClaimedDepositIds = jest.fn();
-jest.mock("@inventory/income", () => ({ incomeClaimedDepositIds }));
+jest.mock("@checkin/income", () => ({ incomeClaimedDepositIds }));
 const getQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks }));
 

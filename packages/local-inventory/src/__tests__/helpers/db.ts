@@ -1,4 +1,4 @@
-import { describeDb as gate } from "@inventory/pg-test-harness";
+import { describeDb as gate } from "@checkin/pg-test-harness";
 import { db } from "../../lib/db/index";
 
 export const describeDb = gate("LOCAL_INVENTORY_DATABASE_URL");

@@ -10,7 +10,7 @@
  * re-reassembles + re-projects stored bulk exports (no Shopify calls). --all is required
 when no narrowing filter is given (the op then covers the whole store).
  */
-import { prisma, logger } from "@inventory/s-ingest-core";
+import { prisma, logger } from "@checkin/s-ingest-core";
 import { handler } from "./handler.js";
 import { flag } from "./args.js";
 

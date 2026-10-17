@@ -4,7 +4,7 @@ import {
   catalogItemReferenceProposalSchema,
   catalogProvisionalItemProposalSchema,
   catalogReferenceConflictSchema,
-} from "@inventory/receipt-types";
+} from "@checkin/receipt-types";
 import { prisma } from "../../db";
 import { describeDb, resetDb } from "../helpers/db";
 import { createItemReferenceProposal } from "../../services/proposalService";

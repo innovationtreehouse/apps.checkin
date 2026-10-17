@@ -4,7 +4,7 @@ const DisbursementItemV1 = z.object({
   type: z.enum(['donation', 'match', 'fees']),
   account: z.string(),
   // Integer minor units (cents), matching the integer-cents discipline used end
-  // to end (DB columns, CSV ingest, @inventory/money). Never a fractional float.
+  // to end (DB columns, CSV ingest, @checkin/money). Never a fractional float.
   amountCents: z.number().int(),
   transactionId: z.string(),
 });

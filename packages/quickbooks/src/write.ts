@@ -1,4 +1,4 @@
-import { sumCents } from "@inventory/money";
+import { sumCents } from "@checkin/money";
 import { appKeyOf, assertAppKey, qboDate, type QuickBooksClient, type TxnWrite } from "./client";
 import { billCandidate, depositCandidate, findMatch, purchaseCandidate, type MatchCandidate, type MatchRequest } from "./match";
 import { CREATE } from "./internal";

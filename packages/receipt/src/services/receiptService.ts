@@ -1,4 +1,4 @@
-import type { ReceiptState } from "@inventory/receipt-types";
+import type { ReceiptState } from "@checkin/receipt-types";
 import { z } from "zod";
 import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";

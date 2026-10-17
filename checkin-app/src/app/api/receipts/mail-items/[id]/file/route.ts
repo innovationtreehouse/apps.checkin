@@ -1,7 +1,7 @@
 // The only way a held mail item's bytes leave (plan rule 7). fileHandler fixes the delivery
 // headers per type; the library audits every read. The endpoint string MUST match its
 // src/security/registry/receipt.ts entry.
-import { mailQueueService } from "@inventory/receipt";
+import { mailQueueService } from "@checkin/receipt";
 import { FILE_CONTENT_TYPES, type FileContentType } from "@/security/core";
 import { fileHandler } from "@/security/fileHandler";
 import { mailItemId, mapServiceErrors } from "@/lib/receipt/route";

@@ -7,11 +7,11 @@
  */
 import type { NextRequest } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { routes } from '@inventory/expense';
+import { routes } from '@checkin/expense';
 import { PUT } from '../route';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
-jest.mock('@inventory/expense', () => ({
+jest.mock('@checkin/expense', () => ({
     ExpenseHttpError: class ExpenseHttpError extends Error {},
     routes: { expenses: { testData: jest.fn() } },
 }));

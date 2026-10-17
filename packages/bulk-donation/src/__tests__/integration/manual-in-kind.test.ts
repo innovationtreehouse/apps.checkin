@@ -3,7 +3,7 @@
  * donation is stored with its donor, and its goods load into inventory keyed `donation:<id>` (X11).
  */
 import { it, expect, beforeEach, vi } from "vitest";
-import type { ResolvedInventoryDelta } from "@inventory/receipt-types";
+import type { ResolvedInventoryDelta } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureBulkDonation } from "../../runtime";

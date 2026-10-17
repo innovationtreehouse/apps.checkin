@@ -3,6 +3,6 @@
 // its src/security/registry/donation.ts entry.
 import { handler } from "@/security/handler";
 import { donationRoute } from "@/lib/bulkDonation/route";
-import { routes } from "@inventory/bulk-donation";
+import { routes } from "@checkin/bulk-donation";
 
 export const DELETE = handler("DELETE /api/donations/comment-rules/[id]", donationRoute(routes.rules.deleteCommentRule));

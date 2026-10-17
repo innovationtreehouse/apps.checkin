@@ -10,7 +10,7 @@
  * watchdog reads each service's freshness from the dedicated monitoring DB's
  * `service_heartbeat` table (which the services PUSH to), so it holds no credential to any
  * watched service's own financial database. The only DB it connects to is the monitoring DB
- * (`MONITORING_DATABASE_URL`, via @inventory/monitoring-db).
+ * (`MONITORING_DATABASE_URL`, via @checkin/monitoring-db).
  *
  * Provided via the MONITORING_SERVICES env var as a JSON array, e.g.:
  *   [{"service":"shopify-read","staleAfterSeconds":7200}]

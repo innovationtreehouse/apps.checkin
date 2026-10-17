@@ -1,7 +1,7 @@
 import { setup } from "xstate";
 import type { ConversionChallengeStatus } from "../db/schema";
 import type { ConversionChallengeEvent, ConversionChallengeEventType } from "./conversion-challenge.events";
-import { makeWorkflowInvariants } from '@inventory/workflows';
+import { makeWorkflowInvariants } from '@checkin/workflows';
 
 // States mirror conversionChallengeStatusEnum from db/schema.
 // If the enum gains a new value and this machine is not updated, tsc will surface

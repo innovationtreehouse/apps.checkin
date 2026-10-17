@@ -24,7 +24,7 @@ import {
   emitServiceError,
   emitDbUnreachable,
   emitMonitorHeartbeat,
-} from "@inventory/telemetry";
+} from "@checkin/telemetry";
 import {
   prisma,
   recordIncident,
@@ -35,7 +35,7 @@ import {
   Severity,
   type IncidentInput,
   type ServiceFreshness,
-} from "@inventory/monitoring-db";
+} from "@checkin/monitoring-db";
 import type { ServiceEntry, WatchdogConfig } from "./registry.js";
 
 /** The newest failed/abandoned run, as the erroring check consumes it. */

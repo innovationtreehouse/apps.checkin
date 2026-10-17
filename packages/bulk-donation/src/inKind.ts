@@ -3,7 +3,7 @@
 // bound port returns. The no-receipt entry records a donation for the current org and principal
 // and loads its goods (X11).
 import { z } from "zod";
-import { CompletedReceiptSchema, type CompletedReceipt } from "@inventory/receipt-types";
+import { CompletedReceiptSchema, type CompletedReceipt } from "@checkin/receipt-types";
 import { CatalogItemSummarySchema, InKindDonorSchema, type CatalogItemSummary, type InKindDonor } from "./contract";
 import { db } from "./db";
 import { recordDonorDataReads, type DonorReadContext } from "./repositories/audit";

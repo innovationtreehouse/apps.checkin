@@ -1,7 +1,7 @@
 // Mounts a receipt library call through checkin's handler(). The endpoint string MUST match
 // its src/security/registry/receipt.ts entry.
 import { z } from "zod";
-import { receiptService } from "@inventory/receipt";
+import { receiptService } from "@checkin/receipt";
 import { badRequest, handler } from "@/security/handler";
 import { readJson, receiptRoute } from "@/lib/receipt/route";
 

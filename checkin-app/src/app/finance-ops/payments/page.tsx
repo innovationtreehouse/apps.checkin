@@ -11,7 +11,7 @@ import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
 import { relTime } from '@/lib/time';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
-import { formatCents } from '@inventory/money';
+import { formatCents } from '@checkin/money';
 import { PageLoader } from "@/components/ui/PageLoader";
 import { MatchAuditPanel } from "@/components/admin/MatchAuditPanel";
 

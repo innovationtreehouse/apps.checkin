@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { centsToDollars } from "@inventory/money";
+import { centsToDollars } from "@checkin/money";
 import { CREATE } from "./internal";
 import { TEST_NOTE_MARKER, assertPayloadMarked } from "./guard";
 import type {

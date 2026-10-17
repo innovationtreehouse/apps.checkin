@@ -3,7 +3,7 @@
  */
 import { catalogReader } from '../reader';
 
-jest.mock('@inventory/global-catalog', () => {
+jest.mock('@checkin/global-catalog', () => {
     const down = () => Promise.reject(new Error('connect ECONNREFUSED'));
     return {
         readService: { listCategories: down, listSubcategories: down, getItem: down, searchItems: down },

@@ -10,7 +10,7 @@
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import type { JWT } from "next-auth/jwt";
 import { z } from "zod";
-import { reimbursementStatus } from "@inventory/expense";
+import { reimbursementStatus } from "@checkin/expense";
 import {
   configureReceipt,
   createAnthropicOcr,
@@ -19,9 +19,9 @@ import {
   type MailboxReader,
   type ReceiptAlerts,
   type ReceiptPrincipal,
-} from "@inventory/receipt";
-import { ingestReceipt } from "@inventory/workflow-mapping";
-import { recordInKindDonor, withdrawInKind } from "@inventory/bulk-donation";
+} from "@checkin/receipt";
+import { ingestReceipt } from "@checkin/workflow-mapping";
+import { recordInKindDonor, withdrawInKind } from "@checkin/bulk-donation";
 import { getOrg } from "@/lib/catalog/configure";
 import { config } from "@/lib/config";
 

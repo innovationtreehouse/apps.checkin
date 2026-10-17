@@ -10,8 +10,8 @@
  * QBO_REALM_ID and QBO_DONATION_BANK_ACCOUNT_ID are set; unbound, a run answers
  * "unbound". Deposits income holds are kept out of its matching. Boot stays DB-free.
  */
-import { configureBulkDonation } from "@inventory/bulk-donation";
-import type { DonationQbPosting, OwnerInfo } from "@inventory/bulk-donation";
+import { configureBulkDonation } from "@checkin/bulk-donation";
+import type { DonationQbPosting, OwnerInfo } from "@checkin/bulk-donation";
 import { getOrg, getPrincipal } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createLocalInventoryApply } from "@/lib/bulkDonation/inventoryApply";
@@ -37,7 +37,7 @@ function qbPosting(): DonationQbPosting | undefined {
 }
 
 async function incomeClaimedDepositIds(orgId: string): Promise<string[]> {
-  return (await import("@inventory/income")).incomeClaimedDepositIds(orgId);
+  return (await import("@checkin/income")).incomeClaimedDepositIds(orgId);
 }
 
 export function configureRuntime(): void {

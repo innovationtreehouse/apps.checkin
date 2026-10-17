@@ -1,4 +1,4 @@
-// Public surface of the @inventory/bulk-donation library: domain, ports and route factories;
+// Public surface of the @checkin/bulk-donation library: domain, ports and route factories;
 // screens and nav are the ./pages/* and ./nav exports.
 export * from "./contract";
 export * from "./runtime";
@@ -41,5 +41,5 @@ export { uploadedFileService } from "./services/uploadedFileService";
 export { ServiceError } from "./services/serviceError";
 export { disbursementMachine, STATES } from "./workflows/disbursement.machine";
 export { sendDisbursementEvent, type AuditContext } from "./workflows/disbursement.actor";
-export { WorkflowTransitionError } from "@inventory/workflows";
+export { WorkflowTransitionError } from "@checkin/workflows";
 export * as routes from "./routes";

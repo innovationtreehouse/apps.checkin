@@ -37,7 +37,7 @@ jest.mock('@prisma/adapter-pg', () => ({
         return { pool };
     }),
 }));
-jest.mock('@inventory/s-ingest-core/client', () => ({
+jest.mock('@checkin/s-ingest-core/client', () => ({
     PrismaClient: jest.fn().mockImplementation((opts: unknown) => {
         prismaCtor(opts);
         return db;

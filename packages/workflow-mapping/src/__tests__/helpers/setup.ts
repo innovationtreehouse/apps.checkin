@@ -1,4 +1,4 @@
-import type { CompletedReceipt, ResolvedInventoryDelta } from "@inventory/receipt-types";
+import type { CompletedReceipt, ResolvedInventoryDelta } from "@checkin/receipt-types";
 import { db } from "../../db";
 import type { ReceivedReceiptLineStatus, ReceivedReceiptState } from "../../db/schema";
 import type { WorkflowPrincipal, WorkflowRuntimeConfig } from "../../contract";

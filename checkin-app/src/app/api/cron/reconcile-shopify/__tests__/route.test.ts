@@ -5,11 +5,11 @@
  * GET /api/cron/reconcile-shopify: the library catch-up, program-stock heal and donor re-send steps are
  * isolated, so no one step's failure fails checkin's reconcile. Every step is mocked; prisma.cronRunLog is stubbed for withCron's stamp.
  */
-import { runExpenseCatchUp } from '@inventory/expense';
-import { catchUpOrgEvents as catchUpInventoryEvents } from '@inventory/local-inventory';
-import { catchUpOrgEvents as catchUpWorkflowEvents } from '@inventory/workflow-mapping';
-import { runReconcile as runIncomeReconcile } from '@inventory/income';
-import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } from '@inventory/receipt';
+import { runExpenseCatchUp } from '@checkin/expense';
+import { catchUpOrgEvents as catchUpInventoryEvents } from '@checkin/local-inventory';
+import { catchUpOrgEvents as catchUpWorkflowEvents } from '@checkin/workflow-mapping';
+import { runReconcile as runIncomeReconcile } from '@checkin/income';
+import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } from '@checkin/receipt';
 import { runReconcile } from '@/lib/finance/reconcile';
 import { runSaleSweep } from '@/lib/programs/saleSweep';
 import { healProgramStock } from '@/lib/shopify';
@@ -17,11 +17,11 @@ import prisma from '@/lib/prisma';
 import { GET } from '../route';
 
 jest.mock('@/lib/finance/reconcile', () => ({ runReconcile: jest.fn() }));
-jest.mock('@inventory/expense', () => ({ runExpenseCatchUp: jest.fn() }));
-jest.mock('@inventory/income', () => ({ runReconcile: jest.fn() }));
-jest.mock('@inventory/local-inventory', () => ({ catchUpOrgEvents: jest.fn() }));
-jest.mock('@inventory/workflow-mapping', () => ({ catchUpOrgEvents: jest.fn() }));
-jest.mock('@inventory/receipt', () => ({ sweepInterruptedOcr: jest.fn(), repushUnpushed: jest.fn(), resendDonorSync: jest.fn(), readMailbox: jest.fn() }));
+jest.mock('@checkin/expense', () => ({ runExpenseCatchUp: jest.fn() }));
+jest.mock('@checkin/income', () => ({ runReconcile: jest.fn() }));
+jest.mock('@checkin/local-inventory', () => ({ catchUpOrgEvents: jest.fn() }));
+jest.mock('@checkin/workflow-mapping', () => ({ catchUpOrgEvents: jest.fn() }));
+jest.mock('@checkin/receipt', () => ({ sweepInterruptedOcr: jest.fn(), repushUnpushed: jest.fn(), resendDonorSync: jest.fn(), readMailbox: jest.fn() }));
 jest.mock('@/lib/programs/saleSweep', () => ({ runSaleSweep: jest.fn() }));
 jest.mock('@/lib/shopify', () => ({ healProgramStock: jest.fn() }));
 jest.mock('@/lib/catalog/configure', () => ({ getOrg: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Org' }) }));

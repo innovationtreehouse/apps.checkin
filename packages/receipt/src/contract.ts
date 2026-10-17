@@ -5,7 +5,7 @@
  * adapters in runtime.ts.
  */
 import { z } from "zod";
-import { MAX_LINE_QUANTITY, type CompletedReceipt } from "@inventory/receipt-types";
+import { MAX_LINE_QUANTITY, type CompletedReceipt } from "@checkin/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
 
 /** The acting host user, projected from the checkin Person. `id` is the Person.id. */
