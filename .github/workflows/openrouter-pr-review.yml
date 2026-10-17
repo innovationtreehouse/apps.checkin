@@ -63,7 +63,7 @@ jobs:
       - id: review
         if: steps.route.outputs.model != ''
         continue-on-error: true
-        uses: FlyOverCoderKY/openrouter-pr-review-action@f0803a825cbd65f8c27ed4d551bdfdca3c03a193 # v1.3.0
+        uses: innovationtreehouse/openrouter-pr-review-action@7bec5bf32e0d9ab6613f0f2cb00769c94b8ba498 # fork: upstream 26f990a + Gemini 4 signature fix (FlyOverCoderKY#44)
         with:
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.route.outputs.model }}
@@ -93,7 +93,7 @@ jobs:
       - id: rerun
         if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
         continue-on-error: true
-        uses: FlyOverCoderKY/openrouter-pr-review-action@f0803a825cbd65f8c27ed4d551bdfdca3c03a193 # v1.3.0
+        uses: innovationtreehouse/openrouter-pr-review-action@7bec5bf32e0d9ab6613f0f2cb00769c94b8ba498 # fork: upstream 26f990a + Gemini 4 signature fix (FlyOverCoderKY#44)
         with:
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.judge.outputs.model }}
