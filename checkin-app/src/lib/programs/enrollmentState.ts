@@ -25,7 +25,7 @@ import type { Prisma, ProgramParticipantStatus as PrismaStatus } from '@/generat
 
 /** Local status union — the trunk `status` column. `UNENROLLED` (∅/no row) is
  *  not a status value; it appears only in the transition table. */
-export type ProgramParticipantStatus = 'PENDING' | 'ACTIVE';
+export type ProgramParticipantStatus = 'PENDING' | 'ACTIVE' | 'WITHDRAWN';
 
 // Parity: fails to compile if the schema enum and this union diverge (§3.4).
 // The runtime twin (assertEnumParity) lives in the unit test.
@@ -102,6 +102,12 @@ export const STATES = {
         statuses: ['ACTIVE'] as const,
         flags: { inventoryHeldAt: false },
     }),
+    /** WITHDRAWN, held=null. Terminal present-row exit: the row stays as history
+     *  (#1462). No transition writes it yet. */
+    WITHDRAWN: mk({
+        statuses: ['WITHDRAWN'] as const,
+        flags: { inventoryHeldAt: false },
+    }),
 } as const;
 
 // ---- fromWhere (§5 CAS from-state, #1080) -----------------------------------
@@ -137,7 +143,8 @@ export type EnrollmentStateName =
     | 'PENDING_HOLD_FAILED'
     | 'PENDING_HELD'
     | 'PENDING_HELD_DENIED'
-    | 'ACTIVE';
+    | 'ACTIVE'
+    | 'WITHDRAWN';
 
 /**
  * Name the row's legal state, or `null` if it is off-diagram (an I1–I4 violation,
@@ -149,6 +156,9 @@ export function classify(row: EnrollmentRow): EnrollmentStateName | null {
         case 'ACTIVE':
             // I1: ACTIVE ⟹ held null. A held seat on an ACTIVE row is off-diagram.
             return row.inventoryHeldAt ? null : 'ACTIVE';
+        case 'WITHDRAWN':
+            // I2: a held seat is only ever on a PENDING row.
+            return row.inventoryHeldAt ? null : 'WITHDRAWN';
         case 'PENDING':
             if (!row.inventoryHeldAt) {
                 // held=null: I4 — a denial is only ever stamped on a held seat.
