@@ -1,12 +1,14 @@
 // Gmail intake (#1265 §2a): the last catch-up step of the host's daily cron. Each mailed file
-// becomes a receipt by its authenticated sender, or a held mail item for finance.
+// becomes a receipt by its authenticated sender, a deferred item when that sender is over their
+// daily upload limit, or a held mail item for finance.
 import { createHash } from "node:crypto";
 import { db } from "../db";
 import type { MailboxReader, MailMessage, MailPart, ReceiptPrincipal } from "../contract";
+import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { getOrg, mailbox, ports } from "../runtime";
 import { intakeMailedReceipt } from "./receiptService";
-import { ServiceError } from "./serviceError";
+import { OrgUploadLimitError, ServiceError } from "./serviceError";
 
 // ponytail: no stored cursor; the ledger makes re-reads free. Ceiling is a cron outage longer than the
 // window, or more than MAIL_WINDOW_DAYS × MAIL_CAP mailed receipts inside one window; widen either then.
@@ -17,7 +19,7 @@ export const MAIL_CAP = 10;
 export const MAIL_HELD_CAP = 50;
 /** Bytes charged to held mail per run (see chargeHold), checked before each download. */
 export const MAIL_HELD_BYTES = 50 * 1024 * 1024;
-/** Held items awaiting finance past which nothing more is held; finance is alerted once per run while over it. */
+/** Held and deferred items past which nothing more is stored; finance is alerted once per run while over it. */
 export const MAIL_HELD_CEILING = 500;
 // ponytail: every listed message is fetched each run before the ledger is checked, so a flood larger than this
 // budget's worth of fetches can still push a later receipt past the window; record unheld message ids then.
@@ -36,6 +38,8 @@ export type MailIntakeResult =
       failed: number;
       /** Files put off by a per-run cap or byte budget; read again next run. */
       deferred: number;
+      /** Files from a known sender over their daily upload limit, stored to retry on a later run. */
+      overLimit: number;
       /** Files not held because the held ceiling was reached. */
       overCeiling: number;
       /** Messages not reached, past the time budget or with every cap spent; read again next run. */
@@ -213,21 +217,53 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): MailFile[] {
 const isUniqueViolation = (err: unknown) =>
   typeof err === "object" && err !== null && (err as { code?: unknown }).code === "P2002";
 
+const isStatus = (err: unknown, code: number) => err instanceof ServiceError && err.statusCode === code;
+
+/** The statuses whose items keep their file in the ledger, awaiting finance or a later run. */
+export const STORED_STATUSES = ["held", "deferred"];
+
+/**
+ * Make a deferred item a receipt uploaded by its sender. The item flips to `assigned` in the
+ * receipt's own insert, so a concurrent retry or release leaves no second receipt (409).
+ */
+export async function intakeDeferred(
+  item: { id: number; fileBlob: Uint8Array; mimeType: string },
+  sender: ReceiptPrincipal,
+  { uploadLimits, onClaim }: { uploadLimits: boolean; onClaim?: (tx: Prisma.TransactionClient, receiptId: string) => Promise<unknown> },
+): Promise<string> {
+  return intakeMailedReceipt(
+    sender,
+    Buffer.from(item.fileBlob),
+    item.mimeType,
+    async (tx, receiptId) => {
+      const claimed = await tx.receiptMailItem.updateMany({
+        where: { id: item.id, status: "deferred" },
+        data: { status: "assigned", receiptId, fileBlob: null },
+      });
+      if (claimed.count !== 1) throw new ServiceError(409, "This mail item was already handled. Refresh and retry.");
+      await onClaim?.(tx, receiptId);
+    },
+    { uploadLimits },
+  );
+}
+
 export async function readMailbox(): Promise<MailIntakeResult> {
   const reader = mailbox();
   if (!reader) return { status: "unbound" };
   const started = Date.now();
   const orgId = (await getOrg()).id;
-  const unresolved = await db.receiptMailItem.count({ where: { orgId, status: "held" } });
-  const counts = { messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overCeiling: 0, unread: 0 };
+  const unresolved = await db.receiptMailItem.count({ where: { orgId, status: { in: STORED_STATUSES } } });
+  const counts = { messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0 };
   let heldFiles = 0;
   let heldBytes = 0;
   const capped = () => counts.receipts >= MAIL_CAP;
-  const holdsSpent = () => heldFiles >= MAIL_HELD_CAP || unresolved + counts.held >= MAIL_HELD_CEILING;
+  const outOfTime = () => Date.now() - started >= MAIL_TIME_BUDGET_MS;
+  const stored = () => unresolved + counts.held + counts.overLimit;
+  const holdsSpent = () => heldFiles >= MAIL_HELD_CAP || stored() >= MAIL_HELD_CEILING;
 
   /**
    * The one charging rule for the held budget: each file downloaded from an unknown sender, and each
-   * file held for a known one, costs one file and its larger stated or actual size, whatever comes of it.
+   * file deferred for a known one, costs one file and its larger stated or actual size, whatever comes of it.
    */
   function chargeHold(file: MailFile, bytes: Buffer): void {
     heldFiles++;
@@ -236,7 +272,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
 
   /** Whether a file of this size may be held now; counts it as deferred or over the ceiling when not. */
   function roomToHold(size: number): boolean {
-    if (unresolved + counts.held >= MAIL_HELD_CEILING) {
+    if (stored() >= MAIL_HELD_CEILING) {
       counts.overCeiling++;
       return false;
     }
@@ -291,14 +327,15 @@ export async function readMailbox(): Promise<MailIntakeResult> {
             counts.receipts++;
             continue;
           } catch (err) {
-            // Over the sender's daily upload limit: finance assigns it instead.
-            if (!(err instanceof ServiceError && err.statusCode === 429)) throw err;
+            // Over the sender's daily upload limit: stored to retry on a later run.
+            if (!isStatus(err, 429)) throw err;
           }
           if (!roomToHold(bytes.length)) continue;
           chargeHold(file, bytes);
         }
-        await db.receiptMailItem.create({ data: { ...item, status: "held", fileBlob: new Uint8Array(bytes), mimeType: check.mimeType } });
-        counts.held++;
+        const status = sender ? "deferred" : "held";
+        await db.receiptMailItem.create({ data: { ...item, status, fileBlob: new Uint8Array(bytes), mimeType: check.mimeType } });
+        counts[sender ? "overLimit" : "held"]++;
       } catch (err) {
         // A concurrent run took this file first.
         if (!isUniqueViolation(err)) throw err;
@@ -307,9 +344,49 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     }
   }
 
+  /**
+   * Deferred items, oldest first, inside the run's receipt cap. A retry refused by the daily limit
+   * spends no cap and no OCR call, and that sender's other deferred items wait for the next run;
+   * the org-wide limit stops every retry for the run.
+   * A sender who is no longer a submitter has their items held for finance.
+   */
+  async function retryDeferred(): Promise<void> {
+    const rows = await db.receiptMailItem.findMany({
+      where: { orgId, status: "deferred" },
+      select: { id: true, senderAddress: true },
+      orderBy: [{ receivedAt: "asc" }, { id: "asc" }],
+    });
+    const limited = new Set<string>();
+    for (const row of rows) {
+      if (capped() || outOfTime()) return;
+      if (limited.has(row.senderAddress)) continue;
+      try {
+        const sender = await ports().people.submitterByEmail(row.senderAddress);
+        if (!sender) {
+          await db.receiptMailItem.updateMany({ where: { id: row.id, status: "deferred" }, data: { status: "held" } });
+          continue;
+        }
+        const item = await db.receiptMailItem.findFirst({ where: { id: row.id, status: "deferred" }, select: { id: true, fileBlob: true, mimeType: true } });
+        if (!item?.fileBlob || !item.mimeType) continue;
+        await intakeDeferred({ ...item, fileBlob: item.fileBlob, mimeType: item.mimeType }, sender, { uploadLimits: true });
+        counts.receipts++;
+      } catch (err) {
+        if (err instanceof OrgUploadLimitError) return;
+        if (isStatus(err, 429)) limited.add(row.senderAddress);
+        else if (isStatus(err, 409)) counts.skipped++;
+        else {
+          counts.failed++;
+          console.error("[receipt] deferred mail retry failed for one item:", err);
+        }
+      }
+    }
+  }
+
+  await retryDeferred();
+
   const ids = await reader.listRecent(MAIL_WINDOW_DAYS);
   for (const [i, id] of ids.entries()) {
-    if ((capped() && holdsSpent()) || Date.now() - started >= MAIL_TIME_BUDGET_MS) {
+    if ((capped() && holdsSpent()) || outOfTime()) {
       counts.unread = ids.length - i;
       break;
     }
@@ -324,7 +401,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
 
   if (counts.overCeiling > 0) {
     try {
-      await ports().alerts.mailHoldCeilingReached({ orgId, unresolved: unresolved + counts.held, refused: counts.overCeiling });
+      await ports().alerts.mailHoldCeilingReached({ orgId, unresolved: stored(), refused: counts.overCeiling });
     } catch (err) {
       console.error("[receipt] mail hold ceiling alert failed:", err);
     }

@@ -153,10 +153,10 @@ export interface MailboxReader {
   getAttachment(messageId: string, attachmentId: string): Promise<Buffer>;
 }
 
-/** Mail intake stopped holding mail because too many held items await finance. */
+/** Mail intake stopped storing mail because too many held or deferred items are stored. */
 export interface MailHoldCeilingEvent {
   orgId: string;
-  /** Held items awaiting finance when the run stopped holding. */
+  /** Held and deferred items stored when the run stopped storing. */
   unresolved: number;
   /** Files this run did not hold. */
   refused: number;

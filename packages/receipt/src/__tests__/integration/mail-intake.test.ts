@@ -11,7 +11,8 @@ import {
   readMailbox,
 } from "../../services/mailIntake";
 import { describeDb } from "../helpers/db";
-import { ALICE, clearAll, configure, okOcr, stateOf, TEST_ORG_ID } from "../helpers/setup";
+import type { ReceiptLimits } from "../../lib/limits";
+import { ALICE, BOB, clearAll, configure, okOcr, stateOf, TEST_ORG_ID } from "../helpers/setup";
 
 const GOOGLE_PASS = "mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass (p=NONE sp=NONE) header.from=example.org";
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
@@ -281,5 +282,112 @@ describeDb("mail intake sender authentication", () => {
     });
     await heldAs("stranger@example.org");
     expect(Buffer.from((await db.receiptMailItem.findFirstOrThrow()).fileBlob ?? []).toString()).toBe("fwd");
+  });
+});
+
+describeDb("mail intake over a sender's daily upload limit", () => {
+  const people: Record<string, typeof ALICE> = { "alice@example.org": ALICE, "bob@example.org": BOB };
+  let lookups: string[];
+
+  function withLimits(limits: Partial<ReceiptLimits>, known = people): void {
+    lookups = [];
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: { mailHoldCeilingReached: async (event) => void alerts.push(event) },
+      limits,
+      people: {
+        submitterByEmail: async (address) => {
+          lookups.push(address);
+          return known[address] ?? null;
+        },
+      },
+    });
+  }
+
+  let seq = 0;
+  async function deferredFor(address: string): Promise<number> {
+    const n = ++seq;
+    const row = await db.receiptMailItem.create({
+      data: {
+        orgId: TEST_ORG_ID,
+        gmailMessageId: `old${n}`,
+        attachmentHash: `h${n}`,
+        receivedAt: new Date(Date.now() - 60_000 + n),
+        senderAddress: address,
+        status: "deferred",
+        fileBlob: new Uint8Array(Buffer.from(pdf(`deferred ${n}`))),
+        mimeType: "application/pdf",
+      },
+    });
+    return row.id;
+  }
+
+  it("defers the file with its bytes, then makes it a receipt on a later run once the sender has allowance", async () => {
+    withLimits({ uploadsPerPersonPerDay: 1 });
+    send("m1");
+    send("m2");
+    expect(await readMailbox()).toMatchObject({ receipts: 1, held: 0, overLimit: 1 });
+    const deferred = await db.receiptMailItem.findFirstOrThrow({ where: { status: "deferred" } });
+    expect(deferred).toMatchObject({ gmailMessageId: "m2", senderAddress: "alice@example.org", receiptId: null });
+    expect(Buffer.from(deferred.fileBlob ?? []).toString()).toBe(pdf("m2"));
+
+    expect(await readMailbox()).toMatchObject({ receipts: 0, overLimit: 0, skipped: 2 });
+
+    withLimits({ uploadsPerPersonPerDay: 30 });
+    mail.messages.clear();
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    const item = await db.receiptMailItem.findUniqueOrThrow({ where: { id: deferred.id } });
+    expect(item).toMatchObject({ status: "assigned", fileBlob: null });
+    const receipt = await db.receipt.findUniqueOrThrow({ where: { id: item.receiptId ?? "" } });
+    expect(receipt).toMatchObject({ uploadedByUserId: ALICE.id, intakeSource: "email" });
+  });
+
+  it("spends no cap and no reading on a refused retry, and skips that sender's other deferred files for the run", async () => {
+    withLimits({ uploadsPerPersonPerDay: 1 });
+    send("a0");
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    mail.messages.clear();
+    for (let i = 0; i <= MAIL_CAP; i++) await deferredFor("alice@example.org");
+    send("bob1", { from: ["bob@example.org"] });
+    withLimits({ uploadsPerPersonPerDay: 1 });
+
+    expect(await readMailbox()).toMatchObject({ receipts: 1, failed: 0 });
+    expect(lookups.filter((a) => a === "alice@example.org")).toHaveLength(1);
+    expect(await db.receiptMailItem.count({ where: { status: "deferred" } })).toBe(MAIL_CAP + 1);
+    expect(await db.receiptAuditLog.count({ where: { action: "ocr_call", userId: ALICE.id } })).toBe(1);
+    expect((await db.receipt.findFirstOrThrow({ where: { uploadedByUserId: BOB.id } })).intakeSource).toBe("email");
+  });
+
+  it("stops every retry for the run once the org-wide upload limit refuses one", async () => {
+    await deferredFor("alice@example.org");
+    await deferredFor("bob@example.org");
+    withLimits({ uploadBytesPerDay: 0 });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, failed: 0 });
+    expect(lookups).toEqual(["alice@example.org"]);
+  });
+
+  it("holds a deferred file for finance once its sender is no longer a submitter", async () => {
+    const id = await deferredFor("alice@example.org");
+    withLimits({}, {});
+    expect(await readMailbox()).toMatchObject({ receipts: 0 });
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "held" });
+  });
+
+  it("counts deferred files toward the held ceiling", async () => {
+    withLimits({ uploadsPerPersonPerDay: 0 });
+    await db.receiptMailItem.createMany({
+      data: Array.from({ length: MAIL_HELD_CEILING }, (_, i) => ({
+        orgId: TEST_ORG_ID,
+        gmailMessageId: `full${i}`,
+        attachmentHash: `f${i}`,
+        receivedAt: new Date(),
+        senderAddress: i === 0 ? "alice@example.org" : "stranger@example.org",
+        status: i === 0 ? "deferred" : "held",
+      })),
+    });
+    send("m1");
+    expect(await readMailbox()).toMatchObject({ overLimit: 0, overCeiling: 1 });
+    expect(alerts).toHaveLength(1);
   });
 });

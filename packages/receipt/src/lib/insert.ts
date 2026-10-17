@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import { audit, type Actor } from "../repositories/receipt";
-import { ServiceError } from "../services/serviceError";
+import { OrgUploadLimitError, ServiceError } from "../services/serviceError";
 import type { ReceiptLimits } from "./limits";
 
 export interface NewLine {
@@ -108,6 +108,6 @@ async function enforceUploadLimits(
     throw new ServiceError(429, "You have reached today's upload size limit. Try again tomorrow.");
   }
   if (used.allBytes + bytes > limits.uploadBytesPerDay) {
-    throw new ServiceError(429, "Receipt uploads have reached today's limit. Try again tomorrow.");
+    throw new OrgUploadLimitError();
   }
 }

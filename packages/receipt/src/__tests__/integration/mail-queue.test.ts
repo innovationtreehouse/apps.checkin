@@ -1,13 +1,14 @@
 import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
 import { CANNOT_ASSIGN, mailQueueService } from "../../services/mailQueueService";
+import type { ReceiptLimits } from "../../lib/limits";
 import { describeDb } from "../helpers/db";
 import { actAs, ALICE, BOB, clearAll, configure, FINANCE, okOcr, stateOf, TEST_ORG_ID } from "../helpers/setup";
 
 const PEOPLE: Record<string, typeof ALICE> = { "alice@example.org": ALICE, "bob@example.org": BOB, "finn@example.org": FINANCE };
 
 let seq = 0;
-async function holdItem(): Promise<number> {
+async function holdItem(status = "held", senderAddress = "stranger@elsewhere.test"): Promise<number> {
   const n = ++seq;
   const item = await db.receiptMailItem.create({
     data: {
@@ -15,8 +16,8 @@ async function holdItem(): Promise<number> {
       gmailMessageId: `m${n}`,
       attachmentHash: `h${n}`,
       receivedAt: new Date(),
-      senderAddress: "stranger@elsewhere.test",
-      status: "held",
+      senderAddress,
+      status,
       fileBlob: new Uint8Array(Buffer.from(`%PDF-1.4 held ${n} ${Date.now()}`)),
       mimeType: "application/pdf",
     },
@@ -24,15 +25,20 @@ async function holdItem(): Promise<number> {
   return item.id;
 }
 
-beforeEach(async () => {
-  await clearAll();
+function configureQueue(limits: Partial<ReceiptLimits> = {}): void {
   configure({
     ocr: okOcr(),
+    limits,
     people: { submitterByEmail: async (address) => PEOPLE[address] ?? null },
     // Bob shares Finn's household.
     households: { householdOf: async (ids) => (ids.includes(FINANCE.id) ? [FINANCE.id, BOB.id] : []) },
   });
   actAs(FINANCE);
+}
+
+beforeEach(async () => {
+  await clearAll();
+  configureQueue();
 });
 
 describeDb("finance mail queue", () => {
@@ -113,5 +119,36 @@ describeDb("finance mail queue", () => {
     const id = await holdItem();
     expect(await mailQueueService.getFile(id)).toMatchObject({ id, mimeType: "application/pdf" });
     expect(await db.receiptAuditLog.count({ where: { action: "mail_file_viewed", valueBefore: String(id) } })).toBe(1);
+  });
+
+  it("lists deferred items beside held ones", async () => {
+    const held = await holdItem();
+    const deferred = await holdItem("deferred", "alice@example.org");
+    expect((await mailQueueService.listHeld()).map((i) => [i.id, i.status])).toEqual([
+      [held, "held"],
+      [deferred, "deferred"],
+    ]);
+  });
+
+  it("releases a deferred item as its sender, outside their daily upload limit, and audits who released it", async () => {
+    configureQueue({ uploadsPerPersonPerDay: 0 });
+    const id = await holdItem("deferred", "alice@example.org");
+    await expect(mailQueueService.assign(id, { email: "alice@example.org" })).rejects.toMatchObject({ statusCode: 429 });
+
+    const out = await mailQueueService.assign(id, { release: true });
+    const [receipt] = await db.receipt.findMany();
+    expect(receipt).toMatchObject({ uploadedByUserId: ALICE.id, intakeSource: "email" });
+    expect(out).toMatchObject({ id, status: "assigned", receiptId: receipt.id });
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "assigned", fileBlob: null });
+    expect(await db.receiptAuditLog.count({ where: { receiptId: receipt.id, action: "mail_released", userId: FINANCE.id } })).toBe(1);
+    await expect(mailQueueService.assign(id, { release: true })).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it("releases only a deferred item, and never to the releaser's own household", async () => {
+    await expect(mailQueueService.assign(await holdItem(), { release: true })).rejects.toMatchObject({ statusCode: 409 });
+    const own = await holdItem("deferred", "bob@example.org");
+    await expect(mailQueueService.assign(own, { release: true })).rejects.toMatchObject({ statusCode: 403 });
+    await expect(mailQueueService.assign(own, { release: false })).rejects.toMatchObject({ statusCode: 400 });
+    expect(await db.receipt.count()).toBe(0);
   });
 });

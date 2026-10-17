@@ -222,10 +222,10 @@ model ReceiptMailItem {
   receivedAt     DateTime  @map("received_at")
   /// @sensitivity:pii
   senderAddress  String    @map("sender_address")
-  // held | assigned | discarded
+  // held | deferred | assigned | discarded
   /// @sensitivity:internal
   status         String    @default("held")
-  // Kept only while held; cleared once the item becomes a receipt or is discarded.
+  // Kept only while held or deferred; cleared once the item becomes a receipt or is discarded.
   /// @sensitivity:pii
   fileBlob       Bytes?    @map("file_blob")
   /// @sensitivity:internal
