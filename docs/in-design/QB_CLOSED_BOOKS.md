@@ -43,7 +43,8 @@ ships.
 
 Relies on, unchanged: *Fail closed* (an unreadable or unset closing date never
 widens what the app books), *Apply once* (every path still matches before it
-creates), *Accountability* (every skip names who and why), and "the app never
+creates, and a record whose create may have landed looks for its own entry
+first, section 6), *Accountability* (every skip names who and why), and "the app never
 changes or deletes anything already in QuickBooks".
 
 ---
@@ -120,8 +121,14 @@ date, or null when none is set. It throws when the read fails.
 
 **Cache:** none across runs. Each drain run reads it once at the start and uses
 it for every record in that run; each "book it" reads it again at the moment of
-the action. One request per run is cheap, and a cache would let a date finance
-just moved later be ignored.
+the action. A cache would let a date finance just moved later be ignored.
+
+**Re-read before each create.** `findOrCreate` reads the closing date again
+after the match and just before it creates, and gates on the later of that date
+and `closedThrough`. That costs one read per create, which is cheap next to the
+create itself, and it shrinks the window in which finance can close a period
+while a run is under way. If that read fails, the record is not created and
+waits for the next run, as when the start-of-run read fails.
 
 **Failing closed:**
 
@@ -137,9 +144,13 @@ queue that the new date covers can then only be skipped; that falls out of
 reading the date at action time and needs no code of its own. The closing state
 is not stored on the record for the same reason: it would go stale.
 
-QuickBooks also refuses to post into a closed period (fault 6200). The app's
-gate is the line it promises; QuickBooks' refusal is a second one the app does
-not rely on.
+**QuickBooks' refusal guards the last gap.** Finance can still close a period
+between the app's last read and the create itself. For that gap the app relies
+on QuickBooks refusing to post into a closed period (fault 6200).
+`findOrCreate` reports fault 6200 as `closed`, the same result as a date the
+gate stopped itself. The lane holds the record as closed, never as
+`POST_FAILED`, so it is never retried as a failed post. The next run reads the
+closing date again and keeps the record held under the new date.
 
 ### 3. Switch-on timestamp
 
@@ -214,6 +225,8 @@ finance-only route whose role and response types stay the same.
   person and the reason. The record leaves the queue for good, and the drain
   never posts or matches it again. Income's and donation's `dismiss` already do
   exactly this, so skip is `dismiss` under its existing name; expense gains it.
+  Skip, dismiss and match on a record whose create may already have landed in
+  QuickBooks first look for the app's own entry (section 6).
 
 "Book it" goes through the same post path as the drain, so everything that path
 checks today still holds: an expense still needs every sign-off seat and, for a
@@ -273,6 +286,99 @@ Income has no `BEFORE_LINE`. Its waiting payouts are sorted by the next run
 under the new rules; `NO_DEPOSIT` rows already open keep their state and gain
 "book it".
 
+### 6. A create that may have landed
+
+A create call can fail after QuickBooks has applied it, for example when the
+call times out. The record then sits in `POST_FAILED` while its entry exists in
+QuickBooks. Match-before-create finds that entry by its key only while the
+entry's date stays inside the record's window. Three paths would then book
+twice, or leave the app's entry linked to nothing and never checked for drift.
+The rules below close them in all three lanes.
+
+**Mark the attempt.** Each lane's record gains one nullable timestamp,
+`qbCreateAttemptedAt`, on `Expense`, `PayoutReconciliation` and
+`DisbursementEvent`. The post path writes it, once, before it sends a create
+call. A record that carries it is "attempted", whatever its state now. The
+column is additive and ships in the lane's PR.
+
+**Looking up the key.** For an attempted record, the lookup reads every entry of
+the lane's entity that QuickBooks created since the attempt:
+
+```
+SELECT * FROM <Deposit | Purchase | Bill> WHERE MetaData.CreateTime >= <qbCreateAttemptedAt>
+```
+
+It reads one page of 1,000 entries, QuickBooks' largest. The app then keeps the
+entries whose memo carries the record's `[checkin:<key>]` marker. This query is
+the narrowest that works:
+
+- The memo (`PrivateNote`), where the key lives, cannot be filtered in a
+  QuickBooks query.
+- The document number is too short for the key (21 characters against up to
+  50), and on purchases and bills it already holds finance's check or bill
+  number.
+- Creation time does not change when finance edits the entry's date, which is
+  the case the window misses.
+
+The outcome of the lookup:
+
+| Lookup finds | Then |
+|---|---|
+| exactly one entry with the key | it is the app's own entry: link it as `CREATED`; a date or amount finance changed shows up as drift, like any edited entry |
+| no entry with the key | the normal match and gate run, and may create |
+| more than one entry with the key, a full page (more may exist), or the read fails | finance's queue with a note that the app may already have booked this record; nothing is created |
+
+The shared gate PR confirms this query in the sandbox, as it does the closing
+date field. If the query is not reliable there, the post path never creates an
+attempted record: it goes to finance's queue with that note instead.
+
+**A retry never creates on the window alone.** Before any create on an attempted
+record, the post path runs the lookup. This covers the drain, finance's retry
+and "book it".
+
+**A lost claim after a create raises a flag.** A post that stalls long enough
+for another worker to reclaim its record can still create its entry. Both posts
+then create, and the stalled one settles to find its claim gone. Today it only
+logs that. Instead, when a settle finds its claim lost after a `created` result,
+the lane tells finance that the app's entry may need voiding, with the entry's
+id. Expense raises its `QB_POST_FAILED` flag, and donation and income put the
+note on the record in finance's queue. The same-lane conflict path already does
+this.
+
+**Finance's actions look first.** Before finance matches, dismisses or skips an
+attempted record, the route runs the lookup:
+
+- **The app's entry is found.** The record is linked to it as `CREATED`, the
+  action is not applied, and the response tells finance which entry the app had
+  already booked.
+- **Nothing is found.** The action goes ahead.
+- **The lookup reads more than one keyed entry, fills a page, or fails.** The
+  action is refused, and nothing changes. A failed read answers 503.
+
+Skip and dismiss on a record that was never attempted need no lookup.
+
+---
+
+## Related fixes
+
+Checking this design turned up four faults in today's posting code. This design
+does not change them, and none depends on it. Each ships as its own PR, and the
+order is scheduled separately.
+
+- **Income and donation can both hold one hand-booked deposit.** Each lane's
+  settle checks only its own lane's holdings. A payout and a disbursement with
+  the same net, into the same bank account, can both match one deposit. The fix
+  is a claim table unique across lanes.
+- **Expense drift ignores the date.** A change finance makes to an entry's date
+  is never reported. The fix stores the entry's date and compares it.
+- **Expense takes its drift baseline from a separate read.** An edit between
+  the match read and the baseline read, or a failed baseline read that the first
+  drift check fills in later, becomes the baseline unreported. The fix takes the
+  baseline from the entry the match itself saw.
+- **Donation pins the booked date late.** After a match by amount the booked
+  date stays empty, and the first drift check pins whatever date the deposit
+  has by then. The fix stores the date at settle, from the read that matched.
+
 ---
 
 ## PR split
@@ -282,20 +388,30 @@ One kind per PR. Registry entries first, each in its own PR based on `main`.
 1. **Security:** the registry entry for `POST /api/expense/expenses/[id]/qb-resolve`.
    No app code.
 2. **Shared gate:** `packages/quickbooks` replaces `takeoverLine` with
-   `closedThrough` and `mayCreate`, and adds `bookCloseDate()`. It confirms the
-   field in the sandbox. Until each lane PR lands, its caller passes its old line
+   `closedThrough` and `mayCreate`, and adds `bookCloseDate()`. It re-reads the
+   closing date just before each create and reports fault 6200 as `closed`
+   (section 2). It adds the created-since read for the key lookup (section 6).
+   It confirms the closing date field and the created-since query in the
+   sandbox. Until each lane PR lands, its caller passes its old line
    as `closedThrough` with `mayCreate: true` (or `mayCreate: false` when it has no
    line), and maps `closed` to today's `too-old` and `needs-finance` to today's
-   `no-line`, so behaviour is unchanged.
+   `no-line`. Behaviour is unchanged, except that a create QuickBooks refuses
+   as closed is held as `too-old` rather than failed.
 3. **Expense:** gate wiring, `UNBOOKED` and `SKIPPED`, `BEFORE_LINE` read as
    `UNBOOKED` (section 5, expand), the `qb-resolve` route and its screen, the
-   self-set stamp, and its migration (the switch-on column).
+   self-set stamp, the key lookup, the lost-claim flag and the lookup before
+   finance's match and skip (section 6), and its migration (the switch-on and
+   create-attempt columns).
 4. **Income:** gate wiring, immediate `NO_DEPOSIT`, the "book" action, the
    late-payout path (reconcile before the stamp, no window cut-off after it),
-   the self-set stamp, the NEEDS_MAPPING ordering, and its switch-on column.
+   the self-set stamp, the NEEDS_MAPPING ordering, the key lookup, the
+   lost-claim note and the lookup before finance's match and dismiss
+   (section 6), and its switch-on and create-attempt columns.
 5. **Donation:** gate wiring, `UNBOOKED`, the "book" action, the self-set
-   Benevity stamp, `BEFORE_LINE` read as `UNBOOKED` (section 5, expand), and its
-   migration (`DonationOrgSettings`). In-kind has no posting lane yet; its column comes
+   Benevity stamp, `BEFORE_LINE` read as `UNBOOKED` (section 5, expand), the key
+   lookup, the lost-claim note and the lookup before finance's match and dismiss
+   (section 6), and its migration (`DonationOrgSettings` and the create-attempt
+   column). In-kind has no posting lane yet; its column comes
    with that lane (#2182).
 6. **Rules:** `revenue.md` and, if it has merged, the `principles.md` line from
    #2210.
@@ -304,7 +420,8 @@ One kind per PR. Registry entries first, each in its own PR based on `main`.
    removal of `BEFORE_LINE` from both lanes' code (section 5, contract).
 
 Each lane keeps its own Prisma schema and migrations, so each lane's migration
-ships with that lane's code.
+ships with that lane's code. The four related fixes are separate PRs, outside
+this split.
 
 Only PR 1 changes the security boundary. The new columns and
 `DonationOrgSettings` carry `@sensitivity:internal`, like their neighbours, and
