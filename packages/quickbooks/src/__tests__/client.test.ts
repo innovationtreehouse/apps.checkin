@@ -140,6 +140,18 @@ describe("QuickBooksClient", () => {
     expect(sql(2)).toBe("SELECT * FROM Vendor WHERE DisplayName = 'O\\'Reilly'");
   });
 
+  it("searches Vendors by part of their DisplayName and reads one by id", async () => {
+    const client = new QuickBooksClient(tokens, sandbox);
+    respond("Vendor", [{ Id: "3", DisplayName: "Pat O'Neil" }]);
+    respond("Vendor", [{ Id: "3", DisplayName: "Pat O'Neil" }]);
+    respond("Vendor", []);
+    await expect(client.vendorsMatching("O'Ne%")).resolves.toEqual([{ Id: "3", DisplayName: "Pat O'Neil" }]);
+    await expect(client.vendorById("3")).resolves.toMatchObject({ Id: "3" });
+    await expect(client.vendorById("4")).resolves.toBeNull();
+    expect(sql(0)).toBe("SELECT * FROM Vendor WHERE DisplayName LIKE '%O\\'Ne%' MAXRESULTS 20");
+    expect(sql(1)).toBe("SELECT * FROM Vendor WHERE Id IN ('3')");
+  });
+
   it("reads a Bill's Balance and LinkedTxn so a caller can tell it was paid", async () => {
     const bill = { Id: "7", TxnDate: "2025-03-01", TotalAmt: 50, Balance: 0, LinkedTxn: [{ TxnId: "90", TxnType: "BillPayment" }] };
     respond("Bill", [bill]);

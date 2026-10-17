@@ -2,8 +2,10 @@ import {
   inertCatalogEventSource,
   inertCatalogReader,
   inertOwnerDirectory,
+  inertPeopleDirectory,
   inertQbReader,
   inertQbRefs,
+  inertQbVendors,
   inertSignoffDirectory,
   type CatalogEventSource,
   type CatalogReader,
@@ -11,8 +13,10 @@ import {
   type ExpensePrincipal,
   type OrgIdentity,
   type OwnerDirectory,
+  type PeopleDirectory,
   type QbReader,
   type QbRefs,
+  type QbVendors,
   type ExpensePosting,
   type SignoffDirectory,
 } from "./contract";
@@ -20,6 +24,7 @@ import {
 export interface QuickBooksPorts {
   reader: QbReader;
   refs: QbRefs;
+  vendors: QbVendors;
   /** Null until the host binds QuickBooks: nothing is posted. */
   posting: ExpensePosting | null;
 }
@@ -34,6 +39,8 @@ export interface ExpenseConfig {
   signoff?: SignoffDirectory;
   catalog?: CatalogReader;
   catalogEvents?: CatalogEventSource;
+  /** Display names, for showing who a reimbursee is. */
+  people?: PeopleDirectory;
   quickbooks?: Partial<QuickBooksPorts>;
 }
 
@@ -44,6 +51,7 @@ export interface ExpenseRuntime {
   signoff: SignoffDirectory;
   catalog: CatalogReader;
   catalogEvents: CatalogEventSource;
+  people: PeopleDirectory;
   quickbooks: QuickBooksPorts;
 }
 
@@ -60,9 +68,11 @@ export function configureExpense(config: ExpenseConfig): void {
     signoff: config.signoff ?? inertSignoffDirectory,
     catalog: config.catalog ?? inertCatalogReader,
     catalogEvents: config.catalogEvents ?? inertCatalogEventSource,
+    people: config.people ?? inertPeopleDirectory,
     quickbooks: {
       reader: config.quickbooks?.reader ?? inertQbReader,
       refs: config.quickbooks?.refs ?? inertQbRefs,
+      vendors: config.quickbooks?.vendors ?? inertQbVendors,
       posting: config.quickbooks?.posting ?? null,
     },
   };
