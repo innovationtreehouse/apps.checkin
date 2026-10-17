@@ -46,7 +46,7 @@ Prisma does not wrap a migration file in a transaction on Postgres ([prisma/pris
 
 Every new migration wraps, single-statement ones included. CI enforces this for every `migration.sql` a PR **adds**, in checkin's chain and in every `packages/*/prisma/migrations` chain: `migration-safety.yml` → "New migrations wrap in a transaction" fails a file whose first SQL line is not `BEGIN;` or whose last is not `COMMIT;` (blank and comment lines ignored). Migrations already on the base branch are never checked; editing one to satisfy the lint would break rule 6's checksum. Two explicit escapes:
 
-- **SQL Postgres refuses inside a transaction** — `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, and the like. Add a comment line `-- no-transaction: <reason>` and make every statement retry-safe (`IF NOT EXISTS` / `IF EXISTS`), since a failure can leave some statements applied. `20260818140000_raw_badge_log_client_event_id` is the model.
+- **SQL Postgres refuses inside a transaction** — `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, and the like. Add a comment line `-- no-transaction: <reason>` and make every statement retry-safe (`IF NOT EXISTS` / `IF EXISTS`), since a failure can leave some statements applied. `20260818140000_raw_badge_log_client_event_id` is the model for retry-safe statements.
 - **A coalesce baseline** (its directory holds `reconcile.sql`) is exempt: it only ever runs on an empty database, which recovers by being recreated.
 
 ### 6. A failed migration wedges every future deploy until a human intervenes

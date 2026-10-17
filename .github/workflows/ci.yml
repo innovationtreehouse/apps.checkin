@@ -255,6 +255,8 @@ jobs:
         run: |
           scripts/each-library.sh run db:generate
           npm -w @inventory/s-ingest-core run db:generate:security
+          # Intent-to-add makes a never-committed map show up in the diff.
+          git add -N checkin-app/src/security/generated/
           git diff --exit-code checkin-app/src/security/generated/ || (echo '::error::checkin-app/src/security/generated/ is stale or missing a map; run prisma generate in checkin-app, scripts/each-library.sh run db:generate, and npm -w @inventory/s-ingest-core run db:generate:security, then commit' && exit 1)
 
       # Fast type feedback. NOTE: tsc does NOT resolve bundler imports, so it

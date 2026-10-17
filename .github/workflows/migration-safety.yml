@@ -438,7 +438,7 @@ jobs:
           echo "Released history intact."
 
   # Deploy rule 5: every migration.sql this PR adds opens with BEGIN; and
-  # closes with COMMIT; (blank and comment lines ignored). Applied history is
+  # closes with COMMIT; (blank lines, `--` lines and `/* */` blocks ignored). Applied history is
   # immutable (rule 6), so only added files are checked. Escapes: a
   # `-- no-transaction: <reason>` line for SQL Postgres refuses inside a
   # transaction (CREATE INDEX CONCURRENTLY), and a coalesce baseline (its dir
@@ -463,7 +463,7 @@ jobs:
           while read -r f; do
             [ -f "$(dirname "$f")/reconcile.sql" ] && continue
             grep -qE '^[[:space:]]*--[[:space:]]*no-transaction:[[:space:]]*[^[:space:]]' "$f" && continue
-            SQL=$(grep -vE '^[[:space:]]*(--.*)?$' "$f" || true)
+            SQL=$(perl -0777 -pe 's{/\*.*?\*/}{}gs' "$f" | grep -vE '^[[:space:]]*(--.*)?$' || true)
             if ! head -n1 <<<"$SQL" | grep -qxE '[[:space:]]*BEGIN;[[:space:]]*' ||
                ! tail -n1 <<<"$SQL" | grep -qxE '[[:space:]]*COMMIT;[[:space:]]*'; then
               echo "::error file=$f::$f must open with BEGIN; and close with COMMIT; (deploy rule 5). For SQL that cannot run in a transaction, add '-- no-transaction: <reason>' and make each statement retry-safe."
