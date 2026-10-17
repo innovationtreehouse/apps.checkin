@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { redactSecrets } from "./index";
+import { REDACT_MAX_CHARS, redactSecrets } from "./index";
 
 describe("redactSecrets", () => {
   it("strips URLs with a query string, keeping plain ones", () => {
@@ -20,6 +20,29 @@ describe("redactSecrets", () => {
     expect(redactSecrets("used key shpat_0123456789abcdef0123")).toBe("used key [redacted]");
     expect(redactSecrets("Bearer eyJhbGciOi.payload.sig")).toBe("Bearer [redacted]");
     expect(redactSecrets("connect postgres://app:password=hunter2@db")).not.toContain("hunter2");
+  });
+
+  it("strips env-style secret assignments, secret-named JSON fields and connection-string passwords", () => {
+    expect(redactSecrets("missing CRON_SECRET=abc123def in env")).toBe("missing CRON_SECRET=[redacted] in env");
+    expect(redactSecrets("SHOPIFY_API_KEY=k1 DB_PASSWORD=p2")).toBe("SHOPIFY_API_KEY=[redacted] DB_PASSWORD=[redacted]");
+    expect(redactSecrets('{"shopifyWebhookSecret":"whsec_a\\"b","ok":true}')).toBe('{"shopifyWebhookSecret":"[redacted]","ok":true}');
+    expect(redactSecrets("connect postgresql://app:hunter2pass@db.internal:5432/app")).toBe(
+      "connect postgresql://app:[redacted]@db.internal:5432/app",
+    );
+  });
+
+  it("stays linear on long separator-free input", () => {
+    for (const unit of ["a", "a1", "a.", "a+", "x@", '"a']) {
+      const input = unit.repeat(100_000 / unit.length);
+      const start = performance.now();
+      redactSecrets(input);
+      expect(performance.now() - start).toBeLessThan(100);
+    }
+  });
+
+  it("truncates input past the cap with a marker", () => {
+    const out = redactSecrets("x".repeat(REDACT_MAX_CHARS + 10));
+    expect(out).toBe(`${"x".repeat(REDACT_MAX_CHARS)}…[truncated 10 chars]`);
   });
 
   it("strips long opaque strings", () => {
