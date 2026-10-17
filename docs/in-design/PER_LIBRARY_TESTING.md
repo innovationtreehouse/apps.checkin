@@ -215,7 +215,8 @@ All of this section is **UNPROVEN**: none of it has been run.
 
 It prints that it would run `npm run test:all`, which is every app unit test
 and every package and function vitest, database containers included. It refuses
-unless `--yes` is also given.
+unless `--yes` is also given, and runs with the same database environment as
+`--db`: `PG_TEST_HARNESS` unset and `REQUIRE_DB=1`.
 
 ## Agent rule
 

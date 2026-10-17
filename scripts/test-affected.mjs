@@ -78,12 +78,19 @@ function die(msg) {
 }
 const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean);
 
+// Heavy tiers must reach a real database: drop the light-run switch and fail if none comes up.
+const requireDbEnv = () => {
+  const env = { ...process.env, REQUIRE_DB: '1' };
+  delete env.PG_TEST_HARNESS;
+  return env;
+};
+
 // ---- --all: the full suites, only on explicit confirmation
 if (opts.all) {
   console.log('Plan: npm run test:all (every jest unit test, every package and function vitest incl. DB containers).');
   if (!opts.yes) die('--all runs every suite on this machine. CI already does. Re-run with --all --yes to confirm.');
   if (opts.dry) process.exit(0);
-  process.exit(spawnSync('npm', ['run', 'test:all'], { cwd: root, stdio: 'inherit' }).status ?? 1);
+  process.exit(spawnSync('npm', ['run', 'test:all'], { cwd: root, env: requireDbEnv(), stdio: 'inherit' }).status ?? 1);
 }
 
 // ---- changed files: committed since the merge base, plus staged, unstaged and untracked
@@ -188,12 +195,6 @@ function jestList(script) {
 // ---- plan
 const steps = [];
 const add = (label, cmd, args, cwd, env) => steps.push({ label, cmd, args, cwd, env });
-// Heavy tiers must reach a real database: drop the light-run switch and fail if none comes up.
-const requireDbEnv = () => {
-  const env = { ...process.env, REQUIRE_DB: '1' };
-  delete env.PG_TEST_HARNESS;
-  return env;
-};
 const strippedDbEnv = () => {
   const env = { ...process.env, PG_TEST_HARNESS: 'off' };
   for (const k of Object.keys(env)) if (/DATABASE_URL$/.test(k)) delete env[k];
