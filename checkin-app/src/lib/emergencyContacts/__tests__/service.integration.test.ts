@@ -40,7 +40,7 @@ async function makeHousehold(suffix: string) {
     return hh.id;
 }
 
-async function addMember(householdId: number, data: { name?: string; email?: string; phone?: string }) {
+async function addMember(householdId: number, data: { name: string; email?: string; phone?: string }) {
     return prisma.person.create({ data: { householdId, ...data } });
 }
 
@@ -135,6 +135,50 @@ describe("upsertPrimaryContact — partial tolerance + member rejection", () => 
     it("rejects a malformed phone even when the name is blank", async () => {
         const hh = await makeHousehold("upsert-badphone");
         await expect(upsertPrimaryContact(prisma, hh, { name: "", phone: "123" })).rejects.toMatchObject({ code: "incomplete" });
+    });
+});
+
+describe("upsertPrimaryContact — a partial save can't degrade a stored contact", () => {
+    it("refuses a blank name and leaves the stored contact untouched", async () => {
+        const hh = await makeHousehold("upsert-degrade-name");
+        const before = await createContact(prisma, hh, { name: "Aunt May", phone: "555-555-2000", email: "may@example.com" });
+
+        await expect(upsertPrimaryContact(prisma, hh, { name: "", phone: "555-555-2000" })).rejects.toMatchObject({ code: "incomplete" });
+
+        const after = await prisma.emergencyContact.findUnique({ where: { id: before.id } });
+        expect(after).toMatchObject({ name: "Aunt May", phone: "555-555-2000", email: "may@example.com" });
+        expect(await householdHasValidContact(prisma, hh)).toBe(true);
+    });
+
+    it("refuses a blank phone, and an email-only payload can't strip name+phone", async () => {
+        const hh = await makeHousehold("upsert-degrade-phone");
+        const before = await createContact(prisma, hh, { name: "Aunt May", phone: "555-555-2000" });
+
+        await expect(upsertPrimaryContact(prisma, hh, { name: "Aunt May", phone: "" })).rejects.toMatchObject({ code: "incomplete" });
+        // Name and phone absent entirely: the stored values carry, so this is a
+        // plain email edit rather than a wipe.
+        const updated = await upsertPrimaryContact(prisma, hh, { email: "may@example.com" });
+        expect(updated).toMatchObject({ id: before.id, name: "Aunt May", phone: "555-555-2000", email: "may@example.com" });
+        expect(await householdHasValidContact(prisma, hh)).toBe(true);
+    });
+
+    it("keeps a stored email when the caller collects no email field", async () => {
+        const hh = await makeHousehold("upsert-keep-email");
+        await upsertPrimaryContact(prisma, hh, { name: "Aunt May", phone: "555-555-2000", email: "may@example.com" });
+
+        const updated = await upsertPrimaryContact(prisma, hh, { name: "Uncle Ben", phone: "555-555-3000" });
+        expect(updated).toMatchObject({ name: "Uncle Ben", phone: "555-555-3000", email: "may@example.com", emailNorm: "may@example.com" });
+    });
+
+    it("still lets a resumable form build up a partial contact from nothing", async () => {
+        const hh = await makeHousehold("upsert-build-up");
+        const first = await upsertPrimaryContact(prisma, hh, { name: "Aunt May", phone: "" });
+        expect(first).toMatchObject({ name: "Aunt May", phone: "" });
+        expect(await householdHasValidContact(prisma, hh)).toBe(false);
+
+        const second = await upsertPrimaryContact(prisma, hh, { phone: "555-555-2000" });
+        expect(second).toMatchObject({ id: first!.id, name: "Aunt May", phone: "555-555-2000" });
+        expect(await householdHasValidContact(prisma, hh)).toBe(true);
     });
 });
 

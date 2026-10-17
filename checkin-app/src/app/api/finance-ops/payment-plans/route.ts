@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { handler } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
-import { isActiveOrgMember, ACTIVE_ORG_MEMBER_INCLUDE } from "@/lib/orgMembership";
+import { isActiveOrgMember } from "@/lib/orgMembership";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { STATES, fromWhere } from "@/lib/programs/enrollmentState";
 import { LIVE_PERSON } from "@/lib/person/filters";
@@ -28,12 +28,25 @@ export const GET = handler('GET /api/finance-ops/payment-plans', async ({ req })
             // can't drift from the state table.
             where: { ...(holdsQueue ? STATES.PENDING_HOLD_FAILED.where : STATES.PENDING_HELD.where), person: LIVE_PERSON },
             include: {
-                // Nests household->orgMembership (same shape as ACTIVE_ORG_MEMBER_INCLUDE)
-                // so the board can see CURRENT membership while a request is still
-                // pending — wasOrgMemberAtApproval is null until approved, so it can't
-                // answer this. Derive live client-side; nothing new to stamp/store here.
-                person: { include: ACTIVE_ORG_MEMBER_INCLUDE },
-                program: true // carries startAt (public) — half of the next-year flag
+                // Nests household→orgMembership so the board can see CURRENT
+                // membership while a request is still pending —
+                // wasOrgMemberAtApproval is null until approved, so it can't
+                // answer this. Derive live client-side; nothing new to stamp.
+                // householdMembers (leads) carry the family contact email.
+                person: {
+                    include: {
+                        household: {
+                            include: {
+                                orgMembership: true,
+                                householdMembers: {
+                                    where: { isHouseholdLead: true, ...LIVE_PERSON },
+                                    select: { id: true, name: true, email: true },
+                                },
+                            },
+                        },
+                    },
+                },
+                program: true, // carries startAt (public) — half of the next-year flag
             },
             orderBy: {
                 pendingSince: 'asc'
@@ -62,13 +75,13 @@ export const POST = withAuth(
                 return apiError("programId and participantId are required", 400);
             }
 
-            // Conflict of interest: a board member may not approve their OWN household's
-            // program payment plan (activate an enrollment without payment for their own
-            // family). Sysadmin bypasses.
+            // Conflict of interest: no actor may approve their OWN household's program
+            // payment plan (activate an enrollment without payment for their own
+            // family). No role bypasses this.
             if (auth.type === 'session') {
                 const target = await prisma.person.findUnique({ where: { id: participantId }, select: { householdId: true } });
-                if (await hasHouseholdConflict(prisma, auth.user.id, target?.householdId, { isSysadmin: auth.user.isSysadmin === true })) {
-                    return apiError("You cannot approve your own household's payment plan — a sysadmin must.", 403);
+                if (await hasHouseholdConflict(prisma, auth.user.id, target?.householdId)) {
+                    return apiError("You cannot approve your own household's payment plan — someone outside your household must.", 403);
                 }
             }
 
@@ -82,22 +95,24 @@ export const POST = withAuth(
                 isPaymentPlanRequested: false, // cleared since it's approved
                 pendingSince: null, // reset
                 wasOrgMemberAtApproval,
-                // Hold-ledger (product decision 2026-07-06): approval CONSUMES the
-                // hold — the applicant keeps the seat permanently as a comped
-                // enrollment, so it must never be released later (e.g. if this
-                // now-ACTIVE participant is later removed, that removal must NOT
-                // fire a +1 — see withdrawAndReleaseHold, which only releases when
-                // inventoryHeldAt is still set).
+                // Approval consumes the hold.
                 inventoryHeldAt: null,
             };
 
             // Scope to the pending request so approving a non-pending/nonexistent
             // request is a no-op error, mirroring the GET queue's filter.
-            const { count } = await prisma.programParticipant.updateMany({
-                // T5 approve CAS: from-state status from the definition (#1080); isPaymentPlanRequested stays literal.
-                where: { programId, personId: participantId, isPaymentPlanRequested: true, ...fromWhere('PENDING_HELD') },
-                data
+            // T5 approve CAS: from-state status from the definition (#1080); isPaymentPlanRequested stays literal.
+            const pending = { programId, personId: participantId, isPaymentPlanRequested: true, ...fromWhere('PENDING_HELD') };
+            // A held seat carries over as seatTakenWithoutSaleAt, so withdrawal can
+            // return it. A request whose hold failed took no seat and records none.
+            const held = await prisma.programParticipant.updateMany({
+                where: { ...pending, inventoryHeldAt: { not: null } },
+                data: { ...data, seatTakenWithoutSaleAt: new Date() },
             });
+            const count = held.count || (await prisma.programParticipant.updateMany({
+                where: { ...pending, inventoryHeldAt: null },
+                data,
+            })).count;
 
             if (count === 0) {
                 return apiError("No pending payment-plan request", 409);

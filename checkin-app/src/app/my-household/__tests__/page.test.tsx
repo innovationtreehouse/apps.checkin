@@ -7,6 +7,7 @@ jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } 
 import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
+import { pinTimezone } from "@/test-helpers/tz";
 import HouseholdPage from "../page";
 
 // Successes toast via notifications.show (no inline banner); assert on the mock.
@@ -67,6 +68,18 @@ function mockRoutes(overrides: Record<string, unknown | (() => unknown)> = {}) {
 }
 
 describe("HouseholdPage", () => {
+  pinTimezone();
+
+  // memberSince is a calendar date at UTC midnight; a Jan 1 start read with a
+  // local getFullYear() west of UTC reports the previous year.
+  it("reads the memberSince year in UTC, not the viewer's local zone", async () => {
+    setSession({ id: 10, email: "sam@example.com" });
+    mockRoutes();
+    renderWithProviders(<HouseholdPage />);
+
+    expect(await screen.findByText("✓ Member since 2024")).toBeInTheDocument();
+  });
+
   it("loads and renders household members", async () => {
     setSession({ id: 10, email: "sam@example.com" });
     mockRoutes();
@@ -87,6 +100,7 @@ describe("HouseholdPage", () => {
     await screen.findByRole("heading", { name: "Smith Household", level: 1 });
 
     fireEvent.click(screen.getByRole("button", { name: "+ Add Household Member" }));
+    expect(screen.getByText(/Printed on name badges exactly as typed/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Full Name"), { target: { value: "Robin Smith" } });
     fireEvent.click(screen.getByLabelText("Individual is over 25"));
     // Phone must be capturable on ADD, not only on a later edit.
@@ -314,7 +328,7 @@ describe("HouseholdPage", () => {
         "/api/household/member",
         expect.objectContaining({
           method: "PATCH",
-          body: JSON.stringify({ participantId: 12, name: "Casey Smith", email: "", dob: "", phone: "5125559999", isLead: true, over25: true, allergies: "" }),
+          body: JSON.stringify({ participantId: 12, name: "Casey Smith", nickname: "", email: "", dob: "", phone: "5125559999", isLead: true, over25: true, allergies: "" }),
         }),
       ),
     );
@@ -325,6 +339,48 @@ describe("HouseholdPage", () => {
     expect(screen.queryByLabelText("Household Lead")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expectToast("Household member updated successfully!"));
+  });
+
+  // A member with a linked sign-in keeps their sign-in address: the field is locked
+  // with how-to-change help, and the edit leaves email out of the PATCH body.
+  describe("signed-in member email", () => {
+    const signedInHousehold = {
+      ...householdData,
+      householdMembers: [
+        { id: 10, name: "Sam Smith", email: "sam@example.com", phone: "5125551234", dateOfBirth: "1980-01-01", isHouseholdLead: true, hasSignIn: true },
+        { id: 12, name: "Casey Smith", email: "", isDeclaredAdult: true, isHouseholdLead: false, hasSignIn: false },
+      ],
+    };
+
+    it.each([
+      ["Board <board@example.org>", "This is the address you sign in with. To change it, email the board at board@example.org."],
+      [null, "This is the address you sign in with. To change it, contact the board."],
+    ])("locks the email with help text (reply-to %p) and omits it on save", async (boardReplyTo, help) => {
+      setSession({ id: 10, email: "sam@example.com" });
+      const fetchMock = mockRoutes({ "/api/household": { household: signedInHousehold, boardReplyTo } });
+      renderWithProviders(<HouseholdPage />);
+      await screen.findByRole("heading", { name: "Smith Household", level: 1 });
+
+      fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+      expect(screen.getByLabelText("Email")).toBeDisabled();
+      expect(screen.getByText(help)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expectToast("Household member updated successfully!"));
+      const [, patchOpts] = fetchMock.mock.calls.find(([url, init]) => String(url) === "/api/household/member" && init?.method === "PATCH")!;
+      expect(JSON.parse(patchOpts!.body as string)).not.toHaveProperty("email");
+    });
+
+    it("leaves the email editable for a member without a sign-in", async () => {
+      setSession({ id: 10, email: "sam@example.com" });
+      mockRoutes({ "/api/household": { household: signedInHousehold, boardReplyTo: null } });
+      renderWithProviders(<HouseholdPage />);
+      await screen.findByRole("heading", { name: "Smith Household", level: 1 });
+
+      fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[1]);
+      expect(screen.getByLabelText("Email")).not.toBeDisabled();
+      expect(screen.queryByText(/This is the address you sign in with/)).not.toBeInTheDocument();
+    });
   });
 
   it("promotes a household member to lead, and shows a server error on failure", async () => {
@@ -470,59 +526,92 @@ describe("HouseholdPage", () => {
     expect(screen.queryByText("Duplicate contact.")).not.toBeInTheDocument();
   });
 
-  it("covers the remaining server-error and network-error branches (settings, contacts, member edit, lead)", async () => {
-    const household = { ...householdData, householdMembers: [...householdData.householdMembers, { id: 12, name: "Casey Smith", email: "", isDeclaredAdult: true }] };
+  // ── Remaining server-error and network-error branches, one write route per
+  //    test ───────────────────────────────────────────────────────────────────
+  // Casey is a promotable non-lead adult; two contacts on file so either row's
+  // Remove is enabled (the last valid contact's is not).
+  const failureHousehold = { ...householdData, householdMembers: [...householdData.householdMembers, { id: 12, name: "Casey Smith", email: "", isDeclaredAdult: true }] };
+  const failureLoadRules = [
+    { url: "/api/household/emergency-contacts", method: "GET", result: { ok: true, body: { contacts: [
+      { id: 9, name: "Old Contact", phone: "5125550000", email: null, relationship: null, priority: 1, invalid: false },
+      { id: 8, name: "Backup Contact", phone: "5125550001", email: null, relationship: null, priority: 2, invalid: false },
+    ] } } },
+    { url: "/api/household", method: "GET", result: { ok: true, body: { household: failureHousehold } } },
+  ];
+
+  /** Render the loaded page as its lead, with `rules` layered over the GET routes. */
+  async function renderWithFailingRoutes(rules: Parameters<typeof routedFetch>[0]) {
     setSession({ id: 10, email: "sam@example.com" });
-    let settingsAttempt = 0;
-    let deleteAttempt = 0;
-    let editAttempt = 0;
-    const fetchMock = routedFetch([
-      { url: "/api/household/emergency-contacts/9", method: "DELETE", result: () => (deleteAttempt++ === 0 ? { ok: false, status: 400, body: { error: "Contact not found." } } : { throws: true }) },
-      { url: "/api/household/emergency-contacts", method: "POST", result: { throws: true } },
-      { url: "/api/household/emergency-contacts", method: "GET", result: { ok: true, body: { contacts: [
-        { id: 9, name: "Old Contact", phone: "5125550000", email: null, relationship: null, priority: 1, invalid: false },
-        { id: 8, name: "Backup Contact", phone: "5125550001", email: null, relationship: null, priority: 2, invalid: false },
-      ] } } },
-      { url: "/api/household/settings", method: "PATCH", result: () => (settingsAttempt++ === 0 ? { ok: false, status: 400, body: {} } : { throws: true }) },
-      { url: "/api/household/member", method: "PATCH", result: () => (editAttempt++ === 0 ? { ok: false, status: 400, body: { error: "Update rejected." } } : { throws: true }) },
-      { url: "/api/household/lead", method: "POST", result: { throws: true } },
-      { url: "/api/household", method: "GET", result: { ok: true, body: { household } } },
-    ]);
+    const fetchMock = routedFetch([...rules, ...failureLoadRules]);
     renderWithProviders(<HouseholdPage />);
     await screen.findByRole("heading", { name: "Smith Household", level: 1 });
+    return fetchMock;
+  }
 
-    // Address settings: client validation error, then server failure, then network error.
+  it("surfaces client-validation, server, and network failures when saving the address", async () => {
+    let attempt = 0;
+    await renderWithFailingRoutes([
+      { url: "/api/household/settings", method: "PATCH", result: () => (attempt++ === 0 ? { ok: false, status: 400, body: {} } : { throws: true }) },
+    ]);
+
     fireEvent.change(screen.getByLabelText(/Street Address/), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Save household details" }));
     expect(await screen.findByText("Street address is required.")).toBeInTheDocument();
+
     fireEvent.change(screen.getByLabelText(/Street Address/), { target: { value: "123 Main St" } });
     fireEvent.click(screen.getByRole("button", { name: "Save household details" }));
     expect(await screen.findByText("Failed to update some settings.")).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: "Save household details" }));
     await waitFor(() => expectToast("Network error saving settings."));
+  });
 
-    // Emergency contact add: network error.
+  it("toasts a network failure when adding an emergency contact", async () => {
+    await renderWithFailingRoutes([
+      { url: "/api/household/emergency-contacts", method: "POST", result: { throws: true } },
+    ]);
+
     fireEvent.click(screen.getByRole("button", { name: "+ Add Contact" }));
     fireEvent.change(screen.getByLabelText("Contact Name"), { target: { value: "New Contact" } });
     fireEvent.change(screen.getByLabelText("Phone"), { target: { value: "5125559000" } });
     fireEvent.click(screen.getByRole("button", { name: "Add Contact" }));
-    await waitFor(() => expectToast("Network error saving emergency contact."));
 
-    // Emergency contact delete: server failure, then network error (same row both times).
+    await waitFor(() => expectToast("Network error saving emergency contact."));
+  });
+
+  it("surfaces server and network failures when removing an emergency contact", async () => {
+    let attempt = 0;
+    await renderWithFailingRoutes([
+      { url: "/api/household/emergency-contacts/9", method: "DELETE", result: () => (attempt++ === 0 ? { ok: false, status: 400, body: { error: "Contact not found." } } : { throws: true }) },
+    ]);
+
+    // Same row both times — the failed delete leaves it on the list.
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
     expect(await screen.findByText("Contact not found.")).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
     await waitFor(() => expectToast("Network error removing emergency contact."));
+  });
 
-    // Household member edit: server failure, then network error.
+  it("surfaces server and network failures when editing a household member", async () => {
+    let attempt = 0;
+    await renderWithFailingRoutes([
+      { url: "/api/household/member", method: "PATCH", result: () => (attempt++ === 0 ? { ok: false, status: 400, body: { error: "Update rejected." } } : { throws: true }) },
+    ]);
+
     fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Update rejected.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expectToast("Network error updating household member."));
+  });
 
-    // Make Lead: network error.
+  it("toasts a network failure when promoting a household member to lead", async () => {
+    const fetchMock = await renderWithFailingRoutes([
+      { url: "/api/household/lead", method: "POST", result: { throws: true } },
+    ]);
+
     fireEvent.click(screen.getByRole("button", { name: "Make Lead" }));
+
     await waitFor(() => expectToast("Network error promoting household member."));
     expect(fetchMock).toHaveBeenCalledWith("/api/household/lead", expect.objectContaining({ method: "POST" }));
   });

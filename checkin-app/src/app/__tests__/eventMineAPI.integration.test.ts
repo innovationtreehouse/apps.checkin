@@ -16,10 +16,13 @@ jest.mock('next-auth/next', () => ({
 describe('My Events API Integration Tests', () => {
     let testUserId: number;
     let testVolunteerId: number;
+    let testLeadId: number;
     let testProgram1Id: number;
     let testProgram2Id: number;
+    let testProgram3Id: number;
     let testEventUpcoming1Id: number;
     let testEventUpcoming2Id: number;
+    let testEventUpcoming3Id: number;
     let testEventPastId: number;
 
     beforeAll(async () => {
@@ -54,8 +57,15 @@ describe('My Events API Integration Tests', () => {
         });
         testVolunteerId = volunteer.id;
 
+        const lead = await prisma.person.create({
+            data: { email: 'lead-mine-events-test@example.com', name: 'Lead Mine Test', household: { create: { name: "Test HH" } } }
+        });
+        testLeadId = lead.id;
+
         const program1 = await prisma.program.create({
             data: {
+                startAt: new Date('2026-01-01'),
+                endAt: new Date('2026-12-31'),
                 name: 'Mine Test Program 1',
                 maxParticipants: 10,
                 minAge: 5,
@@ -66,6 +76,8 @@ describe('My Events API Integration Tests', () => {
 
         const program2 = await prisma.program.create({
             data: {
+                startAt: new Date('2026-01-01'),
+                endAt: new Date('2026-12-31'),
                 name: 'Mine Test Program 2',
                 maxParticipants: 10,
                 minAge: 5,
@@ -73,6 +85,20 @@ describe('My Events API Integration Tests', () => {
             }
         });
         testProgram2Id = program2.id;
+
+        // Program 3 has a lead mentor and no enrollments/volunteers.
+        const program3 = await prisma.program.create({
+            data: {
+                startAt: new Date('2026-01-01'),
+                endAt: new Date('2026-12-31'),
+                name: 'Mine Test Program 3',
+                maxParticipants: 10,
+                minAge: 5,
+                maxAge: 18,
+                leadMentorId: testLeadId,
+            }
+        });
+        testProgram3Id = program3.id;
 
         // User is enrolled in Program 1
         await prisma.programParticipant.create({
@@ -128,6 +154,17 @@ describe('My Events API Integration Tests', () => {
         });
         testEventUpcoming2Id = event2.id;
 
+        // Event for Program 3 (upcoming) — only the lead mentor is tied to it
+        const event3 = await prisma.event.create({
+            data: {
+                name: 'Mine Test Event Upcoming 3',
+                programId: testProgram3Id,
+                startAt: futureStart2,
+                endAt: new Date(futureStart2.getTime() + 1 * 60 * 60 * 1000)
+            }
+        });
+        testEventUpcoming3Id = event3.id;
+
         // RSVP for the user on event 1
         await prisma.rSVP.create({
             data: {
@@ -141,28 +178,28 @@ describe('My Events API Integration Tests', () => {
     afterAll(async () => {
         // Clean up
         await prisma.rSVP.deleteMany({
-            where: { personId: { in: [testUserId, testVolunteerId] } }
+            where: { personId: { in: [testUserId, testVolunteerId, testLeadId] } }
         });
         await prisma.event.deleteMany({
-            where: { id: { in: [testEventUpcoming1Id, testEventUpcoming2Id, testEventPastId] } }
+            where: { id: { in: [testEventUpcoming1Id, testEventUpcoming2Id, testEventUpcoming3Id, testEventPastId] } }
         });
         await prisma.programParticipant.deleteMany({
-            where: { programId: { in: [testProgram1Id, testProgram2Id] } }
+            where: { programId: { in: [testProgram1Id, testProgram2Id, testProgram3Id] } }
         });
         await prisma.programVolunteer.deleteMany({
-            where: { programId: { in: [testProgram1Id, testProgram2Id] } }
+            where: { programId: { in: [testProgram1Id, testProgram2Id, testProgram3Id] } }
         });
         await prisma.program.deleteMany({
-            where: { id: { in: [testProgram1Id, testProgram2Id] } }
+            where: { id: { in: [testProgram1Id, testProgram2Id, testProgram3Id] } }
         });
         // RESTRICT: delete participants before their (auto-created) households.
         const householdIds = (await prisma.person.findMany({
-            where: { id: { in: [testUserId, testVolunteerId] } },
+            where: { id: { in: [testUserId, testVolunteerId, testLeadId] } },
             select: { householdId: true }
         })).map(p => p.householdId);
 
         await prisma.person.deleteMany({
-            where: { id: { in: [testUserId, testVolunteerId] } }
+            where: { id: { in: [testUserId, testVolunteerId, testLeadId] } }
         });
         await prisma.household.deleteMany({
             where: { id: { in: householdIds } }
@@ -206,6 +243,20 @@ describe('My Events API Integration Tests', () => {
             expect(data.length).toBe(1); // Only the upcoming event for Program 2
             
             expect(data[0].name).toBe('Mine Test Event Upcoming 2');
+        });
+
+        it('should return upcoming events for programs the person leads', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testLeadId }
+            });
+            const res = await GET(new Request('http://localhost') as unknown as import("next/server").NextRequest) as Response;
+            expect(res.status).toBe(200);
+
+            const data = await res.json();
+            expect(data.length).toBe(1);
+            expect(data[0].name).toBe('Mine Test Event Upcoming 3');
+            expect(data[0].isLead).toBe(true);
+            expect(data[0].isVolunteer).toBe(false);
         });
 
         it('should not return past events', async () => {

@@ -9,6 +9,7 @@ import { Tabs } from "@mantine/core";
 const TABS = [
   { href: "/attendance/current", label: "Current" },
   { href: "/attendance/manual", label: "Add Past Visit" },
+  { href: "/attendance/my-visits", label: "My Visits" },
   { href: "/attendance/household", label: "Household Check-ins" },
 ];
 

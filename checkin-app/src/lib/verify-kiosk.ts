@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { config } from "./config";
+import { stampKioskSeen } from "./kioskSeen";
 
 /**
  * Verify an Ed25519 signature from the kiosk client.
@@ -18,8 +19,12 @@ import { config } from "./config";
  * verbatim within the 60s timestamp window). Both are required: binding alone
  * stops tampering, not replay.
  *
- * NOTE: the signed-message format changed (nonce added) — client (client.py /
- * badge.py) and server MUST ship together or old clients fail verification.
+ * The message format is a contract with the Python kiosk client
+ * (client/client.py) — a deployed kiosk signing a different format fails every
+ * request here. It is pinned by the golden vector in
+ * client/kiosk-signing-vector.test.json, which this module's test and
+ * client/test_signing_vector.py both check, so a change on either side that
+ * isn't mirrored turns that side red.
  *
  * Supports multiple comma-separated public keys in KIOSK_PUBLIC_KEY env var.
  * Each key should be a hex-encoded 32-byte Ed25519 public key.
@@ -128,6 +133,7 @@ export function verifyKioskSignature(
         return { ok: false, status: 401, error: "Replay detected" };
     }
     seenNonces.set(nonceHeader, nowMs + MAX_AGE_SECONDS * 1000);
+    stampKioskSeen(nowMs);
 
     return { ok: true };
 }

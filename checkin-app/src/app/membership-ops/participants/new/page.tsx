@@ -6,7 +6,7 @@ import { useRequireRole } from '@/hooks/useRequireRole';
 import { AdminPageHeader } from '@/components/admin/AdminPageHeader';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { isYouth } from '@/lib/time';
-import { Button, Card, Checkbox, Container, Paper, Stack, Text, TextInput } from '@mantine/core';
+import { Button, Card, Container, Paper, Stack, Text, TextInput } from '@mantine/core';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { notifications } from '@mantine/notifications';
 
@@ -33,6 +33,7 @@ function NewParticipantForm() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [parentEmail, setParentEmail] = useState("");
+  const [parentName, setParentName] = useState("");
   const [dob, setDob] = useState("");
 
   // Household selection state (the EntityPicker owns the transient query/results)
@@ -41,7 +42,6 @@ function NewParticipantForm() {
 
   const isYouthSelected = isYouth(dob);
 
-  const [alreadyMember, setAlreadyMember] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<{ email?: string }>({});
@@ -89,9 +89,9 @@ function NewParticipantForm() {
           name,
           email: email || null,
           parentEmail: isYouthSelected ? parentEmail : null,
+          parentName: isYouthSelected && parentEmail ? parentName : null,
           dob: dob || null,
-          householdId: householdId ? parseInt(householdId) : null,
-          alreadyMember: !householdId && alreadyMember
+          householdId: householdId ? parseInt(householdId) : null
         })
       });
 
@@ -102,10 +102,10 @@ function NewParticipantForm() {
         setName("");
         setEmail("");
         setParentEmail("");
+        setParentName("");
         setDob("");
         setHouseholdId("");
         setHouseholdSearch("");
-        setAlreadyMember(false);
       } else if (data.fields?.includes("email")) {
         setFieldErrors({ email: "This email is already registered." });
       } else {
@@ -118,7 +118,7 @@ function NewParticipantForm() {
     }
   };
 
-  const submitDisabled = saving || (!isYouthSelected && !email && !householdId) || (isYouthSelected && !parentEmail && !householdId);
+  const submitDisabled = saving || !name.trim() || (!isYouthSelected && !email && !householdId) || (isYouthSelected && !parentEmail && !householdId) || (isYouthSelected && !!parentEmail && !parentName.trim());
 
   return (
     <Container size="md" pb="md">
@@ -143,6 +143,7 @@ function NewParticipantForm() {
           <Stack>
             <TextInput
               label="Full Name"
+              description="Printed on name badges exactly as typed — please double-check the spelling."
               value={name}
               onChange={(e) => setName(e.currentTarget.value)}
               placeholder="e.g. Jane Doe"
@@ -178,6 +179,17 @@ function NewParticipantForm() {
                   onChange={(e) => setParentEmail(e.currentTarget.value)}
                   placeholder="parent@example.com"
                 />
+                {parentEmail && (
+                  <TextInput
+                    label="Parent / Guardian Name"
+                    description="Required in case this parent is not already in the system. Printed on name badges exactly as typed — please double-check the spelling."
+                    required
+                    value={parentName}
+                    onChange={(e) => setParentName(e.currentTarget.value)}
+                    placeholder="e.g. John Doe"
+                    mt="sm"
+                  />
+                )}
               </Paper>
             )}
 
@@ -201,15 +213,6 @@ function NewParticipantForm() {
                 onClear={() => { setHouseholdId(""); setHouseholdSearch(""); }}
               />
             </Paper>
-
-            {!householdId && (
-              <Checkbox
-                checked={alreadyMember}
-                onChange={(e) => setAlreadyMember(e.currentTarget.checked)}
-                label="Confirm this household is already a paid member"
-                description="Leave unchecked for new visitors. Membership is normally earned through the application process."
-              />
-            )}
 
             <Button type="submit" disabled={submitDisabled} loading={saving} mt="sm">
               Create Participant

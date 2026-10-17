@@ -16,12 +16,15 @@
 # Frozen 2026-07-19 from the live route tree (161 method keys).
 # Comment lines and blank lines are ignored.
 GET /api/admin/broken-households
-GET /api/admin/settings/localization
 PUT /api/admin/settings/localization
 POST /api/attendance/manual
 GET /api/attendance
 POST /api/attendance
 DELETE /api/attendance
+# NextAuth's own sign-in/callback/session endpoints: NextAuth(authOptions)
+# serves them before any session exists, so handler() cannot front them.
+GET /api/auth/[...nextauth]
+POST /api/auth/[...nextauth]
 GET /api/auth/dev-personas
 POST /api/auth/dev-personas
 GET /api/cron/lifecycle-reconcile
@@ -36,15 +39,11 @@ GET /api/cron/trusted-adult-expiry
 POST /api/dev/bg-consent/complete
 POST /api/dev/shopify/orders-paid
 POST /api/dev/zoho-sign/complete
-POST /api/events/[id]/attendance
 PATCH /api/events/[id]
 PATCH /api/events/[id]/rsvp
 GET /api/events/mine
-GET /api/events
 POST /api/events
-GET /api/facility/badges
 GET /api/facility/trends
-GET /api/facility/visits
 PATCH /api/facility/visits
 DELETE /api/facility/visits
 POST /api/finance-ops/membership-payment-plans/refuse
@@ -53,12 +52,6 @@ POST /api/finance-ops/payment-plans/manual-hold
 POST /api/finance-ops/payment-plans/refuse
 POST /api/finance-ops/payment-plans
 PATCH /api/finance-ops/payments/[id]
-GET /api/finance-ops/payments
-GET /api/finance-ops/s-read/diagnose
-GET /api/finance-ops/s-read/match-audit
-POST /api/finance-ops/s-read/match-audit/track
-GET /api/finance-ops/s-read/sync
-POST /api/finance-ops/s-read/sync
 GET /api/health/db
 GET /api/health
 PATCH /api/household/emergency-contacts/[contactId]
@@ -120,14 +113,11 @@ GET /api/people/search
 GET /api/profile/onboarding-status
 POST /api/profile/onboarding
 PATCH /api/profile
-GET /api/profile/visits
 POST /api/programs/[id]/discount-code
 POST /api/programs/[id]/participants
 DELETE /api/programs/[id]/participants
-POST /api/programs/[id]/publish
 POST /api/programs/[id]/request-payment-plan
 PATCH /api/programs/[id]
-PATCH /api/programs/[id]/settings
 POST /api/programs/[id]/sync-shopify
 POST /api/programs/[id]/volunteers
 PATCH /api/programs/[id]/volunteers
@@ -141,13 +131,10 @@ GET /api/safety/emergency-contacts
 POST /api/safety/trusted-adults/decision
 POST /api/safety/trusted-adults/override
 POST /api/scan
-GET /api/settings/email
 PUT /api/settings/email
 POST /api/settings/membership/bulk-open-renewals
 POST /api/settings/membership/extract-variant
-GET /api/settings/membership
 PUT /api/settings/membership
-GET /api/settings/membership/volunteer-designations
 POST /api/settings/membership/volunteer-designations
 DELETE /api/settings/membership/volunteer-designations
 GET /api/settings/outreach
@@ -159,12 +146,10 @@ GET /api/shop/tools
 POST /api/shop/tools
 GET /api/system-status/audit-log
 GET /api/system-status/config-health
-GET /api/system-status/errors
 GET /api/system-status/health
 GET /api/system-status/kiosk-version
 GET /api/system-status/lifecycle
 PATCH /api/system-status/links/[id]
-GET /api/system-status/links
 POST /api/trusted-adults/[id]/hide
 POST /api/trusted-adults/[id]/renew
 POST /api/trusted-adults/[id]/resubmit

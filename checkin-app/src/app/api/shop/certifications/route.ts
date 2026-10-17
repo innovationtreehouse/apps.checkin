@@ -1,11 +1,25 @@
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { handler, forbidden, unauthorized } from "@/security/handler";
-import { Prisma } from '@/generated/prisma/client';
+import { Prisma, ToolLevel, type ToolStatus } from '@/generated/prisma/client';
 import prisma from "@/lib/prisma";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { isActiveOrgMember } from "@/lib/orgMembership";
+import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
+import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
+
+const CERTIFIER_LEVEL = ToolLevel.MAY_CERTIFY_OTHERS;
+
+/** Audit table for a refused change to a certifier's level, kept apart from ToolStatus edits. */
+const CERTIFIER_CHANGE_REFUSAL_TABLE = "CertifierChangeRefusal";
+
+type CertWrite = { kind: 'written'; cert: ToolStatus } | { kind: 'certifier' } | { kind: 'conflict' };
+
+function isToolLevel(value: unknown): value is ToolLevel {
+    return typeof value === 'string' && (Object.values(ToolLevel) as string[]).includes(value);
+}
 
 // Cert status is PUBLIC BY DESIGN — certifications are physically posted in the
 // shop. This route runs on the @/security handler() runtime so that intent is
@@ -78,8 +92,7 @@ export const POST = withAuth({}, async (req, auth) => {
             return apiError("Missing required fields", 400);
         }
 
-        const validLevels = ["BASIC", "DOF", "CERTIFIED", "INSTRUCTOR", "MAY_CERTIFY_OTHERS"];
-        if (!validLevels.includes(level)) {
+        if (!isToolLevel(level)) {
             return apiError("Invalid certification level", 400);
         }
 
@@ -118,39 +131,85 @@ export const POST = withAuth({}, async (req, auth) => {
         const tId = parseInt(toolId, 10);
         const pId = parseInt(personId, 10);
 
-        const currentStatus = await prisma.toolStatus.findUnique({
-            where: { personId_toolId: { personId: pId, toolId: tId } }
-        });
+        const target = await prisma.person.findUnique({ where: { id: pId }, select: { householdId: true } });
+        if (await refuseSelfGrant(prisma, currentUserId, { personId: pId, householdId: target?.householdId ?? null }, {
+            table: "ToolStatus",
+            attempted: { toolId: tId, level },
+        })) {
+            return apiError(`Forbidden: ${SELF_GRANT_REFUSAL_MESSAGE}`, 403);
+        }
 
-        const upsertedCert = await prisma.toolStatus.upsert({
-            where: {
-                personId_toolId: {
-                    personId: pId,
-                    toolId: tId
+        // Both actor and target must belong to an active member family.
+        // Sysadmin/board are exempt from the actor check (system-level role).
+        if (!isSysAdminOrBoard && !(await isActiveOrgMember(currentUserId))) {
+            return apiError("Forbidden: certifier must belong to an active member family", 403);
+        }
+        if (!(await isActiveOrgMember(pId))) {
+            return apiError("Forbidden: target must belong to an active member family", 403);
+        }
+
+        const outcome = await prisma.$transaction(async (tx): Promise<CertWrite> => {
+            const currentStatus = await tx.toolStatus.findUnique({
+                where: { personId_toolId: { personId: pId, toolId: tId } }
+            });
+
+            if (currentStatus?.level === CERTIFIER_LEVEL && !session.user.isBoardMember) {
+                await tx.auditLog.create({
+                    data: {
+                        actorId: currentUserId,
+                        action: 'EDIT',
+                        tableName: CERTIFIER_CHANGE_REFUSAL_TABLE,
+                        affectedEntityId: pId,
+                        secondaryAffectedEntity: tId,
+                        oldData: currentStatus,
+                        newData: { reason: 'target_is_certifier', attempted: { level } },
+                    }
+                });
+                return { kind: 'certifier' };
+            }
+
+            // Compare-and-set on the level read above, so a concurrent change
+            // (e.g. the target being made a certifier) can't be overwritten.
+            if (currentStatus) {
+                const { count } = await tx.toolStatus.updateMany({
+                    where: { personId: pId, toolId: tId, level: currentStatus.level },
+                    data: { level },
+                });
+                if (count === 0) return { kind: 'conflict' };
+            } else {
+                const { count } = await tx.toolStatus.createMany({
+                    data: { personId: pId, toolId: tId, level },
+                    skipDuplicates: true,
+                });
+                if (count === 0) return { kind: 'conflict' };
+            }
+            const cert = await tx.toolStatus.findUniqueOrThrow({
+                where: { personId_toolId: { personId: pId, toolId: tId } }
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    actorId: currentUserId,
+                    action: currentStatus ? 'EDIT' : 'CREATE',
+                    tableName: 'ToolStatus',
+                    affectedEntityId: pId,
+                    secondaryAffectedEntity: tId,
+                    oldData: currentStatus ?? Prisma.JsonNull,
+                    newData: cert
                 }
-            },
-            update: {
-                level: level as 'BASIC' | 'DOF' | 'CERTIFIED' | 'INSTRUCTOR' | 'MAY_CERTIFY_OTHERS'
-            },
-            create: {
-                personId: pId,
-                toolId: tId,
-                level: level as 'BASIC' | 'DOF' | 'CERTIFIED' | 'INSTRUCTOR' | 'MAY_CERTIFY_OTHERS'
-            }
+            });
+            return { kind: 'written', cert };
         });
 
-        await prisma.auditLog.create({
-            data: {
-                actorId: currentUserId,
-                action: currentStatus ? 'EDIT' : 'CREATE',
-                tableName: 'ToolStatus',
-                affectedEntityId: pId,
-                secondaryAffectedEntity: tId,
-                oldData: currentStatus ?? Prisma.JsonNull,
-                newData: upsertedCert
-            }
-        });
+        if (outcome.kind === 'certifier') {
+            return apiError("Forbidden: Only the Board can change the level of a certifier", 403);
+        }
+        if (outcome.kind === 'conflict') {
+            return apiError("This certification changed while you were editing it. Reload and try again.", 409);
+        }
+        const upsertedCert = outcome.cert;
 
+        invalidateKioskCertificationsCache();
         return NextResponse.json({ success: true, certification: upsertedCert });
     } catch (error: unknown) {
         await logBackendError(error, "POST /api/shop/certifications");

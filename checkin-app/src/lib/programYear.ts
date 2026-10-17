@@ -19,3 +19,23 @@ export function landsNextYear(startAt: string | null, cutoff: string | null, now
     if (!startAt || !cutoff) return false;
     return new Date(startAt).getTime() >= nextBoundary(new Date(cutoff), now).getTime();
 }
+
+/**
+ * The two member-year start dates an age report is judged against: `next` is the
+ * upcoming boundary, `current` the one the org is living in (a year earlier).
+ */
+export function memberYearStarts(boundary: Date, now: Date = new Date()): { current: Date; next: Date } {
+    const next = nextBoundary(boundary, now);
+    const current = new Date(next);
+    current.setUTCFullYear(current.getUTCFullYear() - 1);
+    return { current, next };
+}
+
+/**
+ * Latest date of birth that still makes someone `years` old as of `asOf` — the
+ * SQL-side form of calculateAge(dob, asOf) >= years, so an age filter can run in
+ * the query instead of over every loaded row.
+ */
+export function birthCutoff(asOf: Date, years = 18): Date {
+    return new Date(Date.UTC(asOf.getUTCFullYear() - years, asOf.getUTCMonth(), asOf.getUTCDate()));
+}

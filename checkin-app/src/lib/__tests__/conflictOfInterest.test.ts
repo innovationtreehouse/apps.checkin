@@ -15,8 +15,8 @@ describe("sharesHousehold", () => {
 });
 
 describe("hasHouseholdConflict", () => {
-    const db = (actorHouseholdId: number | null) =>
-        ({ person: { findUnique: jest.fn().mockResolvedValue(actorHouseholdId == null ? null : { householdId: actorHouseholdId }) } }) as unknown as DbClient;
+    const db = (actorHouseholdId: number | null, actorRow: Record<string, unknown> = {}) =>
+        ({ person: { findUnique: jest.fn().mockResolvedValue(actorHouseholdId == null ? null : { householdId: actorHouseholdId, ...actorRow }) } }) as unknown as DbClient;
 
     it("conflict when the actor shares the subject's household", async () => {
         expect(await hasHouseholdConflict(db(3), 1, 3)).toBe(true);
@@ -26,13 +26,19 @@ describe("hasHouseholdConflict", () => {
         expect(await hasHouseholdConflict(db(4), 1, 3)).toBe(false);
     });
 
-    it("sysadmin always bypasses — no conflict, and no DB read", async () => {
-        const client = db(3); // same household as subject → would conflict without the bypass
-        expect(await hasHouseholdConflict(client, 1, 3, { isSysadmin: true })).toBe(false);
-        expect((client.person.findUnique as jest.Mock)).not.toHaveBeenCalled();
+    it("still conflicts when the actor holds every privileged role", async () => {
+        const privileged = { isSysadmin: true, isBoardMember: true, isBackgroundCheckReviewer: true, isKeyholder: true };
+        expect(await hasHouseholdConflict(db(3, privileged), 1, 3)).toBe(true);
     });
 
     it("no conflict when the subject has no household to conflict with", async () => {
         expect(await hasHouseholdConflict(db(3), 1, null)).toBe(false);
+    });
+
+    it.each([
+        ["an actor id that resolves to nobody", 1],
+        ["an actor id that is not a positive integer", 0],
+    ])("conflicts (fails closed) for %s", async (_label, actorId) => {
+        expect(await hasHouseholdConflict(db(null), actorId, 3)).toBe(true);
     });
 });

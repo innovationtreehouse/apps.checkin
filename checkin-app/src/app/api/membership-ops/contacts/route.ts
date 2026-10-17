@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { withAuth } from "@/lib/auth";
 import { createParticipantWithHousehold } from "@/lib/auth-options";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
+import { LIVE_PERSON } from "@/lib/person/filters";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 
@@ -59,7 +60,7 @@ export const POST = withAuth({ roles: ['isBoardMember', 'isOperations'] }, async
         // TypeErrors the Assign-household render path on the new row.
         const participant = await prisma.person.findUnique({
             where: { id: person.id },
-            include: { household: { include: { householdMembers: { select: { id: true, name: true, email: true } } } } },
+            include: { household: { include: { householdMembers: { where: LIVE_PERSON, select: { id: true, name: true, email: true } } } } },
         });
 
         return NextResponse.json({ success: true, participant });
@@ -68,7 +69,7 @@ export const POST = withAuth({ roles: ['isBoardMember', 'isOperations'] }, async
         // email can both pass it); the @unique constraint is the real guard, so a
         // P2002 here gets the same owner-named-style 409 as the pre-check catch,
         // not a generic 500.
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        if (isPrismaError(error, "P2002")) {
             return NextResponse.json(
                 { error: "This email already belongs to an existing account", fields: ["email"] },
                 { status: 409 },

@@ -4,46 +4,27 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { getAppSettings } from "@/lib/appSettings";
 import { apiError } from "@/lib/api-response";
-
-type PeriodType = "week" | "month" | "quarter" | "year";
+import { toZonedTime } from "date-fns-tz";
+import { getPeriodStart, type PeriodType } from "@/lib/timePeriods";
 
 function getHoursBetween(arrived: Date, departed: Date | null): number {
     if (!departed) return 0;
     return (departed.getTime() - arrived.getTime()) / (1000 * 60 * 60);
 }
 
-function getPeriodStart(date: Date, period: PeriodType): Date {
-    const d = new Date(date);
+function formatPeriodLabel(date: Date, period: PeriodType, locale: string, timeZone: string): string {
+    const d = toZonedTime(date, timeZone);
     if (period === "week") {
-        const day = d.getDay();
-        d.setDate(d.getDate() - day);
-        d.setHours(0, 0, 0, 0);
-    } else if (period === "month") {
-        d.setDate(1);
-        d.setHours(0, 0, 0, 0);
-    } else if (period === "quarter") {
-        const qMonth = Math.floor(d.getMonth() / 3) * 3;
-        d.setMonth(qMonth, 1);
-        d.setHours(0, 0, 0, 0);
-    } else {
-        d.setMonth(0, 1);
-        d.setHours(0, 0, 0, 0);
-    }
-    return d;
-}
-
-function formatPeriodLabel(date: Date, period: PeriodType, locale: string): string {
-    if (period === "week") {
-        const end = new Date(date);
+        const end = new Date(d);
         end.setDate(end.getDate() + 6);
-        return `${date.toLocaleDateString(locale, { month: "short", day: "numeric" })} – ${end.toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" })}`;
+        return `${d.toLocaleDateString(locale, { month: "short", day: "numeric" })} – ${end.toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" })}`;
     } else if (period === "month") {
-        return date.toLocaleDateString(locale, { month: "long", year: "numeric" });
+        return d.toLocaleDateString(locale, { month: "long", year: "numeric" });
     } else if (period === "quarter") {
-        const q = Math.floor(date.getMonth() / 3) + 1;
-        return `Q${q} ${date.getFullYear()}`;
+        const q = Math.floor(d.getMonth() / 3) + 1;
+        return `Q${q} ${d.getFullYear()}`;
     } else {
-        return `${date.getFullYear()}`;
+        return `${d.getFullYear()}`;
     }
 }
 
@@ -65,10 +46,14 @@ export interface TrendBucket {
     totalParticipantHours: number;
     structuredHours: number;
     unstructuredHours: number;
+    // Hours only, keyed by arrivedVia (or "UNSPECIFIED"). One person can carry
+    // both a scan and a roster mark in the same bucket, so this is NOT a
+    // decomposition of uniqueVolunteers/uniqueParticipants — those stay whole.
+    bySource: Record<string, number>;
 }
 
 export const GET = withAuth(
-    { roles: ['isSysadmin', 'isBoardMember'] },
+    { roles: ['isSysadmin', 'isBoardMember', 'isOperations'] },
     async (req) => {
         try {
             const url = new URL(req.url);
@@ -80,7 +65,7 @@ export const GET = withAuth(
                 return apiError("Invalid period. Use week, month, quarter, or year.", 400);
             }
 
-            const { locale } = await getAppSettings();
+            const { locale, timezone } = await getAppSettings();
 
             const lookbackMs = getLookbackMonths(period) * 30 * 24 * 60 * 60 * 1000;
             const since = new Date(Date.now() - lookbackMs);
@@ -88,10 +73,10 @@ export const GET = withAuth(
             const whereClause: Record<string, unknown> = {
                 arrivedAt: { gte: since },
                 departedAt: { not: null },
-                // Exclude synthetic "marked present" visits (events attendance route): their
-                // arrivedAt/departedAt is the event window, not a measured duration. arrivedVia=SYSTEM
-                // is the marker — real visits use SCANNER/WEB on arrival.
-                arrivedVia: { not: "SYSTEM" },
+                deletedAt: null,
+                // Every completed visit counts, whatever recorded it. The only
+                // exclusions: an open visit has no duration to sum, and a deleted
+                // visit did not happen.
             };
 
             if (programId) {
@@ -126,15 +111,16 @@ export const GET = withAuth(
                 participantHours: number;
                 structuredHours: number;
                 unstructuredHours: number;
+                bySource: Record<string, number>;
             }>();
 
             for (const visit of visits) {
-                const periodStart = getPeriodStart(visit.arrivedAt, period);
+                const periodStart = getPeriodStart(visit.arrivedAt, period, timezone);
                 const key = periodStart.toISOString();
 
                 if (!bucketMap.has(key)) {
                     bucketMap.set(key, {
-                        label: formatPeriodLabel(periodStart, period, locale),
+                        label: formatPeriodLabel(periodStart, period, locale, timezone),
                         periodStart,
                         volunteerIds: new Set(),
                         participantIds: new Set(),
@@ -142,6 +128,7 @@ export const GET = withAuth(
                         participantHours: 0,
                         structuredHours: 0,
                         unstructuredHours: 0,
+                        bySource: {},
                     });
                 }
 
@@ -162,6 +149,11 @@ export const GET = withAuth(
                 } else {
                     bucket.unstructuredHours += hours;
                 }
+
+                // Reporting axis only: decomposes hours, not people (see bySource
+                // comment on TrendBucket above).
+                const source = visit.arrivedVia ?? "UNSPECIFIED";
+                bucket.bySource[source] = (bucket.bySource[source] ?? 0) + hours;
             }
 
             const buckets: TrendBucket[] = Array.from(bucketMap.values())
@@ -175,7 +167,21 @@ export const GET = withAuth(
                     totalParticipantHours: Math.round(b.participantHours * 10) / 10,
                     structuredHours: Math.round(b.structuredHours * 10) / 10,
                     unstructuredHours: Math.round(b.unstructuredHours * 10) / 10,
+                    bySource: Object.fromEntries(
+                        Object.entries(b.bySource).map(([source, hours]) => [source, Math.round(hours * 10) / 10])
+                    ),
                 }));
+
+            // Accumulate raw, round once — per-step rounding drifts across buckets.
+            const bySourceTotals: Record<string, number> = {};
+            for (const b of buckets) {
+                for (const [source, hours] of Object.entries(b.bySource)) {
+                    bySourceTotals[source] = (bySourceTotals[source] ?? 0) + hours;
+                }
+            }
+            for (const source of Object.keys(bySourceTotals)) {
+                bySourceTotals[source] = Math.round(bySourceTotals[source] * 10) / 10;
+            }
 
             const totals: TrendBucket = {
                 label: "Total",
@@ -186,6 +192,7 @@ export const GET = withAuth(
                 totalParticipantHours: Math.round(buckets.reduce((s, b) => s + b.totalParticipantHours, 0) * 10) / 10,
                 structuredHours: Math.round(buckets.reduce((s, b) => s + b.structuredHours, 0) * 10) / 10,
                 unstructuredHours: Math.round(buckets.reduce((s, b) => s + b.unstructuredHours, 0) * 10) / 10,
+                bySource: bySourceTotals,
             };
 
             return NextResponse.json({ buckets, totals, period });

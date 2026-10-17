@@ -43,6 +43,24 @@ describe("AdminProgramsIndex", () => {
     expect(screen.getByText("Robotics Club")).toBeInTheDocument();
   });
 
+  // [maxParticipants, enrolled, rendered]
+  const capacityCases: [number | null, number, string][] = [
+    [null, 3, "3"],   // uncapped: no slash
+    [0, 3, "3/0"],    // a 0 cap is a real cap, not "uncapped"
+    [6, 3, "3/6"],
+    [6, 6, "6/6"],
+    [6, 7, "7/6"],    // over capacity renders as-is, unclamped
+  ];
+
+  it.each(capacityCases)("shows capacity in Participants: max %p with %i enrolled renders %s", async (maxParticipants, participants, expected) => {
+    mockFetchJson({
+      "/api/programs": [{ ...programs[0], maxParticipants, _count: { participants, events: 2 } }],
+    });
+    renderWithProviders(<AdminProgramsIndex />);
+    await screen.findByText("Robotics Club");
+    expect(screen.getByText(expected)).toBeInTheDocument();
+  });
+
   it("navigates to the create-program page", async () => {
     mockFetchJson({ "/api/programs": programs });
     renderWithProviders(<AdminProgramsIndex />);

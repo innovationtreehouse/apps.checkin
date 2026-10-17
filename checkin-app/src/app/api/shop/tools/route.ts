@@ -3,6 +3,7 @@ import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
+import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
 
 export const GET = withAuth({}, async (_req, auth) => {
     // withAuth funnels the denied-household check (auth.ts) and rejects kiosk —
@@ -65,6 +66,7 @@ export const POST = withAuth({}, async (req, auth) => {
             }
         });
 
+        invalidateKioskCertificationsCache();
         return NextResponse.json({ success: true, tool: newTool });
     } catch (error: unknown) {
         await logBackendError(error, "POST /api/shop/tools");

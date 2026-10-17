@@ -13,7 +13,7 @@ import {
     SHOPIFY_WEBHOOK_RECEIPT_TABLE,
     isShopifyTestNotification,
     recordShopifyWebhookReceipt,
-    tryParseJson,
+    logRejectedShopifyWebhook,
 } from '../shopifyWebhookReceipt';
 
 jest.mock('@/lib/logger', () => ({
@@ -44,7 +44,7 @@ describe('isShopifyTestNotification', () => {
     it('detects the sample order id through JSON.parse precision loss (> 2^53)', () => {
         // Shopify sends the id as a bare JSON number; JSON.parse rounds it to the
         // nearest double, so a strict string compare of the parsed value would miss.
-        expect(isShopifyTestNotification(tryParseJson('{"id":820982911946154508}'))).toBe(true);
+        expect(isShopifyTestNotification(JSON.parse('{"id":820982911946154508}'))).toBe(true);
     });
 
     it('is false for real orders and junk payloads', () => {
@@ -57,10 +57,18 @@ describe('isShopifyTestNotification', () => {
     });
 });
 
-describe('tryParseJson', () => {
-    it('parses valid JSON and swallows invalid bytes', () => {
-        expect(tryParseJson('{"id":1}')).toEqual({ id: 1 });
-        expect(tryParseJson('not json')).toBeNull();
+describe('logRejectedShopifyWebhook', () => {
+    it('logs at most once a minute, counts the rejections between, and never writes', () => {
+        const t0 = 10_000_000;
+        logRejectedShopifyWebhook('signature mismatch', t0);
+        logRejectedShopifyWebhook('signature mismatch', t0 + 1_000);
+        logRejectedShopifyWebhook('missing signature', t0 + 59_000);
+        expect(logger.warn).toHaveBeenCalledTimes(1);
+
+        logRejectedShopifyWebhook('signature mismatch', t0 + 60_000);
+        expect(logger.warn).toHaveBeenCalledTimes(2);
+        expect((logger.warn as jest.Mock).mock.calls[1][0]).toContain('3 rejected');
+        expect(auditCreate).not.toHaveBeenCalled();
     });
 });
 

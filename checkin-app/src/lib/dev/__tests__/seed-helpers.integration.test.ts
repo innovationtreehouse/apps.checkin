@@ -9,7 +9,7 @@ import {
 
 /**
  * Integration coverage for the dev seed/macro helpers + the reset truncate-and-reseed flow
- * (DEV_DASHBOARD_DESIGN.md §4–§5). Opt-in (*.integration.test.ts) — needs a live Postgres and is
+ * (docs/ops/dev-instance.md, "Macros" + "Reset"). Opt-in (*.integration.test.ts) — needs a live Postgres and is
  * DESTRUCTIVE (it truncates the public schema), so it is excluded from the default CI run. Run with
  * `npm run test:integration` against a throwaway dev database.
  */
@@ -38,6 +38,9 @@ describe("dev seed-helpers (integration)", () => {
         // that reasons about global role counts fail on ambient fixtures, so truncate
         // back to empty rather than just disconnecting.
         await truncateAll();
+        // The truncate also wipes the Org row the org_registry migration inserts, which
+        // later suites in this worker resolve through getOrg(); restore that baseline.
+        await prisma.org.create({ data: { id: "treehouse", name: "Treehouse" } });
         await prisma.$disconnect();
     });
 
@@ -63,15 +66,14 @@ describe("dev seed-helpers (integration)", () => {
         expect(household?.householdMembers.length).toBe(3);
     });
 
-    it("+ Program adds a program with a fee and two participants", async () => {
+    it("+ Program adds a program with two participants", async () => {
         const summary = await createProgram(prisma);
         expect(summary).toMatch(/Test Program/);
         const program = await prisma.program.findFirst({
             where: { name: { startsWith: "Test Program" } },
-            include: { fees: true, participants: true },
+            include: { participants: true },
             orderBy: { id: "desc" },
         });
-        expect(program?.fees.length).toBe(1);
         expect(program?.participants.length).toBe(2);
     });
 

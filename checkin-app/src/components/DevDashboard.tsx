@@ -16,7 +16,7 @@ import {
 import { relTime } from "@/lib/time";
 
 /**
- * The dev dashboard (DEV_DASHBOARD_DESIGN.md §7) — a slide-up drawer from the bottom of the
+ * The dev dashboard (docs/ops/dev-instance.md, "The dev dashboard") — a slide-up drawer from the bottom of the
  * screen, rendered only on the dev/local instance for a signed-in org member. Collapsed to a
  * grey "▲ Change mock account" handle so it never obscures the app; expands to the mock-account
  * (persona) picker + the macros + reset + ledger line. Impersonation provenance ("viewing as…"

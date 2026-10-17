@@ -134,6 +134,81 @@ export function ConfigHealthBox() {
   );
 }
 
+// Mirrors CronJobStatus in lib/cronRuns.ts (lastSuccessAt arrives JSON-serialized).
+type CronJob = { job: string; lastSuccessAt: string; stale: boolean; lastError?: string };
+
+/** "3 hours ago" / "2 days ago" — coarse on purpose; the exact stamp is the title text. */
+function timeAgo(iso: string): string {
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} days ago`;
+}
+
+/**
+ * Last successful run of each cron sweep, from GET /api/system-status/config-health
+ * (admins + board only). Nothing in this repo schedules the crons — the schedule and
+ * the caller live in a separate infra repo — so this panel is the app's only view of
+ * whether its own nightly sweeps are still firing. Two separate failures show here and
+ * both add to the red System Status nav pill: a job past the staleness window (stopped
+ * running) and a job whose latest run could not finish its work. See lib/cronRuns.ts.
+ */
+export function CronRunsBox() {
+  const [jobs, setJobs] = useState<CronJob[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/system-status/config-health')
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then((data) => setJobs(data.cronJobs as CronJob[]))
+      .catch(() => setFailed(true));
+  }, []);
+
+  // Mirrors countUnhealthyCronJobs so the panel badge and the nav pill agree: a job
+  // that ran last night but failed rows is not stale, and still needs attention.
+  const alertCount = jobs?.filter((j) => j.stale || j.lastError).length ?? 0;
+
+  return (
+    <Card withBorder radius="md" padding="lg">
+      <Group gap="sm" mb="xs">
+        <Title order={4}>Scheduled Jobs</Title>
+        {alertCount > 0 && <Badge color="red" circle title={`${alertCount} job(s) need attention`} />}
+      </Group>
+      <Text size="sm" c="dimmed" mb="md">
+        Last completed run of each nightly sweep. A red timestamp means the job has not run
+        in over 48 hours — treat it as stopped and check the scheduler. A red line beneath a
+        green timestamp means the job ran, but could not finish its work.
+      </Text>
+
+      {failed ? (
+        <Text c="yellow">Unable to load scheduled-job status.</Text>
+      ) : !jobs ? (
+        <Text c="dimmed">Checking scheduled jobs…</Text>
+      ) : jobs.length === 0 ? (
+        <Text c="dimmed">No cron run has been recorded yet.</Text>
+      ) : (
+        <List spacing="sm" listStyleType="none">
+          {jobs.map((j) => (
+            <List.Item key={j.job}>
+              <Group justify="space-between" wrap="nowrap" align="flex-start">
+                <Code>{j.job}</Code>
+                <Text c={j.stale ? 'red' : 'green'} fw={j.stale ? 700 : undefined} ta="right" title={j.lastSuccessAt}>
+                  ● {timeAgo(j.lastSuccessAt)}
+                </Text>
+              </Group>
+              {j.lastError && (
+                <Text size="xs" c="red">Last run: {j.lastError}</Text>
+              )}
+            </List.Item>
+          ))}
+        </List>
+      )}
+    </Card>
+  );
+}
+
 // Mirrors DiagStep in api/finance-ops/s-read/diagnose/route.ts.
 type DiagStep = { id: string; ok: boolean | null; detail: string; code?: string };
 
@@ -148,7 +223,7 @@ const DIAG_LABELS: Record<string, string> = {
 };
 
 /**
- * On-demand deep probe of the s-read chain (docs/designs/S_READ_DIAGNOSTICS.md).
+ * On-demand deep probe of the s-read chain (docs/ops/shopify-mirror.md).
  * Deliberately NOT run on page load and never polled: every probe wakes the
  * scale-to-zero Aurora cluster, so it fires only on an explicit click. This is
  * the deep counterpart to ConfigHealthBox above, which stays presence-only.
@@ -228,7 +303,7 @@ export function SystemVersionBox() {
         setCurrentVersion(currentSha);
 
         if (currentSha && !currentSha.startsWith('unknown')) {
-          const ghRes = await fetch('https://api.github.com/repos/innovationtreehouse/checkin/commits/main');
+          const ghRes = await fetch('https://api.github.com/repos/innovationtreehouse/apps.checkin/commits/main');
           if (!ghRes.ok) throw new Error('Failed to fetch latest version from GitHub');
 
           const ghData = await ghRes.json();
@@ -236,7 +311,7 @@ export function SystemVersionBox() {
           setLatestVersion(latestSha);
 
           if (latestSha && currentSha !== latestSha && !latestSha.startsWith(currentSha)) {
-            const compRes = await fetch(`https://api.github.com/repos/innovationtreehouse/checkin/compare/${currentSha}...main`);
+            const compRes = await fetch(`https://api.github.com/repos/innovationtreehouse/apps.checkin/compare/${currentSha}...main`);
             if (compRes.ok) {
               const compData = await compRes.json();
               if (compData.commits) {
@@ -286,7 +361,7 @@ export function SystemVersionBox() {
           </Text>
 
           <Anchor
-            href={`https://github.com/innovationtreehouse/checkin/compare/${currentVersion}...main`}
+            href={`https://github.com/innovationtreehouse/apps.checkin/compare/${currentVersion}...main`}
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -316,6 +391,40 @@ export function SystemVersionBox() {
   );
 }
 
+type HeartbeatRow = { metric: string; timestamp: string; value: number };
+
+export function KioskHeartbeatBox() {
+  const [rows, setRows] = useState<HeartbeatRow[] | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/system-status/kiosk-heartbeat")
+      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
+      .then((data: { heartbeat?: HeartbeatRow[] }) => {
+        setRows(Array.isArray(data?.heartbeat) ? data.heartbeat : []);
+      })
+      .catch(() => setRows(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  let body: string;
+  if (loading) body = "Checking…";
+  else if (rows == null) body = "Unable to read kiosk last-seen.";
+  else if (rows.length === 0) body = "No kiosk request since this task started (stale during overnight curfew is expected).";
+  else {
+    const age = rows[0].value;
+    const minutes = Math.floor(age / 60);
+    body = minutes < 1 ? `Kiosk last seen ${age}s ago` : `Kiosk last seen ${minutes}m ago`;
+  }
+
+  return (
+    <Card withBorder radius="md" padding="lg">
+      <Title order={4} mb="xs">Kiosk last seen</Title>
+      <Text size="sm" c="dimmed">{body}</Text>
+    </Card>
+  );
+}
+
 export function BadgeScanChart() {
   const [stats, setStats] = useState<DailyStat[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -328,7 +437,7 @@ export function BadgeScanChart() {
           setStats(data.days);
         }
       })
-      .catch(console.error)
+      .catch((err) => console.error("Failed to load system health:", err))
       .finally(() => setLoading(false));
   }, []);
 

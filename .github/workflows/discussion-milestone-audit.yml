@@ -1,0 +1,32 @@
+name: Discussion milestone audit
+
+# Read-only. No secrets, no discussion triggers, no writes — the job is a
+# report, so the token is read-only and there is nothing here to hijack.
+on:
+  workflow_dispatch:
+    inputs:
+      discussion:
+        description: Discussion number to audit
+        required: true
+
+permissions:
+  contents: read
+  issues: read
+  discussions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUM: ${{ inputs.discussion }}
+        # Without pipefail the job's status is `tee`'s, so a failed audit reports
+        # green; `2>&1` puts the error in the summary instead of leaving it blank.
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/discussion-milestone-audit.sh "$NUM" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"

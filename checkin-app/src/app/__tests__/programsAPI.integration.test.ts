@@ -53,7 +53,7 @@ describe('Programs API Integration Tests', () => {
 
         // Create Lead
         const lead = await prisma.person.create({
-            data: { email: 'lead-programs-api-test@example.com', name: 'Lead', household: { create: { name: "Test HH" } } }
+            data: { email: 'lead-programs-api-test@example.com', name: 'Lead', isDeclaredAdult: true, household: { create: { name: "Test HH" } } }
         });
         leadId = lead.id;
 
@@ -66,9 +66,10 @@ describe('Programs API Integration Tests', () => {
         // Create mock programs
         await prisma.program.createMany({
             data: [
-                { name: 'Public API Test Program', phase: 'RUNNING', orgMemberOnly: false, minAge: 10, maxAge: 18, leadMentorNotificationSettings: { notifyRsvp: true } },
-                { name: 'Draft API Test Program', phase: 'PLANNING', orgMemberOnly: false, leadMentorId: leadId },
-                { name: 'Member Only API Test Program', phase: 'RUNNING', orgMemberOnly: true }
+                { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public API Test Program', phase: 'RUNNING', orgMemberOnly: false, minAge: 10, maxAge: 18, leadMentorNotificationSettings: { notifyRsvp: true } },
+                { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Draft API Test Program', phase: 'PLANNING', orgMemberOnly: false, leadMentorId: leadId },
+                { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only API Test Program', phase: 'RUNNING', orgMemberOnly: true },
+                { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Member Only API Test Program', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true }
             ]
         });
     });
@@ -108,6 +109,21 @@ describe('Programs API Integration Tests', () => {
              expect(orgMemberOnly).toBeUndefined(); // Filtered because orgMemberOnly is true
         });
 
+        it('shows a publiclyVisible members-only program to an unauthenticated caller', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue(null);
+
+             const req = new Request('http://localhost:4000/api/programs', { method: 'GET' });
+             const res = await GET(req as unknown as import("next/server").NextRequest);
+             expect(res.status).toBe(200);
+
+             const programs = await res.json();
+             const hidden = programs.find((p: { name?: string }) => p.name === 'Member Only API Test Program');
+             const shown = programs.find((p: { name?: string }) => p.name === 'Public Member Only API Test Program');
+
+             expect(hidden).toBeUndefined(); // members-only and NOT publiclyVisible — stays hidden
+             expect(shown).toBeDefined();    // members-only but opted into the public catalogue
+        });
+
         it('should return drafts if the authenticated user is the lead mentor', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
 
@@ -134,6 +150,45 @@ describe('Programs API Integration Tests', () => {
 
              expect(draft).toBeDefined(); // Revealed because admin
              expect(orgMemberOnly).toBeDefined(); // Revealed because admin
+        });
+
+        // #1397: membership fee paid, background check still with the board — the catalog
+        // shows them members-only programs, same as an ACTIVE household.
+        it('reveals member-only programs to a household that has paid but is awaiting background clearance', async () => {
+             const paidPending = await prisma.person.create({
+                 data: {
+                     email: 'paid-pending-programs-api-test@example.com',
+                     name: 'Paid Pending',
+                     household: {
+                         create: {
+                             name: 'Test HH',
+                             orgMembership: {
+                                 create: {
+                                     status: 'NONE',
+                                     processes: { create: { kind: 'INITIAL', status: 'PENDING_BG_CLEARANCE', paidAt: new Date() } },
+                                 },
+                             },
+                         },
+                     },
+                 },
+                 select: { id: true, householdId: true },
+             });
+
+             try {
+                 (getServerSession as jest.Mock).mockResolvedValue({ user: { id: paidPending.id } });
+
+                 const req = new Request('http://localhost:4000/api/programs', { method: 'GET' });
+                 const res = await GET(req as unknown as import("next/server").NextRequest);
+                 expect(res.status).toBe(200);
+
+                 const programs = await res.json();
+                 const orgMemberOnly = programs.find((p: { name?: string }) => p.name === 'Member Only API Test Program');
+                 expect(orgMemberOnly).toBeDefined();
+             } finally {
+                 await prisma.orgMembershipProcess.deleteMany({ where: { orgMembership: { householdId: paidPending.householdId } } });
+                 await prisma.orgMembership.deleteMany({ where: { householdId: paidPending.householdId } });
+                 await prisma.person.delete({ where: { id: paidPending.id } });
+             }
         });
 
         // The catalog is deliberately anonymous-readable, so the projection — not a
@@ -253,7 +308,7 @@ describe('Programs API Integration Tests', () => {
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',
-                 body: JSON.stringify({ leadMentorId: leadId })
+                 body: JSON.stringify({ leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-12-31' })
              });
              const res = await POST(req as unknown as import("next/server").NextRequest);
              expect(res.status).toBe(400);
@@ -264,7 +319,7 @@ describe('Programs API Integration Tests', () => {
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',
-                 body: JSON.stringify({ name: 'New API Test Program', leadMentorId: leadId })
+                 body: JSON.stringify({ name: 'New API Test Program', leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-12-31' })
              });
              const res = await POST(req as unknown as import("next/server").NextRequest);
              expect(res.status).toBe(400);
@@ -277,7 +332,7 @@ describe('Programs API Integration Tests', () => {
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',
-                 body: JSON.stringify({ name: 'Created API Test Program', leadMentorId: leadId, minAge: 12, maxAge: 17, maxParticipants: 50 })
+                 body: JSON.stringify({ name: 'Created API Test Program', leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-12-31', minAge: 12, maxAge: 17, maxParticipants: 50 })
              });
              const res = await POST(req as unknown as import("next/server").NextRequest);
              expect(res.status).toBe(200);
@@ -289,6 +344,21 @@ describe('Programs API Integration Tests', () => {
              expect(data.program.minAge).toBe(12);
              expect(data.program.maxAge).toBe(17);
              expect(data.program.maxParticipants).toBe(50);
+        });
+
+        it('clamps publiclyVisible to false on create when the program is not members-only', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+             const req = new Request('http://localhost:4000/api/programs', {
+                 method: 'POST',
+                 body: JSON.stringify({ name: 'Clamp Create API Test Program', leadMentorId: leadId, startAt: '2026-01-01', endAt: '2026-12-31', maxParticipants: 50, orgMemberOnly: false, publiclyVisible: true })
+             });
+             const res = await POST(req as unknown as import("next/server").NextRequest);
+             expect(res.status).toBe(200);
+
+             const data = await res.json();
+             expect(data.program.orgMemberOnly).toBe(false);
+             expect(data.program.publiclyVisible).toBe(false);
         });
     });
 });

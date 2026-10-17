@@ -2,9 +2,12 @@ import prisma from "./prisma";
 import { sendEmail } from "./email";
 import { runPaced } from "./email";
 import { formatTime, formatDate } from "./time";
+import { resolveDisplayTimezone } from "./appSettings";
 import { checkinReceiptTemplate } from "./email-templates/checkin";
 import { householdMemberTemplate } from "./email-templates/household";
 import { escapeHtml, type VisitSource } from "./email-templates/base";
+import { programAssignmentTemplate } from "./email-templates/program-assignment";
+import { config } from "./config";
 import { LIVE_PERSON } from "./person/filters";
 import {
     ACTIVE_ORG_MEMBER_PERSON_WHERE,
@@ -36,14 +39,24 @@ export async function sendNotification(userId: number, eventType: NotificationEv
         // No user / no address: nothing can ever be sent here — treat as done, not retryable.
         if (!user || !user.email) return true;
 
-        // Construct message based on type
+        // Construct message based on type. `html`, when set, is sent verbatim as the
+        // email body (already-safe HTML from a template); otherwise `message` is
+        // escaped and wrapped in a <p>.
         let message = "";
         let subject = "Treehouse Notification";
+        let html: string | null = null;
 
         switch (eventType) {
             case 'PROGRAM_ENROLLMENT':
                 subject = `Confirmed: Enrollment in ${payload.programName}`;
                 message = `Hi ${user.name}, you have been successfully enrolled in ${payload.programName}.`;
+                break;
+            case 'PROGRAM_ASSIGNMENT':
+                subject = 'Your Innovation Treehouse Program has been Created!';
+                html = programAssignmentTemplate({
+                    programName: String(payload.programName ?? 'your program'),
+                    manageUrl: `${config.baseUrl()}/program-ops/programs/${payload.programId}`,
+                });
                 break;
             case 'CHECKIN':
                 subject = `✅ Checked In — ${user.name}`;
@@ -64,7 +77,7 @@ export async function sendNotification(userId: number, eventType: NotificationEv
         // Email disabled: return true so a user who opted out isn't retried forever.
         if (!wantsEmail) return true;
 
-        const ok = await sendEmail(user.email, subject, `<p>${escapeHtml(message)}</p>`);
+        const ok = await sendEmail(user.email, subject, html ?? `<p>${escapeHtml(message)}</p>`);
         return ok;
 
     } catch (error) {
@@ -84,7 +97,7 @@ export async function sendNotification(userId: number, eventType: NotificationEv
  * has fired. Best-effort: fire-and-forget from the helper.
  */
 export async function notifyNewProgramAnnounced(
-    program: { name: string; startAt: Date | null; endAt: Date | null },
+    program: { name: string; endAt: Date },
 ): Promise<void> {
     try {
         const coverageDate = programCoverageDate(program);
@@ -128,7 +141,7 @@ export async function notifyNewProgramAnnounced(
  * - emailCheckinReceipts: send to the participant themselves
  * - emailDependentCheckins: send to household leads when a dependent checks in/out
  */
-export async function sendCheckinNotifications(participantId: number, type: 'checkin' | 'checkout', source?: VisitSource | null) {
+export async function sendCheckinNotifications(participantId: number, type: 'checkin' | 'checkout', source?: VisitSource | null, at: Date = new Date()) {
     try {
         const participant = await prisma.person.findUnique({
             where: { id: participantId },
@@ -143,13 +156,17 @@ export async function sendCheckinNotifications(participantId: number, type: 'che
 
         if (!participant) return;
 
-        const now = new Date();
-        const timeStr = formatTime(now, {
+        // Server-side render: the client TimezoneProvider never runs here, so the
+        // configured zone is passed per call.
+        const timeZone = await resolveDisplayTimezone();
+        const timeStr = formatTime(at, {
+            timeZone,
             hour: 'numeric',
             minute: '2-digit',
             hour12: true
         });
-        const dateStr = formatDate(now, {
+        const dateStr = formatDate(at, {
+            timeZone,
             weekday: 'long',
             month: 'long',
             day: 'numeric'

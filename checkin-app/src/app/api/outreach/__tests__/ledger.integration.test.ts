@@ -13,11 +13,12 @@ import { POST as PROCESS_BATCH } from '@/app/api/outreach/process-batch/route';
 import { GET as STATUS_GET, POST as STATUS_POST } from '@/app/api/outreach/status/route';
 import { POST as TEST_SEND } from '@/app/api/outreach/test-send/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import { sendEmail } from '@/lib/email';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
-jest.mock('@/lib/email', () => ({ sendEmail: jest.fn() }));
+jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn() }));
 // process-batch's join-variant unsubscribe footer (unsubscribeToken.ts hmacKey) reads
 // config.nextAuthSecret(), which throws when unset — fine locally (the gitignored .env
 // supplies it) but CI has no .env. Same partial-mock pattern as auth-options-jwt.test.ts:
@@ -54,7 +55,7 @@ function req(method: string, body?: unknown) {
 async function setBoundary(date: Date | null) {
     await prisma.boardSettings.upsert({
         where: { id: 1 },
-        create: { id: 1, normalDuesCents: 0, volunteerDuesCents: 0, orgMembershipYearBoundary: date },
+        create: { id: 1, standardMembershipFeeCents: 0, volunteerMembershipFeeCents: 0, orgMembershipYearBoundary: date },
         update: { orgMembershipYearBoundary: date },
     });
 }
@@ -81,18 +82,17 @@ async function wipeLedger() {
 }
 
 describe('outreach ledger (send / process-batch / status)', () => {
-    let prevBoundary: Date | null = null;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
     let boardId: number;
 
     beforeAll(async () => {
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevBoundary = existing?.orgMembershipYearBoundary ?? null;
+        restoreBoardSettings = await snapshotBoardSettings();
     });
 
     afterAll(async () => {
         await wipeLedger();
         await wipeHouseholds();
-        await setBoundary(prevBoundary);
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 
@@ -316,6 +316,38 @@ describe('outreach ledger (send / process-batch / status)', () => {
         const drained = await prisma.bulkSendItem.findUniqueOrThrow({ where: { id: item.id } });
         expect(drained.status).toBe('skipped_unsubscribed');
         expect((sendEmail as jest.Mock).mock.calls.some(([to]) => to === `lateunsub-${TAG}@example.com`)).toBe(false);
+    });
+
+    it('a DENIED household lead is left out of the snapshot entirely', async () => {
+        const hh = await makeNonMemberLead('Denied', `denied-${TAG}@example.com`);
+        await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'DENIED' } });
+        const person = await prisma.person.findFirstOrThrow({ where: { householdId: hh.id } });
+        asBoard(boardId);
+
+        const created = await (await SEND(req('POST', { emailType: 'opening', audience: 'c' }))).json();
+        expect(await prisma.bulkSendItem.count({ where: { bulkSendId: created.bulkSend.id, personId: person.id } })).toBe(0);
+    });
+
+    it('drain skips a household DENIED after the snapshot: no email, item marked skipped_denied', async () => {
+        const hh = await makeNonMemberLead('LateDeny', `latedeny-${TAG}@example.com`);
+        const person = await prisma.person.findFirstOrThrow({ where: { householdId: hh.id } });
+        asBoard(boardId);
+
+        const created = await (await SEND(req('POST', { emailType: 'opening', audience: 'c' }))).json();
+        const bulkSendId = created.bulkSend.id;
+        const item = await prisma.bulkSendItem.findFirstOrThrow({ where: { bulkSendId, personId: person.id } });
+        expect(item.status).toBe('queued');
+
+        await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'DENIED' } });
+
+        let remaining = created.counts.queued;
+        let guard = 0;
+        while (remaining > 0 && guard++ < 5) {
+            remaining = (await (await PROCESS_BATCH(req('POST', { bulkSendId }))).json()).remaining;
+        }
+
+        expect((await prisma.bulkSendItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe('skipped_denied');
+        expect((sendEmail as jest.Mock).mock.calls.some(([to]) => to === `latedeny-${TAG}@example.com`)).toBe(false);
     });
 
     it('test-send renders both variants and sends them to the caller', async () => {

@@ -13,7 +13,7 @@ import {
 } from "@/lib/dev/seed-helpers";
 
 /**
- * The dev dashboard's server actions (DEV_DASHBOARD_DESIGN.md §4–§6). Every export is fenced by
+ * The dev dashboard's server actions (docs/ops/dev-instance.md, "The dev dashboard"). Every export is fenced by
  * assertDevActor() — dead in prod, org-verified in dev, relaxed on local — so the client can never
  * reach these in production and an unverified visitor can never drive them. Each mutating action
  * writes a ledger row (attributed to the real human) and revalidates the layout so the UI reflects
@@ -44,7 +44,7 @@ export async function macroCheckins(): Promise<ActionResult> {
     return runMacro("checkins", createCheckins);
 }
 
-// ── Reset (truncate + reseed; DEV_DASHBOARD_DESIGN.md §5) ───────────────────
+// ── Reset (truncate + reseed; docs/ops/dev-instance.md, "Reset") ────────────
 export async function resetDevInstance(): Promise<ActionResult> {
     const real = await assertDevActor();
 

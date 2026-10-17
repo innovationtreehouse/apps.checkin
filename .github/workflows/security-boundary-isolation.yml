@@ -9,9 +9,14 @@ name: Security boundary isolation
 # never be buried inside a feature diff.
 #
 # What this enforces, mechanically:
-#   - If the PR touches any boundary file (src/security/** excluding
-#     generated/, or scripts/security-generator.js), every other changed file
-#     must be a test, doc, schema annotation, or this workflow itself.
+#   - If the PR touches any boundary file, every other changed file must be a
+#     test, doc, schema annotation, or this workflow itself. The boundary set is
+#     src/security/** (excluding generated/ and __tests__/), src/middleware.ts
+#     — the site-wide org-login/access gate, which nothing imports, so deleting
+#     or renaming it leaves tsc and the build green — scripts/security-
+#     generator.js, and the two certifier scripts below. is_boundary is the
+#     single source of that set; the certifier is handed the match, never
+#     re-deriving it.
 #   - If the PR re-tiers an existing field (the generated classifications
 #     diff shows the same field moving between tiers), the same isolation
 #     applies. Purely ADDITIVE classification changes (new models/fields from
@@ -21,35 +26,139 @@ name: Security boundary isolation
 # The sanctioned flow for a new registered route: land the registry entry in
 # its own PR first (a defineRoute for an endpoint nothing serves yet is
 # inert), then land the route handler in the feature PR.
+#
+# Enforcement applies only to PRs into main — the branch where boundary
+# changes first land and get reviewed. Release-line PRs (main→rel/* syncs,
+# cherry-picks of already-merged PRs) replay changes that were isolation-
+# checked on main, and a sync merge inevitably mixes boundary and feature
+# files; those runs short-circuit to success below.
+#
+# EXCEPTION — whole-entity decommission. Isolation exists to stop ADDED
+# exposure from hiding in a feature diff; a boundary diff that only removes
+# entire top-level entries whose subjects cease to exist in the same PR (a
+# scopeBindings model dropped from schema.prisma; a defineRoute whose verb is
+# no longer served) cannot add exposure, and the drift check WELDS such a PR
+# to its migration (#1446). When check-boundary-decommission.js certifies
+# that shape — fail-closed: partial edits, additions, re-tiers, reorders, and
+# engine-file changes never qualify — the PR may also carry prisma/migrations/**
+# and the route files of the removed entries, nothing else. The comparison is
+# byte-strict apart from the two edits a whole-entity drop FORCES: comments, and
+# a `returns:` element naming a model dropped in the same PR (that array is
+# typed off the generated classifications, so the entry stops compiling
+# otherwise). Neither can widen exposure; see boundary-decommission.js.
+#
+# Known fail-closed corner: the certifier requires each removed route entry's
+# derived file to export the verb AT BASE (otherwise absence at head proves
+# nothing). Removing an ALREADY-INERT entry therefore fails certification. That
+# is only visible on a PR that also carries a violation — a bindings drop plus
+# its migration, say — since a boundary-only PR never reaches the certifier.
+# Split the inert-entry removal into its own PR.
 on:
   pull_request:
-    # pull_request triggers evaluate against the BASE branch's workflow file,
-    # so this must exist on both main (every future rel/* cut inherits it)
-    # and rel/1.0 (so current release-line PRs get checks).
+    # rel/** stays in the trigger even though enforcement is main-only:
+    # `isolation` is a required status check on the rel/* branch protections,
+    # and a required context with no dispatched run never reports, hanging
+    # the PR on "Expected" forever. The rel/* run exists to report success.
     branches: [main, 'rel/**']
+  # If `isolation` is a REQUIRED check, the merge queue expects it on the
+  # merge_group ref too — without this trigger no run is dispatched, the
+  # context never reports, and the queue entry hangs forever. The isolation
+  # policy is a PR-shape concern (changed files vs base); the queued PRs are
+  # already reviewed and there's no pull_request base SHA here, so this event
+  # short-circuits to success below.
+  merge_group:
+
+# pull_request runs share one group per ref, so a new push cancels the run it
+# supersedes. Every other event keys on run_id: a group of one, so main pushes,
+# merge_group entries and workflow_call validates are never queued behind or
+# replaced by each other (a group holds one running + one pending run).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   isolation:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
+      - name: Skip on merge queue (already enforced on the PR)
+        if: github.event_name == 'merge_group'
+        run: echo "merge_group event — isolation already checked on the PR; nothing to do."
+
+      - name: Skip on release-line PRs (enforced where the change landed — main)
+        if: github.event_name == 'pull_request' && github.base_ref != 'main'
+        run: echo "base is ${{ github.base_ref }} — isolation is enforced on PRs into main; release-line PRs replay already-reviewed changes. Nothing to do."
+
       - uses: actions/checkout@v5
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
         with:
           fetch-depth: 0
 
       - name: Check boundary changes ship alone
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          git fetch --no-tags --depth=1 origin "$BASE_SHA" || true
-          mapfile -t CHANGED < <(git diff --name-only "$BASE_SHA"...HEAD)
-          [ "${#CHANGED[@]}" -eq 0 ] && { echo "No changes."; exit 0; }
+          # The scope-oracle pin (checkin-app/tests/security/scopeOracleSet.test.ts)
+          # is what makes a deleted oracle fail loudly, but a deleted test cannot
+          # fail, so the pin cannot guard itself. This is where that regress
+          # terminates: a check that is not a test. Deliberately against the
+          # checked-out merge ref (refs/pull/N/merge), not HEAD_SHA — that tree is
+          # what actually lands on main, and a branch cut before the pin existed
+          # would fail a HEAD_SHA check while removing nothing.
+          test -f checkin-app/tests/security/scopeOracleSet.test.ts || {
+            echo "::error::checkin-app/tests/security/scopeOracleSet.test.ts is missing — it pins the security scope-oracle set and cannot guard its own deletion."
+            exit 1
+          }
+
+          # Diff the PR's OWN head, not the checked-out merge ref. On a
+          # pull_request, checkout resolves refs/pull/N/merge — the branch
+          # merged with the current tip of main — so HEAD carries main's newest
+          # commits. Diffing against HEAD would sweep in main's advance (any
+          # src/security/* it landed) and mis-flag it as this PR's boundary
+          # change. BASE_SHA...HEAD_SHA is merge-base(base,head)→head: only the
+          # branch's real changes. BASE_SHA is the merge ref's first parent —
+          # the current tip of main — not pull_request.base.sha, which can lag
+          # behind a rebased branch and so sweep main's newer commits into the
+          # diff. fetch-depth:0 has both parents local, so no fetch is needed;
+          # if either SHA is unreachable this fails loud, never a silent
+          # unaudited pass.
+          if ! BASE_SHA=$(git rev-parse --verify HEAD^1); then
+            echo "::error::Could not resolve the merge ref's first parent (base tip). Failing rather than passing this PR unaudited."
+            exit 1
+          fi
+
+          # --no-renames: with rename detection on, `git diff --name-only`
+          # reports ONLY the destination, so renaming a boundary file never puts
+          # its name in CHANGED, is_boundary never fires, and the step exits
+          # green. Next.js runs only src/middleware.ts, so a rename disables the
+          # site-wide gate exactly as thoroughly as deleting it — and nothing
+          # imports it, so tsc and the build stay green too. D+A surfaces both
+          # names. (The certifier's own --name-status diff deliberately keeps the
+          # destination only; detection needs the source, the deletion rule does
+          # not.)
+          if ! CHANGED_RAW=$(git diff --no-renames --name-only "$BASE_SHA"..."$HEAD_SHA"); then
+            echo "::error::Could not diff $BASE_SHA...$HEAD_SHA — a SHA is unreachable. Failing rather than passing this PR unaudited."
+            exit 1
+          fi
+          [ -z "$CHANGED_RAW" ] && { echo "No changes."; exit 0; }
+          mapfile -t CHANGED <<< "$CHANGED_RAW"
 
           is_boundary() { # policy/runtime files — the security boundary itself
             case "$1" in
               checkin-app/src/security/generated/*) return 1 ;;
+              # Tests ASSERT the policy, they don't set it. Classifying them as
+              # boundary files made a decommission block itself: a per-model
+              # scope oracle (visit-household-lead-scope.test.ts for Visit) has
+              # to change or leave with its model, and the certifier rejects any
+              # boundary file that isn't declarative. They stay companions.
+              checkin-app/src/security/__tests__/*) return 1 ;;
               checkin-app/src/security/*) return 0 ;;
+              checkin-app/src/middleware.ts) return 0 ;;             # site-wide org-login/access gate
               checkin-app/scripts/security-generator.js) return 0 ;;
+              checkin-app/scripts/check-boundary-decommission.js) return 0 ;;
+              checkin-app/scripts/lib/boundary-decommission.js) return 0 ;;
             esac
             return 1
           }
@@ -59,24 +168,48 @@ jobs:
               checkin-app/tests/security/*) return 0 ;;
               */__tests__/*|*.test.ts|*.test.tsx|*.spec.ts) return 0 ;;
               checkin-app/prisma/schema.prisma) return 0 ;;          # @sensitivity annotations
+              # Vendored Inventory libraries adopt this regime over their own
+              # separate schemas (#1286 §5): those schemas carry @sensitivity +
+              # a `generator security` block feeding the merged classifications.
+              packages/*/prisma/schema.prisma) return 0 ;;           # @sensitivity annotations
               docs/*|*/docs/*|*.md) return 0 ;;
               .github/CODEOWNERS) return 0 ;;
               .github/workflows/security-boundary-isolation.yml) return 0 ;;
+              # The route-coverage lint parses the registry files as text, so a
+              # change to where registry entries live must update it in step.
+              checkin-app/scripts/check-route-coverage.ts) return 0 ;;
+              # boundary files are their own companions — a boundary PR must be
+              # able to contain them
+              checkin-app/src/middleware.ts) return 0 ;;
+              checkin-app/scripts/security-generator.js) return 0 ;;
+              checkin-app/scripts/check-boundary-decommission.js) return 0 ;;
+              checkin-app/scripts/lib/boundary-decommission.js) return 0 ;;
             esac
             return 1
           }
 
           BOUNDARY_TOUCHED=0
+          BOUNDARY_FILES=()
           for f in "${CHANGED[@]}"; do
-            if is_boundary "$f"; then BOUNDARY_TOUCHED=1; fi
+            if is_boundary "$f"; then BOUNDARY_TOUCHED=1; BOUNDARY_FILES+=("$f"); fi
           done
 
-          # Re-tier detection: an existing field moving between tiers in the
-          # generated classifications. Pure additions (new fields/models) pass.
+          # Re-tier detection: an existing field moving between tiers in a
+          # generated classifications map. Pure additions (new fields/models)
+          # pass. Every checked-in generator output under generated/ is a
+          # source of truth for some schema (checkin's own, or a vendored
+          # package's per #1286 §5) — loop over whichever of them changed
+          # rather than naming one, so a re-tier in any of them is caught.
           RETIER=""
-          CLS=checkin-app/src/security/generated/classifications.ts
-          if printf '%s\n' "${CHANGED[@]}" | grep -qx "$CLS"; then
-            DIFF=$(git diff "$BASE_SHA"...HEAD -- "$CLS")
+          GENERATED_CHANGED=()
+          for f in "${CHANGED[@]}"; do
+            case "$f" in
+              checkin-app/src/security/generated/*.ts) GENERATED_CHANGED+=("$f") ;;
+            esac
+          done
+          for CLS in "${GENERATED_CHANGED[@]:-}"; do
+            [ -z "$CLS" ] && continue
+            DIFF=$(git diff "$BASE_SHA"..."$HEAD_SHA" -- "$CLS")
             # `|| true`: under set -euo pipefail, grep's exit 1 on zero matches
             # would kill the script mid-step with no verdict — which failed every
             # PR whose classifications diff was PURELY ADDITIVE (the exact case
@@ -87,10 +220,10 @@ jobs:
               [ -z "$field" ] && continue
               newtier=$(echo "$ADDED" | awk -v f="$field" '$1 == f { print $2 }' | head -1)
               if [ -n "$newtier" ] && [ "$newtier" != "$oldtier" ]; then
-                RETIER="$RETIER $field:$oldtier->$newtier"
+                RETIER="$RETIER $field:$oldtier->$newtier (in $CLS)"
               fi
             done <<< "$REMOVED"
-          fi
+          done
           [ -n "$RETIER" ] && BOUNDARY_TOUCHED=1
 
           if [ "$BOUNDARY_TOUCHED" -eq 0 ]; then
@@ -104,6 +237,21 @@ jobs:
           done
 
           if [ "${#VIOLATIONS[@]}" -gt 0 ]; then
+            # Whole-entity decommission exception (see header). Re-tiers never
+            # qualify, and the certifier fails closed on anything but pure
+            # whole-entry removals of subjects deleted in this same PR.
+            # Pass the boundary set (is_boundary above is the single source of
+            # truth) so the certifier never re-derives "what is a boundary file".
+            if [ -z "$RETIER" ] && [ "${#BOUNDARY_FILES[@]}" -gt 0 ] &&
+               node checkin-app/scripts/check-boundary-decommission.js \
+                 --base "$BASE_SHA" \
+                 --head "$HEAD_SHA" \
+                 --boundary "${BOUNDARY_FILES[@]}" \
+                 -- "${VIOLATIONS[@]}"; then
+              echo "Decommission exception: boundary diff is whole-entry removals of dropped"
+              echo "subjects; non-companion files are the drop migration/deletions only."
+              exit 0
+            fi
             echo "::error::This PR changes the security boundary and must ship it ALONE."
             [ -n "$RETIER" ] && echo "::error::Re-tiered existing fields:$RETIER"
             echo "Boundary changes (registry grants, token grammar, handler/stripper,"
@@ -112,6 +260,12 @@ jobs:
             echo "to a separate PR (registry-first for new routes — an unused"
             echo "defineRoute is inert):"
             printf '  %s\n' "${VIOLATIONS[@]}"
+            # Guarded: a re-tier-only failure has no boundary files, and an
+            # empty array still prints one blank bullet.
+            if [ "${#BOUNDARY_FILES[@]}" -gt 0 ]; then
+              echo "Triggered by these boundary files:"
+              printf '  %s\n' "${BOUNDARY_FILES[@]}"
+            fi
             exit 1
           fi
           echo "Boundary change is properly isolated (companions: tests/docs/schema only)."

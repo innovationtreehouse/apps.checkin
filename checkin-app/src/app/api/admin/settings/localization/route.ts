@@ -4,15 +4,18 @@ import prisma from "@/lib/prisma";
 import { APP_TIMEZONE } from "@/lib/time";
 import { APP_LOCALE } from "@/lib/appSettings";
 import { apiError } from "@/lib/api-response";
+import { handler } from "@/security/handler";
 
 export const dynamic = "force-dynamic";
 
 const DEFAULTS = { id: 1, timezone: APP_TIMEZONE, locale: APP_LOCALE };
 
-/** GET /api/admin/settings/localization — app-wide localization singleton (created on first read). */
-export const GET = withAuth({ roles: ["isSysadmin"] }, async () => {
+/** GET /api/admin/settings/localization — app-wide localization singleton (created on first read).
+ *  Registry-governed: admission anyRole [isSysadmin]; envelope 'settings'.
+ *  AppSettings is wholly public-tier; the gate is about admin surfaces. */
+export const GET = handler('GET /api/admin/settings/localization', async () => {
     const settings = await prisma.appSettings.upsert({ where: { id: 1 }, create: DEFAULTS, update: {} });
-    return NextResponse.json({ settings });
+    return { AppSettings: settings };
 });
 
 /**

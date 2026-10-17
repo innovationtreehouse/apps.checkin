@@ -11,7 +11,7 @@ vi.mock("./handler.js", () => ({ handler: h.handler }));
 // requeue-dead path collaborators: the DB helper + config are stubbed so the CLI dispatch is
 // exercised without a real database. Unused (and harmless) on the run:once path.
 const db = vi.hoisted(() => ({ requeueDead: vi.fn(), prisma: { __brand: "prisma" } }));
-vi.mock("@inventory/monitoring-db", () => ({ prisma: db.prisma, requeueDead: db.requeueDead }));
+vi.mock("@checkin/monitoring-db", () => ({ prisma: db.prisma, requeueDead: db.requeueDead }));
 const c = vi.hoisted(() => ({ loadRelayConfig: vi.fn() }));
 vi.mock("./config.js", () => ({ loadRelayConfig: c.loadRelayConfig }));
 

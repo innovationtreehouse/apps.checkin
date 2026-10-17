@@ -39,4 +39,15 @@ describe("safety/pickup page", () => {
 
     expect(await screen.findByText("No approved trusted adults to show.")).toBeInTheDocument();
   });
+
+  it("shows an error state (not a false empty) when the load fails", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    global.fetch = jest.fn(() => Promise.reject(new Error("boom"))) as unknown as typeof fetch;
+    renderWithProviders(<TrustedAdultPickupPage />);
+
+    expect(await screen.findByText("Couldn't load the pickup list.")).toBeInTheDocument();
+    expect(screen.queryByText("No approved trusted adults to show.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    spy.mockRestore();
+  });
 });

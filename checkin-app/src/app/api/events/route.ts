@@ -6,15 +6,19 @@ import { addDays, parseISO, isBefore, isEqual, getDay, setHours, setMinutes } fr
 import { fromZonedTime } from 'date-fns-tz';
 import { getAppSettings } from "@/lib/appSettings";
 import { apiError } from "@/lib/api-response";
+import { handler } from "@/security/handler";
 
 // List standalone (one-time) events — those with no associated program.
-export const GET = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async () => {
+// Registry-governed (GET /api/events): admission anyRole sysadmin/board;
+// envelope null + single-key bag keeps the bare-array response shape. The
+// select stays tight (all public-tier columns) as defense in depth.
+export const GET = handler('GET /api/events', async () => {
     const events = await prisma.event.findMany({
         where: { programId: null },
         orderBy: { startAt: "desc" },
         select: { id: true, name: true, startAt: true, endAt: true, description: true },
     });
-    return NextResponse.json(events);
+    return { Event: events };
 });
 
 export const POST = withAuth({}, async (req, auth) => {

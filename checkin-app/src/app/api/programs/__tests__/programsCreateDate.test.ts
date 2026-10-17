@@ -1,18 +1,16 @@
 /**
  * @jest-environment node
  *
- * Regression test for GitHub issue #154 — start date entered during program
- * creation was dropped before reaching the detail page.
- *
- * Verifies that:
- * 1. The POST /api/programs handler forwards `startAt` and `endAt` strings to
- *    prisma.program.create as Date objects (not null).
- * 2. The response body includes `program.startAt` and `program.endAt` so the
- *    client can read data.program.id and redirect correctly.
+ * Verifies that POST /api/programs:
+ * 1. Forwards `startAt` / `endAt` to prisma.program.create as Date objects
+ *    (not null), and the response carries them back so the client can redirect.
+ * 2. Stores those date-only strings at the calendar-date convention (UTC
+ *    midnight), which formatDateOnly renders back as the picked date.
  */
 
 import { POST } from '@/app/api/programs/route';
 import { getServerSession } from 'next-auth/next';
+import { formatDateOnly } from '@/lib/time';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -23,7 +21,6 @@ jest.mock('@/lib/notifications', () => ({
 }));
 
 jest.mock('@/lib/shopify', () => ({
-    createShopifyProgramVariants: jest.fn().mockResolvedValue(null),
 }));
 
 jest.mock('@/lib/logger', () => ({
@@ -36,6 +33,9 @@ const mockAuditLogCreate = jest.fn().mockResolvedValue({});
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {
+        person: {
+            findUnique: jest.fn().mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true }),
+        },
         program: {
             create: (...args: unknown[]) => mockProgramCreate(...args),
         },
@@ -45,7 +45,7 @@ jest.mock('@/lib/prisma', () => ({
     },
 }));
 
-describe('POST /api/programs — startAt/endAt date preservation (issue #154)', () => {
+describe('POST /api/programs — startAt/endAt date preservation', () => {
     const adminSession = {
         user: { id: 1, isSysadmin: true },
     };
@@ -74,8 +74,6 @@ describe('POST /api/programs — startAt/endAt date preservation (issue #154)', 
             phase: 'PLANNING',
             enrollmentStatus: 'CLOSED',
             shopifyProductId: null,
-            shopifyOrgMemberVariantId: null,
-            shopifyNonOrgMemberVariantId: null,
         };
         mockProgramCreate.mockResolvedValue(createdProgram);
 
@@ -99,8 +97,9 @@ describe('POST /api/programs — startAt/endAt date preservation (issue #154)', 
         const createArgs = mockProgramCreate.mock.calls[0][0] as { data: Record<string, unknown> };
         expect(createArgs.data.startAt).toBeInstanceOf(Date);
         expect(createArgs.data.endAt).toBeInstanceOf(Date);
-        expect((createArgs.data.startAt as Date).toISOString()).toMatch(/^2024-09-01/);
-        expect((createArgs.data.endAt as Date).toISOString()).toMatch(/^2024-12-15/);
+        // Calendar-date convention: UTC midnight (design doc Axis 1)
+        expect((createArgs.data.startAt as Date).toISOString()).toBe('2024-09-01T00:00:00.000Z');
+        expect((createArgs.data.endAt as Date).toISOString()).toBe('2024-12-15T00:00:00.000Z');
 
         // Verify the response body includes program.startAt so the client can
         // read data.program.id and redirect to the detail page
@@ -112,27 +111,36 @@ describe('POST /api/programs — startAt/endAt date preservation (issue #154)', 
         expect(body.program.startAt).toBeTruthy();
     });
 
-    it('stores null for startAt/endAt when omitted from the request body', async () => {
-        const createdProgram = {
-            id: 43,
-            name: 'No-Date Program',
-            leadMentorId: 7,
-            startAt: null,
-            endAt: null,
-            orgMemberOnly: false,
-            minAge: null,
-            maxAge: null,
-            orgMemberPriceCents: null,
-            nonOrgMemberPriceCents: null,
-            maxParticipants: null,
-            phase: 'PLANNING',
-            enrollmentStatus: 'CLOSED',
-            shopifyProductId: null,
-            shopifyOrgMemberVariantId: null,
-            shopifyNonOrgMemberVariantId: null,
-        };
-        mockProgramCreate.mockResolvedValue(createdProgram);
+    // Invariant: the stored instant renders as the picked calendar date on the
+    // Programs list and repopulates the edit form unchanged.
+    it.each(['2026-01-15', '2026-03-08', '2026-09-01', '2026-11-01'])(
+        'renders %s back as the same calendar date after a create round-trip',
+        async (picked) => {
+            mockProgramCreate.mockResolvedValue({ id: 44, name: 'Round Trip' });
 
+            const req = new Request('http://localhost/api/programs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: 'Round Trip',
+                    leadMentorId: 7,
+                    startAt: picked,
+                    endAt: picked,
+                    maxParticipants: 50,
+                }),
+            }) as unknown as import('next/server').NextRequest;
+
+            expect((await POST(req)).status).toBe(200);
+
+            const { data } = mockProgramCreate.mock.calls[0][0] as { data: Record<string, unknown> };
+            const [y, m, d] = picked.split('-').map(Number);
+            expect(formatDateOnly(data.startAt as Date)).toBe(`${m}/${d}/${y}`);
+            expect((data.startAt as Date).toISOString().split('T')[0]).toBe(picked);
+            expect((data.endAt as Date).toISOString().split('T')[0]).toBe(picked);
+        },
+    );
+
+    it('rejects when startAt is omitted', async () => {
         const req = new Request('http://localhost/api/programs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -140,15 +148,29 @@ describe('POST /api/programs — startAt/endAt date preservation (issue #154)', 
                 name: 'No-Date Program',
                 leadMentorId: 7,
                 maxParticipants: 50,
-                // startAt and endAt intentionally absent — simulates form left blank
+                endAt: '2026-12-31',
             }),
         }) as unknown as import('next/server').NextRequest;
 
         const res = await POST(req);
-        expect(res.status).toBe(200);
+        expect(res.status).toBe(400);
+        expect(mockProgramCreate).not.toHaveBeenCalled();
+    });
 
-        const createArgs = mockProgramCreate.mock.calls[0][0] as { data: Record<string, unknown> };
-        expect(createArgs.data.startAt).toBeNull();
-        expect(createArgs.data.endAt).toBeNull();
+    it('rejects when endAt is omitted', async () => {
+        const req = new Request('http://localhost/api/programs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: 'No-Date Program',
+                leadMentorId: 7,
+                maxParticipants: 50,
+                startAt: '2026-01-01',
+            }),
+        }) as unknown as import('next/server').NextRequest;
+
+        const res = await POST(req);
+        expect(res.status).toBe(400);
+        expect(mockProgramCreate).not.toHaveBeenCalled();
     });
 });

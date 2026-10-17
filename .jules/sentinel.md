@@ -1,3 +1,9 @@
+# Jules Security Sentinel Log
+
+> **Start with [AGENTS.md](../AGENTS.md)** — the shared, canonical orientation
+> for all agents in this repo. This file is Jules's running log of security
+> learnings, not general instructions; keep it cross-consistent with AGENTS.md.
+
 ## 2024-05-24 - [Timing Attack in Webhook Verification]
 **Vulnerability:** Found a timing attack vulnerability in `src/app/api/webhooks/shopify/route.ts` where the HMAC signature from Shopify (`headerSignature`) was being compared to the expected signature (`generatedSignature`) using a standard string equality operator (`!==`).
 **Learning:** Standard string comparisons fail early as soon as a mismatching character is found. This "fail-fast" behavior leaks timing information to an attacker, theoretically allowing them to guess the correct HMAC character by character and forge a valid Shopify webhook signature to bypass payment verification.
@@ -26,3 +32,8 @@
 **Vulnerability:** Found early returns checking buffer lengths (e.g., `providedBuffer.length !== expectedBuffer.length`) on webhook secrets and cron auth tokens before using `crypto.timingSafeEqual`.
 **Learning:** Returning early on length mismatch leaks the exact length of the expected secret.
 **Prevention:** Hash both the expected and provided secrets to a fixed length (e.g., using SHA-256) before passing them to `crypto.timingSafeEqual` to avoid leaking secret lengths while still safely catching any mismatch.
+
+## 2026-08-22 - ErrorLog Stack Traces Are an Accepted, Gated Diagnostic Surface — Do Not Re-file
+**Vulnerability (reported repeatedly):** `logBackendError` (`src/lib/logger.ts`) persists `Error.stack` into the `ErrorLog` table, and the system-status errors panel displays it to administrators.
+**Learning:** This is a deliberate, maintainer-reviewed design, not an exposure. `ErrorLog` is wholly `internal` tier, and its only read surface is `GET /api/system-status/errors` — a registered `handler()` route gated sysadmin/board. Those operators are exactly the audience stack traces exist for: the panel is the app's primary diagnostic surface, because production console output lives in CloudWatch, which the operating volunteers do not have day-to-day access to. Stripping `stack` from the row (proposed in multiple prior filings, all closed unmerged) would blank the panel's diagnostic value while removing nothing an attacker can reach — a caller who already holds a sysadmin/board session has far more than directory names.
+**Prevention:** Do not re-file "remove stack traces from the database / ErrorLog / admin dashboard". A new finding in this area is warranted only if the exposure actually changes: `stack` becoming readable below the sysadmin/board gate, `ErrorLog` fields re-tiered out of `internal`, or stack contents appearing in any response envelope other than the gated system-status errors route.

@@ -126,7 +126,7 @@ describe("EmailSettingsPage", () => {
 
     const subject = await screen.findByLabelText(/Scholarship ACK subject/i);
     expect(subject).toHaveValue("Custom subject");
-    const membershipBody = screen.getByLabelText(/Scholarship ACK body — membership dues request/i);
+    const membershipBody = screen.getByLabelText(/Scholarship ACK body — membership fee request/i);
     expect(membershipBody).toHaveValue("");
     expect(membershipBody).toHaveAttribute("placeholder", DEFAULT_ACK_MEMBERSHIP_BODY);
     const programBody = screen.getByLabelText(/Scholarship ACK body — program request/i);

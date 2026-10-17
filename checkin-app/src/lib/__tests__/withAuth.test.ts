@@ -12,7 +12,7 @@ import { withAuth } from '@/lib/auth';
 import { getServerSession } from 'next-auth/next';
 import { getKioskPublicKeys, verifyKioskSignature } from '@/lib/verify-kiosk';
 import { ORG_DOMAIN } from '@/lib/config';
-import type { SessionUser } from '@/types/participant';
+import type { AuthenticatedUser } from '@/types/auth';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/auth-options', () => ({ authOptions: {} }));
@@ -35,8 +35,8 @@ const kioskReq = () =>
         headers: { 'x-kiosk-signature': 'sig' },
     }) as never;
 
-function user(overrides: Partial<SessionUser> = {}): SessionUser {
-    return { id: 1, householdId: 10, ...overrides } as SessionUser;
+function user(overrides: Partial<AuthenticatedUser> = {}): AuthenticatedUser {
+    return { id: 1, householdId: 10, ...overrides } as AuthenticatedUser;
 }
 
 beforeEach(() => {
@@ -66,11 +66,39 @@ describe('withAuth', () => {
         expect(handler).not.toHaveBeenCalled();
     });
 
+    // NextAuth still builds session.user from the empty token the jwt callback returns
+    // when the person's re-sync lookup misses (merged away / deleted).
+    it.each([
+        ['an empty-token session (no id)', { name: undefined, email: undefined, image: undefined }],
+        ['the dev guest persona (non-numeric id)', { id: 'guest', name: 'Logged out' }],
+    ])('returns 401 for %s', async (_label, sessionUser) => {
+        mockSession.mockResolvedValue({ user: sessionUser });
+        const route = withAuth({}, handler);
+        const res = await route(sessionReq());
+
+        expect(res.status).toBe(401);
+        expect(handler).not.toHaveBeenCalled();
+    });
+
     it('returns 403 for a kiosk request on a route without allowKiosk', async () => {
         mockPubKeys.mockReturnValue(['key']);
         mockVerify.mockReturnValue({ ok: true });
         const route = withAuth({}, handler);
         const res = await route(kioskReq());
+
+        expect(res.status).toBe(403);
+        expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('returns 403 for a kiosk request that is not a GET, even on an allowKiosk route', async () => {
+        mockPubKeys.mockReturnValue(['key']);
+        mockVerify.mockReturnValue({ ok: true });
+        const route = withAuth({ allowKiosk: true }, handler);
+        const res = await route(new Request('http://localhost/api/whatever', {
+            method: 'POST',
+            headers: { 'x-kiosk-signature': 'sig' },
+            body: JSON.stringify({ any: 'thing' }),
+        }) as never);
 
         expect(res.status).toBe(403);
         expect(handler).not.toHaveBeenCalled();

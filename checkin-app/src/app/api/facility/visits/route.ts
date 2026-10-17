@@ -1,31 +1,33 @@
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
+import type { Visit } from "@/generated/prisma/client";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
-import { parseVisitTime, departureAfterArrival, withinMaxDuration } from "@/lib/visitTimes";
+import { parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTime } from "@/lib/visitTimes";
+import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
+import { handler } from "@/security/handler";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { correctCloseTime } from "@/lib/attendance/close";
 
-export const GET = withAuth(
-    { roles: ['isSysadmin', 'isBoardMember'] },
-    async () => {
-        try {
-            const visits = await prisma.visit.findMany({
-                take: 50,
-                orderBy: { arrivedAt: "desc" },
-                include: {
-                    person: {
-                        select: { email: true, name: true, isSysadmin: true, isKeyholder: true },
-                    },
-                },
-            });
+// Registry-governed (GET /api/facility/visits): admission anyRole
+// sysadmin/board; envelope 'visits'. Nested person carries email (pii) —
+// covered by the admin everyones band, and now stripped for any role a
+// future view adds. Same query, same take-50 shape, same tombstone filter.
+export const GET = handler('GET /api/facility/visits', async () => {
+    const visits = await prisma.visit.findMany({
+        take: 50,
+        where: { deletedAt: null },
+        orderBy: { arrivedAt: "desc" },
+        include: {
+            person: {
+                select: { email: true, name: true, isSysadmin: true, isKeyholder: true },
+            },
+        },
+    });
 
-            return NextResponse.json({ visits });
-        } catch (error) {
-            logger.error("Fetch visits error:", error);
-            return apiError("Internal Server Error", 500);
-        }
-    }
-);
+    return { Visit: visits };
+});
 
 export const PATCH = withAuth(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -38,45 +40,88 @@ export const PATCH = withAuth(
             }
 
             const existing = await prisma.visit.findUnique({ where: { id: visitId } });
-            if (!existing) {
+            if (!existing || existing.deletedAt) {
                 return apiError("Visit not found.", 404); // also turns a bad id into a clean 404
             }
 
             const now = new Date();
-            let nextArrived = existing.arrivedAt;
-            let nextDeparted = existing.departedAt;
+            let parsedArrived: Date | null = null;
+            let parsedDeparted: Date | null = null;
 
             if (arrivedAt) {
                 const r = parseVisitTime(arrivedAt, "arrival", now);
                 if (!r.ok) return apiError(r.error, 400);
-                nextArrived = r.value;
+                parsedArrived = r.value;
             }
             if (departedAt) {
                 const r = parseVisitTime(departedAt, "departure", now);
                 if (!r.ok) return apiError(r.error, 400);
-                nextDeparted = r.value;
+                parsedDeparted = r.value;
             }
 
-            // Result must be closed: can close an open visit, never reopen a closed one.
-            if (nextDeparted === null) {
-                return apiError("Departure time is required to close this visit.", 400);
-            }
-            if (!departureAfterArrival(nextArrived, nextDeparted)) {
-                return apiError("Departure time must be after arrival time", 400);
-            }
-            if (!withinMaxDuration(nextArrived, nextDeparted)) {
-                return apiError("A visit cannot be longer than 24 hours.", 400);
-            }
+            // Editing a visit is a read-modify-write on this person's visit state, so
+            // it takes the same per-person advisory xact lock as /api/scan and re-reads
+            // the row inside it — the pre-check above ran unserialized and a racing
+            // scan or the facility-close sweep may have closed or removed the visit.
+            const result = await prisma.$transaction(async (tx): Promise<{ error: string; status: number } | { visit: Visit; previous: Visit }> => {
+                await tx.$executeRaw`SELECT pg_advisory_xact_lock(${existing.personId})`;
 
-            const updatedVisit = await prisma.visit.update({
-                where: { id: visitId },
-                data: {
-                    ...(arrivedAt ? { arrivedAt: nextArrived, arrivedVia: "WEB" } : {}),
-                    ...(departedAt ? { departedAt: nextDeparted, departedVia: "WEB" } : {}),
-                },
-            });
+                const current = await tx.visit.findUnique({ where: { id: visitId } });
+                if (!current || current.deletedAt) return { error: "Visit not found.", status: 404 as const };
 
-            // Log the manual edit in the audit trail
+                const editedArrived = parsedArrived && !isUnchangedTime(parsedArrived, current.arrivedAt) ? parsedArrived : null;
+                const editedDeparted = parsedDeparted && !isUnchangedTime(parsedDeparted, current.departedAt) ? parsedDeparted : null;
+                const nextArrived = editedArrived ?? current.arrivedAt;
+                const nextDeparted = editedDeparted ?? current.departedAt;
+
+                // Result must be closed: can close an open visit, never reopen a closed one.
+                if (nextDeparted === null) {
+                    return { error: "Departure time is required to close this visit.", status: 400 as const };
+                }
+                if (!departureAfterArrival(nextArrived, nextDeparted)) {
+                    return { error: "Departure time must be after arrival time", status: 400 as const };
+                }
+                if (!withinMaxDuration(nextArrived, nextDeparted)) {
+                    return { error: "A visit cannot be longer than 24 hours.", status: 400 as const };
+                }
+                if (!editedArrived && !editedDeparted) {
+                    return { error: "Nothing to change.", status: 400 as const };
+                }
+
+                const visit = await tx.visit.update({
+                    where: { id: visitId },
+                    data: {
+                        // A corrected time becomes a typed clock: an edited
+                        // arrival stamps arrivedVia TYPED, a departure staff typed
+                        // stamps departedVia TYPED. Significance already read the
+                        // pre-edit source (editSignificance below), so restamping
+                        // only sets what the NEXT correction overwrites — a second
+                        // correction weighs the value as a self-report.
+                        ...(editedArrived ? { arrivedAt: nextArrived, arrivedVia: "TYPED" } : {}),
+                        ...(editedDeparted ? { departedAt: nextDeparted, departedVia: "TYPED" } : {}),
+                    },
+                });
+                // The board correcting a closer's departure corrects the close they made.
+                if (editedDeparted && current.departedAt && auth.type === 'session' && auth.user.isBoardMember) {
+                    const close = await tx.facilityClose.findFirst({
+                        where: { closerVisitId: visitId },
+                        select: { id: true, closedAt: true, closedById: true },
+                    });
+                    if (close) await correctCloseTime(tx, close, auth.user.id, nextDeparted);
+                }
+                return { previous: current, visit };
+            }, { maxWait: 5000, timeout: 15000 });
+
+            if ('error' in result) return apiError(result.error, result.status);
+            invalidateAttendanceCache();
+            const { visit: updatedVisit, previous } = result;
+
+            // Log the manual edit in the audit trail. secondaryAffectedEntity =
+            // the visit's person, so a correction review can tell self from
+            // acting-for-another by comparison alone. oldData/
+            // significance score against `previous` (the in-lock re-read), not
+            // the pre-lock `existing` — a racing scan/close can change the row
+            // between the two reads.
             if (auth.type === 'session') {
                 await prisma.auditLog.create({
                     data: {
@@ -84,7 +129,13 @@ export const PATCH = withAuth(
                         action: "EDIT",
                         tableName: "Visit",
                         affectedEntityId: visitId,
-                        newData: JSON.parse(JSON.stringify(updatedVisit)),
+                        secondaryAffectedEntity: previous.personId,
+                        oldData: JSON.parse(JSON.stringify(previous)),
+                        newData: JSON.parse(JSON.stringify({
+                            ...updatedVisit,
+                            type: "staff_correction",
+                            significance: editSignificance(previous, updatedVisit, { byProxy: auth.user.id !== previous.personId }),
+                        })),
                     },
                 });
             }
@@ -108,14 +159,33 @@ export const DELETE = withAuth(
             }
 
             const existing = await prisma.visit.findUnique({ where: { id: visitId } });
-            if (!existing) {
+            if (!existing || existing.deletedAt) {
                 return apiError("Visit not found.", 404);
             }
 
-            await prisma.visit.delete({ where: { id: visitId } });
+            // Same per-person advisory xact lock as the PATCH above, with the
+            // existence check re-run inside it so a racing delete can't tombstone
+            // the row twice and overwrite who deleted it.
+            const removed = await prisma.$transaction(async (tx) => {
+                await tx.$executeRaw`SELECT pg_advisory_xact_lock(${existing.personId})`;
 
-            // Log the manual deletion in the audit trail — keep the deleted row in oldData
-            // since it no longer exists anywhere else.
+                const current = await tx.visit.findUnique({ where: { id: visitId } });
+                if (!current || current.deletedAt) return null;
+
+                // Tombstone, matching the member's own self-delete: a deleted visit
+                // keeps its row so the deletion stays reviewable and reversible.
+                await tx.visit.update({
+                    where: { id: visitId },
+                    data: { deletedAt: new Date(), deletedById: auth.type === 'session' ? auth.user.id : null },
+                });
+                return current;
+            }, { maxWait: 5000, timeout: 15000 });
+
+            if (!removed) return apiError("Visit not found.", 404);
+            invalidateAttendanceCache();
+
+            // Log the manual deletion in the audit trail — oldData carries the
+            // pre-delete row so the review needs no join.
             if (auth.type === 'session') {
                 await prisma.auditLog.create({
                     data: {
@@ -123,7 +193,9 @@ export const DELETE = withAuth(
                         action: "DELETE",
                         tableName: "Visit",
                         affectedEntityId: visitId,
-                        oldData: JSON.parse(JSON.stringify(existing)),
+                        secondaryAffectedEntity: removed.personId,
+                        oldData: JSON.parse(JSON.stringify(removed)),
+                        newData: { type: "staff_removal", significance: deleteSignificance(removed, { byProxy: auth.user.id !== removed.personId }) },
                     },
                 });
             }

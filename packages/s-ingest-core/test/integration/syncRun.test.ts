@@ -6,20 +6,13 @@
  * Skipped unless SHOPIFY_READ_DATABASE_URL is set.
  */
 import { it, expect, beforeEach, afterAll } from "vitest";
-import { PrismaPg } from "@prisma/adapter-pg";
 import { prisma } from "../../src/db/client.js";
-import { PrismaClient } from "../../src/generated/prisma/client.js";
 import { withSyncRun, type RunHeartbeat } from "../../src/sync/run.js";
 import { withAdvisoryLock, ConcurrentRunError } from "../../src/sync/locks.js";
 import { SyncKind, SyncStatus } from "../../src/generated/prisma/client.js";
 import { describeDb } from "../helpers/db.js";
 
 const STORE = "syncrun-test.myshopify.com";
-
-function singleConnClient(): PrismaClient {
-  const adapter = new PrismaPg({ connectionString: process.env.SHOPIFY_READ_DATABASE_URL as string, max: 1 });
-  return new PrismaClient({ adapter });
-}
 
 const latestRun = () => prisma.syncRun.findFirst({ where: { storeId: STORE }, orderBy: { id: "desc" } });
 
@@ -91,6 +84,17 @@ describeDb("withSyncRun", () => {
     expect(beats[0]).toMatchObject({ status: SyncStatus.FAILED, error: "kaboom" });
   });
 
+  it("redacts secrets from the stored error and the heartbeat", async () => {
+    const beats: RunHeartbeat[] = [];
+    await expect(
+      withSyncRun(prisma, STORE, SyncKind.INCREMENTAL, "orders", async () => {
+        throw new Error("401 from X-Shopify-Access-Token: shpat_0123456789abcdef");
+      }, { heartbeat: (b) => void beats.push(b) }),
+    ).rejects.toThrow();
+    expect((await latestRun())?.error).toBe("401 from X-Shopify-Access-Token: [redacted]");
+    expect(beats[0]).toMatchObject({ error: "401 from X-Shopify-Access-Token: [redacted]" });
+  });
+
   it("never fires a heartbeat for an ADMIN run (replay/reset must not reset freshness)", async () => {
     const beats: RunHeartbeat[] = [];
     await withSyncRun(prisma, STORE, SyncKind.ADMIN, "reset-watermark", async () => ({ ok: true }), {
@@ -111,19 +115,14 @@ describeDb("withSyncRun", () => {
   });
 
   it("throws ConcurrentRunError and creates NO run row when the advisory lock is held", async () => {
-    const holder = singleConnClient();
-    try {
-      const before = await prisma.syncRun.count({ where: { storeId: STORE } });
-      await withAdvisoryLock(holder, `sync_run:${STORE}`, async () => {
-        // A second run for the same store cannot take the lock — it must fail fast,
-        // BEFORE any sync_run row is created (so a skip leaves no FAILED row behind).
-        await expect(
-          withSyncRun(prisma, STORE, SyncKind.INCREMENTAL, "orders", async () => ({ processed: 1 })),
-        ).rejects.toBeInstanceOf(ConcurrentRunError);
-      });
-      expect(await prisma.syncRun.count({ where: { storeId: STORE } })).toBe(before);
-    } finally {
-      await holder.$disconnect();
-    }
+    const before = await prisma.syncRun.count({ where: { storeId: STORE } });
+    await withAdvisoryLock(`sync_run:${STORE}`, async () => {
+      // A second run for the same store cannot take the lock — it must fail fast,
+      // BEFORE any sync_run row is created (so a skip leaves no FAILED row behind).
+      await expect(
+        withSyncRun(prisma, STORE, SyncKind.INCREMENTAL, "orders", async () => ({ processed: 1 })),
+      ).rejects.toBeInstanceOf(ConcurrentRunError);
+    });
+    expect(await prisma.syncRun.count({ where: { storeId: STORE } })).toBe(before);
   });
 });

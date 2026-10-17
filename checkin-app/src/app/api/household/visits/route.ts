@@ -4,6 +4,8 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 export const GET = withAuth(
     {},
     async (req, auth) => {
@@ -18,11 +20,12 @@ export const GET = withAuth(
             let endDate: Date;
 
             if (filterDateStr) {
-                const baseDate = new Date(filterDateStr);
-                startDate = new Date(baseDate);
-                startDate.setDate(baseDate.getDate() - 7);
-                endDate = new Date(baseDate);
-                endDate.setDate(baseDate.getDate() + 7);
+                // The date-only filter parses to UTC midnight, so shift the window in UTC
+                // too — getDate/setDate read local fields and skew the bounds by the
+                // server's DST offset across a transition.
+                const baseMs = new Date(filterDateStr).getTime();
+                startDate = new Date(baseMs - 7 * DAY_MS);
+                endDate = new Date(baseMs + 7 * DAY_MS);
             } else {
                 endDate = new Date();
                 startDate = new Date();
@@ -43,6 +46,7 @@ export const GET = withAuth(
                     person: {
                         householdId: user.householdId
                     },
+                    deletedAt: null,
                     arrivedAt: {
                         gte: startDate,
                         lte: endDate

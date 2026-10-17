@@ -10,8 +10,8 @@ import { notifications } from "@mantine/notifications";
 import MembershipSettingsPage from "../page";
 
 const SETTINGS = {
-  normalDuesCents: 15000,
-  volunteerDuesCents: 5000,
+  standardMembershipFeeCents: 15000,
+  volunteerMembershipFeeCents: 5000,
   orgMembershipYearBoundary: "2025-09-01T00:00:00.000Z",
   orgMembershipVariantId: "123456",
   orgMembershipProductUrl: "https://test-store.myshopify.com/products/annual-membership",
@@ -43,15 +43,15 @@ describe("MembershipSettingsPage", () => {
     const fetchMock = mockFetchJson({ "/api/settings/membership": { settings: SETTINGS } });
     renderWithProviders(<MembershipSettingsPage />);
 
-    const normalDues = await screen.findByDisplayValue("150.00");
-    fireEvent.change(normalDues, { target: { value: "200.00" } });
+    const standardFee = await screen.findByDisplayValue("150.00");
+    fireEvent.change(standardFee, { target: { value: "200.00" } });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" }));
     });
     const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
-    expect(JSON.parse(putOpts!.body as string)).toEqual(expect.objectContaining({ normalDuesCents: 20000 }));
+    expect(JSON.parse(putOpts!.body as string)).toEqual(expect.objectContaining({ standardMembershipFeeCents: 20000 }));
 
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Settings saved." })),
@@ -211,7 +211,7 @@ describe("MembershipSettingsPage", () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({}); // unmatched -> res.ok false, load() leaves state at its initial defaults
     renderWithProviders(<MembershipSettingsPage />);
-    await waitFor(() => expect(screen.getByLabelText("Annual dues (normal)")).toHaveValue("0"));
+    await waitFor(() => expect(screen.getByLabelText("Standard annual membership fee")).toHaveValue("0"));
 
     global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Save blocked." }) })) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
@@ -231,9 +231,8 @@ describe("MembershipSettingsPage", () => {
     );
   });
 
-  // The signing-target radio is a CHECKIN_ENV=dev knob: the API 400s devSigningTarget on
-  // any other env, and one rejected field rejects the whole PUT — so sending it on 'local'
-  // made every membership setting unsaveable. tsc can't see this (both predicates are
+  // The signing-target radio is a CHECKIN_ENV=dev knob: the API only honours it on a dev
+  // instance, so the client sends it only there. tsc can't see this (both predicates are
   // boolean), so the env gate needs a real assertion on the PUT body.
   it.each([
     ["local" as const, false],

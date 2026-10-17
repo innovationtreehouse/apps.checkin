@@ -1,5 +1,5 @@
 /**
- * Exhaustive state-space safety proof (docs/designs/LIFECYCLE.md, last bullet).
+ * Exhaustive state-space safety proof.
  *
  * For each machine, enumerate the ENTIRE bounded state space — every
  * (status × flag-combination) tuple — and assert:
@@ -28,10 +28,17 @@ import {
     validate as validateMembership,
     TRANSITIONS as MEMBERSHIP_TRANSITIONS,
     ALL_STATUSES as MEMBERSHIP_ALL_STATUSES,
+    ALL_KINDS as MEMBERSHIP_ALL_KINDS,
     INITIAL_STATES as MEMBERSHIP_INITIAL_STATES,
     LEGACY_STATUSES as MEMBERSHIP_LEGACY_STATUSES,
     type ClassifyRow as MembershipRow,
 } from '@/lib/membership/lifecycle';
+
+import {
+    TRANSITIONS as HOUSEHOLD_TRANSITIONS,
+    STATES as HOUSEHOLD_STATES,
+    INITIAL_STATES as HOUSEHOLD_INITIAL_STATES,
+} from '@/lib/membership/householdStatus';
 
 const BOOLS = [false, true] as const;
 
@@ -85,27 +92,32 @@ describe('membership — exhaustive state space', () => {
     const legacy = new Set<string>(MEMBERSHIP_LEGACY_STATUSES);
     const realized = new Set<string>();
 
-    test('every (status × 4 flags) tuple is on-diagram-clean or off-diagram-flagged', () => {
+    // Kind is the second axis because the machine's ACTIVE edges are kind-specific:
+    // a PERSON_AGREEMENT settles on the signature and owes no clearance stamp.
+    test('every (status × kind × 4 flags) tuple is on-diagram-clean or off-diagram-flagged', () => {
         for (const status of MEMBERSHIP_ALL_STATUSES) {
-            for (const contractSignedAt of BOOLS) {
-                for (const bgConsentAt of BOOLS) {
-                    for (const bgClearedAt of BOOLS) {
-                        for (const paidAt of BOOLS) {
-                            const row: MembershipRow = {
-                                status,
-                                contractSignedAt,
-                                bgConsentAt,
-                                bgClearedAt,
-                                paidAt,
-                            };
-                            const name = classifyMembership(row);
-                            if (name !== null) {
-                                expect(validateMembership(row)).toBeNull();
-                                // reachable, or the dead-but-guarded legacy status (docs/designs/LIFECYCLE.md)
-                                expect(reachable.has(name) || legacy.has(name)).toBe(true);
-                                realized.add(name);
-                            } else {
-                                expect(validateMembership(row)).not.toBeNull();
+            for (const kind of MEMBERSHIP_ALL_KINDS) {
+                for (const contractSignedAt of BOOLS) {
+                    for (const bgConsentAt of BOOLS) {
+                        for (const bgClearedAt of BOOLS) {
+                            for (const paidAt of BOOLS) {
+                                const row: MembershipRow = {
+                                    status,
+                                    kind,
+                                    contractSignedAt,
+                                    bgConsentAt,
+                                    bgClearedAt,
+                                    paidAt,
+                                };
+                                const name = classifyMembership(row);
+                                if (name !== null) {
+                                    expect(validateMembership(row)).toBeNull();
+                                    // reachable, or the dead-but-guarded legacy status
+                                    expect(reachable.has(name) || legacy.has(name)).toBe(true);
+                                    realized.add(name);
+                                } else {
+                                    expect(validateMembership(row)).not.toBeNull();
+                                }
                             }
                         }
                     }
@@ -133,6 +145,34 @@ describe('membership — exhaustive state space', () => {
             ['ACTIVE', 'ARCHIVED'],
         );
         expect(r.unreachable).toEqual(['RENEWAL_PENDING_BG']);
+        expect(r.deadEnds).toEqual([]);
+    });
+});
+
+describe('household status — owner rulings hold in the table', () => {
+    const edges = HOUSEHOLD_TRANSITIONS.filter((t) => t.from !== '∅');
+
+    test('DENIED → ACTIVE is not an edge', () => {
+        expect(edges.some((t) => t.from === 'DENIED' && t.to === 'ACTIVE')).toBe(false);
+    });
+
+    test("DENIED's only exit is the board's restore to NONE", () => {
+        const exits = edges.filter((t) => t.from === 'DENIED');
+        expect(exits.map((t) => [t.to, t.actor])).toEqual([['NONE', 'board']]);
+    });
+
+    test('ACTIVE can only become ACTIVE via NONE, REVOKED (convergence)', () => {
+        const into = edges.filter((t) => t.to === 'ACTIVE').map((t) => t.from).sort();
+        expect(into).toEqual(['NONE', 'REVOKED']);
+    });
+
+    test('nothing returns ACTIVE or REVOKED to NONE', () => {
+        expect(edges.filter((t) => t.to === 'NONE').map((t) => t.from)).toEqual(['DENIED']);
+    });
+
+    test('every state is reachable from creation', () => {
+        const r = reachability(HOUSEHOLD_TRANSITIONS, HOUSEHOLD_STATES, HOUSEHOLD_INITIAL_STATES, HOUSEHOLD_STATES);
+        expect(r.unreachable).toEqual([]);
         expect(r.deadEnds).toEqual([]);
     });
 });

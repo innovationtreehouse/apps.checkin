@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { Box, Center, Loader, Stack, Tabs, Text } from "@mantine/core";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { SAFETY_SECTION_ROLES } from "@/lib/safetyNav";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { tabBadgeFor } from "@/components/navBadges";
 import { CountBadge } from "@/components/ui/CountBadge";
@@ -18,7 +19,7 @@ export default function SafetyLayout({ children }: { children: React.ReactNode }
   const { data: session } = useSession();
   const sessionUser = session?.user as { isSysadmin?: boolean; isBoardMember?: boolean } | undefined;
   const isBoard = !!(sessionUser?.isSysadmin || sessionUser?.isBoardMember);
-  const { loading, ready } = useRequireRole(["isSysadmin", "isBoardMember", "isKeyholder"]);
+  const { loading, ready } = useRequireRole(SAFETY_SECTION_ROLES);
   // Trusted-adult disclosures awaiting board review — same count as the Safety nav badge
   // (derived in navBadges.tabBadgeFor so nav and tab can't diverge).
   const counts = useTodoCounts(isBoard);

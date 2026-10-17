@@ -12,8 +12,7 @@ import {
     type RouteGrantSpec,
 } from '@/security/scopes';
 import { SCOPE_BINDINGS, OPT_OUT_PENDING_ROUTE } from '@/security/scopeBindings';
-import { classifications } from '@/security/generated/classifications';
-import { allRoutes } from '@/security/core';
+import { classifications, allRoutes } from '@/security/core';
 // Side-effect import: registers every route via defineRoute() so allRoutes()
 // yields the real policy surface for the CI gate below.
 import '@/security/registry';
@@ -45,7 +44,7 @@ describe('validateBindings — coverage (forgotten-model catcher)', () => {
         // createdById FK; with an empty queue it must error. (MembershipProcess
         // was the old exemplar but is now un-scopable by the direct-FK heuristic
         // once bare `id` left SCOPABLE_FIELDS — it has only membershipId/
-        // certifiedById, neither a recognised actor FK.)
+        // manualPaymentById, neither a recognised actor FK.)
         const errs = validateBindings(SCOPE_BINDINGS, CLS, new Set());
         expect(errs.some(e => e.startsWith('VolunteerDesignation is sensitive and scopable'))).toBe(true);
     });
@@ -61,14 +60,11 @@ describe('validateBindings — coverage (forgotten-model catcher)', () => {
     });
 });
 
-describe('validateBindings — Fee/RSVP dead-field cleanup + RSVP eventId re-add', () => {
-    it('no longer flags Fee.participantId (Fee unbound) or RSVP.programId (RSVP now eventId-bound)', () => {
-        // #574 dropped the dead literal-port reads (Fee has no participantId, RSVP
-        // has no programId). Fee is now unbound (public-only); RSVP is re-bound on
-        // the real `eventId` column by this chip. Neither field-existence error
-        // should appear, and RSVP must be clean.
+describe('validateBindings — RSVP eventId re-add', () => {
+    it('no longer flags RSVP.programId (RSVP is eventId-bound)', () => {
+        // RSVP has no programId column; the program-lead grant resolves through
+        // eventId. No field-existence error should appear and RSVP must be clean.
         const errs = validateBindings(SCOPE_BINDINGS, CLS, OPT_OUT_PENDING_ROUTE);
-        expect(errs).not.toContain('Fee.participantId — no such field');
         expect(errs).not.toContain('RSVP.programId — no such field');
         expect(errs.some(e => e.startsWith('RSVP.'))).toBe(false);
     });
@@ -90,6 +86,25 @@ describe('validateRouteGrants — seam check', () => {
             { endpoint: '/api/y', orderedView: [['authenticated', ['their_own:pii', 'everyones:internal', 'public']]], returns: ['Person'] },
         ];
         expect(validateRouteGrants(routes, bindings)).toEqual([]);
+    });
+
+    // The CI gate below passes only if the seam is actually EVALUATED for the
+    // self-correction grant — a route whose `returns` is missing is skipped, so
+    // "green" alone does not prove the grant was checked. Strip led_households
+    // from the Visit binding and the real spec must go red.
+    it('bites on the real self-correction spec when Visit loses its led_households binding', () => {
+        const patch = [...allRoutes()].find(
+            ([ep]) => ep === 'PATCH /api/attendance/manual/[id]',
+        )?.[1];
+        expect(patch?.returns).toEqual(['Visit']);
+        const errs = validateRouteGrants([patch as RouteGrantSpec], {
+            ...SCOPE_BINDINGS,
+            Visit: {
+                their_own: SCOPE_BINDINGS.Visit.their_own,
+                all_current_visitors: SCOPE_BINDINGS.Visit.all_current_visitors,
+            },
+        });
+        expect(errs.some(e => e.includes("grants 'led_households:*'"))).toBe(true);
     });
 
     it('skips a route that has not declared `returns` (incremental coverage)', () => {

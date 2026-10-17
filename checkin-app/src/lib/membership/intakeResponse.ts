@@ -7,9 +7,14 @@ const STATUS_FOR: Record<IntakeError["code"], number> = {
     no_household: 400,
     not_lead: 403,
     already_member: 409,
+    denied: 409,
+    blocked: 409,
+    renewal_open: 409,
     no_process: 400,
     incomplete: 400,
     lead_limit: 400,
+    name_required: 400,
+    email_designated: 400,
 };
 
 /**

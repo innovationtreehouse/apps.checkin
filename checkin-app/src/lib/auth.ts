@@ -4,8 +4,7 @@ import { authOptions } from '@/lib/auth-options';
 import { getKioskPublicKeys, verifyKioskSignature } from './verify-kiosk';
 import { config, isStagingAccessAllowed } from './config';
 import { apiError } from './api-response';
-import type { SessionUser } from '@/types/participant';
-import type { BusinessRole, AuthResult } from '@/types/auth';
+import type { AuthenticatedUser, BusinessRole, AuthResult } from '@/types/auth';
 
 /**
  * Authenticate a request — tries kiosk signature first, then session. Resolves the
@@ -14,45 +13,59 @@ import type { BusinessRole, AuthResult } from '@/types/auth';
  */
 async function resolveAuthResult(
     req: NextRequest,
-    body?: string
+    body?: string,
+    opts?: { sessionOnly?: boolean }
 ): Promise<AuthResult> {
-    // 1. Try kiosk signature
-    const pubKeys = getKioskPublicKeys();
-    const hasKioskHeaders = req.headers.get('x-kiosk-signature');
+    // 1. Try kiosk signature. Skipped for session-only resolution: verifying a
+    // signature consumes its single-use nonce, so a caller that discards kiosk
+    // results (getOptionalSessionUser) must not verify here — the kiosk-tolerant
+    // route's own verification of the same request would then see a replay.
+    if (!opts?.sessionOnly) {
+        const pubKeys = getKioskPublicKeys();
+        const hasKioskHeaders = req.headers.get('x-kiosk-signature');
 
-    if (pubKeys.length > 0 && hasKioskHeaders) {
-        const method = req.method;
-        const path = new URL(req.url).pathname;
-        const result = verifyKioskSignature(
-            method, path, body || '',
-            req.headers.get('x-kiosk-timestamp'),
-            req.headers.get('x-kiosk-signature'),
-            req.headers.get('x-kiosk-nonce'),
-            pubKeys
-        );
-        if (result.ok) return { type: 'kiosk' };
-    } else if (pubKeys.length === 0 && config.isLocal()) {
-        // Local laptops only (CHECKIN_ENV=local): treat as kiosk when no signing key is
-        // configured, so the kiosk/check-in flows can be exercised without provisioning keys.
-        // Deliberately NOT enabled on the cloud dev instance (CHECKIN_ENV=dev) — that box is
-        // publicly reachable and must require a real kiosk key, exactly like prod. CHECKIN_ENV
-        // is unset under tests, so this stays off there too.
-        if (hasKioskHeaders || !req.headers.get('cookie')) {
-            return { type: 'kiosk' };
+        if (pubKeys.length > 0 && hasKioskHeaders) {
+            const method = req.method;
+            const path = new URL(req.url).pathname;
+            const result = verifyKioskSignature(
+                method, path, body || '',
+                req.headers.get('x-kiosk-timestamp'),
+                req.headers.get('x-kiosk-signature'),
+                req.headers.get('x-kiosk-nonce'),
+                pubKeys
+            );
+            if (result.ok) return { type: 'kiosk' };
+        } else if (pubKeys.length === 0 && config.isLocal()) {
+            // Local laptops only (CHECKIN_ENV=local): treat as kiosk when no signing key is
+            // configured, so the kiosk/check-in flows can be exercised without provisioning keys.
+            // Deliberately NOT enabled on the cloud dev instance (CHECKIN_ENV=dev) — that box is
+            // publicly reachable and must require a real kiosk key, exactly like prod. CHECKIN_ENV
+            // is unset under tests, so this stays off there too.
+            if (hasKioskHeaders || !req.headers.get('cookie')) {
+                return { type: 'kiosk' };
+            }
         }
     }
 
     // 2. Try session
     const session = await getServerSession(authOptions);
     if (session?.user) {
+        // No positive integer id = no live person behind the session (the jwt re-sync
+        // emptied the token, or the dev guest persona). Downstream `where: { x: user.id }`
+        // filters would drop an undefined id and match every row, so this must not be a
+        // session.
+        const id: unknown = session.user.id;
+        if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0) {
+            return { type: 'unauthenticated' };
+        }
         // A denied household is locked out of the whole app. Treat it as unauthenticated
         // so every route — including authenticated-only ones — fails closed, regardless of
         // each route's role list. The jwt callback already strips role flags; this is the
         // belt-and-suspenders that also denies plain member endpoints.
-        if ((session.user as SessionUser).denied) {
+        if ((session.user as AuthenticatedUser).denied) {
             return { type: 'unauthenticated' };
         }
-        return { type: 'session', user: session.user as SessionUser };
+        return { type: 'session', user: session.user as AuthenticatedUser };
     }
 
     return { type: 'unauthenticated' };
@@ -72,9 +85,10 @@ async function resolveAuthResult(
  */
 export async function authenticateRequest(
     req: NextRequest,
-    body?: string
+    body?: string,
+    opts?: { sessionOnly?: boolean }
 ): Promise<AuthResult> {
-    const result = await resolveAuthResult(req, body);
+    const result = await resolveAuthResult(req, body, opts);
 
     if (config.isStaging()) {
         const claims = result.type === 'session' ? result.user : null;
@@ -97,7 +111,10 @@ export async function authenticateRequest(
  * authenticateRequest, so it falls through to `undefined` here → sees the
  * public-only view, same as anonymous. Kiosk requests also resolve to
  * `undefined` (this returns only real session users); a kiosk-tolerant route
- * keeps its own kiosk plumbing.
+ * keeps its own kiosk plumbing. Resolution is session-only: kiosk signatures
+ * are NOT verified here, because verification consumes the single-use nonce
+ * and would make the route's own verification of the same request fail as a
+ * replay.
  *
  * Scope: this is for genuinely PUBLIC / optional-session reads only. It is NOT
  * an escape hatch for routes that should require a session — those use withAuth
@@ -106,8 +123,8 @@ export async function authenticateRequest(
  * ban getServerSession in app/api/** outright. The session read lives here in
  * the auth boundary, alongside authenticateRequest.
  */
-export async function getOptionalSessionUser(req: Request): Promise<SessionUser | undefined> {
-    const auth = await authenticateRequest(req as NextRequest);
+export async function getOptionalSessionUser(req: Request): Promise<AuthenticatedUser | undefined> {
+    const auth = await authenticateRequest(req as NextRequest, undefined, { sessionOnly: true });
     return auth.type === 'session' ? auth.user : undefined;
 }
 
@@ -145,7 +162,9 @@ export function withAuth<Ctx = unknown>(
             return apiError('Unauthorized', 401);
         }
 
-        if (auth.type === 'kiosk' && !options.allowKiosk) {
+        // The kiosk signature is checked here over an empty body, so it only
+        // authenticates a bodiless read: a kiosk write must verify its own body.
+        if (auth.type === 'kiosk' && (!options.allowKiosk || !['GET', 'HEAD'].includes(nreq.method))) {
             return apiError('Forbidden', 403);
         }
 

@@ -22,6 +22,12 @@ jest.mock('@/lib/verify-kiosk', () => ({
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
 }));
+// The route fires check-in notifications without awaiting; stub them so no
+// query outlives the suite's teardown.
+jest.mock('@/lib/notifications', () => ({
+    ...jest.requireActual('@/lib/notifications'),
+    sendCheckinNotifications: jest.fn().mockResolvedValue(undefined),
+}));
 describe('General Attendance API Integration Tests', () => {
     let adminId: number;
     let commonId: number;
@@ -29,6 +35,7 @@ describe('General Attendance API Integration Tests', () => {
     let householdChildId: number;
     let boardMemberId: number;
     let keyholderId: number;
+    let tombstoneId: number;
 
     let activeVisitId: number;
     let childActiveVisitId: number;
@@ -120,6 +127,17 @@ describe('General Attendance API Integration Tests', () => {
             data: { personId: keyholderId, arrivedAt: new Date() }
         });
 
+        // A merge tombstone: the row survives with mergedIntoId set at the survivor.
+        const tombstone = await prisma.person.create({
+            data: {
+                email: 'tombstone-attend-api-test@example.com',
+                name: 'Merged Away',
+                mergedInto: { connect: { id: commonId } },
+                household: { create: { name: "Test HH" } }
+            }
+        });
+        tombstoneId = tombstone.id;
+
         // Create initial active visits
         const commonVisit = await prisma.visit.create({
             data: { personId: commonId, arrivedAt: new Date() }
@@ -133,7 +151,7 @@ describe('General Attendance API Integration Tests', () => {
     });
 
     afterAll(async () => {
-        const existingUserIds = [adminId, commonId, householdLeadId, householdChildId, boardMemberId, keyholderId].filter(id => id !== undefined);
+        const existingUserIds = [adminId, commonId, householdLeadId, householdChildId, boardMemberId, keyholderId, tombstoneId].filter(id => id !== undefined);
 
         if (existingUserIds.length > 0) {
             await prisma.visit.deleteMany({
@@ -210,6 +228,32 @@ describe('General Attendance API Integration Tests', () => {
              const names = data.attendance.map((v: { participant: { name: string } }) => v.participant.name);
              expect(names).toContain('Common');
              expect(names).toContain('Household Child');
+        });
+
+        it('carries the parked-scan review count in counts.needReview (D7 corner count)', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+             const before = await (async () => {
+                 const req = new Request(`http://localhost:4000/api/attendance`, { method: 'GET' });
+                 const res = await GET(req as unknown as import("next/server").NextRequest) as Response;
+                 return (await res.json()).counts.needReview as number;
+             })();
+
+             const parked = await prisma.rawBadgeLog.create({
+                 data: { personId: adminId, reviewReason: 'facility_closed' },
+             });
+             const dismissed = await prisma.rawBadgeLog.create({
+                 data: { personId: adminId, reviewReason: 'stale_replay', reviewedAt: new Date(), reviewedBy: adminId },
+             });
+             try {
+                 const req = new Request(`http://localhost:4000/api/attendance`, { method: 'GET' });
+                 const res = await GET(req as unknown as import("next/server").NextRequest) as Response;
+                 const data = await res.json();
+                 // Only the un-reviewed parked row moves the count.
+                 expect(data.counts.needReview).toBe(before + 1);
+             } finally {
+                 await prisma.rawBadgeLog.deleteMany({ where: { id: { in: [parked.id, dismissed.id] } } });
+             }
         });
     });
 
@@ -313,10 +357,27 @@ describe('General Attendance API Integration Tests', () => {
                  body: JSON.stringify({ type: 'MANUAL_CHECKIN', participantId: adminId })
              });
              const res = await POST(req as unknown as import("next/server").NextRequest) as Response;
-             expect(res.status).toBe(403);
-             
+             // 404, not 403: an id the caller may not check in must be
+             // indistinguishable from one that does not exist.
+             expect(res.status).toBe(404);
+
              const data = await res.json();
-             expect(data.error).toMatch(/Forbidden/);
+             expect(data.error).toBe('Participant not found');
+        });
+
+        it('a blocked check-in is indistinguishable from a nonexistent participant', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } });
+
+             const request = (participantId: number) => new Request(`http://localhost:4000/api/attendance`, {
+                 method: 'POST',
+                 body: JSON.stringify({ type: 'MANUAL_CHECKIN', participantId })
+             });
+
+             const blocked = await POST(request(adminId) as unknown as import("next/server").NextRequest) as Response;
+             const missing = await POST(request(99999999) as unknown as import("next/server").NextRequest) as Response;
+
+             expect(blocked.status).toBe(missing.status);
+             expect(await blocked.json()).toEqual(await missing.json());
         });
 
         it('should block checking in a user that is already checked in', async () => {
@@ -357,6 +418,23 @@ describe('General Attendance API Integration Tests', () => {
              const data = await res.json();
              expect(data.success).toBe(true);
              expect(data.visit.personId).toBe(householdChildId);
+        });
+
+        // A merged-away Person is a tombstone: nobody can walk through the door as
+        // one, so an admin must not be able to open a Visit for it either.
+        it('should refuse to check in a merged-away (tombstoned) person', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+             const req = new Request(`http://localhost:4000/api/attendance`, {
+                 method: 'POST',
+                 body: JSON.stringify({ type: 'MANUAL_CHECKIN', participantId: tombstoneId })
+             });
+
+             const res = await POST(req as unknown as import("next/server").NextRequest) as Response;
+             expect(res.ok).toBe(false);
+
+             const visits = await prisma.visit.count({ where: { personId: tombstoneId } });
+             expect(visits).toBe(0);
         });
 
         it('should allow an admin to check in any user', async () => {
@@ -426,10 +504,12 @@ describe('General Attendance API Integration Tests', () => {
              });
 
              const res = await DELETE(req as unknown as import("next/server").NextRequest) as Response;
-             expect(res.status).toBe(403);
-             
+             // 404, not 403: a visit id the caller may not touch must be
+             // indistinguishable from one that does not exist.
+             expect(res.status).toBe(404);
+
              const data = await res.json();
-             expect(data.error).toMatch(/Forbidden/);
+             expect(data.error).toBe('Visit not found');
         });
 
         it('should allow a common user to check themselves out', async () => {

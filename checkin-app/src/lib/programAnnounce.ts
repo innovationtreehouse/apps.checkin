@@ -15,8 +15,8 @@ type AnnounceState = {
 type AnnouncedProgram = AnnounceState & {
     announceOnOpen: boolean;
     name: string;
-    startAt: Date | null;
-    endAt: Date | null;
+    startAt: Date;
+    endAt: Date;
 };
 
 /**

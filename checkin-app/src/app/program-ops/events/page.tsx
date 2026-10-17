@@ -30,7 +30,7 @@ export default function OneTimeEventsList() {
     fetch("/api/events")
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setEvents(Array.isArray(data) ? data : []))
-      .catch((err) => console.error(err))
+      .catch((err) => console.error("Failed to load events:", err))
       .finally(() => setLoading(false));
   }, []);
 

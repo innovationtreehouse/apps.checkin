@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * POST /api/dev/zoho-sign/complete — dev-only completion trigger for the Zoho Sign
- * mock (see docs/designs/ZOHO_SIGN_DEV_MOCK.md §4a). Reached from the dev
+ * mock (see docs/ops/contract-signing-mock.md). Reached from the dev
  * interstitial's "Complete signing" button. Rather than shortcut to markContractSigned,
  * it synthesizes a Zoho completion payload and fires the REAL inbound webhook, so the
  * mock exercises the same verify → parse → match → advance path prod does. The shared

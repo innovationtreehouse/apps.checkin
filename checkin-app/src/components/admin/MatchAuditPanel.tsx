@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Alert, Badge, Button, Card, Group, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { formatCents } from "@inventory/money";
+import { formatCents } from "@checkin/money";
 // Type-only imports: erased at compile time, so the server modules' prisma
 // imports never reach the client bundle — and a server-side reshape is a
 // compile error here instead of a silent drift.
@@ -19,7 +19,7 @@ import type { TrackBody } from "@/app/api/finance-ops/s-read/match-audit/track/r
  * Rendering rule: clean buckets collapse to a one-line count; only the gap
  * buckets (unclaimed paid orders, activations with no payment basis, order ids
  * missing from the mirror) get row-level tables. Manual/scholarship rows are
- * listed too — they are legitimate, but "who certified what" is exactly what an
+ * listed too — they are legitimate, but "who recorded what" is exactly what an
  * auditor is here to see.
  */
 
@@ -105,7 +105,7 @@ export function MatchAuditPanel() {
     }
     for (const m of result?.memberships ?? []) {
       if (m.bucket === 'NO_PAYMENT_BASIS' || m.bucket === 'ORDER_NOT_IN_MIRROR' || m.bucket === 'NO_PROCESS') groups.membershipGaps.push(m);
-      else if (m.bucket === 'MANUAL_CERTIFIED') groups.manual.push(m);
+      else if (m.bucket === 'MANUAL_PAYMENT') groups.manual.push(m);
       else if (m.bucket === 'ORDER_REVERSED') groups.reversedMemberships.push(m);
       else if (m.bucket === 'PRE_MIRROR') preMirrorCount++;
       else if (m.bucket === 'TRACKED_EXCEPTION') matchedCounts.tracked++;
@@ -136,7 +136,7 @@ export function MatchAuditPanel() {
       </Group>
       <Text size="sm" c="dimmed">
         Checks that every membership/program purchase (matched by variant) has an activation, and every
-        activation has an order, a board certification, or an approved scholarship behind it. Donations and
+        activation has an order, a manually recorded payment, or an approved scholarship behind it. Donations and
         merchandise never match a known variant and are not expected to reconcile.
       </Text>
 
@@ -173,7 +173,7 @@ export function MatchAuditPanel() {
             {count('Tracked as exceptions', matched.tracked)}
             {count('Memberships matched', matched.memberships)}
             {count('Enrollments matched', matched.enrollments)}
-            {count('Board-certified', manual.length)}
+            {count('Manually recorded payments', manual.length)}
             {count('Scholarships', scholarships.length)}
             {count('Comped', comped.length)}
             {preMirrorCount > 0 && count('Pre-mirror (before mirror history)', preMirrorCount)}
@@ -256,7 +256,7 @@ export function MatchAuditPanel() {
                       <Table.Td>{m.processId != null ? `Membership process ${m.processId}` : `Membership — ${m.householdName ?? m.membershipId}`}</Table.Td>
                       <Table.Td>{m.householdName}</Table.Td>
                       <Table.Td>{
-                        m.bucket === 'NO_PAYMENT_BASIS' ? 'No order and no certification'
+                        m.bucket === 'NO_PAYMENT_BASIS' ? 'No order and no manually recorded payment'
                         : m.bucket === 'NO_PROCESS' ? 'Active membership with no INITIAL/RENEWAL process'
                         : `Order ${m.shopifyOrderId} not in the mirror`
                       }</Table.Td>
@@ -308,7 +308,7 @@ export function MatchAuditPanel() {
                     <Table.Tr key={`man-${m.processId}`}>
                       <Table.Td>Membership process {m.processId}</Table.Td>
                       <Table.Td>{m.householdName}</Table.Td>
-                      <Table.Td>Certified by {m.certifiedByName}</Table.Td>
+                      <Table.Td>Payment recorded manually by {m.manualPaymentByName}</Table.Td>
                     </Table.Tr>
                   ))}
                   {scholarships.map((e) => (

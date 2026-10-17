@@ -68,7 +68,9 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
                 }
             });
 
-            if (!isEnrolled && !isVolunteer) {
+            const isLead = event.program?.leadMentorId === currentUserId;
+
+            if (!isEnrolled && !isVolunteer && !isLead) {
                 return apiError("Forbidden: You are not a participant of this program", 403);
             }
         }

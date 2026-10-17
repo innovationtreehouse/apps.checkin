@@ -1,6 +1,6 @@
 /**
  * Shared plumbing for the Shopify LIVE contract suite (see
- * docs/designs/SHOPIFY_LIVE_TESTS.md). These tests run the app's REAL
+ * docs/ops/shopify-live-tests.md). These tests run the app's REAL
  * lib/shopify.ts functions against the REAL dev store — no fetch mocks — to
  * catch Admin-API contract drift that mocked tests structurally cannot.
  *

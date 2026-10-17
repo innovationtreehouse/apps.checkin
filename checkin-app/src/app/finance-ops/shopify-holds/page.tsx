@@ -7,7 +7,8 @@ import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
-import { formatDateTime } from '@/lib/time';
+import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
+import { useOrgTime } from '@/components/TimezoneProvider';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -29,12 +30,13 @@ type HoldFailedRow = {
 type Target = { programId: number; participantId: number } | null;
 
 export default function ShopifyHoldsPage() {
-  const { user: me, ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
-  // Conflict of interest mirrors the scholarship queue: a board member may not
-  // approve/deny their OWN household's request (server enforces; this is UX). It
-  // does NOT gate the manual-hold action — that confers no benefit.
+  const { formatDateTime } = useOrgTime();
+  const { user: me, ready, loading: authLoading } = useRequireRole(FINANCE_SECTION_ROLES);
+  // Conflict of interest mirrors the scholarship queue: no actor may approve/deny
+  // their OWN household's request (server enforces; this is UX). It does NOT gate
+  // the manual-hold action — that confers no benefit.
   const ownHousehold = (row: HoldFailedRow) =>
-    me?.isSysadmin !== true && sharesHousehold(me?.householdId, row.person.householdId);
+    sharesHousehold(me?.householdId, row.person.householdId);
 
   const [rows, setRows] = useState<HoldFailedRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,21 +47,22 @@ export default function ShopifyHoldsPage() {
   const [denyOpened, { open: openDeny, close: closeDeny }] = useDisclosure(false);
   const [target, setTarget] = useState<Target>(null);
 
-  const fetchRows = useCallback(async () => {
-    try {
-      const res = await fetch('/api/finance-ops/payment-plans?queue=holds');
+  const fetchRows = useCallback(() => fetch('/api/finance-ops/payment-plans?queue=holds')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setRows(data.ProgramParticipant ?? []);
       } else {
         setMessage("Failed to load the reconciliation queue. You may not have access.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading the reconciliation queue.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchRows();
@@ -132,7 +135,7 @@ export default function ShopifyHoldsPage() {
           <Button
             size="xs" fz={15} color="red" variant="subtle"
             disabled={ownHousehold(r)}
-            title={ownHousehold(r) ? "You can't deny your own household's plan — a sysadmin must." : undefined}
+            title={ownHousehold(r) ? "You can't deny your own household's plan — someone outside your household must." : undefined}
             onClick={() => openFor(r, 'deny')}
           >
             Deny (override)
@@ -140,7 +143,7 @@ export default function ShopifyHoldsPage() {
           <Button
             size="xs" fz={15} color="red" variant="subtle"
             disabled={ownHousehold(r)}
-            title={ownHousehold(r) ? "You can't approve your own household's plan — a sysadmin must." : undefined}
+            title={ownHousehold(r) ? "You can't approve your own household's plan — someone outside your household must." : undefined}
             onClick={() => openFor(r, 'approve')}
           >
             Approve (override)

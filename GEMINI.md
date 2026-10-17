@@ -1,6 +1,7 @@
 # Agent Instructions & Guidelines
 
-## Code Quality & Linting
-- **NEVER fix lint errors by disabling the linter.** Do not use `// eslint-disable-next-line`, `/* eslint-disable */`, `@ts-expect-error`, or `@ts-ignore` to suppress errors.
-- **NEVER fix TypeScript errors by using `any` coercions.** Always properly type variables, parameters, and return signatures. If a type isn't immediately obvious, define an interface or use `unknown` and perform proper type narrowing.
-- Address the root cause of the lint or type error by modifying the logic, defining missing types, or importing the correct interfaces.
+> **Start with [AGENTS.md](AGENTS.md)** — the shared, canonical orientation for
+> all agents in this repo (repo layout, code quality and linting, test classes,
+> docs map, and the commenting strategy). Every rule that applies to more than
+> one agent lives there. This file holds Gemini-specific additions on top of it,
+> and is empty until there are some.

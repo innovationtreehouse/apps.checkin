@@ -88,7 +88,7 @@ export const POST = withWebhook({ provider: "resend", verify: verifyResendSignat
             for (const address of addresses) {
                 const ids = await findPersonIdsByEmail(address);
                 if (ids.length === 0) continue;
-                await prisma.person.updateMany({ where: { id: { in: ids } }, data: { emailUndeliverableAt: new Date() } });
+                await prisma.person.updateMany({ where: { id: { in: ids }, ...LIVE_PERSON }, data: { emailUndeliverableAt: new Date() } });
             }
             return NextResponse.json({ ok: true });
         }
@@ -96,7 +96,7 @@ export const POST = withWebhook({ provider: "resend", verify: verifyResendSignat
             for (const address of addresses) {
                 const ids = await findPersonIdsByEmail(address);
                 if (ids.length === 0) continue;
-                await prisma.person.updateMany({ where: { id: { in: ids } }, data: { emailUndeliverableAt: null } });
+                await prisma.person.updateMany({ where: { id: { in: ids }, ...LIVE_PERSON }, data: { emailUndeliverableAt: null } });
             }
             return NextResponse.json({ ok: true });
         }

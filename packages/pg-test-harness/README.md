@@ -1,4 +1,4 @@
-# @inventory/pg-test-harness
+# @checkin/pg-test-harness
 
 The fleet template for **Postgres integration testing**. Every package with a real-Postgres
 integration tier boots a throwaway, migration-fresh container via this harness instead of
@@ -33,7 +33,7 @@ stays green on a machine without Docker.
 1. **`test/globalSetup.ts`** — boot + migrate:
    ```ts
    import { fileURLToPath } from "node:url";
-   import { pgGlobalSetup } from "@inventory/pg-test-harness";
+   import { pgGlobalSetup } from "@checkin/pg-test-harness";
 
    export default pgGlobalSetup({
      migrateCwd: fileURLToPath(new URL("..", import.meta.url)), // dir with prisma.config.ts
@@ -46,7 +46,7 @@ stays green on a machine without Docker.
 
 2. **`test/setupEnv.ts`** — publish the URL into the worker's env:
    ```ts
-   import { applyHarnessEnv } from "@inventory/pg-test-harness";
+   import { applyHarnessEnv } from "@checkin/pg-test-harness";
    applyHarnessEnv({ envVar: "MY_DATABASE_URL", provideKey: "myDbUrl" });
    ```
 
@@ -58,7 +58,7 @@ stays green on a machine without Docker.
    }
    ```
 
-4. Add `"@inventory/pg-test-harness": "*"` to `devDependencies`.
+4. Add `"@checkin/pg-test-harness": "*"` to `devDependencies`.
 
 Your existing DB gate (`describeDb` / `runIfDb`, which reads the env var) and
 `singleConnClient()` helpers keep working unchanged — `setupEnv` sets the env var before any
@@ -75,4 +75,5 @@ pointing at their own Postgres) always wins.
 ## Knobs
 
 - `pgGlobalSetup({ image })` — override the pinned Postgres image (default
-  `postgres:17-alpine`; pin to your deployed RDS major).
+  `public.ecr.aws/docker/library/postgres:17-alpine`, the ECR Public mirror of the
+  official image; pin to your deployed RDS major).

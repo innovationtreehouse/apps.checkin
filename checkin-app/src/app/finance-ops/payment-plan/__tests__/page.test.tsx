@@ -15,7 +15,13 @@ const requests = [
     programId: 10,
     personId: 20,
     pendingSince: "2026-01-01T00:00:00.000Z",
-    person: { id: 20, name: "Pat Participant", email: "pat@example.com" },
+    person: {
+      id: 20, name: "Pat Participant", email: "pat@example.com",
+      household: {
+        id: 1, name: "Participant Family",
+        householdMembers: [{ id: 30, name: "Lead Parent", email: "lead@example.com" }],
+      },
+    },
     program: { id: 10, name: "Robotics", orgMemberPriceCents: 5000, nonOrgMemberPriceCents: 7500 },
   },
 ];
@@ -28,6 +34,7 @@ describe("finance-ops/payment-plan page", () => {
 
     expect(await screen.findByText("Pat Participant")).toBeInTheDocument();
     expect(screen.getByText("pat@example.com")).toBeInTheDocument();
+    expect(screen.getByText("lead@example.com")).toBeInTheDocument();
     expect(screen.getByText("Robotics")).toBeInTheDocument();
     expect(screen.getByText(/M \$50.00 \/ NM \$75.00/)).toBeInTheDocument();
   });

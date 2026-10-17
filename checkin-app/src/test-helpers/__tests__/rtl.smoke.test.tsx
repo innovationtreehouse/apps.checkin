@@ -29,7 +29,7 @@ describe("rtl test-helper", () => {
         setSession({ id: 1, isSysadmin: true });
         expect(navMock().usePathname()).toBe("/x");
         expect(navMock().useRouter()).toBe(router);
-        expect(authMock().useSession()).toEqual({ data: { user: { id: 1, isSysadmin: true } }, status: "authenticated" });
+        expect(authMock().useSession()).toEqual({ data: { user: { id: 1, isSysadmin: true } }, status: "authenticated", update: expect.any(Function) });
     });
 
     it("resetRtl clears router spies and state", () => {

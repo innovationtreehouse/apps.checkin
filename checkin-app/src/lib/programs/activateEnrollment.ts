@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { adjustProgramInventory } from "@/lib/shopify";
 import { fromWhere } from "@/lib/programs/enrollmentState";
+import { saleStockDelta } from "@/lib/programs/saleState";
 
 /**
  * Activate paid program enrollments — the single choke point the Shopify
@@ -11,14 +12,11 @@ import { fromWhere } from "@/lib/programs/enrollmentState";
  *
  * Per participant: a transactionally-guarded PENDING → ACTIVE flip (so a webhook
  * redelivery or a reconciler re-run can't double-activate or double-count),
- * clearing the pending timer, stamping the paying order id, and releasing any
- * scholarship inventory hold (compensating Shopify's sale-time auto-decrement).
+ * clearing the pending timer, stamping the paying order id, and squaring the
+ * public variant's stock with the seats just filled (see {@link publicStockDelta}).
  *
- * The membership-item / tier check lives with the CALLER, because only the webhook
- * has the order's line-item variant ids — the mirror does not. The webhook passes
- * the computed values; the reconciler passes hasProgramItem=true (it matched the
- * order to a pending enrollment by email) and purchasedTier=null (tier unknown), in
- * which case the legacy two-pool sibling-inventory mirror is skipped.
+ * Callers must first establish the order pays for these people
+ * (orderEntitlesEnrollment in lib/finance/reconcile/program.ts); this function does not.
  */
 export interface ActivateEnrollmentInput {
     programId: number;
@@ -26,23 +24,36 @@ export interface ActivateEnrollmentInput {
     personIds: number[];
     /** Numeric Shopify order id, stored on each activated participant for reversal joins. */
     shopifyOrderId: string;
-    /** Did the paid order contain this program's product? Fail-closed: false = don't activate. */
-    hasProgramItem: boolean;
-    /**
-     * Which tier Shopify sold (true = org-member variant), for the legacy two-pool
-     * sibling-inventory mirror. null = unknown (reconciler path) → skip the mirror.
-     */
-    purchasedOrgMember: boolean | null;
+    /** The paying order's lines; seats on the claimant variant never touched public stock. Omitted = all public. */
+    lines?: { variantId: string; quantity: number }[];
 }
 
 export interface ActivateEnrollmentResult {
     activatedCount: number;
     releasedHoldCount: number;
+    claimantSeatCount: number;
+}
+
+/**
+ * Each filled seat must end up exactly one unit out of the public variant's stock.
+ * A sale on the public variant takes its unit itself; one on the untracked claimant
+ * variant takes none. A scholarship hold already took one at request time. So:
+ *   held + public   → +1 (the sale took a second unit)
+ *   held + claimant →  0
+ *   unheld + public →  0
+ *   unheld + claimant → -1
+ * which sums to released holds minus claimant-paid seats.
+ */
+export function publicStockDelta(releasedHoldCount: number, claimantSeatCount: number): number {
+    return releasedHoldCount - claimantSeatCount;
 }
 
 export async function activateProgramEnrollment(input: ActivateEnrollmentInput): Promise<ActivateEnrollmentResult> {
-    const { programId, personIds, shopifyOrderId, hasProgramItem, purchasedOrgMember } = input;
-    const program = await prisma.program.findUnique({ where: { id: programId } });
+    const { programId, personIds, shopifyOrderId, lines = [] } = input;
+    const program = await prisma.program.findUnique({
+        where: { id: programId },
+        select: { shopifyVariantId: true, claimantShopifyVariantId: true, maxParticipants: true, startAt: true, offSaleAt: true, saleEndedAt: true },
+    });
 
     let activatedCount = 0;
     let releasedHoldCount = 0;
@@ -51,10 +62,6 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
         const existing = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId } } });
         if (!existing) {
             logger.warn(`[enroll] Participant ${personId} not found in program ${programId} — ignoring payment.`);
-            continue;
-        }
-        if (!hasProgramItem) {
-            logger.warn(`[enroll] Order ${shopifyOrderId || "?"} for participant ${personId} / program ${programId} did not contain the program's Shopify variant — left PENDING, NOT activated.`);
             continue;
         }
 
@@ -77,28 +84,20 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
         if (existing.inventoryHeldAt && activated.count > 0) releasedHoldCount += 1;
     }
 
-    // Compensating +1 for every hold released, in one call. Never fatal.
-    if (releasedHoldCount > 0) {
-        const ok = await adjustProgramInventory(
-            {
-                shopifyVariantId: program?.shopifyVariantId ?? null,
-                shopifyOrgMemberVariantId: program?.shopifyOrgMemberVariantId ?? null,
-                shopifyNonOrgMemberVariantId: program?.shopifyNonOrgMemberVariantId ?? null,
-            },
-            releasedHoldCount,
-        );
-        if (!ok) logger.error(`[enroll] Failed to release ${releasedHoldCount} scholarship hold(s) for program ${programId} — capacity may be out of sync.`);
+    const claimantVariantId = program?.claimantShopifyVariantId;
+    const claimantPaid = claimantVariantId
+        ? lines.filter((l) => l.variantId === claimantVariantId).reduce((n, l) => n + l.quantity, 0)
+        : 0;
+    // Uncapped programs don't track public stock, so there is nothing to take a claimant seat from.
+    const claimantSeatCount = program?.maxParticipants != null ? Math.min(claimantPaid, activatedCount) : 0;
+
+    // One stock call for the whole order; once the sale has ended only a
+    // reduction goes through, so no seat goes back on sale. Never fatal.
+    const delta = program ? saleStockDelta(program, publicStockDelta(releasedHoldCount, claimantSeatCount)) : 0;
+    if (delta !== 0) {
+        const ok = await adjustProgramInventory({ id: programId, shopifyVariantId: program?.shopifyVariantId ?? null }, delta, "activation", { deferred: true });
+        if (!ok) logger.error(`[enroll] Failed to adjust public stock by ${delta} for program ${programId} (${releasedHoldCount} hold(s) released, ${claimantSeatCount} claimant seat(s)) — capacity may be out of sync.`);
     }
 
-    // LEGACY two-pool sibling mirror: only when we know the tier. Single-pool programs
-    // (shopifyVariantId) need no mirror; the reconciler (tier unknown) skips it.
-    if (activatedCount > 0 && !program?.shopifyVariantId && purchasedOrgMember !== null) {
-        const siblingOnly = purchasedOrgMember
-            ? { shopifyOrgMemberVariantId: null, shopifyNonOrgMemberVariantId: program?.shopifyNonOrgMemberVariantId ?? null }
-            : { shopifyOrgMemberVariantId: program?.shopifyOrgMemberVariantId ?? null, shopifyNonOrgMemberVariantId: null };
-        const ok = await adjustProgramInventory({ shopifyVariantId: null, ...siblingOnly }, -activatedCount);
-        if (!ok) logger.error(`[enroll] Failed to mirror sibling-variant inventory for program ${programId} — pools may be out of sync.`);
-    }
-
-    return { activatedCount, releasedHoldCount };
+    return { activatedCount, releasedHoldCount, claimantSeatCount };
 }

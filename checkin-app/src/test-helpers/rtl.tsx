@@ -77,7 +77,7 @@ export function setStagingInstance(v: boolean) {
 export function renderWithProviders(ui: ReactElement, options?: RenderOptions) {
     return render(
         <MantineProvider>
-            <EnvProvider value={{ checkinEnv, shopifyStoreDomain, isStaging }}>{ui}</EnvProvider>
+            <EnvProvider value={{ checkinEnv, shopifyStoreDomain, isStaging, csvImportEnabled: false }}>{ui}</EnvProvider>
         </MantineProvider>,
         options,
     );
@@ -94,7 +94,7 @@ export const router = {
 };
 let pathname = "/";
 let searchParams = new URLSearchParams();
-let session: { data: unknown; status: string } = { data: null, status: "unauthenticated" };
+let session: { data: unknown; status: string; update?: jest.Mock } = { data: null, status: "unauthenticated" };
 
 /** Factory for `jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock())`. */
 export function navMock() {
@@ -125,7 +125,10 @@ export function setSearchParams(sp: URLSearchParams | string) {
 }
 /** Set the mocked session user (pass null for signed-out). */
 export function setSession(user: Record<string, unknown> | null, status = user ? "authenticated" : "unauthenticated") {
-    session = { data: user ? { user } : null, status };
+    // `update` is next-auth's force-a-re-stamp hook; components call it after a
+    // write that changes their own claims. Resolving to the same session keeps
+    // those call sites from hanging on an undefined function.
+    session = { data: user ? { user } : null, status, update: jest.fn().mockResolvedValue(null) };
 }
 /** Reset router spies + pathname/search/session between tests. */
 export function resetRtl() {

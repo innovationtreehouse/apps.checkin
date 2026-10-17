@@ -15,6 +15,7 @@ jest.mock('@/lib/email', () => ({
 }));
 
 import { notifyNewProgramAnnounced } from '@/lib/notifications';
+import { membershipYearCycle } from '@/lib/membership/renewal';
 import { sendEmail } from '@/lib/email';
 import prisma from '@/lib/prisma';
 
@@ -23,6 +24,9 @@ const TAG = 'announce-recip-test';
 
 describe('notifyNewProgramAnnounced recipient set (#1153 covered-member audience)', () => {
     let tombstoneHouseholdId: number, tombstoneTargetId: number;
+    // Integration suites share one DB, so BoardSettings row 1 may already carry a
+    // boundary from another suite. The unbounded cases below require none.
+    let prevBoardSettingsOuter: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number } | null = null;
 
     async function wipe() {
         const hhs = await prisma.household.findMany({
@@ -41,6 +45,16 @@ describe('notifyNewProgramAnnounced recipient set (#1153 covered-member audience
 
     beforeAll(async () => {
         await wipe();
+
+        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
+        prevBoardSettingsOuter = existing
+            ? { orgMembershipYearBoundary: existing.orgMembershipYearBoundary, bgRecheckMonths: existing.bgRecheckMonths }
+            : null;
+        await prisma.boardSettings.upsert({
+            where: { id: 1 },
+            create: { id: 1, orgMembershipYearBoundary: null },
+            update: { orgMembershipYearBoundary: null },
+        });
 
         // Covered: ACTIVE-membership household, default prefs -> included.
         await prisma.person.create({
@@ -82,6 +96,11 @@ describe('notifyNewProgramAnnounced recipient set (#1153 covered-member audience
 
     afterAll(async () => {
         await wipe();
+        if (prevBoardSettingsOuter) {
+            await prisma.boardSettings.update({ where: { id: 1 }, data: prevBoardSettingsOuter });
+        } else {
+            await prisma.boardSettings.delete({ where: { id: 1 } }).catch(() => {});
+        }
     });
 
     beforeEach(() => {
@@ -89,7 +108,7 @@ describe('notifyNewProgramAnnounced recipient set (#1153 covered-member audience
     });
 
     it('includes covered+opted-in live members, excludes uncovered/opted-out/tombstoned, with no date boundary configured', async () => {
-        await notifyNewProgramAnnounced({ name: 'Robotics Recip Test', startAt: null, endAt: new Date('2026-12-01') });
+        await notifyNewProgramAnnounced({ name: 'Robotics Recip Test', endAt: new Date('2026-12-01') });
 
         const recipients = mockSendEmail.mock.calls.map((c) => c[0]);
         expect(recipients).toContain(`covered-${TAG}@example.com`);
@@ -99,14 +118,20 @@ describe('notifyNewProgramAnnounced recipient set (#1153 covered-member audience
         expect(recipients).not.toContain(`tombstone-${TAG}@example.com`);
     });
 
-    // #1061 "full duration" gate: a covered household with NO settled renewal is only
-    // valid through the current membership-year boundary. One boundary config (Aug 1,
-    // via BoardSettings row 1, absent by default in the integration DB) exercises both
-    // sides: a program ending after the boundary excludes the household, a program
-    // ending before it includes the SAME household.
+    // #1061 "full duration" gate: a household settled for the live membership year
+    // (#1811) is valid only through the boundary that closes it. One boundary config
+    // (Aug 1, via BoardSettings row 1, which the outer beforeAll leaves unset)
+    // exercises both sides: a program ending after that boundary excludes the
+    // household, a program ending before it includes the SAME household.
     describe('expired-at-midyear boundary', () => {
         let prevBoardSettings: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number } | null = null;
-        const AUG1 = new Date(Date.UTC(2020, 7, 1)); // only month/day matter to nextBoundary()
+        const AUG1 = new Date(Date.UTC(2020, 7, 1)); // only month/day matter to membershipYearCycle()
+        // Both program dates are derived from the boundary the code will actually
+        // compute, never hardcoded: a literal date silently swaps the two cases
+        // once the real clock passes it.
+        const boundary = membershipYearCycle(AUG1, new Date()).cycleEnd;
+        const ENDS_AFTER_BOUNDARY = new Date(boundary.getTime() + 30 * 24 * 60 * 60 * 1000);
+        const ENDS_BEFORE_BOUNDARY = new Date((Date.now() + boundary.getTime()) / 2);
 
         beforeAll(async () => {
             const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
@@ -117,6 +142,15 @@ describe('notifyNewProgramAnnounced recipient set (#1153 covered-member audience
                 where: { id: 1 },
                 create: { id: 1, orgMembershipYearBoundary: AUG1 },
                 update: { orgMembershipYearBoundary: AUG1 },
+            });
+            // Settle the covered household for the live year (paid now ⇒ on or after
+            // settledSince in either season); without a paid process it has bought
+            // nothing and reads as lapsed once the boundary passes.
+            await prisma.orgMembershipProcess.create({
+                data: {
+                    kind: 'INITIAL', status: 'ACTIVE', paidAt: new Date(), stageEnteredAt: new Date(),
+                    orgMembership: { connect: { householdId: (await prisma.household.findFirstOrThrow({ where: { name: `Covered HH ${TAG}` }, select: { id: true } })).id } },
+                },
             });
         });
 
@@ -129,13 +163,13 @@ describe('notifyNewProgramAnnounced recipient set (#1153 covered-member audience
         });
 
         it('excludes the covered household when the program ends AFTER the boundary (unrenewed)', async () => {
-            await notifyNewProgramAnnounced({ name: 'Robotics Past Boundary', startAt: null, endAt: new Date('2026-12-01') });
+            await notifyNewProgramAnnounced({ name: 'Robotics Past Boundary', endAt: ENDS_AFTER_BOUNDARY });
             const recipients = mockSendEmail.mock.calls.map((c) => c[0]);
             expect(recipients).not.toContain(`covered-${TAG}@example.com`);
         });
 
         it('includes the SAME covered household when the program ends BEFORE the boundary', async () => {
-            await notifyNewProgramAnnounced({ name: 'Robotics Before Boundary', startAt: null, endAt: new Date('2026-07-25') });
+            await notifyNewProgramAnnounced({ name: 'Robotics Before Boundary', endAt: ENDS_BEFORE_BOUNDARY });
             const recipients = mockSendEmail.mock.calls.map((c) => c[0]);
             expect(recipients).toContain(`covered-${TAG}@example.com`);
         });

@@ -44,6 +44,11 @@ This is exactly what happened 2026-07-02: three generated "rename" migrations pa
 ### 5. Wrap multi-statement migrations in `BEGIN;` / `COMMIT;`
 Prisma does not wrap a migration file in a transaction on Postgres ([prisma/prisma#15295](https://github.com/prisma/prisma/issues/15295)) — a multi-statement migration can **partially apply**. The 2026-07-02 incident hit this directly: one table's `ALTER` committed, the sibling table's rolled back in the same migration file, requiring manual surgical repair before the automated fix (#791) could even be deployed. If a migration touches more than one statement that needs to succeed or fail together, wrap it in explicit `BEGIN;` / `COMMIT;` — a failure becomes a clean atomic retry instead of a wedge.
 
+Every new migration wraps, single-statement ones included. CI enforces this for every `migration.sql` a PR **adds**, in checkin's chain and in every `packages/*/prisma/migrations` chain: `migration-safety.yml` → "New migrations wrap in a transaction" fails a file whose first SQL line is not `BEGIN;` or whose last is not `COMMIT;` (blank and comment lines ignored). Migrations already on the base branch are never checked; editing one to satisfy the lint would break rule 6's checksum. Two explicit escapes:
+
+- **SQL Postgres refuses inside a transaction** — `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, and the like. Add a comment line `-- no-transaction: <reason>` and make every statement retry-safe (`IF NOT EXISTS` / `IF EXISTS`), since a failure can leave some statements applied. `20260818140000_raw_badge_log_client_event_id` is the model for retry-safe statements.
+- **A coalesce baseline** (its directory holds `reconcile.sql`) is exempt: it only ever runs on an empty database, which recovers by being recreated.
+
 ### 6. A failed migration wedges every future deploy until a human intervenes
 A failed migration leaves a row in `_prisma_migrations` with no success recorded. Every subsequent `migrate deploy` — meaning every subsequent deploy of any kind, unrelated PRs included — fails fast with `P3009` ("migrate found failed migrations in the target database") until someone runs:
 
@@ -67,11 +72,84 @@ npx prisma migrate resolve --applied 20260703130000_squashed_init
 
 The ledger's checksum (what `migrate resolve`/`migrate deploy` compare against) is a sha256 of the migration's `migration.sql` — editing an already-applied file's contents (as #791 did, on migrations no environment had applied yet) is safe; editing one that's already recorded as applied anywhere is not.
 
-### 7. Misc rules with incident backing
+### 7. Dropping a security-bound model: one decommission PR
+
+Dropping a Prisma model that has a `SCOPE_BINDINGS` entry welds four changes
+into one green unit: `validateBindings` requires the binding to leave in the
+exact PR the model leaves `classifications.ts`, the freshness guard welds
+`classifications.ts` to `schema.prisma`, and the drift check welds the schema
+drop to its `DROP TABLE` migration. The boundary-isolation workflow permits
+that packaging through its **whole-entity decommission exception**
+(`scripts/check-boundary-decommission.js`, see the workflow header and #1446):
+
+1. **First release(s):** cut every reader/writer per rules 2–3, boundary
+   grants included, until nothing serves the model.
+2. **Decommission PR (one PR, all green):** remove the `model` from
+   `schema.prisma`, the `DROP TABLE` migration, the regenerated
+   `classifications.ts`, and the *entire* `SCOPE_BINDINGS` /
+   `ROW_SCOPE_KEY` / `OPT_OUT_PENDING_ROUTE` entries for that model, plus
+   test-oracle updates. Alongside the boundary removal the certifier admits
+   the migration and **the route files of the registry entries this PR
+   removes** — no other deletion. "It is a deletion" is not evidence a file
+   belongs to the drop: a file nothing imports can still be a security
+   control, and removing one breaks neither tsc nor the build.
+
+The exception fails closed: a partial edit inside a surviving binding (which
+can *widen* a grant — deleting one element of an `all:` match weakens it), an
+addition, a re-tier, or any engine-file change disqualifies the PR, and the
+boundary change must ship alone as usual. Removing a `ROW_SCOPE_KEY` entry
+**widens**: `makeScopesHeld` returns the empty set for a row missing its scope
+key, but with the entry gone `scopeKey === undefined` and the same row gets
+`everyones`. For that container the schema-exit check is the only guard —
+unlike `SCOPE_BINDINGS`/`registry.ts`, which narrow on their own. Do not relax
+it on the belief that removals narrow.
+
+The comparison is byte-strict apart from the two edits a whole-entity drop
+forces — comments, and a `returns:` element naming a model dropped in the same
+PR (that array is typed off the generated classifications, so leaving the
+element in stops the entry compiling). Both are normalised on both sides;
+nothing else is.
+
+The same shape covers route kills: an entire `defineRoute` removal qualifies
+when the PR also deletes the route file/verb export. One fail-closed corner:
+the certifier requires the removed entry's route file to export the verb **at
+base**, so removing an ALREADY-INERT entry fails certification — split that
+into its own PR. Fallback if certification is unwanted: park the model in
+`OPT_OUT_PENDING_ROUTE` in a boundary-only PR, then drop schema+migration
+separately.
+
+`checkin-app/src/middleware.ts` is a boundary file too — it is the site-wide
+org-login/access gate, nothing imports it, so deleting or renaming it leaves
+tsc and the build green. Any PR touching it ships alone, decommission or not.
+
+### 8. Misc rules with incident backing
 - **Postgres does not auto-index foreign key columns.** `Person.householdId` in PR #917 had no `@@index` anywhere in its migration history — collapsing the `HouseholdLead` join table into a flag on `Person` silently turned an indexed lookup into a full `Person` seq-scan on hot paths (check-in notification fan-out, nav badges). Add `@@index` for any relation scalar you actually query, in the same migration that adds the column.
 - **Same-timestamp migrations from two open PRs interleave lexicographically at deploy time.** Prisma applies migrations in filename order; if two schema PRs are both open, check what order their timestamps put them in once both land — a same-timestamp collision (verified harmless for #917/#918's specific case, checked via `git merge-tree`) isn't guaranteed harmless in general.
 - **Schema field changes need `/// @sensitivity:<tier>` annotations** (see `docs/security/SECURITY-POLICY.md`) with regenerated `classifications.ts` committed — this is a CI-enforced, CODEOWNERS-gated check, and it's a schema-adjacent step easy to forget in the middle of a migration-focused PR.
 - **Aurora Serverless v2 auto-pauses.** Any new one-off DB task (not just the two deploy workflows) needs the retry-loop pattern from rule/step 2 above, or its first connection will race the resume and fail with `P1001`.
+
+### 9. Database roles: create and grant before any URL points at them
+The app connects as a DML-only role (rows, no DDL); migrations connect as the role that owns the tables. In AWS the roles come from the infra repo's cluster bootstrap (`checkin_<env>_dml`). In the self-hosted compose stack (`deploy/docker-compose.prod.yml`) they come from `deploy/prod-initdb/`:
+- `05-checkin-roles.sh` creates `checkin_dml` on checkin's database, grants it DML on every existing table and sequence, and sets `DEFAULT PRIVILEGES FOR ROLE` the bootstrap user, so tables a later migration creates are granted automatically. It revokes CONNECT from PUBLIC on checkin's database, `postgres` and `template1`.
+- `10-library-dbs.sh` does the same per library, with a real `<name>_owner` role.
+- **Checkin's migrate uses the bootstrap user** (`POSTGRES_USER`), which owns checkin's existing tables. There is no separate checkin owner role yet. Moving ownership to one is a possible later step: it needs `ALTER ... OWNER TO` on every table, sequence and type of the live database (`REASSIGN OWNED` refuses the bootstrap superuser), done in a quiet window.
+- Database passwords live in `deploy/.env` (compose interpolation). The web container's `env_file` (`../.env`) holds app secrets only; web gets just the DML URLs, and only `db` and `migrate` see owner or bootstrap passwords.
+
+Postgres runs `prod-initdb` only on a fresh data volume. **On an existing volume, in this order:**
+1. Add `CHECKIN_DML_DB_PASSWORD` (and each library's `<NAME>_OWNER_DB_PASSWORD` / `<NAME>_DML_DB_PASSWORD`, if not yet set) to `deploy/.env`; remove every `*_DB_PASSWORD` from `../.env`.
+2. Recreate only the database container so it sees the new passwords: `docker compose -f deploy/docker-compose.prod.yml up -d --no-deps db` (a short restart; web reconnects).
+3. Run the bootstrap once (both scripts are idempotent, so re-running is safe): `docker compose -f deploy/docker-compose.prod.yml exec db sh -c 'for f in /docker-entrypoint-initdb.d/*.sh; do sh "$f" || exit 1; done'`.
+4. Verify before switching: `docker compose -f deploy/docker-compose.prod.yml exec db psql -h 127.0.0.1 -U checkin_dml -d checkmein -c 'SELECT count(*) FROM "Person"'` succeeds, and the same login against `-d postgres` is refused.
+5. Only now recreate web, which picks up the `checkin_dml` URL: `docker compose -f deploy/docker-compose.prod.yml up -d web`.
+
+Rollback: point web's `DATABASE_URL` back at the bootstrap user and `up -d web`. The roles and grants are additive and can stay. Never switch the URL first: until step 3 the role does not exist, and every request fails to connect.
+
+**Baseline before the first `migrate` run on a volume built by `prisma db push`.** Such a database has checkin's tables but no `_prisma_migrations` ledger, so `prisma migrate deploy` refuses it with `P3005` ("the database schema is not empty"). Once, before the first `docker compose -f deploy/docker-compose.prod.yml --profile migrate run --rm migrate`, using the image of the release the volume was last pushed from:
+1. Confirm the database matches that release's schema; this must print no diff: `docker compose -f deploy/docker-compose.prod.yml --profile migrate run --rm migrate sh -c 'cd checkin-app && npx --no-install prisma migrate diff --from-config-datasource --to-schema=prisma/schema.prisma --exit-code'`. Any diff means the volume is not at that release; stop and reconcile by hand.
+2. `db push` cannot create the partial unique indexes that migrations add in raw SQL. Copy each `CREATE UNIQUE INDEX ... WHERE` statement from `checkin-app/prisma/migrations/*/migration.sql` that is missing from `pg_indexes`, and run it as the bootstrap user.
+3. Record every migration as applied: `docker compose -f deploy/docker-compose.prod.yml --profile migrate run --rm migrate sh -c 'cd checkin-app && for m in prisma/migrations/*/; do npx --no-install prisma migrate resolve --applied "$(basename "$m")" || exit 1; done'`.
+
+After that, `migrate` runs normally on every deploy. A fresh volume needs none of this.
 
 ## How to verify
 

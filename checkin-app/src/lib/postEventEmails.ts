@@ -55,7 +55,7 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
                     }
                 },
                 rsvps: true,
-                visits: true
+                visits: { where: { deletedAt: null } }
             },
             take: batchSize,
             orderBy: { id: 'asc' }

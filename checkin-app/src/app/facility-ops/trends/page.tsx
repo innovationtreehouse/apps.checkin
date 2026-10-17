@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Card, Group, SegmentedControl, Select, SimpleGrid, Stack, Table, Text } from "@mantine/core";
+import { Card, Group, SegmentedControl, Select, SimpleGrid, Stack, Switch, Table, Text } from "@mantine/core";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { FACILITY_AGGREGATE_ROLES } from "@/lib/facilityNav";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 type PeriodType = "week" | "month" | "quarter" | "year";
@@ -16,6 +17,7 @@ interface TrendBucket {
   totalParticipantHours: number;
   structuredHours: number;
   unstructuredHours: number;
+  bySource: Record<string, number>;
 }
 
 interface ProgramOption {
@@ -23,11 +25,25 @@ interface ProgramOption {
   name: string;
 }
 
+// Hours-only breakdown (see bySource on the route's TrendBucket) — per-source
+// unique-people counts would double-count anyone with more than one source in
+// the same window, so this axis never touches the volunteer/participant stats.
+const SOURCE_LABELS: Record<string, string> = {
+  SCANNER: "Scanner",
+  WEB: "Web (legacy)",
+  TYPED: "Typed",
+  LEAD_MARKED: "Staff-Marked",
+  FACILITY_CLOSE: "Facility Close",
+  AUTO_CLOSE: "Auto Close",
+  UNSPECIFIED: "Unspecified",
+};
+
 export default function ParticipationTrendsPage() {
-  const { ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
+  const { ready, loading: authLoading } = useRequireRole(FACILITY_AGGREGATE_ROLES);
 
   const [period, setPeriod] = useState<PeriodType>("month");
   const [programId, setProgramId] = useState<string>("");
+  const [showSource, setShowSource] = useState(false);
   const [programs, setPrograms] = useState<ProgramOption[]>([]);
   const [buckets, setBuckets] = useState<TrendBucket[]>([]);
   const [totals, setTotals] = useState<TrendBucket | null>(null);
@@ -42,7 +58,7 @@ export default function ParticipationTrendsPage() {
           setPrograms(data.map((p: { id: number; name: string }) => ({ id: p.id, name: p.name })));
         }
       })
-      .catch(console.error);
+      .catch((err) => console.error("Failed to load programs for trends dropdown:", err));
   }, []);
 
   // Fetch trends data
@@ -58,7 +74,7 @@ export default function ParticipationTrendsPage() {
         setBuckets(data.buckets || []);
         setTotals(data.totals || null);
       })
-      .catch(console.error)
+      .catch((err) => console.error("Failed to load facility trends:", err))
       .finally(() => setLoading(false));
   }, [period, programId, ready]);
 
@@ -111,6 +127,11 @@ export default function ParticipationTrendsPage() {
             { value: "", label: "All Programs (Aggregate)" },
             ...programs.map((p) => ({ value: String(p.id), label: p.name })),
           ]}
+        />
+        <Switch
+          label="Show hours by source"
+          checked={showSource}
+          onChange={(e) => setShowSource(e.currentTarget.checked)}
         />
       </Group>
 
@@ -174,6 +195,30 @@ export default function ParticipationTrendsPage() {
           )}
         </Table>
       </Table.ScrollContainer>
+
+      {showSource && totals && (
+        <Table.ScrollContainer minWidth={300}>
+          <Table verticalSpacing="sm" highlightOnHover>
+            <Table.Caption>Hours by source, across all periods shown above. Not a breakdown of unique volunteers/participants — one person can appear under more than one source.</Table.Caption>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Source</Table.Th>
+                <Table.Th>Hours</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {Object.entries(totals.bySource)
+                .sort(([, a], [, b]) => b - a)
+                .map(([source, hours]) => (
+                  <Table.Tr key={source}>
+                    <Table.Td>{SOURCE_LABELS[source] ?? source}</Table.Td>
+                    <Table.Td>{fmtHours(hours)}</Table.Td>
+                  </Table.Tr>
+                ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+      )}
     </Stack>
   );
 }

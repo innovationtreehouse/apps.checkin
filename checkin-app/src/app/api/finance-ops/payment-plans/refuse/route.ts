@@ -28,12 +28,12 @@ export const POST = withAuth(
                 return apiError("programId and participantId are required", 400);
             }
 
-            // Conflict of interest: mirrors approve — a board member may not refuse
-            // their OWN household's request either. Sysadmin bypasses.
+            // Conflict of interest: mirrors approve — no actor may refuse their OWN
+            // household's request either. No role bypasses this.
             if (auth.type === 'session') {
                 const target = await prisma.person.findUnique({ where: { id: participantId }, select: { householdId: true } });
-                if (await hasHouseholdConflict(prisma, auth.user.id, target?.householdId, { isSysadmin: auth.user.isSysadmin === true })) {
-                    return apiError("You cannot refuse your own household's payment plan — a sysadmin must.", 403);
+                if (await hasHouseholdConflict(prisma, auth.user.id, target?.householdId)) {
+                    return apiError("You cannot refuse your own household's payment plan — someone outside your household must.", 403);
                 }
             }
 

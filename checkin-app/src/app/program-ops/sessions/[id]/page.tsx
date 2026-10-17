@@ -7,7 +7,8 @@ import { Alert, Badge, Button, Card, Checkbox, Container, Group, Modal, Select, 
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
-import { formatDateTime, toDatetimeLocal, fromDatetimeLocal } from '@/lib/time';
+import { toDatetimeLocal, fromDatetimeLocal } from '@/lib/time';
+import { useOrgTime } from '@/components/TimezoneProvider';
 import { MAX_VISIT_MS } from '@/lib/visitTimes';
 import type { RSVPStatus } from '@/types/rsvp';
 
@@ -54,6 +55,7 @@ const RSVP_BADGE: Record<RSVPStatus, { label: string; color: string }> = {
 };
 
 export default function EventAdminPage({ params }: { params: Promise<{ id: string }> }) {
+  const { formatDateTime } = useOrgTime();
   const { id } = use(params);
   const { user: sessionUser, loading: authLoading, ready } = useRequireRole([]);
   const router = useRouter();
@@ -86,10 +88,8 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
   const [manualArrived, setManualArrived] = useState("");
   const [manualDeparted, setManualDeparted] = useState("");
 
-  const fetchEvent = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/events/${id}`);
+  const loadEvent = useCallback(() => fetch(`/api/events/${id}`)
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setEventData(data);
@@ -101,16 +101,23 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
       } else {
         setMessage("Failed to load event.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, [id]);
+    }),
+  [id]);
+
+  const fetchEvent = useCallback(() => {
+    setLoading(true);
+    return loadEvent();
+  }, [loadEvent]);
 
   useEffect(() => {
-    if (ready) fetchEvent();
-  }, [ready, fetchEvent]);
+    if (ready) loadEvent();
+  }, [ready, loadEvent]);
 
   const handleConfirmAttendance = async () => {
     setActionLoading(true);

@@ -1,21 +1,18 @@
 /**
  * Declarative scope-resolution engine.
  *
- * The per-row scope resolver used to be an imperative `switch (modelName)` in
- * access-resolvers.ts. This file is the data-driven replacement: a small
- * `Match` vocabulary, the `evalMatch` interpreter, and `makeScopesHeld` which
- * turns a binding table into a resolver with the IDENTICAL signature
+ * A small `Match` vocabulary, the `evalMatch` interpreter, and `makeScopesHeld`,
+ * which turns a binding table into the per-row scope resolver
  * `(modelName, row, ctx) => Set<Scope>`.
  *
  * Why this exists: making resolution *data* (scopeBindings.ts) instead of code
  * is the minimum needed for the CI security validators below — `validateBindings`
  * (field-typo + forgotten-model catchers) and `validateRouteGrants` (the
  * route-grant ↔ binding-scope seam check). None of them can run against an
- * opaque switch. See docs/security/auth-consistency-analysis.md §7.
+ * imperative switch. See docs/security/auth-consistency-analysis.md §7.
  *
  * The bindings + table live in scopeBindings.ts; this file is the generic
- * engine. Kept deliberately local to checkin-app/src/security — no package
- * extraction (that is §7.7, out of scope).
+ * engine, kept deliberately local to checkin-app/src/security.
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
@@ -31,7 +28,8 @@ export type CtxSet =
     | 'participantIdsInScopePrograms'
     | 'householdIdsInScopePrograms'
     | 'eventIdsInScopePrograms'
-    | 'activeVisitorIds';
+    | 'activeVisitorIds'
+    | 'ledHouseholdMemberIds';
 export type CtxFlag = 'isKeyholder' | 'isKiosk';
 
 export type ScopePredicate = (row: Record<string, unknown>, ctx: CallerContext) => boolean;
@@ -43,6 +41,7 @@ export type ScopePredicate = (row: Record<string, unknown>, ctx: CallerContext) 
  *   { field, inCtx } — ctx[set].has(row[field])     (array = OR over sets)
  *   { flag }         — ctx[flag] === true
  *   { field, isNull }— row[field] == null
+ *   { field, isTrue }— row[field] === true
  *   { all }          — every sub-match (AND)
  *   { custom }       — escape hatch; SKIPS validation, must be logged
  */
@@ -51,6 +50,7 @@ export type Match =
     | { field: string; inCtx: CtxSet | readonly CtxSet[] }
     | { flag: CtxFlag }
     | { field: string; isNull: true }
+    | { field: string; isTrue: true }
     | { all: readonly Match[] }
     | { custom: ScopePredicate };
 
@@ -59,14 +59,15 @@ export type ScopeBindings = Record<string, Partial<Record<Scope, Match>>>;
 /**
  * Evaluate one Match against a row + caller context.
  *
- * The `typeof v === 'number'` guards on eqCtx/inCtx are load-bearing: they
- * encode the old switch's `x !== undefined` checks. Without them an anonymous
- * caller (selfId === undefined) would spuriously match a row whose field is
- * also absent (undefined === undefined).
+ * The `typeof v === 'number'` guards on eqCtx/inCtx are load-bearing: without
+ * them an anonymous caller (selfId === undefined) would spuriously match a row
+ * whose field is also absent (undefined === undefined).
  */
 export function evalMatch(m: Match, row: Record<string, unknown>, ctx: CallerContext): boolean {
     if ('flag' in m) return ctx[m.flag] === true;
     if ('isNull' in m) return row[m.field] == null;
+    // Strict === true: an unselected column is `undefined`, which must not match.
+    if ('isTrue' in m) return row[m.field] === true;
     if ('all' in m) return m.all.every(s => evalMatch(s, row, ctx));
     if ('custom' in m) return m.custom(row, ctx);
     if ('eqCtx' in m) {
@@ -92,9 +93,8 @@ export function evalMatch(m: Match, row: Record<string, unknown>, ctx: CallerCon
  *   - a null / non-object row: row-scoped models fail closed; others get the
  *     broad scope.
  *
- * `rowScopeKeys` is the new home of the old ROW_SCOPE_KEY map. The §7.3 doc
- * sketch dropped it; the live switch has it and the equivalence test (and the
- * existing EmergencyContact fail-closed unit tests) require it.
+ * `rowScopeKeys` is the ROW_SCOPE_KEY map; the EmergencyContact fail-closed
+ * unit tests require it.
  */
 export function makeScopesHeld(
     bindings: ScopeBindings,
@@ -126,7 +126,7 @@ export function makeScopesHeld(
     };
 }
 
-// ─── Validators (authored for CI; NOT wired as gates in this chip — see §7.6) ──
+// ─── Validators (CI gates, armed by __tests__/scopeValidators.test.ts) ──
 
 /** Walk a model's scope map, descending into `all` combinators, yielding leaf+compound matches. */
 function allMatches(scopeMap: Partial<Record<Scope, Match>>): Match[] {
@@ -162,6 +162,7 @@ const SCOPABLE_FIELDS = new Set([
     'userId',
     'actorId',
     'createdById',
+    'uploadedByUserId',
 ]);
 
 export function isScopable(
@@ -227,12 +228,8 @@ export function validateBindings(
 /**
  * The seam check: every `scope:tier` token a route GRANTS in its orderedView
  * must be RESOLVABLE on at least one model that route returns — else the grant
- * silently strips to nothing (over-restriction). See §8.
- *
- * NOTE: this cannot be wired as a CI gate until RouteSpec declares a `returns`
- * field listing the model(s) its bag may contain. That arrives with the
- * route-migration track (Step 3); this chip deliberately does NOT add `returns`
- * to RouteSpec. Authored here so it exists and is tested in isolation.
+ * silently strips to nothing (over-restriction). A route that declares no
+ * `returns` is skipped.
  */
 export interface RouteGrantSpec {
     endpoint: string;

@@ -13,7 +13,7 @@ const m = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("@inventory/s-ingest-core", () => ({
+vi.mock("@checkin/s-ingest-core", () => ({
   prisma: { $disconnect: m.disconnect },
   logger: m.logger,
 }));
@@ -78,6 +78,15 @@ describe("cli — command dispatch", () => {
       bulkOperationId: "gid://x/BulkOperation/9",
       since: "2026-02-02T00:00:00Z",
     });
+  });
+
+  it("--all sets scope: \"all\"; without it no scope key is sent", async () => {
+    await runCli(["reset-watermark", "--reason", "rewind", "--all"]);
+    expect(event()).toMatchObject({ mode: "reset-watermark", scope: "all" });
+
+    m.handler.mockClear();
+    await runCli(["reset-watermark", "--reason", "rewind"]);
+    expect(event()).not.toHaveProperty("scope");
   });
 
   it("an explicit --actor overrides the cli:<user> default", async () => {

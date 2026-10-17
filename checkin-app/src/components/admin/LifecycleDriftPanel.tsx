@@ -11,7 +11,7 @@ type LifecycleViolation = {
 };
 
 /**
- * System Status "Lifecycle" panel (docs/designs/LIFECYCLE.md): read-only view of
+ * System Status "Lifecycle" panel: read-only view of
  * the current off-diagram rows across both lifecycle machines, from the same
  * `validate()` the reconciler cron uses. The human face of the reconciler — the
  * board sees drift live, without waiting for the cron email.

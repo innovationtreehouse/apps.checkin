@@ -12,6 +12,9 @@
 
 # Schema annotations — the source of truth for field sensitivity.
 /checkin-app/prisma/schema.prisma                 @dkaygithub @jee7s @thpr
+# Every package schema — the vendored libraries adopt the same @sensitivity
+# regime (#1286 §5). Matches the boundary glob in security-boundary-isolation.yml.
+/packages/*/prisma/schema.prisma                  @dkaygithub @jee7s @thpr
 
 # The policy layer itself.
 /checkin-app/src/security/                        @dkaygithub @jee7s @thpr
@@ -19,6 +22,10 @@
 # Authentication & session machinery.
 /checkin-app/src/lib/auth.ts                      @dkaygithub @jee7s @thpr
 /checkin-app/src/lib/auth-options.ts              @dkaygithub @jee7s @thpr
+# The site-wide org-login/access gate. security-boundary-isolation.yml's
+# is_boundary() already treats this as a boundary file; without the entry here
+# the isolation check and the review requirement disagree about what it is.
+/checkin-app/src/middleware.ts                    @dkaygithub @jee7s @thpr
 
 # Contract tests that enforce the policy in CI.
 /checkin-app/tests/security/                      @dkaygithub @jee7s @thpr
@@ -30,6 +37,8 @@
 # The CI lint and the codegen — bypass routes if changed.
 /checkin-app/scripts/check-route-coverage.ts      @dkaygithub @jee7s @thpr
 /checkin-app/scripts/security-generator.js        @dkaygithub @jee7s @thpr
+/checkin-app/scripts/check-boundary-decommission.js @dkaygithub @jee7s @thpr
+/checkin-app/scripts/lib/boundary-decommission.js @dkaygithub @jee7s @thpr
 /checkin-app/scripts/migrated-routes.txt          @dkaygithub @jee7s @thpr
 /checkin-app/scripts/legacy-authz-routes.txt      @dkaygithub @jee7s @thpr
 /checkin-app/scripts/tsconfig.json                @dkaygithub @jee7s @thpr

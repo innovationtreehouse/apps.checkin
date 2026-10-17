@@ -11,10 +11,10 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createShopifyClient, MAX_ATTEMPTS, REQUEST_TIMEOUT_MS } from "../../src/shopify/client.js";
-import type { ShopifyConfig } from "@inventory/s-ingest-core";
+import type { ShopifyConfig } from "@checkin/s-ingest-core";
 
 // Silence the retry warn/info logs and avoid pulling the generated Prisma client in.
-vi.mock("@inventory/s-ingest-core", () => ({
+vi.mock("@checkin/s-ingest-core", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 

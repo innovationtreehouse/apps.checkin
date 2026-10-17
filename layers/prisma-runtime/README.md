@@ -8,7 +8,7 @@ Postgres: `s-read-function`, `s-replay-function`, `monitoring-relay-function`,
 ## Why a layer
 
 Each function is bundled with esbuild (`scripts/bundle-function.mjs`) into a single
-`dist/handler.mjs`. The bundle inlines all reachable source — `@inventory/*`, the
+`dist/handler.mjs`. The bundle inlines all reachable source — `@checkin/*`, the
 **generated** Prisma client, zod — but deliberately leaves the Prisma *runtime*
 external:
 

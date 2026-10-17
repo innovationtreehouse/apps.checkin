@@ -41,7 +41,10 @@ describe('Membership notifications API', () => {
         plainId = (await prisma.person.create({ data: { email: `plain-${TAG}@example.com`, name: 'Plain', household: { create: { name: `Plain HH ${TAG}` } } } })).id;
 
         // An application awaiting review (eligible for the reviewer — different household).
+        // It needs a lead: reviewers attest per adult, so a household with nobody to name
+        // has nothing for them to do and drops out of the queue.
         const appHh = await prisma.household.create({ data: { name: `App HH ${TAG}` } });
+        await prisma.person.create({ data: { name: 'App Lead', email: `applead-${TAG}@example.com`, householdId: appHh.id, isHouseholdLead: true } });
         const m1 = await prisma.orgMembership.create({ data: { householdId: appHh.id, status: 'NONE' } });
         await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m1.id, kind: 'INITIAL', status: 'PENDING_BG_REVIEW' } });
 

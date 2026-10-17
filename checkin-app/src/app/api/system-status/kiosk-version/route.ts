@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { execSync } from "child_process";
+import { SCAN_PROTOCOL_VERSION } from "@/lib/scanProtocol";
 
 // Cache it for the lifetime of this Node process
 let cachedVersion: string | null = null;
@@ -19,5 +20,5 @@ export async function GET() {
     }
   }
 
-  return NextResponse.json({ version: cachedVersion });
+  return NextResponse.json({ version: cachedVersion, scanProtocolVersion: SCAN_PROTOCOL_VERSION });
 }

@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
-import { withAuth } from "@/lib/auth";
+import { handler } from "@/security/handler";
 import { ordersByLegacyIds, type MirrorOrder } from "@/lib/shopifyRead/client";
+import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
  * GET /api/finance-ops/payments — the board's queue of reconciler-detected
@@ -13,8 +13,8 @@ import { ordersByLegacyIds, type MirrorOrder } from "@/lib/shopifyRead/client";
  * the s-read mirror by shopifyOrderId. A mirror-less env (unconfigured) just
  * yields no live block — the row still lists. See lib/shopifyRead/client.ts.
  */
-export const GET = withAuth(
-    { roles: ['isBoardMember'] },
+export const GET = handler(
+    "GET /api/finance-ops/payments",
     async () => {
         const exceptions = await prisma.paymentException.findMany({
             where: { status: { in: ['OPEN', 'ACKNOWLEDGED'] } },
@@ -41,7 +41,7 @@ export const GET = withAuth(
                                           name: true,
                                           // The household lead carries the contact email shown in the queue.
                                           householdMembers: {
-                                              where: { isHouseholdLead: true },
+                                              where: { isHouseholdLead: true, ...LIVE_PERSON },
                                               select: { name: true, email: true },
                                               take: 1,
                                           },
@@ -100,7 +100,7 @@ export const GET = withAuth(
             };
         });
 
-        return NextResponse.json(rows);
+        return { PaymentQueueRow: rows };
     }
 );
 

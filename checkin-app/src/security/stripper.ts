@@ -10,13 +10,13 @@
  *
  * For each scalar field, visibility is decided by `fieldVisible(tier, tokens,
  * scopes)` where `scopes = scopesHeld(modelName, row, callerCtx)` — the
- * per-row predicate. Relations are recursed into; each `_count` key is gated
- * to relations the view can see (see relationVisible).
+ * per-row predicate; a field a file route serves is never emitted. Relations
+ * are recursed into; each `_count` key is gated to relations the view can see
+ * (see relationVisible).
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
-import { fieldVisible, type Scope, type Tier, type Token } from './core';
-import { classifications, relations } from './generated/classifications';
+import { classifications, relations, fieldVisible, isFileOnlyField, type Scope, type Tier, type Token } from './core';
 import { scopesHeld, type CallerContext } from './access-resolvers';
 
 export function stripBag(
@@ -45,7 +45,12 @@ export function stripValue(
     if (Array.isArray(value)) {
         return value.map(item => stripValue(modelName, item, tokens, callerCtx));
     }
-    if (typeof value !== 'object') return value;
+    // A model position holds a row (or rows). A bare scalar there has no field
+    // name to classify, so it cannot be tier-checked: drop it (fail-closed).
+    if (typeof value !== 'object') {
+        console.warn(`[security] scalar value under model '${modelName}' — dropping`);
+        return null;
+    }
 
     const obj = value as Record<string, unknown>;
     const tiers = classifications[modelName as keyof typeof classifications] as
@@ -62,6 +67,8 @@ export function stripValue(
     const result: Record<string, unknown> = {};
     for (const [field, tier] of Object.entries(tiers)) {
         if (!(field in obj)) continue;
+        // A field a file route serves leaves only through fileHandler (plan rule 7).
+        if (isFileOnlyField(modelName, field)) continue;
         if (fieldVisible(tier, tokens, scopes)) {
             result[field] = obj[field];
         }

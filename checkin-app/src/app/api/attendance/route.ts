@@ -2,13 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { withAuth, getOptionalSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { getKioskPublicKeys, verifyKioskSignature } from "@/lib/verify-kiosk";
-import { getFullAttendance } from "@/lib/getFullAttendance";
+import { buildingLink } from "@/lib/kioskSeen";
+import { getFullAttendance, invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
+import { closeActor, finishCloseGuard, lastKeyholderGuard, recordWebClose } from "@/lib/attendance/keyholderGuard";
+import { lockFacility } from "@/lib/facilityLock";
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { logBackendError, logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { KEYHOLDER_IN_BUILDING, LIVE_VISIT } from "@/lib/visit/filters";
+import { systemActor } from "@/lib/auditActor";
 
 // GET is kiosk-first with distinct signature-failure semantics (403 on bad signature,
 // not 401), so it keeps its own kiosk plumbing rather than moving to withAuth. The one
@@ -37,8 +42,13 @@ export async function GET(req: NextRequest) {
 
         let isKiosk = false;
 
-        if (!user && pubKeys.length > 0 && hasKioskHeaders) {
-            // Kiosk request — verify signature
+        // Minimization keys on the DISPLAY, not the credential (see
+        // docs/rules/attendance-checkin.md, "The kiosk" — public-screen only).
+        // A valid kiosk signature means this request is the public
+        // kiosk screen — even when a keyholder has signed in on that same
+        // browser. The staff grant (`keyholders:personal`) stays on a session
+        // request that is NOT kiosk-signed (a laptop, not the door display).
+        if (pubKeys.length > 0 && hasKioskHeaders) {
             const result = verifyKioskSignature(
                 "GET",
                 "/api/attendance",
@@ -69,21 +79,29 @@ export async function GET(req: NextRequest) {
         // payload into an iframe with a wildcard postMessage target origin
         // (client/client.py). It gets a display-only roster: no dateOfBirth
         // (personal), no phone (pii), no emergency contacts (personal) — none of
-        // which it renders. A signed-in keyholder/board/sysadmin still gets the
-        // full payload: that grant is deliberate (registry.ts `keyholders:personal`,
-        // for pickup/emergency lookups) and unchanged here.
+        // which it renders. A signed-in keyholder on a non-kiosk browser still
+        // gets the full payload (pickup/emergency lookups).
         const { attendance, counts, safety } = await getFullAttendance({ kiosk: isKiosk });
+        // Web surfaces state occupancy/open/supervision as fact only while the
+        // kiosk is reachable (docs/rules/attendance-checkin.md).
+        const building = buildingLink();
 
         // Determine access level
         const isAdmin = isKiosk || user?.isSysadmin || user?.isBoardMember || user?.isKeyholder;
 
         if (isAdmin) {
+            // ⚠ corner count for the door display (§2 D7): parked scans awaiting
+            // a human. An aggregate only — names and reasons stay on the panel.
+            const needReview = await prisma.rawBadgeLog.count({
+                where: { reviewReason: { not: null }, reviewedAt: null },
+            });
             // Full roster access: all visits + counts (kiosk gets the reduced rows above)
             return NextResponse.json({
                 access: "full",
                 attendance,
-                counts,
+                counts: { ...counts, needReview },
                 safety,
+                building,
                 signedRequest: isKiosk,
             });
         }
@@ -100,6 +118,7 @@ export async function GET(req: NextRequest) {
             safety,
             self: selfVisit,
             household: householdVisits,
+            building,
             signedRequest: isKiosk,
         });
     } catch (error) {
@@ -114,7 +133,7 @@ export const DELETE = withAuth({}, async (req, auth) => {
 
     try {
         const body = await req.json();
-        const { visitId } = body;
+        const { visitId, forceCloseToken, closeChoice, handoverToId } = body;
 
         if (!visitId) {
             return apiError("visitId is required", 400);
@@ -125,7 +144,7 @@ export const DELETE = withAuth({}, async (req, auth) => {
             include: { person: true }
         });
 
-        if (!visit) {
+        if (!visit || visit.deletedAt) {
             return apiError("Visit not found", 404);
         }
 
@@ -137,19 +156,44 @@ export const DELETE = withAuth({}, async (req, auth) => {
         const isHouseholdCheckOut = Boolean(user.householdId && visit.person.householdId === user.householdId && user.householdLead);
         const isAdmin = user.isSysadmin || user.isKeyholder || user.isBoardMember;
 
+        // Out of scope reads exactly as missing (same status, same message): a
+        // caller not entitled to the visit learns nothing about whether the id
+        // exists. docs/rules/principles.md — no existence oracle.
         if (!isSelf && !isHouseholdCheckOut && !isAdmin) {
-            return apiError("Forbidden: You are not authorized to check out this user.", 403);
+            return apiError("Visit not found", 404);
         }
 
-        const finalVisits = await processVisitCheckout(visitId, new Date(), undefined, "WEB");
+        if (visit.departedAt) {
+            return apiError("Visit already checked out", 400);
+        }
+
+        const closeCtx = { actorId: Number(user.id), subjectId: visit.personId, visitId, via: "WEB_DASHBOARD" as const };
+        // The guard decides on the building as the checkout leaves it: under the
+        // person lock (this checkout against the kiosk's) and the facility lock
+        // (against any check-in or close), with the close committing alongside
+        // the checkout. A lost race departs nothing and records no close.
+        const { guard, finalVisits } = await prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(${visit.personId})`;
+            await lockFacility(tx);
+            const guard = await lastKeyholderGuard(visitId, visit.person, closeActor(user), { token: forceCloseToken, choice: closeChoice, handoverToId }, {}, tx);
+            if (guard.action !== 'proceed') return { guard, finalVisits: [] };
+            const departed = await processVisitCheckout(visitId, new Date(), tx, "TYPED");
+            if (departed.length > 0) await recordWebClose(tx, guard, closeCtx);
+            return { guard, finalVisits: departed };
+        }, { maxWait: 5000, timeout: 15000 });
+        if (guard.action === 'warn') return NextResponse.json(guard.warning, { status: 400 });
+        if (guard.action === 'refuse') return apiError(guard.error, guard.status);
+        const { facilityClosed } = guard;
         const updatedVisit = finalVisits.length > 0 ? finalVisits[finalVisits.length - 1] : visit;
+
+        await finishCloseGuard(guard, { ...closeCtx, recorded: true });
 
         // Fire-and-forget: send check-out notifications (mirrors /api/scan)
         sendCheckinNotifications(visit.personId, 'checkout').catch(err =>
             logger.error('Checkout notification error:', err)
         );
 
-        return NextResponse.json({ success: true, visit: updatedVisit });
+        return NextResponse.json({ success: true, visit: updatedVisit, facilityClosed });
     } catch (error) {
         await logBackendError(error, "DELETE /api/attendance");
         return apiError("Failed to force checkout", 500);
@@ -171,24 +215,26 @@ export const POST = withAuth({}, async (req, auth) => {
                 return apiError("participantId is required", 400);
             }
 
-            // Verify participant exists
-            const participant = await prisma.person.findUnique({
-                where: { id: participantId }
+            // Verify participant exists. LIVE_PERSON: a merge tombstone must not be
+            // checked into the building — it would create a Visit nobody can act on.
+            const participant = await prisma.person.findFirst({
+                where: { id: participantId, ...LIVE_PERSON }
             });
 
             if (!participant) {
                 return apiError("Participant not found", 404);
             }
 
-            // Check Permissions
+            // Check Permissions. Out of scope reads exactly as missing (same
+            // status, same message), so an id the caller may not check in is
+            // indistinguishable from one that does not exist — otherwise any
+            // signed-in member could walk the person id space.
+            // docs/rules/principles.md — no existence oracle.
             const isSelf = participant.id === Number(user.id);
             const isHouseholdCheckIn = Boolean(user.householdId && participant.householdId === user.householdId && user.householdLead);
             if (!isSelf && !isHouseholdCheckIn && !isAdmin) {
-                return apiError("Forbidden: You are not authorized to check in this user.", 403);
+                return apiError("Participant not found", 404);
             }
-
-            const arrivalTime = new Date();
-            const eventId = await findAssociatedEventAt(participant.id, arrivalTime);
 
             // Read-then-create on this participant's open-visit state. Without
             // serialization, two concurrent MANUAL_CHECKINs — or one racing a kiosk
@@ -200,11 +246,16 @@ export const POST = withAuth({}, async (req, auth) => {
             // paths serialize against each other. Re-check under the lock, then create.
             const result = await prisma.$transaction(async (tx) => {
                 await tx.$executeRaw`SELECT pg_advisory_xact_lock(${participant.id})`;
+                await lockFacility(tx);
+                // Stamped under the facility lock: after any close it waited
+                // behind was carried out, so it reads as arriving after that close.
+                const arrivalTime = new Date();
 
                 const activeVisit = await tx.visit.findFirst({
                     where: {
                         personId: participant.id,
-                        departedAt: null
+                        departedAt: null,
+                        ...LIVE_VISIT
                     }
                 });
 
@@ -212,23 +263,24 @@ export const POST = withAuth({}, async (req, auth) => {
                     return { alreadyCheckedIn: true as const };
                 }
 
-                // Same facility-open guard as /api/scan's processCheckin: a
-                // non-keyholder cannot be the first in. Checked under the lock so a
-                // racing keyholder check-in is either fully committed or not yet seen.
-                if (!participant.isKeyholder) {
-                    const activeKeyholders = await tx.visit.count({
-                        where: { departedAt: null, person: { isKeyholder: true } }
-                    });
-                    if (activeKeyholders === 0) {
-                        return { facilityClosed: true as const };
-                    }
+                // Same facility-open guard as /api/scan's processCheckin: nobody,
+                // keyholder included, opens the building from the web; a keyholder
+                // already inside can check in someone without their badge. Checked
+                // under the lock so a racing keyholder check-in is either fully
+                // committed or not yet seen.
+                const activeKeyholders = await tx.visit.count({
+                    where: KEYHOLDER_IN_BUILDING
+                });
+                if (activeKeyholders === 0) {
+                    return { facilityClosed: true as const };
                 }
 
+                const eventId = await findAssociatedEventAt(participant.id, arrivalTime, tx);
                 const visit = await tx.visit.create({
                     data: {
                         personId: participant.id,
                         arrivedAt: arrivalTime,
-                        arrivedVia: "WEB",
+                        arrivedVia: "TYPED",
                         associatedEventId: eventId
                     }
                 });
@@ -240,7 +292,7 @@ export const POST = withAuth({}, async (req, auth) => {
             });
 
             if ('facilityClosed' in result) {
-                return apiError("Facility is closed. A Keyholder must check in first.", 403);
+                return apiError("Facility is closed. A keyholder must badge in at the door first.", 403);
             }
             if (result.alreadyCheckedIn) {
                 return apiError("User is already checked in", 400);
@@ -251,6 +303,7 @@ export const POST = withAuth({}, async (req, auth) => {
                 logger.error('Checkin notification error:', err)
             );
 
+            invalidateAttendanceCache();
             return NextResponse.json({ success: true, visit: result.visit });
         }
 
@@ -278,7 +331,7 @@ export const POST = withAuth({}, async (req, auth) => {
             // Log that we sent the notification to prevent spam from multiple kiosks
             await prisma.auditLog.create({
                 data: {
-                    actorId: 0, // System actor
+                    ...systemActor("kiosk:two-deep"),
                     action: 'CREATE',
                     tableName: 'SYSTEM_NOTIFY',
                     affectedEntityId: 0,

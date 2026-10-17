@@ -38,11 +38,18 @@ import {
 } from '@/security/access-resolvers';
 import { stripValue } from '@/security/stripper';
 import { SCOPE_BINDINGS } from '@/security/scopeBindings';
-import type { AuthResult } from '@/types/auth';
-import type { SessionUser } from '@/types/participant';
+import type { AuthResult, AuthenticatedUser } from '@/types/auth';
+import prisma from '@/lib/prisma';
 // Side-effect import: registers every route via defineRoute() so allRoutes()
 // yields the real policy surface.
 import '@/security/registry';
+
+// expense-approver's treasurer leg makes one inline DB read, independent of
+// CallerContext, so masked ≡ full still holds; this stub keeps the "no real DB"
+// invariant (jest.setup rejects the real client).
+beforeAll(() => {
+    prisma.programVolunteer.findFirst = jest.fn().mockResolvedValue(null);
+});
 
 // ─── Personas: fully-populated contexts + matching AuthResults ────────────────
 
@@ -58,11 +65,12 @@ function ctx(opts: Partial<CallerContext> = {}): CallerContext {
         householdIdsInScopePrograms: new Set(),
         eventIdsInScopePrograms: new Set(),
         activeVisitorIds: new Set(),
+        ledHouseholdMemberIds: new Set(),
         ...opts,
     };
 }
 
-function sessionUser(over: Partial<SessionUser> & { id: number }): SessionUser {
+function sessionUser(over: Partial<AuthenticatedUser> & { id: number }): AuthenticatedUser {
     return {
         email: `p${over.id}@example.com`,
         isSysadmin: false,
@@ -70,6 +78,7 @@ function sessionUser(over: Partial<SessionUser> & { id: number }): SessionUser {
         isKeyholder: false,
         isBackgroundCheckReviewer: false,
         isOperations: false,
+        isInventoryManager: false,
         ...over,
     };
 }
@@ -88,14 +97,20 @@ const PERSONAS: Record<string, Persona> = {
     kiosk: { auth: { type: 'kiosk' }, full: ctx({ isKiosk: true }) },
     member: {
         auth: { type: 'session', user: sessionUser({ id: 5, householdId: 2 }) },
-        full: ctx({ selfId: 5, householdId: 2 }),
+        // ledHouseholdMemberIds populated for a NON-lead too (the runtime never
+        // does this) — same adversarial principle as the program sets below.
+        full: ctx({ selfId: 5, householdId: 2, ledHouseholdMemberIds: new Set([5, 6, 9]) }),
     },
     householdLead: {
         auth: {
             type: 'session',
             user: sessionUser({ id: 6, householdId: 2, householdLead: true }),
         },
-        full: ctx({ selfId: 6, householdId: 2 }),
+        full: ctx({
+            selfId: 6,
+            householdId: 2,
+            ledHouseholdMemberIds: new Set([5, 6, 9]),
+        }),
     },
     programLead: {
         auth: { type: 'session', user: sessionUser({ id: 10, householdId: 4 }) },
@@ -172,6 +187,9 @@ function maskToNeeds(full: CallerContext, needs: CtxNeeds): CallerContext {
             : new Set(),
         eventIdsInScopePrograms: needs.programEvents ? full.eventIdsInScopePrograms : new Set(),
         activeVisitorIds: needs.activeVisitors ? full.activeVisitorIds : new Set(),
+        ledHouseholdMemberIds: needs.ledHouseholdMembers
+            ? full.ledHouseholdMemberIds
+            : new Set(),
     };
 }
 
@@ -191,7 +209,7 @@ const ROWS: Array<Record<string, unknown> | null> = [
     { id: 100, householdId: 4, participantId: 10, personId: 10, programId: 100, eventId: 200, userId: 10, actorId: 10, departedAt: null },
 ];
 
-const MODELS = [...Object.keys(SCOPE_BINDINGS), 'Fee', 'OrgMembershipProcess'];
+const MODELS = [...Object.keys(SCOPE_BINDINGS), 'OrgMembershipProcess'];
 
 // Param sets: program-scoped routes key roles/admission on params.id.
 // 100 = programLead's program, 101 = coreVolunteer's, 999 = nobody's.
@@ -283,6 +301,27 @@ describe('deriveCtxNeeds — spot checks against the live registry', () => {
             programHouseholds: false,
             programEvents: false,
             activeVisitors: false,
+            ledHouseholdMembers: false,
+        });
+    });
+
+    it('the self-correction PATCH needs the led-household roster', () => {
+        expect(byEndpoint.get('PATCH /api/attendance/manual/[id]')?.ctxNeeds).toEqual({
+            programs: false,
+            programHouseholds: false,
+            programEvents: false,
+            activeVisitors: false,
+            ledHouseholdMembers: true,
+        });
+    });
+
+    it('the self-correction DELETE needs no prefetches (empty bag)', () => {
+        expect(byEndpoint.get('DELETE /api/attendance/manual/[id]')?.ctxNeeds).toEqual({
+            programs: false,
+            programHouseholds: false,
+            programEvents: false,
+            activeVisitors: false,
+            ledHouseholdMembers: false,
         });
     });
 
@@ -292,6 +331,7 @@ describe('deriveCtxNeeds — spot checks against the live registry', () => {
             programHouseholds: true,
             programEvents: true,
             activeVisitors: false,
+            ledHouseholdMembers: false,
         });
     });
 

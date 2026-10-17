@@ -21,16 +21,16 @@ Status: **ALL 7 chips folded (V1–V7).** Every step tagged vs live code at base
 0a. ❌ Pre-membership: prospect logs in, subscribes to newsletter, gets program notifications; open house on public calendar (`CM14`)
 0b. ❌ Preview the membership agreement as view-only PDF without triggering Zoho Sign (`M20`)
 1. ✅ Intake application incl "anything else" note (captured + surfaced to reviewers)
-2. ✅ Board pre-designation of volunteer household — but drives **dues only**, NOT skip-review→payment (that's a separate `bgFresh` path; a designated vol WITH an intake note is still held at review)
+2. ✅ Board pre-designation of volunteer household — but drives **dues only**, NOT skip-review→payment (that's a separate `bgFresh` path)
 3. ✅ Contract sent + signed (Zoho, embedded)
 4. ✅ BG sent + consent (self-attest honor + board backstop; no Averity API)
 5. ✅ BG review (2-of-N, anti-collusion gates, board override w/ COI gate)
-6. ✅ Reviewer volunteer bit / intake-note gates review
+6. ✅ Reviewer volunteer bit; intake note shown to reviewers (does NOT gate payment — review runs in parallel)
 7. ✅ Payment via Shopify (member vs volunteer price + discount code)
 8. ✅ Webhook validates payment→activation (HMAC + variant-id check; H2 no-item → stays PENDING + board alert). NOTE: volunteer discount-code entitlement still NOT validated (`CO2`/#278)
 9. 🟡 Post-activation fan-out: welcome/congrats ✅ · **mailing-list `CM1` ❌ + badge-print `AT11` ❌ NOT wired to activation**
 10. ✅ 18+ student BG trigger on activation (`SA1` Trigger C)
-11. ✅ Scholarship/payment-plan request — but **scholarship not modeled distinctly**; rides the board payment-plan-certify override
+11. ✅ Scholarship/payment-plan request — the **ask** is now modeled distinctly (`scholarshipRequestKind`: SCHOLARSHIP / PAYMENT_PLAN / UNSURE, stated by the family, shown on the queue); the **grant** still rides the board payment-plan-certify override, and granted terms stay out of the app by decision
 
 ### A2. Returning family (annual renewal)  [bucket M]  — validated V1
 1. 🟡 Renewal cron OPENS the process ✅ but **auto-reminder SEND is gutted** (`renewalReminderSentAt` write-never — `CM5`); manual outreach only
@@ -57,7 +57,7 @@ Status: **ALL 7 chips folded (V1–V7).** Every step tagged vs live code at base
 ### A4. Program leader  [bucket P/GC-ROLES]  — validated V2
 1. ✅ Assigned to program — `Program.leadMentorId` FK + `ProgramVolunteer{isCore}` join
 2. 🟡 Create program ✅ (`api/programs` POST + `program-ops/new`) — but **ProgramInstance tier ❌** (`P1`/#953 not in base schema; nothing reads an instance)
-3. ✅ Set capacity/fee/dates (create form + PATCH; `Fee` model)
+3. ✅ Set capacity/fee/dates (create form + PATCH; `Program.orgMemberPriceCents`/`nonOrgMemberPriceCents`)
 4. ⛔ Assign keyholder per event (manual by design)
 5. ✅ Assign 2nd volunteer (`ProgramVolunteer` join) — recruitment/comms itself is AT domain
 6. 🟡 Enrollment mgmt — lead can **remove** ✅, **cannot add** (`"Program leads cannot manually add participants"`, by design; only self/household-lead/board/sysadmin)
@@ -90,14 +90,14 @@ _Extraction adds (2026-07-22):_
 2. 🟡 Youth enrollment rules (`P16`) — age gate **enforced** ✅ (`checkProgramAge`, min/max as-of start, declared-adult/no-DOB handled); youth-specific slot-reserve/parent-notify/limit ❌ (open DECISION, not built)
 3. ✅ Check-in / out
 4. ✅ Insert own past visit — `attendance/manual` forces `personId=self` (never from body), backdate allowed by design, audit-logged CREATE
-5. 🟡 Edit an inserted visit (`AT3` — **now fully mapped**): **user self-edit ⛔ none** (manual route INSERT-only) · **staff edit ✅** board/sysadmin PATCH/DELETE `facility/visits` (⚠️ UI page gates sysadmin-only but API allows board too — role discrepancy) · **lead/ops add-for-others ✅ scoped** (event-roster synthetic visit via `events/[id]/attendance`, or live `scan`) — but **no arbitrary-past-time insert for others** exists
+5. 🟡 Edit an inserted visit (`AT3` — **now fully mapped**): **user self-edit ⛔ none** (manual route INSERT-only) · **staff edit ✅** board/sysadmin PATCH/DELETE `facility/visits` (⚠️ UI page gates sysadmin-only but API allows board too — role discrepancy) · **lead/ops add-for-others ✅ scoped** (per-session correction via `PATCH events/[id]` `manualEditAttendance`, or live `scan`) — but **no arbitrary-past-time insert for others** exists
 6. ❌ Waiver-gated enrollment where the program requires one — camps (`P28`)
 7. ❌ Age-out → alumni pipeline (`M21`; SA1 BG trigger already covers the mentor return)
 
 ### A7. Keyholder / front-desk (kiosk)  [bucket AT]  — validated V3
-1. ✅ Open facility — non-keyholder check-in blocked when `activeKeyholders===0` (scan + manual paths)
+1. ✅ Open facility — open means a keyholder is present (`safety.facilityOpen`); a kiosk badge with no keyholder in still checks in, marked "no keyholder" (cleared by a keyholder IN within 10 min); web/manual check-in still blocked when `activeKeyholders===0`
 2. ✅ Check people in/out — `POST /api/scan` toggles presence, per-participant advisory lock
-3. ✅ Presence board — `getFullAttendance` roster+counts+safety (privileged ships DOB/phone/EC, kiosk display-only)
+3. ✅ Presence board — `getFullAttendance` roster+counts+safety (privileged ships DOB/phone/EC, kiosk display-only); never blank while anyone is inside; no-keyholder visits shown under a "facility closed" banner
 4. ✅ Cert-level display — kiosk cert grid (PII-minimized, #329 pattern)
 5. 🟡 Two-deep tracking (`AT6`) — **display flag only, no enforcement** (`isTwoDeepViolation` red banner; no block on last adult leaving, no 60s delay). ⚠️ **`AT10`/#300 fail-open CONFIRMED**: `isYouth(null)→false` so unknown-DOB persons count as **adults** → two-deep silently passes
 6. ✅ Keyholder-count warning + forced signout on close — last-keyholder double-badge (≤12s) → `closeAllOpenVisits` SYSTEM sweep marks every open visit departed. (Race `AT9`/#254 not re-tested)
@@ -124,7 +124,7 @@ _Extraction adds (2026-07-22):_
 
 ### Finance / ops — 7 distinct journeys (A10–A16)  [bucket FR/FE/FD/CI + GC-QB]  — mostly PORT from Inventory monorepo; depth per `sources/inventory_capabilities.md`; checkin side validated V5
 _Finance is **not one persona journey** — it's 7 Inventory apps, each its own state machine with its own exception/queue screen (those queues are the "missed oversight surfaces"). **The PORT gap is specifically receipts (A10) / catalog (A11) / inventory (A12) / expense→QB (A13) / donations (A14) / hours-alloc (A16)** — 18 of 23 steps ❌ (empty-grep confirmed V5). Every "exception:" line is a distinct screen; each app is separately ownable + shippable._
-_**But payment-reconciliation is NOT a gap** — V5 found checkin already ships an undocumented, mature **`finance-ops/`** domain around Shopify payment truth (see A15 + B1): an 11-kind `PaymentException` state machine, daily cursor reconciler, bidirectional match-audit, reversal webhooks, board-alert, and resolution screens. **Zero QuickBooks integration** anywhere (only a free-text `FeePayment.quickBooksInvoice` column) — so A13/A16's QB post is entirely unbuilt. `@inventory/money` (`formatCents`/`dollarsToCents`) is already a **live shared dependency** between checkin and the Inventory monorepo — the port isn't purely future. Reframe (owner): receipt toil = **inventory cataloging** (thousands of receipts) NOT reimbursement (~10/yr) — high-volume driver is card-receipt intake, so A10-5 upload/line cap is a real throughput+DoS concern._
+_**But payment-reconciliation is NOT a gap** — V5 found checkin already ships an undocumented, mature **`finance-ops/`** domain around Shopify payment truth (see A15 + B1): an 11-kind `PaymentException` state machine, daily cursor reconciler, bidirectional match-audit, reversal webhooks, board-alert, and resolution screens. **Zero QuickBooks integration** anywhere (no QB model, field, client, or credential in the schema or `src/`) — so A13/A16's QB post is entirely unbuilt. `@checkin/money` (`formatCents`/`dollarsToCents`) is already a **live shared dependency** between checkin and the Inventory monorepo — the port isn't purely future. Reframe (owner): receipt toil = **inventory cataloging** (thousands of receipts) NOT reimbursement (~10/yr) — high-volume driver is card-receipt intake, so A10-5 upload/line cap is a real throughput+DoS concern._
 
 ### A10. Receipt intake  (receipt-app)
 1. ❌ Upload receipt jpg/gif/pdf/text + blob store
@@ -175,7 +175,7 @@ _Exists as membership/program **payment** reconciliation, not generic income/GL.
 
 ### A16. Program-hours finance + orchestration glue  [`GC-PROGRAM-FINANCE` + workflow-mapping-app]
 1. ❌ Volunteer/program hours → QB expense allocation (allocation only, not payroll). Concretized (`FE7`): base per-hour shop fee (+surplus for shop-users) → each program's P&L as **monthly QB inter-class journals**; checkin has the hours, needs rates + rules
-2. ❌ Orchestrator: received-receipt queue + line-status tracking; line→GTIN associate (optimistic), propose-reference, mark-non-inventory; apply/retry-apply/proceed — _glue; collapses to direct calls in checkin monolith, port only after ≥2 pipeline apps land_
+2. ✅ Orchestrator (receipt mapping, `/inventory/receiving`): received-receipt queue + line-status tracking; line→GTIN associate (optimistic), propose-reference, mark-non-inventory; apply/retry-apply/proceed — ported as the workflow-mapping library, which checkin calls in-process; only the transport changed. Correcting an already-applied receipt ❌ (#2267)
 
 ---
 
@@ -218,7 +218,7 @@ _For each loop: does the whole thing close, and can staff SEE/FIX it? These over
   - ✅ hygiene: synthetic (SYSTEM) visits excluded from building-hours, so lead "mark present" doesn't inflate measured hours
 
 ### B4. Comms / mailing-list loop  [CM]  — validated V6
-- ❌ **Entire mailing-list loop absent at all 3 levels** (no write/viewer/review) — but now **IN-DESIGN**: `docs/designs/MEMBERSHIP_SYNC.md` (PR #1197) covers the engine (`CM1`), coverage-drop detection (`CM2` rescoped — warn-only, no auto re-add), ghost detection (`CM3`), boundary cleanup (`CM4` mostly absorbed; DENIED-newsletter exception net-new). Board decision pending: under-13 on lists (DECISIONS SYNC-1). Was the weakest column; now the best-designed unbuilt one.
+- ❌ **Entire mailing-list loop absent at all 3 levels** (no write/viewer/review) — but now **IN-DESIGN**: `docs/in-design/MEMBERSHIP_SYNC.md` (PR #1197) covers the engine (`CM1`), coverage-drop detection (`CM2` rescoped — warn-only, no auto re-add), ghost detection (`CM3`), boundary cleanup (`CM4` mostly absorbed; DENIED-newsletter exception net-new). Board decision pending: under-13 on lists (DECISIONS SYNC-1). Was the weakest column; now the best-designed unbuilt one.
 - Oversight/breakage:
   - 🟡 **email deliverability/bounce (`CM7`) — surprisingly BUILT**: Svix-verified Resend webhook stamps/clears `Person.emailUndeliverableAt` (self-healing); household broken-email badge; nav red-pill count. Gap: no proactive "fix this address" worklist; no per-message bounce history
   - ✅ **email send-failure queue** — `IntegrationErrorLog` → **Link Status** panel with mark-resolved/reopen (the one mature exception-review surface)

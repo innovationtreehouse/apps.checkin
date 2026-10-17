@@ -16,7 +16,7 @@ import { normalizeAuditData } from '@/lib/auditPayload';
 import { notifyReviewers } from '@/lib/membership/review';
 import prisma from '@/lib/prisma';
 
-jest.mock('@/lib/email', () => ({ sendEmail: jest.fn().mockResolvedValue(true) }));
+jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
 // Bare stubs, deliberately NOT a requireActual spread: review.ts sits on an
 // import cycle (review → payment → personBgTriggers → renewal → review), so an
 // eager requireActual inside this factory re-enters review.ts mid-init and

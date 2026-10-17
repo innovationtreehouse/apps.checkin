@@ -1,11 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 import MyProgramsLayout from "../layout";
 
 const push = jest.fn();
 let mockPathname = "/my-programs";
-let mockSession: { status: string };
+let mockSession: { status: string; data?: { user: { id: number } } };
 let mockCounts: TodoCounts | null;
 
 jest.mock("next/navigation", () => ({
@@ -46,7 +46,7 @@ beforeAll(() => {
 });
 
 const CHILD = "child-marker";
-const renderLayout = (pathname: string, session: { status: string }, counts: TodoCounts | null) => {
+const renderLayout = (pathname: string, session: typeof mockSession, counts: TodoCounts | null) => {
   mockPathname = pathname;
   mockSession = session;
   mockCounts = counts;
@@ -80,6 +80,19 @@ describe("MyProgramsLayout lead gate", () => {
     renderLayout("/my-programs", { status: "authenticated" }, noLeadCounts);
     expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
     expect(push).toHaveBeenCalledWith("/");
+  });
+
+  it("admits a program treasurer who leads no program, showing only Expense approvals", () => {
+    const treasurerCounts = {
+      lead: { programs: [] },
+      releasedLibraries: ["expense"],
+      libraries: { expense: { approver: 1 } },
+    } as unknown as TodoCounts;
+    renderLayout("/my-programs/expense-approvals", { status: "authenticated", data: { user: { id: 5 } } }, treasurerCounts);
+    expect(screen.getByText(CHILD)).toBeInTheDocument();
+    expect(screen.getByText("Expense approvals")).toBeInTheDocument();
+    expect(screen.queryByText("Attendance")).not.toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("redirects unauthenticated callers", () => {

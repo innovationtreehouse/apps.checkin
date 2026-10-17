@@ -10,6 +10,7 @@
  */
 
 import { GET } from '@/app/api/membership-audit/compliance/route';
+import { nextBoundary } from '@/lib/membership/renewal';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 
@@ -19,6 +20,13 @@ jest.mock('next-auth/next', () => ({
 
 const TAG = 'person-bg-test';
 const RECHECK_MONTHS = 12;
+const BOUNDARY_SEED = new Date('2000-06-01'); // only month/day matter to nextBoundary()
+// Age is judged as-of the boundary the route computes from the real clock, so the
+// minor's DOB is derived from that same boundary — a literal year would age past
+// 18 and flip the verdict to NEEDED. 10 as of the boundary keeps clear of the
+// inclusive ≥18 edge.
+const BOUNDARY = nextBoundary(BOUNDARY_SEED, new Date());
+const MINOR_DOB = new Date(Date.UTC(BOUNDARY.getUTCFullYear() - 10, BOUNDARY.getUTCMonth(), BOUNDARY.getUTCDate()));
 
 function get() {
     return GET(new Request('http://localhost:4000/api/membership-audit/compliance', {
@@ -76,8 +84,8 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
         savedSettings = prev ? { bgRecheckMonths: prev.bgRecheckMonths, orgMembershipYearBoundary: prev.orgMembershipYearBoundary } : null;
         await prisma.boardSettings.upsert({
             where: { id: 1 },
-            create: { id: 1, bgRecheckMonths: RECHECK_MONTHS, orgMembershipYearBoundary: new Date('2000-06-01') },
-            update: { bgRecheckMonths: RECHECK_MONTHS, orgMembershipYearBoundary: new Date('2000-06-01') },
+            create: { id: 1, bgRecheckMonths: RECHECK_MONTHS, orgMembershipYearBoundary: BOUNDARY_SEED },
+            update: { bgRecheckMonths: RECHECK_MONTHS, orgMembershipYearBoundary: BOUNDARY_SEED },
         });
 
         const board = await prisma.person.create({
@@ -85,20 +93,20 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
         });
         boardId = board.id;
 
-        // Adult (37), no check → NEEDED. Enrolled as a participant.
+        // Adult, no check → NEEDED. Enrolled as a participant.
         participantId = (await makePerson('participant', { dateOfBirth: new Date('1990-01-01') })).id;
         // Adult, no check, in a non-member household → NEEDED, must appear in the person list.
         volunteerId = (await makePerson('volunteer', { dateOfBirth: new Date('1988-01-01') })).id;
         // Adult, no check → NEEDED. Program lead.
         leadId = (await makePerson('lead', { dateOfBirth: new Date('1985-01-01') })).id;
         // Under 18 → excluded even though attached as a volunteer.
-        minorId = (await makePerson('minor', { dateOfBirth: new Date('2015-01-01') })).id;
+        minorId = (await makePerson('minor', { dateOfBirth: MINOR_DOB })).id;
         // Adult with a current check → FRESH, excluded.
         freshId = (await makePerson('fresh', { dateOfBirth: new Date('1980-01-01'), lastBackgroundCheck: new Date() })).id;
         // No DOB, not declared adult → DOB_MISSING, not NEEDED.
         missingDobId = (await makePerson('nodob', { dateOfBirth: null })).id;
 
-        const program = await prisma.program.create({ data: { name: `${TAG} program`, leadMentorId: leadId } });
+        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${TAG} program`, leadMentorId: leadId } });
         programId = program.id;
         await prisma.programParticipant.create({ data: { programId, personId: participantId } });
         await prisma.programParticipant.create({ data: { programId, personId: freshId } });
@@ -109,8 +117,12 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
 
     afterAll(async () => {
         await cleanup();
+        // Unconditional: a row this suite created must go, or its boundary leaks into
+        // suites that share this DB and expect none.
         if (savedSettings) {
             await prisma.boardSettings.update({ where: { id: 1 }, data: savedSettings });
+        } else {
+            await prisma.boardSettings.delete({ where: { id: 1 } }).catch(() => {});
         }
     });
 

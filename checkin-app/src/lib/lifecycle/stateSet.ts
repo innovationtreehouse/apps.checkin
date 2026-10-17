@@ -3,10 +3,10 @@
  * BOTH a client-safe runtime predicate (`has`) AND a server Prisma `where`
  * fragment from ONE spec, so the two can never drift apart.
  *
- * Client-safety (see lifecycle/README intent): this file value-imports NOTHING.
- * The Prisma `where` type is a caller-supplied generic param (`Where`), so no
- * `@/generated/prisma` value ever reaches the client bundle. The `where` value
- * is a plain object literal — inert data, no Prisma runtime dependency.
+ * Client-safe: a Prisma value here would pull the generated client into a page
+ * bundle, so the `where` type is a caller-supplied generic (`Where`) and the
+ * value a plain object literal. Enforced by `no-restricted-imports` in
+ * `eslint.config.mjs` — `import type` only.
  */
 
 export type StateSet<Row, Where> = {

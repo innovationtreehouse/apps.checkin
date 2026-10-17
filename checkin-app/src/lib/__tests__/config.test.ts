@@ -339,9 +339,9 @@ describe("simple optional getters (env-set vs default)", () => {
         process.env.RESEND_API_KEY = "resend-1";
         expect(config.resendApiKey()).toBe("resend-1");
     });
-    it("emailFrom default", () => {
+    it("emailFrom is null when unset (no hardcoded sender to mask a gap)", () => {
         delete process.env.EMAIL_FROM;
-        expect(config.emailFrom()).toBe("CheckMeIn <onboarding@resend.dev>");
+        expect(config.emailFrom()).toBeNull();
         process.env.EMAIL_FROM = "a@b.com";
         expect(config.emailFrom()).toBe("a@b.com");
     });

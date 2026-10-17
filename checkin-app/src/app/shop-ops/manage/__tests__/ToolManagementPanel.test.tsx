@@ -323,7 +323,7 @@ describe("ToolManagementPanel", () => {
     fireEvent.click(screen.getByText("Alice"));
     await waitFor(() => expect(screen.queryByText("Table Saw", { selector: "p" })).not.toBeInTheDocument());
 
-    fireEvent.change(screen.getByPlaceholderText("Search members..."), { target: { value: "nonexistent" } });
+    fireEvent.change(screen.getByPlaceholderText("Search members by name, email, or ID..."), { target: { value: "nonexistent" } });
     expect(await screen.findByText("No members match.")).toBeInTheDocument();
   });
 

@@ -4,7 +4,7 @@ import { withCron } from "@/lib/cronAuth";
 import { runLifecycleReconcile } from "@/lib/lifecycleDrift";
 
 /**
- * Invariant-driven lifecycle reconciler (docs/designs/LIFECYCLE.md). Scans BOTH
+ * Invariant-driven lifecycle reconciler. Scans BOTH
  * lifecycle models with the machines' OWN `validate()` oracles, auto-heals the one
  * safe unambiguous case — enrollment I1 (`status=ACTIVE` with a stranded
  * `inventoryHeldAt`: a Shopify `-1` the webhook took but died before releasing) by

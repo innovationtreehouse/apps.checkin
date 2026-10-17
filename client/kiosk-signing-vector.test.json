@@ -1,0 +1,21 @@
+{
+  "_comment": "TEST-ONLY golden vector pinning the kiosk<->server Ed25519 request-signing contract. Read by client/test_signing_vector.py and checkin-app/src/lib/__tests__/verifyKioskSignature.test.ts; if either side changes the message template, a header name, or the encoding, its own test goes red. Ed25519 is deterministic (RFC 8032), so a fixed (seed, message) always yields this exact signature.",
+  "_security": "test_only_private_key_seed_hex is a throwaway keypair generated for this fixture and is PUBLIC. NEVER write it to a kiosk's client.key, and NEVER set test_only_public_key_hex as KIOSK_PUBLIC_KEY on any instance — doing so lets anyone forge signed kiosk requests.",
+
+  "signed_message_template": "{timestamp}:{nonce}:{method}:{path}:{body}",
+  "headers": {
+    "timestamp": "X-Kiosk-Timestamp",
+    "nonce": "X-Kiosk-Nonce",
+    "signature": "X-Kiosk-Signature"
+  },
+
+  "timestamp": "1750000000",
+  "nonce": "4b2f8c1d6a3e9f0752c8d1b4a7e30695",
+  "method": "POST",
+  "path": "/api/scan",
+  "body": "{\"participantId\": 5}",
+
+  "test_only_private_key_seed_hex": "c4f45bf4a58def991ad1c9d6d59e4a0ef3b5a9b79c04a79925a02aaeb21d79f7",
+  "test_only_public_key_hex": "11632e15edf89e27aa86610691c86c9f98cf7d3d4992f192a5d6f05526c57755",
+  "expected_signature_hex": "8ff4906b6c33ba9d8e6a05abcc6c578ab86b3698b84ade626cd8b75d348a8ea99836e39a49fbe6f393d8e593c1ef1e15badf4d293a91f580e8d649f2dd400600"
+}

@@ -67,8 +67,9 @@ Program roles (all Treehouse Volunteers):
 |---|---|---|---|
 | **Program Leader** | the person responsible for a program | `programLeaderId` *(rename pending from `leadMentorId`)* | policy term; **retire "lead mentor"** |
 | **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | Core's legal-authority rules are organizational (out of software scope) |
+| **Program Treasurer** | a Program Volunteer who keeps the program's money; a program may have several. With the Program Leader, approves within the program's budget-owner bucket | `ProgramVolunteer.isTreasurer` | policy term (*Sponsored Program Policy, Art. III §III.7*) |
 
-**Retired words (do not use):** `staff` / "program staff" (→ Treehouse Volunteers), `mentor` and `lead mentor` (→ Program Leader / Program Volunteer; program-specific "mentor" language is external), "program instructor" (→ `instructor` is **tool-only**, see Shop & Certification).
+**Retired words (do not use):** `staff` / "program staff" (→ Treehouse Volunteers), `mentor` and `lead mentor` (→ Program Leader / Program Volunteer; program-specific "mentor" language is external), "program instructor" (→ `instructor` is **tool-only**, see Shop & Certification), "dues" (→ **membership fee**; Treehouse is not a membership organization under the law, so what a household pays is a fee, the word used outside the software too).
 
 ## Roles & accounts
 
@@ -76,7 +77,7 @@ Program roles (all Treehouse Volunteers):
 - **Board Member** (`isBoardMember`) — a governance role; **distinct from the OrgMembership "Treehouse Member"** (a Board Member need not be a Treehouse Member). Not the bare-`member` this dictionary bans.
 - **Treehouse Account** — an internal org-domain (`@innovationtreehouse.org`) account; not a real Member Family. `isTreehouseAccount` *(rename pending from `isStaffAccount`; also `STAFF_ENTERED`)*.
 - **Admin** — ⚠️ **UNRESOLVED / do not rely on.** "admin" is a loose derived label (no `isAdmin` column) that means `isSysadmin` in some files and `isSysadmin || isBoardMember` in others. Security-sensitive; deferred to its own discussion (UNFINISHED.md).
-- **Review / Reviewer** — ⚠️ overloaded across BG-reviewer role, attestation reviewer, membership review, and trusted-adult "decider"; lower-priority followup (UNFINISHED.md). Never use "review" bare until resolved.
+- **Review / Reviewer** — the BG-reviewer role, the membership review queue, and `BackgroundCheckAttestation.reviewer` are **one concept**, defined under [Background check](#background-check). Trusted-adult review keeps its own **review** + **decider** (`TrustedAdultReview.decidedBy`) — one board member's decision with recorded reasoning, not a two-of-N attestation. **Scholarship Review Team** (see Money) is a third, unrelated.
 
 ## Shop & Certification
 
@@ -100,15 +101,60 @@ Rules:
 
 ## Money
 
-**The canonical money word is `fee`.** Kinds: **membership fee** *(rename pending from "dues": `normalDuesCents`→`standardMembershipFeeCents`, `volunteerDuesCents`→`volunteerMembershipFeeCents`)*, **program fee** (`Fee`), plus **shop fee** and **facility fee** (shop and facility are billed separately). `price` = the cents **amount** on a fee, not a rival concept.
+**The canonical money word is `fee`.** Kinds: **membership fee** (`BoardSettings.standardMembershipFeeCents`, `BoardSettings.volunteerMembershipFeeCents`), **program fee** (`Program.orgMemberPriceCents` / `nonOrgMemberPriceCents`), plus **shop fee** and **facility fee** (shop and facility are billed separately). `price` = the cents **amount** on a fee, not a rival concept. There is no `Fee`/`FeePayment` model: program payment truth lives in the Shopify pipeline (`ProgramParticipant.status` + `shopifyOrderId`, `shopify_read`, `PaymentException`); the dead `Fee`/`FeePayment` tables were killed in FR7 (#354).
 
 **Payment vs relief** (keep separate):
-- **Manual payment** — payment landed **outside Shopify** (recorded in QuickBooks), so a membership activates without a Shopify order. `via: "manual"` / `manualPaymentById` *(rename pending from `"certified"` / `certifiedById` — which collided with tool certification)*. **Not** a comp.
-- **Payment Plan** — installments (`isPaymentPlanRequested`).
-- **Scholarship** — a board comp (fee waived). Unnamed in code today.
+- **Manual payment** — payment landed **outside Shopify** (recorded in QuickBooks), so a membership activates without a Shopify order. `via: "manual"` / `manualPaymentById`. **Not** a comp.
+- **Payment Plan** — installments (`isPaymentPlanRequested`, kind `PAYMENT_PLAN`).
+- **Scholarship** — a board comp (fee waived). Named in code as `ScholarshipRequestKind.SCHOLARSHIP`.
+- **`isPaymentPlanRequested` is the umbrella flag**, not the payment-plan half: it means
+  "this household asked for help with a fee" and is set by a scholarship request too.
+  Which ask it was lives in `scholarshipRequestKind` (`SCHOLARSHIP` / `PAYMENT_PLAN` /
+  `UNSURE`, null on requests predating the column). Granted terms stay out of the app —
+  see `docs/rules/revenue.md`.
 - **Scholarship Review Team** — the board-designated recipients of scholarship / payment-plan
   request notifications (`BoardSettings.scholarshipNotifyEmail`; falls back to all board members
   when unset). The canonical UI/copy term — **retire "Finance Committee"** for this concept.
+
+## Background check
+
+One flow, three acts to keep apart. **Reviewing is the job; attesting is the act
+that ends it; a clearance is what two attestations produce.**
+
+**review** (read the report on Averity) → **attest** (one reviewer's judgement of one
+adult) → two attestations → **clearance** (dated; the validity window runs from it).
+
+| Term | Meaning | Code | UI |
+|---|---|---|---|
+| **Reviewer** | the person — a background-check reviewer, or a board member (implicitly one). The role and the job, not the act | `isBackgroundCheckReviewer` / `BG_REVIEWER` | "reviewer" |
+| **Review** | the **reading** of the Averity report. Not the decision | `/membership-ops/review`, `/api/membership/reviews` | "review" |
+| **Attest** | one reviewer putting their name to a judgement about one adult — the act, and the only thing the app stores | `attest()`, `BackgroundCheckAttestation` | "Attest" |
+| **Approve / Reject** | the **value** carried on an attestation — what was judged, never the act of judging | `AttestationResult` | "Approve" / "Reject" |
+| **Clearance** / **cleared** | the outcome: two attestations, dated. The re-check window runs from that date | `bgClearedAt`, `PENDING_BG_CLEARANCE`, `Person.lastBackgroundCheck` | "cleared" |
+| **Consent** | the **applicant's** act — they submitted the Averity form. Never "attest" | `bgConsentAt`, `markBgConsent` | "consent" |
+| **Override** | the board acting against the flow's own outcome — force-approving a blocked application, or discarding attestations | `overrideBlocked` | "override" |
+
+Rules:
+1. **A reviewer attests; two attestations clear the check.** One word per sense —
+   never "approve" for the act, never "attest" for the outcome.
+2. **Never "clean," never "passed."** The app never holds the report or its
+   result, only that a reviewer read it and what they judged
+   ([../../docs/rules/membership.md](../../docs/rules/membership.md), Procedure ›
+   Application and review). Both words state an outcome of the report; "I approve
+   this person" states the judgement, which is what is stored. Policy's own
+   outcome vocabulary is approval, restriction, or denial — a pass/fail framing
+   has nowhere to put the middle one.
+3. **`clear` never means erase.** Undoing attestations is **discard**. Erasing a
+   person's clearance date is **remove**. `clear` is reserved for the outcome
+   above — and as a **verb on a button** it reads as *reset* even so, which is why
+   the reviewer queue names the outcome with the noun (*complete the clearance*),
+   not the verb.
+4. **"Attest" is the reviewer's word alone.** An applicant **consents**; a Tool
+   Certifier **certifies** (see Shop & Certification).
+5. **`PENDING_BG_REVIEW` and `PENDING_BG_CLEARANCE` do not mark review vs
+   clearance** — they differ by whether the membership fee is paid. A known misnomer; the enum
+   stays, because renaming a status reaches the schema, a migration, and the
+   applicant-facing wire.
 
 ## Attendance / check-in
 

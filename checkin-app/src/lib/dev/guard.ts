@@ -5,7 +5,7 @@ import { authOptions } from "@/lib/auth-options";
 
 /**
  * The dev-instance security fence, shared by every dev-only server action and the ledger reader
- * (DEV_DASHBOARD_DESIGN.md §2). It mirrors the persona-mint gate (DEV_INSTANCE_DESIGN.md §5):
+ * (docs/ops/dev-instance.md, "The dev fence"). It mirrors the persona-mint gate:
  *
  *   - prod  → notFound() always. Dead in production by construction.
  *   - dev   → the caller's CURRENT session must be a verified @innovationtreehouse.org member
@@ -16,7 +16,8 @@ import { authOptions } from "@/lib/auth-options";
  * signed-in email) for ledger attribution — never a persona's identity.
  *
  * This is defense-in-depth, not the only control: the dev middleware already org-gates these routes
- * and data isolation (§6) means even a forged session cannot reach prod data. It is the third fence.
+ * and structural data isolation (docs/ops/dev-instance.md, "Data isolation") means even a forged
+ * session cannot reach prod data. It is the third fence.
  */
 export async function assertDevActor(): Promise<string> {
     // notFound() (404) rather than 403 keeps the dev surface invisible, matching /api/auth/dev-personas.

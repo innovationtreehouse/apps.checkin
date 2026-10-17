@@ -1,9 +1,42 @@
 // Pure nav-badge derivation, split out of AppFrame so it can be unit-tested
 // without pulling in React/Mantine. AppFrame imports navBadgeFor for rendering
 // and leadsAnyProgram for the staff "My Programs" visibility gate.
-import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
+import type { TodoCounts } from '@/lib/nav/todoCounts';
+import type { LibraryKey, NavTab } from '@/lib/libraryNav';
 
 export type NavBadge = { count: number; color: string; label: string };
+
+/** One count a library's provider reported (0 when absent: not visible, failed, or unregistered). */
+export function libraryCount(counts: TodoCounts | null, lib: LibraryKey, key: string): number {
+  return counts?.libraries?.[lib]?.[key] ?? 0;
+}
+
+/**
+ * Folds badges to at most one per color (counts summed, labels joined), so a
+ * sidebar entry never shows two same-color pills side by side.
+ */
+export function foldBadges(badges: NavBadge[]): NavBadge[] {
+  const byColor = new Map<string, NavBadge>();
+  for (const b of badges) {
+    const prev = byColor.get(b.color);
+    byColor.set(b.color, prev ? { count: prev.count + b.count, color: b.color, label: `${prev.label}; ${b.label}` } : b);
+  }
+  return [...byColor.values()];
+}
+
+/** A sidebar entry's pills: its own navBadgeFor pills plus its tabs' pills, folded. */
+export function sectionBadges(href: string, tabs: readonly NavTab[], counts: TodoCounts | null): NavBadge[] {
+  const tabBadges = tabs.flatMap((t) => {
+    const b = t.badge?.(counts);
+    return b ? [b] : [];
+  });
+  return foldBadges([...navBadgeFor(href, counts), ...tabBadges]);
+}
+
+/** A section tab's pill: the shared tabBadgeFor, else the tab's own badge function. */
+export function sectionTabBadge(tabs: readonly NavTab[], href: string, counts: TodoCounts | null): NavBadge | null {
+  return tabBadgeFor(href, counts) ?? tabs.find((t) => t.href === href)?.badge?.(counts) ?? null;
+}
 
 /** True when the caller leads ≥1 program — gates the staff "My Programs" nav item. */
 export function leadsAnyProgram(counts: TodoCounts | null): boolean {
@@ -102,6 +135,7 @@ export function navBadgeFor(href: string, counts: TodoCounts | null): NavBadge[]
       return [...red, ...green(n, `${n} attendance ${n === 1 ? 'item' : 'items'} to confirm`)];
     }
     case '/attendance': {
+      if (!counts.buildingReachable) return [];
       const mine = counts.buildingHousehold;
       const blue = (n: number, label: string): NavBadge[] =>
         n > 0 ? [{ count: n, color: 'blue', label }] : [];
@@ -179,15 +213,28 @@ export function navBadgeFor(href: string, counts: TodoCounts | null): NavBadge[]
       return b ? [b] : [];
     }
     case '/system-status': {
-      // Red alert: number of failing system-config checks (env-var/deploy gaps,
-      // e.g. Zoho e-sign unconfigured). Distinct from the green/gray queue badges —
-      // this is "infra broken," not "you have a task." Admins + board only (the
-      // count is absent from the payload for everyone else). Links to the page,
-      // where the full per-check list lives. See lib/configHealth.ts.
-      const n = counts.configHealth?.openIssues ?? 0;
-      return n > 0
-        ? [{ count: n, color: 'red', label: `${n} config ${n === 1 ? 'issue' : 'issues'}` }]
-        : [];
+      // Red alert: things broken about the deployment itself — failing system-config
+      // checks (env-var/deploy gaps, e.g. Zoho e-sign unconfigured) plus cron sweeps
+      // that stopped running OR stopped working. Distinct from the
+      // green/gray queue badges — this is "infra broken," not "you have a task."
+      // Admins + board only (the counts are absent from the payload for everyone else).
+      //
+      // ONE pill, not two: both halves mean "go look at System Status", they land on
+      // the same page and the same audience fixes them, and a second red pill on the
+      // same nav item would just be a second number pointing at the same link. The
+      // label keeps them itemized so the pill is still specific. See lib/configHealth.ts
+      // and lib/cronRuns.ts.
+      const config = counts.configHealth?.openIssues ?? 0;
+      // "unhealthy", not "not running": the count also covers a sweep that runs every
+      // night and cannot finish its work. Which one it is, is a panel-level detail.
+      const cron = counts.configHealth?.unhealthyCronJobs ?? 0;
+      const n = config + cron;
+      if (n === 0) return [];
+      const parts = [
+        ...(config > 0 ? [`${config} config ${config === 1 ? 'issue' : 'issues'}`] : []),
+        ...(cron > 0 ? [`${cron} cron job${plural(cron, '', 's')} unhealthy`] : []),
+      ];
+      return [{ count: n, color: 'red', label: parts.join(', ') }];
     }
     // Other admin roll-ups have no badge here: every queue count belongs to another
     // nav item that already badges it, so a roll-up would just duplicate numbers.

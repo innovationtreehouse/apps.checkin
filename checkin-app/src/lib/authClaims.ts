@@ -1,6 +1,7 @@
 import type { JWT } from "next-auth/jwt";
 import type { OrgMembershipStatus, PersonRoleKind } from "@/generated/prisma/client";
-import { orgMembershipStatusBlocksLogin } from "@/lib/orgMembership";
+import { orgMembershipStatusBlocksLogin, personRecordIsActiveOrgMember } from "@/lib/orgMembership";
+import { ageBand } from "@/lib/programAge";
 import { ROLE_FLAGS, rolesToFlags } from "@/lib/roles";
 
 /** The participant fields the JWT carries, plus the household membership the login gate reads. */
@@ -13,10 +14,16 @@ export type ClaimSourceParticipant = {
     // Leadership of their own household. Single source of truth (a1) — supersedes
     // the former HouseholdLead join.
     isHouseholdLead: boolean;
+    // Age inputs for the isKnownAdult claim. Both are plain Person scalars the
+    // callback already loads; only the derived boolean reaches the token.
+    dateOfBirth: Date | null;
+    isDeclaredAdult: boolean;
     // Programs this participant is the lead mentor of (Program.leadMentorId === id).
     // Drives the client-side program-ops row gate; mirrors access-resolvers' programsLed.
     programsLed?: { id: number }[];
-    household?: { orgMembership?: { status: OrgMembershipStatus } | null } | null;
+    // Any ProgramVolunteer row on an unfinished program makes this person a Program Volunteer; one is enough.
+    programVolunteers?: unknown[];
+    household?: { orgMembership?: { status: OrgMembershipStatus; isVolunteer?: boolean } | null } | null;
     // ops-stg access gate escape hatch — a plain Person column, NOT one of the
     // PersonRole-backed flags above (sysadmin-settable only; see lib/roles.ts).
     canAccessStaging: boolean;
@@ -41,8 +48,15 @@ export function assignParticipantClaims(token: JWT, p: ClaimSourceParticipant): 
     }
     token.householdId = p.householdId;
     token.householdLead = denied ? false : p.isHouseholdLead;
+    // Derived band, never the DOB itself. Not a role, so DENIED doesn't clear
+    // it — age is a fact about the person, not an authority grant.
+    token.ageBand = ageBand(p);
     token.toolStatuses = denied ? [] : p.toolStatuses;
     token.programsLed = denied ? [] : (p.programsLed?.map((prog) => prog.id) ?? []);
     // ops-stg access gate escape hatch — forced false on DENIED, same as every role flag.
     token.canAccessStaging = denied ? false : p.canAccessStaging;
+    // Treehouse Volunteer inputs (lib/volunteer.ts), forced false on DENIED.
+    token.isProgramVolunteer = !denied && (p.programVolunteers?.length ?? 0) > 0;
+    token.isVolunteerFamily = !denied && p.household?.orgMembership?.isVolunteer === true;
+    token.isActiveOrgMember = !denied && personRecordIsActiveOrgMember(p);
 }

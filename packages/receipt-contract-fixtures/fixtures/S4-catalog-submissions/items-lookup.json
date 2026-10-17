@@ -1,0 +1,17 @@
+{
+  "retailer": "Home Depot",
+  "lookups": [
+    {
+      "index": 0,
+      "partNumber": "PN-1",
+      "manufacturer": "Acme",
+      "description": "Bolt"
+    },
+    {
+      "index": 1,
+      "partNumber": "PN-2",
+      "manufacturer": null,
+      "description": "Nut"
+    }
+  ]
+}

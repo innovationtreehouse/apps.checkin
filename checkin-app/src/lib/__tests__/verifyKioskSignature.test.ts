@@ -11,6 +11,8 @@
  * expects success must use a UNIQUE nonce — reusing one trips replay detection.
  */
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { verifyKioskSignature } from '../verify-kiosk';
 
 /** Generate an Ed25519 keypair and return the raw 32-byte public key + a signer. */
@@ -175,5 +177,46 @@ describe('verifyKioskSignature', () => {
         const n2 = freshNonce();
         const s2 = sign(ts, n2, 'POST', '/api/scan', '');
         expect(verifyKioskSignature('POST', '/api/scan', '', ts, s2, n2, rawPublic).ok).toBe(true);
+    });
+});
+
+/**
+ * The other half of the golden vector in client/kiosk-signing-vector.test.json —
+ * the Python side is client/test_signing_vector.py. The signature there was
+ * produced by PyNaCl from the fixture's test-only key; verifying it here proves
+ * the two implementations still agree on the message template, the header
+ * meanings, and the hex encoding.
+ *
+ * The fixture timestamp is fixed and long past, so Date.now is pinned to it for
+ * the duration — that keeps the real freshness and replay checks intact instead
+ * of routing around them.
+ */
+describe('kiosk signing contract (golden vector shared with the Python client)', () => {
+    const vector = JSON.parse(
+        fs.readFileSync(
+            path.join(__dirname, '../../../../client/kiosk-signing-vector.test.json'),
+            'utf8'
+        )
+    );
+    const publicKey = Buffer.from(vector.test_only_public_key_hex, 'hex');
+
+    beforeAll(() => {
+        jest.spyOn(Date, 'now').mockReturnValue(Number(vector.timestamp) * 1000);
+    });
+    afterAll(() => {
+        jest.restoreAllMocks();
+    });
+
+    it('verifies the signature the Python client produced', () => {
+        const res = verifyKioskSignature(
+            vector.method,
+            vector.path,
+            vector.body,
+            vector.timestamp,
+            vector.expected_signature_hex,
+            vector.nonce,
+            publicKey
+        );
+        expect(res).toEqual({ ok: true });
     });
 });

@@ -80,10 +80,8 @@ export default function DevLoginPicker({ callbackUrl = "/" }: { callbackUrl?: st
     return badges;
   };
 
-  // CHECKIN_ENV, not NODE_ENV: in a client bundle NODE_ENV is inlined at BUILD
-  // time, so the old check made the picker vanish in every production build —
-  // including a local `next build` — regardless of instance. checkinEnv comes
-  // from EnvProvider (server-resolved) and fails safe to 'prod' when unset.
+  // checkinEnv comes from EnvProvider (server-resolved) and fails safe to 'prod'
+  // when unset — a client bundle has no server env of its own to read.
   if (checkinEnv === 'prod') return null;
 
   if (loading) {

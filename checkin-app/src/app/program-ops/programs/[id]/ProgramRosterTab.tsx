@@ -5,9 +5,32 @@ import { Alert, Badge, Box, Button, Card, Checkbox, Group, Modal, SimpleGrid, St
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { EntityPicker } from '@/components/admin/EntityPicker';
-import { calculateAge, formatDateTime } from '@/lib/time';
+import { useOrgTime } from '@/components/TimezoneProvider';
 import { formatPhone } from '@/lib/phone';
-import type { ProgramDetail, ParticipantOption } from './page';
+import type { ProgramDetail, EligibleOption } from './page';
+
+type Participant = ProgramDetail['participants'][number];
+
+// Roster mutation routes answer with these advisory fields. A non-JSON body
+// (session-expiry HTML redirect, proxy error page) must not throw and skip the
+// roster refetch, so parse failures degrade to an empty object.
+type ApiFeedback = { notice?: string; warning?: string; error?: string };
+async function readJson(res: Response): Promise<ApiFeedback> {
+  try { return await res.json(); } catch { return {}; }
+}
+
+// The household's leads, minus the participant themselves when they lead their
+// own household — an adult enrolled in a program is not their own parent.
+function parentsOf(p: Participant) {
+  return (p.person.household?.householdMembers ?? []).filter(m => m.id !== p.personId);
+}
+
+// Contact fields are absent for a viewer the stripper denied them to, so a
+// parent can legitimately render as a bare name.
+function formatParent(m: ReturnType<typeof parentsOf>[number]) {
+  const contact = [m.phone ? formatPhone(m.phone) : null, m.email || null].filter(Boolean).join(', ');
+  return contact ? `${m.name || 'Unnamed'} - ${contact}` : (m.name || 'Unnamed');
+}
 
 type ProgramRosterTabProps = {
   programId: string;
@@ -17,6 +40,7 @@ type ProgramRosterTabProps = {
 };
 
 export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchProgram }: ProgramRosterTabProps) {
+  const { formatDateTime } = useOrgTime();
   const [saving, setSaving] = useState(false);
   const [enrollError, setEnrollError] = useState("");
   const [newVolId, setNewVolId] = useState("");
@@ -33,8 +57,23 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
   const activeParticipants = program.participants.filter(p => p.status === 'ACTIVE');
   const pendingParticipants = program.participants.filter(p => p.status === 'PENDING');
 
+  // Roster mutations must never fail silently: a rejected remove (403 from a
+  // caller who isn't this program's lead, a 400, a 500) is otherwise
+  // indistinguishable from a successful one — the row just stays put.
+  const mutate = async (path: string, init: RequestInit): Promise<ApiFeedback | null> => {
+    try {
+      const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...init });
+      const data = await readJson(res);
+      if (res.ok) return data;
+      notifications.show({ color: 'red', message: data.error || `Request failed (${res.status}).`, autoClose: 6000 });
+    } catch {
+      notifications.show({ color: 'red', message: 'Network error — please try again.', autoClose: 6000 });
+    }
+    return null;
+  };
+
   // Volunteer + participant pickers both search this program's eligible members.
-  const searchEligible = useCallback(async (query: string): Promise<ParticipantOption[]> => {
+  const searchEligible = useCallback(async (query: string): Promise<EligibleOption[]> => {
     const res = await fetch(`/api/programs/${programId}/eligible-participants?q=${encodeURIComponent(query)}`);
     if (!res.ok) return [];
     const data = await res.json();
@@ -46,11 +85,11 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
     if (!newVolId) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/programs/${programId}/volunteers`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const ok = await mutate(`/api/programs/${programId}/volunteers`, {
+        method: 'POST',
         body: JSON.stringify({ participantId: parseInt(newVolId) })
       });
-      if (res.ok) { setNewVolId(""); setVolLabel(""); fetchProgram(); }
+      if (ok) { setNewVolId(""); setVolLabel(""); fetchProgram(); }
     } finally {
       setSaving(false);
     }
@@ -66,17 +105,15 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
     closeConfirmRemoveVol();
     const participantId = pendingRemoveVolId;
     setPendingRemoveVolId(null);
-    try {
-      await fetch(`/api/programs/${programId}/volunteers`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ participantId }) });
-      fetchProgram();
-    } catch { }
+    const ok = await mutate(`/api/programs/${programId}/volunteers`, { method: 'DELETE', body: JSON.stringify({ participantId }) });
+    if (ok) fetchProgram();
   };
 
   const handleToggleCore = async (participantId: number, isCore: boolean) => {
     setSaving(true);
     try {
-      const res = await fetch(`/api/programs/${programId}/volunteers`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ participantId, isCore }) });
-      if (res.ok) fetchProgram();
+      const ok = await mutate(`/api/programs/${programId}/volunteers`, { method: 'PATCH', body: JSON.stringify({ participantId, isCore }) });
+      if (ok) fetchProgram();
     } finally {
       setSaving(false);
     }
@@ -103,9 +140,12 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ participantId: parseInt(newPartId), override: true })
       });
-      if (res.ok) { setNewPartId(""); setPartLabel(""); fetchProgram(); }
+      const data = await readJson(res);
+      if (res.ok) {
+        if (data.warning) notifications.show({ color: 'yellow', message: data.warning, autoClose: false });
+        setNewPartId(""); setPartLabel(""); fetchProgram();
+      }
       else {
-        const data = await res.json();
         if (res.status === 409) {
           // Race: benign double-submit / stale view — already enrolled.
           notifications.show({ color: "red", message: data.error || "Participant is already enrolled in this program.", autoClose: 4000 });
@@ -130,10 +170,12 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
     closeConfirmRemovePart();
     const participantId = pendingRemovePartId;
     setPendingRemovePartId(null);
-    try {
-      await fetch(`/api/programs/${programId}/participants`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ participantId }) });
+    const data = await mutate(`/api/programs/${programId}/participants`, { method: 'DELETE', body: JSON.stringify({ participantId }) });
+    if (data) {
+      if (data.notice) notifications.show({ color: 'blue', message: data.notice, autoClose: false });
+      if (data.warning) notifications.show({ color: 'yellow', message: data.warning, autoClose: false });
       fetchProgram();
-    } catch { }
+    }
   };
 
   return (
@@ -144,15 +186,14 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
         <form onSubmit={handleAddVolunteer}>
           <Group align="flex-end" gap="md" mb="lg" wrap="wrap">
             <Box style={{ flex: 1, minWidth: 200 }}>
-              <EntityPicker<ParticipantOption>
-                label="Assign Volunteer (Name/Email)"
+              <EntityPicker<EligibleOption>
+                label="Assign Volunteer"
                 placeholder="Start typing to search..."
                 selectedId={newVolId || null}
                 selectedLabel={volLabel}
                 search={searchEligible}
                 getOptionLabel={(p) => p.name || 'Unnamed'}
-                getOptionDescription={(p) => p.email}
-                onSelect={(p) => { setNewVolId(p.id.toString()); setVolLabel(`${p.name || 'Unnamed'} (${p.email})`); }}
+                onSelect={(p) => { setNewVolId(p.id.toString()); setVolLabel(p.name || 'Unnamed'); }}
                 onClear={() => { setNewVolId(""); setVolLabel(""); }}
               />
             </Box>
@@ -182,28 +223,15 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
         <form onSubmit={handleAddParticipant}>
           <Group align="flex-end" gap="md" mb="lg" wrap="wrap">
             <Box style={{ flex: 1, minWidth: 200 }}>
-              <EntityPicker<ParticipantOption>
-                label="Assign Participant (Name/Email)"
+              <EntityPicker<EligibleOption>
+                label="Assign Participant"
                 placeholder="Start typing to search..."
                 selectedId={newPartId || null}
                 selectedLabel={partLabel}
                 search={searchEligible}
                 getOptionLabel={(p) => p.name || 'Unnamed'}
-                getOptionDescription={(p) => {
-                  let warning: string | null = null;
-                  if (p.dateOfBirth) {
-                    const age = calculateAge(p.dateOfBirth, program.startAt ?? undefined);
-                    if (program.minAge !== null && age < program.minAge) warning = `⚠️ Too Young (${age})`;
-                    if (program.maxAge !== null && age > program.maxAge) warning = `⚠️ Too Old (${age})`;
-                  }
-                  return (
-                    <Group gap="xs" justify="space-between" wrap="nowrap">
-                      <span>{p.email}</span>
-                      {warning && <Badge color="yellow" variant="light">{warning}</Badge>}
-                    </Group>
-                  );
-                }}
-                onSelect={(p) => { setNewPartId(p.id.toString()); setPartLabel(`${p.name || 'Unnamed'} (${p.email})`); }}
+                getOptionDescription={(p) => p.ageWarning && <Badge color="yellow" variant="light">⚠️ {p.ageWarning}</Badge>}
+                onSelect={(p) => { setNewPartId(p.id.toString()); setPartLabel(p.name || 'Unnamed'); }}
                 onClear={() => { setNewPartId(""); setPartLabel(""); }}
               />
             </Box>
@@ -221,7 +249,9 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
 
         {activeParticipants.length === 0 ? <Text c="dimmed">No active participants yet.</Text> : (
           <Stack gap="xs">
-            {activeParticipants.map(p => (
+            {activeParticipants.map(p => {
+              const parents = parentsOf(p);
+              return (
               <Card key={p.personId} withBorder radius="sm" padding="sm">
                 <Group justify="space-between">
                   <Text fw={700} c="blue">{p.person.name || 'Unnamed'}</Text>
@@ -229,18 +259,24 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
                   <Text size="sm" c="dimmed"><strong>Email:</strong> {p.person.email}</Text>
-                  <Text size="sm" c="dimmed"><strong>Phone:</strong> {p.person.phone ? formatPhone(p.person.phone) : 'N/A'}</Text>
                   {p.person.household && (
-                    <Text size="sm" c="dimmed" style={{ gridColumn: '1 / -1' }}>
-                      <strong>Emergency Contact{(p.person.household.emergencyContacts?.length ?? 0) > 1 ? 's' : ''}:</strong>{' '}
-                      {p.person.household.emergencyContacts && p.person.household.emergencyContacts.length > 0
-                        ? p.person.household.emergencyContacts.map((c) => `${c.name} - ${formatPhone(c.phone)}`).join('; ')
-                        : 'N/A'}
-                    </Text>
+                    <>
+                      <Text size="sm" c="dimmed" style={{ gridColumn: '1 / -1' }}>
+                        <strong>Parent/Guardian:</strong>{' '}
+                        {parents.length > 0 ? parents.map(formatParent).join('; ') : 'N/A'}
+                      </Text>
+                      <Text size="sm" c="dimmed" style={{ gridColumn: '1 / -1' }}>
+                        <strong>Emergency Contact{(p.person.household.emergencyContacts?.length ?? 0) > 1 ? 's' : ''}:</strong>{' '}
+                        {p.person.household.emergencyContacts && p.person.household.emergencyContacts.length > 0
+                          ? p.person.household.emergencyContacts.map((c) => `${c.name} - ${formatPhone(c.phone)}`).join('; ')
+                          : 'N/A'}
+                      </Text>
+                    </>
                   )}
                 </SimpleGrid>
               </Card>
-            ))}
+              );
+            })}
           </Stack>
         )}
       </Card>
@@ -258,7 +294,6 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
                   <Text size="sm" c="dimmed"><strong>Email:</strong> {p.person.email}</Text>
-                  <Text size="sm" c="dimmed"><strong>Phone:</strong> {p.person.phone ? formatPhone(p.person.phone) : 'N/A'}</Text>
                   <Text size="sm" c="dimmed"><strong>Pending Since:</strong> {p.pendingSince ? formatDateTime(p.pendingSince) : 'Unknown'}</Text>
                 </SimpleGrid>
               </Card>

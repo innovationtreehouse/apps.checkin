@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 /**
- * Status-literal allowlist drift guard (docs/designs/LIFECYCLE.md) — the lifecycle
+ * Status-literal allowlist drift guard — the lifecycle
  * analogue of EDGE_INCLUDE_ALLOWLIST / authzRegistry.test.ts.
  *
  * A hand-encoded state-SET in a `where` on the ProgramParticipant or
@@ -105,8 +105,8 @@ function isDefinitionModule(rel: string): boolean {
  * is why files like facility/trends, renewal-status, notifications, payment.ts, and
  * orgMembership.ts (all single-status reads) are absent; likewise single-status CAS guards
  * (activateEnrollment PENDING→ACTIVE, archive ARCHIVED→target) and sets spelled with a
- * canonical constant (renewal's `{ in: [...IN_FLIGHT_RENEWAL] }`, which carries no bare
- * literal and cannot drift).
+ * canonical constant (renewal's `{ in: [...IN_FLIGHT_RENEWAL] }` and the PERSON_BG
+ * existence set's `...personBgOpen.where`, which carry no bare literal and cannot drift).
  */
 const ALLOWLIST: Record<string, string> = {
     // ── CAS transition guards now source their from-state status from the definition (#1080) ──
@@ -118,11 +118,14 @@ const ALLOWLIST: Record<string, string> = {
     // beginRenewalForUser read is a LONE single-status literal, which the sharpened scanner no
     // longer flags either, so it isn't listed.)
 
-    // Not a transition from-state: the PERSON_BG edge is ∅→PENDING_BG_REVIEW (no from-row).
-    // An idempotency EXISTENCE SET (already open/blocked → skip), broader than any one
-    // from-state, so it stays a literal set rather than misrepresent it via fromWhere.
-    'lib/membership/personBgTriggers.ts':
-        'PERSON_BG create idempotency existence set: where status in {PENDING_BG_REVIEW,BLOCKED}.',
+    // Not a transition from-state: the PERSON_AGREEMENT edge is ∅→PENDING_EXTERNAL_ACTION
+    // (no from-row). This is the "already handled this cycle" existence set — in flight, OR
+    // terminal since the cycle floor — spanning an in-flight AND a terminal status, which no
+    // single StateSet expresses. Owned by personAgreementTriggers.handledThisCycleWhere; this
+    // board read is the same set, inline. (The trigger module itself carries no `where:` block
+    // for it — the set lives in a helper's return object — so it never reaches this scanner.)
+    'app/api/membership-audit/compliance/route.ts':
+        'PERSON_AGREEMENT handled-this-cycle set, read to list over-25 non-leads with no agreement yet: status=PENDING_EXTERNAL_ACTION, or status in {ACTIVE,ARCHIVED} since the cycle floor.',
 
     // ── invariant-driven reconciler (Phase 4) ──
     'lib/lifecycleDrift.ts':
@@ -131,12 +134,12 @@ const ALLOWLIST: Record<string, string> = {
     // ── multi-status read / query filters (not yet migrated onto a StateSet.where) ──
     'app/api/membership-ops/applications/route.ts':
         'Board application list: live view is a set — status notIn {ACTIVE,ARCHIVED}.',
-    'app/api/nav/todo-counts/route.ts':
+    'lib/nav/todoCounts.ts':
         'Dashboard counts: status+flag probes — {PENDING,isPaymentPlanRequested,inventoryHeldAt,paymentPlanDeniedAt} and {PENDING_PAYMENT,isPaymentPlanRequested}.',
-    'lib/finance/reconcile.ts':
+    'lib/finance/reconcile/reversals.ts':
         'Reconciler paid-order set: where status in {ACTIVE,PENDING_BG_CLEARANCE} on OrgMembershipProcess.',
     'lib/finance/matchAudit.ts':
-        'Audit read queries: activation sweep (ACTIVE/PENDING_BG_CLEARANCE + ACTIVE participants) and the claim lookup excluding ARCHIVED/BLOCKED — report-only, mirrors the reconcile.ts entry.',
+        'Audit read queries: activation sweep (ACTIVE/PENDING_BG_CLEARANCE + ACTIVE participants) and the claim lookup excluding ARCHIVED/BLOCKED — report-only, mirrors the reconcile/reversals.ts entry.',
 };
 
 // ── scanner ──────────────────────────────────────────────────────────────────
@@ -261,7 +264,7 @@ describe('lifecycle status-literal allowlist drift guard', () => {
     it('no raw status where-literal outside the definition modules + allowlist', () => {
         const unexpected = flagged.filter((f) => !known.has(f)).sort();
         // A new one of these must consume a StateSet.where or be added to ALLOWLIST
-        // with a justification (see docs/designs/LIFECYCLE.md).
+        // with a justification.
         expect(unexpected).toEqual([]);
     });
 

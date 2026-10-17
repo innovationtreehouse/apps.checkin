@@ -20,7 +20,7 @@ here, and infra `modules/checkin/overview.tf` for the design decisions.
   `prevent_self_review`, no admin bypass, `v*` tags only; H2 ✅) → migrate task
   → ECS rollout → smoke against https://ops.innovationtreehouse.org.
 - **OIDC pinning** (C1, config level ✅): `checkin-deploy-prod` trust =
-  `repo:innovationtreehouse/checkin:environment:production`; dev role pinned to
+  `repo:innovationtreehouse/apps.checkin:environment:production`; dev role pinned to
   `refs/heads/main`. Verify the APPLIED trust policy once during step 6.
 - **DNS**: `ops.innovationtreehouse.org` resolves (rides the wiki ALB cert).
 - **Per-env store domains** (M1 ✅): infra bakes
@@ -83,7 +83,7 @@ Only upload (`aws s3 cp ...`) if missing.
 - Enable **Require review from Code Owners** on `main` (security review L2 —
   currently OFF; CODEOWNERS covers `.github/` so promotion workflows can't be
   quietly weakened once this is on).
-- Consider adding the `s-read tests` job (#993) to required status checks.
+- Consider adding the `Package & function tests (Vitest)` job (#993, broadened in #228) to required status checks.
 
 ### 6. One-time in-AWS verification (with `aws login`)
 

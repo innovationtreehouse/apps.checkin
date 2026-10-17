@@ -8,11 +8,11 @@ Usage:
 
 import json
 import os
-import secrets
 import sys
-import time
-from nacl.signing import SigningKey
 import requests
+
+# Signing is shared with the kiosk proxy so the two entry points can't drift.
+from client import load_signing_key, sign_request
 
 
 def load_config(path="config.json"):
@@ -21,25 +21,6 @@ def load_config(path="config.json"):
         sys.exit(1)
     with open(path) as f:
         return json.load(f)
-
-
-def load_signing_key(path):
-    with open(path, "rb") as f:
-        return SigningKey(f.read())
-
-
-def sign_request(signing_key, method, path, body=""):
-    # Nonce bound into the signed message + single-use server-side → no replay
-    # within the 60s window. Server must verify the same format.
-    timestamp = str(int(time.time()))
-    nonce = secrets.token_hex(16)
-    message = f"{timestamp}:{nonce}:{method}:{path}:{body}".encode()
-    signature = signing_key.sign(message).signature.hex()
-    return {
-        "X-Kiosk-Timestamp": timestamp,
-        "X-Kiosk-Nonce": nonce,
-        "X-Kiosk-Signature": signature,
-    }
 
 
 def main():

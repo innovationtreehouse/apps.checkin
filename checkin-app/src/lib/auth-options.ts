@@ -15,9 +15,14 @@ import { ROLE_FLAGS, setRoleFlag } from "@/lib/roles";
 import { addHouseholdLead } from "@/lib/household/leads";
 import { withAuroraResumeRetry } from "@/lib/auroraResumeRetry";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
+import { mintPersonId } from "@/lib/person/mintId";
+import { nameWrite } from "@/lib/person/name";
 
 // Stable id for the dev/local persona-mint credential flow.
 export const PERSONA_MINT_PROVIDER_ID = "persona-mint";
+
+// /signin?error= code for a first Google sign-in refused over an unverified email.
+export const UNVERIFIED_EMAIL_SIGNIN_ERROR = "EmailNotVerified";
 
 // ── NextAuth adapter: the Int ↔ string id boundary, in ONE place ─────────────
 //
@@ -67,7 +72,15 @@ export async function createParticipantWithHousehold(data: {
             data: { name: data.name?.trim() || data.email?.trim() || "Household" },
         });
         const participant = await tx.person.create({
-            data: { ...data, householdId: household.id },
+            data: {
+                ...data,
+                id: await mintPersonId(tx),
+                householdId: household.id,
+                // ponytail: last manufactured name in the tree (Decision 4) — a
+                // provider/flow that supplies no name must not block sign-in; the
+                // member can fix it later in their profile.
+                name: nameWrite(data.name) ?? nameWrite(data.email?.split("@")[0]) ?? "Member",
+            },
         });
         await addHouseholdLead(tx, household.id, participant.id);
         return participant;
@@ -112,7 +125,8 @@ const patchedAdapter = {
     updateUser: async ({ id, ...data }: { id: string; name?: string | null; email?: string | null; image?: string | null; emailVerified?: Date | null }) => {
         const user = await prisma.person.update({
             where: { id: toDbId(id) },
-            data: { name: data.name, email: data.email ?? undefined, image: data.image, emailVerified: data.emailVerified },
+            // A provider that stops sending a name must not erase one already on file.
+            data: { name: nameWrite(data.name), email: data.email ?? undefined, image: data.image, emailVerified: data.emailVerified },
         });
         return toAdapterUser(user);
     },
@@ -145,12 +159,34 @@ const patchedAdapter = {
     },
 };
 
-// Bootstrap isSysadmin emails — comma-separated list from env.
-// Any account matching these emails will be auto-promoted to isSysadmin on login.
+// Bootstrap isSysadmin emails — comma-separated list from env. A listed account is
+// promoted to isSysadmin on sign-in only while the system has no sysadmin at all.
 const BOOTSTRAP_SYSADMINS = (process.env.BOOTSTRAP_SYSADMINS || "")
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
+
+/**
+ * First-run bootstrap is open only while no sysadmin exists, and never for a person whose
+ * isSysadmin was revoked before (setRoleFlag audits every revocation), so a revoke sticks.
+ */
+async function isBootstrapOpen(personId: number): Promise<boolean> {
+    const [sysadmins, revocations] = await Promise.all([
+        prisma.personRole.count({ where: { role: "SYSADMIN" } }),
+        prisma.auditLog.count({
+            where: {
+                tableName: "PersonRole",
+                affectedEntityId: personId,
+                newData: { path: ["isSysadmin"], equals: false },
+            },
+        }),
+    ]);
+    return sysadmins === 0 && revocations === 0;
+}
+
+/** Absolute session lifetime from sign-in; the 15-minute refresh never extends past it. */
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
+export const SESSION_EXPIRED = "Session expired";
 
 export const authOptions: NextAuthOptions = {
     debug: config.isDevInstance(),
@@ -177,20 +213,18 @@ export const authOptions: NextAuthOptions = {
                 }
             }
         }),
-        // Persona-mint — the unified impersonation flow for dev + local (DEV_INSTANCE_DESIGN.md §5).
+        // Persona-mint — the unified impersonation flow for dev + local
+        // (docs/ops/dev-instance.md, "Impersonation").
         // Dead in prod by construction. Mints a real session AS the chosen persona, stamping an
         // inert `impersonatedBy` claim (display/audit only — no authz path reads it). The policy
         // lives in evaluateMint(); this provider just supplies the caller's claims and the target.
         // (Replaces the old local-only "Offline Login" provider — local mints are the
         // unauthenticated-caller case in evaluateMint.)
         //
-        // Registration gates on CHECKIN_ENV only (via isDevInstance) — NOT NODE_ENV. The cloud dev
-        // instance runs the prod image (NODE_ENV=production, CHECKIN_ENV=dev; see Dockerfile +
-        // deploy-dev.yml), so a NODE_ENV clause here (added by #280) unregistered the provider on
-        // the very instance impersonation is designed for, and every mint failed. isDevInstance()
-        // fails safe to prod (unset CHECKIN_ENV → 'prod'), matching the shared dev fence
-        // (lib/dev/guard.ts), and evaluateMint independently denies prod even if the provider
-        // somehow runs — both covered in auth-options-authorize.test.ts.
+        // Registration gates on isDevInstance(), which fails safe to prod (unset CHECKIN_ENV
+        // → 'prod'), matching the shared dev fence (lib/dev/guard.ts); evaluateMint
+        // independently denies prod even if the provider somehow runs — both covered in
+        // auth-options-authorize.test.ts.
         ...(config.isDevInstance() ? [
             CredentialsProvider({
                 id: PERSONA_MINT_PROVIDER_ID,
@@ -232,6 +266,8 @@ export const authOptions: NextAuthOptions = {
                             : null,
                     });
                     if (!decision.allowed) return null;
+                    // The minted session inherits the caller's sign-in time (see the jwt callback).
+                    const signedInAt = callerToken?.signedInAt ?? null;
 
                     // Logged-out preview: mint a synthetic guest session with NO participant. authz
                     // sees a logged-out visitor (no id/roles via the jwt callback's email guard); the
@@ -247,6 +283,7 @@ export const authOptions: NextAuthOptions = {
                             email: null,
                             name: "Logged out",
                             impersonatedBy: decision.impersonatedBy,
+                            signedInAt,
                         };
                     }
 
@@ -268,7 +305,7 @@ export const authOptions: NextAuthOptions = {
                     }
                     if (!dbParticipant) return null;
 
-                    // Record the mint in the dev ledger (DEV_DASHBOARD_DESIGN.md §6), attributed to
+                    // Record the mint in the dev ledger (docs/ops/dev-instance.md, "The ledger"), attributed to
                     // the REAL human. impersonatedBy set → an impersonation (real human becomes a
                     // persona); null → a plain login (e.g. a local first-login as the persona).
                     const realActor = decision.impersonatedBy ?? dbParticipant.email ?? "unknown";
@@ -283,6 +320,7 @@ export const authOptions: NextAuthOptions = {
                         email: dbParticipant.email,
                         name: dbParticipant.name,
                         impersonatedBy: decision.impersonatedBy,
+                        signedInAt,
                     };
                 }
             })
@@ -298,13 +336,45 @@ export const authOptions: NextAuthOptions = {
         // Bound token lifetime so a stale or forgotten session cannot live for the
         // 30-day NextAuth default. The jwt callback below also re-syncs role flags
         // from the DB on every request so revocations take effect promptly.
-        maxAge: 60 * 60 * 8,   // 8 hours
+        maxAge: SESSION_MAX_AGE_SECONDS,
         updateAge: 60 * 15,    // 15 minutes
     },
     callbacks: {
+        // Runs before NextAuth links a Google account to the Person holding its email
+        // (allowDangerousEmailAccountLinking), so a new link requires Google to have
+        // verified that email. An account already linked keeps signing in as before.
+        async signIn({ account, profile }) {
+            if (account?.provider !== "google") return true;
+            const linked = await prisma.account.findUnique({
+                where: {
+                    provider_providerAccountId: {
+                        provider: account.provider,
+                        providerAccountId: account.providerAccountId,
+                    },
+                },
+                select: { id: true },
+            });
+            if (linked) return true;
+            if ((profile as { email_verified?: boolean } | undefined)?.email_verified === true) return true;
+            return `/signin?error=${UNVERIFIED_EMAIL_SIGNIN_ERROR}`;
+        },
         async jwt({ token, user, account, profile }) {
+            const now = Math.floor(Date.now() / 1000);
+            if (user) {
+                // A persona mint carries the caller's clock, so minting never extends a session.
+                token.signedInAt = user.signedInAt ?? now;
+            } else {
+                // A token from before this claim existed starts its clock now.
+                token.signedInAt ??= now;
+                if (now - token.signedInAt >= SESSION_MAX_AGE_SECONDS) {
+                    // NextAuth's session route catches a jwt-callback error and clears the session
+                    // cookie, so the person is signed out cleanly and lands on /signin.
+                    throw new Error(SESSION_EXPIRED);
+                }
+            }
             // Capture Google's hosted-domain + email_verified claims on sign-in so the dev-instance
-            // middleware can gate on verified org membership (see DEV_INSTANCE_DESIGN.md §4).
+            // middleware can gate on verified org membership (docs/ops/dev-instance.md,
+            // "Running the cloud dev instance").
             // Prefer the `hd` claim over string-matching the email suffix.
             if (account?.provider === "google" && profile) {
                 const googleProfile = profile as { hd?: string; email_verified?: boolean };
@@ -331,7 +401,7 @@ export const authOptions: NextAuthOptions = {
                 // (issue #292); Google's casing is otherwise passed through verbatim.
                 const email = normalizeEmail(user.email);
                 const dbParticipant = await withAuroraResumeRetry(() => prisma.person.findUnique({
-                    where: { email },
+                    where: { email, mergedIntoId: null },
                     include: {
                         toolStatuses: {
                             select: {
@@ -341,6 +411,8 @@ export const authOptions: NextAuthOptions = {
                         },
                         // Program ids led — drives the client program-ops row gate.
                         programsLed: { select: { id: true } },
+                        // One row on an unfinished program makes a Program Volunteer (Treehouse Volunteer input).
+                        programVolunteers: { where: { program: { phase: { not: "FINISHED" } } }, select: { programId: true }, take: 1 },
                         household: { include: { orgMembership: true } },
                         // Source of truth for the five authority claims (assignParticipantClaims).
                         roles: { select: { role: true } }
@@ -351,12 +423,14 @@ export const authOptions: NextAuthOptions = {
                     if (
                         !dbParticipant.isSysadmin &&
                         dbParticipant.email &&
-                        BOOTSTRAP_SYSADMINS.includes(dbParticipant.email.toLowerCase())
+                        BOOTSTRAP_SYSADMINS.includes(dbParticipant.email.toLowerCase()) &&
+                        (await isBootstrapOpen(dbParticipant.id))
                     ) {
                         // System bypass: bootstrap self-promotion off an env-configured
                         // allowlist, not a user-initiated authority-matrix request — there is
                         // no actor to check against, only a trusted source deciding its own grant.
-                        await setRoleFlag(prisma, dbParticipant.id, "isSysadmin", true, "system");
+                        // setRoleFlag writes the grant's AuditLog row under this system actor.
+                        await setRoleFlag(prisma, dbParticipant.id, "isSysadmin", true, { system: "system:bootstrap-sysadmin" });
                         dbParticipant.isSysadmin = true;
                         // Claims derive from `roles`, not the mirror column — push the grant
                         // into the in-memory list so this same-request sign-in gets it too.
@@ -375,7 +449,11 @@ export const authOptions: NextAuthOptions = {
                 // privileges (including the /api/roles endpoint) until the JWT
                 // aged out — up to 30 days.
                 const dbParticipant = await withAuroraResumeRetry(() => prisma.person.findUnique({
-                    where: { id: token.id as number },
+                    // A merge tombstone keeps its row and its roles, so `mergedIntoId: null`
+                    // (LIVE_PERSON) is what makes this lookup miss and collapses the token
+                    // below — otherwise the re-sync re-grants authority from a record every
+                    // other surface refuses to show.
+                    where: { id: token.id as number, mergedIntoId: null },
                     include: {
                         toolStatuses: {
                             select: {
@@ -385,6 +463,8 @@ export const authOptions: NextAuthOptions = {
                         },
                         // Program ids led — drives the client program-ops row gate.
                         programsLed: { select: { id: true } },
+                        // One row on an unfinished program makes a Program Volunteer (Treehouse Volunteer input).
+                        programVolunteers: { where: { program: { phase: { not: "FINISHED" } } }, select: { programId: true }, take: 1 },
                         household: { include: { orgMembership: true } },
                         // Source of truth for the five authority claims (assignParticipantClaims).
                         roles: { select: { role: true } }
@@ -414,6 +494,7 @@ export const authOptions: NextAuthOptions = {
                 }
                 session.user.householdId = token.householdId;
                 session.user.householdLead = token.householdLead ?? false;
+                session.user.ageBand = token.ageBand ?? "unknown";
                 session.user.programsLed = token.programsLed ?? [];
                 session.user.toolStatuses = token.toolStatuses || [];
                 session.user.impersonatedBy = token.impersonatedBy ?? null;
@@ -423,6 +504,10 @@ export const authOptions: NextAuthOptions = {
                 session.user.emailVerified = token.emailVerified ?? false;
                 // ops-stg access gate escape hatch — see lib/config.ts isStagingAccessAllowed.
                 session.user.canAccessStaging = token.canAccessStaging ?? false;
+                // Treehouse Volunteer inputs (lib/volunteer.ts).
+                session.user.isProgramVolunteer = token.isProgramVolunteer ?? false;
+                session.user.isVolunteerFamily = token.isVolunteerFamily ?? false;
+                session.user.isActiveOrgMember = token.isActiveOrgMember ?? false;
             }
             return session;
         }

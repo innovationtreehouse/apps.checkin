@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { reassembleOrders } from "../../src/shopify/bulk.js";
-import { normalizeOrder, orderNodeSchema } from "@inventory/s-ingest-core";
+import { normalizeOrder, orderNodeSchema } from "@checkin/s-ingest-core";
 
 describe("reassembleOrders (bulk JSONL parent/child)", () => {
   // Flat JSONL records as Shopify emits them: parent order, then children with __parentId.

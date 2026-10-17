@@ -4,8 +4,8 @@ import { withCron } from "@/lib/cronAuth";
 import prisma from "@/lib/prisma";
 import { withdrawAndReleaseHold } from "@/lib/program/capacity";
 import { STATES } from "@/lib/programs/enrollmentState";
+import { systemActor } from "@/lib/auditActor";
 
-const SYSTEM_ACTOR = 0;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -42,6 +42,7 @@ export const GET = withCron(async () => {
     });
 
     let released = 0;
+    let failed = 0;
     for (const record of expired) {
         try {
             const { released: didRelease } = await withdrawAndReleaseHold(record.programId, record.personId, record.program);
@@ -49,7 +50,7 @@ export const GET = withCron(async () => {
 
             await prisma.auditLog.create({
                 data: {
-                    actorId: SYSTEM_ACTOR,
+                    ...systemActor("cron:scholarship-grace-expiry"),
                     action: "DELETE",
                     tableName: "ProgramParticipant",
                     affectedEntityId: record.personId,
@@ -63,9 +64,13 @@ export const GET = withCron(async () => {
             logger.info(`[CRON] Auto-withdrew ${record.person.name} from ${record.program.name} — scholarship denial grace period (${graceDays}d) expired.`);
         } catch (err) {
             // Isolate one bad row from the rest of the sweep.
+            failed++;
             logger.error(`[CRON] Failed to process grace-expiry for participant ${record.personId} in program ${record.programId}:`, err);
         }
     }
 
-    return NextResponse.json({ success: true, enabled: true, processed: expired.length, released });
+    // `failed` is the run-health signal withCron reads: isolating a bad row keeps
+    // the sweep going and the run still counts as having RUN, but it is not clean,
+    // so withCron records it with an error rather than silently green.
+    return NextResponse.json({ success: true, enabled: true, processed: expired.length, released, failed });
 });

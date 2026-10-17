@@ -6,6 +6,9 @@ import { Badge, Button, Card, Group, Stack, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { PageLoader } from "@/components/ui/PageLoader";
+import { formatDateOnly } from "@/lib/time";
+import { isMembershipLapsed } from "@/lib/membership/lapsed";
+import { SigningStatusCard, type Signing } from "@/components/membership/SigningStatusCard";
 
 type Enrollment = {
   status: "PENDING" | "ACTIVE";
@@ -26,8 +29,10 @@ type Household = {
   bgValidUntil?: string | null;
 };
 
+// Every date this renders (memberSince, validUntil, bgValidUntil) is a calendar
+// date at UTC midnight, so it must be read UTC-pinned or it shows the day before.
 const fmtDate = (s?: string | null) =>
-  s ? new Date(s).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "—";
+  s ? formatDateOnly(s, { year: "numeric", month: "short", day: "numeric" }) : "—";
 
 // A household detail view for the board — its members and each member's program
 // enrollments in one focused screen, off the noisy households list.
@@ -39,23 +44,26 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
   const [household, setHousehold] = useState<Household | null>(null);
   const [loading, setLoading] = useState(true);
   const [validUntil, setValidUntil] = useState<string | null>(null);
+  const [signing, setSigning] = useState<Signing | null>(null);
 
-  const fetchHousehold = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/membership-ops/households?id=${id}`);
+  const fetchHousehold = useCallback(() => fetch(`/api/membership-ops/households?id=${id}`)
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setHousehold(data.household);
         setValidUntil(data.validUntil ?? null);
+        setSigning(data.signing ?? null);
       } else {
         notifications.show({ color: "red", message: "Failed to load household.", autoClose: false });
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, [id]);
+    }),
+  [id]);
 
   useEffect(() => {
     if (ready) fetchHousehold();
@@ -88,6 +96,8 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
         <Title order={3}>{household.name || `Household #${household.id}`}</Title>
         {status === "DENIED" ? (
           <Badge color="red">Denied</Badge>
+        ) : status === "ACTIVE" && isMembershipLapsed(validUntil) ? (
+          <Badge color="orange">Member (lapsed)</Badge>
         ) : status === "ACTIVE" ? (
           <Badge>Member</Badge>
         ) : (
@@ -100,6 +110,8 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
         <Text size="sm" c="dimmed">Valid until: {fmtDate(validUntil)}</Text>
         <Text size="sm" c="dimmed">BG valid until: {fmtDate(household.bgValidUntil)}</Text>
       </Group>
+
+      <SigningStatusCard signing={signing} onChange={fetchHousehold} />
 
       {members.length === 0 ? (
         <Text c="dimmed" fs="italic">No people in this household.</Text>

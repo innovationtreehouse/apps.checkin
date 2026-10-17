@@ -326,12 +326,56 @@ describe('Trusted Adults service', () => {
         expect(again!.expiryWarningSentAt).not.toBeNull();
 
         await prisma.trustedAdultReview.update({ where: { id: r.id }, data: { reviewBy: new Date(Date.now() - 86400000) } });
+        sendEmail.mockClear();
         const expireRun = await runExpirySweep(new Date());
         expect(expireRun.expired).toBeGreaterThanOrEqual(1);
         const expired = await prisma.trustedAdultReview.findUnique({ where: { id: r.id } });
         expect(expired!.status).toBe('EXPIRED');
 
+        // Expiring drops the adult off the pickup list, so the family hears about it that
+        // day — not only from the warning a month earlier.
+        expect(sendEmail).toHaveBeenCalledWith(
+            `lead-${TAG}@ex.com`,
+            'Trusted adult approval expired: Jane External',
+            expect.stringContaining('no longer authorized at the front desk'),
+        );
+
         // The system, not a person, drives the nightly expiry transition.
+        const audit = await latestAudit(ta.id);
+        expect(audit?.actorId).toBe(0); // SYSTEM_ACTOR
+        expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'EXPIRED' });
+
+        // The flip is its own dedup: an EXPIRED review is no longer selectable, so the
+        // next night's run neither re-expires nor re-notifies.
+        sendEmail.mockClear();
+        const rerun = await runExpirySweep(new Date());
+        expect(rerun.expired).toBe(0);
+        expect(sendEmail).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('expired'), expect.anything());
+    });
+
+    it('a failed expiry email still leaves the review EXPIRED and audited', async () => {
+        const ta = await discloseOne();
+        const r = await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        await prisma.trustedAdultReview.update({ where: { id: r.id }, data: { reviewBy: new Date(Date.now() - 86400000) } });
+
+        sendEmail.mockRejectedValueOnce(new Error('smtp down'));
+        try {
+            const run = await runExpirySweep(new Date());
+            expect(run.expired).toBeGreaterThanOrEqual(1);
+            // The rejected send is the expiry notice itself, not some other email.
+            expect(sendEmail).toHaveBeenCalledWith(
+                `lead-${TAG}@ex.com`,
+                'Trusted adult approval expired: Jane External',
+                expect.any(String),
+            );
+        } finally {
+            // mockReset, not mockResolvedValue: an unconsumed ...Once rejection would
+            // otherwise leak into the next test.
+            sendEmail.mockReset();
+            sendEmail.mockResolvedValue(true);
+        }
+
+        expect((await prisma.trustedAdultReview.findUnique({ where: { id: r.id } }))!.status).toBe('EXPIRED');
         const audit = await latestAudit(ta.id);
         expect(audit?.actorId).toBe(0); // SYSTEM_ACTOR
         expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'EXPIRED' });
@@ -446,9 +490,9 @@ describe('Trusted Adults service', () => {
         expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'APPROVED', override: 'approve' });
     });
 
-    // Conflict of interest on the OVERRIDE path — mirrors decideReview's rule. A board
-    // member who leads the disclosing household must not override its own review (they'd
-    // force-approve their own trusted adult). Only a sysadmin is the remedy that bypasses.
+    // Conflict of interest on the OVERRIDE path — mirrors decideReview's rule, and no
+    // role is exempt. A board member who leads the disclosing household must not override
+    // its own review (they'd force-approve their own trusted adult); nor may a sysadmin.
     it('refuses a board member overriding their OWN household review, leaving DB + audit untouched', async () => {
         const ta = await discloseOne();
         const reviewId = ta.reviews[0].id;
@@ -463,17 +507,6 @@ describe('Trusted Adults service', () => {
         expect(after!.decidedById).toBeNull();
         const auditAfter = await latestAudit(ta.id);
         expect(auditAfter?.id).toBe(auditBefore?.id); // no new audit row appended
-    });
-
-    it('allows a sysadmin to override their own household review (the deliberate remedy)', async () => {
-        const ta = await discloseOne();
-        // Same actor whose board role is conflicted, but acting AS sysadmin → bypass.
-        const approved = await overrideReview(ta.reviews[0].id, boardLeadId, 'approve', SHARED, { isSysadmin: true });
-        expect(approved.status).toBe('APPROVED');
-
-        const audit = await latestAudit(ta.id);
-        expect(audit?.actorId).toBe(boardLeadId);
-        expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'APPROVED', override: 'approve' });
     });
 
     it('allows a cross-household board member to override (no conflict)', async () => {
@@ -624,6 +657,39 @@ describe('runExpirySweep edge cases', () => {
         expect(sendEmail).not.toHaveBeenCalled();
     });
 
+    // Regression (#1618): "expiring" is per adult, not per review. An adult who renewed
+    // early carries a stale in-window approval PLUS a live renewal that outlives it — the
+    // renewal is their current authorization, so the stale row must NOT trigger a warning.
+    // A genuinely single expiring approval still must.
+    it('warns once per ADULT on the current authorization: a live renewal suppresses the stale in-window row', async () => {
+        const now = new Date();
+        const soon = new Date(now.getTime() + 10 * DAY); // inside the 30-day warn window
+        const far = new Date(now.getTime() + 300 * DAY); // well past it
+
+        // Adult A: renewed early — stale approval in the window, renewal far out.
+        const renewedTa = await prisma.trustedAdult.create({
+            data: { householdId, trustedAdultName: `Renewed ${SWEEP_TAG}`, trustedAdultEmail: 'r@example.com', familyContext: 'ctx', disclosedById: leadId },
+        });
+        const staleRow = await prisma.trustedAdultReview.create({
+            data: { householdId, trustedAdultId: renewedTa.id, kind: 'INITIAL', status: 'APPROVED', reviewBy: soon },
+        });
+        await prisma.trustedAdultReview.create({
+            data: { householdId, trustedAdultId: renewedTa.id, kind: 'RENEWAL', status: 'APPROVED', reviewBy: far },
+        });
+
+        // Adult B: one approval, in the window, nothing behind it — genuinely expiring.
+        const lone = await seedReview('APPROVED', soon);
+
+        const run = await runExpirySweep(now);
+
+        // Only adult B is warned. Adult A's stale row is superseded — not warned, not stamped.
+        expect(run.warned).toBe(1);
+        expect((await prisma.trustedAdultReview.findUnique({ where: { id: staleRow.id } }))!.expiryWarningSentAt).toBeNull();
+        expect((await prisma.trustedAdultReview.findUnique({ where: { id: lone.id } }))!.expiryWarningSentAt).not.toBeNull();
+        expect(sendEmail).toHaveBeenCalledTimes(1);
+        expect(sendEmail).toHaveBeenCalledWith(`sweeplead-${SWEEP_TAG}@ex.com`, expect.stringContaining('expiring'), expect.any(String));
+    });
+
     it('expires at the boundary: reviewBy == now and reviewBy in the past both EXPIRE, never warn', async () => {
         const now = new Date();
         const atNow = await seedReview('APPROVED', new Date(now.getTime())); // reviewBy === now → lte:now, not gt:now
@@ -632,12 +698,95 @@ describe('runExpirySweep edge cases', () => {
         const run = await runExpirySweep(now);
         expect(run.warned).toBe(0); // boundary row expires, it does not get a fresh warning
         expect(run.expired).toBe(2);
-        expect(sendEmail).not.toHaveBeenCalled();
+        // Each expiry emails the family; neither row gets the 30-days-out warning.
+        expect(sendEmail).toHaveBeenCalledTimes(2);
+        expect(sendEmail).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('expiring'), expect.anything());
 
         for (const r of [atNow, past]) {
             const after = await prisma.trustedAdultReview.findUnique({ where: { id: r.id } });
             expect(after!.status).toBe('EXPIRED');
             expect(after!.expiryWarningSentAt).toBeNull(); // expired, never warned
         }
+    });
+
+    // Regression: renewing early leaves the adult with TWO APPROVED reviews (renew never
+    // retires the prior one). When the OLD row lapses the sweep must still expire it, but
+    // the family is NOT de-authorized — /operational lists a TA while ANY review is
+    // APPROVED. Asserts both directions so the fix can't be "stop emailing".
+    it('a renewed adult whose old review lapses gets no de-authorization email; a genuinely lapsed one still does', async () => {
+        const now = new Date();
+        const past = new Date(now.getTime() - 1 * DAY);
+        const future = new Date(now.getTime() + 300 * DAY);
+
+        // Adult A: original approval lapsing now, plus a board-approved renewal still live.
+        const renewedTa = await prisma.trustedAdult.create({
+            data: { householdId, trustedAdultName: `Renewed Grandma ${SWEEP_TAG}`, trustedAdultEmail: 'gran@example.com', familyContext: 'ctx', disclosedById: leadId },
+        });
+        const staleRow = await prisma.trustedAdultReview.create({
+            data: { householdId, trustedAdultId: renewedTa.id, kind: 'INITIAL', status: 'APPROVED', reviewBy: past },
+        });
+        const renewalRow = await prisma.trustedAdultReview.create({
+            data: { householdId, trustedAdultId: renewedTa.id, kind: 'RENEWAL', status: 'APPROVED', reviewBy: future },
+        });
+
+        // Adult B: one approval, lapsed, nothing behind it — genuinely de-authorized.
+        const lapsedRow = await seedReview('APPROVED', past);
+
+        const run = await runExpirySweep(now);
+
+        // Both stale rows flip: expiry is per-review bookkeeping and is unchanged.
+        expect(run.expired).toBe(2);
+        expect((await prisma.trustedAdultReview.findUnique({ where: { id: staleRow.id } }))!.status).toBe('EXPIRED');
+        expect((await prisma.trustedAdultReview.findUnique({ where: { id: lapsedRow.id } }))!.status).toBe('EXPIRED');
+        // The renewal is untouched, so /operational's `some: APPROVED` rule still lists adult A.
+        expect((await prisma.trustedAdultReview.findUnique({ where: { id: renewalRow.id } }))!.status).toBe('APPROVED');
+        expect(await prisma.trustedAdult.count({ where: { id: renewedTa.id, reviews: { some: { status: 'APPROVED' } } } })).toBe(1);
+        // ...and adult B really is off the list.
+        expect(await prisma.trustedAdult.count({ where: { id: lapsedRow.trustedAdultId, reviews: { some: { status: 'APPROVED' } } } })).toBe(0);
+
+        // Direction 1: the genuinely lapsed adult's family is still told.
+        expect(sendEmail).toHaveBeenCalledWith(
+            `sweeplead-${SWEEP_TAG}@ex.com`,
+            `Trusted adult approval expired: Sweep ${SWEEP_TAG}`,
+            expect.stringContaining('no longer authorized at the front desk'),
+        );
+        // Direction 2: the renewed adult's family is NOT told they lost someone they still have.
+        expect(sendEmail).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('Renewed Grandma'), expect.anything());
+        expect(sendEmail).toHaveBeenCalledTimes(1);
+    });
+
+    // Pins "one notice per ADULT, not one per row" — a property of statement ORDER: each
+    // row's flip commits before the next row's authorization check reads, so only the last
+    // row to lapse finds no approval and mails. Batch the flips into one upfront
+    // transaction and every row sees zero approvals: one email per row again. The
+    // `expired` assertion pins the other half — `continue` stays AFTER `expired++`, so
+    // per-review bookkeeping is byte-identical to the pre-fix behaviour.
+    it('two lapsed reviews on ONE adult expire both rows but send exactly one de-authorization email', async () => {
+        const now = new Date();
+        const ta = await prisma.trustedAdult.create({
+            data: { householdId, trustedAdultName: `Twice Lapsed ${SWEEP_TAG}`, trustedAdultEmail: 'twice@example.com', familyContext: 'ctx', disclosedById: leadId },
+        });
+        // A year-old original and the renewal that replaced it, both now past reviewBy.
+        const older = await prisma.trustedAdultReview.create({
+            data: { householdId, trustedAdultId: ta.id, kind: 'INITIAL', status: 'APPROVED', reviewBy: new Date(now.getTime() - 400 * DAY) },
+        });
+        const newer = await prisma.trustedAdultReview.create({
+            data: { householdId, trustedAdultId: ta.id, kind: 'RENEWAL', status: 'APPROVED', reviewBy: new Date(now.getTime() - 1 * DAY) },
+        });
+
+        const run = await runExpirySweep(now);
+
+        // Per-review bookkeeping unchanged: both rows counted, both flipped.
+        expect(run.expired).toBe(2);
+        expect((await prisma.trustedAdultReview.findUnique({ where: { id: older.id } }))!.status).toBe('EXPIRED');
+        expect((await prisma.trustedAdultReview.findUnique({ where: { id: newer.id } }))!.status).toBe('EXPIRED');
+        // The adult really is de-authorized now, so the notice is owed — exactly once.
+        expect(await prisma.trustedAdult.count({ where: { id: ta.id, reviews: { some: { status: 'APPROVED' } } } })).toBe(0);
+        expect(sendEmail).toHaveBeenCalledTimes(1);
+        expect(sendEmail).toHaveBeenCalledWith(
+            `sweeplead-${SWEEP_TAG}@ex.com`,
+            `Trusted adult approval expired: Twice Lapsed ${SWEEP_TAG}`,
+            expect.stringContaining('no longer authorized at the front desk'),
+        );
     });
 });

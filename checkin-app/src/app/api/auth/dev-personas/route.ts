@@ -28,9 +28,7 @@ const PERSONA_LIMIT = 50;
  * session is required (the logged-out picker is the initial login path).
  */
 export async function GET(request: Request) {
-    // Gate on CHECKIN_ENV only (via isDevInstance) — NOT NODE_ENV. The cloud dev instance is a
-    // prod build (NODE_ENV=production, CHECKIN_ENV=dev), so a NODE_ENV check would 404 the picker
-    // there. isDevInstance() already fails safe to prod. Mirrors the shared dev fence (guard.ts).
+    // isDevInstance() fails safe to prod; mirrors the shared dev fence (guard.ts).
     if (!config.isDevInstance()) {
         return apiError("Not available", 404);
     }
@@ -104,7 +102,6 @@ export async function GET(request: Request) {
  * a caller-supplied email, so it cannot target or collide with a real person.
  */
 export async function POST() {
-    // CHECKIN_ENV is the single fuse (NODE_ENV eliminated repo-wide, #951 review):
     // 'local' can only be true when explicitly set — unset/unknown fails safe to prod.
     if (config.checkinEnv() !== 'local') {
         return apiError("Not available", 404);

@@ -14,6 +14,7 @@ import {
   Stack,
   Table,
   Text,
+  TextInput,
 } from "@mantine/core";
 
 type AuditLog = {
@@ -21,6 +22,7 @@ type AuditLog = {
   timestamp: string;
   actorId: number;
   actorName: string | null;
+  actorSystem: string | null;
   action: "CREATE" | "EDIT" | "DELETE" | "BECOME_ADMIN";
   tableName: string;
   affectedEntityId: number;
@@ -35,6 +37,8 @@ type AuditResponse = {
   page: number;
   pageSize: number;
   tables: string[];
+  actors: { id: number; name: string }[];
+  systemActors: string[];
 };
 
 const ACTION_COLOR: Record<AuditLog["action"], string> = {
@@ -52,6 +56,8 @@ export function AuditLogPanel() {
   const [page, setPage] = useState(1);
   const [action, setAction] = useState<string | null>(null);
   const [table, setTable] = useState<string | null>(null);
+  const [actor, setActor] = useState<string | null>(null);
+  const [entityId, setEntityId] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
 
@@ -59,6 +65,8 @@ export function AuditLogPanel() {
     const qs = new URLSearchParams({ page: String(page) });
     if (action) qs.set("action", action);
     if (table) qs.set("table", table);
+    if (actor) qs.set("actor", actor);
+    if (entityId.trim()) qs.set("entityId", entityId.trim());
     if (from) qs.set("from", from);
     if (to) qs.set("to", to);
 
@@ -72,7 +80,7 @@ export function AuditLogPanel() {
         setFailed(false);
       })
       .catch(() => setFailed(true));
-  }, [page, action, table, from, to]);
+  }, [page, action, table, actor, entityId, from, to]);
 
   // Filter changes reset to page 1.
   const onFilter =
@@ -81,6 +89,13 @@ export function AuditLogPanel() {
       setter(v);
       setPage(1);
     };
+
+  // People by name, then the named automated paths — one control over two columns
+  // (a person's value is their id, a system path's value is its own name).
+  const actorOptions = [
+    ...(data?.actors ?? []).map((a) => ({ value: String(a.id), label: a.name })),
+    ...(data?.systemActors ?? []).map((s) => ({ value: s, label: `System — ${s}` })),
+  ];
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
 
@@ -105,6 +120,24 @@ export function AuditLogPanel() {
           value={table}
           onChange={onFilter(setTable)}
           w={180}
+        />
+        <Select
+          label="Actor"
+          placeholder="Anyone"
+          clearable
+          searchable
+          data={actorOptions}
+          value={actor}
+          onChange={onFilter(setActor)}
+          w={220}
+        />
+        <TextInput
+          label="Entity #"
+          placeholder="id"
+          type="number"
+          value={entityId}
+          onChange={(e) => onFilter(setEntityId)(e.currentTarget.value)}
+          w={100}
         />
         <DateField label="From" value={from} onChange={onFilter(setFrom)} />
         <DateField label="To" value={to} onChange={onFilter(setTo)} />
@@ -155,7 +188,13 @@ export function AuditLogPanel() {
                       {l.secondaryAffectedEntity != null && ` +${l.secondaryAffectedEntity}`}
                     </Table.Td>
                     <Table.Td style={{ whiteSpace: "nowrap" }}>
-                      {l.actorName ?? (l.actorId === 0 ? "System" : `#${l.actorId}`)}
+                      {l.actorSystem ? (
+                        <Text span fz="xs" c="dimmed">
+                          {l.actorSystem}
+                        </Text>
+                      ) : (
+                        (l.actorName ?? (l.actorId === 0 ? "System" : `#${l.actorId}`))
+                      )}
                     </Table.Td>
                     <Table.Td>
                       {l.oldData != null || l.newData != null ? (

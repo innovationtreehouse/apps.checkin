@@ -59,17 +59,19 @@ describe("AppFrame", () => {
     expect(screen.getByText("Membership Ops")).toBeInTheDocument();
     expect(screen.getByText("Membership Audit")).toBeInTheDocument();
     expect(screen.getByText("Program Ops")).toBeInTheDocument();
-    // Finance Ops is board-only — a sysadmin does NOT see it (issue #1083).
-    expect(screen.queryByText("Finance Ops")).not.toBeInTheDocument();
+    // Revenue Ops admits FINANCE or BOARD — a sysadmin does NOT see it (issue #1083).
+    expect(screen.queryByText("Revenue Ops")).not.toBeInTheDocument();
     expect(screen.getByText("System Status")).toBeInTheDocument();
     expect(screen.getByText("Settings")).toBeInTheDocument();
   });
 
-  it("shows Finance Ops to a board member (board-only, issue #1083)", () => {
+  it("shows Revenue Ops (the renamed Finance Ops) to a board member", () => {
     setSession({ id: 1, isBoardMember: true });
     renderFrame();
 
-    expect(screen.getByText("Finance Ops")).toBeInTheDocument();
+    expect(screen.getByText("Revenue Ops")).toBeInTheDocument();
+    expect(screen.queryByText("Finance Ops")).not.toBeInTheDocument();
+    expect(screen.getByText("Revenue Ops").closest("a")).toHaveAttribute("href", "/finance-ops/payment-plan");
   });
 
   it("shows Shop Ops for a certifier without admin flags, and My Programs when leading a program", () => {
@@ -78,6 +80,7 @@ describe("AppFrame", () => {
       member: { household: [], programs: [], programsAwaitingFinance: 0 },
       building: 0,
       buildingHousehold: 0,
+      buildingReachable: true,
       activePrograms: 0,
       lead: { programs: [{ id: 9, pending: [] }] },
     });
@@ -98,12 +101,23 @@ describe("AppFrame", () => {
     expect(screen.queryByText("Membership Audit")).not.toBeInTheDocument();
   });
 
+  it("shows Facility Ops to an operations-only user (#1633's aggregate-tools grant)", () => {
+    setSession({ id: 4, isOperations: true });
+    renderFrame();
+
+    expect(screen.getByText("Facility Ops")).toBeInTheDocument();
+    // Operations-only: the board-only sections stay hidden — the entry appeared
+    // because of the union, not because the gate got sloppy.
+    expect(screen.queryByText("Membership Audit")).not.toBeInTheDocument();
+  });
+
   it("badges the reviewer-only Membership Ops nav with the green can-act-on count", () => {
     setSession({ id: 3, isBackgroundCheckReviewer: true });
     mockedUseTodoCounts.mockReturnValue({
       member: { household: [], programs: [], programsAwaitingFinance: 0 },
       building: 0,
       buildingHousehold: 0,
+      buildingReachable: true,
       activePrograms: 0,
       review: { canActOn: 4, approvedAwaitingSecond: 0 },
     });
@@ -182,5 +196,37 @@ describe("AppFrame", () => {
     // (Link handles real navigation in the browser) — this exercises guardNav's
     // pass-through branch without throwing.
     expect(router.push).not.toHaveBeenCalled();
+  });
+});
+
+describe("AppFrame library release gate", () => {
+  const countsWith = (releasedLibraries: string[]) => ({
+    member: { household: [], programs: [], programsAwaitingFinance: 0 },
+    building: 0,
+    buildingHousehold: 0,
+    buildingReachable: true,
+    activePrograms: 0,
+    releasedLibraries,
+  });
+
+  it("hides the Inventory entry from a non-board catalog viewer while unreleased", () => {
+    setSession({ id: 3, isKeyholder: true });
+    mockedUseTodoCounts.mockReturnValue(countsWith([]));
+    renderFrame();
+    expect(screen.queryByText("Inventory")).not.toBeInTheDocument();
+  });
+
+  it("shows the Inventory entry to a non-board catalog viewer once released", () => {
+    setSession({ id: 3, isKeyholder: true });
+    mockedUseTodoCounts.mockReturnValue(countsWith(["catalog"]));
+    renderFrame();
+    expect(screen.getByText("Inventory")).toBeInTheDocument();
+  });
+
+  it("always shows the Inventory entry to a board member", () => {
+    setSession({ id: 4, isBoardMember: true });
+    mockedUseTodoCounts.mockReturnValue(countsWith([]));
+    renderFrame();
+    expect(screen.getByText("Inventory")).toBeInTheDocument();
   });
 });

@@ -1,12 +1,19 @@
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
-import { Prisma } from "@/generated/prisma/client";
 import { withAuth } from "@/lib/auth";
 import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
-import { parseVisitTime, departureAfterArrival, withinMaxDuration } from "@/lib/visitTimes";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { LIVE_VISIT } from "@/lib/visit/filters";
+import {
+    loadEventEditContext,
+    confirmAttendance,
+    editEventTime,
+    manualEditAttendance,
+    type EventEditResult,
+    type EventRefusal,
+} from "@/lib/programs/events";
 
 // FAIL-CLOSED, staff-only. This payload is fundamentally a roster — who is
 // enrolled / RSVP'd / attended — and a participant's name, id, and the very
@@ -27,28 +34,59 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
     const eventId = parseInt(params.id, 10);
     if (isNaN(eventId)) throw badRequest('Invalid event ID');
 
+    // Explicit select, not include: whole rows would ship every pii/personal/
+    // internal Person and ProgramParticipant column to this event's lead mentors
+    // and core volunteers, whose view grants their_program_participants on all
+    // three tiers. Ids and the join keys below are not rendered — they are the
+    // scope keys scopesHeld() reads to resolve their_program_participants /
+    // their_own; drop one and the row strips to nothing for those roles.
     const event = await prisma.event.findUnique({
         where: { id: eventId },
-        include: {
+        select: {
+            id: true,
+            programId: true,
+            name: true,
+            startAt: true,
+            endAt: true,
+            attendanceConfirmedAt: true,
+            recurringGroupId: true,
+            attendanceConfirmedBy: { select: { name: true } },
             program: {
-                include: {
+                select: {
+                    id: true,
+                    name: true,
+                    leadMentorId: true,
                     volunteers: {
                         where: { person: LIVE_PERSON },
-                        include: { person: true }
+                        select: {
+                            programId: true,
+                            personId: true,
+                            isCore: true,
+                            person: { select: { id: true, name: true, email: true } }
+                        }
                     },
                     participants: {
                         where: { person: LIVE_PERSON },
-                        include: { person: true }
+                        select: {
+                            programId: true,
+                            personId: true,
+                            status: true,
+                            person: { select: { id: true, name: true, email: true } }
+                        }
                     }
                 }
             },
-            visits: true,
+            visits: {
+                where: LIVE_VISIT,
+                // associatedEventId is the scope key a lead mentor / core volunteer
+                // resolves their_program_participants on (Visit has no programId).
+                // Unselected, the row fails closed and arrivedAt/departedAt strip
+                // away for everyone but sysadmin/board.
+                select: { id: true, personId: true, arrivedAt: true, departedAt: true, associatedEventId: true }
+            },
             rsvps: {
                 where: { person: LIVE_PERSON },
-                include: { person: true }
-            },
-            attendanceConfirmedBy: {
-                select: { name: true }
+                select: { eventId: true, personId: true, status: true }
             }
         }
     });
@@ -77,221 +115,30 @@ export const PATCH = withAuth({}, async (req: Request, auth, { params }: { param
     const body = await req.json();
 
     try {
-        const event = await prisma.event.findUnique({
-            where: { id: eventId },
-            include: { program: { include: { volunteers: true } } }
-        });
+        const ctx = await loadEventEditContext(eventId, auth.user);
+        if (!ctx) return apiError("Event not found", 404);
 
-        if (!event) return apiError("Event not found", 404);
-
-        const userId = auth.user.id;
-        const isSysAdminOrBoard = auth.user.isSysadmin || auth.user.isBoardMember;
-        const isLeadMentor = event.program?.leadMentorId === userId;
-        const isCoreVolunteer = event.program?.volunteers?.some(v => v.personId === userId && v.isCore) || false;
-
-        // Action: Confirm Attendance
+        let result: EventEditResult<object>;
         if (body.action === 'confirmAttendance') {
-            if (!isSysAdminOrBoard && !isLeadMentor && !isCoreVolunteer) {
-                return apiError("Forbidden: Not authorized to confirm attendance", 403);
-            }
-
-            const updatedEvent = await prisma.event.update({
-                where: { id: eventId },
-                data: { 
-                    attendanceConfirmedAt: new Date(),
-                    attendanceConfirmedById: userId 
-                }
-            });
-
-            return NextResponse.json({ success: true, event: updatedEvent });
+            result = await confirmAttendance(ctx);
+        } else if (body.action === 'editTime' || body.action === 'cancel') {
+            result = await editEventTime(ctx, body);
+        } else if (body.action === 'manualEditAttendance') {
+            result = await manualEditAttendance(ctx, body);
+        } else {
+            return apiError("Invalid action", 400);
         }
 
-        // Action: Edit / Cancel Time
-        if (body.action === 'editTime' || body.action === 'cancel') {
-            // Core volunteers can't edit or cancel events. Only lead mentors, isSysadmin, board.
-            if (!isSysAdminOrBoard && !isLeadMentor) {
-                return apiError("Forbidden: Only Lead Mentors or Admins can edit/cancel events", 403);
-            }
-
-            // Block edits to an event that has already finished — rescheduling a
-            // past event is meaningless. Use endAt (not startAt) so an in-progress
-            // event still edits.
-            if (body.action === 'editTime' && event.endAt.getTime() < Date.now()) {
-                return apiError("Cannot edit a past event", 400);
-            }
-
-            const { startAt, endAt, applyToFuture } = body;
-
-            const timeShiftStartMs = startAt ? new Date(startAt).getTime() - event.startAt.getTime() : 0;
-            const timeShiftEndMs = endAt ? new Date(endAt).getTime() - event.endAt.getTime() : 0;
-
-            if (applyToFuture && event.recurringGroupId) {
-                const futureEvents = await prisma.event.findMany({
-                    where: {
-                        recurringGroupId: event.recurringGroupId,
-                        startAt: { gte: event.startAt }
-                    }
-                });
-
-                if (body.action === 'cancel') {
-                    const eventIds = futureEvents.map(e => e.id);
-                    // Cleanup RSVPs and Visits first to avoid foreign key constraints.
-                    // All three writes in one transaction so a mid-way failure rolls back.
-                    await prisma.$transaction([
-                        prisma.rSVP.deleteMany({ where: { eventId: { in: eventIds } } }),
-                        prisma.visit.updateMany({ where: { associatedEventId: { in: eventIds } }, data: { associatedEventId: null } }),
-                        prisma.event.deleteMany({ where: { id: { in: eventIds } } }),
-                    ]);
-
-                    return NextResponse.json({ success: true, count: futureEvents.length });
-                } else if (body.action === 'editTime') {
-                    const ops: Prisma.PrismaPromise<unknown>[] = futureEvents.map(fe => {
-                        return prisma.event.update({
-                            where: { id: fe.id },
-                            data: {
-                                startAt: new Date(fe.startAt.getTime() + timeShiftStartMs),
-                                endAt: new Date(fe.endAt.getTime() + timeShiftEndMs)
-                            }
-                        });
-                    });
-
-                    await prisma.$transaction(ops);
-
-                    return NextResponse.json({ success: true, count: futureEvents.length });
-                }
-            } else {
-                // Apply ONLY to this single event
-                if (body.action === 'cancel') {
-                    // All three writes in one transaction so a mid-way failure rolls back.
-                    await prisma.$transaction([
-                        prisma.rSVP.deleteMany({ where: { eventId: event.id } }),
-                        prisma.visit.updateMany({ where: { associatedEventId: event.id }, data: { associatedEventId: null } }),
-                        prisma.event.delete({ where: { id: event.id } }),
-                    ]);
-                    return NextResponse.json({ success: true });
-                } else if (body.action === 'editTime') {
-                    const updatedEvent = await prisma.event.update({
-                        where: { id: event.id },
-                        data: {
-                            startAt: startAt ? new Date(startAt) : event.startAt,
-                            endAt: endAt ? new Date(endAt) : event.endAt
-                        }
-                    });
-                    return NextResponse.json({ success: true, event: updatedEvent });
-                }
-            }
-        }
-
-        // Action: Manual Edit Attendance
-        if (body.action === 'manualEditAttendance') {
-            if (!isSysAdminOrBoard && !isLeadMentor && !isCoreVolunteer) {
-                return apiError("Forbidden: Not authorized to edit attendance", 403);
-            }
-
-            const { participantId, status, arrivedAt, departedAt } = body;
-
-            if (!participantId || !status) {
-                return apiError("Missing required fields", 400);
-            }
-
-            // Authz on the TARGET: the participant must be enrolled or volunteering
-            // in this event's program. Without this a lead mentor could write a
-            // presence record for anyone in the system (see attendance POST). A
-            // program-less event is reachable only by admin/board (lead/core-vol
-            // authz above requires a program), so there is no IDOR to guard there.
-            const targetId = Number(participantId);
-            if (event.programId != null) {
-                const [enrolled, volunteering] = await Promise.all([
-                    prisma.programParticipant.findFirst({ where: { programId: event.programId, personId: targetId }, select: { personId: true } }),
-                    prisma.programVolunteer.findFirst({ where: { programId: event.programId, personId: targetId }, select: { personId: true } }),
-                ]);
-                if (!enrolled && !volunteering) {
-                    return apiError("Participant is not enrolled or volunteering in this program", 400);
-                }
-            }
-
-            if (status === 'Absent') {
-                // An open visit (departedAt = null) means they physically scanned in
-                // and are currently on-site. Deleting it would destroy the live
-                // roster of who's in the building — reject instead.
-                const openVisit = await prisma.visit.findFirst({
-                    where: {
-                        personId: Number(participantId),
-                        associatedEventId: eventId,
-                        departedAt: null
-                    }
-                });
-                if (openVisit) {
-                    return apiError("Participant is currently checked in — check them out before marking Absent", 400);
-                }
-                // Only closed visits remain; safe to remove on an Absent correction.
-                await prisma.visit.deleteMany({
-                    where: {
-                        personId: Number(participantId),
-                        associatedEventId: eventId
-                    }
-                });
-            } else if (status === 'Present') {
-                if (!arrivedAt) {
-                    return apiError("Arrival time is required for Present status", 400);
-                }
-
-                const now = new Date();
-                const ar = parseVisitTime(arrivedAt, "arrival", now);
-                if (!ar.ok) return apiError(ar.error, 400);
-
-                let dep: Date | null = null;
-                if (departedAt) {
-                    const dr = parseVisitTime(departedAt, "departure", now);
-                    if (!dr.ok) return apiError(dr.error, 400);
-                    if (!departureAfterArrival(ar.value, dr.value)) {
-                        return apiError("Departure time must be after arrival time", 400);
-                    }
-                    if (!withinMaxDuration(ar.value, dr.value)) {
-                        return apiError("A visit cannot be longer than 24 hours.", 400);
-                    }
-                    dep = dr.value;
-                }
-
-                // Check if there is an existing visit
-                const existingVisit = await prisma.visit.findFirst({
-                    where: {
-                        personId: Number(participantId),
-                        associatedEventId: eventId
-                    }
-                });
-
-                if (existingVisit) {
-                    await prisma.visit.update({
-                        where: { id: existingVisit.id },
-                        data: {
-                            arrivedAt: ar.value,
-                            departedAt: dep,
-                            arrivedVia: "WEB",
-                            departedVia: departedAt ? "WEB" : null
-                        }
-                    });
-                } else {
-                    await prisma.visit.create({
-                        data: {
-                            personId: Number(participantId),
-                            associatedEventId: eventId,
-                            arrivedAt: ar.value,
-                            departedAt: dep,
-                            arrivedVia: "WEB",
-                            departedVia: departedAt ? "WEB" : null
-                        }
-                    });
-                }
-            }
-
-            return NextResponse.json({ success: true });
-        }
-
-        return apiError("Invalid action", 400);
-
+        if (!result.ok) return apiError(result.message, REFUSAL_STATUS[result.refusal]);
+        return NextResponse.json({ success: true, ...result.value });
     } catch (error: unknown) {
         logger.error("Failed to update event:", error);
         return apiError("Failed to update event", 500);
     }
 });
+
+const REFUSAL_STATUS: Record<EventRefusal, number> = {
+    invalid: 400,
+    forbidden: 403,
+    facility_closed: 403,
+};

@@ -3,7 +3,7 @@ import * as realClient from "@/lib/membership/contract/zohoClient";
 import { signingMockActive } from "@/lib/membership/contract/signingTarget";
 
 /**
- * Zoho Sign provider seam (see docs/designs/ZOHO_SIGN_DEV_MOCK.md).
+ * Zoho Sign provider seam (see docs/ops/contract-signing-mock.md).
  *
  * The real adapter is today's zohoClient (network + OAuth), used in prod and any
  * dev instance with real secrets. The mock adapter stands in on a non-prod
@@ -21,6 +21,7 @@ export type ZohoSignProvider = {
     submitRequest: typeof realClient.submitRequest;
     getEmbeddedSignUrl: typeof realClient.getEmbeddedSignUrl;
     getRequestStatus: typeof realClient.getRequestStatus;
+    recallRequest: typeof realClient.recallRequest;
 };
 
 const realProvider: ZohoSignProvider = {
@@ -29,6 +30,7 @@ const realProvider: ZohoSignProvider = {
     submitRequest: realClient.submitRequest,
     getEmbeddedSignUrl: realClient.getEmbeddedSignUrl,
     getRequestStatus: realClient.getRequestStatus,
+    recallRequest: realClient.recallRequest,
 };
 
 const mockProvider: ZohoSignProvider = {
@@ -45,7 +47,7 @@ const mockProvider: ZohoSignProvider = {
     async submitRequest() {
         /* no-op: no real request to attach fields to */
     },
-    // Send the applicant to the dev interstitial (§4a) carrying the request id, not
+    // Send the applicant to the dev interstitial carrying the request id, not
     // straight to ?signed=1 — the interstitial is where completion is triggered.
     async getEmbeddedSignUrl({ requestId, host }) {
         return `${host}/dev/zoho-sign?rid=${encodeURIComponent(requestId)}`;
@@ -56,6 +58,9 @@ const mockProvider: ZohoSignProvider = {
     // recovery path (#876) stays dormant in mock mode.
     async getRequestStatus() {
         return "completed" as const;
+    },
+    async recallRequest() {
+        /* no-op: nothing was sent */
     },
 };
 
@@ -73,4 +78,5 @@ export const zohoSign: ZohoSignProvider = {
     submitRequest: async (...a) => (await pick()).submitRequest(...a),
     getEmbeddedSignUrl: async (...a) => (await pick()).getEmbeddedSignUrl(...a),
     getRequestStatus: async (...a) => (await pick()).getRequestStatus(...a),
+    recallRequest: async (...a) => (await pick()).recallRequest(...a),
 };

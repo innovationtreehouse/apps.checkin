@@ -17,7 +17,9 @@ export const baseTheme = createTheme({
     Paper:      { defaultProps: { radius: 'lg' } },
     ActionIcon: { defaultProps: { radius: 'xl' } },
     TextInput:  { defaultProps: { radius: 'md' } },
-    Select:     { defaultProps: { radius: 'md' } },
+    // scrollAreaProps: a long option list shows its scrollbar whenever it overflows;
+    // Mantine's default ('scroll') hides it until the first scroll event.
+    Select:     { defaultProps: { radius: 'md', scrollAreaProps: { type: 'auto' } } },
     Textarea:   { defaultProps: { radius: 'md' } },
   },
 });
@@ -26,6 +28,7 @@ export const baseTheme = createTheme({
 export const baseBrand: Brand = {
   id: 'base',
   appName: 'CheckMeIn',
+  home: { title: 'CheckMeIn', subtitle: 'the program and attendance system for your community' },
   theme: baseTheme,
   fontVariables: '',
   logo: null,

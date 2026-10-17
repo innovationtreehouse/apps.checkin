@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
+import { LIVE_PERSON } from "@/lib/person/filters";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export const GET = handler("GET /api/safety/trusted-adults", async () => {
             familyContext: true,
             origin: true,
             createdAt: true,
-            household: { select: { id: true, name: true, householdMembers: { where: { isHouseholdLead: true }, select: { id: true, name: true, email: true } } } },
+            household: { select: { id: true, name: true, householdMembers: { where: { isHouseholdLead: true, ...LIVE_PERSON }, select: { id: true, name: true, email: true } } } },
             trustedAdultPerson: { select: { id: true, name: true, email: true } },
             reviews: {
                 orderBy: { id: "desc" },

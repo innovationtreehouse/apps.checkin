@@ -15,9 +15,12 @@ jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn()
 }));
 
+const SYSTEM_TAG = 'cron:nightly';
+
 describe('Admin Audit API Integration Tests', () => {
     let adminId: number;
     let commonId: number;
+    let boardId: number;
 
     beforeAll(async () => {
         // Clean up any leaked state
@@ -47,6 +50,12 @@ describe('Admin Audit API Integration Tests', () => {
         });
         commonId = commonUser.id;
 
+        // Create a board member (no sysadmin flag) — they answer for what is logged here.
+        const board = await prisma.person.create({
+            data: { email: 'board-audit-api-test@example.com', name: 'Board', isBoardMember: true, household: { create: { name: "Test HH" } } }
+        });
+        boardId = board.id;
+
         // Produce a fake audit log row
         await prisma.auditLog.create({
             data: {
@@ -57,10 +66,26 @@ describe('Admin Audit API Integration Tests', () => {
                 newData: { email: 'common-audit-api-test@example.com' }
             }
         });
+
+        // And one written by a named system actor, keyed on the same person as
+        // the SECONDARY id — the slot an entity filter must also search.
+        await prisma.auditLog.create({
+            data: {
+                actorId: 0,
+                actorSystem: SYSTEM_TAG,
+                action: 'EDIT',
+                affectedEntityId: 0,
+                secondaryAffectedEntity: commonId,
+                tableName: 'SYSTEM_NOTIFY',
+                newData: { message: 'audit-api-test system row' }
+            }
+        });
     });
 
     afterAll(async () => {
-        const existingUserIds = [adminId, commonId].filter(id => id !== undefined);
+        const existingUserIds = [adminId, commonId, boardId].filter(id => id !== undefined);
+
+        await prisma.auditLog.deleteMany({ where: { actorSystem: SYSTEM_TAG, secondaryAffectedEntity: commonId } });
 
         if (existingUserIds.length > 0) {
             await prisma.auditLog.deleteMany({
@@ -111,6 +136,43 @@ describe('Admin Audit API Integration Tests', () => {
              expect(data.pageSize).toBe(50);
              expect(Array.isArray(data.tables)).toBe(true);
              expect(ourLog.actorName).toBe('Admin');
+        });
+
+        it('should return 200 OK for a board member (non-sysadmin)', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isSysadmin: false, isBoardMember: true } });
+
+             const req = new Request('http://localhost:4000/api/system-status/audit-log', { method: 'GET' });
+             const res = await GET(req as unknown as import("next/server").NextRequest);
+             expect(res.status).toBe(200);
+             expect(Array.isArray((await res.json()).logs)).toBe(true);
+        });
+
+        it('should filter by a person actor and by a named system actor', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+             const byPerson = await (await GET(new Request(`http://localhost:4000/api/system-status/audit-log?actor=${adminId}`) as unknown as import("next/server").NextRequest)).json();
+             expect(byPerson.logs.length).toBeGreaterThanOrEqual(1);
+             for (const log of byPerson.logs) expect(log.actorId).toBe(adminId);
+
+             const bySystem = await (await GET(new Request(`http://localhost:4000/api/system-status/audit-log?actor=${SYSTEM_TAG}`) as unknown as import("next/server").NextRequest)).json();
+             expect(bySystem.logs.length).toBeGreaterThanOrEqual(1);
+             for (const log of bySystem.logs) expect(log.actorSystem).toBe(SYSTEM_TAG);
+
+             // Both actors are offered as filter options.
+             expect(bySystem.systemActors).toContain(SYSTEM_TAG);
+             expect(bySystem.actors.map((a: { id: number }) => a.id)).toContain(adminId);
+        });
+
+        it('should filter by entity id across both the primary and secondary slot', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+             const data = await (await GET(new Request(`http://localhost:4000/api/system-status/audit-log?entityId=${commonId}`) as unknown as import("next/server").NextRequest)).json();
+             for (const log of data.logs) {
+                 expect([log.affectedEntityId, log.secondaryAffectedEntity]).toContain(commonId);
+             }
+             // The person row (primary slot) and the system row (secondary slot) both match.
+             expect(data.logs.some((l: { tableName: string }) => l.tableName === 'Person')).toBe(true);
+             expect(data.logs.some((l: { actorSystem: string | null }) => l.actorSystem === SYSTEM_TAG)).toBe(true);
         });
 
         it('should filter by action and entity and page server-side', async () => {

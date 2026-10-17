@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Alert, Badge, Box, Button, Card, Group, Modal, Paper, Stack, Switch, Table, Text, TextInput, UnstyledButton } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { modals } from "@mantine/modals";
 import { IconChevronDown, IconChevronUp, IconSelector } from "@tabler/icons-react";
 import { EntityPicker } from "@/components/admin/EntityPicker";
 import { AdminEditHouseholdModal } from "@/components/admin/AdminEditHouseholdModal";
 import { RoleBadge } from "@/components/ui/RoleBadge";
 import { ROLE_FLAGS } from "@/lib/roles";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useCsvImportEnabled } from "@/components/EnvProvider";
 
 type HouseholdRef = {
   id: number;
@@ -32,6 +34,8 @@ type PersonRow = {
   isKeyholder?: boolean;
   isBackgroundCheckReviewer?: boolean;
   isOperations?: boolean;
+  isInventoryManager?: boolean;
+  isFinance?: boolean;
   emailSuppressed?: boolean;
 };
 
@@ -49,6 +53,7 @@ export default function AdminParticipantsIndex() {
   // role gate: board + operations, sysadmin deliberately excluded there).
   const { user: me } = useRequireRole([]);
   const isStaff = !!me?.isBoardMember || !!me?.isSysadmin;
+  const csvImportEnabled = useCsvImportEnabled();
   const canAddContact = !!me?.isBoardMember || !!me?.isOperations;
 
   const toggleSort = (col: "id" | "name" | "email" | "household") => {
@@ -78,11 +83,6 @@ export default function AdminParticipantsIndex() {
     return 0;
   });
 
-  useEffect(() => {
-    const id = setTimeout(() => fetchParticipants(searchQuery), 250);
-    return () => clearTimeout(id);
-  }, [searchQuery]);
-
   const fetchParticipants = async (query = "") => {
     setLoading(true);
     try {
@@ -92,11 +92,16 @@ export default function AdminParticipantsIndex() {
         setResults(data.people);
       }
     } catch (err) {
-      console.error(err);
+      console.error("Participants page action failed:", err);
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const id = setTimeout(() => fetchParticipants(searchQuery), 250);
+    return () => clearTimeout(id);
+  }, [searchQuery]);
 
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [selectedParticipant, setSelectedParticipant] = useState<PersonRow | null>(null);
@@ -163,23 +168,42 @@ export default function AdminParticipantsIndex() {
         showNotification(data.error || "Failed to assign household", "error");
       }
     } catch (err) {
-      console.error(err);
+      console.error("Participants page action failed:", err);
       showNotification("Network error", "error");
     } finally {
       setAssigning(false);
     }
   };
 
-  const handleEditParticipant = async (e: React.FormEvent) => {
+  const handleEditParticipant = (e: React.FormEvent) => {
     e.preventDefault();
+    saveParticipant(false);
+  };
+
+  const saveParticipant = async (confirmBgStale: boolean) => {
     if (!editingParticipant) return;
     setSavingDetails(true);
     try {
       const res = await fetch(`/api/membership-ops/participants/${editingParticipant.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editForm)
+        body: JSON.stringify({ ...editForm, confirmBgStale })
       });
+      if (res.status === 409) {
+        const data = await res.json().catch(() => ({}));
+        if (data.requiresConfirmation) {
+          modals.openConfirmModal({
+            title: "Background check will no longer be valid",
+            children: <Text size="sm">{data.warning}</Text>,
+            labels: { confirm: "Save anyway", cancel: "Cancel" },
+            confirmProps: { color: "orange" },
+            onConfirm: () => saveParticipant(true),
+          });
+        } else {
+          showNotification(data.error || "Failed to update person", "error");
+        }
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setResults(results.map(p => p.id === editingParticipant.id ? { ...p, ...data.participant } : p));
@@ -191,7 +215,7 @@ export default function AdminParticipantsIndex() {
         showNotification(data.error || "Failed to update person", "error");
       }
     } catch (err) {
-      console.error(err);
+      console.error("Participants page action failed:", err);
       showNotification("Network error", "error");
     } finally {
       setSavingDetails(false);
@@ -226,7 +250,7 @@ export default function AdminParticipantsIndex() {
         showNotification(data.error || "Failed to add contact", "error");
       }
     } catch (err) {
-      console.error(err);
+      console.error("Participants page action failed:", err);
       showNotification("Network error", "error");
     } finally {
       setAddContactSaving(false);
@@ -243,7 +267,7 @@ export default function AdminParticipantsIndex() {
           <Text c="dimmed">Search and manage system people and households.</Text>
         </div>
         <Group>
-          {isStaff && <Button variant="light" onClick={() => router.push('/membership-ops/participants/import')}>Bulk Import</Button>}
+          {isStaff && csvImportEnabled && <Button variant="light" onClick={() => router.push('/membership-ops/participants/import')}>Bulk Import</Button>}
           {isStaff && <Button onClick={() => router.push('/membership-ops/participants/new')}>+ New Person</Button>}
           {canAddContact && <Button variant="outline" onClick={() => setAddContactOpen(true)}>+ Add contact</Button>}
         </Group>
@@ -251,7 +275,7 @@ export default function AdminParticipantsIndex() {
 
       <Card withBorder radius="md" padding="lg">
         <TextInput
-          placeholder="Search by name or email..."
+          placeholder="Search by name, email, or ID..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.currentTarget.value)}
         />
@@ -348,6 +372,7 @@ export default function AdminParticipantsIndex() {
           <Stack>
             <TextInput
               label="Name"
+              description="Printed on name badges exactly as typed — please double-check the spelling."
               required
               value={addContactName}
               onChange={(e) => { const value = e.currentTarget.value; setAddContactName(value); }}
@@ -436,7 +461,7 @@ export default function AdminParticipantsIndex() {
                 cycle ends, and the updater callback runs later (next render phase), not at
                 call time. Reading it lazily inside the updater intermittently crashed with
                 "Cannot read properties of null (reading 'value')". */}
-            <TextInput label="Name" required value={editForm.name} onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, name: value })); }} />
+            <TextInput label="Name" description="Printed on name badges exactly as typed — please double-check the spelling." required value={editForm.name} onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, name: value })); }} />
             <TextInput type="email" label="Email Address" value={editForm.email} onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, email: value })); }} />
             <TextInput type="tel" label="Phone Number" value={editForm.phone} onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, phone: value })); }} placeholder="(555) 123-4567" />
             {editingParticipant?.dateOfBirth ? (
@@ -452,7 +477,7 @@ export default function AdminParticipantsIndex() {
             <TextInput
               type="date"
               label="Last Background Check Review"
-              description="Date the board last reviewed this person's background check. Clear the field to remove it."
+              description="Date the board last reviewed this person's background check. Leave the field blank to remove it."
               value={editForm.lastBackgroundCheck}
               onChange={(e) => { const value = e.currentTarget.value; setEditForm(f => ({ ...f, lastBackgroundCheck: value })); }}
             />

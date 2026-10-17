@@ -2,9 +2,9 @@
  * @jest-environment node
  */
 /**
- * Concurrency test for renewal opening. runRenewalSweep (cron) and
- * openRenewalsForAllActive (admin button) both check-then-act through the shared
- * createRenewalProcess, and neither serializes the read+create. Across instances
+ * Concurrency test for renewal opening. runRenewalSweep (the board button and
+ * the unscheduled cron) and concurrent presses check-then-act through the shared
+ * createRenewalProcess. Across instances
  * two overlapping runs each read zero open processes and both reach the INSERT —
  * which would mint duplicate PENDING_RENEWAL rows (and a dangling process
  * beginRenewalForUser never advances). We drive that losing branch directly: two
@@ -23,7 +23,7 @@ import { createRenewalProcess } from '@/lib/membership/renewal';
 import prisma from '@/lib/prisma';
 
 const sendEmail = jest.fn().mockResolvedValue(true);
-jest.mock('@/lib/email', () => ({ sendEmail: (...a: unknown[]) => sendEmail(...a) }));
+jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: (...a: unknown[]) => sendEmail(...a) }));
 
 const TAG = 'renewal-concurrency-test';
 

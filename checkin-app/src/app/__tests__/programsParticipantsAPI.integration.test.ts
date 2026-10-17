@@ -8,6 +8,7 @@
 
 import { POST, DELETE } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
+import { withdrawAndReleaseHold } from '@/lib/program/capacity';
 import { getServerSession } from 'next-auth/next';
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
@@ -25,11 +26,17 @@ describe('Program Participants API Integration Tests', () => {
     let otherId: number;
     let boardId: number;   // board member who leads a household
     let depId: number;     // dependent (25yo) in the board member's household
+    let youthDepId: number; // youth dependent in the same household
+    let boardNonLeadId: number; // board member in that household who is NOT its lead
+    let dep2Id: number;    // second dependent (25yo) in the same household
+    let memberId: number;  // person in a household with an ACTIVE OrgMembership
+    let memberHouseholdId: number;
 
     let standardProgramId: number;
     let freeProgramId: number;
     let fullProgramId: number;
     let exactAgeProgramId: number;
+    let memberOnlyProgramId: number;
 
     beforeAll(async () => {
         // Clean up any leaked state
@@ -41,6 +48,10 @@ describe('Program Participants API Integration Tests', () => {
 
         await prisma.programParticipant.deleteMany({
             where: { personId: { in: existingUserIds } }
+        });
+
+        await prisma.orgMembership.deleteMany({
+            where: { household: { householdMembers: { some: { id: { in: existingUserIds } } } } }
         });
 
         await prisma.program.deleteMany({
@@ -57,13 +68,28 @@ describe('Program Participants API Integration Tests', () => {
 
         // Create Admin
         const admin = await prisma.person.create({
-            data: { email: 'admin-partic-api-test@example.com', name: 'Admin', isSysadmin: true, household: { create: { name: "Test HH" } } }
+            // Adult DOB: this persona self-enrolls in the conflict-of-interest
+            // capacity test, which must reach the capacity limit rather than stop
+            // at the known-adult self-gate.
+            data: {
+                email: 'admin-partic-api-test@example.com',
+                name: 'Admin',
+                isSysadmin: true,
+                dateOfBirth: new Date(Date.now() - (35 * 31556952000)),
+                household: { create: { name: "Test HH" } },
+            }
         });
         adminId = admin.id;
 
         // Create Lead
         const lead = await prisma.person.create({
-            data: { email: 'lead-partic-api-test@example.com', name: 'Lead', household: { create: { name: "Test HH" } } }
+            // Adult DOB: this persona self-enrolls in the double-submit test below.
+            data: {
+                email: 'lead-partic-api-test@example.com',
+                name: 'Lead',
+                dateOfBirth: new Date(Date.now() - (30 * 31556952000)),
+                household: { create: { name: "Test HH" } },
+            }
         });
         leadId = lead.id;
 
@@ -105,28 +131,58 @@ describe('Program Participants API Integration Tests', () => {
             }
         });
         depId = dependent.id;
+        const youthDependent = await prisma.person.create({
+            data: {
+                email: 'youthdep-partic-api-test@example.com',
+                name: 'Board Youth Dependent',
+                dateOfBirth: new Date(Date.now() - (10 * 31556952000)),
+                householdId: boardHousehold.id
+            }
+        });
+        youthDepId = youthDependent.id;
         await prisma.person.update({
             where: { id: boardId },
-            data: { isHouseholdLead: true }
+            data: { isHouseholdLead: true, dateOfBirth: new Date(Date.now() - (40 * 31556952000)) }
         });
+
+        // Same household, board flag, but NOT the lead — the case `isHouseholdLead`
+        // alone misses. Plus a second dependent so this actor has an own-household
+        // target that no other test has already enrolled.
+        const boardNonLead = await prisma.person.create({
+            data: { email: 'board-nonlead-partic-api-test@example.com', name: 'Board Non-Lead', householdId: boardHousehold.id }
+        });
+        boardNonLeadId = boardNonLead.id;
+        const dependent2 = await prisma.person.create({
+            data: {
+                email: 'dep2-partic-api-test@example.com',
+                name: 'Board Dependent Two',
+                dateOfBirth: new Date(Date.now() - (25 * 31556952000)),
+                householdId: boardHousehold.id
+            }
+        });
+        dep2Id = dependent2.id;
 
         // Create mock programs
         const standardProgram = await prisma.program.create({
-            data: { name: 'Standard Partic API Test', phase: 'RUNNING', enrollmentStatus: 'OPEN', leadMentorId: leadId, orgMemberPriceCents: 1000, nonOrgMemberPriceCents: 1500 }
+            // Priced programs carry a variant — a priced one without it is
+            // checkout-broken and the route now refuses payment-bound enrollment.
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Standard Partic API Test', phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), leadMentorId: leadId, orgMemberPriceCents: 1000, nonOrgMemberPriceCents: 1500, shopifyVariantId: 'dev-mock-variant-standard-partic' }
         });
         standardProgramId = standardProgram.id;
 
         const freeProgram = await prisma.program.create({
-            data: { name: 'Free Partic API Test', phase: 'RUNNING', enrollmentStatus: 'OPEN', leadMentorId: leadId, orgMemberPriceCents: null, nonOrgMemberPriceCents: null }
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Free Partic API Test', phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), leadMentorId: leadId, orgMemberPriceCents: null, nonOrgMemberPriceCents: null }
         });
         freeProgramId = freeProgram.id;
 
         // Create a capped program and pre-fill it to its capacity (1 participant)
         const fullProgram = await prisma.program.create({
             data: { 
+                startAt: new Date('2026-01-01'),
+                endAt: new Date('2026-12-31'),
                 name: 'Full Partic API Test', 
                 phase: 'RUNNING', 
-                enrollmentStatus: 'OPEN',
+                enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'),
                 maxParticipants: 1,
                 participants: {
                     create: { personId: otherId }
@@ -136,14 +192,35 @@ describe('Program Participants API Integration Tests', () => {
         fullProgramId = fullProgram.id;
 
         const exactAgeProgram = await prisma.program.create({
-            data: { name: 'Age Restricted Partic API Test', phase: 'RUNNING', enrollmentStatus: 'OPEN', minAge: 18, maxAge: 21 }
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Age Restricted Partic API Test', phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), minAge: 18, maxAge: 21 }
         });
         exactAgeProgramId = exactAgeProgram.id;
+
+        // Treehouse Member (household carries the ACTIVE OrgMembership) + the
+        // members-only program they are the only eligible enroller for.
+        const memberHousehold = await prisma.household.create({
+            data: { name: "Test HH", orgMembership: { create: { status: 'ACTIVE' } } }
+        });
+        memberHouseholdId = memberHousehold.id;
+        const member = await prisma.person.create({
+            data: {
+                email: 'member-partic-api-test@example.com',
+                name: 'Org Member',
+                dateOfBirth: new Date(Date.now() - (25 * 31556952000)),
+                householdId: memberHouseholdId
+            }
+        });
+        memberId = member.id;
+
+        const memberOnlyProgram = await prisma.program.create({
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only Partic API Test', phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), orgMemberOnly: true, orgMemberPriceCents: null, nonOrgMemberPriceCents: null }
+        });
+        memberOnlyProgramId = memberOnlyProgram.id;
     });
 
     afterAll(async () => {
-        const existingUserIds = [adminId, leadId, commonId, otherId, boardId, depId].filter(id => id !== undefined);
-        const validProgramIds = [standardProgramId, freeProgramId, fullProgramId, exactAgeProgramId].filter(id => id !== undefined);
+        const existingUserIds = [adminId, leadId, commonId, otherId, boardId, depId, youthDepId, boardNonLeadId, dep2Id, memberId].filter(id => id !== undefined);
+        const validProgramIds = [standardProgramId, freeProgramId, fullProgramId, exactAgeProgramId, memberOnlyProgramId].filter(id => id !== undefined);
 
         if (existingUserIds.length > 0) {
             await prisma.programParticipant.deleteMany({
@@ -165,6 +242,10 @@ describe('Program Participants API Integration Tests', () => {
             await prisma.person.deleteMany({
                 where: { id: { in: existingUserIds } }
             });
+        }
+
+        if (memberHouseholdId !== undefined) {
+            await prisma.orgMembership.deleteMany({ where: { householdId: memberHouseholdId } });
         }
     });
 
@@ -273,13 +354,37 @@ describe('Program Participants API Integration Tests', () => {
         });
 
         // INTENT LOCK: a board/isSysadmin override DELIBERATELY overfills a program
-        // past maxParticipants. The override is a confirmed action (the route first
-        // returns requiresOverride:true) and is meant to bypass every soft limit —
-        // closed enrollment, age, AND capacity. This 200 is correct, not a bug.
-        // The non-override path still cannot overbook (see the 400 test above and
-        // programsParticipantsConcurrency.integration.test.ts). Do not "fix" the
-        // capacity bypass at route.ts enforceLimits to make this fail.
-        it('should allow an admin override to enroll into a FULL program (deliberate overfill)', async () => {
+        // past maxParticipants FOR SOMEONE ELSE. The override is a confirmed action
+        // (the route first returns requiresOverride:true) and is meant to bypass
+        // every soft limit — closed enrollment, age, AND capacity. This 200 is
+        // correct, not a bug. The non-override path still cannot overbook (see the
+        // 400 test above and programsParticipantsConcurrency.integration.test.ts),
+        // and a conflicted actor cannot bypass at all (see the two tests below).
+        // Do not "fix" the capacity bypass at route.ts enforceLimits to make this
+        // fail — narrow it only to the conflicted case.
+        it('should allow an admin override to enroll a non-household person into a FULL program (deliberate overfill)', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+             const req = new Request(`http://localhost:4000/api/programs/${fullProgramId}/participants`, {
+                 method: 'POST',
+                 body: JSON.stringify({ participantId: commonId, override: true })
+             });
+             const res = await POST(req as unknown as import("next/server").NextRequest, createParams(fullProgramId) as unknown as never);
+             expect(res.status).toBe(200);
+
+             const data = await res.json();
+             expect(data.success).toBe(true);
+             expect(data.enrollment.status).toBe('ACTIVE'); // override → confirmed comp
+
+             // Program is now intentionally over its cap of 1.
+             const enrolled = await prisma.programParticipant.count({ where: { programId: fullProgramId } });
+             expect(enrolled).toBe(2);
+        });
+
+        // Conflict of interest: the override is a one-actor decision, so it cannot
+        // be spent on the actor's own seat. A sysadmin self-enrolling into a FULL
+        // program falls through to the ordinary enforced-limits path.
+        it('should NOT let a sysadmin override the capacity limit for their OWN enrollment', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
 
              const req = new Request(`http://localhost:4000/api/programs/${fullProgramId}/participants`, {
@@ -287,15 +392,38 @@ describe('Program Participants API Integration Tests', () => {
                  body: JSON.stringify({ participantId: adminId, override: true })
              });
              const res = await POST(req as unknown as import("next/server").NextRequest, createParams(fullProgramId) as unknown as never);
-             expect(res.status).toBe(200);
+             expect(res.status).toBe(400);
 
              const data = await res.json();
-             expect(data.success).toBe(true);
-             expect(data.enrollment.status).toBe('ACTIVE'); // override → confirmed/paid bypass
+             expect(data.error).toMatch(/maximum capacity/);
+             expect(data.requiresOverride).toBe(true);
 
-             // Program is now intentionally over its cap of 1.
-             const enrolled = await prisma.programParticipant.count({ where: { programId: fullProgramId } });
-             expect(enrolled).toBe(2);
+             const row = await prisma.programParticipant.findUnique({
+                 where: { programId_personId: { programId: fullProgramId, personId: adminId } },
+             });
+             expect(row).toBeNull();
+        });
+
+        // Same rule one step out: own household is the actor's own interest too.
+        it('should NOT let a board member override the age limit for their OWN household member', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+
+             // depId is 25 — outside the exact-age program's [18, 21] band.
+             const req = new Request(`http://localhost:4000/api/programs/${exactAgeProgramId}/participants`, {
+                 method: 'POST',
+                 body: JSON.stringify({ participantId: depId, override: true })
+             });
+             const res = await POST(req as unknown as import("next/server").NextRequest, createParams(exactAgeProgramId) as unknown as never);
+             expect(res.status).toBe(400);
+
+             const data = await res.json();
+             expect(data.error).toMatch(/maximum age is 21/);
+             expect(data.requiresOverride).toBe(true);
+
+             const row = await prisma.programParticipant.findUnique({
+                 where: { programId_personId: { programId: exactAgeProgramId, personId: depId } },
+             });
+             expect(row).toBeNull();
         });
 
         // A board member is also a parent. Enrolling their own dependent through
@@ -315,6 +443,24 @@ describe('Program Participants API Integration Tests', () => {
              const data = await res.json();
              expect(data.success).toBe(true);
              expect(data.enrollment.status).toBe('PENDING'); // pays like any parent
+        });
+
+        // "Own household" for the comp is shared-household, not lead-of-household:
+        // a board member who is an ordinary (non-lead) member of the household pays
+        // for their own household member too, and cannot buy the comp with an
+        // override.
+        it('should make a NON-LEAD board household member PAY (PENDING) for their own household member', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardNonLeadId, isBoardMember: true } });
+
+             const req = new Request(`http://localhost:4000/api/programs/${standardProgramId}/participants`, {
+                 method: 'POST',
+                 body: JSON.stringify({ participantId: dep2Id, override: true })
+             });
+             const res = await POST(req as unknown as import("next/server").NextRequest, createParams(standardProgramId) as unknown as never);
+             expect(res.status).toBe(200);
+
+             const data = await res.json();
+             expect(data.enrollment.status).toBe('PENDING'); // not a comp
         });
 
         // The comp still belongs to genuine admin action: a board member
@@ -349,7 +495,7 @@ describe('Program Participants API Integration Tests', () => {
             process.env.CHECKIN_ENV = 'local'; // arms the adjustProgramInventory mock (logs the delta)
             const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
             const shopifyProgram = await prisma.program.create({
-                data: { name: 'Comp Shopify Partic API Test', enrollmentStatus: 'OPEN', maxParticipants: 5, orgMemberPriceCents: 1000, shopifyVariantId: 'dev-mock-variant-comp-partic' },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Comp Shopify Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, orgMemberPriceCents: 1000, shopifyVariantId: 'dev-mock-variant-comp-partic' },
             });
             try {
                 (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
@@ -368,12 +514,13 @@ describe('Program Participants API Integration Tests', () => {
                 expect(data.enrollment.status).toBe('ACTIVE'); // comp
                 expect(data.warning).toBeUndefined();
                 // The comp took a seat out of the Shopify pool: relative -1 on the variant.
-                expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory by -1 for variants: dev-mock-variant-comp-partic'));
+                expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory by -1 for variant: dev-mock-variant-comp-partic'));
                 // Comp is ACTIVE and NOT a hold: I1/I2/I3 keep inventoryHeldAt PENDING-only.
                 const row = await prisma.programParticipant.findUnique({
                     where: { programId_personId: { programId: shopifyProgram.id, personId: otherId } },
                 });
                 expect(row?.inventoryHeldAt).toBeNull();
+                expect(row?.seatTakenWithoutSaleAt).not.toBeNull(); // the -1 is on record
             } finally {
                 logSpy.mockRestore();
                 process.env.CHECKIN_ENV = prevCheckinEnv;
@@ -391,13 +538,13 @@ describe('Program Participants API Integration Tests', () => {
         // SHOPIFY_STORE_DOMAIN/credentials configured, adjustProgramInventory returns
         // false at its credential guard (before any network) — the exact non-fatal
         // failure the warning branch handles.
-        it('comp-add keeps the enrollment and warns when the Shopify decrement fails', async () => {
+        it('a comp whose Shopify push fails is kept, stamped, and still gets its seat back on withdrawal', async () => {
             const prevCheckinEnv = process.env.CHECKIN_ENV;
             const prevDomain = process.env.SHOPIFY_STORE_DOMAIN;
             delete process.env.CHECKIN_ENV;       // mock off → real adjust path
-            delete process.env.SHOPIFY_STORE_DOMAIN; // no creds → returns false (no network)
+            delete process.env.SHOPIFY_STORE_DOMAIN; // no creds → the push fails after the -1 is recorded (no network)
             const shopifyProgram = await prisma.program.create({
-                data: { name: 'Comp Shopify Fail Partic API Test', enrollmentStatus: 'OPEN', maxParticipants: 5, orgMemberPriceCents: 1000, shopifyVariantId: 'dev-mock-variant-comp-fail' },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Comp Shopify Fail Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, orgMemberPriceCents: 1000, shopifyVariantId: 'dev-mock-variant-comp-fail' },
             });
             try {
                 (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
@@ -415,6 +562,20 @@ describe('Program Participants API Integration Tests', () => {
                     where: { programId_personId: { programId: shopifyProgram.id, personId: otherId } },
                 });
                 expect(row?.status).toBe('ACTIVE');
+                // The -1 is owed in the carry, so the seat counts as taken out of stock.
+                expect(row?.seatTakenWithoutSaleAt).not.toBeNull();
+                expect((await prisma.program.findUniqueOrThrow({ where: { id: shopifyProgram.id } })).shopifyStockCarry).toBe(-1);
+
+                // Withdrawing the comp puts the seat back: the +1 nets the owed -1 to 0.
+                const del = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
+                        method: 'DELETE',
+                        body: JSON.stringify({ participantId: otherId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(shopifyProgram.id) as unknown as never,
+                );
+                expect(del.status).toBe(200);
+                expect((await prisma.program.findUniqueOrThrow({ where: { id: shopifyProgram.id } })).shopifyStockCarry).toBe(0);
             } finally {
                 process.env.CHECKIN_ENV = prevCheckinEnv;
                 if (prevDomain === undefined) delete process.env.SHOPIFY_STORE_DOMAIN;
@@ -422,6 +583,164 @@ describe('Program Participants API Integration Tests', () => {
                 await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
                 await prisma.program.delete({ where: { id: shopifyProgram.id } });
             }
+        });
+
+        // The three read routes only HIDE an orgMemberOnly program; POSTing the id
+        // directly used to enroll a non-member outright.
+        it('should block a non-member from self-enrolling into a members-only program', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } });
+
+             const req = new Request(`http://localhost:4000/api/programs/${memberOnlyProgramId}/participants`, {
+                 method: 'POST',
+                 body: JSON.stringify({ participantId: commonId })
+             });
+             const res = await POST(req as unknown as import("next/server").NextRequest, createParams(memberOnlyProgramId) as unknown as never);
+             expect(res.status).toBe(400);
+
+             const data = await res.json();
+             expect(data.error).toMatch(/Treehouse Members only/);
+             expect(data.requiresOverride).toBe(true);
+
+             const row = await prisma.programParticipant.findUnique({
+                 where: { programId_personId: { programId: memberOnlyProgramId, personId: commonId } },
+             });
+             expect(row).toBeNull();
+        });
+
+        it('should allow a Treehouse Member to self-enroll into a members-only program', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: memberId } });
+
+             const req = new Request(`http://localhost:4000/api/programs/${memberOnlyProgramId}/participants`, {
+                 method: 'POST',
+                 body: JSON.stringify({ participantId: memberId })
+             });
+             const res = await POST(req as unknown as import("next/server").NextRequest, createParams(memberOnlyProgramId) as unknown as never);
+             expect(res.status).toBe(200);
+
+             const data = await res.json();
+             expect(data.success).toBe(true);
+             expect(data.enrollment.personId).toBe(memberId);
+        });
+
+        // #1397: the write gate must admit exactly who the read gates show the
+        // program to — a household whose membership fee is paid and whose background check
+        // is still with the board sees this program, so it must be able to enroll.
+        it('should allow a household that has paid but is awaiting background clearance', async () => {
+             const paidPending = await prisma.person.create({
+                 data: {
+                     email: 'paid-pending-partic-api-test@example.com',
+                     name: 'Paid Pending',
+                     dateOfBirth: new Date('1990-01-01'),
+                     household: {
+                         create: {
+                             name: 'Test HH',
+                             orgMembership: {
+                                 create: {
+                                     status: 'NONE',
+                                     processes: { create: { kind: 'INITIAL', status: 'PENDING_BG_CLEARANCE', paidAt: new Date() } },
+                                 },
+                             },
+                         },
+                     },
+                 },
+                 select: { id: true, householdId: true },
+             });
+
+             try {
+                 (getServerSession as jest.Mock).mockResolvedValue({ user: { id: paidPending.id } });
+
+                 const req = new Request(`http://localhost:4000/api/programs/${memberOnlyProgramId}/participants`, {
+                     method: 'POST',
+                     body: JSON.stringify({ participantId: paidPending.id })
+                 });
+                 const res = await POST(req as unknown as import("next/server").NextRequest, createParams(memberOnlyProgramId) as unknown as never);
+                 expect(res.status).toBe(200);
+
+                 const data = await res.json();
+                 expect(data.success).toBe(true);
+             } finally {
+                 await prisma.programParticipant.deleteMany({ where: { personId: paidPending.id } });
+                 await prisma.orgMembershipProcess.deleteMany({ where: { orgMembership: { householdId: paidPending.householdId } } });
+                 await prisma.orgMembership.deleteMany({ where: { householdId: paidPending.householdId } });
+                 await prisma.person.delete({ where: { id: paidPending.id } });
+             }
+        });
+
+        // The members-only gate lives inside enforceLimits, so it must not break
+        // the deliberate comp path — a confirmed board/sysadmin override still
+        // seats a non-member.
+        it('should let a confirmed admin comp a non-member into a members-only program', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+             const req = new Request(`http://localhost:4000/api/programs/${memberOnlyProgramId}/participants`, {
+                 method: 'POST',
+                 body: JSON.stringify({ participantId: otherId, override: true })
+             });
+             const res = await POST(req as unknown as import("next/server").NextRequest, createParams(memberOnlyProgramId) as unknown as never);
+             expect(res.status).toBe(200);
+
+             const data = await res.json();
+             expect(data.success).toBe(true);
+             expect(data.enrollment.status).toBe('ACTIVE');
+        });
+
+        // Only a KNOWN adult may commit themselves. A youth needs a household
+        // lead; an unverifiable age is refused too and routed to age capture.
+        it('should block a youth from self-enrolling, even into a free program', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: otherId } }); // 10 years old
+
+             const req = new Request(`http://localhost:4000/api/programs/${freeProgramId}/participants`, {
+                 method: 'POST',
+                 body: JSON.stringify({ participantId: otherId })
+             });
+             const res = await POST(req as unknown as import("next/server").NextRequest, createParams(freeProgramId) as unknown as never);
+             expect(res.status).toBe(403);
+             expect((await res.json()).error).toMatch(/household lead must enroll/i);
+
+             const row = await prisma.programParticipant.findUnique({
+                 where: { programId_personId: { programId: freeProgramId, personId: otherId } },
+             });
+             expect(row).toBeNull();
+        });
+
+        it('should block a self-enroller whose age is unverifiable, pointing them at age capture', async () => {
+             const noAge = await prisma.person.create({
+                 data: { email: 'noage-partic-api-test@example.com', name: 'No Age', household: { create: { name: "Test HH" } } }
+             });
+             try {
+                 (getServerSession as jest.Mock).mockResolvedValue({ user: { id: noAge.id } });
+
+                 const res = await POST(
+                     new Request(`http://localhost:4000/api/programs/${freeProgramId}/participants`, {
+                         method: 'POST',
+                         body: JSON.stringify({ participantId: noAge.id })
+                     }) as unknown as import("next/server").NextRequest,
+                     createParams(freeProgramId) as unknown as never,
+                 );
+                 expect(res.status).toBe(403);
+                 // Not the lead-required message: the remedy is to establish an age.
+                 expect((await res.json()).error).toMatch(/date of birth|over 25/i);
+             } finally {
+                 await prisma.programParticipant.deleteMany({ where: { personId: noAge.id } });
+                 await prisma.person.delete({ where: { id: noAge.id } });
+                 await prisma.household.deleteMany({ where: { householdMembers: { none: {} }, name: "Test HH" } });
+             }
+        });
+
+        // The gate is about who INITIATES: a lead enrolling their own child is
+        // the supported path and must keep working.
+        it('should let a household lead enroll a youth in their household', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId } }); // lead, no board flag on the session
+
+             const res = await POST(
+                 new Request(`http://localhost:4000/api/programs/${freeProgramId}/participants`, {
+                     method: 'POST',
+                     body: JSON.stringify({ participantId: youthDepId })
+                 }) as unknown as import("next/server").NextRequest,
+                 createParams(freeProgramId) as unknown as never,
+             );
+             expect(res.status).toBe(200);
+             expect((await res.json()).enrollment.personId).toBe(youthDepId);
         });
 
         it('should return 409 (not 500) when enrolling the same participant twice', async () => {
@@ -449,6 +768,33 @@ describe('Program Participants API Integration Tests', () => {
                  where: { programId: freeProgramId, personId: leadId }
              });
              expect(count).toBe(1);
+        });
+
+        it('lets a family with a PENDING claim back to checkout (409) even once the program is full, closed and finished', async () => {
+             const program = await prisma.program.create({
+                 data: {
+                     startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Pending Claim Partic API Test',
+                     phase: 'FINISHED', enrollmentStatus: 'CLOSED', maxParticipants: 1,
+                     orgMemberPriceCents: 1000, nonOrgMemberPriceCents: 1500, shopifyVariantId: 'dev-mock-variant-pending-claim',
+                     participants: { create: { personId: commonId, status: 'PENDING' } },
+                 },
+             });
+             try {
+                 (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } });
+                 const res = await POST(
+                     new Request(`http://localhost:4000/api/programs/${program.id}/participants`, {
+                         method: 'POST',
+                         body: JSON.stringify({ participantId: commonId })
+                     }) as unknown as import("next/server").NextRequest,
+                     createParams(program.id) as unknown as never
+                 );
+                 expect(res.status).toBe(409);
+                 expect((await res.json()).error).toMatch(/already enrolled/i);
+                 expect(await prisma.programParticipant.count({ where: { programId: program.id } })).toBe(1);
+             } finally {
+                 await prisma.programParticipant.deleteMany({ where: { programId: program.id } });
+                 await prisma.program.delete({ where: { id: program.id } });
+             }
         });
     });
 
@@ -499,14 +845,42 @@ describe('Program Participants API Integration Tests', () => {
              expect(row).toBeNull();
         });
         
-        it('should allow a common user to drop out of their own program', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: otherId } });
+        // A youth may not withdraw themselves: beyond matching the enroll gate,
+        // withdrawing a scholarship-held seat releases Shopify inventory, a
+        // financial side effect that is the household lead's to trigger.
+        it('should block a youth from dropping out of their own program', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: otherId } }); // 10 years old
 
              const req = new Request(`http://localhost:4000/api/programs/${fullProgramId}/participants`, {
                  method: 'DELETE',
-                 body: JSON.stringify({ participantId: otherId }) // self-removal
+                 body: JSON.stringify({ participantId: otherId })
              });
              const res = await DELETE(req as unknown as import("next/server").NextRequest, createParams(fullProgramId) as unknown as never);
+             expect(res.status).toBe(403);
+             expect((await res.json()).error).toMatch(/household lead must withdraw/i);
+
+             // Still enrolled — the refusal wrote nothing.
+             const row = await prisma.programParticipant.findUnique({
+                 where: { programId_personId: { programId: fullProgramId, personId: otherId } },
+             });
+             expect(row).not.toBeNull();
+        });
+
+        it('should allow an adult to drop out of their own program', async () => {
+             // An earlier POST test may already have seated them; make the fixture
+             // independent of test order.
+             await prisma.programParticipant.upsert({
+                 where: { programId_personId: { programId: freeProgramId, personId: commonId } },
+                 create: { programId: freeProgramId, personId: commonId, status: 'ACTIVE' },
+                 update: { status: 'ACTIVE' },
+             });
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } });
+
+             const req = new Request(`http://localhost:4000/api/programs/${freeProgramId}/participants`, {
+                 method: 'DELETE',
+                 body: JSON.stringify({ participantId: commonId }) // self-removal
+             });
+             const res = await DELETE(req as unknown as import("next/server").NextRequest, createParams(freeProgramId) as unknown as never);
              expect(res.status).toBe(200);
 
              const data = await res.json();
@@ -514,18 +888,41 @@ describe('Program Participants API Integration Tests', () => {
         });
 
         it('should be idempotent (200, not 500) when un-enrolling a participant twice', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: otherId } });
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } });
 
-             // otherId already self-removed from fullProgram in the test above.
+             // commonId already self-removed from freeProgram in the test above.
              // A second delete hits a missing row (Prisma P2025) — must stay 200.
-             const req = new Request(`http://localhost:4000/api/programs/${fullProgramId}/participants`, {
+             const req = new Request(`http://localhost:4000/api/programs/${freeProgramId}/participants`, {
                  method: 'DELETE',
-                 body: JSON.stringify({ participantId: otherId })
+                 body: JSON.stringify({ participantId: commonId })
              });
-             const res = await DELETE(req as unknown as import("next/server").NextRequest, createParams(fullProgramId) as unknown as never);
+             const res = await DELETE(req as unknown as import("next/server").NextRequest, createParams(freeProgramId) as unknown as never);
              expect(res.status).toBe(200);
              const data = await res.json();
              expect(data.success).toBe(true);
+        });
+
+        it('refuses self-withdrawal of a paid place even when the program is free now', async () => {
+             // Paid while priced (order on the place), then the Board zeroed the price.
+             await prisma.programParticipant.create({
+                 data: { programId: freeProgramId, personId: commonId, status: 'ACTIVE', shopifyOrderId: '9900123' },
+             });
+             try {
+                 (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } });
+                 const res = await DELETE(
+                     new Request(`http://localhost:4000/api/programs/${freeProgramId}/participants`, {
+                         method: 'DELETE',
+                         body: JSON.stringify({ participantId: commonId }),
+                     }) as unknown as import("next/server").NextRequest,
+                     createParams(freeProgramId) as unknown as never,
+                 );
+                 expect(res.status).toBe(403);
+                 expect(await prisma.programParticipant.findUnique({
+                     where: { programId_personId: { programId: freeProgramId, personId: commonId } },
+                 })).not.toBeNull();
+             } finally {
+                 await prisma.programParticipant.deleteMany({ where: { programId: freeProgramId, personId: commonId } });
+             }
         });
 
         // Hold-ledger (product decision 2026-07-06): withdrawal is release path
@@ -537,7 +934,7 @@ describe('Program Participants API Integration Tests', () => {
             process.env.CHECKIN_ENV = 'local';
             const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
             const shopifyProgram = await prisma.program.create({
-                data: { name: 'Withdraw Shopify Partic API Test', enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-withdraw-partic' },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Withdraw Shopify Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-withdraw-partic' },
             });
             try {
                 await prisma.programParticipant.create({
@@ -564,8 +961,12 @@ describe('Program Participants API Integration Tests', () => {
                     createParams(shopifyProgram.id) as unknown as never,
                 );
                 expect(res.status).toBe(200);
-                expect((await res.json()).warning).toBeUndefined();
-                expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory by 1 for variants: dev-mock-variant-withdraw-partic'));
+                const withdrawData = await res.json();
+                expect(withdrawData.warning).toBeUndefined();
+                // Scholarship release path already fires +1; it is
+                // NOT the manual-restock notice case.
+                expect(withdrawData.notice).toBeUndefined();
+                expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory by 1 for variant: dev-mock-variant-withdraw-partic'));
 
                 const row = await prisma.programParticipant.findUnique({
                     where: { programId_personId: { programId: shopifyProgram.id, personId: commonId } },
@@ -588,6 +989,441 @@ describe('Program Participants API Integration Tests', () => {
                 expect(second.status).toBe(200);
                 expect((await second.json()).idempotent).toBe(true);
                 expect(logSpy).not.toHaveBeenCalled();
+            } finally {
+                logSpy.mockRestore();
+                process.env.CHECKIN_ENV = prevCheckinEnv;
+                await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
+                await prisma.program.delete({ where: { id: shopifyProgram.id } });
+            }
+        });
+
+        // Removing an ACTIVE seat frees the room but does NOT auto-restock
+        // Shopify (paid/comped seats are only put back on sale by a human). The
+        // route returns an advisory `notice` and fires NO +1 — the staffer
+        // decides whether to restock. Staff-only (#1519): only sysadmin/board
+        // can actually act on the notice in Shopify.
+        it('advises (notice) on ACTIVE removal from a capped Shopify program when staff removes, and does NOT +1', async () => {
+            const prevCheckinEnv = process.env.CHECKIN_ENV;
+            process.env.CHECKIN_ENV = 'local'; // arms the adjustProgramInventory mock (logs the delta)
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            const shopifyProgram = await prisma.program.create({
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Notice Shopify Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, shopifyVariantId: 'dev-mock-variant-notice-partic' },
+            });
+            try {
+                await prisma.programParticipant.create({
+                    data: { programId: shopifyProgram.id, personId: commonId, status: 'ACTIVE' },
+                });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } }); // staff removal
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
+                        method: 'DELETE',
+                        headers: { cookie: 'session=test' },
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(shopifyProgram.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                const data = await res.json();
+                expect(data.notice).toMatch(/NOT put back on sale automatically/i);
+                expect(data.warning).toBeUndefined();
+                // Freed seat is NOT auto-restocked: no positive-delta Shopify call.
+                expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory by 1'));
+                // Seat-freeing itself is unaffected by who removed it.
+                const row = await prisma.programParticipant.findUnique({
+                    where: { programId_personId: { programId: shopifyProgram.id, personId: commonId } },
+                });
+                expect(row).toBeNull();
+            } finally {
+                logSpy.mockRestore();
+                process.env.CHECKIN_ENV = prevCheckinEnv;
+                await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
+                await prisma.program.delete({ where: { id: shopifyProgram.id } });
+            }
+        });
+
+        it('does not advise a +1 restock when staff removes an ACTIVE child after the sale ended', async () => {
+            const prevCheckinEnv = process.env.CHECKIN_ENV;
+            process.env.CHECKIN_ENV = 'local';
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            const shopifyProgram = await prisma.program.create({
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2099-12-31'), name: 'Notice Sale Ended Partic API Test', enrollmentStatus: 'CLOSED', maxParticipants: 5, shopifyVariantId: 'dev-mock-variant-notice-ended', saleEndedAt: new Date() },
+            });
+            try {
+                await prisma.programParticipant.create({
+                    data: { programId: shopifyProgram.id, personId: commonId, status: 'ACTIVE' },
+                });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
+                        method: 'DELETE',
+                        headers: { cookie: 'session=test' },
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(shopifyProgram.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                const data = await res.json();
+                expect(data.notice).toBeUndefined();
+                expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory'));
+            } finally {
+                logSpy.mockRestore();
+                process.env.CHECKIN_ENV = prevCheckinEnv;
+                await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
+                await prisma.program.delete({ where: { id: shopifyProgram.id } });
+            }
+        });
+
+        it('does not advise a +1 restock when the program is over capacity (the seat pays its shortfall)', async () => {
+            const shopifyProgram = await prisma.program.create({
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2099-12-31'), name: 'Notice Over Capacity Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, shopifyVariantId: 'dev-mock-variant-notice-over', shopifyStockCarry: -2 },
+            });
+            try {
+                await prisma.programParticipant.create({
+                    data: { programId: shopifyProgram.id, personId: commonId, status: 'ACTIVE' },
+                });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
+                        method: 'DELETE',
+                        headers: { cookie: 'session=test' },
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(shopifyProgram.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                expect((await res.json()).notice).toBeUndefined();
+            } finally {
+                await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
+                await prisma.program.delete({ where: { id: shopifyProgram.id } });
+            }
+        });
+
+        // Removing a place returns its seat (+1) only when the app recorded taking it
+        // without a sale. A comp or approval with no record (its -1 failed, or it
+        // joined while the program was free) and a paid place (B8) return nothing.
+        it.each([
+            ['comped/approved with its -1 recorded', null, new Date(), true],
+            ['comped/approved with no -1 recorded', null, null, false],
+            ['paid', 'order-paid-1', null, false],
+        ])('board removal of a %s place', async (_label, shopifyOrderId, seatTakenWithoutSaleAt, returnsSeat) => {
+            const prevCheckinEnv = process.env.CHECKIN_ENV;
+            process.env.CHECKIN_ENV = 'local';
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            const shopifyProgram = await prisma.program.create({
+                data: {
+                    startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Comp Return Partic API Test',
+                    enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, shopifyVariantId: 'dev-mock-variant-comp-return',
+                    orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000,
+                },
+            });
+            try {
+                await prisma.programParticipant.create({
+                    data: { programId: shopifyProgram.id, personId: commonId, status: 'ACTIVE', shopifyOrderId, seatTakenWithoutSaleAt },
+                });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
+                        method: 'DELETE',
+                        headers: { cookie: 'session=test' },
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(shopifyProgram.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                const data = await res.json();
+                const plusOnes = logSpy.mock.calls.filter(([m]) => String(m).includes('Would adjust inventory by 1 ')).length;
+                expect(plusOnes).toBe(returnsSeat ? 1 : 0);
+                if (returnsSeat) expect(data.notice).toBeUndefined();
+                else expect(data.notice).toMatch(/NOT put back on sale automatically/i);
+            } finally {
+                logSpy.mockRestore();
+                process.env.CHECKIN_ENV = prevCheckinEnv;
+                await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
+                await prisma.program.delete({ where: { id: shopifyProgram.id } });
+            }
+        });
+
+        // #1519: the lead mentor is authorized to remove the participant (same
+        // seat-freeing outcome as staff above), but can't act on Shopify
+        // inventory, so the advisory must not reach them.
+        it('does NOT advise (no notice) on ACTIVE removal from a capped Shopify program when the lead mentor removes', async () => {
+            const prevCheckinEnv = process.env.CHECKIN_ENV;
+            process.env.CHECKIN_ENV = 'local';
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            const shopifyProgram = await prisma.program.create({
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Notice Lead Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, shopifyVariantId: 'dev-mock-variant-notice-lead', leadMentorId: leadId },
+            });
+            try {
+                await prisma.programParticipant.create({
+                    data: { programId: shopifyProgram.id, personId: commonId, status: 'ACTIVE' },
+                });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } }); // lead-mentor removal
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
+                        method: 'DELETE',
+                        headers: { cookie: 'session=test' },
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(shopifyProgram.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                const data = await res.json();
+                expect(data.notice).toBeUndefined();
+                expect(data.warning).toBeUndefined();
+                expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory by 1'));
+                // Seat-freeing itself is unaffected: the row is still gone.
+                const row = await prisma.programParticipant.findUnique({
+                    where: { programId_personId: { programId: shopifyProgram.id, personId: commonId } },
+                });
+                expect(row).toBeNull();
+            } finally {
+                logSpy.mockRestore();
+                process.env.CHECKIN_ENV = prevCheckinEnv;
+                await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
+                await prisma.program.delete({ where: { id: shopifyProgram.id } });
+            }
+        });
+
+        // #1519: same for self-removal (e.g. a parent withdrawing themselves via
+        // the public program page) — authorized to free the seat, but not to act
+        // on Shopify inventory.
+        it('does NOT advise (no notice) on ACTIVE removal from a capped Shopify program on self-removal', async () => {
+            const prevCheckinEnv = process.env.CHECKIN_ENV;
+            process.env.CHECKIN_ENV = 'local';
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            const shopifyProgram = await prisma.program.create({
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Notice Self Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, shopifyVariantId: 'dev-mock-variant-notice-self' },
+            });
+            try {
+                await prisma.programParticipant.create({
+                    data: { programId: shopifyProgram.id, personId: commonId, status: 'ACTIVE' },
+                });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } }); // self-removal
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
+                        method: 'DELETE',
+                        headers: { cookie: 'session=test' },
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(shopifyProgram.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                const data = await res.json();
+                expect(data.notice).toBeUndefined();
+                expect(data.warning).toBeUndefined();
+                expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory by 1'));
+                // Seat-freeing itself is unaffected: the row is still gone.
+                const row = await prisma.programParticipant.findUnique({
+                    where: { programId_personId: { programId: shopifyProgram.id, personId: commonId } },
+                });
+                expect(row).toBeNull();
+            } finally {
+                logSpy.mockRestore();
+                process.env.CHECKIN_ENV = prevCheckinEnv;
+                await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
+                await prisma.program.delete({ where: { id: shopifyProgram.id } });
+            }
+        });
+
+        // A PENDING non-scholarship row never took a seat, so removing it frees
+        // nothing and carries no notice.
+        it('does NOT advise (no notice) when removing a PENDING participant with no hold', async () => {
+            const shopifyProgram = await prisma.program.create({
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Notice Pending Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, shopifyVariantId: 'dev-mock-variant-notice-pending' },
+            });
+            try {
+                await prisma.programParticipant.create({
+                    data: { programId: shopifyProgram.id, personId: commonId, status: 'PENDING' },
+                });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } }); // self-removal
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
+                        method: 'DELETE',
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(shopifyProgram.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                const data = await res.json();
+                expect(data.notice).toBeUndefined();
+            } finally {
+                await prisma.programParticipant.deleteMany({ where: { programId: shopifyProgram.id } });
+                await prisma.program.delete({ where: { id: shopifyProgram.id } });
+            }
+        });
+
+        // Uncapped programs track no inventory (inventory_management=null), so an
+        // ACTIVE removal there frees no tracked seat — no notice, no Shopify call.
+        it('does NOT advise (no notice) on ACTIVE removal from an UNCAPPED program', async () => {
+            const prevCheckinEnv = process.env.CHECKIN_ENV;
+            process.env.CHECKIN_ENV = 'local';
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            const uncappedProgram = await prisma.program.create({
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Notice Uncapped Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: null, shopifyVariantId: 'dev-mock-variant-notice-uncapped' },
+            });
+            try {
+                await prisma.programParticipant.create({
+                    data: { programId: uncappedProgram.id, personId: commonId, status: 'ACTIVE' },
+                });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } }); // self-removal
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${uncappedProgram.id}/participants`, {
+                        method: 'DELETE',
+                        headers: { cookie: 'session=test' },
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(uncappedProgram.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                const data = await res.json();
+                expect(data.notice).toBeUndefined();
+                expect(logSpy).not.toHaveBeenCalled();
+            } finally {
+                logSpy.mockRestore();
+                process.env.CHECKIN_ENV = prevCheckinEnv;
+                await prisma.programParticipant.deleteMany({ where: { programId: uncappedProgram.id } });
+                await prisma.program.delete({ where: { id: uncappedProgram.id } });
+            }
+        });
+
+        it.each([
+            ['PENDING', 200],
+            ['ACTIVE', 403],
+        ] as const)('lets a household lead withdraw their own %s child only while unpaid (%i)', async (status, expected) => {
+            await prisma.programParticipant.upsert({
+                where: { programId_personId: { programId: freeProgramId, personId: youthDepId } },
+                create: { programId: freeProgramId, personId: youthDepId, status },
+                update: { status },
+            });
+            // No board flag on the session: the household-lead path alone decides it.
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId } });
+
+            const res = await DELETE(
+                new Request(`http://localhost:4000/api/programs/${freeProgramId}/participants`, {
+                    method: 'DELETE',
+                    body: JSON.stringify({ participantId: youthDepId }),
+                }) as unknown as import("next/server").NextRequest,
+                createParams(freeProgramId) as unknown as never,
+            );
+            expect(res.status).toBe(expected);
+            const row = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId: freeProgramId, personId: youthDepId } },
+            });
+            if (expected === 403) {
+                expect((await res.json()).error).toMatch(/ask the board/i);
+                expect(row).not.toBeNull();
+                await prisma.programParticipant.delete({ where: { programId_personId: { programId: freeProgramId, personId: youthDepId } } });
+            } else {
+                expect(row).toBeNull();
+            }
+        });
+
+        it.each([
+            ['PENDING', 200],
+            ['ACTIVE', 403],
+        ] as const)('lets an adult withdraw their own %s place in a priced program only while unpaid (%i)', async (status, expected) => {
+            const priced = await prisma.program.create({
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Self Withdraw Priced ${status} Partic API Test`, enrollmentStatus: 'OPEN', nonOrgMemberPriceCents: 5000 },
+            });
+            try {
+                await prisma.programParticipant.create({ data: { programId: priced.id, personId: commonId, status } });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } }); // self-removal
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${priced.id}/participants`, {
+                        method: 'DELETE',
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(priced.id) as unknown as never,
+                );
+                expect(res.status).toBe(expected);
+                const row = await prisma.programParticipant.findUnique({
+                    where: { programId_personId: { programId: priced.id, personId: commonId } },
+                });
+                if (expected === 403) {
+                    expect((await res.json()).error).toMatch(/ask the board/i);
+                    expect(row).not.toBeNull();
+                } else {
+                    expect(row).toBeNull();
+                }
+            } finally {
+                await prisma.programParticipant.deleteMany({ where: { programId: priced.id } });
+                await prisma.program.delete({ where: { id: priced.id } });
+            }
+        });
+
+        // The lead path's paid check lives in the delete itself, so a row that
+        // turned ACTIVE after any earlier read is still refused, never deleted.
+        it('refuses the unpaid-only delete once the row is ACTIVE, keeping the row', async () => {
+            await prisma.programParticipant.upsert({
+                where: { programId_personId: { programId: freeProgramId, personId: youthDepId } },
+                create: { programId: freeProgramId, personId: youthDepId, status: 'ACTIVE' },
+                update: { status: 'ACTIVE' },
+            });
+            try {
+                await expect(withdrawAndReleaseHold(freeProgramId, youthDepId, {}, 'PENDING'))
+                    .rejects.toMatchObject({ code: 'P2025' });
+                const row = await prisma.programParticipant.findUnique({
+                    where: { programId_personId: { programId: freeProgramId, personId: youthDepId } },
+                });
+                expect(row?.status).toBe('ACTIVE');
+            } finally {
+                await prisma.programParticipant.deleteMany({ where: { programId: freeProgramId, personId: youthDepId } });
+            }
+        });
+
+        it("refuses a household lead withdrawing another household's child", async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId } });
+
+            const res = await DELETE(
+                new Request(`http://localhost:4000/api/programs/${fullProgramId}/participants`, {
+                    method: 'DELETE',
+                    body: JSON.stringify({ participantId: otherId }),
+                }) as unknown as import("next/server").NextRequest,
+                createParams(fullProgramId) as unknown as never,
+            );
+            expect(res.status).toBe(403);
+            const row = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId: fullProgramId, personId: otherId } },
+            });
+            expect(row).not.toBeNull();
+        });
+
+        // Lead mentors must never learn scholarship / payment-plan status, so
+        // withdrawing a scholarship-held seat must look like any other removal.
+        it('gives a lead mentor no scholarship information when withdrawing a held seat', async () => {
+            const prevCheckinEnv = process.env.CHECKIN_ENV;
+            process.env.CHECKIN_ENV = 'local';
+            const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+            const shopifyProgram = await prisma.program.create({
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Held Lead Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-held-lead', leadMentorId: leadId },
+            });
+            try {
+                await prisma.programParticipant.create({
+                    data: { programId: shopifyProgram.id, personId: commonId, status: 'PENDING', inventoryHeldAt: new Date(), paymentPlanDeniedAt: new Date() },
+                });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+
+                const res = await DELETE(
+                    new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
+                        method: 'DELETE',
+                        headers: { cookie: 'session=test' },
+                        body: JSON.stringify({ participantId: commonId }),
+                    }) as unknown as import("next/server").NextRequest,
+                    createParams(shopifyProgram.id) as unknown as never,
+                );
+                expect(res.status).toBe(200);
+                expect(await res.json()).toEqual({ success: true });
+                // The hold is still released server-side.
+                expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory by 1 for variant: dev-mock-variant-held-lead'));
             } finally {
                 logSpy.mockRestore();
                 process.env.CHECKIN_ENV = prevCheckinEnv;

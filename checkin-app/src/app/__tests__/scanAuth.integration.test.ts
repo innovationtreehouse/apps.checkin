@@ -22,7 +22,7 @@ import crypto from 'crypto';
 import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
-import type { SessionUser } from '@/types/participant';
+import type { AuthenticatedUser } from '@/types/auth';
 
 // Keep notification / logging side effects out of the DB assertions.
 jest.mock('@/lib/notifications', () => ({
@@ -64,7 +64,7 @@ function scanReq(body: string, headers?: Record<string, string>) {
     }) as unknown as import('next/server').NextRequest;
 }
 
-function sessionUser(overrides: Partial<SessionUser> & { id: number }): SessionUser {
+function sessionUser(overrides: Partial<AuthenticatedUser> & { id: number }): AuthenticatedUser {
     return {
         email: `user-${overrides.id}-${TAG}@example.com`,
         isSysadmin: false,
@@ -72,6 +72,7 @@ function sessionUser(overrides: Partial<SessionUser> & { id: number }): SessionU
         isKeyholder: false,
         isBackgroundCheckReviewer: false,
         isOperations: false,
+        isInventoryManager: false,
         ...overrides,
     };
 }

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npm run db:generate -w @inventory/s-ingest-core && npm run db:generate -w @inventory/monitoring-db && tsc --noEmit && node ../scripts/bundle-function.mjs",
+    "build": "npm run db:generate -w @checkin/s-ingest-core && npm run db:generate -w @checkin/monitoring-db && tsc --noEmit && node ../scripts/bundle-function.mjs",
     "typecheck": "tsc --noEmit",
     "ping": "node --env-file=.env --import tsx src/cli.ts ping",
     "read-orders": "node --env-file=.env --import tsx src/cli.ts read-orders",
@@ -17,8 +17,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@inventory/monitoring-db": "*",
-    "@inventory/s-ingest-core": "*",
+    "@checkin/monitoring-db": "*",
+    "@checkin/s-ingest-core": "*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

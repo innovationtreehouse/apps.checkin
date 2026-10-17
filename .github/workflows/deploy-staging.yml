@@ -59,7 +59,7 @@ name: Deploy staging
 #   - Secret VALUES set in Secrets Manager (checkin-stg/database-url*, ...).
 #   - GitHub Environment "staging": deployment branches = rel/*, required
 #     reviewers configured (approval gate) — this also pins the OIDC sub to
-#     repo:innovationtreehouse/checkin:environment:staging with no wildcard.
+#     repo:innovationtreehouse/apps.checkin:environment:staging with no wildcard.
 #   - DNS + cert SAN for ops-stg.innovationtreehouse.org.
 
 on:
@@ -112,6 +112,7 @@ env:
   MIGRATE_TASK_FAMILY: checkin-migrate-stg
   COPY_TASK_FAMILY: checkin-stg-copy
   DEPLOY_ROLE: arn:aws:iam::639595353568:role/checkin-deploy-stg
+  PULL_ROLE: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
   APP_URL: https://ops-stg.innovationtreehouse.org
 
 jobs:
@@ -215,6 +216,22 @@ jobs:
         with:
           ref: ${{ needs.vars.outputs.sha }}
 
+      # The deploy role has no ECR Public access; the pull-only role authenticates
+      # the base-image pull, then the deploy role is assumed below.
+      - name: Configure AWS credentials for image pulls (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.PULL_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR Public
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - name: Pull base image
+        run: bash scripts/ci-pull-image.sh public.ecr.aws/docker/library/node:24-alpine
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -301,19 +318,17 @@ jobs:
 
             aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
 
-            EXIT_CODE=$(aws ecs describe-tasks \
+            # One call: exit code + stoppedReason (why ECS stopped it when the
+            # container never ran).
+            read -r EXIT_CODE STOP_REASON < <(aws ecs describe-tasks \
               --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
-              --query 'tasks[0].containers[0].exitCode' --output text)
+              --query 'tasks[0].[containers[0].exitCode, stoppedReason]' --output text)
             echo "Copy task exit code: $EXIT_CODE"
 
-            # Surface the container's own output either way — without this, a
-            # failure only shows the exit code here and the real error hides in
-            # CloudWatch, which is how the 2026-07-02 P3009 wedge went
-            # undiagnosed for a day (same reasoning as deploy-dev.yml's migrate step).
+            # Pointer only: this task streams prod rows, and psql errors echo
+            # them; Actions logs on this public repo are world-readable.
             TASK_ID="${TASK_ARN##*/}"
-            echo "--- copy task logs (/ecs/$COPY_TASK_FAMILY), attempt $attempt ---"
-            ./scripts/dump-task-logs.sh "/ecs/$COPY_TASK_FAMILY" "ecs/checkin-stg-copy/$TASK_ID"
-            echo "--- end copy task logs ---"
+            ./scripts/dump-task-logs.sh --pointer-only "/ecs/$COPY_TASK_FAMILY" "ecs/checkin-stg-copy/$TASK_ID"
 
             # Retry only what a retry can clear. The entrypoint runs under
             # `set -e`, so a failing psql IS the container's exit status:
@@ -329,6 +344,11 @@ jobs:
             case "$EXIT_CODE" in
               0) break ;;
               2 | None | null | "")
+                # An image-pull failure is deterministic; retrying only hides it.
+                if [[ "$STOP_REASON" == *CannotPullContainerError* ]]; then
+                  echo "::error::Copy task could not pull its image — not retrying. $STOP_REASON"
+                  break
+                fi
                 echo "Copy task exit $EXIT_CODE — connection/placement failure (Aurora may be resuming); retrying in 20s"
                 sleep 20
                 ;;
@@ -422,6 +442,9 @@ jobs:
             run_migrate_step "npx prisma migrate resolve --rolled-back '$RESOLVE_ROLLED_BACK'" "migrate-resolve"
           fi
 
+          # Checkin-hosted libraries first, each against its own database
+          # (checkin-app/libraries.json), then checkin's.
+          run_migrate_step "../scripts/each-library.sh exec --no -- prisma migrate deploy" "libraries-migrate-deploy"
           run_migrate_step "npx prisma migrate deploy" "migrate-deploy"
 
       # Deliberately LAST, after migrate has already succeeded against the DDL
@@ -467,17 +490,19 @@ jobs:
 
             aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
 
-            EXIT_CODE=$(aws ecs describe-tasks \
+            read -r EXIT_CODE STOP_REASON < <(aws ecs describe-tasks \
               --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
-              --query 'tasks[0].containers[0].exitCode' --output text)
+              --query 'tasks[0].[containers[0].exitCode, stoppedReason]' --output text)
             echo "Repoint task exit code: $EXIT_CODE"
 
             TASK_ID="${TASK_ARN##*/}"
-            echo "--- repoint task logs (/ecs/$COPY_TASK_FAMILY), attempt $attempt ---"
-            ./scripts/dump-task-logs.sh "/ecs/$COPY_TASK_FAMILY" "ecs/checkin-stg-copy/$TASK_ID"
-            echo "--- end repoint task logs ---"
+            ./scripts/dump-task-logs.sh --pointer-only "/ecs/$COPY_TASK_FAMILY" "ecs/checkin-stg-copy/$TASK_ID"
 
             [ "$EXIT_CODE" = "0" ] && break
+            if [[ "$STOP_REASON" == *CannotPullContainerError* ]]; then
+              echo "::error::Repoint task could not pull its image — not retrying. $STOP_REASON"
+              break
+            fi
             echo "Repoint task failed (exit $EXIT_CODE) — DB may be resuming from auto-pause; retrying in 20s"
             sleep 20
           done

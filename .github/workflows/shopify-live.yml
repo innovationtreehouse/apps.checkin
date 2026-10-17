@@ -1,7 +1,7 @@
 name: Shopify live contract tests (dev store)
 
 # Runs the shopify-live suite (checkin-app/shopify-live/, see
-# docs/designs/SHOPIFY_LIVE_TESTS.md) against the REAL dev store — catches
+# docs/ops/shopify-live-tests.md) against the REAL dev store — catches
 # Admin-API contract drift the mocked suites structurally cannot. Nightly +
 # manual; NEVER part of PR CI or pre-commit.
 #
@@ -52,6 +52,13 @@ jobs:
       - name: Install dependencies
         working-directory: .
         run: npm ci
+
+      # lib/shopify.ts imports the generated Prisma client. Generating needs only
+      # a syntactically valid DATABASE_URL; it never connects.
+      - name: Generate Prisma Client
+        env:
+          DATABASE_URL: "postgresql://unused:unused@localhost:5432/unused"
+        run: npx prisma generate
 
       # Sweep leftovers from any previously-crashed run BEFORE testing, so
       # stale citest resources can't confuse this run's assertions.

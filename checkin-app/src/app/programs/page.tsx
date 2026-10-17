@@ -5,7 +5,7 @@ import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { Alert, Badge, Button, Card, Checkbox, Divider, Group, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { formatDate } from '@/lib/time';
+import { formatDateOnly } from '@/lib/time';
 import { PageContainer } from '@/components/ui/PageContainer';
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -18,6 +18,7 @@ type ProgramSummary = {
   phase: string;
   enrollmentStatus: string;
   leadMentorId: number | null;
+  maxParticipants: number | null;
   _count?: {
     participants: number;
     volunteers: number;
@@ -35,9 +36,9 @@ export default function PublicProgramsDirectory() {
   // tone as the global DbWakeNotice banner.
   const [slowLoad, setSlowLoad] = useState(false);
   useEffect(() => {
-    if (!loading) { setSlowLoad(false); return; }
+    if (!loading) return;
     const t = setTimeout(() => setSlowLoad(true), 4000);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); setSlowLoad(false); };
   }, [loading]);
   const [message, setMessage] = useState("");
   const [activeOnly, setActiveOnly] = useState(true);
@@ -127,8 +128,8 @@ export default function PublicProgramsDirectory() {
                 </Group>
 
                 <Text c="dimmed" style={{ flex: 1 }} mb="md">
-                  {program.startAt ? formatDate(program.startAt) : 'Start Date TBD'}
-                  {program.endAt ? ` - ${formatDate(program.endAt)}` : ' (Ongoing)'}
+                  {program.startAt ? formatDateOnly(program.startAt) : 'Start Date TBD'}
+                  {program.endAt ? ` - ${formatDateOnly(program.endAt)}` : ' (Ongoing)'}
                 </Text>
 
                 {/* Counts come live-only (never cached): while the system wakes,
@@ -137,7 +138,7 @@ export default function PublicProgramsDirectory() {
                   <Card withBorder radius="sm" padding="xs" mb="md">
                     <Group justify="space-around">
                       <Stack gap={0} align="center">
-                        <Text fw={700}>{program._count.participants}</Text>
+                        <Text fw={700}>{program._count.participants}{program.maxParticipants != null && `/${program.maxParticipants}`}</Text>
                         <Text size="xs" c="dimmed">Enrolled</Text>
                       </Stack>
                       <Divider orientation="vertical" />
@@ -154,7 +155,7 @@ export default function PublicProgramsDirectory() {
                   </Card>
                 )}
 
-                <Group grow>
+                <Stack gap="xs">
                   <Button component={Link} href={`/programs/${program.id}`} variant="light">
                     View details and enroll
                   </Button>
@@ -163,7 +164,7 @@ export default function PublicProgramsDirectory() {
                       Manage
                     </Button>
                   )}
-                </Group>
+                </Stack>
               </Card>
             );
           })}

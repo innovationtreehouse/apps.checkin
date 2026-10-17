@@ -2,10 +2,10 @@ import prisma from "@/lib/prisma";
 import { config } from "@/lib/config";
 
 /**
- * The dev-instance activity ledger (DEV_DASHBOARD_DESIGN.md §6).
+ * The dev-instance activity ledger (docs/ops/dev-instance.md, "The ledger").
  *
  * Records the last login / impersonate / macro / reset by REAL human identity so a shared dev
- * instance shows who tested/reset last (principle 6: no accidental clobbering). The DevLedger table
+ * instance shows who tested/reset last, so nobody clobbers a colleague's scenario. The DevLedger table
  * lives only in checkin_dev; these helpers are no-ops in prod by construction.
  */
 

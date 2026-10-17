@@ -72,11 +72,9 @@ beforeEach(() => {
     mirrorMock.orderLegacyIdsPresent.mockResolvedValue(new Set());
     prismaMock.boardSettings.findUnique.mockResolvedValue({
         orgMembershipVariantId: '111',
-        shopifyNormalVariantId: null,
-        shopifyVolunteerVariantId: '112',
     });
     prismaMock.program.findMany.mockResolvedValue([
-        { id: 7, name: 'Robotics', shopifyVariantId: '222', shopifyOrgMemberVariantId: null, shopifyNonOrgMemberVariantId: null },
+        { id: 7, name: 'Robotics', shopifyVariantId: '222' },
     ]);
     prismaMock.orgMembershipProcess.findMany.mockResolvedValue([]);
     prismaMock.programParticipant.findMany.mockResolvedValue([]);
@@ -98,7 +96,7 @@ it('reports configured:false without touching prisma or the mirror data when unw
 it('asks the mirror for exactly the union of settings + program variants', async () => {
     await runMatchAudit();
     const asked = mirrorMock.ordersForVariants.mock.calls[0][0] as string[];
-    expect([...asked].sort()).toEqual(['111', '112', '222']);
+    expect([...asked].sort()).toEqual(['111', '222']);
 });
 
 describe('order buckets (Shopify → activation)', () => {
@@ -198,18 +196,18 @@ describe('membership buckets (activation → Shopify)', () => {
     const proc = (id: number, over: Partial<Record<string, unknown>> = {}) => ({
         id,
         shopifyOrderId: null,
-        certifiedById: null,
+        manualPaymentById: null,
         orgMembership: { household: { name: `House ${id}` } },
         ...over,
     });
 
-    it('classifies all four buckets, resolving certifier names', async () => {
+    it('classifies all four buckets, resolving manual-payment actor names', async () => {
         prismaMock.orgMembershipProcess.findMany
             .mockResolvedValueOnce([]) // claim lookup
             .mockResolvedValueOnce([
                 proc(1, { shopifyOrderId: '800' }),
                 proc(2, { shopifyOrderId: '801' }),
-                proc(3, { certifiedById: 42 }),
+                proc(3, { manualPaymentById: 42 }),
                 proc(4),
             ]);
         mirrorMock.orderLegacyIdsPresent.mockResolvedValue(new Set(['800']));
@@ -219,10 +217,10 @@ describe('membership buckets (activation → Shopify)', () => {
         expect(r.memberships.map((m) => m.bucket)).toEqual([
             'ORDER_MATCHED',
             'ORDER_NOT_IN_MIRROR',
-            'MANUAL_CERTIFIED',
+            'MANUAL_PAYMENT',
             'NO_PAYMENT_BASIS',
         ]);
-        expect(r.memberships[2].certifiedByName).toBe('Board Bob');
+        expect(r.memberships[2].manualPaymentByName).toBe('Board Bob');
     });
 
     it('sweeps only payment-bearing kinds — PERSON_BG processes must never appear as gaps', async () => {
@@ -267,7 +265,7 @@ describe('PRE_MIRROR vs ORDER_NOT_IN_MIRROR', () => {
     const proc = (id: number, shopifyOrderId: string) => ({
         id,
         shopifyOrderId,
-        certifiedById: null,
+        manualPaymentById: null,
         orgMembership: { household: { name: `House ${id}` } },
     });
 
@@ -337,15 +335,7 @@ describe('enrollment buckets', () => {
         const sweep = prismaMock.programParticipant.findMany.mock.calls[1][0];
         expect(sweep.where.status).toBe('ACTIVE');
         expect(sweep.where.OR).toContainEqual({ shopifyOrderId: { not: null } });
-        expect(sweep.where.OR).toContainEqual({
-            program: {
-                OR: [
-                    { shopifyVariantId: { not: null } },
-                    { shopifyOrgMemberVariantId: { not: null } },
-                    { shopifyNonOrgMemberVariantId: { not: null } },
-                ],
-            },
-        });
+        expect(sweep.where.OR).toContainEqual({ program: { shopifyVariantId: { not: null } } });
     });
 
     describe('ADMIN_COMPED', () => {
@@ -400,7 +390,7 @@ describe('tracked-exception override (P3 gap → exception promotion)', () => {
     const proc = (id: number, over: Partial<Record<string, unknown>> = {}) => ({
         id,
         shopifyOrderId: null,
-        certifiedById: null,
+        manualPaymentById: null,
         orgMembership: { household: { name: `House ${id}` } },
         ...over,
     });
@@ -456,16 +446,16 @@ describe('tracked-exception override (P3 gap → exception promotion)', () => {
         expect(enrollmentCall![0].where.status).toEqual({ not: 'RESOLVED' });
     });
 
-    it('a stray open exception on a MANUAL_CERTIFIED row is not overridden — the override is gap-only', async () => {
+    it('a stray open exception on a MANUAL_PAYMENT row is not overridden — the override is gap-only', async () => {
         prismaMock.orgMembershipProcess.findMany
             .mockResolvedValueOnce([])
-            .mockResolvedValueOnce([proc(1, { certifiedById: 42 })]); // MANUAL_CERTIFIED, not a gap
+            .mockResolvedValueOnce([proc(1, { manualPaymentById: 42 })]); // MANUAL_PAYMENT, not a gap
         prismaMock.person.findMany.mockResolvedValue([{ id: 42, name: 'Board Bob' }]);
         prismaMock.paymentException.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
             isMembershipLookup(where) ? [{ processId: 1 }] : [],
         );
         const r = await runMatchAudit();
-        expect(r.memberships[0].bucket).toBe('MANUAL_CERTIFIED');
+        expect(r.memberships[0].bucket).toBe('MANUAL_PAYMENT');
     });
 
     it('a stray open exception on an ORDER_MATCHED enrollment is not overridden — the override is gap-only', async () => {

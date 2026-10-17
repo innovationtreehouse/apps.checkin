@@ -7,6 +7,7 @@ import { modals } from "@mantine/modals";
 import { pickAddress, type StructuredAddress } from "@/lib/address";
 import { isValidPhone, PHONE_ERROR } from "@/lib/phone";
 import { isYouth } from "@/lib/time";
+import EmergencyContactNotice from "@/components/ui/EmergencyContactNotice";
 
 // Per-household lead cap (issue #269). Server enforces it atomically in
 // lib/household/leads.ts (MAX_HOUSEHOLD_LEADS); hardcoded here — that module
@@ -78,10 +79,9 @@ export function AdminEditHouseholdModal({
   // next to the form instead of a global corner toast behind the modal.
   const [notice, setNotice] = useState<{ color: string; message: string } | null>(null);
 
-  const loadHousehold = useCallback(async (signal?: { cancelled: boolean }) => {
-    if (householdId == null) return;
-    try {
-      const res = await fetch(`/api/membership-ops/households?id=${householdId}`);
+  const loadHousehold = useCallback((signal?: { cancelled: boolean }) => {
+    if (householdId == null) return Promise.resolve();
+    return fetch(`/api/membership-ops/households?id=${householdId}`).then(async (res) => {
       const data = await res.json();
       const h: AdminHousehold | null = data.household;
       if (signal?.cancelled) return;
@@ -103,15 +103,22 @@ export function AdminEditHouseholdModal({
         setMembers(h.householdMembers ?? []);
         setLeadIds((h.householdLeads ?? []).map((l) => l.personId));
       }
-    } catch {
+    }).catch(() => {
       notifications.show({ color: "red", message: "Failed to load household.", autoClose: false });
-    }
+    });
   }, [householdId]);
+
+  // Show the loader from the render that opens the modal (or switches household).
+  const loadKey = opened && householdId != null ? householdId : null;
+  const [loadingFor, setLoadingFor] = useState<number | null>(null);
+  if (loadingFor !== loadKey) {
+    setLoadingFor(loadKey);
+    if (loadKey != null) setLoading(true);
+  }
 
   useEffect(() => {
     if (!opened || householdId == null) return;
     const signal = { cancelled: false };
-    setLoading(true);
     loadHousehold(signal).finally(() => {
       if (!signal.cancelled) setLoading(false);
     });
@@ -278,6 +285,7 @@ export function AdminEditHouseholdModal({
               <TextInput label="State" maxLength={2} value={form.state} onChange={(e) => update({ state: e.currentTarget.value })} placeholder="TX" />
               <TextInput label="ZIP" value={form.postalCode} onChange={(e) => update({ postalCode: e.currentTarget.value })} placeholder="78701" />
             </SimpleGrid>
+            <EmergencyContactNotice />
             <SimpleGrid cols={{ base: 1, sm: 2 }}>
               <TextInput
                 label="Emergency Contact Name"

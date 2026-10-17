@@ -5,7 +5,7 @@ API into a dedicated Postgres database. Designed to run as a scheduled ECS task,
 every step runs locally first so the pipeline is proven before deployment.
 
 Database, projection, and normalization logic live in the shared
-[`@inventory/s-ingest-core`](../packages/s-ingest-core) package (which owns the Prisma
+[`@checkin/s-ingest-core`](../packages/s-ingest-core) package (which owns the Prisma
 schema + migrations); this package holds the Shopify-API-facing read path. The
 companion [`s-replay-function`](../s-replay-function) handles admin replay / watermark
 operations over the same core.
@@ -53,6 +53,9 @@ Copy `.env.example` to `.env` (git-ignored) and fill it in:
 | `SHOPIFY_API_VERSION` | API version to pin, e.g. `2025-07`. |
 | `STORE_ID` | Seed used **only** by offline `inject` (defaults to `SHOPIFY_SHOP`). Real syncs ignore it and derive `store_id` from the live store's `myshopifyDomain` (recorded in the `store` registry table); a mismatch is logged as a warning. |
 | `CUTOVER_DATE` | ISO date — backfill starts here and moves forward. |
+| `MONITORING_DATABASE_URL` | Optional. Monitoring Postgres the run-freshness heartbeat is pushed to; unset = no push. |
+| `MONITORING_ENV` | **Required when `MONITORING_DATABASE_URL` is set**, no default: the heartbeat's `env`, e.g. `prod`. Must match the watchdog's `MONITORING_ENV`. If it is missing, the sync still runs, but the push is disabled and an error is logged. |
+| `SERVICE_NAME` | Heartbeat `service` (default `shopify-read`). Must match the watchdog registry entry. |
 
 **Required Admin API scopes:**
 - `read_orders` — orders, line items, money, refunds.
@@ -110,11 +113,11 @@ scheduled ECS Fargate task with `SHOPIFY_CLIENT_ID` / `SHOPIFY_CLIENT_SECRET` (n
 
 ```bash
 npm install                                  # from the repo root (workspaces)
-npm run db:generate -w @inventory/s-ingest-core   # generate the Prisma client
-npm run db:deploy   -w @inventory/s-ingest-core   # apply migrations to the DB (uses core/.env)
+npm run db:generate -w @checkin/s-ingest-core   # generate the Prisma client
+npm run db:deploy   -w @checkin/s-ingest-core   # apply migrations to the DB (uses core/.env)
 ```
 
-The schema, migrations, and Prisma client are owned by `@inventory/s-ingest-core` — this
+The schema, migrations, and Prisma client are owned by `@checkin/s-ingest-core` — this
 package consumes the generated client. See [DEPLOY.md](DEPLOY.md) for how migrations are
 applied in deployment (the `s-read-<env>-migrate` task).
 
@@ -125,14 +128,23 @@ All run locally with no AWS dependency (they read `.env`):
 ```bash
 npm run sync:incremental     # delta pull (orders + payouts) since the last watermark
 npm run sync:backfill        # Bulk Operation backfill from CUTOVER_DATE forward
-npm run inject -- <fixture.json> [--test]   # load a hand-authored/fixture node
+INJECT_ALLOW=1 npm run inject -- <fixture.json> --reason "<why>" [--test]   # load a hand-authored/fixture node
 ```
 
 `inject` validates the node with the same Zod schema the API path uses, appends it
 to `shopify_raw_event` tagged `HAND_LOADED` (or `TEST_LOADED` with `--test`), then
-runs the loader so it flows into the live tables exactly like real data. This is
-also how batch/test infrastructure seeds matching raw events. A fixture file looks
-like:
+runs the loader so it flows into the live tables exactly like real data. Each live
+row carries the same `source` stamp. Inject refuses the whole file, before writing
+anything, if any GID already has an API-synced row (source `BACKFILL`,
+`INCREMENTAL`, or NULL; any existing `shop_refund` row), so a fixture can never
+overwrite real data. This is also how batch/test infrastructure seeds matching raw events.
+
+Guard rails: inject refuses to run without `INJECT_ALLOW=1` and a non-empty
+`--reason`, and records the operator (`cli:<os user>`) and reason on an `ADMIN`
+`sync_run` that the injected raw events link to. `--test` also forces each order's
+`test` flag on (every checkin reader filters `test = false`) and is refused against
+the production store, by `STORE_ID` or by the mirror's `store` registry. A fixture
+file looks like:
 
 ```json
 { "objectType": "PAYOUT", "node": { "id": "gid://shopify/ShopifyPaymentsPayout/1", "...": "..." } }

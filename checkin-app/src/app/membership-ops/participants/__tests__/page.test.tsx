@@ -6,6 +6,7 @@ jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } 
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
 import AdminParticipantsIndex from "../page";
+import { ModalsProvider } from "@mantine/modals";
 
 beforeEach(() => {
     resetRtl();
@@ -51,20 +52,47 @@ describe("AdminParticipantsIndex", () => {
         fireEvent.click(screen.getByRole("button", { name: /Name/ }));
         fireEvent.click(screen.getByRole("button", { name: /Name/ }));
 
-        fireEvent.change(screen.getByPlaceholderText("Search by name or email..."), { target: { value: "ali" } });
-        await waitFor(() => expect(screen.getByPlaceholderText("Search by name or email...")).toHaveValue("ali"));
+        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
+        await waitFor(() => expect(screen.getByPlaceholderText("Search by name, email, or ID...")).toHaveValue("ali"));
 
         // Scope to Alice's row rather than a fixed index — the sort toggles above can reorder rows.
         const aliceRow = screen.getByText("Alice A").closest("tr")!;
         fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
 
         expect(await screen.findByText("Edit Person")).toBeInTheDocument();
+        expect(screen.getByText(/Printed on name badges exactly as typed/)).toBeInTheDocument();
         const emailInput = screen.getByLabelText("Email Address");
         fireEvent.change(emailInput, { target: { value: "alice@new.com" } });
         fireEvent.click(screen.getByRole("button", { name: "Save Details" }));
 
         await waitFor(() => expect(screen.queryByText("Edit Person")).not.toBeInTheDocument());
         expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Person updated successfully!" }));
+    });
+
+    it("asks for confirmation before saving a lead's check that would no longer be valid", async () => {
+        const warning = "Alice A's background check covers the membership year starting 2027-08-01, and will not after this change.";
+        const puts: unknown[] = [];
+        global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = input.toString();
+            if (url.includes("/api/people/search")) return { ok: true, status: 200, json: async () => ({ people: [alice] }) } as Response;
+            const body = JSON.parse(String(init?.body));
+            puts.push(body);
+            return body.confirmBgStale
+                ? { ok: true, status: 200, json: async () => ({ participant: alice }) } as Response
+                : { ok: false, status: 409, json: async () => ({ error: warning, warning, requiresConfirmation: true }) } as Response;
+        }) as unknown as typeof fetch;
+        renderWithProviders(<ModalsProvider><AdminParticipantsIndex /></ModalsProvider>);
+
+        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
+        const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
+        fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Save Details" }));
+
+        expect(await screen.findByText(warning)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Save anyway" }));
+
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Person updated successfully!" })));
+        expect(puts).toEqual([expect.objectContaining({ confirmBgStale: false }), expect.objectContaining({ confirmBgStale: true })]);
     });
 
     it("assigns a new household to a participant with none", async () => {
@@ -108,7 +136,7 @@ describe("AdminParticipantsIndex", () => {
         renderWithProviders(<AdminParticipantsIndex />);
         expect(screen.queryByText("No people found.")).not.toBeInTheDocument();
 
-        fireEvent.change(screen.getByPlaceholderText("Search by name or email..."), { target: { value: "zzz" } });
+        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "zzz" } });
         expect(await screen.findByText("No people found.")).toBeInTheDocument();
     });
 
@@ -117,7 +145,7 @@ describe("AdminParticipantsIndex", () => {
         global.fetch = jest.fn().mockRejectedValue(new Error("boom"));
         renderWithProviders(<AdminParticipantsIndex />);
         await waitFor(() => expect(errSpy).toHaveBeenCalled());
-        expect(screen.getByPlaceholderText("Search by name or email...")).toBeInTheDocument();
+        expect(screen.getByPlaceholderText("Search by name, email, or ID...")).toBeInTheDocument();
         errSpy.mockRestore();
     });
 

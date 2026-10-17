@@ -4,14 +4,13 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
+import { LIVE_PERSON } from "@/lib/person/filters";
 
 export const dynamic = "force-dynamic";
 
-// "Broken" households have no household lead at all (zero HouseholdLead rows).
+// "Broken" households have live members but no household lead among them.
 // Most arrive this way via Zoho import without a designated primary contact —
 // a registered family that nobody can claim, because claiming requires a lead.
-// Empty households (no participants) are included so the board can see them,
-// even though there's no one to promote.
 export const GET = withAuth(
     { roles: ["isSysadmin", "isBoardMember"] },
     async () => {
@@ -20,6 +19,7 @@ export const GET = withAuth(
                 where: BROKEN_HOUSEHOLD_WHERE,
                 include: {
                     householdMembers: {
+                        where: LIVE_PERSON,
                         select: { id: true, name: true, dateOfBirth: true },
                         orderBy: { id: "asc" },
                     },

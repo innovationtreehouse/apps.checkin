@@ -1,4 +1,5 @@
-import { checkProgramAge, validateProgramAgeBounds, MAX_PROGRAM_AGE } from "@/lib/programAge";
+import { checkProgramAge, isKnownAdult, isLeaderAgeEligible, LEADER_MIN_AGE, validateProgramAgeBounds, MAX_PROGRAM_AGE } from "@/lib/programAge";
+import { orgCalendarDay } from "@/lib/time";
 
 // as-of date pins calculateAge so the DOB cases don't drift with wall-clock time.
 const asOf = "2026-01-01";
@@ -41,6 +42,68 @@ describe("checkProgramAge", () => {
       label: "Too old",
     });
     expect(checkProgramAge({ dateOfBirth: "2000-01-01" }, { minAge: 16, maxAge: 40, asOf }).ok).toBe(true);
+  });
+});
+
+describe("isKnownAdult", () => {
+  // n years ago today, as a calendar date at UTC midnight — how a DOB is stored.
+  // Built from a moment instead, the 18 case is a birthday landing at whatever
+  // time the suite happens to run, and the boundary it is testing moves.
+  const yearsAgo = (n: number) => {
+    const d = orgCalendarDay();
+    d.setUTCFullYear(d.getUTCFullYear() - n);
+    return d;
+  };
+
+  it("admits an 18+ DOB and a declared over-25 adult", () => {
+    expect(isKnownAdult({ dateOfBirth: yearsAgo(18) })).toBe(true);
+    expect(isKnownAdult({ dateOfBirth: yearsAgo(40) })).toBe(true);
+    expect(isKnownAdult({ dateOfBirth: null, isDeclaredAdult: true })).toBe(true);
+  });
+
+  it("refuses a under-18 DOB", () => {
+    expect(isKnownAdult({ dateOfBirth: yearsAgo(17) })).toBe(false);
+    expect(isKnownAdult({ dateOfBirth: yearsAgo(10) })).toBe(false);
+  });
+
+  it("fails closed on an unverifiable age", () => {
+    expect(isKnownAdult({ dateOfBirth: null })).toBe(false);
+    expect(isKnownAdult({ dateOfBirth: null, isDeclaredAdult: false })).toBe(false);
+  });
+
+  it("lets a real DOB outrank the declared-adult flag", () => {
+    expect(isKnownAdult({ dateOfBirth: yearsAgo(15), isDeclaredAdult: true })).toBe(false);
+  });
+});
+
+describe("isLeaderAgeEligible", () => {
+  const yearsAgo = (n: number) => {
+    const d = orgCalendarDay();
+    d.setUTCFullYear(d.getUTCFullYear() - n);
+    return d;
+  };
+
+  it("admits someone 23 or older", () => {
+    expect(isLeaderAgeEligible({ dateOfBirth: yearsAgo(23) })).toBe(true);
+    expect(isLeaderAgeEligible({ dateOfBirth: yearsAgo(40) })).toBe(true);
+  });
+
+  it("rejects someone under 23", () => {
+    expect(isLeaderAgeEligible({ dateOfBirth: yearsAgo(22) })).toBe(false);
+    expect(isLeaderAgeEligible({ dateOfBirth: yearsAgo(18) })).toBe(false);
+  });
+
+  it("admits isDeclaredAdult (marked 25+)", () => {
+    expect(isLeaderAgeEligible({ dateOfBirth: null, isDeclaredAdult: true })).toBe(true);
+  });
+
+  it("fails closed on unknown DOB without the flag", () => {
+    expect(isLeaderAgeEligible({ dateOfBirth: null })).toBe(false);
+    expect(isLeaderAgeEligible({ dateOfBirth: null, isDeclaredAdult: false })).toBe(false);
+  });
+
+  it("constant matches 23", () => {
+    expect(LEADER_MIN_AGE).toBe(23);
   });
 });
 

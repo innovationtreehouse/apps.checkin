@@ -34,13 +34,15 @@ async function makeReviewer(label: string): Promise<number> {
 }
 
 /** A fresh applicant household + membership + a process awaiting BG review. */
-async function makePendingProcess(): Promise<number> {
+async function makePendingProcess(): Promise<{ processId: number; leadId: number }> {
     const hh = await prisma.household.create({ data: { name: `Applicant ${TAG}` } });
+    // A lead to name as the check's subject — reviewers attest per adult.
+    const lead = await prisma.person.create({ data: { name: `Applicant Lead ${TAG}`, householdId: hh.id, isHouseholdLead: true } });
     const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
     const proc = await prisma.orgMembershipProcess.create({
         data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_BG_REVIEW' },
     });
-    return proc.id;
+    return { processId: proc.id, leadId: lead.id };
 }
 
 async function wipe() {
@@ -75,7 +77,7 @@ describe('attest() concurrency', () => {
     });
 
     it('two concurrent APPROVEs advance the process exactly once', async () => {
-        const processId = await makePendingProcess();
+        const { processId, leadId } = await makePendingProcess();
 
         // One approval already on record; two more reviewers attest concurrently.
         // The invariant: regardless of interleaving, the process advances to payment
@@ -83,11 +85,11 @@ describe('attest() concurrency', () => {
         // approvals === 2, and both call advanceToPayment (double background-date
         // stamp). The FOR UPDATE lock serializes them so the loser re-reads
         // PENDING_PAYMENT and bails with wrong_phase.
-        await attest(revA, processId, { result: 'APPROVE' });
+        await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
 
         const [b, c] = await Promise.allSettled([
-            attest(revB, processId, { result: 'APPROVE' }),
-            attest(revC, processId, { result: 'APPROVE' }),
+            attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadId] }),
+            attest(revC, processId, { result: 'APPROVE', subjectPersonIds: [leadId] }),
         ]);
 
         const statuses = [b, c].map((r) => (r.status === 'fulfilled' ? (r.value as { status: string }).status : (r.reason as ReviewError).code));
@@ -113,7 +115,7 @@ describe('attest() concurrency', () => {
     });
 
     it('a REJECT audit carries the rejecting reviewer\'s id, not another reviewer\'s', async () => {
-        const processId = await makePendingProcess();
+        const { processId } = await makePendingProcess();
         // revB rejects; revA never touches this process.
         await attest(revB, processId, { result: 'REJECT' });
 

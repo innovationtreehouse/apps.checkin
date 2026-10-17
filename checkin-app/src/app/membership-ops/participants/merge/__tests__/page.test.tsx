@@ -7,6 +7,7 @@ jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } 
 import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import { notifications } from "@mantine/notifications";
+import { pinTimezone } from "@/test-helpers/tz";
 import MergeParticipants from "../page";
 
 beforeEach(() => { resetRtl(); (notifications.show as jest.Mock).mockClear(); });
@@ -32,15 +33,17 @@ function mockRoutes() {
 }
 
 async function selectBoth() {
-  fireEvent.change(screen.getAllByPlaceholderText("Search by name or email...")[0], { target: { value: "Alice" } });
+  fireEvent.change(screen.getAllByPlaceholderText("Search by name, email, or ID...")[0], { target: { value: "Alice" } });
   fireEvent.click(await screen.findByText("Alice Adams", { exact: false }));
 
   // Box A is now a selected card, so only box B's search input remains.
-  fireEvent.change(screen.getByPlaceholderText("Search by name or email..."), { target: { value: "Bob" } });
+  fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "Bob" } });
   fireEvent.click(await screen.findByText("Bob Adams", { exact: false }));
 }
 
 describe("membership-ops/participants/merge page", () => {
+  pinTimezone();
+
   it("searches, selects two participants, and analyzes them", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockRoutes();
@@ -70,7 +73,7 @@ describe("membership-ops/participants/merge page", () => {
     });
     renderWithProviders(<MergeParticipants />);
 
-    fireEvent.change(screen.getAllByPlaceholderText("Search by name or email...")[0], { target: { value: "Sam" } });
+    fireEvent.change(screen.getAllByPlaceholderText("Search by name, email, or ID...")[0], { target: { value: "Sam" } });
 
     expect(await screen.findByText("Sam One", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("Sam Two", { exact: false })).toBeInTheDocument();
@@ -95,7 +98,7 @@ describe("membership-ops/participants/merge page", () => {
         "/api/membership-ops/participants/merge",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ keepId: 1, mergeId: 2, fieldChoices: { name: "keep", email: "keep" } }),
+          body: JSON.stringify({ keepId: 1, mergeId: 2, fieldChoices: { name: "keep", identity: "keep" } }),
         }),
       ),
     );
@@ -124,9 +127,9 @@ describe("membership-ops/participants/merge page", () => {
     });
     renderWithProviders(<MergeParticipants />);
 
-    fireEvent.change(screen.getAllByPlaceholderText("Search by name or email...")[0], { target: { value: "Zack" } });
+    fireEvent.change(screen.getAllByPlaceholderText("Search by name, email, or ID...")[0], { target: { value: "Zack" } });
     fireEvent.click(await screen.findByText("Zack Zero", { exact: false }));
-    fireEvent.change(screen.getByPlaceholderText("Search by name or email..."), { target: { value: "Belle" } });
+    fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "Belle" } });
     fireEvent.click(await screen.findByText("Belle Best", { exact: false }));
 
     await screen.findByText("Keep and augment");
@@ -152,12 +155,12 @@ describe("membership-ops/participants/merge page", () => {
     mockRoutes();
     renderWithProviders(<MergeParticipants />);
 
-    fireEvent.change(screen.getAllByPlaceholderText("Search by name or email...")[0], { target: { value: "Alice" } });
+    fireEvent.change(screen.getAllByPlaceholderText("Search by name, email, or ID...")[0], { target: { value: "Alice" } });
     fireEvent.click(await screen.findByText("Alice Adams", { exact: false }));
     expect(screen.getByText("Alice Adams", { exact: false })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Change" }));
-    expect(screen.getAllByPlaceholderText("Search by name or email...")).toHaveLength(2);
+    expect(screen.getAllByPlaceholderText("Search by name, email, or ID...")).toHaveLength(2);
     // The re-shown search box still has "Alice" as its value, which re-triggers the
     // search effect; let that settle so it doesn't leak an unawaited update.
     expect(await screen.findByText("Alice Adams", { exact: false })).toBeInTheDocument();
@@ -197,9 +200,9 @@ describe("membership-ops/participants/merge page", () => {
     });
     renderWithProviders(<MergeParticipants />);
 
-    fireEvent.change(screen.getAllByPlaceholderText("Search by name or email...")[0], { target: { value: "Leo" } });
+    fireEvent.change(screen.getAllByPlaceholderText("Search by name, email, or ID...")[0], { target: { value: "Leo" } });
     fireEvent.click(await screen.findByText("Leo Lead", { exact: false }));
-    fireEvent.change(screen.getByPlaceholderText("Search by name or email..."), { target: { value: "Otto" } });
+    fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "Otto" } });
     fireEvent.click(await screen.findByText("Otto Other", { exact: false }));
 
     // Otto out-scores Leo, so Leo (the household lead) is the one slated for deletion.
@@ -226,9 +229,9 @@ describe("membership-ops/participants/merge page", () => {
     });
     renderWithProviders(<MergeParticipants />);
 
-    fireEvent.change(screen.getAllByPlaceholderText("Search by name or email...")[0], { target: { value: "Mia" } });
+    fireEvent.change(screen.getAllByPlaceholderText("Search by name, email, or ID...")[0], { target: { value: "Mia" } });
     fireEvent.click(await screen.findByText("Mia Member", { exact: false }));
-    fireEvent.change(screen.getByPlaceholderText("Search by name or email..."), { target: { value: "Hank" } });
+    fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "Hank" } });
     fireEvent.click(await screen.findByText("Hank High", { exact: false }));
 
     expect(await screen.findByText(/is in a household with others/)).toBeInTheDocument();
@@ -272,7 +275,7 @@ describe("membership-ops/participants/merge page", () => {
     await screen.findByText("Merge Successful!");
 
     fireEvent.click(screen.getByRole("button", { name: "Merge More" }));
-    expect(screen.getAllByPlaceholderText("Search by name or email...")).toHaveLength(2);
+    expect(screen.getAllByPlaceholderText("Search by name, email, or ID...")).toHaveLength(2);
   });
 
   it("cancels out of preview mode back to the analysis screen", async () => {
@@ -296,12 +299,15 @@ describe("membership-ops/participants/merge page", () => {
     await selectBoth();
     await screen.findByText("Keep and augment");
 
-    // Alice/Bob differ on name+email; both share phone: null.
+    // Alice/Bob differ on name; both have an email so the login identity is a
+    // conflict too; both share phone: null and have no dateOfBirth.
     const picker = screen.getByText("Resolve conflicting fields").closest(".mantine-Card-root") as HTMLElement;
     expect(within(picker).getByText("Name")).toBeInTheDocument();
-    expect(within(picker).getByText("Email")).toBeInTheDocument();
-    expect(within(picker).queryByText("Phone")).not.toBeInTheDocument();
+    expect(within(picker).getByText("Login identity")).toBeInTheDocument();
+    // email/googleId are no longer their own radios — folded into "Login identity".
+    expect(within(picker).queryByText("Email")).not.toBeInTheDocument();
     expect(within(picker).queryByText("Google Account")).not.toBeInTheDocument();
+    expect(within(picker).queryByText("Phone")).not.toBeInTheDocument();
     expect(within(picker).queryByText("Date of Birth")).not.toBeInTheDocument();
   });
 
@@ -313,14 +319,15 @@ describe("membership-ops/participants/merge page", () => {
     await selectBoth();
     await screen.findByText("Keep and augment");
 
-    // Alice out-scores Bob (visits + googleId), so she's the default keeper.
+    // Alice out-scores Bob (visits + googleId), so she's the default keeper. The
+    // "keep" radio in each group shows the keeper's value (name + login identity).
     expect(screen.getByRole("radio", { name: "Alice Adams" })).toBeChecked();
-    expect(screen.getByRole("radio", { name: "alice@example.com" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /alice@example\.com · Google/ })).toBeChecked();
 
     fireEvent.click(screen.getByRole("button", { name: "Swap Kept / Merged" }));
 
     expect(screen.getByRole("radio", { name: "Bob Adams" })).toBeChecked();
-    expect(screen.getByRole("radio", { name: "bob@example.com" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /bob@example\.com · unverified/ })).toBeChecked();
   });
 
   // Matrix 21
@@ -331,8 +338,8 @@ describe("membership-ops/participants/merge page", () => {
     await selectBoth();
     await screen.findByText("Keep and augment");
 
-    // Pick the tombstone's (Bob's) email instead of the keeper's default.
-    fireEvent.click(screen.getByRole("radio", { name: "bob@example.com" }));
+    // Pick the tombstone's (Bob's) login identity instead of the keeper's default.
+    fireEvent.click(screen.getByRole("radio", { name: /bob@example\.com · unverified/ }));
 
     fireEvent.click(screen.getByRole("button", { name: "Proceed to Preview" }));
     await screen.findByText("Preview & Confirm Merge");
@@ -343,21 +350,23 @@ describe("membership-ops/participants/merge page", () => {
         "/api/membership-ops/participants/merge",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ keepId: 1, mergeId: 2, fieldChoices: { name: "keep", email: "merge" } }),
+          body: JSON.stringify({ keepId: 1, mergeId: 2, fieldChoices: { name: "keep", identity: "merge" } }),
         }),
       ),
     );
   });
 
   // Matrix 22
-  it("shows each side's own identity for a googleId conflict instead of 'Connected' on both", async () => {
+  it("shows each side's own login identity (email + Google + verified marker), not 'Connected'", async () => {
     const gia = {
       id: 60, name: "Gia Google", email: "gia@example.com", phone: null, googleId: "g-gia-000000",
+      emailVerified: "2026-01-01T00:00:00.000Z",
       _count: { visits: 5, rawBadgeLogs: 0, programParticipants: 0, programVolunteers: 0 },
       household: null,
     };
     const gary = {
       id: 61, name: "Gary Gmail", email: null, phone: null, googleId: "g-gary-111111",
+      emailVerified: null,
       _count: { visits: 0, rawBadgeLogs: 0, programParticipants: 0, programVolunteers: 0 },
       household: null,
     };
@@ -369,17 +378,18 @@ describe("membership-ops/participants/merge page", () => {
     });
     renderWithProviders(<MergeParticipants />);
 
-    fireEvent.change(screen.getAllByPlaceholderText("Search by name or email...")[0], { target: { value: "Gia" } });
+    fireEvent.change(screen.getAllByPlaceholderText("Search by name, email, or ID...")[0], { target: { value: "Gia" } });
     fireEvent.click(await screen.findByText("Gia Google", { exact: false }));
-    fireEvent.change(screen.getByPlaceholderText("Search by name or email..."), { target: { value: "Gary" } });
+    fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "Gary" } });
     fireEvent.click(await screen.findByText("Gary Gmail", { exact: false }));
 
     await screen.findByText("Keep and augment");
     const picker = screen.getByText("Resolve conflicting fields").closest(".mantine-Card-root") as HTMLElement;
-    // Gia has an email, so her radio shows it; Gary has none, so his falls back
-    // to the googleId tail — neither says the uninformative "Connected".
-    expect(within(picker).getByText("gia@example.com")).toBeInTheDocument();
-    expect(within(picker).getByText("…111111")).toBeInTheDocument();
+    // Gia has a verified email; Gary has none, so his falls back to the googleId
+    // tail and shows unverified — neither says the uninformative "Connected".
+    expect(within(picker).getByText(/gia@example\.com · Google/)).toBeInTheDocument();
+    expect(within(picker).getByText(/· verified$/)).toBeInTheDocument();
+    expect(within(picker).getByText(/…111111 · unverified/)).toBeInTheDocument();
     expect(within(picker).queryByText("Connected")).not.toBeInTheDocument();
   });
 
@@ -405,18 +415,20 @@ describe("membership-ops/participants/merge page", () => {
     });
     renderWithProviders(<MergeParticipants />);
 
-    fireEvent.change(screen.getAllByPlaceholderText("Search by name or email...")[0], { target: { value: "Dan" } });
+    fireEvent.change(screen.getAllByPlaceholderText("Search by name, email, or ID...")[0], { target: { value: "Dan" } });
     fireEvent.click(await screen.findByText("Dan Date", { exact: false }));
-    fireEvent.change(screen.getByPlaceholderText("Search by name or email..."), { target: { value: "Dot" } });
+    fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "Dot" } });
     fireEvent.click(await screen.findByText("Dot Different", { exact: false }));
 
     await screen.findByText("Keep and augment");
     const warningText = await screen.findByText(/Different birth dates may mean these are NOT the same person/);
     const alertBox = warningText.closest(".mantine-Alert-root") as HTMLElement;
     expect(alertBox).toBeInTheDocument();
-    // Still resolvable via the radio, just nested inside the warning — exact date
-    // text is locale/timezone-formatted (toLocaleDateString), so just count them.
     expect(within(alertBox).getAllByRole("radio")).toHaveLength(2);
+    // DOB is a calendar date at UTC midnight: both options must read as their own
+    // day, not the day before, even west of UTC.
+    expect(alertBox.textContent).toContain("1/1/1990");
+    expect(alertBox.textContent).toContain("6/15/2005");
   });
 
   it("renders nothing for a background-check reviewer who navigates directly", () => {
@@ -424,7 +436,7 @@ describe("membership-ops/participants/merge page", () => {
     mockRoutes();
     renderWithProviders(<MergeParticipants />);
 
-    expect(screen.queryByPlaceholderText("Search by name or email...")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Search by name, email, or ID...")).not.toBeInTheDocument();
     expect(screen.queryByText("Keep and augment")).not.toBeInTheDocument();
   });
 });

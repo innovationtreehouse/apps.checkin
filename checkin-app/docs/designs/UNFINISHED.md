@@ -4,6 +4,8 @@ Open decisions, deferred fixes, and not-yet-built items surfaced during the
 2026-07-02 vocabulary sweep. Decided terms are recorded in
 [../VOCABULARY.md](../VOCABULARY.md); this doc holds what's left to *act on*. Add
 sections freely — we'll find more. Nothing here is implemented; investigation only.
+(Audited against `main` 2026-08-08: everything below is still open. Items that
+resolved have been moved to *Considered and dismissed*.)
 
 **Legend:** 🔴 high-priority / risky · 🟡 decision needed · 🟢 mechanical fix ·
 🔵 aspirational (not-yet-built) · 📖 record-in-dictionary only
@@ -39,19 +41,30 @@ privileged-"staff" onto it. (4) audit every call site for over/under-grant.
 
 ---
 
-## 🟡 "Review" / "Reviewer" — followup (lower priority than Admin)
+## 🟢 Background-check verbs (decided)
 
-Four review flows share the word, and product owner isn't sure yet where each term
-is used or whether they should converge:
+**✅ A reviewer *reviews*, *attests*, and two attestations *clear* the check**
+([../VOCABULARY.md](../VOCABULARY.md) › Background check). Four copy/identifier
+renames, all ops-facing or internal — no schema, no `src/security/`:
+- The reviewer queue asserts the report's content rather than the reviewer's
+  judgement: "check is clean" on the row button, in the modal title, confirm label
+  and both body branches (`membership-ops/review/page.tsx`, 5 strings + 8 test
+  assertions). All become *attest*, and the outcome is named as the **noun** —
+  `clear` as a verb on a button next to "Reject" reads as *reset*
+- "Clear approvals" → "Discard approvals" (`membership-ops/applications/page.tsx`,
+  button + confirm label + comment; 2 test assertions)
+- The whole erase path for a person's background-check date is built on `clear` —
+  handler, button, modal title, confirm label, toast
+  (`membership-audit/compliance/page.tsx`, 8 sites + 4 test assertions). Becomes
+  *remove*, the verb its own body text already uses
+- `selfAttestBgConsent` → `selfRecordBgConsent` (~17 refs / 5 files; the
+  `/api/membership/bg-consent` route path is unchanged). Keeps the `self` prefix:
+  `markBgConsent` is exported and called from seven places, so a bare
+  `recordBgConsent` wrapping it would be a coin flip at every call site
 
-- **BG Reviewer** role — `isBackgroundCheckReviewer` → "BG Reviewer".
-- **Attestation reviewer** — `BackgroundCheckAttestation.reviewer`.
-- **Membership review** — `/api/membership/reviews`, `membership-ops/review`.
-- **Trusted-adult review** — `TrustedAdultReview.decidedBy` (a "reviewer" called a
-  **"decider"** — is that the same concept?).
-
-Decide: one canonical word, or keep distinct per subsystem; and reconcile
-"decider" vs "reviewer". Deserves its own pass. _(VOCAB #9)_
+**Do not "fix"** `AttestationResult.result` or the `PENDING_BG_REVIEW` /
+`PENDING_BG_CLEARANCE` misnomer. Both are wrong and both stay: renaming either
+reaches the schema, a migration, and `src/security/`. _(VOCAB #9)_
 
 ---
 
@@ -65,17 +78,6 @@ Decide: one canonical word, or keep distinct per subsystem; and reconcile
 - "Lead Mentor" UI copy (63 refs) → "Program Leader"
 
 Watch tsc-blind escapes (Prisma relation strings, mocks). _(VOCAB #7)_
-
----
-
-## 🟢 Retire "staff" (program sense) → Treehouse Volunteers
-
-100% volunteer, no staff. Scrub "program staff" strings:
-[my-programs/layout.tsx:15](../../src/app/my-programs/layout.tsx#L15),
-[nav/todo-counts/route.ts:65](../../src/app/api/nav/todo-counts/route.ts#L65),
-[programs/[id]/route.ts:72](../../src/app/api/programs/[id]/route.ts#L72),
-[programs/[id]/volunteers/route.ts:38](../../src/app/api/programs/[id]/volunteers/route.ts#L38).
-Umbrella = **Treehouse Volunteers**. _(VOCAB #7)_
 
 ---
 
@@ -99,78 +101,41 @@ _(VOCAB #2)_
 
 ---
 
-## ✅ Certifier "any-tool → global" widening — ACCEPTED (not a security issue)
-
-**Decision (2026-07-02): fine as-is.** Certifiers are a small group; wide
-access/visibility is acceptable. The `isCertifier` nav/access checks that fire on
-holding `MAY_CERTIFY_OTHERS` on **any** tool (shopNav.ts:31,
-access-resolvers.ts:135, pageRegistry.ts:36, AppFrame.tsx:101,
-ToolManagementPanel.tsx:525) are intended convenience, not an over-grant. The
-**actual grant action stays per-tool**
-([certifications/route.ts:100](../../src/app/api/shop/certifications/route.ts#L100)) —
-you can only certify others on a tool you're a certifier for — which is the part
-that matters. No change needed. _(VOCAB #2)_
-
----
-
 ## 🟢 "Tool Certifier" vs "Shop Certifier" label
 
-Code uses both; policy canonical = **Tool Certifier**. Retire "Shop Certifier"
-([ToolLevelBadge.tsx:22](../../src/components/ToolLevelBadge.tsx#L22),
-[RoleBadge.tsx:23](../../src/components/ui/RoleBadge.tsx#L23),
-[security/core.ts:125](../../src/security/core.ts#L125)). _(VOCAB #2)_
+Code uses both; policy canonical = **Tool Certifier**. One user-visible "Shop
+Certifier" label left ([ToolLevelBadge.tsx:22](../../src/components/ToolLevelBadge.tsx#L22),
+plus its doc comment `:32`); `RoleBadge.tsx` and `security/core.ts` already say
+"certifier" (two prose comments in core.ts still read "shop certifier").
+_(VOCAB #2)_
 
 ---
 
-## 🟢 Rename payment "certified" → "manual" (collides with tool certification)
+## 🟢 Name the relief types: Payment Plan / Scholarship
 
-`via: "certified"` / `MembershipProcess.certifiedById`
-([payment.ts:117](../../src/lib/membership/payment.ts#L117),
-[:236](../../src/lib/membership/payment.ts#L236),
-[schema.prisma:352](../../prisma/schema.prisma#L352)) = payment **landed outside
-Shopify** (recorded in QuickBooks), so the membership activates without a Shopify
-order. NOT a comp — they paid, through another channel. **✅ Decision:**
-- `via: "certified"` → **`via: "manual"`**
-- `certifiedById` → **`manualPaymentById`**
-
-Kills the tool-certification collision. Separately name the relief types (distinct
-from manual payment): **Payment Plan** (installments, `isPaymentPlanRequested`) and
-**Scholarship** (board comp, 0 code refs today) — one process handles either/both.
-_(VOCAB #17)_
+Distinct from a **manual payment** (already renamed — `via: "manual"` /
+`manualPaymentById`): **Payment Plan** (installments,
+`isPaymentPlanRequested`) and **Scholarship** (board comp, 0 code refs today)
+— one process handles either/both. The relief surfaces still say "certify":
+`certifyPaymentPlan()`
+([payment.ts:249](../../src/lib/membership/payment.ts#L249)), the route path
+`/api/membership-ops/applications/certify-payment`, and the
+`certificationNote` column, which now holds the note for BOTH a manual payment
+and a payment-plan approval. _(VOCAB #17)_
 
 ---
 
-## 🟢 "dues" → "membership fee"
+## 🟢 Drop the vocabulary-rename `@map` shims (contract stage)
 
-Canonical money word = **fee**. Rename `normalDuesCents` →
-`standardMembershipFeeCents`, `volunteerDuesCents` → `volunteerMembershipFeeCents`
-(kills the `normal`=non-member trap). Coordinate with P4's `*PriceCents` work.
-_(VOCAB #6)_
-
----
-
-## 🟢 Dedup `SessionUser` type
-
-`type SessionUser` redeclared inline in ≥4 places
-([types/participant.ts:5](../../src/types/participant.ts#L5),
-[attendance/current/page.tsx:42](../../src/app/attendance/current/page.tsx#L42),
-[programs/[id]/page.tsx:36](../../src/app/programs/[id]/page.tsx#L36),
-[AppFrame.tsx:53](../../src/components/AppFrame.tsx#L53)). Consolidate to one export;
-rename the stale-named `types/participant.ts`. _(VOCAB #8)_
+"dues" → "membership fee" (`BoardSettings.standardMembershipFeeCents`,
+`.volunteerMembershipFeeCents`) and "certified" → "manual"
+(`OrgMembershipProcess.manualPaymentById`) shipped the Prisma/API/UI half; all
+three fields still `@map` to the old physical columns, which a rolling deploy
+can't rename in the same release. Rename them once that release is out —
+[#1583](https://github.com/innovationtreehouse/checkin/issues/1583).
+_(VOCAB #6, #17)_
 
 ---
-
-## 🟡 `household` vs `family` — keep the split, or unify?
-
-Code is all `Household`; UI intermittently says "family" (and `TrustedAdult.familyContext`).
-**Default = keep the split** — code `Household`, "family" allowed as warm user copy
-(already recorded in VOCABULARY). To **unify** instead: rename field
-`TrustedAdult.familyContext` → `householdContext` (`prisma/schema.prisma`) + consumers
-(`api/safety/trusted-adults`, `api/trusted-adults/*`, `safety/trusted-adults/page.tsx`,
-security registry + strip tests); "family" → "household" copy across
-my-household / review / register / volunteer-memberships / my-activities;
-`memberFamilies` → `memberHouseholds`. DB wiped on deploy → no data care.
-_(was proposal Phase 5)_
 
 ## 🟢 Retire `dependent` + fix intake `children` bucket (BUG-2)
 
@@ -201,13 +166,12 @@ separate `'member'` **security field-visibility tier**, which is a different axi
 (a typed access contract, not the membership noun):
 
 - `Tier = 'public' | 'member' | SensitiveTier | 'secret'` and
-  `Token = 'public' | 'member' | …` ([security/core.ts:41,55](../../src/security/core.ts#L41)).
+  `Token = 'public' | 'member' | …` ([security/core.ts:55,74](../../src/security/core.ts#L55)).
   Semantics: a `member`-tier field is visible to a member view; a member view holds
-  BOTH `'member'` and `'public'`, anon holds only `'public'`
-  ([core.ts:6-10,241](../../src/security/core.ts#L6)).
-- Surface if ever renamed to `'orgMember'`: ~34 `'member'` tokens across
+  BOTH `'member'` and `'public'`, anon holds only `'public'`.
+- Surface if ever renamed to `'orgMember'`: ~43 `'member'` tokens across
   [registry.ts](../../src/security/registry.ts) scope arrays; the one
-  `@sensitivity:member` schema tag ([schema.prisma:144](../../prisma/schema.prisma#L144),
+  `@sensitivity:member` schema tag ([schema.prisma:254](../../prisma/schema.prisma#L254),
   on `ToolStatus`); `level: 'member'` in generated
   [classifications.ts](../../src/security/generated/classifications.ts); parser
   guards ([scopes.ts:260](../../src/security/scopes.ts#L260), core.ts).
@@ -226,9 +190,6 @@ bless it as-is and record that in VOCABULARY. _(Phase 4 OQ-1)_
 
 ## 🔵 Aspirational — not built yet (enforced by policy / no data today)
 
-- **Tool categories + per-level/per-category age gates** (10/13/21; Certified =
-  category-based). `Tool` has no `category`, no age checks. Enforced by policy
-  outside the software for now. _(VOCAB #2)_
 - **Corporation / Organizational Partner Member** — no corporate partners today.
   Keep `Corporation`/`CorporationLead`/`CorporationMember` as scaffolding; when
   built, define the concept and qualify the bare `CorporationMember`. _(VOCAB #5)_
@@ -244,45 +205,12 @@ from the vocabulary sweep above. **Everything else that audit flagged has
 shipped** — the P0-B auth-consolidation buckets, the P1 near-neighbor fixes, P3-1
 error-path (`apiError` + lint, #728), P3-2 logger (#727), P1-2/6/7/8, P2-1 Person
 rename, P2-2 counterparty→trustedAdult (#734), and the GAP-1 program-roster leak.
-These four are what remain.
-
-## 🔴 Program → Instance → Event — 3-tier restructure (IN DESIGN, do NOT start code)
-
-Domain is **definition → offering → occurrence** but the schema is 2-tier
-(`Program` → `Event`, [schema.prisma:586](../../prisma/schema.prisma#L586)/[:702](../../prisma/schema.prisma#L702)).
-**Decided:** insert `ProgramInstance` between them — `Program` = reusable definition,
-`Instance` = one concrete offering, `Event` = today's leaf (attendance stays on
-`Event`; `RSVP`/`Visit` do not move). Model name `ProgramInstance` in code (never bare
-`instance`; `Session` is off-limits — NextAuth owns it).
-
-**Core open decision:** because `Program` becomes a template, its children
-(`ProgramParticipant` roster, `ProgramVolunteer`, `Fee`, `leadMentorId`, capacity,
-dates) likely **move down to Instance** — you enroll in an offering, not a definition.
-The per-child placement table is the heart of the design.
-
-**Security ripple (large):** the `programsLed` session claim (auth-options / authClaims
-/ next-auth.d.ts, added for the program-ops row gate) becomes `instancesLed`; the
-event→program authorize hop (`access-resolvers`, `events/[id]` inline gate, the GAP-1
-roster gate in `programs/[id]`) becomes event→instance→program. Full design proposal:
-[PROGRAM_INSTANCE_RESTRUCTURE.md](../../../docs/designs/PROGRAM_INSTANCE_RESTRUCTURE.md);
-**do not write code until the child-placement table + phasing are reviewed.**
-Supersedes the P2-3 Event/session naming item (naming resolves as an output).
-
-## 🟡 GAP-2 drift-guard — ban auth/route drift in CI (validators already armed)
-
-The scope validators are **armed + green** ([scopeValidators.test.ts](../../src/security/__tests__/scopeValidators.test.ts),
-#733): they prove every sensitive field is bound and every route grant resolves. The
-**second half is unbuilt by choice** — a CI drift-guard that fails on any new
-`getServerSession`/`authenticateRequest` import outside the wrapper libs
-([lib/auth.ts](../../src/lib/auth.ts)), and any `src/app/api/**` route that calls
-`prisma` without a registered policy. Today: 2 legit `getServerSession`
-(`dev-personas`, `shop/tools`, both optional-session). Without the guard the IDOR/drift
-class can regrow (it already went 2→6→2 once). Re-armable anytime.
-Ref: [auth-consistency-analysis.md](../../../docs/security/auth-consistency-analysis.md) §9 Step 7.
+Two remain here; the 3-tier restructure and the GAP-2 drift-guard have graduated to
+issues (see *Tracked as issues* below).
 
 ## 🔵 `handler()` consolidation — the "one authorization rule" end-state
 
-~13 of ~101 routes use the security `handler()` runtime; ~75 use `withAuth` (admission
+~13 of ~144 routes use the security `handler()` runtime; ~118 use `withAuth` (admission
 only, no field stripping) with row-authorization hand-rolled inline. End-state:
 `handler()` becomes the default, `withAuth` collapses into a degenerate `handler()`
 (permissive `orderedView` → no-op stripper), `withCron`/`withWebhook`/`withKiosk` stay
@@ -293,9 +221,28 @@ Ref: [auth-consistency-analysis.md](../../../docs/security/auth-consistency-anal
 ## 🟢 Response envelope — phase 2 (success bodies)
 
 Error responses route through `apiError()` + a lint guard (#728). **Success** bodies are
-still ad-hoc (~547 raw `NextResponse.json`, varied shapes: `{data}`, `{household}`,
+still ad-hoc (~252 raw `NextResponse.json`, varied shapes: `{data}`, `{household}`,
 `{Person}`, …). Standardizing them is deliberately deferred to **ride the `handler()`
 migration** (handler owns the success `envelope`), not a parallel rewrite. Ref: P3-1.
+
+---
+
+## Tracked as issues — removed from this ledger (do not re-add)
+
+These were surfaced here, then graduated to the issue tracker. The issue is the
+live record; this doc no longer carries them.
+
+- **Program → Instance → Event, 3-tier restructure** — **#1361** (phase 1: additive
+  tier + backfill). Design: [PROGRAM_INSTANCE_RESTRUCTURE.md](../../../docs/designs/PROGRAM_INSTANCE_RESTRUCTURE.md).
+  Related: #1243 (volunteer↔instance assignment).
+- **GAP-2 drift-guard CI ban** (fail on new `getServerSession` / unregistered prisma
+  route) — **#1320**. Ref: [auth-consistency-analysis.md](../../../docs/security/auth-consistency-analysis.md) §9 Step 7.
+- **Tool categories not modelled** — **#1440**.
+- **Per-level / per-category age gates** (10/13/21) — **#1439**.
+
+The vocab renames still listed above are the body of the umbrella issue **#1322**
+(*Vocab rename ledger (UNFINISHED.md)*), which points back at this doc — so they stay
+here rather than graduating.
 
 ---
 
@@ -308,8 +255,11 @@ migration** (handler owns the success `envelope`), not a parallel rewrite. Ref: 
 - **EmergencyContact** — clear, well-commented; not-a-household-member invariant
   documented. (`conflictParticipantId` is Person-migration tail, not new.)
 - **Audit / Error / Metric / Integration / Dev logs** — internal, self-describing.
-- **Account / Session / VerificationToken** — standard NextAuth; only smell
-  (`@map("participant_id")` + "user") is the SessionUser dedup item above.
+- **Account / Session / VerificationToken** — standard NextAuth. The remaining
+  smell is the `userId Int @map("participant_id")` on `Account`/`Session`
+  ([schema.prisma:1189](../../prisma/schema.prisma#L1189), `:1222`) — a
+  Participant-era physical column NextAuth insists on calling "user". Left
+  alone: renaming it is a migration, not a vocab fix.
 - **AttestationResult / OrgMembershipStatus / ProgramPhase / EnrollmentStatus** —
   well-scoped status enums; no cross-layer drift. (Was `MembershipStatus`; renamed
   with the model in Phase 4 #735.)
@@ -334,6 +284,19 @@ migration** (handler owns the success `envelope`), not a parallel rewrite. Ref: 
   `security/handler.ts`), then re-wraps under the route's `envelope` for the wire
   (e.g. `/api/shop/org-members` → `{ org-members: [...] }`). The bag key reading
   differently from the wire key is **intentional**, not a mismatch — do not "fix" it.
+- **Certifier "any-tool → global" widening — ACCEPTED (2026-07-02), not a security
+  issue.** Certifiers are a small group; the `isCertifier` nav/access checks that
+  fire on holding `MAY_CERTIFY_OTHERS` on **any** tool (`shopNav`,
+  `access-resolvers`, `pageRegistry`, `AppFrame`, `ToolManagementPanel`) are
+  intended convenience, not an over-grant. The **grant action itself stays
+  per-tool** ([shop/certifications/route.ts](../../src/app/api/shop/certifications/route.ts)) —
+  you can only certify others on a tool you're a certifier for. No change needed.
+- **`household` vs `family` — split kept, decided.** Code is `Household`; "family"
+  is allowed as warm user copy, and `TrustedAdult.familyContext` is a distinct
+  *attribute* (the board-facing explanation), not a stale alias — both recorded in
+  [VOCABULARY.md](../VOCABULARY.md). The unify option (`familyContext` →
+  `householdContext`, `memberFamilies` → `memberHouseholds`) is **not** being taken.
+  _(was proposal Phase 5)_
 - **`student` / `youth` == non-lead** — checked, **NOT** a logic conflation. It
   lives only in vocabulary (`dependent` ≈ non-lead; old `student` ≈ minor);
   promotion allows a non-lead **adult** → lead (`my-household`). Behavior preserves

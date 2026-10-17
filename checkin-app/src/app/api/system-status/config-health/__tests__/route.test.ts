@@ -13,6 +13,16 @@ jest.mock('@/lib/auth', () => ({
 }));
 
 import { GET } from '../route';
+import prisma from '@/lib/prisma';
+
+const LAST_SUCCESS = new Date('2026-08-06T09:00:00.000Z');
+
+beforeEach(() => {
+    prisma.cronRunLog.groupBy = jest.fn().mockResolvedValue([
+        { job: 'nightly', _max: { finishedAt: LAST_SUCCESS } },
+    ]);
+    prisma.cronRunLog.findMany = jest.fn().mockResolvedValue([]);
+});
 
 const req = () => new Request('http://localhost/api/system-status/config-health');
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -45,5 +55,13 @@ describe('GET /api/system-status/config-health — auth gate', () => {
     it('200 for a sysadmin', async () => {
         const res = await call({ type: 'session', user: { isSysadmin: true, isBoardMember: false } });
         expect(res.status).toBe(200);
+    });
+
+    it('carries the cron run ledger alongside the config checks', async () => {
+        const res = await call({ type: 'session', user: { isSysadmin: false, isBoardMember: true } });
+        const body = await res.json();
+        expect(body.cronJobs).toEqual([
+            { job: 'nightly', lastSuccessAt: LAST_SUCCESS.toISOString(), stale: expect.any(Boolean) },
+        ]);
     });
 });

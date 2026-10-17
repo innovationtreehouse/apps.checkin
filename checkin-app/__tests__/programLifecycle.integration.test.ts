@@ -66,14 +66,15 @@ describe('Program Lifecycle Integration Tests', () => {
         // 4. Create a program
         const program = await prisma.program.create({
             data: {
+                startAt: new Date('2026-01-01'),
+                endAt: new Date('2026-12-31'),
                 name: "Integration Test Program",
                 leadMentorId,
                 orgMemberPriceCents: 50,
                 nonOrgMemberPriceCents: 100,
                 shopifyProductId: "test-prod",
-                shopifyOrgMemberVariantId: "test-mem-var",
-                shopifyNonOrgMemberVariantId: "test-non-var",
-                enrollmentStatus: "OPEN"
+                shopifyVariantId: "test-non-var",
+                enrollmentStatus: "OPEN", offSaleAt: new Date("2999-01-01")
             }
         });
         testProgramId = program.id;
@@ -136,6 +137,9 @@ describe('Program Lifecycle Integration Tests', () => {
     it('Should require a Board Member to supply override=true when bypassing payment flows', async () => {
         mockGetSession.mockResolvedValue({ user: { id: boardAdminId, isBoardMember: true } });
 
+        // An existing PENDING claim short-circuits to 409 before the override prompt.
+        await prisma.programParticipant.deleteMany({ where: { programId: testProgramId, personId: testParticipantId } });
+
         const req = new Request(`http://localhost/api/programs/${testProgramId}/participants`, {
             method: 'POST',
             body: JSON.stringify({ participantId: testParticipantId }) // No override flag
@@ -180,10 +184,11 @@ describe('Program Lifecycle Integration Tests', () => {
         });
 
         // 2. Build Shopify webhook payload. line_items must contain the program's
-        // own Shopify variant (shopifyNonOrgMemberVariantId set in beforeAll) —
-        // the route now verifies this before activating (see route.ts).
+        // own Shopify variant (shopifyVariantId set in beforeAll) — the route
+        // verifies this before activating (see route.ts).
         const payload = JSON.stringify({
             id: 12345,
+            financial_status: 'paid',
             line_items: [{ variant_id: "test-non-var" }],
             note_attributes: [
                 { name: "CheckMeIn_Account_ID", value: String(testParticipantId) },
@@ -199,6 +204,7 @@ describe('Program Lifecycle Integration Tests', () => {
             method: 'POST',
             headers: {
                 'x-shopify-hmac-sha256': hmac,
+                'x-shopify-topic': 'orders/paid',
                 'Content-Type': 'application/json'
             },
             body: payload

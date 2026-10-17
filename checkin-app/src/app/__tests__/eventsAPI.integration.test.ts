@@ -64,6 +64,8 @@ describe('Events API Integration Tests', () => {
 
         const program = await prisma.program.create({
             data: {
+                startAt: new Date('2026-01-01'),
+                endAt: new Date('2026-12-31'),
                 name: 'Events Test Program',
                 leadMentorId: testLeadMentorId,
                 maxParticipants: 10,

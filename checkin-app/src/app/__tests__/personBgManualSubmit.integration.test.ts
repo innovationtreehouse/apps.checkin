@@ -20,12 +20,13 @@ import { GET as REVIEW_QUEUE } from '@/app/api/membership/reviews/route';
 import { GET as COMPLIANCE } from '@/app/api/membership-audit/compliance/route';
 import { attest, eligibleReviewProcessIds } from '@/lib/membership/review';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import { sendEmail } from '@/lib/email';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 // The reviewer ping is exercised (notifyReviewers) but must not hit Resend.
-jest.mock('@/lib/email', () => ({ sendEmail: jest.fn().mockResolvedValue(true) }));
+jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
 const sendEmailMock = sendEmail as jest.Mock;
 
 const TAG = 'person-bg-submit-test';
@@ -59,7 +60,7 @@ async function makePerson(slug: string, householdId: number, data: Partial<{ dat
     });
 }
 async function attachToProgram(slug: string, personId: number) {
-    const program = await prisma.program.create({ data: { name: `${TAG} ${slug} program` } });
+    const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${TAG} ${slug} program` } });
     await prisma.programParticipant.create({ data: { programId: program.id, personId } });
     return program.id;
 }
@@ -104,13 +105,12 @@ async function cleanup() {
 }
 
 describe('Phase 3 — manual PERSON_BG submit + queue gating + e2e', () => {
-    let savedSettings: { bgRecheckMonths: number; orgMembershipYearBoundary: Date | null } | null = null;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
     let rev1 = 0, rev2 = 0, board = 0, nonReviewer = 0;
 
     beforeAll(async () => {
         await cleanup();
-        const prev = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        savedSettings = prev ? { bgRecheckMonths: prev.bgRecheckMonths, orgMembershipYearBoundary: prev.orgMembershipYearBoundary } : null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await setRecheckMonths(RECHECK_MONTHS);
 
         const hhA = await makeHousehold('revA');
@@ -124,7 +124,7 @@ describe('Phase 3 — manual PERSON_BG submit + queue gating + e2e', () => {
 
     afterAll(async () => {
         await cleanup();
-        if (savedSettings) await prisma.boardSettings.update({ where: { id: 1 }, data: savedSettings });
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 

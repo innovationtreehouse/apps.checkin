@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Validator-oracle integration tests (docs/designs/LIFECYCLE.md).
+ * Validator-oracle integration tests.
  *
  * Drives each real transition (T3, T3f, T3m, T4, T5, T6, T7/T8/T9) against a real
  * DB through its OWNING code — the route handler / shared mutator that carries the
@@ -20,6 +20,14 @@ import { POST as RefusePost } from '@/app/api/finance-ops/payment-plans/refuse/r
 import { activateProgramEnrollment } from '@/lib/programs/activateEnrollment';
 import { withdrawAndReleaseHold } from '@/lib/program/capacity';
 import prisma from '@/lib/prisma';
+import * as shopify from '@/lib/shopify';
+
+// Wrap only changeProgramStock (call-through) so one test can force a −1 that
+// could not be recorded; SWC exports are non-configurable getters, so no spyOn.
+jest.mock('@/lib/shopify', () => {
+    const actual = jest.requireActual('@/lib/shopify');
+    return { ...actual, changeProgramStock: jest.fn(actual.changeProgramStock) };
+});
 import { classify, validate, toRow, type EnrollmentStateName } from '@/lib/programs/enrollmentState';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -36,7 +44,14 @@ describe('enrollment state — validator oracle over real transitions', () => {
 
     beforeAll(async () => {
         const self = await prisma.person.create({
-            data: { name: 'Oracle Self', email: `self-${TAG}@example.com`, household: { create: { name: 'HH' } } },
+            // Adult DOB: the oracle drives self-service transitions (request a
+            // payment plan), which only a known adult may do.
+            data: {
+                name: 'Oracle Self',
+                email: `self-${TAG}@example.com`,
+                dateOfBirth: new Date(Date.now() - (30 * 31556952000)),
+                household: { create: { name: 'HH' } },
+            },
         });
         selfId = self.id;
         const board = await prisma.person.create({
@@ -45,7 +60,7 @@ describe('enrollment state — validator oracle over real transitions', () => {
         boardId = board.id;
         // shopifyVariantId present so the apply-time hold logic engages (single pool).
         const program = await prisma.program.create({
-            data: { name: `Oracle Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-oracle' },
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Oracle Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: 'dev-mock-variant-oracle' },
         });
         programId = program.id;
     });
@@ -72,6 +87,8 @@ describe('enrollment state — validator oracle over real transitions', () => {
                 inventoryHeldAt: fields.held ? now : null,
                 paymentPlanDeniedAt: fields.den ? now : null,
                 pendingSince: fields.pendingSince ?? now,
+                shopifyOrderId: null,
+                seatTakenWithoutSaleAt: null,
             },
             create: {
                 programId, personId: selfId,
@@ -124,7 +141,9 @@ describe('enrollment state — validator oracle over real transitions', () => {
 
     it('T3f apply (−1 FAILS): PENDING_UNPAID → PENDING_HOLD_FAILED', async () => {
         const prev = process.env.CHECKIN_ENV;
-        delete process.env.CHECKIN_ENV; // no mock, no creds → adjust returns false → rollback
+        delete process.env.CHECKIN_ENV;
+        // Only a −1 the stock writer could not even record rolls the hold back.
+        jest.mocked(shopify.changeProgramStock).mockResolvedValueOnce({ recorded: false, landed: false });
         try {
             await seed({ req: false, held: false, den: false }); // PENDING_UNPAID
             mockSession.mockResolvedValue({ user: { id: selfId } });
@@ -148,7 +167,7 @@ describe('enrollment state — validator oracle over real transitions', () => {
     it('T4 activate (payment) from PENDING_HELD → ACTIVE, hold released', async () => {
         await seed({ req: true, held: true, den: false }); // PENDING_HELD
         const { activatedCount, releasedHoldCount } = await activateProgramEnrollment({
-            programId, personIds: [selfId], shopifyOrderId: 'order-oracle-1', hasProgramItem: true, purchasedOrgMember: null,
+            programId, personIds: [selfId], shopifyOrderId: 'order-oracle-1',
         });
         expect(activatedCount).toBe(1);
         expect(releasedHoldCount).toBe(1);
@@ -158,7 +177,7 @@ describe('enrollment state — validator oracle over real transitions', () => {
     it('T4 activate (payment) from PENDING_UNPAID → ACTIVE, no hold to release', async () => {
         await seed({ req: false, held: false, den: false }); // PENDING_UNPAID
         const { activatedCount, releasedHoldCount } = await activateProgramEnrollment({
-            programId, personIds: [selfId], shopifyOrderId: 'order-oracle-2', hasProgramItem: true, purchasedOrgMember: null,
+            programId, personIds: [selfId], shopifyOrderId: 'order-oracle-2',
         });
         expect(activatedCount).toBe(1);
         expect(releasedHoldCount).toBe(0);
@@ -204,6 +223,37 @@ describe('enrollment state — validator oracle over real transitions', () => {
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
         const { released } = await withdrawAndReleaseHold(programId, selfId, program);
         expect(released).toBe(true);
+        await assertGone();
+    });
+
+    const stampOf = async () =>
+        (await prisma.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId: selfId } } })).seatTakenWithoutSaleAt;
+
+    it('T5 then T11: an approved held seat is recorded, and withdrawal returns it (+1)', async () => {
+        await seed({ req: true, held: true, den: false }); // PENDING_HELD
+        mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        expect((await PlansPost(financeReq('http://localhost/api/finance-ops/payment-plans'))).status).toBe(200);
+        expect(await stampOf()).not.toBeNull();
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(true);
+        await assertGone();
+    });
+
+    it('T11 after approving a request whose hold failed: nothing recorded, nothing returned', async () => {
+        await seed({ req: true, held: false, den: false }); // PENDING_HOLD_FAILED
+        mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        expect((await PlansPost(financeReq('http://localhost/api/finance-ops/payment-plans'))).status).toBe(200);
+        await assertState('ACTIVE');
+        expect(await stampOf()).toBeNull();
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(false);
+        await assertGone();
+    });
+
+    it('T11 on an ACTIVE place with no record (paid, or enrolled while free) returns nothing', async () => {
+        await seed({ req: false, held: false, den: false, status: 'ACTIVE' });
+        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+        expect((await withdrawAndReleaseHold(programId, selfId, program)).released).toBe(false);
         await assertGone();
     });
 

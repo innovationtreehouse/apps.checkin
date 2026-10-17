@@ -4,6 +4,7 @@ import { sendCheckinNotifications } from "@/lib/notifications";
 import { sendEmail } from "@/lib/email";
 
 jest.mock("@/lib/email", () => ({
+    runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())),
     sendEmail: jest.fn().mockResolvedValue(true)
 }));
 

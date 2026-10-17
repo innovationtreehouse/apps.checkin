@@ -1,14 +1,22 @@
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { withAuth } from "@/lib/auth";
 import { reconcileAndWarn } from "@/lib/emergencyContacts/service";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { isOrgAccount } from "@/lib/orgAccount";
-import { HOUSEHOLD_PEER_SELECT } from "@/lib/household/participantProjection";
+import { HOUSEHOLD_PEER_SELECT, HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT } from "@/lib/household/participantProjection";
 import { householdLeadship } from "@/lib/household/leads";
+import { normalizeAdultDob } from "@/lib/person/adultDob";
+import { LIVE_PERSON } from "@/lib/person/filters";
+import { mintPersonId } from "@/lib/person/mintId";
 import { apiError } from "@/lib/api-response";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { getEmailSenderIdentity } from "@/lib/emailIdentity";
+import { membershipValidThrough } from "@/lib/orgMembership";
+import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 
 export const GET = withAuth(
     {},
@@ -22,7 +30,7 @@ export const GET = withAuth(
                 include: {
                     household: {
                         include: {
-                            householdMembers: { select: HOUSEHOLD_PEER_SELECT },
+                            householdMembers: { where: LIVE_PERSON, select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT },
                             orgMembership: true,
                         }
                     }
@@ -40,11 +48,25 @@ export const GET = withAuth(
             // and the 403 on PATCH /api/household/settings. Address stays: shared
             // household data the family authored.
             const canSeeNotes = user.isHouseholdLead || user.isSysadmin;
-            const household = user.household && !canSeeNotes
-                ? { ...user.household, intakeNotes: null }
-                : user.household;
+            const household = user.household && {
+                ...user.household,
+                ...(canSeeNotes ? {} : { intakeNotes: null }),
+                // A linked sign-in locks the member's email on the household card;
+                // only the boolean leaves, never Account data.
+                householdMembers: user.household.householdMembers.map(({ _count, ...m }) => ({
+                    ...m,
+                    hasSignIn: _count.accounts > 0,
+                })),
+            };
+            // Where the locked-email help text points members to change it.
+            const { replyTo } = await getEmailSenderIdentity();
 
-            return NextResponse.json({ household }, { status: 200 });
+            // Same valid-until households-ops shows, so the family sees the lapse the board sees.
+            const validUntil = household?.orgMembership?.status === "ACTIVE"
+                ? await membershipValidThrough(household.id)
+                : null;
+
+            return NextResponse.json({ household, boardReplyTo: replyTo?.[0] ?? null, validUntil }, { status: 200 });
         } catch (error: unknown) {
             logger.error("Household GET Error:", error);
             return apiError("Internal Server Error", 500);
@@ -83,8 +105,16 @@ export const PATCH = withAuth(
                 return apiError("Invalid email format", 400);
             }
 
+            if (memberEmail && await isDesignatedEmail(prisma, memberEmail)) {
+                return apiError(await designatedEmailRefusalForBoard(), 400);
+            }
+
             if (memberPhone && !isValidPhone(memberPhone)) {
                 return apiError(PHONE_ERROR, 400);
+            }
+
+            if (!memberName?.trim()) {
+                return apiError("Name is required", 400);
             }
 
             if (!memberDob && !memberOver25) {
@@ -102,11 +132,14 @@ export const PATCH = withAuth(
                 // here would let any lead absorb a known/guessed email into their household.
                 const member = await tx.person.create({
                     data: {
+                        id: await mintPersonId(tx),
                         name: memberName,
                         ...(memberEmail && { email: memberEmail.toLowerCase() }),
-                        dateOfBirth: memberDob ? new Date(memberDob) : null,
+                        // #1165: strip DoB + declare adult when the entered date is 26+.
+                        // When no DoB is given, the over-25 checkbox owns the flag.
+                        ...normalizeAdultDob(memberDob || null),
                         ...(memberPhone && { phone: formatPhone(memberPhone) }),
-                        isDeclaredAdult: !memberDob && !!memberOver25,
+                        ...(memberDob ? {} : { isDeclaredAdult: !!memberOver25 }),
                         allergies: memberAllergies || null,
                         householdId,
                     },
@@ -129,6 +162,7 @@ export const PATCH = withAuth(
 
                 return { member, warning };
             });
+            invalidateAttendanceCache();
 
             return NextResponse.json({ member, warning }, { status: 200 });
         } catch (error: unknown) {
@@ -144,10 +178,3 @@ export const PATCH = withAuth(
         }
     }
 );
-
-// Prisma known-request errors carry a string `code`. Duck-typed so we don't
-// pull in the generated Prisma namespace just for one check.
-function isPrismaError(error: unknown, code: string): boolean {
-    return typeof error === 'object' && error !== null && 'code' in error
-        && (error as { code: unknown }).code === code;
-}

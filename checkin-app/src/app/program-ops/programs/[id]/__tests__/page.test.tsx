@@ -97,6 +97,14 @@ describe("ProgramDetailsPage", () => {
     expect(screen.getByText("Mandy Mentor (mandy@example.com)")).toBeInTheDocument();
   });
 
+  it("renders a zero max participants as a real cap, not as uncapped", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/programs/1": { ...programData, maxParticipants: 0 } });
+    renderPage();
+
+    expect(await screen.findByText("2 / 0")).toBeInTheDocument();
+  });
+
   it("switches to the roster tab and shows volunteers/participants", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/programs/1": programData });
@@ -112,7 +120,7 @@ describe("ProgramDetailsPage", () => {
   it("searches and adds a volunteer", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({
-      "/api/programs/1/eligible-participants": { members: [{ id: 555, name: "Wendy West", email: "wendy@example.com" }] },
+      "/api/programs/1/eligible-participants": { members: [{ id: 555, name: "Wendy West", ageWarning: null }] },
       "/api/programs/1/volunteers": {},
       "/api/programs/1": programData,
     });
@@ -344,7 +352,7 @@ describe("ProgramDetailsPage", () => {
   it("keeps the volunteer selection when the add request fails", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = routedFetch([
-      { url: "/api/programs/1/eligible-participants", method: "GET", result: { ok: true, body: { members: [{ id: 555, name: "Wendy West", email: "wendy@example.com" }] } } },
+      { url: "/api/programs/1/eligible-participants", method: "GET", result: { ok: true, body: { members: [{ id: 555, name: "Wendy West", ageWarning: null }] } } },
       { url: "/api/programs/1/volunteers", method: "POST", result: { ok: false, status: 400, body: {} } },
       { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
     ]);
@@ -360,7 +368,7 @@ describe("ProgramDetailsPage", () => {
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith("/api/programs/1/volunteers", expect.objectContaining({ method: "POST" })),
     );
-    expect(screen.getByDisplayValue("Wendy West (wendy@example.com)")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Wendy West")).toBeInTheDocument();
   });
 
   it("shows empty states when there are no volunteers, participants, or events", async () => {
@@ -379,13 +387,12 @@ describe("ProgramDetailsPage", () => {
     expect(await screen.findByText("No events scheduled.")).toBeInTheDocument();
   });
 
-  it("enrolls a participant after the sysadmin confirms, warns on age, and shows a server error otherwise", async () => {
+  it("enrolls a participant after the sysadmin confirms, shows the server's age warning, and shows a server error otherwise", async () => {
     setSession({ id: 1, isSysadmin: true });
     const eligible = {
       members: [
-        { id: 777, name: "Gerry Grownup", email: "gerry@example.com", dateOfBirth: "1990-01-01" },
-        { id: 778, name: "Kiki Kid", email: "kiki@example.com", dateOfBirth: "2022-01-01" }, // too young
-        { id: 779, name: "Oldman Owen", email: "owen@example.com", dateOfBirth: "1970-01-01" }, // too old
+        { id: 777, name: "Gerry Grownup", ageWarning: null },
+        { id: 778, name: "Kiki Kid", ageWarning: "Too young" },
       ],
     };
     let attempt = 0;
@@ -404,9 +411,7 @@ describe("ProgramDetailsPage", () => {
     const participantSearch = (await screen.findAllByPlaceholderText("Start typing to search..."))[1];
     fireEvent.change(participantSearch, { target: { value: "e" } });
     await screen.findByText("Kiki Kid");
-    expect(screen.getByText(/Too Young/)).toBeInTheDocument();
-    // Both Gerry (36) and Owen (56) exceed maxAge 18 -> two "Too Old" badges.
-    expect(screen.getAllByText(/Too Old/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Too young/)).toHaveLength(1);
     fireEvent.click(screen.getByText("Gerry Grownup"));
 
     fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
@@ -428,6 +433,55 @@ describe("ProgramDetailsPage", () => {
         expect.objectContaining({ method: "POST", body: JSON.stringify({ participantId: 777, override: true }) }),
       ),
     );
+  });
+
+  it("renders the parents above the emergency contacts, skipping a participant who leads their own household", async () => {
+    const withParents = {
+      ...programData,
+      participants: [
+        {
+          personId: 501, status: "ACTIVE", pendingSince: null,
+          person: {
+            name: "Kid With Parents", email: "kid@example.com", phone: "5125559999",
+            household: {
+              householdMembers: [
+                { id: 601, name: "Sam Smith", email: "sam@example.com", phone: "5125551111" },
+                { id: 602, name: "Jamie Smith", email: null, phone: "5125552222" },
+              ],
+              emergencyContacts: [{ id: 1, name: "Aunt Ada", phone: "5125553333", relationship: "Aunt" }],
+            },
+          },
+        },
+        {
+          personId: 603, status: "ACTIVE", pendingSince: null,
+          person: {
+            name: "Adult Lead", email: "adult@example.com", phone: "5125558888",
+            household: {
+              householdMembers: [{ id: 603, name: "Adult Lead", email: "adult@example.com", phone: "5125558888" }],
+              emergencyContacts: [],
+            },
+          },
+        },
+      ],
+    };
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/programs/1": withParents });
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+
+    const labels = await screen.findAllByText("Parent/Guardian:");
+    expect(screen.getByText(/Sam Smith - 512-555-1111, sam@example.com; Jamie Smith - 512-555-2222/)).toBeInTheDocument();
+
+    // The point of the issue: parents come first, emergency contacts after.
+    // Both cards render a singular "Emergency Contact:"; [0] is this card's.
+    const contacts = screen.getAllByText("Emergency Contact:")[0];
+    expect(labels[0].compareDocumentPosition(contacts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // An adult who leads their own household is not listed as their own parent:
+    // the second card's line reads N/A, not the adult's own name.
+    expect(labels[1].parentElement).toHaveTextContent("Parent/Guardian: N/A");
+    expect(screen.queryByText(/Adult Lead - /)).not.toBeInTheDocument();
   });
 
   it("renders participant phone/household/pending-since edge cases and removes on confirm", async () => {
@@ -487,6 +541,124 @@ describe("ProgramDetailsPage", () => {
         expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 403 }) }),
       ),
     );
+  });
+
+  it("surfaces the server error when removing a pending participant is rejected", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = routedFetch([
+      {
+        url: "/api/programs/1/participants", method: "DELETE",
+        result: { ok: false, status: 403, body: { error: "Forbidden: Not authorized to remove this participant" } },
+      },
+      { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    await screen.findByText(/Charlie Kid/);
+
+    // Volunteer (201), active participant (101), then the pending one (102).
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[2]);
+    const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
+    fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/programs/1/participants",
+        expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 102 }) }),
+      ),
+    );
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", message: "Forbidden: Not authorized to remove this participant" }),
+      ),
+    );
+    // The row is still there — the failed removal must not look like it worked.
+    expect(screen.getByText(/Charlie Kid/)).toBeInTheDocument();
+  });
+
+  it("surfaces a network error when the remove request throws", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    routedFetch([
+      { url: "/api/programs/1/participants", method: "DELETE", result: { throws: true } },
+      { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    await screen.findByText(/Charlie Kid/);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[2]);
+    const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
+    fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", message: "Network error — please try again." }),
+      ),
+    );
+  });
+
+  it("surfaces the server error when removing a volunteer is rejected", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    routedFetch([
+      { url: "/api/programs/1/volunteers", method: "DELETE", result: { ok: false, status: 500, body: {} } },
+      { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    await screen.findByText(/Vera Volunteer/);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+    const modal = await screen.findByRole("dialog", { name: "Remove Volunteer" });
+    fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
+
+    // No `error` in the body -> the status-code fallback.
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", message: "Request failed (500)." }),
+      ),
+    );
+  });
+
+  it("surfaces a DELETE notice/warning as a notification, but stays quiet on a bare success", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const responses = [
+      { notice: "Seat freed. Add +1 in Shopify." },
+      { warning: "Shopify inventory release failed." },
+      { success: true },
+    ];
+    let call = 0;
+    routedFetch([
+      { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
+      { url: "/api/programs/1/participants", method: "DELETE", result: () => ({ ok: true, body: responses[call++] }) },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    await screen.findByText(/Alice Kid/);
+
+    // 1st remove -> notice (blue)
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Remove" }));
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "blue", message: "Seat freed. Add +1 in Shopify." })),
+    );
+
+    // 2nd remove -> warning (yellow)
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Remove" }));
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "yellow", message: "Shopify inventory release failed." })),
+    );
+
+    // 3rd remove -> bare success, no further notification
+    const before = (notifications.show as jest.Mock).mock.calls.length;
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Remove Participant" })).not.toBeInTheDocument());
+    expect((notifications.show as jest.Mock).mock.calls.length).toBe(before);
   });
 
   it("shows past-confirmed and future events distinctly, and can schedule a new session", async () => {

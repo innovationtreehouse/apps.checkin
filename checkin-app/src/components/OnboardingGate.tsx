@@ -7,6 +7,7 @@ import { notifications } from '@mantine/notifications';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { isValidEmail } from '@/lib/emergencyContacts/identity';
 import { isValidPhone, PHONE_ERROR } from '@/lib/phone';
+import EmergencyContactNotice from '@/components/ui/EmergencyContactNotice';
 import {
   Alert,
   Box,
@@ -35,9 +36,8 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const checkStatus = useCallback(async () => {
-    try {
-      const res = await fetch('/api/profile/onboarding-status');
+  const checkStatus = useCallback(() => fetch('/api/profile/onboarding-status')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
 
@@ -46,19 +46,16 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
           setNeedsEmergencyContact(data.needsEmergencyContact);
         }
       }
-    } catch (err) {
+    })
+    .catch((err) => {
       console.error('Failed to check onboarding status', err);
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
-    if (status === 'unauthenticated') {
-      setLoading(false);
-      return;
-    }
-
     if (status === 'authenticated') {
       checkStatus();
     }
@@ -154,10 +151,11 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
                 <Title order={5} mb="xs">
                   Household Emergency Contact
                 </Title>
-                <Text size="sm" c="dimmed" mb="md">
+                <Text size="sm" c="dimmed" mb="sm">
                   As a household lead, you must designate an emergency contact for your household
                   members.
                 </Text>
+                <EmergencyContactNotice mb="md" />
                 <Stack>
                   <TextInput
                     label="Contact Name"

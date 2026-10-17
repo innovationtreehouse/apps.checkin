@@ -6,7 +6,9 @@ import { useRequireRole } from '@/hooks/useRequireRole';
 import { Alert, Badge, Button, Card, Checkbox, Group, Paper, SimpleGrid, Stack, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core';
 import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { PageContainer } from '@/components/ui/PageContainer';
-import { calculateAge } from '@/lib/time';
+import EmergencyContactNotice from '@/components/ui/EmergencyContactNotice';
+import { calculateAge, formatDateOnly } from '@/lib/time';
+import { isMembershipLapsed } from '@/lib/membership/lapsed';
 import TrustedAdultPanel from '@/components/TrustedAdultPanel';
 import { notifications } from '@mantine/notifications';
 import TodoCard from '@/components/TodoCard';
@@ -16,6 +18,7 @@ import { pickAddress, validateAddress, type StructuredAddress, type AddressField
 import { isValidPhone, formatPhone, PHONE_ERROR } from '@/lib/phone';
 import { isValidEmail } from '@/lib/emergencyContacts/identity';
 import { useUnsavedGuard, shallowEqual } from '@/components/UnsavedChangesProvider';
+import { signInEmailHelp } from '@/lib/person/signInEmail';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 const blankAddress: StructuredAddress = { line1: "", line2: "", city: "", state: "", postalCode: "" };
@@ -45,7 +48,7 @@ function ageBadge(p: HouseholdMember): { label: string; color: string; variant: 
   return { label: 'Age Unavailable', color: 'red', variant: 'filled' };
 }
 
-type HouseholdMember = { id: number; name?: string; email?: string; dateOfBirth?: string; phone?: string; isDeclaredAdult?: boolean; allergies?: string | null; isHouseholdLead?: boolean };
+type HouseholdMember = { id: number; name?: string; nickname?: string | null; email?: string; dateOfBirth?: string; phone?: string; isDeclaredAdult?: boolean; allergies?: string | null; isHouseholdLead?: boolean; hasSignIn?: boolean };
 type EmergencyContact = { id: number; name: string; phone: string; email?: string | null; relationship?: string | null; priority: number; invalid: boolean };
 type HouseholdData = {
   id?: number;
@@ -62,9 +65,11 @@ export default function HouseholdPage() {
 
   const [loading, setLoading] = useState(true);
   const [household, setHousehold] = useState<HouseholdData>(null);
+  const [boardReplyTo, setBoardReplyTo] = useState<string | null>(null);
   // Open renewal for this household (lead-only, from /api/membership/renewal-status).
   // Drives the "Renew now" copy for a still-ACTIVE member whose renewal has opened.
   const [renewalDue, setRenewalDue] = useState(false);
+  const [validUntil, setValidUntil] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
   // Explicit tone per outcome so a real error can never render green (was
   // decided by `message.includes('success')`).
@@ -79,7 +84,7 @@ export default function HouseholdPage() {
   const [householdMemberErrors, setHouseholdMemberErrors] = useState<{ name?: string; email?: string; dob?: string; phone?: string }>({});
 
   const [editingHouseholdMemberId, setEditingHouseholdMemberId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState({ name: "", email: "", dob: "", phone: "", isLead: false, over25: false, allergies: "" });
+  const [editForm, setEditForm] = useState({ name: "", nickname: "", email: "", dob: "", phone: "", isLead: false, over25: false, allergies: "" });
   // Errors for the inline edit form. phone shown only after a Save attempt, so
   // the red ring never appears mid-typing.
   const [editErrors, setEditErrors] = useState<{ name?: string; email?: string; dob?: string; phone?: string }>({});
@@ -106,20 +111,22 @@ export default function HouseholdPage() {
   // so phone/email/name errors never flash while the user is still typing.
   const [contactErrors, setContactErrors] = useState<{ name?: string; phone?: string; email?: string }>({});
 
-  const fetchContacts = useCallback(async () => {
-    const res = await fetch('/api/household/emergency-contacts');
-    if (res.ok) {
-      const data = await res.json();
-      setContacts(data.contacts || []);
-    }
-  }, []);
+  const fetchContacts = useCallback(() => fetch('/api/household/emergency-contacts')
+    .then(async (res) => {
+      if (res.ok) {
+        const data = await res.json();
+        setContacts(data.contacts || []);
+      }
+    }),
+  []);
 
-  const fetchHousehold = useCallback(async () => {
-    try {
-      const res = await fetch('/api/household');
+  const fetchHousehold = useCallback(() => fetch('/api/household')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setHousehold(data.household);
+        setBoardReplyTo(data.boardReplyTo ?? null);
+        setValidUntil(data.validUntil ?? null);
         const a = pickAddress(data.household);
         const loaded = { line1: a.line1 ?? "", line2: a.line2 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "" };
         setAddress(loaded);
@@ -127,12 +134,14 @@ export default function HouseholdPage() {
         setNotes(data.household?.intakeNotes ?? "");
         setInitialNotes(data.household?.intakeNotes ?? "");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading household.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) {
@@ -273,7 +282,7 @@ export default function HouseholdPage() {
     }
   };
 
-  const handleEditHouseholdMember = async (e: React.FormEvent, participantId: number) => {
+  const handleEditHouseholdMember = async (e: React.FormEvent, participantId: number, emailLocked: boolean) => {
     e.preventDefault();
     setMessage(null);
     const errs = validateHouseholdMemberFields(editForm);
@@ -283,7 +292,7 @@ export default function HouseholdPage() {
       const res = await fetch('/api/household/member', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ participantId, name: editForm.name, email: editForm.email, dob: editForm.over25 ? "" : editForm.dob, phone: editForm.phone, isLead: editForm.isLead, over25: editForm.over25, allergies: editForm.allergies })
+        body: JSON.stringify({ participantId, name: editForm.name, nickname: editForm.nickname, email: emailLocked ? undefined : editForm.email, dob: editForm.over25 ? "" : editForm.dob, phone: editForm.phone, isLead: editForm.isLead, over25: editForm.over25, allergies: editForm.allergies })
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -375,7 +384,13 @@ export default function HouseholdPage() {
             ) : household.orgMembership?.status === 'ACTIVE' ? (
               <Alert mb="lg">
                 <Group gap="xs" wrap="wrap">
-                  <Text fw={600}>✓ Member{household.orgMembership.memberSince ? ` since ${new Date(household.orgMembership.memberSince).getFullYear()}` : ''}</Text>
+                  {/* memberSince is a calendar date at UTC midnight — getUTCFullYear, or a Jan 1 start reads as the prior year. */}
+                  <Text fw={600}>✓ Member{household.orgMembership.memberSince ? ` since ${new Date(household.orgMembership.memberSince).getUTCFullYear()}` : ''}</Text>
+                  {validUntil && (
+                    <Text c={isMembershipLapsed(validUntil) ? 'red' : 'dimmed'} fw={isMembershipLapsed(validUntil) ? 700 : undefined}>
+                      Valid through {formatDateOnly(validUntil, { year: 'numeric', month: 'short', day: 'numeric' })}{isMembershipLapsed(validUntil) ? ' (lapsed)' : ''}
+                    </Text>
+                  )}
                   {household.orgMembership.isVolunteer && <Badge variant="light">Volunteer-only family</Badge>}
                 </Group>
               </Alert>
@@ -410,10 +425,11 @@ export default function HouseholdPage() {
                   return (
                     <Card key={p.id} withBorder radius="md" padding="md" bg={leadMissingPhone ? 'var(--mantine-color-red-light)' : undefined}>
                       {editingHouseholdMemberId === p.id ? (
-                        <form onSubmit={(e) => handleEditHouseholdMember(e, p.id)}>
+                        <form onSubmit={(e) => handleEditHouseholdMember(e, p.id, !!p.hasSignIn)}>
                           <Stack gap="xs">
-                            <TextInput size="xs" label="Name" value={editForm.name} error={editErrors.name} onChange={(e) => { setEditForm({ ...editForm, name: e.currentTarget.value }); setEditErrors({ ...editErrors, name: undefined }); }} />
-                            <TextInput size="xs" inputMode="email" label="Email" value={editForm.email} error={editErrors.email} onChange={(e) => { setEditForm({ ...editForm, email: e.currentTarget.value }); setEditErrors({ ...editErrors, email: undefined }); }} />
+                            <TextInput size="xs" label="Name" description="Printed on name badges exactly as typed — please double-check the spelling." value={editForm.name} error={editErrors.name} onChange={(e) => { setEditForm({ ...editForm, name: e.currentTarget.value }); setEditErrors({ ...editErrors, name: undefined }); }} />
+                            <TextInput size="xs" label="Nickname (optional)" description="Printed on the name badge in place of the first name." value={editForm.nickname} onChange={(e) => setEditForm({ ...editForm, nickname: e.currentTarget.value })} />
+                            <TextInput size="xs" inputMode="email" label="Email" value={editForm.email} disabled={p.hasSignIn} description={p.hasSignIn ? signInEmailHelp(boardReplyTo) : undefined} error={editErrors.email} onChange={(e) => { setEditForm({ ...editForm, email: e.currentTarget.value }); setEditErrors({ ...editErrors, email: undefined }); }} />
                             <Checkbox size="xs" label="Individual is over 25" checked={editForm.over25} onChange={(e) => { setEditForm({ ...editForm, over25: e.currentTarget.checked, dob: e.currentTarget.checked ? "" : editForm.dob }); setEditErrors({ ...editErrors, dob: undefined }); }} />
                             {!editForm.over25 && (
                               <TextInput size="xs" type="date" label="Date of Birth" value={editForm.dob} error={editErrors.dob} onChange={(e) => { setEditForm({ ...editForm, dob: e.currentTarget.value }); setEditErrors({ ...editErrors, dob: undefined }); }} />
@@ -438,7 +454,7 @@ export default function HouseholdPage() {
                           {p.email && <Text size="sm" c="dimmed" style={{ wordBreak: 'break-word' }}>{p.email}</Text>}
                           {p.phone && <Text size="sm" c="dimmed" style={{ wordBreak: 'break-word' }}>{formatPhone(p.phone)}</Text>}
                           {p.allergies && <Text size="sm" c="dimmed" style={{ wordBreak: 'break-word' }}>Allergies: {p.allergies}</Text>}
-                          {leadMissingPhone && <Badge color="red" variant="filled" mt="xs">TODO: Add phone number</Badge>}
+                          {leadMissingPhone && <Badge color="red" variant="filled" mt="xs">Add a phone number</Badge>}
                           <Group gap="xs" mt="sm">
                             {householdMemberIsLead && <Badge color="grape" variant="light">Household Lead</Badge>}
                             {!householdMemberIsLead && isAdult && viewerIsLead && (
@@ -448,7 +464,7 @@ export default function HouseholdPage() {
                               <Button size="compact-xs" variant="subtle" color="gray" onClick={() => {
                                 setEditingHouseholdMemberId(p.id);
                                 setEditErrors({});
-                                setEditForm({ name: p.name || "", email: p.email || "", dob: p.dateOfBirth ? new Date(p.dateOfBirth).toISOString().split('T')[0] : "", phone: p.phone || "", isLead: householdMemberIsLead, over25: !p.dateOfBirth && !!p.isDeclaredAdult, allergies: p.allergies || "" });
+                                setEditForm({ name: p.name || "", nickname: p.nickname || "", email: p.email || "", dob: p.dateOfBirth ? new Date(p.dateOfBirth).toISOString().split('T')[0] : "", phone: p.phone || "", isLead: householdMemberIsLead, over25: !p.dateOfBirth && !!p.isDeclaredAdult, allergies: p.allergies || "" });
                               }}>Edit</Button>
                             )}
                           </Group>
@@ -471,7 +487,7 @@ export default function HouseholdPage() {
                       are a student dependent who will not sign in themselves.
                     </Text>
                     <Stack>
-                      <TextInput label="Full Name" value={householdMemberForm.name} error={householdMemberErrors.name} onChange={(e) => { setHouseholdMemberForm({ ...householdMemberForm, name: e.currentTarget.value }); setHouseholdMemberErrors({ ...householdMemberErrors, name: undefined }); }} />
+                      <TextInput label="Full Name" description="Printed on name badges exactly as typed — please double-check the spelling." value={householdMemberForm.name} error={householdMemberErrors.name} onChange={(e) => { setHouseholdMemberForm({ ...householdMemberForm, name: e.currentTarget.value }); setHouseholdMemberErrors({ ...householdMemberErrors, name: undefined }); }} />
                       <TextInput inputMode="email" label="Email (Optional)" value={householdMemberForm.email} error={householdMemberErrors.email} onChange={(e) => { setHouseholdMemberForm({ ...householdMemberForm, email: e.currentTarget.value }); setHouseholdMemberErrors({ ...householdMemberErrors, email: undefined }); }} placeholder="spouse@example.com" />
                       <Checkbox label="Individual is over 25" checked={householdMemberForm.over25} onChange={(e) => { setHouseholdMemberForm({ ...householdMemberForm, over25: e.currentTarget.checked, dob: e.currentTarget.checked ? "" : householdMemberForm.dob }); setHouseholdMemberErrors({ ...householdMemberErrors, dob: undefined }); }} />
                       {!householdMemberForm.over25 && (
@@ -527,8 +543,9 @@ export default function HouseholdPage() {
                   {!showContactForm && <Button size="compact-xs" variant="light" onClick={startAddContact}>+ Add Contact</Button>}
                 </Group>
                 <Text size="sm" c="dimmed" mb="sm">
-                  At least one is required. Each must be someone <strong>outside</strong> this household.
+                  At least one is required.
                 </Text>
+                <EmergencyContactNotice mb="sm" />
 
                 {contactError && (
                   <Alert color="red" variant="light" mb="sm" withCloseButton onClose={() => setContactError("")}>{contactError}</Alert>

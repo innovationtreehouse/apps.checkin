@@ -1,6 +1,8 @@
 import prisma from "@/lib/prisma";
 import { handler, unauthorized } from "@/security/handler";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { AUTHORIZED_REVIEW } from "@/lib/trusted-adult/filters";
+import type { Prisma } from "@/generated/prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -16,9 +18,7 @@ export const GET = handler("GET /api/trusted-adults/operational", async ({ auth 
     const u = auth.user;
     const privileged = u.isSysadmin || u.isBoardMember || u.isKeyholder;
 
-    const where: { reviews: { some: { status: "APPROVED" } }; householdId?: { in: number[] } } = {
-        reviews: { some: { status: "APPROVED" } },
-    };
+    const where: Prisma.TrustedAdultWhereInput = { reviews: { some: AUTHORIZED_REVIEW } };
 
     if (!privileged) {
         // Program leads: households of children enrolled in programs they lead or core-vol.
@@ -48,7 +48,7 @@ export const GET = handler("GET /api/trusted-adults/operational", async ({ auth 
             trustedAdultEmail: true,
             household: { select: { id: true, name: true } },
             reviews: {
-                where: { status: "APPROVED" },
+                where: AUTHORIZED_REVIEW,
                 orderBy: { id: "desc" },
                 take: 1,
                 select: { id: true, householdId: true, status: true, sharedNote: true, reviewBy: true },

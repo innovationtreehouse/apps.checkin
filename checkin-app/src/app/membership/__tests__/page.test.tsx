@@ -77,6 +77,8 @@ describe("membership page", () => {
     renderWithProviders(<MembershipPage />);
     await screen.findByText("Your household");
 
+    expect(screen.getAllByText(/Printed on name badges exactly as typed/).length).toBeGreaterThan(0);
+
     fireEvent.change(screen.getByPlaceholderText("123 Main St"), { target: { value: "1 Treehouse Ln" } });
     fireEvent.change(screen.getByLabelText("City", { exact: false }), { target: { value: "Austin" } });
     fireEvent.change(screen.getByLabelText("State", { exact: false }), { target: { value: "TX" } });
@@ -194,20 +196,69 @@ describe("membership page", () => {
     expect(screen.getByRole("link", { name: /Pay here with Shopify/ })).toHaveAttribute("href", "https://shop.example/checkout");
   });
 
+  // ── non-lead household members see progress, never a lead-only task ────────
+  it("hides the intake form from a non-lead household member", async () => {
+    setSession({ id: 2 });
+    mockFetchJson({ "/api/membership": state({ isLead: false, process: { id: 1, kind: "INITIAL", status: "INTAKE" } }) });
+    renderWithProviders(<MembershipPage />);
+
+    expect(await screen.findByText("Membership application in progress")).toBeInTheDocument();
+    expect(screen.queryByText("Your household")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save progress" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Submit & continue" })).not.toBeInTheDocument();
+  });
+
+  it("hides contract signing and background-check consent from a non-lead household member", async () => {
+    setSession({ id: 2 });
+    mockFetchJson({
+      "/api/membership": state({
+        isLead: false,
+        process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
+        external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: "https://averity.example/consent" },
+      }),
+    });
+    renderWithProviders(<MembershipPage />);
+
+    expect(await screen.findByText("Membership application in progress")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Sign your membership agreement/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Consent on Averity/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /I submitted my consent on Averity/ })).not.toBeInTheDocument();
+  });
+
+  it("hides the renewal confirmation from a non-lead household member", async () => {
+    setSession({ id: 2 });
+    mockFetchJson({ "/api/membership": state({ isLead: false, process: { id: 1, kind: "RENEWAL", status: "PENDING_RENEWAL" } }) });
+    renderWithProviders(<MembershipPage />);
+
+    expect(await screen.findByText("Your household is up for renewal")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Renew now" })).not.toBeInTheDocument();
+  });
+
+  it("hides the membership fee and the checkout link from a non-lead household member", async () => {
+    setSession({ id: 2 });
+    const fetchMock = mockFetchJson({
+      "/api/membership/payment": { amountCents: 12500, checkoutUrl: "https://shop.example/checkout" },
+      "/api/membership": state({
+        isLead: false,
+        process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" },
+        external: { contractSigned: true, contractStarted: true, bgConsented: true, bgCleared: true, deepLinkUrl: null },
+      }),
+    });
+    renderWithProviders(<MembershipPage />);
+
+    expect(await screen.findByText("Membership application in progress")).toBeInTheDocument();
+    expect(screen.queryByText("$125.00", { exact: false })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Pay here with Shopify/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Request a scholarship or payment plan/ })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/membership/payment"))).toBe(false);
+  });
+
   it("renders PENDING_BG_CLEARANCE", async () => {
     setSession({ id: 1 });
     mockFetchJson({ "/api/membership": state({ process: { id: 1, kind: "INITIAL", status: "PENDING_BG_CLEARANCE" } }) });
     renderWithProviders(<MembershipPage />);
 
     expect(await screen.findByText("Payment received 🎉", { exact: false })).toBeInTheDocument();
-  });
-
-  it("renders the held-for-review card for PENDING_BG_REVIEW (#907)", async () => {
-    setSession({ id: 1 });
-    mockFetchJson({ "/api/membership": state({ process: { id: 1, kind: "INITIAL", status: "PENDING_BG_REVIEW" } }) });
-    renderWithProviders(<MembershipPage />);
-
-    expect(await screen.findByText("Hang tight — your application is being reviewed")).toBeInTheDocument();
   });
 
   it("renders the default in-progress card for other statuses", async () => {
@@ -312,7 +363,7 @@ describe("membership page", () => {
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining("Signature received — finalizing.") })));
   });
 
-  // ── PENDING_PAYMENT dues fetch branches ──────────────────────────────────────
+  // ── PENDING_PAYMENT membership fee fetch branches ──────────────────────
   it("hides the bg-check alert once cleared and shows a not-yet-available checkout link", async () => {
     setSession({ id: 1 });
     mockFetchJson({
@@ -329,7 +380,7 @@ describe("membership page", () => {
     expect(screen.queryByText("Your background check is being reviewed", { exact: false })).not.toBeInTheDocument();
   });
 
-  it("keeps the preparing-invoice placeholder when the dues request fails", async () => {
+  it("keeps the preparing-invoice placeholder when the membership fee request fails", async () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/api/membership/payment")) return { ok: false, json: async () => ({}) } as Response;
@@ -344,7 +395,7 @@ describe("membership page", () => {
     expect(await screen.findByText("Preparing your invoice…")).toBeInTheDocument();
   });
 
-  it("keeps the preparing-invoice placeholder when the dues request throws", async () => {
+  it("keeps the preparing-invoice placeholder when the membership fee request throws", async () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/api/membership/payment")) throw new Error("boom");
@@ -811,8 +862,8 @@ describe("membership page", () => {
           household: { name: null, emergencyContactName: "Aunt Jo", emergencyContactPhone: "512-555-1234", emergencyContactEmail: null, line1: "1 Treehouse Ln", line2: null, city: "Austin", state: "TX", postalCode: "78701" },
           primaryParent: { id: 1, name: "Pat Parent", email: "pat@example.com", dob: "1980-01-01", allergies: null },
           // Sam has every field null except name/id — exercises the `sec.x ?? ""`
-          // fallback side of hydrate() (the "fills every intake field" test below
-          // already exercises the truthy side with a fully-populated secondary).
+          // fallback side of hydrate() (the "fills every second parent / guardian
+          // field" test below covers the truthy side).
           secondaryParent: { id: 9, name: "Sam Secondary", email: null, dob: null, allergies: null },
           children: [
             { id: 5, name: "Kid A", email: null, dob: "2015-01-01", allergies: "peanuts" },
@@ -834,8 +885,10 @@ describe("membership page", () => {
     expect(screen.queryByText("No children added yet.")).not.toBeInTheDocument();
   });
 
-  // ── Every intake onChange handler + addChild/updateChild/removeChild ─────
-  it("fills every intake field, adds/removes children, and saves with a secondary parent", async () => {
+  // Renders the intake step and exposes the body of the PATCH a "Save progress"
+  // sends. The payload is the only place to read the filled form back: save()
+  // re-hydrates every field from the response, which carries an empty prefill.
+  async function renderIntakeStep() {
     setSession({ id: 1 });
     const fetchMock = mockFetchJson({
       "/api/membership/intake": { state: state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } }), rejections: [] },
@@ -843,6 +896,21 @@ describe("membership page", () => {
     });
     renderWithProviders(<MembershipPage />);
     await screen.findByText("Your household");
+
+    const savedPayload = async () => {
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith("/api/membership/intake", expect.objectContaining({ method: "PATCH" })),
+      );
+      const call = fetchMock.mock.calls.find(([u, init]) => u === "/api/membership/intake" && (init as RequestInit)?.method === "PATCH")!;
+      return JSON.parse((call[1] as RequestInit).body as string);
+    };
+    return { savedPayload };
+  }
+
+  // ── Every intake onChange handler + addChild/updateChild/removeChild, one
+  //    form section per test ─────────────────────────────────────────────────
+  it("fills every household and primary-parent intake field and saves them", async () => {
+    const { savedPayload } = await renderIntakeStep();
 
     fireEvent.change(screen.getByPlaceholderText("123 Main St"), { target: { value: "1 Treehouse Ln" } });
     fireEvent.change(screen.getByPlaceholderText("Apt 4B"), { target: { value: "Unit 2" } });
@@ -856,41 +924,63 @@ describe("membership page", () => {
     fireEvent.change(screen.getByLabelText("Date of birth"), { target: { value: "1980-01-01" } });
     fireEvent.change(screen.getByLabelText("Allergies (optional)"), { target: { value: "none" } });
 
+    fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+
+    const body = await savedPayload();
+    expect(body.household).toMatchObject({
+      line1: "1 Treehouse Ln", line2: "Unit 2", city: "Austin", state: "TX", postalCode: "78701",
+      emergencyContactName: "Aunt Jo", emergencyContactPhone: "512-555-1234", emergencyContactEmail: "jo@example.com",
+    });
+    expect(body.primaryParent).toMatchObject({ name: "Pat Parent", dob: "1980-01-01", allergies: "none" });
+    expect(body.secondaryParent).toBeNull();
+  });
+
+  it("fills every second parent / guardian field and saves them", async () => {
+    const { savedPayload } = await renderIntakeStep();
+
     fireEvent.click(screen.getByLabelText("Add a second parent / guardian"));
     fireEvent.change(screen.getAllByLabelText("Full name", { exact: false })[1], { target: { value: "Sam Secondary" } });
-    fireEvent.change(screen.getAllByLabelText("Email (optional)")[0], { target: { value: "sam@example.com" } });
+    fireEvent.change(screen.getByLabelText("Email (optional)"), { target: { value: "sam@example.com" } });
     fireEvent.change(screen.getAllByLabelText("Date of birth")[1], { target: { value: "1982-02-02" } });
     fireEvent.change(screen.getAllByLabelText("Allergies (optional)")[1], { target: { value: "peanuts" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+
+    const body = await savedPayload();
+    expect(body.secondaryParent).toMatchObject({ name: "Sam Secondary", email: "sam@example.com", dob: "1982-02-02", allergies: "peanuts" });
+  });
+
+  it("adds and removes children, saving only the ones left", async () => {
+    const { savedPayload } = await renderIntakeStep();
 
     fireEvent.click(screen.getByRole("button", { name: "+ Add child" }));
     fireEvent.click(screen.getByRole("button", { name: "+ Add child" }));
     expect(screen.getByText("Child 1")).toBeInTheDocument();
     expect(screen.getByText("Child 2")).toBeInTheDocument();
 
-    fireEvent.change(screen.getAllByLabelText("Full name", { exact: false })[2], { target: { value: "Kid One" } });
-    fireEvent.change(screen.getAllByLabelText("Date of birth")[2], { target: { value: "2015-01-01" } });
-    fireEvent.change(screen.getAllByLabelText("Email (optional)")[1], { target: { value: "kid1@example.com" } });
-    fireEvent.change(screen.getAllByLabelText("Allergies (optional)")[2], { target: { value: "bees" } });
-    fireEvent.change(screen.getAllByLabelText("Full name", { exact: false })[3], { target: { value: "Kid Two" } });
+    fireEvent.change(screen.getAllByLabelText("Full name", { exact: false })[1], { target: { value: "Kid One" } });
+    fireEvent.change(screen.getAllByLabelText("Date of birth")[1], { target: { value: "2015-01-01" } });
+    fireEvent.change(screen.getAllByLabelText("Email (optional)")[0], { target: { value: "kid1@example.com" } });
+    fireEvent.change(screen.getAllByLabelText("Allergies (optional)")[1], { target: { value: "bees" } });
+    fireEvent.change(screen.getAllByLabelText("Full name", { exact: false })[2], { target: { value: "Kid Two" } });
 
     fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
     expect(screen.queryByText("Child 2")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
 
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/membership/intake", expect.objectContaining({ method: "PATCH" })),
-    );
-    const call = fetchMock.mock.calls.find(([u, init]) => u === "/api/membership/intake" && (init as RequestInit)?.method === "PATCH")!;
-    const body = JSON.parse((call[1] as RequestInit).body as string);
-    expect(body.household.city).toBe("Austin");
-    expect(body.secondaryParent.name).toBe("Sam Secondary");
+    const body = await savedPayload();
     expect(body.children).toHaveLength(1);
-    expect(body.children[0].name).toBe("Kid One");
+    expect(body.children[0]).toMatchObject({ name: "Kid One", dob: "2015-01-01", email: "kid1@example.com", allergies: "bees" });
+  });
+
+  it("leaves the Home link's navigation unblocked", async () => {
+    await renderIntakeStep();
 
     // onNavigate on the Home link — no UnsavedChangesProvider is mounted in this
     // harness, so confirmNav() is the always-true no-op and preventDefault is skipped.
-    fireEvent.click(screen.getByRole("link", { name: "← Home" }));
+    const home = screen.getByRole("link", { name: "← Home" });
+    expect(fireEvent.click(home)).toBe(true);
   });
 
   it("omits blank secondary-parent and child fields from the saved payload", async () => {
@@ -904,7 +994,9 @@ describe("membership page", () => {
 
     // Only the secondary parent's name and a child's name are filled — leaves
     // email/dob/allergies blank on both, exercising the `|| undefined`/`|| null`
-    // fallback side of buildPayload() (the previous test covers the truthy side).
+    // fallback side of buildPayload() (the "fills every second parent /
+    // guardian field" and "adds and removes children" tests above cover the
+    // truthy side).
     fireEvent.click(screen.getByLabelText("Add a second parent / guardian"));
     fireEvent.change(screen.getAllByLabelText("Full name", { exact: false })[1], { target: { value: "Sam Secondary" } });
 
@@ -976,9 +1068,16 @@ describe("scholarship / payment-plan request", () => {
     const fetchMock = mockFetchJson({ ...pendingPayment(), "/api/membership/request-payment-plan": { ok: true } });
     renderWithProviders(<MembershipPage />);
     fireEvent.click(await screen.findByRole("button", { name: /Request a scholarship or payment plan/ }));
+    // The kind is required — "Send request" is disabled until one is picked.
+    expect(await screen.findByRole("button", { name: "Send request" })).toBeDisabled();
+    fireEvent.click(await screen.findByRole("radio", { name: /^Payment plan$/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Send request" }));
     expect(await screen.findByText(/requested — the Scholarship Review Team will follow up/)).toBeInTheDocument();
-    expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes("request-payment-plan")).length).toBe(1);
+    const planCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes("request-payment-plan"));
+    expect(planCalls.length).toBe(1);
+    expect(JSON.parse(String((planCalls[0][1] as RequestInit).body))).toEqual(
+      expect.objectContaining({ kind: "PAYMENT_PLAN" }),
+    );
     expect(screen.queryByRole("button", { name: /Request a scholarship or payment plan/ })).not.toBeInTheDocument();
   });
 

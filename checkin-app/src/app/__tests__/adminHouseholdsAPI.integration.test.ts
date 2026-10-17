@@ -8,6 +8,7 @@
 
 import { GET, POST } from '@/app/api/membership-ops/households/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import { bgValidUntilBoundary } from '@/lib/membership/renewal';
 
@@ -41,13 +42,10 @@ describe('Admin Households API Integration Tests', () => {
     const leadALastCheck = new Date(Date.UTC(2025, 0, 1)); // raw expiry 2026-01-01 -> Aug 1 2026
     const leadBLastCheck = new Date(Date.UTC(2025, 8, 1)); // raw expiry 2026-09-01 (past Aug 1 2026) -> Aug 1 2027 — later than A
     const nonLeadCLastCheck = new Date(Date.UTC(2026, 8, 1)); // raw expiry 2027-09-01 (past Aug 1 2027) -> Aug 1 2028 — later than the household (leads-only) value
-    let prevBoardSettings: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number } | null = null;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     beforeAll(async () => {
-        const existingSettings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevBoardSettings = existingSettings
-            ? { orgMembershipYearBoundary: existingSettings.orgMembershipYearBoundary, bgRecheckMonths: existingSettings.bgRecheckMonths }
-            : null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await prisma.boardSettings.upsert({
             where: { id: 1 },
             create: { id: 1, orgMembershipYearBoundary: bgBoundary, bgRecheckMonths },
@@ -120,7 +118,7 @@ describe('Admin Households API Integration Tests', () => {
         // Enroll the household-2 member in a program so the single-household
         // (?id=) branch has an enrollment to surface for the detail view.
         const program = await prisma.program.create({
-            data: { name: 'Households API Test Program' }
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Households API Test Program' }
         });
         testProgramId = program.id;
         await prisma.programParticipant.create({
@@ -136,6 +134,9 @@ describe('Admin Households API Integration Tests', () => {
         await prisma.program.deleteMany({
             where: { id: testProgramId }
         });
+        await prisma.orgMembershipProcess.deleteMany({
+            where: { orgMembership: { householdId: { in: [testHousehold1Id, testHousehold2Id] } } }
+        });
         await prisma.orgMembership.deleteMany({
             where: { householdId: { in: [testHousehold1Id, testHousehold2Id] } }
         });
@@ -148,7 +149,7 @@ describe('Admin Households API Integration Tests', () => {
 
         await prisma.person.deleteMany({ where: { id: { in: [leadAId, leadBId, nonLeadCId, memberDId] } } });
         await prisma.household.deleteMany({ where: { id: bgHouseholdId } });
-        if (prevBoardSettings) await prisma.boardSettings.update({ where: { id: 1 }, data: prevBoardSettings });
+        await restoreBoardSettings();
     });
 
     describe('GET /api/membership-ops/households', () => {
@@ -337,14 +338,14 @@ describe('Admin Households API Integration Tests', () => {
             expect(res.status).toBe(400);
         });
 
-        it('should successfully activate membership for a household', async () => {
+        it('grant pays an application rather than setting the household ACTIVE', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
                 user: { id: testAdminId, isSysadmin: true }
             });
 
             const req = new Request('http://localhost:4000/api/membership-ops/households', {
                 method: 'POST',
-                body: JSON.stringify({ householdId: testHousehold1Id, active: true })
+                body: JSON.stringify({ householdId: testHousehold1Id, active: true, reason: 'Paid by check' })
             });
 
             const res = await POST(req as unknown as import("next/server").NextRequest);
@@ -352,12 +353,10 @@ describe('Admin Households API Integration Tests', () => {
 
             const data = await res.json();
             expect(data.success).toBe(true);
-            expect(data.membership.status).toBe('ACTIVE');
+            expect(data.paid).toBe(false);
 
-            const membership = await prisma.orgMembership.findFirst({
-                where: { householdId: testHousehold1Id, status: 'ACTIVE' }
-            });
-            expect(membership).toBeDefined();
+            const membership = await prisma.orgMembership.findUnique({ where: { householdId: testHousehold1Id } });
+            expect(membership?.status).not.toBe('ACTIVE');
         });
 
         it('should successfully deactivate membership for a household', async () => {
@@ -380,6 +379,30 @@ describe('Admin Households API Integration Tests', () => {
                 where: { householdId: testHousehold2Id, status: 'ACTIVE' }
             });
             expect(activeMembership).toBeNull(); // Should be deactivated
+        });
+
+        it('refuses a coming-year grant from a sysadmin who is not on the Board (403, nothing certified)', async () => {
+            const membership = await prisma.orgMembership.findUniqueOrThrow({ where: { householdId: testHousehold2Id } });
+            const renewal = await prisma.orgMembershipProcess.create({
+                data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() },
+            });
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+
+            const req = new Request('http://localhost:4000/api/membership-ops/households', {
+                method: 'POST',
+                body: JSON.stringify({ householdId: testHousehold2Id, comingYear: true, reason: 'Paid by check' })
+            });
+
+            const res = await POST(req as unknown as import("next/server").NextRequest);
+            expect(res.status).toBe(403);
+
+            const after = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: renewal.id } });
+            expect(after.status).toBe('PENDING_PAYMENT');
+            expect(after.paidAt).toBeNull();
+            expect(after.manualPaymentById).toBeNull();
+            expect(after.certificationNote).toBeNull();
         });
     });
 });

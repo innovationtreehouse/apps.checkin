@@ -49,7 +49,7 @@ export default function ChildrenListForm({
               <Text fw={600}>{itemLabel} {i + 1}</Text>
               <Button variant="subtle" color="red" size="compact-sm" onClick={() => onRemove(i)}>Remove</Button>
             </Group>
-            <TextInput label="Full name" value={child.name} onChange={(e) => onUpdate(i, "name", e.currentTarget.value)} />
+            <TextInput label="Full name" description="Printed on name badges exactly as typed — please double-check the spelling." value={child.name} onChange={(e) => onUpdate(i, "name", e.currentTarget.value)} />
             {hideEmail ? (
               <TextInput type="date" mt="sm" label="Date of birth" value={child.dob} onChange={(e) => onUpdate(i, "dob", e.currentTarget.value)} />
             ) : (

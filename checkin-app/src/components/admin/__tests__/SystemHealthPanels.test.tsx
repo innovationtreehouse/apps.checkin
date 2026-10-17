@@ -1,6 +1,6 @@
 import { screen, fireEvent } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
-import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox } from "../SystemHealthPanels";
+import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox } from "../SystemHealthPanels";
 
 beforeEach(() => resetRtl());
 
@@ -79,5 +79,57 @@ describe("SReadDiagnosticsBox", () => {
     renderWithProviders(<SReadDiagnosticsBox />);
     fireEvent.click(screen.getByRole("button", { name: /Run diagnostics/ }));
     expect(await screen.findByText(/Diagnostics failed to run/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * The panel is the detail view behind the red System Status pill, and it derives its
+ * own badge count client-side — so it can drift from countUnhealthyCronJobs and leave
+ * the pill saying 2 while the panel it links to shows nothing. It also has to keep
+ * the two failures visually distinct: "stopped running" is a scheduler problem,
+ * "ran but could not finish" is not.
+ */
+describe("CronRunsBox", () => {
+  const twoJobs = (now: number) => ({
+    "/api/system-status/config-health": {
+      cronJobs: [
+        // Stale: no completed run in over 48h.
+        { job: "post-event", lastSuccessAt: new Date(now - 72 * 3600_000).toISOString(), stale: true },
+        // Ran two hours ago, but could not process every row.
+        { job: "nightly", lastSuccessAt: new Date(now - 2 * 3600_000).toISOString(), stale: false, lastError: "3 item(s) failed" },
+      ],
+    },
+  });
+
+  it("counts a job that ran-but-failed toward the badge, not just the stale one", async () => {
+    mockFetchJson(twoJobs(Date.now()));
+    renderWithProviders(<CronRunsBox />);
+
+    // 2, not 1 — mirrors countUnhealthyCronJobs, which feeds the nav pill.
+    expect(await screen.findByTitle("2 job(s) need attention")).toBeInTheDocument();
+  });
+
+  it("shows the failing job as recently-run rather than as stopped", async () => {
+    mockFetchJson(twoJobs(Date.now()));
+    renderWithProviders(<CronRunsBox />);
+
+    // The error is named, so the row is actionable...
+    expect(await screen.findByText(/3 item\(s\) failed/)).toBeInTheDocument();
+    // ...but its timestamp is fresh, which is the whole point of the split: this job
+    // did run last night, and must not read as "not running".
+    expect(screen.getByText(/2 hours ago/)).toBeInTheDocument();
+    expect(screen.getByText(/3 days ago/)).toBeInTheDocument();
+  });
+});
+
+describe("KioskHeartbeatBox", () => {
+  it("renders last-seen age from the heartbeat envelope", async () => {
+    mockFetchJson({
+      "/api/system-status/kiosk-heartbeat": {
+        heartbeat: [{ metric: "kiosk_last_seen", timestamp: new Date().toISOString(), value: 90 }],
+      },
+    });
+    renderWithProviders(<KioskHeartbeatBox />);
+    expect(await screen.findByText(/Kiosk last seen 1m ago/)).toBeInTheDocument();
   });
 });

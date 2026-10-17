@@ -34,6 +34,7 @@ export const treehouseBrand: Brand = {
   ...baseBrand,
   id: 'treehouse',
   appName: 'CheckMeIn',
+  home: { title: 'Innovation Treehouse Operations', subtitle: 'the program and attendance system for our community' },
   fontVariables,
   // Trademarked brand collateral — see /TRADEMARKS.md. The source-code license does NOT grant
   // a license to use the Innovation Treehouse logo/marks; replace when reusing for another org.

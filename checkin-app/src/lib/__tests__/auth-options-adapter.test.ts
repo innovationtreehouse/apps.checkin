@@ -66,9 +66,13 @@ jest.unmock('@/lib/auth-options');
 
 import { authOptions } from '@/lib/auth-options';
 
+// $queryRaw is here for the same reason every model name is: createParticipantWithHousehold
+// mints the person id through mintPersonId(tx), which is one $queryRaw. Named
+// explicitly, NOT via a fallback proxy — see the note above.
 const prismaMockTx = {
     household: { create: jest.fn() },
     person: { create: jest.fn() },
+    $queryRaw: jest.fn().mockResolvedValue([{ value: 2503 }]),
 };
 
 const mockPersonFindUnique = (prisma as unknown as { person: { findUnique: jest.Mock } })
@@ -134,12 +138,50 @@ describe('PrismaAdapter user-model shim (auth-options.ts)', () => {
     test('createUser creates a Person inside a household transaction', async () => {
         prismaMockTx.household.create.mockResolvedValue({ id: 9 });
         prismaMockTx.person.create.mockResolvedValue({ id: 7, email: 'new@example.com' });
+        prismaMockTx.$queryRaw.mockResolvedValue([{ value: 2503 }]);
         const created = await adapter.createUser({ email: 'new@example.com', name: 'New Person' });
         expect(prismaMockTx.person.create).toHaveBeenCalledWith(
             expect.objectContaining({ data: expect.objectContaining({ householdId: 9 }) }),
         );
         expect(addHouseholdLead).toHaveBeenCalled();
         expect(created).toEqual(expect.objectContaining({ id: '7', email: 'new@example.com' }));
+    });
+
+    // #1693: the OAuth path is one of the nine sites that must pass an explicit
+    // minted id. A sequence-minted id here is a silent gap on every first sign-in
+    // — nothing else in this tree would notice.
+    test('createUser passes the minted id through to person.create', async () => {
+        prismaMockTx.household.create.mockResolvedValue({ id: 9 });
+        prismaMockTx.person.create.mockResolvedValue({ id: 2503, email: 'minted@example.com' });
+        prismaMockTx.$queryRaw.mockResolvedValue([{ value: 2503 }]);
+        await adapter.createUser({ email: 'minted@example.com', name: 'Minted' });
+        expect(prismaMockTx.$queryRaw).toHaveBeenCalledTimes(1);
+        expect(prismaMockTx.person.create).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ id: 2503 }) }),
+        );
+    });
+
+    // #1432 Decision 4: sign-in must never fail for want of a name. createUser
+    // is the one remaining place a name is manufactured — from the email
+    // local-part, never left null.
+    test('createUser defaults a missing name to the email local-part (Decision 4)', async () => {
+        prismaMockTx.household.create.mockResolvedValue({ id: 9 });
+        prismaMockTx.person.create.mockResolvedValue({ id: 7, email: 'nodisplay@example.com' });
+        prismaMockTx.$queryRaw.mockResolvedValue([{ value: 2503 }]);
+        await adapter.createUser({ email: 'nodisplay@example.com' });
+        expect(prismaMockTx.person.create).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ name: 'nodisplay' }) }),
+        );
+    });
+
+    test('createUser defaults a whitespace-only name to the email local-part', async () => {
+        prismaMockTx.household.create.mockResolvedValue({ id: 9 });
+        prismaMockTx.person.create.mockResolvedValue({ id: 8, email: 'blank@example.com' });
+        prismaMockTx.$queryRaw.mockResolvedValue([{ value: 2504 }]);
+        await adapter.createUser({ email: 'blank@example.com', name: '   ' });
+        expect(prismaMockTx.person.create).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ name: 'blank' }) }),
+        );
     });
 
     test('getUserByEmail returns a string id (Int→string on the way out)', async () => {
@@ -185,5 +227,16 @@ describe('PrismaAdapter user-model shim (auth-options.ts)', () => {
             expect.objectContaining({ where: { id: 12 } }),
         );
         expect(user).toEqual(expect.objectContaining({ id: '12', email: 'u@example.com' }));
+    });
+
+    // #1432 site 14 / Decision 5: a provider that stops sending a name must
+    // not erase one already on file — `name: null` must pass through as
+    // `undefined` (Prisma leaves the column alone) rather than nulling it.
+    test('updateUser with a null name leaves the stored name untouched', async () => {
+        mockPersonUpdate.mockResolvedValue({ id: 12, email: 'u@example.com', name: 'Existing Name' });
+        await adapter.updateUser({ id: '12', name: null });
+        expect(mockPersonUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ name: undefined }) }),
+        );
     });
 });

@@ -20,6 +20,7 @@ const ctx: CallerContext = {
     householdIdsInScopePrograms: new Set(),
     eventIdsInScopePrograms: new Set(),
     activeVisitorIds: new Set(),
+    ledHouseholdMemberIds: new Set(),
 };
 
 describe('ToolStatus self-scoping after participantId -> personId rename', () => {

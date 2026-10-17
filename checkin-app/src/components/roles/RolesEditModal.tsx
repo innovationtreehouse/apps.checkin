@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Box, Button, Group, Modal, Stack, Switch, Text, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { modals } from "@mantine/modals";
@@ -16,6 +16,8 @@ export type RolesEditTarget = {
   isKeyholder?: boolean;
   isBackgroundCheckReviewer?: boolean;
   isOperations?: boolean;
+  isInventoryManager?: boolean;
+  isFinance?: boolean;
   // ops-stg access gate escape hatch. NOT one of the five ROLE_FLAGS above —
   // sysadmin-settable only (see PATCH /api/roles), so it is edited separately
   // below rather than folded into the ROLE_FLAGS loop's board-symmetric switches.
@@ -57,11 +59,15 @@ export function RolesEditModal({ target, me, onClose, onSaved }: RolesEditModalP
   const [stagingForm, setStagingForm] = useState(false);
   const [savingRoles, setSavingRoles] = useState(false);
 
-  useEffect(() => {
-    if (!target) return;
-    setRolesForm(flagsFromTarget(target));
-    setStagingForm(!!target.canAccessStaging);
-  }, [target]);
+  // Re-seed the form whenever a new target is opened.
+  const [seededFor, setSeededFor] = useState<RolesEditTarget | null>(null);
+  if (seededFor !== target) {
+    setSeededFor(target);
+    if (target) {
+      setRolesForm(flagsFromTarget(target));
+      setStagingForm(!!target.canAccessStaging);
+    }
+  }
 
   const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
     notifications.show({ message, color: type === 'error' ? 'red' : 'green', autoClose: type === 'error' ? false : 4000 });
@@ -104,7 +110,7 @@ export function RolesEditModal({ target, me, onClose, onSaved }: RolesEditModalP
         showNotification(data.error || "Failed to update roles", "error");
       }
     } catch (err) {
-      console.error(err);
+      console.error("Failed to update roles:", err);
       showNotification("Network error updating roles", "error");
     } finally {
       setSavingRoles(false);

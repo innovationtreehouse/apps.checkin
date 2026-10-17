@@ -1,14 +1,15 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
+import { systemActor } from "@/lib/auditActor";
 
 /**
  * Delivery log for the inbound Shopify webhook, surfaced on the "Shopify
  * Webhook" settings tab so a board member can verify the store's webhook
  * wiring end-to-end: press "Send test notification" in the Shopify admin,
- * then see the receipt — or the signature failure — inside checkin. Settlement
- * is driven ONLY by the orders/paid webhook, so a store with no webhook
- * registered (or one signed with the wrong secret) silently never settles;
- * this log is the in-app evidence either way.
+ * then see the receipt inside checkin. Settlement is driven ONLY by the
+ * orders/paid webhook, so a store with no webhook registered silently never
+ * settles; this log is the in-app evidence. Only signature-verified deliveries
+ * are recorded — a rejected one writes nothing (see logRejectedShopifyWebhook).
  *
  * Stored as AuditLog rows (actorId 0 = system, the convention the audit-log
  * viewer already renders as "System") rather than a new table: the repo allows
@@ -43,13 +44,21 @@ export interface ShopifyWebhookReceipt {
 // stores/clients that send the id as a string.
 const SHOPIFY_SAMPLE_ORDER_ID = "820982911946154508";
 
-/** JSON.parse that never throws — failed-HMAC bodies may be arbitrary bytes. */
-export function tryParseJson(raw: string): unknown {
-    try {
-        return JSON.parse(raw);
-    } catch {
-        return null;
-    }
+const REJECT_LOG_INTERVAL_MS = 60_000;
+let lastRejectLogAt = 0;
+let rejectsSinceLastLog = 0;
+
+/**
+ * Log a delivery that failed signature checks, at most once a minute per
+ * instance, with a count of the rejections since the last line. Writes nothing
+ * to the database: an unauthenticated caller must not be able to add rows.
+ */
+export function logRejectedShopifyWebhook(reason: string, now = Date.now()): void {
+    rejectsSinceLastLog++;
+    if (now - lastRejectLogAt < REJECT_LOG_INTERVAL_MS) return;
+    logger.warn(`Shopify webhook rejected (${reason}); ${rejectsSinceLastLog} rejected in the last interval.`);
+    lastRejectLogAt = now;
+    rejectsSinceLastLog = 0;
 }
 
 /**
@@ -70,9 +79,7 @@ export function isShopifyTestNotification(order: unknown): boolean {
 /**
  * Append one delivery receipt. NEVER throws: a failed insert must not break
  * settlement (a non-2xx would make Shopify retry the whole order), so the
- * write is fully swallowed — logged and moved past. Callers may await it
- * (the webhook handler does) or fire-and-forget with `void` (the HMAC verify
- * hook does — verify is synchronous by contract).
+ * write is fully swallowed — logged and moved past.
  */
 export async function recordShopifyWebhookReceipt(
     req: Request,
@@ -92,7 +99,7 @@ export async function recordShopifyWebhookReceipt(
         };
         await prisma.auditLog.create({
             data: {
-                actorId: 0, // system — no session behind an inbound webhook
+                ...systemActor("webhook:shopify-receipt"),
                 action: "CREATE",
                 tableName: SHOPIFY_WEBHOOK_RECEIPT_TABLE,
                 affectedEntityId: 0, // no entity row backs a receipt; newData IS the record

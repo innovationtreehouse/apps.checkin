@@ -5,7 +5,7 @@ jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 
 import { screen, fireEvent, waitFor, within } from "@testing-library/react";
-import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
+import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import { notifications } from "@mantine/notifications";
 import AdminVisitsPage from "../page";
 
@@ -29,6 +29,37 @@ describe("facility-ops/visits page", () => {
     expect(screen.getByText("Active")).toBeInTheDocument();
   });
 
+  // The page must gate on the same roles the PATCH/DELETE /api/facility/visits
+  // route allows (['isSysadmin', 'isBoardMember']) — UI and API agree on who
+  // may edit/delete a visit.
+  it("admits a board member (matches the API's edit/delete grant)", async () => {
+    setSession({ id: 3, isBoardMember: true });
+    mockFetchJson({ "/api/facility/visits": { visits } });
+    renderWithProviders(<AdminVisitsPage />);
+
+    expect(await screen.findByText("Val Volunteer")).toBeInTheDocument();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  // Operations reaches attendance in aggregate only (#1633) — one person's visit
+  // record is outside that reach, on the page as on the API.
+  it("redirects an operations user", async () => {
+    setSession({ id: 5, isOperations: true });
+    mockFetchJson({ "/api/facility/visits": { visits } });
+    renderWithProviders(<AdminVisitsPage />);
+
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/"));
+  });
+
+  it("redirects a non-privileged user (denied like the API)", async () => {
+    setSession({ id: 4 });
+    mockFetchJson({ "/api/facility/visits": { visits } });
+    renderWithProviders(<AdminVisitsPage />);
+
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/"));
+    expect(screen.queryByText("Val Volunteer")).not.toBeInTheDocument();
+  });
+
   it("re-sorts rows when a sortable header is clicked", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/facility/visits": { visits } });
@@ -39,6 +70,22 @@ describe("facility-ops/visits page", () => {
 
     const rows = screen.getAllByRole("row").slice(1); // drop header row
     expect(rows[0]).toHaveTextContent("Stu Student");
+  });
+
+  it("filters rows by participant or event", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/facility/visits": { visits } });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+
+    const input = screen.getByPlaceholderText(/Filter by/);
+    fireEvent.change(input, { target: { value: "open facility" } });
+    expect(screen.queryByText("Val Volunteer")).not.toBeInTheDocument();
+    expect(screen.getByText("Stu Student")).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "VAL" } });
+    expect(screen.getByText("Val Volunteer")).toBeInTheDocument();
+    expect(screen.queryByText("Stu Student")).not.toBeInTheDocument();
   });
 
   it("edits and saves a visit's arrival/departure", async () => {

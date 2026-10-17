@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
+import { LIVE_PERSON } from "@/lib/person/filters";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,7 @@ export const GET = handler("GET /api/membership-ops/applications", async ({ req 
             bgConsentAt: true,
             bgClearedAt: true,
             paidAt: true,
-            attestations: { select: { id: true, result: true, isMarkedVolunteer: true } },
+            attestations: { select: { id: true, result: true, subjectPersonId: true, isMarkedVolunteer: true } },
             orgMembership: {
                 select: {
                     householdId: true,
@@ -38,7 +39,9 @@ export const GET = handler("GET /api/membership-ops/applications", async ({ req 
                     household: {
                         select: {
                             name: true,
-                            householdMembers: { select: { id: true, name: true, email: true, isHouseholdLead: true } },
+                            // Live only: the leads here are the selectable subjects of a
+                            // board force-approve, and the service rejects a tombstone.
+                            householdMembers: { where: LIVE_PERSON, select: { id: true, name: true, email: true, isHouseholdLead: true } },
                         },
                     },
                 },

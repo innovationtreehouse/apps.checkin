@@ -1,5 +1,5 @@
 {
-  "name": "@inventory/s-ingest-core",
+  "name": "@checkin/s-ingest-core",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,26 +9,35 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./client": {
+      "types": "./src/generated/checkin-prisma/client.ts",
+      "import": "./src/generated/checkin-prisma/client.ts"
     }
   },
   "scripts": {
-    "postinstall": "prisma generate",
-    "db:generate": "prisma generate",
-    "db:migrate": "node --env-file=.env node_modules/.bin/prisma migrate dev && node node_modules/.bin/prisma generate",
+    "postinstall": "prisma generate --generator client --generator checkin_client",
+    "db:generate": "prisma generate --generator client",
+    "db:generate:checkin": "prisma generate --generator checkin_client",
+    "db:migrate": "node --env-file=.env node_modules/.bin/prisma migrate dev && node node_modules/.bin/prisma generate --generator client",
     "db:deploy": "prisma migrate deploy",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "db:generate:security": "prisma generate --generator security"
   },
   "dependencies": {
-    "@inventory/money": "*",
-    "@inventory/telemetry": "*",
+    "@checkin/money": "*",
+    "@checkin/telemetry": "*",
+    "@checkin/utils": "*",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "pg": "^8.18.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@inventory/pg-test-harness": "*",
+    "@checkin/pg-test-harness": "*",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.16.0",
     "@vitest/coverage-v8": "^4.1.8",
     "dotenv": "^17.0.0",
     "prisma": "^7.8.0",

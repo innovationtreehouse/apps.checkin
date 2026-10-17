@@ -12,17 +12,21 @@ describe("SystemStatusAuditLogPage", () => {
     it("renders the audit log panel for a sysadmin", async () => {
         setSession({ id: 1, isSysadmin: true });
         mockFetchJson({
-            "/api/system-status/audit-log": { logs: [], total: 0, page: 1, pageSize: 25, tables: [] },
+            "/api/system-status/audit-log": { logs: [], total: 0, page: 1, pageSize: 25, tables: [], actors: [], systemActors: [] },
         });
         renderWithProviders(<SystemStatusAuditLogPage />);
 
         expect(await screen.findByText("No audit entries match these filters.")).toBeInTheDocument();
     });
 
-    it("bounces a board member (non-sysadmin) to /system-status/health", () => {
+    it("renders for a board member too — the board answers for what is logged here", async () => {
         setSession({ id: 2, isBoardMember: true });
+        mockFetchJson({
+            "/api/system-status/audit-log": { logs: [], total: 0, page: 1, pageSize: 25, tables: [], actors: [], systemActors: [] },
+        });
         renderWithProviders(<SystemStatusAuditLogPage />);
 
-        expect(router.push).toHaveBeenCalledWith("/system-status/health");
+        expect(await screen.findByText("No audit entries match these filters.")).toBeInTheDocument();
+        expect(router.push).not.toHaveBeenCalled();
     });
 });

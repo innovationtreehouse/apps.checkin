@@ -18,9 +18,9 @@ function absorb(jar: Jar, res: Response): void {
 
 const header = (jar: Jar) => [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
 
-export interface Session { jar: Jar; }
+export interface Session { jar: Jar; personaId: number; }
 
-/** Sign in as a seeded persona (by email) via persona-mint; returns its cookie jar. */
+/** Sign in as a seeded persona (by email) via persona-mint; returns its cookie jar and resolved persona id. */
 export async function loginAs(email: string): Promise<Session> {
     const jar: Jar = new Map();
 
@@ -51,7 +51,7 @@ export async function loginAs(email: string): Promise<Session> {
     if (![...jar.keys()].some((k) => k.includes("session-token"))) {
         throw new Error(`login failed for ${email}: no session cookie set`);
     }
-    return { jar };
+    return { jar, personaId: persona.id };
 }
 
 /** Fetch JSON from the running server, attaching a session's cookies when given. */

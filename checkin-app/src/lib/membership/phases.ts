@@ -21,7 +21,7 @@ export interface IntakePhase {
 export const INITIAL_PHASES: IntakePhase[] = [
     { status: "INTAKE", label: "Your Family", description: "Tell us about your household." },
     { status: "PENDING_EXTERNAL_ACTION", label: "Contract & Background Check", description: "Sign the contract and start your background check." },
-    { status: "PENDING_PAYMENT", label: "Payment", description: "Pay your annual membership dues." },
+    { status: "PENDING_PAYMENT", label: "Payment", description: "Pay your annual membership fee." },
     { status: "ACTIVE", label: "Member", description: "Welcome to the Treehouse!" },
 ];
 
@@ -35,8 +35,7 @@ export function stepperActiveIndex(status: OrgMembershipProcessStatus | null): n
     switch (status) {
         case "INTAKE": return 0;
         case "PENDING_EXTERNAL_ACTION": return 1;
-        // Held for review (household intake note): external actions are done and
-        // Payment is the pending step — it just won't open until the review clears.
+        // Legacy held-for-review rows: external actions are done, Payment pending.
         case "PENDING_BG_REVIEW": return 2;
         case "PENDING_PAYMENT": return 2;
         case "PENDING_BG_CLEARANCE": return 3;

@@ -21,7 +21,8 @@
  *   HH_B   — leadB (lead of a DIFFERENT household). The cross-household attacker
  *            used to prove the id-addressed trusted-adult routes reject a lead
  *            of the wrong household.
- *   HH_PAY        — payUser; membership process PENDING_PAYMENT.
+ *   HH_PAY        — payLead (lead) + payMember (NOT a lead); membership process
+ *                   PENDING_PAYMENT.
  *   HH_RENEWAL    — renewalLead (lead); membership process PENDING_RENEWAL (read-only:
  *                   renewal-status).
  *   HH_RENEW      — renewUser; membership process PENDING_RENEWAL (mutated by renew).
@@ -38,7 +39,7 @@ import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
-jest.mock('@/lib/email', () => ({ sendEmail: jest.fn().mockResolvedValue(true) }));
+jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
 
 const TAG = 'authz-ownership-test';
 
@@ -86,7 +87,7 @@ function taAuditCount(taId: number) {
 describe('Ownership-boundary authorization', () => {
     let leadA = 0, memberA = 0, hhA = 0;
     let leadB = 0, hhB = 0;
-    let payUser = 0, hhPay = 0;
+    let payLead = 0, payMember = 0, hhPay = 0;
     let renewalLead = 0, hhRenewal = 0;
     let renewUser = 0, hhRenew = 0;
     let taWithdrawId = 0, taRenewId = 0;
@@ -131,7 +132,8 @@ describe('Ownership-boundary authorization', () => {
         leadB = await mkMember(hhB, 'LeadB', true);
 
         hhPay = await mkHousehold('HH_PAY');
-        payUser = await mkMember(hhPay, 'PayUser');
+        payLead = await mkMember(hhPay, 'PayLead', true);
+        payMember = await mkMember(hhPay, 'PayMember');
         await mkPendingProcess(hhPay, 'PENDING_PAYMENT', 'INITIAL');
 
         hhRenewal = await mkHousehold('HH_RENEWAL');
@@ -312,22 +314,27 @@ describe('Ownership-boundary authorization', () => {
         });
     });
 
-    // ---- membership/payment (GET) — self-scoped (no id param) ------------------
+    // ---- membership/payment (GET) — self-scoped (no id param), lead-only -------
     // No IDOR vector: the route derives the household from the session user, so a
-    // caller can only ever reach their OWN household's process. The boundary test
-    // is isolation: a user from a household with no pending payment must NOT see
-    // another household's link.
+    // caller can only ever reach their OWN household's process. Two boundaries:
+    // the membership fee figure and the live checkout link are the lead's (a non-lead member
+    // of the paying household gets 403), and a lead of another household must NOT
+    // see this household's link.
     describe('GET /api/membership/payment', () => {
         it('401 unauthenticated', async () => {
             anon();
             expect((await PAYMENT_GET(req())).status).toBe(401);
         });
-        it('200 for a member of the household awaiting payment', async () => {
-            as(payUser, { householdId: hhPay });
+        it('403 for a non-lead member of the household awaiting payment', async () => {
+            as(payMember, { householdId: hhPay });
+            expect((await PAYMENT_GET(req())).status).toBe(403);
+        });
+        it('200 for the lead of the household awaiting payment', async () => {
+            as(payLead, { householdId: hhPay });
             expect((await PAYMENT_GET(req())).status).toBe(200);
         });
         it('does not expose another household\'s payment process (409, not 200)', async () => {
-            as(memberA, { householdId: hhA });
+            as(leadA, { householdId: hhA });
             expect((await PAYMENT_GET(req())).status).toBe(409);
         });
     });

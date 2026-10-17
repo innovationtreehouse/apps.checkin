@@ -17,7 +17,7 @@
  * Mirrors checkin-app/src/lib/shopify.ts's getAccessToken shape (cache + 5-min-early
  * refresh), but standalone — this package imports nothing from checkin-app.
  */
-import type { ShopifyConfig } from "@inventory/s-ingest-core";
+import type { ShopifyConfig } from "@checkin/s-ingest-core";
 
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // fallback when the response has no expires_in
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;

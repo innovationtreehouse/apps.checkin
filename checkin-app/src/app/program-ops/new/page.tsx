@@ -30,6 +30,7 @@ export default function CreateProgramPage() {
   const [nonMemberPrice, setNonMemberPrice] = useState("");
   const [maxParticipants, setMaxParticipants] = useState("50");
   const [orgMemberOnly, setMemberOnly] = useState(false);
+  const [publiclyVisible, setPubliclyVisible] = useState(false);
   const [saving, setSaving] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [message, setMessage] = useState("");
@@ -54,9 +55,10 @@ export default function CreateProgramPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
-          startAt: startAt || null,
-          endAt: endAt || null,
+          startAt,
+          endAt,
           orgMemberOnly,
+          publiclyVisible: orgMemberOnly && publiclyVisible,
           minAge: minAge ? parseInt(minAge) : null,
           maxAge: maxAge ? parseInt(maxAge) : null,
           memberPrice: (!isFree && memberPrice) ? memberPrice : null,
@@ -85,8 +87,8 @@ export default function CreateProgramPage() {
   const isDirty =
     !submitted &&
     !shallowEqual(
-      { name: "", startAt: "", endAt: "", minAge: "", maxAge: "", isFree: true, memberPrice: "", nonMemberPrice: "", maxParticipants: "50", orgMemberOnly: false, leadMentorId: "" },
-      { name, startAt, endAt, minAge, maxAge, isFree, memberPrice, nonMemberPrice, maxParticipants, orgMemberOnly, leadMentorId },
+      { name: "", startAt: "", endAt: "", minAge: "", maxAge: "", isFree: true, memberPrice: "", nonMemberPrice: "", maxParticipants: "50", orgMemberOnly: false, publiclyVisible: false, leadMentorId: "" },
+      { name, startAt, endAt, minAge, maxAge, isFree, memberPrice, nonMemberPrice, maxParticipants, orgMemberOnly, publiclyVisible, leadMentorId },
     );
   useUnsavedGuard(isDirty);
 
@@ -120,7 +122,7 @@ export default function CreateProgramPage() {
               label="Lead Mentor / Program Coordinator"
               required
               description="The lead mentor will be able to manage this program's roster and events."
-              placeholder="Search by name or email..."
+              placeholder="Search by name, email, or ID..."
               selectedId={leadMentorId || null}
               selectedLabel={mentorSearch}
               search={async (q) => {
@@ -144,6 +146,7 @@ export default function CreateProgramPage() {
               <TextInput
                 type="date"
                 label="Start Date"
+                required
                 value={startAt}
                 onChange={(e) => setStartAt(e.currentTarget.value)}
                 error={datesInvalid}
@@ -152,6 +155,7 @@ export default function CreateProgramPage() {
               <TextInput
                 type="date"
                 label="End Date"
+                required
                 value={endAt}
                 onChange={(e) => setEndAt(e.currentTarget.value)}
                 error={datesInvalid ? 'End date must be on or after start date.' : false}
@@ -201,15 +205,25 @@ export default function CreateProgramPage() {
               checked={orgMemberOnly}
               onChange={(e) => setMemberOnly(e.currentTarget.checked)}
               label="Treehouse Members-Only Program"
-              description="If checked, this program will only be visible to logged-in users with active memberships."
+              description="If checked, only Treehouse Members can enroll."
             />
+
+            {orgMemberOnly && (
+              <Checkbox
+                ml="lg"
+                checked={publiclyVisible}
+                onChange={(e) => setPubliclyVisible(e.currentTarget.checked)}
+                label="Show to non-members"
+                description="List this members-only program publicly so non-members can see it. They still must be a member to enroll."
+              />
+            )}
 
             {message && (
               <Alert color="red" variant="light" title="Couldn't create program">{message}</Alert>
             )}
 
             <Group justify="flex-end">
-              <Button type="submit" disabled={saving || !name.trim() || !leadMentorId || !maxParticipants || datesInvalid} loading={saving}>
+              <Button type="submit" disabled={saving || !name.trim() || !leadMentorId || !startAt || !endAt || !maxParticipants || datesInvalid} loading={saving}>
                 Create Program
               </Button>
             </Group>

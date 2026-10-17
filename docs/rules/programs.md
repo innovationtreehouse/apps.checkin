@@ -1,0 +1,392 @@
+# Programs
+
+Eligibility, enrollment, pricing, capacity, and scholarships.
+
+---
+
+## Policy
+
+### What a program is and who runs it
+
+- Every activity of the Treehouse operates as a sponsored program, unless it is
+  coordinated and budgeted by the board directly, charges no fee, and has no
+  specific group of participants. — *Sponsored Program Policy, Art. III §III.1*
+
+- Every sponsored program has a program budget and a program leader identified
+  in writing. — *Sponsored Program Policy, Art. III §III.2*
+
+- A program leader is at least 23, is a member, and has passed the background
+  check. — *Sponsored Program Policy, Art. IV*
+
+- A program leader holds exclusive, non-transferable authority over their
+  program. Programs do not create their own governance — committees, voting
+  memberships, or budget authority — without written board authorisation, and
+  the board may modify or terminate a program at its discretion. — *Sponsored
+  Program Policy, Art. IX*
+
+- A second adult volunteer is required when the program is not running alongside
+  another program at the same facility or event. — *Sponsored Program Policy,
+  Art. III §III.2*
+
+- Every use of a facility has an agreed keyholder, agreed by both the program
+  leader and the keyholder. — *Sponsored Program Policy, Art. III §III.3*
+
+- The membership fee does not buy participation in a program that carries an
+  application, a fee, or other restrictions. — *Membership Policy, Art. V;
+  Definitions Policy, Art. III, "Member Family"*
+
+### Fees and scholarships
+
+- Program fees, before any scholarship adjustment, are equal for all members —
+  including a board member enrolling their own family, who pays what everyone
+  else pays. A fee may be assessed at several points across the program's life,
+  and those assessments need not be equal to one another. — *Sponsored Program
+  Policy, Art. VI §VI.2*
+
+- Holding a role is not a reason to decide a matter that benefits your own
+  family. — *Ethics Policy, Art. III §§III.2, III.5*
+
+- A program fee is a fee, not a charitable donation. — *Sponsored Program
+  Policy, Art. VI §VI.2*
+
+- No more than 20% of total participant fees may be waived by scholarship
+  without board approval. Externally designated scholarship funds do not count
+  toward that limit, and where total fees are $20 or less per participant the
+  limit rises to 50%. — *Sponsored Program Policy, Art. VII*
+
+- A scholarship has a specific intent and is budgeted for in the program budget.
+  — *Sponsored Program Policy, Art. VII*
+
+- A program payment plan does not extend beyond the later of the program's end
+  and 90 days from its start. — *Membership Policy, Art. XIII*
+
+- A participant who completes a registration is responsible for paying for it.
+  — *Sponsored Program Policy, Art. VIII*
+
+### Youth participation
+
+- Youth are enrolled in school — public, private, or home — unless they hold a
+  high-school diploma or equivalent. — *Membership Policy, Art. IV*
+
+- A program leader may require a parent or guardian to stay during a program,
+  and may apply that to some families and not others. — *Sponsored Program
+  Policy, Art. III §III.4*
+
+---
+
+## Assumptions
+
+Things the app takes as true because they are handled outside it.
+
+- Scholarship totals are tracked in the program budget, where the cap on waived
+  fees and the board approval it triggers are applied.
+
+- Payment-plan terms are agreed within the limits policy sets. The app records
+  that a plan was approved, not its schedule.
+
+---
+
+## Procedure
+
+### Eligibility
+
+- Age eligibility is measured at the program's start date, not at registration.
+  Both start and end dates are required.  [Decision]
+
+- No program targets anyone over 25, and an age limit above that is refused.  [Decision]
+
+- A declared adult clears any youth minimum and fails any youth maximum. Nothing
+  verifies the claim. Checking a date of birth and telling a guardian were both
+  considered and refused; a minor who declares themselves an adult is a risk
+  taken knowingly.  [Decision — deliberate limit]
+
+- A program leader is 23 or older, the floor belonging to the role rather than to
+  adulthood. A program volunteer has no age floor at all — youth volunteer too.  [Decision — *Policy: Sponsored Program Policy, Art. IV*]
+
+- A core volunteer is a known adult: 18 or older by date of birth, or declared
+  adult. Being core opens families' contact details, so a youth or someone of
+  unknown age is refused. No board approval is needed beyond that.  [Decision — *Principle: least privilege*]
+
+- Nothing checks that a program leader is a member who has passed a background
+  check.  [Short of policy — *Policy: Sponsored Program Policy, Art. IV*]
+
+- Nobody sets themself or anyone in their own household as a program's leader,
+  because the leader approves the program's expenses.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
+- Nobody adds themselves or their own household as a program volunteer, or makes
+  them core; someone outside the household must. Only a program that has not
+  finished makes its volunteers Program Volunteers.  [Decision]
+
+- Nobody under 18 enrolls themselves, and nobody whose age is unknown does
+  either; only a known adult may. The bar is the guardian-consent line and is
+  separate from the ages a program targets. A youth is enrolled by their
+  household lead, who may also withdraw them while the place is unpaid. Neither a
+  youth nor someone whose age is unknown withdraws themselves.  [Decision — *Principle: fail closed*]
+
+- A paid place is not the household's to withdraw: neither the household lead
+  nor the enrolled adult can remove it. The board, a sysadmin and the program's
+  leader can.  [Unsettled — who withdraws a paid
+  place is open with the board]
+
+- Being refused for an unknown age is not a dead end. Someone with no age on file
+  is asked to record one and may then enroll themselves; a brand-new adult is
+  their own household lead and has nobody else to ask.  [Decision]
+
+### Enrollment
+
+- A program never enrolls beyond capacity, including on a simultaneous claim of
+  the last seat. A confirmed admin override on another household is the one
+  exception.  [Decision]
+
+- Enrollment is done only by the person, their household lead, the board, or a
+  sysadmin.  [Decision — *Principle: least privilege*;
+  superuser scope unsettled]
+
+- The fee waiver applies only to an administrator acting on another household.
+  Waiving a limit is a separate power from waiving a fee.  [Decision — *Policy: Sponsored Program Policy, Art. VI §VI.2; Ethics Policy, Art. III*]
+
+- Unpaid enrollments are warned, then escalated to the board. Overdue is a
+  classification, not an action.  [Decision — *Principle: people decide about people*]
+
+- Enrolling in a public workshop takes no membership agreement, and a household
+  that only ever enrolls in programs need give no mailing address.  [Decision]
+
+- A household that cannot enroll — nobody eligible, or no valid emergency contact
+  — is offered the way to fix it rather than a refusal.  [Decision]
+
+- Registration signs someone in before intake begins, so whether an account
+  exists is answered by signing in and never by a public reply.  [Decision — *Principle: no existence oracle*]
+
+- Removing a paid enrollment returns nothing to sale. A person decides whether
+  the freed seat goes back, and does it at the store.  [Decision — deliberate limit; *Principle: people decide about people*]
+
+- Removing a comped or approved enrollment puts its seat back on sale, the same
+  as returning any seat taken off sale without a payment. Every removal does it:
+  a family's withdrawal, the board's removal, and the expiry sweeps. A seat goes
+  back only when the app recorded taking it; a place that never took one (its
+  hold failed, or it joined while the program was free) returns nothing, so a
+  return can never sell a seat beyond capacity.  [Decision — *Principle: fail closed*]
+
+- One order pays for one household. A checkout naming someone from another
+  household is refused before it reaches the store, and a paid order that names
+  more than one household activates nobody and goes to the board.  [Decision]
+
+- A request for a payment plan is never swept away for sitting too long.  [Decision]
+
+- Moving a program's start date or changing its age limits never removes or
+  changes an enrollment. Anyone enrolled who fitted the program's ages before the
+  edit and no longer does is named to the board, which decides what happens.  [Decision — *Principle: people decide about people*]
+
+### What a youth sees of money
+
+- A youth is never shown a payment obligation, a payment action, or a payment
+  status, whether their own or their household's. It is not disabled and not
+  explained; it is absent, and the server never sends it: their own enrollment
+  reads as enrolled, paid or not.  [Decision]
+
+- Payment status — whether an enrollment is paid or not paid yet — goes to the
+  people running the program and to a household lead for their own household,
+  with a way to pay what is not paid yet. Nobody else receives it: not a youth,
+  not a household member who is not a lead, and no family for another family's
+  children.  [Decision — *Principle: least privilege*]
+
+- A youth may not settle a payment their household lead started, on their own
+  enrollment or any other. There is no finish-the-checkout allowance for an
+  enrollment that already exists.  [Decision]
+
+- What a program costs stays public. A price is program information, not a
+  payment situation; it carries no obligation, no state and no action, so a youth
+  sees it like anyone else.  [Decision — deliberate limit]
+
+- Someone whose age is unknown is treated the opposite way from a youth here.
+  They may well be an adult, so nothing is hidden from them and they are asked
+  for their age instead. Known youth, hide; unknown, ask.  [Decision]
+
+### Pricing
+
+- A program sells at its full price only. The member price comes from a discount
+  code the server mints, never from the buyer picking a cheaper store item, so
+  nobody can choose the member price for themselves.  [Decision]
+
+- A failed discount degrades to undiscounted checkout, never an error.  [Decision — deliberate limit]
+
+- A member discount code is minted for one household's unpaid claims, names that
+  household, and is good for one order. On anyone else's order, or once that
+  household's membership no longer covers the program, it activates nobody and
+  goes to the board. What "covers the program" means rests on the candidate
+  below, which is not settled.  [Decision]
+
+- A program priced on a tier with nothing wired to sell it is broken and is
+  reported as such. A free tier has nothing to wire and is never reported, and a
+  tier priced at zero is free — it is never sold, never reported, and never waits
+  on a payment.  [Decision]
+
+- Such a program takes no enrollment that would have to be paid for. The place is
+  refused outright rather than admitted and left waiting on a payment that can
+  never arrive. An administrator's comped place never reaches the store and is
+  seated as normal; nobody else's confirmation makes the program sellable, so
+  none is offered.  [Decision — *Principle: fail closed*]
+
+> **Candidate, not settled — for owner ratification.** Member pricing requires
+> the membership to cover the program's end date, not merely be active today.
+> Falls back to status alone when the membership-year boundary is unset.
+> (`checkin-app/src/lib/orgMembership.ts`)
+
+### Capacity and scholarship holds
+
+- A program has one capacity pool, with no separate member-priced pool. The
+  number is how many people fit in the room, so a comped place takes one like any
+  other.  [Decision]
+
+- A request whose seat was never taken off sale is its own state, not an unpaid
+  applicant — the family did nothing wrong when the store call failed. It waits
+  in its own queue until a board member removes the seat by hand and confirms it,
+  which records the hold and returns the request to the normal decision.  [Decision]
+
+- The self-approval bar covers deciding a request, not repairing one. Confirming
+  a hold somebody's failed store call never made benefits nobody.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
+- A family that holds a place can always pay for it. Each paid program has a
+  second, hidden "reserved seat" item in the store besides its public one, and
+  every checkout the app sends a family to uses it — in the app a checkout only
+  ever follows a claim. It does not count stock, so it never sells out: the
+  family's place is already counted by the app, and the app's own count is the
+  only gate. A program without one falls back to the public item.  [Decision]
+
+- The reserved-seat item is unlisted: kept out of the store's search,
+  collections and recommendations, but payable by a direct link. Hidden is not
+  locked — anyone holding the link can buy it. Such a purchase, like any store
+  order no enrollment claims, activates nobody and is left for a person to
+  resolve from the finance board.  [Decision — deliberate limit]
+
+- Every filled place ends up exactly one unit out of the public item's stock, so
+  the store never offers a place a family already holds. A sale on the public item
+  takes its own unit; a reserved-seat sale takes none, so activation takes it,
+  unless the family's scholarship hold already did.  [Decision]
+
+- A refund on the reserved-seat item is raised for the board and puts nothing
+  back on sale; only a public-item refund restocks.  [Decision — deliberate limit]
+
+- The public item keeps its counted stock for people buying straight from the
+  store. A change to a program's full price goes to both store items. A member
+  price does not, because members pay through their discount code. A full price
+  of zero or none is never sent, since a free store item would give places away;
+  that case, or a price the store refuses, is reported to the admins and the
+  saved price stands.  [Decision]
+
+- The store is never asked to show fewer than no places. Where the app holds more
+  places than the store has stock, the difference stays owed; places that come
+  back pay it down before any goes back on sale, and the board is told when it
+  grows.  [Decision]
+
+- A stock change the store can no longer confirm is never resent, because it
+  could apply twice. A board member settles it against the store.  [Decision — *Principle: fail closed*]
+
+- Each program has an off-sale date, set by the board, defaulting to its start
+  date; it may fall before or after the start. On that date new claims stop, and
+  the next daily run closes enrollment and hides the public item, retrying each
+  day until the store confirms. Families who claimed in time still pay through
+  the reserved-seat item. Moving only the start date never reopens an ended
+  sale.  [Decision]
+
+- A program with no reserved-seat item keeps its public item on sale past the
+  off-sale date, because hiding it would stop claimed families paying; the
+  admins are emailed to create one.  [Decision — deliberate limit]
+
+- After the off-sale date no seat goes back on sale: a withdrawal, a released
+  hold, a raised capacity or a refund that restocks changes no store stock,
+  though a cut still lowers it. The off-sale date wins over a refund going back
+  on sale.  [Decision — owner]
+
+- Automatic changes only reduce visibility. Nothing opens enrollment, re-lists a
+  product or reopens a sale on its own; the board reopens a sale by moving its
+  off-sale date later, which resets the store stock, and re-lists the public item
+  by hand.  [Decision]
+
+- One week after the off-sale date the board is emailed the claims still unpaid,
+  once per program.  [Decision]
+
+- A scholarship or payment-plan request takes its seat when requested, not when
+  approved.  [Decision]
+
+- A held seat is returned exactly once — by withdrawal, payment, or grace expiry
+  — or consumed by approval, which makes it a comped place; that seat comes back
+  when the place is removed. This holds against a failed store call, not a crash
+  mid-transition.  [Decision]
+
+- A place granted while its seat is still held is the one drift repaired without
+  a person: a sweep releases the seat and leaves the place. Every other
+  off-diagram enrollment is reported and left alone, because repairing it would
+  mean guessing which of two states the family is actually in.  [Decision — deliberate limit;
+  *Principle: people decide about people*]
+
+- Denying a request does not release the seat; the family may still pay for it.  [Decision]
+
+- A denial starts the grace clock and sends nothing, so the board's own message
+  has to state the deadline.  [Decision — deliberate limit]
+
+- The grace period is a board setting. Unset means the feature is off.  [Decision — *Principle: fail closed*]
+
+- A request whose seat hold failed waits for a board member to take the seat off
+  sale by hand. It can still be approved or denied without one, deliberately: the
+  queue offers each as a named override behind a confirmation that states the
+  oversell risk. A failed store call is the organisation's fault, and stranding
+  the family is the worse outcome.  [Decision — deliberate limit]
+
+### Access to program information
+
+- A program's catalogue entry is public; its roster is visible only to the people
+  running it — its leader, its core volunteers, the board and sysadmins — and to
+  people enrolled in it. The catalogue filters rather than gates: an anonymous
+  caller reaches it and sees less, and is never told that a hidden members-only
+  program exists.  [Decision — *Policy: Records Policy, Art. IV*]
+
+- A members-only program is hidden by default and keeps that silence on its own
+  page: an anonymous caller is told there is no such program; a signed-in caller
+  who is not a member is told it exists and that it is members only. Signing in is
+  what earns the reason for being turned away.  [Decision — *Principle: no existence oracle*]
+
+- A program's leader may opt a members-only program into the public catalogue
+  (publiclyVisible). Such a program is listed and its detail page shown to everyone,
+  non-members included, so the offering can be understood; its roster stays hidden
+  from non-enrolled callers, and enrollment is still refused to anyone whose
+  membership is unsettled. Visibility and the right to join are separate.  [Decision]
+
+- A program leader is defined by the program they lead, not by a role they hold.
+  They reach the programs they lead and no others; the board and sysadmins reach
+  all of them.  [Decision — superuser scope unsettled]
+
+- A program announces to families only if its leader opts in, and only to those
+  whose membership covers it. It fires on becoming both upcoming and open to
+  enrollment — neither alone — and once in the program's life, so closing and
+  reopening cannot send it again.  [Decision — deliberate limit]
+
+- A program leader sees whether a participant has paid, never how. Method,
+  scholarship, and payment plan are not theirs.  [Decision — *Principle: least privilege*]
+
+- Only the board and sysadmins set a program's price or its store variant. A
+  program leader cannot: a price change can make their own family's place
+  free.  [Decision — *Principle: least privilege*]
+
+- The people running a program reach a family through its household leads and
+  emergency contacts. A participant's own phone number is not given to them.  [Decision — *Principle: least privilege*]
+
+- A program leader cannot remove the program's treasurer from its volunteers.
+  The treasurer comes from the budget agreed between the board and the program
+  leader, so only the board or a sysadmin removes them.  [Decision]
+
+- The search a program leader uses to add volunteers and participants returns
+  names only, and matches a name or an id, never an email. Contact details and
+  dates of birth of people outside the program, youth above all, are not theirs.
+  The server checks each name against the program's age limits and sends only
+  the verdict ("Too young", "Too old", "DOB missing"), so the picker still warns.  [Decision — *Principle: least privilege*]
+
+- A program's detail page shows which of the household is already enrolled and
+  what the program limits, and hides the non-member price where the program is
+  members only.  [Decision]
+
+- Participant hours are hours logged by people enrolled in a program. Age says
+  nothing about it.  [Decision]
+
+- Cross-selling one program from another will not be built.  [Decision — deliberate limit]
+

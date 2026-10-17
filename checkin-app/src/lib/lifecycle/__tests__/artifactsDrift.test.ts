@@ -1,5 +1,5 @@
 /**
- * Drift guard for the generated lifecycle artifacts (docs/designs/LIFECYCLE.md).
+ * Drift guard for the generated lifecycle artifacts.
  *
  * Regenerates every machine's artifact in memory from its `TRANSITIONS` and
  * asserts byte-equality with the checked-in `docs/generated/lifecycle/<name>.md`.

@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { Stack } from '@mantine/core';
+import { Stack, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useRequireRole } from '@/hooks/useRequireRole';
+import { FACILITY_RECORD_ROLES } from '@/lib/facilityNav';
 import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
-import { formatDateTime } from '@/lib/time';
+import { useOrgTime } from '@/components/TimezoneProvider';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 type BadgeEvent = {
@@ -16,36 +17,40 @@ type BadgeEvent = {
   location?: string;
 };
 
-const COLUMNS: DataTableColumn<BadgeEvent>[] = [
-  { header: 'ID', render: (b) => b.id, sortBy: (b) => b.id },
-  { header: 'Time', render: (b) => formatDateTime(b.timestamp), sortBy: (b) => b.timestamp },
-  { header: 'Participant', render: (b) => b.person?.name || 'Unknown', sortBy: (b) => b.person?.name },
-  { header: 'Email', render: (b) => b.person?.email, sortBy: (b) => b.person?.email },
-  { header: 'Location', render: (b) => b.location || 'Front Door', sortBy: (b) => b.location },
-];
-
 export default function AdminBadgesPage() {
-  const { ready, loading: authLoading } = useRequireRole(['isSysadmin']);
+  const { ready, loading: authLoading } = useRequireRole(FACILITY_RECORD_ROLES);
+  const { formatDateTime } = useOrgTime();
+
+  // Built here, not at module scope: the time column needs the org zone from context.
+  const COLUMNS: DataTableColumn<BadgeEvent>[] = [
+    { header: 'ID', render: (b) => b.id, sortBy: (b) => b.id },
+    { header: 'Time', render: (b) => formatDateTime(b.timestamp), sortBy: (b) => b.timestamp },
+    { header: 'Participant', render: (b) => b.person?.name || 'Unknown', sortBy: (b) => b.person?.name },
+    { header: 'Email', render: (b) => b.person?.email, sortBy: (b) => b.person?.email },
+    { header: 'Location', render: (b) => b.location || 'Front Door', sortBy: (b) => b.location },
+  ];
 
   const [loading, setLoading] = useState(true);
   const [badges, setBadges] = useState<BadgeEvent[]>([]);
   const [message, setMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
-  const fetchBadges = useCallback(async () => {
-    try {
-      const res = await fetch('/api/facility/badges');
+  const fetchBadges = useCallback(() => fetch('/api/facility/badges')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setBadges(data.badges);
       } else {
         setMessage({ text: "Failed to load badge events.", tone: "error" });
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading badges.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchBadges();
@@ -57,11 +62,27 @@ export default function AdminBadgesPage() {
 
   if (!ready) return null;
 
+  const multiLocation = new Set(badges.map((b) => b.location).filter(Boolean)).size > 1;
+  const term = searchTerm.trim().toLowerCase();
+  const visible = term
+    ? badges.filter((b) =>
+        [b.id, b.person?.name, b.person?.email, multiLocation ? b.location : null].some((v) =>
+          String(v ?? '').toLowerCase().includes(term),
+        ),
+      )
+    : badges;
+
   return (
     <Stack>
       <AlertBanner message={message?.text} tone={message?.tone} />
 
-      <DataTable columns={COLUMNS} rows={badges} getRowKey={(b) => b.id} emptyMessage="No badge events." />
+      <TextInput
+        placeholder={multiLocation ? "Filter by name, email, location, or ID..." : "Filter by name, email, or ID..."}
+        value={searchTerm}
+        onChange={(e) => setSearchTerm(e.currentTarget.value)}
+      />
+
+      <DataTable columns={COLUMNS} rows={visible} getRowKey={(b) => b.id} emptyMessage="No badge events." />
     </Stack>
   );
 }

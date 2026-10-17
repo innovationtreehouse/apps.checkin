@@ -19,10 +19,10 @@ describe("MatchAuditPanel", () => {
           { bucket: "UNCLAIMED_PAID", orderLegacyId: "2", name: "#2", customerEmail: "b@x.com", financialStatus: "PAID", totalCents: 7500, discountCodes: ["VOL50"], expected: ["program: Robotics"] },
         ],
         memberships: [
-          { bucket: "MANUAL_CERTIFIED", processId: 3, membershipId: null, householdName: "The Larks", shopifyOrderId: null, certifiedByName: "Board Bob" },
-          { bucket: "NO_PAYMENT_BASIS", processId: 4, membershipId: null, householdName: "The Wrens", shopifyOrderId: null, certifiedByName: null },
-          { bucket: "NO_PROCESS", processId: null, membershipId: 5, householdName: "The Finches", shopifyOrderId: null, certifiedByName: null },
-          { bucket: "ORDER_REVERSED", processId: 6, membershipId: null, householdName: "The Sparrows", shopifyOrderId: "801", certifiedByName: null },
+          { bucket: "MANUAL_PAYMENT", processId: 3, membershipId: null, householdName: "The Larks", shopifyOrderId: null, manualPaymentByName: "Board Bob" },
+          { bucket: "NO_PAYMENT_BASIS", processId: 4, membershipId: null, householdName: "The Wrens", shopifyOrderId: null, manualPaymentByName: null },
+          { bucket: "NO_PROCESS", processId: null, membershipId: 5, householdName: "The Finches", shopifyOrderId: null, manualPaymentByName: null },
+          { bucket: "ORDER_REVERSED", processId: 6, membershipId: null, householdName: "The Sparrows", shopifyOrderId: "801", manualPaymentByName: null },
         ],
         enrollments: [
           { bucket: "SCHOLARSHIP_APPROVED", programId: 7, programName: "Robotics", personId: 9, personName: "Kid Nine", shopifyOrderId: null, compedByName: null },
@@ -45,10 +45,10 @@ describe("MatchAuditPanel", () => {
     expect(screen.getByText("#2")).toBeInTheDocument();
     expect(screen.getByText("program: Robotics")).toBeInTheDocument();
     expect(screen.getByText("VOL50")).toBeInTheDocument();
-    expect(screen.getByText("No order and no certification")).toBeInTheDocument();
+    expect(screen.getByText("No order and no manually recorded payment")).toBeInTheDocument();
     expect(screen.getByText("Active membership with no INITIAL/RENEWAL process")).toBeInTheDocument();
     // ...and the manual/scholarship/comped classes are listed with WHO, not flagged as gaps.
-    expect(screen.getByText("Certified by Board Bob")).toBeInTheDocument();
+    expect(screen.getByText("Payment recorded manually by Board Bob")).toBeInTheDocument();
     expect(screen.getByText("Scholarship / payment plan approved")).toBeInTheDocument();
     expect(screen.getByText("Comped by Admin Amy")).toBeInTheDocument();
     // Reversed rows render informationally, not as a gap.
@@ -148,7 +148,7 @@ describe("MatchAuditPanel", () => {
           { bucket: "UNCLAIMED_PAID", orderLegacyId: "2", name: "#2", customerEmail: "b@x.com", financialStatus: "PAID", totalCents: 7500, discountCodes: [], expected: ["membership"] },
         ],
         memberships: [
-          { bucket: "NO_PAYMENT_BASIS", processId: 4, membershipId: null, householdName: "The Wrens", shopifyOrderId: null, certifiedByName: null },
+          { bucket: "NO_PAYMENT_BASIS", processId: 4, membershipId: null, householdName: "The Wrens", shopifyOrderId: null, manualPaymentByName: null },
         ],
         enrollments: [],
       },

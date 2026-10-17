@@ -3,17 +3,20 @@ import { config } from "./config";
 import { parseEmailHeaderList } from "./emailHeader";
 
 export interface EmailSenderIdentity {
-    /** The Resend `from`. BoardSettings.emailFromAddress overrides the EMAIL_FROM env default. */
-    from: string;
+    /**
+     * The Resend `from`. BoardSettings.emailFromAddress wins over the EMAIL_FROM env
+     * value; null when neither is configured, which sendEmail treats as "cannot send".
+     */
+    from: string | null;
     /** The Resend `replyTo` addresses (one or more), or undefined when the board hasn't configured any. */
     replyTo?: string[];
 }
 
 /**
  * Resolve the effective sender identity for outbound mail: the board can override
- * the EMAIL_FROM env default and add a Reply-To via Settings → Membership. Falls
- * back to the env-only identity on any DB error so a settings-table hiccup never
- * blocks mail delivery.
+ * the EMAIL_FROM env value and add a Reply-To via Settings → Email. Falls back to
+ * the env-only identity on any DB error so a settings-table hiccup never blocks
+ * mail delivery. A null `from` means no sender is configured at either layer.
  *
  * ponytail: one findUnique on the single-row BoardSettings PK per send. Fan-outs
  * (e.g. notifyNewProgramAnnounced) pay it per recipient; the lookup is a cached

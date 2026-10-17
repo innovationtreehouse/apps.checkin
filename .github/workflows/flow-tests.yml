@@ -9,15 +9,22 @@ on:
     # so this must exist on both main (every future rel/* cut inherits it)
     # and rel/1.0 (so current release-line PRs get checks).
     branches: [main, 'rel/**']
+    # Safe only while this is not a required check: a skipped required check
+    # never reports and would block the merge.
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'client/**'
   workflow_dispatch: {}
 
 permissions:
   contents: read
   id-token: write      # mint the GitHub OIDC token to assume the AWS role (no stored creds)
 
+# Same key as ci.yml: PR pushes supersede each other; nothing else groups.
 concurrency:
-  group: flow-tests-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   AWS_REGION: us-east-2
@@ -30,6 +37,7 @@ jobs:
   flow:
     name: User-journey flow tests (docker dev server)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 

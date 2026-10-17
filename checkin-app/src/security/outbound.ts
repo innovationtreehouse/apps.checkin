@@ -11,8 +11,7 @@
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
-import { getOutbound } from './core';
-import { classifications, relations } from './generated/classifications';
+import { classifications, relations, getOutbound } from './core';
 // Side-effect import to register outbound surfaces.
 import './registry';
 

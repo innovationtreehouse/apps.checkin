@@ -5,7 +5,10 @@ import { withAuth } from "@/lib/auth";
 import { handler, notFound, unauthorized } from "@/security/handler";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { isYouth } from "@/lib/time";
+import { normalizeAdultDob } from "@/lib/person/adultDob";
+import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 export const GET = handler('GET /api/profile', async ({ auth }) => {
     if (auth.type !== 'session') throw unauthorized();
@@ -13,6 +16,7 @@ export const GET = handler('GET /api/profile', async ({ auth }) => {
         where: { id: auth.user.id },
         include: {
             visits: {
+                where: { deletedAt: null },
                 orderBy: { arrivedAt: 'desc' },
                 take: 50,
                 include: { event: true },
@@ -39,23 +43,40 @@ export const PATCH = withAuth(
             }
 
             const body = await req.json();
-            const { name, phone, dob, notificationSettings, emailSuppressed } = body;
+            const { name, nickname, phone, dob, over25, notificationSettings, emailSuppressed } = body;
 
             if (phone !== undefined && phone !== "" && !isValidPhone(phone)) {
                 return apiError(PHONE_ERROR, 400);
             }
 
+            // A submitted-but-blank name is rejected, not silently dropped (Decision 5).
+            if (name !== undefined && !nameWrite(name)) {
+                return apiError("Name cannot be blank", 400);
+            }
+
+            if (!isNicknameWrite(nickname)) {
+                return apiError("Invalid nickname", 400);
+            }
+
             const updatedProfile = await prisma.person.update({
                 where: { id: userId },
                 data: {
-                    name: name !== undefined ? name : undefined,
+                    name: nameWrite(name),
+                    nickname: nicknameWrite(nickname),
                     phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
-                    dateOfBirth: dob ? new Date(dob) : undefined,
+                    // #1165: a self-entered DoB for a 26+ member is stripped and the
+                    // over-25 flag set instead; with no DoB the over-25 checkbox owns
+                    // the flag. Only touched when the profile form submits age fields,
+                    // so notification-only PATCHes leave DoB/flag unchanged.
+                    ...(dob !== undefined || over25 !== undefined
+                        ? { ...normalizeAdultDob(dob || null), ...(dob ? {} : { isDeclaredAdult: !!over25 }) }
+                        : {}),
                     notificationSettings: notificationSettings !== undefined ? notificationSettings : undefined,
                     emailSuppressed: emailSuppressed !== undefined ? !!emailSuppressed : undefined,
                 },
                 select: {
                     name: true,
+                    nickname: true,
                     email: true,
                     phone: true,
                     dateOfBirth: true,
@@ -63,6 +84,7 @@ export const PATCH = withAuth(
                     emailSuppressed: true,
                 }
             });
+            invalidateAttendanceCache();
 
             await prisma.auditLog.create({
                 data: {

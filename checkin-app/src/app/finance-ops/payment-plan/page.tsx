@@ -7,24 +7,30 @@ import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
-import { formatDateTime } from '@/lib/time';
+import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
+import { useOrgTime } from '@/components/TimezoneProvider';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
-import { formatCents } from '@inventory/money';
+import { formatCents } from '@checkin/money';
 import { landsNextYear } from '@/lib/programYear';
+import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 
 import { PageLoader } from "@/components/ui/PageLoader";
+type HouseholdLead = { id: number; name: string | null; email: string | null };
+
 type PaymentPlanRequest = {
   programId: number;
   personId: number;
   pendingSince: string;
+  scholarshipRequestKind: string | null;
   person: {
     id: number;
     name: string | null;
     email: string;
-    // Current (live) membership, not the point-in-time snapshot — nothing is
-    // stamped until the request is approved, so this is derived on render.
-    household?: { orgMembership?: { status: string } | null } | null;
+    household?: {
+      orgMembership?: { status: string } | null;
+      householdMembers?: HouseholdLead[];
+    } | null;
     householdId: number | null;
   };
   program: {
@@ -37,11 +43,12 @@ type PaymentPlanRequest = {
 };
 
 export default function PendingParticipantsPage() {
-  const { user: me, ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
-  // Conflict of interest: a board member may not approve their OWN household member's
-  // plan (mirrors the server guard). Sysadmin keeps the button. UX only — server enforces.
+  const { formatDateTime } = useOrgTime();
+  const { user: me, ready, loading: authLoading } = useRequireRole(FINANCE_SECTION_ROLES);
+  // Conflict of interest: no actor may approve their OWN household member's plan
+  // (mirrors the server guard). UX only — server enforces.
   const ownHousehold = (req: PaymentPlanRequest) =>
-    me?.isSysadmin !== true && sharesHousehold(me?.householdId, req.person.householdId);
+    sharesHousehold(me?.householdId, req.person.householdId);
 
   const [requests, setRequests] = useState<PaymentPlanRequest[]>([]);
   const [cutoff, setCutoff] = useState<string | null>(null);
@@ -52,9 +59,8 @@ export default function PendingParticipantsPage() {
   const [confirmRefuseOpened, { open: openConfirmRefuse, close: closeConfirmRefuse }] = useDisclosure(false);
   const [pendingRefusal, setPendingRefusal] = useState<{ programId: number; participantId: number } | null>(null);
 
-  const fetchRequests = useCallback(async () => {
-    try {
-      const res = await fetch('/api/finance-ops/payment-plans');
+  const fetchRequests = useCallback(() => fetch('/api/finance-ops/payment-plans')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setRequests(data.ProgramParticipant ?? []);
@@ -62,12 +68,14 @@ export default function PendingParticipantsPage() {
       } else {
         setMessage("Failed to load requests. You may not have access.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading requests.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchRequests();
@@ -157,6 +165,11 @@ export default function PendingParticipantsPage() {
 
   if (!ready) return null;
 
+  const leadEmails = (req: PaymentPlanRequest): string[] =>
+    (req.person.household?.householdMembers ?? [])
+      .map(l => l.email)
+      .filter((e): e is string => !!e);
+
   const columns: DataTableColumn<PaymentPlanRequest>[] = [
     {
       header: 'Participant',
@@ -166,6 +179,24 @@ export default function PendingParticipantsPage() {
           <Text fw={500}>{req.person.name}</Text>
           <Text size="sm" c="dimmed">{req.person.email}</Text>
         </>
+      ),
+    },
+    {
+      header: 'Family Email',
+      render: (req) => {
+        const emails = leadEmails(req);
+        return emails.length
+          ? emails.map(e => <Text key={e} size="sm">{e}</Text>)
+          : <Text size="sm" c="dimmed">—</Text>;
+      },
+    },
+    {
+      header: 'Asked For',
+      sortBy: (req) => scholarshipRequestKindLabel(req.scholarshipRequestKind).toLowerCase(),
+      render: (req) => (
+        <Text size="sm" c={req.scholarshipRequestKind ? undefined : 'dimmed'}>
+          {scholarshipRequestKindLabel(req.scholarshipRequestKind)}
+        </Text>
       ),
     },
     {
@@ -204,7 +235,7 @@ export default function PendingParticipantsPage() {
           <Button
             size="xs" fz={15} color="red" variant="light"
             disabled={ownHousehold(req)}
-            title={ownHousehold(req) ? "You can't refuse your own household's plan — a sysadmin must." : undefined}
+            title={ownHousehold(req) ? "You can't refuse your own household's plan — someone outside your household must." : undefined}
             onClick={() => handleRefuse(req.programId, req.personId)}
           >
             Refuse
@@ -212,7 +243,7 @@ export default function PendingParticipantsPage() {
           <Button
             size="xs" fz={15} variant="light"
             disabled={ownHousehold(req)}
-            title={ownHousehold(req) ? "You can't approve your own household's plan — a sysadmin must." : undefined}
+            title={ownHousehold(req) ? "You can't approve your own household's plan — someone outside your household must." : undefined}
             onClick={() => handleApprove(req.programId, req.personId)}
           >
             Approve &amp; Mark Active

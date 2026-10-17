@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Alert, Button, Card, Stack, Text, TextInput, Title } from "@mantine/core";
+import { useEffect, useState } from "react";
+import { Alert, Button, Card, Select, Stack, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { useRequireRole } from "@/hooks/useRequireRole";
@@ -10,13 +10,33 @@ import { MAX_VISIT_MS } from "@/lib/visitTimes";
 import { AttendanceTabs } from "../AttendanceTabs";
 
 import { PageLoader } from "@/components/ui/PageLoader";
+type HouseholdMember = { id: number; name: string | null; email: string };
+
 export default function ManualAttendance() {
-  const { ready, loading: authLoading } = useRequireRole([]);
+  const { ready, loading: authLoading, user } = useRequireRole([]);
   const [arrivedAt, setArrived] = useState("");
   const [departedAt, setDeparted] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{ arrivedAt?: string; departedAt?: string }>({});
+  // A household lead records for any member of their household — the only way a
+  // minor's visit gets entered at all. Everyone else records for themselves.
+  const [members, setMembers] = useState<HouseholdMember[]>([]);
+  const [personId, setPersonId] = useState<string | null>(null);
+
+  const isLead = !!user?.householdLead;
+
+  useEffect(() => {
+    if (!ready || !isLead) return;
+    let active = true;
+    (async () => {
+      const res = await fetch("/api/household");
+      if (!res.ok) return;
+      const data = await res.json().catch(() => ({}));
+      if (active) setMembers(data.household?.householdMembers ?? []);
+    })();
+    return () => { active = false; };
+  }, [ready, isLead]);
 
   const validateTimes = () => {
     const now = Date.now();
@@ -60,6 +80,8 @@ export default function ManualAttendance() {
         body: JSON.stringify({
           arrivedAt: new Date(arrivedAt).toISOString(),
           departedAt: departedAt ? new Date(departedAt).toISOString() : "",
+          // Omitted = self. The server re-checks household scope regardless.
+          ...(personId ? { personId: Number(personId) } : {}),
         }),
       });
 
@@ -92,12 +114,22 @@ export default function ManualAttendance() {
         <Text c="dimmed" mb="lg">
           Forgot to scan your badge? You can self-correct your time record here. If you are
           currently in the building, leave the departure time blank.
+          {members.length > 1 && " As a household lead you can also record a visit for another member of your household."}
         </Text>
 
         {error && <Alert color="red" mb="md">{error}</Alert>}
 
         <form onSubmit={handleSubmit}>
           <Stack>
+            {members.length > 1 && (
+              <Select
+                label="Who is this visit for?"
+                data={members.map((m) => ({ value: String(m.id), label: m.name || m.email }))}
+                value={personId ?? String(user?.id ?? "")}
+                onChange={setPersonId}
+                allowDeselect={false}
+              />
+            )}
             <TextInput
               type="datetime-local"
               label="Arrival Time (Required)"

@@ -11,8 +11,9 @@ import { runRenewalSweep, beginRenewal, nextBoundary } from '@/lib/membership/re
 import { attest } from '@/lib/membership/review';
 import { markBgConsent, markContractSigned } from '@/lib/membership/external';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 
-jest.mock('@/lib/email', () => ({ sendEmail: jest.fn().mockResolvedValue(true) }));
+jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
 
 const TAG = 'renewal-test';
 const CRON_SECRET = 'cron-test-secret';
@@ -25,7 +26,7 @@ function cronReq(token: string | null) {
 
 describe('Membership renewal', () => {
     const prevSecret = process.env.CRON_SECRET;
-    let prevBoundary: Date | null = null;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
     let rev1: number, rev2: number;
     // The sweep is global; track where we started so afterAll can remove every
     // process this test opened (including renewals on other suites' memberships).
@@ -37,7 +38,7 @@ describe('Membership renewal', () => {
         const parent = await prisma.person.create({ data: { name: `${label} Parent`, householdId: hh.id, email: leadEmail, lastBackgroundCheck: parentBg ?? undefined } });
         await prisma.person.update({ where: { id: parent.id }, data: { isHouseholdLead: true } });
         const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'ACTIVE' } });
-        return { householdId: hh.id, orgMembershipId: m.id, leadEmail };
+        return { householdId: hh.id, orgMembershipId: m.id, leadEmail, leadId: parent.id };
     }
 
     async function wipe() {
@@ -59,7 +60,7 @@ describe('Membership renewal', () => {
     async function setBoundary(date: Date | null) {
         await prisma.boardSettings.upsert({
             where: { id: 1 },
-            create: { id: 1, normalDuesCents: 0, volunteerDuesCents: 0, orgMembershipYearBoundary: date, bgRecheckMonths: BG_RECHECK_MONTHS },
+            create: { id: 1, standardMembershipFeeCents: 0, volunteerMembershipFeeCents: 0, orgMembershipYearBoundary: date, bgRecheckMonths: BG_RECHECK_MONTHS },
             update: { orgMembershipYearBoundary: date, bgRecheckMonths: BG_RECHECK_MONTHS },
         });
     }
@@ -68,8 +69,7 @@ describe('Membership renewal', () => {
         process.env.CRON_SECRET = CRON_SECRET;
         const maxRow = await prisma.orgMembershipProcess.findFirst({ orderBy: { id: 'desc' }, select: { id: true } });
         preMaxProcessId = maxRow?.id ?? 0;
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevBoundary = existing?.orgMembershipYearBoundary ?? null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await wipe();
         const r1 = await prisma.person.create({ data: { email: `rev1-${TAG}@example.com`, name: 'Rev1', isBackgroundCheckReviewer: true, household: { create: { name: `Rev1 HH ${TAG}` } } } });
         rev1 = r1.id;
@@ -81,7 +81,7 @@ describe('Membership renewal', () => {
         await prisma.backgroundCheckAttestation.deleteMany({ where: { processId: { gt: preMaxProcessId } } });
         await prisma.orgMembershipProcess.deleteMany({ where: { id: { gt: preMaxProcessId } } });
         await wipe();
-        await setBoundary(prevBoundary);
+        await restoreBoardSettings();
         if (prevSecret === undefined) delete process.env.CRON_SECRET;
         else process.env.CRON_SECRET = prevSecret;
         await prisma.$disconnect();
@@ -150,7 +150,7 @@ describe('Membership renewal', () => {
         await setBoundary(new Date(Date.UTC(2000, 7, 1)));
         const m = await makeActiveMembership('Fresh', new Date()); // recent background check
         const proc = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.orgMembershipId, kind: 'RENEWAL', status: 'PENDING_RENEWAL' } });
-        const out = await beginRenewal(proc.id);
+        const out = await beginRenewal(proc.id, m.leadId);
         // A fresh agreement is signed every cycle; the still-valid background check is
         // pre-cleared, so the signature alone opens payment.
         expect(out.status).toBe('PENDING_EXTERNAL_ACTION');
@@ -164,12 +164,12 @@ describe('Membership renewal', () => {
         await setBoundary(new Date(Date.UTC(2000, 7, 1)));
         const m = await makeActiveMembership('Stale', null); // no background check on record
         const proc = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.orgMembershipId, kind: 'RENEWAL', status: 'PENDING_RENEWAL' } });
-        const out = await beginRenewal(proc.id);
+        const out = await beginRenewal(proc.id, m.leadId);
         // Same external step as a new applicant — the member must sign a fresh
         // agreement AND consent on Averity; nothing sits in the review queue yet.
         expect(out.status).toBe('PENDING_EXTERNAL_ACTION');
         expect(out.bgClearedAt).toBeNull();
-        await expect(attest(rev1, proc.id, { result: 'APPROVE' })).rejects.toMatchObject({ code: 'wrong_phase' });
+        await expect(attest(rev1, proc.id, { result: 'APPROVE', subjectPersonIds: [m.leadId] })).rejects.toMatchObject({ code: 'wrong_phase' });
 
         // Consent alone is not enough — the renewal re-signs the agreement too.
         await markBgConsent(proc.id, rev1);
@@ -180,8 +180,8 @@ describe('Membership renewal', () => {
         await markContractSigned(proc.id);
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } }))?.status).toBe('PENDING_PAYMENT');
 
-        await attest(rev1, proc.id, { result: 'APPROVE' });
-        const final = await attest(rev2, proc.id, { result: 'APPROVE' });
+        await attest(rev1, proc.id, { result: 'APPROVE', subjectPersonIds: [m.leadId] });
+        const final = await attest(rev2, proc.id, { result: 'APPROVE', subjectPersonIds: [m.leadId] });
         expect(final.status).toBe('PENDING_PAYMENT');
     });
 

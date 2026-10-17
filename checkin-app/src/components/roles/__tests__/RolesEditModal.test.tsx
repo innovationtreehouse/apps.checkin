@@ -1,6 +1,7 @@
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 jest.mock("@mantine/modals", () => ({ modals: { openConfirmModal: jest.fn() } }));
 
+import { useState } from "react";
 import { screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
 import { modals } from "@mantine/modals";
@@ -43,6 +44,25 @@ describe("RolesEditModal", () => {
         expect(screen.getByLabelText("Keyholder")).toBeChecked();
         expect(screen.getByLabelText("BG Reviewer")).not.toBeChecked();
         expect(screen.getByLabelText("Operations")).not.toBeChecked();
+    });
+
+    it("re-seeds the switches when a different target is opened", () => {
+        function Harness() {
+            const [target, setTarget] = useState<RolesEditTarget>(jane);
+            return (
+                <>
+                    <button onClick={() => setTarget(bob)}>Switch to Bob</button>
+                    <RolesEditModal target={target} me={{ isBoardMember: true }} onClose={jest.fn()} onSaved={jest.fn()} />
+                </>
+            );
+        }
+        renderWithProviders(<Harness />);
+        expect(screen.getByLabelText("Keyholder")).toBeChecked();
+
+        fireEvent.click(screen.getByText("Switch to Bob"));
+
+        expect(screen.getByLabelText("Keyholder")).not.toBeChecked();
+        expect(screen.getByLabelText("Board")).toBeChecked();
     });
 
     it("board actor: no switch is disabled, even for a target who is already board", () => {
@@ -196,5 +216,37 @@ describe("RolesEditModal", () => {
         expect(screen.getByLabelText("Operations")).not.toBeChecked();
         expect(onSaved).not.toHaveBeenCalled();
         expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it("toasts a network error and reverts when the PATCH fetch rejects", async () => {
+        const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+        const onSaved = jest.fn();
+        const onClose = jest.fn();
+        renderWithProviders(<RolesEditModal target={jane} me={{ isBoardMember: true }} onClose={onClose} onSaved={onSaved} />);
+
+        fireEvent.click(screen.getByLabelText("Operations")); // grant
+        fireEvent.click(screen.getByLabelText("Keyholder")); // revoke (was checked)
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+        const call = (modals.openConfirmModal as jest.Mock).mock.calls[0][0];
+        // Reject the fetch itself (not ok:false) so the catch runs, not the else branch.
+        global.fetch = jest.fn(() => Promise.reject(new Error("network down"))) as unknown as typeof fetch;
+
+        await act(async () => {
+            await call.onConfirm();
+        });
+
+        await waitFor(() =>
+            expect(notifications.show).toHaveBeenCalledWith(
+                expect.objectContaining({ color: "red", message: "Network error updating roles" }),
+            ),
+        );
+        expect(spy).toHaveBeenCalledWith(expect.stringContaining("Failed to update roles"), expect.anything());
+
+        // The catch (unlike the ok:false branch) does not revert; it only toasts.
+        // Neither success callback fires.
+        expect(onSaved).not.toHaveBeenCalled();
+        expect(onClose).not.toHaveBeenCalled();
+        spy.mockRestore();
     });
 });

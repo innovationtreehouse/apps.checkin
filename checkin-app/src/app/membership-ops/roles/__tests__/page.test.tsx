@@ -39,7 +39,7 @@ describe("RolesPage — holders-first roles editor", () => {
         renderWithProviders(<RolesPage />);
         await screen.findByText("Ann Admin");
 
-        fireEvent.change(screen.getByPlaceholderText("Search people by name or email..."), { target: { value: "cara" } });
+        fireEvent.change(screen.getByPlaceholderText("Search people by name, email, or ID..."), { target: { value: "cara" } });
         fireEvent.click(await screen.findByText("Cara Candidate"));
 
         // The shared modal opened for the picked person.

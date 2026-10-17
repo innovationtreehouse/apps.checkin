@@ -154,5 +154,62 @@ describe('Profile API Integration Tests', () => {
             });
             expect(auditLogs.length).toBeGreaterThan(0);
         });
+
+        it('should reject a blank name and leave the stored name unchanged', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId } });
+
+            const req = new Request('http://localhost:4000/api/profile', {
+                method: 'PATCH',
+                body: JSON.stringify({ name: '   ' })
+            });
+
+            const res = await PATCH(req as unknown as import("next/server").NextRequest);
+            expect(res.status).toBe(400);
+
+            const row = await prisma.person.findUnique({ where: { id: testUserId }, select: { name: true } });
+            expect(row?.name).toBe('Updated Profile Tester');
+        });
+
+        it('sets isDeclaredAdult and clears DoB when over25 is checked with no dob', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId } });
+
+            const req = new Request('http://localhost:4000/api/profile', {
+                method: 'PATCH',
+                body: JSON.stringify({ dob: null, over25: true })
+            });
+            const res = await PATCH(req as unknown as import("next/server").NextRequest);
+            expect(res.status).toBe(200);
+
+            const row = await prisma.person.findUnique({
+                where: { id: testUserId },
+                select: { dateOfBirth: true, isDeclaredAdult: true }
+            });
+            expect(row?.dateOfBirth).toBeNull();
+            expect(row?.isDeclaredAdult).toBe(true);
+        });
+
+        it('leaves DoB and the adult flag untouched on a notification-only PATCH', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId } });
+
+            // Seed a real DoB first so we can prove the guard preserves it.
+            await prisma.person.update({
+                where: { id: testUserId },
+                data: { dateOfBirth: new Date('1990-01-01'), isDeclaredAdult: false }
+            });
+
+            const req = new Request('http://localhost:4000/api/profile', {
+                method: 'PATCH',
+                body: JSON.stringify({ notificationSettings: { foo: true } })
+            });
+            const res = await PATCH(req as unknown as import("next/server").NextRequest);
+            expect(res.status).toBe(200);
+
+            const row = await prisma.person.findUnique({
+                where: { id: testUserId },
+                select: { dateOfBirth: true, isDeclaredAdult: true }
+            });
+            expect(row?.dateOfBirth).toEqual(new Date('1990-01-01'));
+            expect(row?.isDeclaredAdult).toBe(false);
+        });
     });
 });

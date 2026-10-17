@@ -1,9 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 import { config as appConfig, isStagingAccessAllowed, ORG_DOMAIN } from '@/lib/config';
+import { bodyLimitFor, isDeclaredBodyTooLarge } from '@/lib/requestBodyLimit';
+
+/** True when a body sent without Content-Length runs past the route's limit. Stops reading once it does. */
+async function isStreamedBodyTooLarge(pathname: string, body: ReadableStream<Uint8Array>): Promise<boolean> {
+    const limit = bodyLimitFor(pathname);
+    const reader = body.getReader();
+    let total = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return false;
+        total += value.byteLength;
+        if (total > limit) {
+            await reader.cancel();
+            return true;
+        }
+    }
+}
 
 /**
- * Site-wide org-login gate for the cloud dev instance (see DEV_INSTANCE_DESIGN.md §4)
+ * Site-wide org-login gate for the cloud dev instance (docs/ops/dev-instance.md, "Running the
+ * cloud dev instance")
  * — and the ops-stg ACCESS GATE (see docs on the staging access gate).
  *
  * When CHECKIN_ENV=dev, every page route requires a session whose Google hosted-domain (`hd`)
@@ -23,9 +41,24 @@ import { config as appConfig, isStagingAccessAllowed, ORG_DOMAIN } from '@/lib/c
  * that deliberately carries no sign-in affordance. This is only ONE of three surfaces the gate covers —
  * see isStagingAccessAllowed's callers in lib/auth.ts (authenticateRequest, the API chokepoint)
  * and security/access-resolvers.ts (resolveAccess, the `authorize: 'public'` path this
- * middleware's matcher can never reach because /api is exempt below).
+ * middleware never gates: on /api it runs only the body size check).
  */
 export async function middleware(req: NextRequest) {
+    // /api gets the body size check only; routes there self-enforce auth.
+    const { pathname } = req.nextUrl;
+    if (pathname.startsWith('/api/')) {
+        const contentLength = req.headers.get('content-length');
+        // A body with no declared length is counted on a clone so the route still reads the original.
+        const streamedBody = contentLength === null ? req.clone().body : null;
+        if (
+            isDeclaredBodyTooLarge(pathname, contentLength)
+            || (streamedBody !== null && await isStreamedBodyTooLarge(pathname, streamedBody))
+        ) {
+            return NextResponse.json({ error: 'Request body too large' }, { status: 413 });
+        }
+        return NextResponse.next();
+    }
+
     // The bare "Access Denied" page must stay reachable in every env, or a denied
     // user would loop on the redirect below (and an anonymous hit just sees the words).
     if (req.nextUrl.pathname.startsWith('/access-denied')) {
@@ -88,15 +121,15 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-    // Gate page navigation only. Exempt:
-    //  - api/*       — routes self-enforce auth (withAuth / kiosk signature). Skipping them also
-    //                  lets a keyed kiosk reach /api/scan on dev, keeps NextAuth's own sign-in +
-    //                  Google callback reachable, and avoids redirecting JSON clients to HTML.
+    // Gate page navigation. /api is matched separately and gets only the body size check —
+    // routes self-enforce auth (withAuth / kiosk signature), which also lets a keyed kiosk reach
+    // /api/scan on dev, keeps NextAuth's own sign-in + Google callback reachable, and avoids
+    // redirecting JSON clients to HTML. The page matcher exempts:
     //  - signin      — the custom sign-in screen itself, or anonymous visitors would loop forever.
     //  - _next/*, favicon — framework internals.
     //  - any path with a file extension (`.*\..*`) — public static assets under /public (the brand
     //    logo/mark, svgs, the import template). They must stay reachable on the dev instance, and
     //    next/image optimizes via an origin fetch of its source — so a gated /brand/*.webp source
     //    makes /_next/image return 400 (the broken dev-instance logo).
-    matcher: ['/((?!api|signin|_next/static|_next/image|favicon.ico|.*\\..*).*)'],
+    matcher: ['/((?!api|signin|_next/static|_next/image|favicon.ico|.*\\..*).*)', '/api/(.*)'],
 };

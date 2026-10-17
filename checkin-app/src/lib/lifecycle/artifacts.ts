@@ -1,6 +1,6 @@
 /**
  * Pure renderers that turn a machine's declared `TRANSITIONS` (+ its state
- * metadata) into the review artifacts of docs/designs/LIFECYCLE.md: a mermaid
+ * metadata) into the machine's review artifacts: a mermaid
  * `stateDiagram`, a coverage matrix, and a reachability report.
  *
  * Dependency-free and deterministic — every list is sorted and every edge
@@ -24,7 +24,8 @@ export type MachineSpec = {
     readonly allStates: readonly string[];
     /** Entry state(s) for reachability. */
     readonly initials: readonly string[];
-    /** Designated legit terminal states (a reachable terminal not here = dead-end). */
+    /** Designated legit resting states (a reachable terminal not here = dead-end).
+     *  A resting state may still have outbound edges — ARCHIVED rests, unarchive leaves. */
     readonly accepting: readonly string[];
     /** Pseudo-states rendered as mermaid `[*]` (e.g. `∅` / `UNENROLLED`). */
     readonly origins: readonly string[];
@@ -95,7 +96,7 @@ export function renderReachabilityReport(spec: MachineSpec): string {
         `- **Initial:** ${list(spec.initials)}`,
         `- **Reachable (${new Set(r.reachable).size}):** ${list(r.reachable)}`,
         `- **Terminal (no outbound edge):** ${list(r.terminal)}`,
-        `- **Accepting terminals:** ${list(spec.accepting)}`,
+        `- **Accepting (designated resting states):** ${list(spec.accepting)}`,
         `- **Dead-ends (reachable terminal, not accepting):** ${list(r.deadEnds)}`,
         `- **Unreachable (declared but no legal path from ∅):** ${list(r.unreachable)}`,
     ].join('\n');
@@ -112,7 +113,7 @@ export function renderMachineArtifact(spec: MachineSpec): string {
             '',
             `# ${spec.title} — lifecycle artifacts`,
             '',
-            'Generated from the machine’s `TRANSITIONS` (docs/designs/LIFECYCLE.md). Do not hand-edit.',
+            'Generated from the machine’s `TRANSITIONS`. Do not hand-edit.',
             '',
             '## State diagram',
             '',

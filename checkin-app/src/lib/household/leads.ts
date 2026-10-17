@@ -90,7 +90,7 @@ export class HouseholdLeadYouthError extends Error {
  * blocks on the lock, then sees the updated count and is rejected — closing the
  * check-then-act (TOCTOU) race that a bare count+update would leave open.
  *
- * Leadership is `Person.isHouseholdLead` (a1, HOUSEHOLD_LEAD_MODEL.md): a person
+ * Leadership is `Person.isHouseholdLead`: a person always
  * leads their OWN household ({@link Person.householdId}), so the cap counts
  * flagged members of `householdId`. Caller guarantees `householdId` is the
  * participant's household.
@@ -110,9 +110,9 @@ async function addHouseholdLeadTx(
         select: { isHouseholdLead: true, householdId: true, dateOfBirth: true },
     });
     // Invariant: isHouseholdLead means "lead of their OWN household". Flagging a
-    // person whose householdId != the counted/locked household would create a
-    // divergence the a1 model exists to prevent — reject instead of silently
-    // flagging the wrong household (would also make the cap count meaningless).
+    // person whose householdId != the counted/locked household would silently
+    // flag them as lead of the wrong household and make the cap count
+    // meaningless — reject instead.
     if (person && person.householdId !== householdId) {
         throw new HouseholdLeadMismatchError(householdId, participantId);
     }

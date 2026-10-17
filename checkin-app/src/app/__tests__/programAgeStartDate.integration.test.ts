@@ -35,6 +35,7 @@ const FAKE_TIMER_OPTS: Parameters<typeof jest.useFakeTimers>[0] = {
 describe('Program Age Start-Date Basis (authenticated route)', () => {
     let programId: number;
     let userId: number;
+    let guardianId: number;
 
     beforeAll(async () => {
         await prisma.programParticipant.deleteMany({ where: { person: { email: { contains: 'age-startdate-test' } } } });
@@ -47,16 +48,31 @@ describe('Program Age Start-Date Basis (authenticated route)', () => {
                 name: 'Age StartDate Test Program',
                 minAge: 14,
                 startAt: new Date('2026-09-01T00:00:00.000Z'),
+                endAt: new Date('2027-06-01T00:00:00.000Z'),
                 phase: 'UPCOMING',
-                enrollmentStatus: 'OPEN'
+                enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01')
             }
         });
         programId = program.id;
 
         // Born 2012-04-01: age 13 as of 2026-01-01 (frozen now), turns 14 on
         // 2026-04-01 — BEFORE the 2026-09-01 start. Eligible as of startAt only.
+        // The subject is 13 at enrollment time, so a household lead enrolls them —
+        // only a known adult may self-enroll (docs/rules/programs.md). The
+        // age-as-of-startAt rule under test is unaffected by who submits.
+        const household = await prisma.household.create({ data: { name: "Test HH" } });
+        const guardian = await prisma.person.create({
+            data: {
+                email: 'guardian-age-startdate-test@example.com',
+                name: 'Guardian',
+                dateOfBirth: new Date('1985-01-01T00:00:00.000Z'),
+                isHouseholdLead: true,
+                householdId: household.id,
+            }
+        });
+        guardianId = guardian.id;
         const user = await prisma.person.create({
-            data: { email: 'turns14-age-startdate-test@example.com', name: 'Turns 14 Before Start', dateOfBirth: new Date('2012-04-01T00:00:00.000Z'), household: { create: { name: "Test HH" } } }
+            data: { email: 'turns14-age-startdate-test@example.com', name: 'Turns 14 Before Start', dateOfBirth: new Date('2012-04-01T00:00:00.000Z'), householdId: household.id }
         });
         userId = user.id;
     });
@@ -64,7 +80,7 @@ describe('Program Age Start-Date Basis (authenticated route)', () => {
     afterAll(async () => {
         await prisma.programParticipant.deleteMany({ where: { programId } });
         await prisma.program.deleteMany({ where: { id: programId } });
-        await prisma.person.deleteMany({ where: { id: userId } });
+        await prisma.person.deleteMany({ where: { id: { in: [userId, guardianId] } } });
     });
 
     afterEach(async () => {
@@ -75,7 +91,7 @@ describe('Program Age Start-Date Basis (authenticated route)', () => {
         jest.useFakeTimers(FAKE_TIMER_OPTS);
         try {
             (getServerSession as jest.Mock).mockResolvedValue({
-                user: { id: userId, isSysadmin: false, isBoardMember: false }
+                user: { id: guardianId, isSysadmin: false, isBoardMember: false }
             });
 
             const req = new Request(`http://localhost:4000/api/programs/${programId}/participants`, {

@@ -3,8 +3,9 @@
  */
 /**
  * Integration tests for the Broken Households tab.
- *  - GET /api/admin/broken-households lists households with zero leads (incl. empty
- *    ones) and excludes households that already have a lead.
+ *  - GET /api/admin/broken-households lists households whose live members include no
+ *    lead, and excludes both households that already have a lead and households with
+ *    no live member to promote.
  *  - POST /api/household/lead lets a BOARD MEMBER assign a lead to a household they
  *    are not a member of, which un-breaks it.
  */
@@ -54,7 +55,7 @@ describe('Broken Households API Integration Tests', () => {
             data: { email: 'youth-broken-api-test@example.com', name: 'Broken Youth', householdId: brokenHouseholdId, dateOfBirth: new Date('2015-01-01') }
         });
 
-        // 2. Leadless household with no participants -> still broken (included).
+        // 2. Leadless household with no members -> nobody to promote, so NOT listed.
         const empty = await prisma.household.create({ data: { name: 'Broken API Test HH Empty' } });
         emptyHouseholdId = empty.id;
 
@@ -69,7 +70,7 @@ describe('Broken Households API Integration Tests', () => {
 
     afterAll(cleanup);
 
-    it('GET lists leadless households (including empty) and excludes led ones', async () => {
+    it('GET lists leadless households and excludes led and empty ones', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({
             user: { id: boardId, isSysadmin: false, isBoardMember: true }
         });
@@ -81,7 +82,7 @@ describe('Broken Households API Integration Tests', () => {
         const data = await res.json();
         const ids = data.households.map((h: { id: number }) => h.id);
         expect(ids).toContain(brokenHouseholdId);
-        expect(ids).toContain(emptyHouseholdId);
+        expect(ids).not.toContain(emptyHouseholdId);
         expect(ids).not.toContain(ledHouseholdId);
 
         const broken = data.households.find((h: { id: number }) => h.id === brokenHouseholdId);

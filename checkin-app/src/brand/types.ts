@@ -14,6 +14,8 @@ export interface Brand {
   id: string;
   /** Wordmark text, shown when there is no `logo`. */
   appName: string;
+  /** Home page hero copy. Kept per-brand so the base/unbranded build carries no trademark. */
+  home: { title: string; subtitle: string };
   /** Mantine theme — base structural theme extended per brand via mergeThemeOverrides. */
   theme: MantineThemeOverride;
   /** className exposing the brand's --font-* CSS vars on <body>; '' = system fonts. */

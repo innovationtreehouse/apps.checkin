@@ -1,0 +1,119 @@
+jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock());
+jest.mock("next-auth/react", () => jest.requireActual("@/test-helpers/rtl").authMock());
+jest.mock("@/hooks/useTodoCounts", () => ({ useTodoCounts: jest.fn(() => null) }));
+
+import { screen } from "@testing-library/react";
+import { renderWithProviders, setSession, setPathname, resetRtl } from "@/test-helpers/rtl";
+import { useTodoCounts } from "@/hooks/useTodoCounts";
+import { LIBRARY_KEYS } from "@/lib/libraryRelease";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
+import AppFrame from "../AppFrame";
+
+const mockedUseTodoCounts = useTodoCounts as jest.Mock;
+
+beforeEach(() => {
+  resetRtl();
+  mockedUseTodoCounts.mockReturnValue(counts());
+});
+
+const counts = (extra: Partial<Pick<TodoCounts, "lead" | "libraries" | "releasedLibraries">> = {}): TodoCounts => ({
+  member: { household: [], programs: [], programsAwaitingFinance: 0 },
+  building: 0,
+  buildingHousehold: 0,
+  buildingReachable: true,
+  activePrograms: 0,
+  releasedLibraries: [...LIBRARY_KEYS],
+  ...extra,
+});
+
+const renderFrame = () => renderWithProviders(<AppFrame>{<div>PAGE</div>}</AppFrame>);
+const hrefOf = (label: string) => screen.getByText(label).closest("a")?.getAttribute("href");
+
+describe("AppFrame library nav slots", () => {
+  it("Board: Revenue Ops (legacy first), Expense Ops, Inventory", () => {
+    setSession({ id: 1, isBoardMember: true });
+    renderFrame();
+    expect(hrefOf("Revenue Ops")).toBe("/finance-ops/payment-plan");
+    expect(hrefOf("Expense Ops")).toBe("/expense");
+    expect(hrefOf("Inventory")).toBe("/catalog/items");
+    expect(hrefOf("My Receipts")).toBe("/receipts");
+    expect(screen.queryByText("My Programs")).not.toBeInTheDocument();
+  });
+
+  it("FINANCE-only: Revenue Ops lands on Income (no legacy tab); Inventory lands on the catalog (a role holder is a catalog viewer)", () => {
+    setSession({ id: 2, isFinance: true });
+    renderFrame();
+    expect(hrefOf("Revenue Ops")).toBe("/income");
+    expect(hrefOf("Expense Ops")).toBe("/expense");
+    expect(hrefOf("Inventory")).toBe("/catalog/items");
+  });
+
+  it("program lead: My Programs and Inventory, no Ops sections", () => {
+    setSession({ id: 3, programsLed: [9], ageBand: "adult", isActiveOrgMember: true });
+    mockedUseTodoCounts.mockReturnValue(counts({ lead: { programs: [{ id: 9, name: "P", totalEnrolled: 0, pending: [], upcoming: [] }] } }));
+    renderFrame();
+    expect(hrefOf("My Programs")).toBe("/my-programs");
+    expect(hrefOf("Inventory")).toBe("/catalog/items");
+    expect(screen.queryByText("Revenue Ops")).not.toBeInTheDocument();
+    expect(screen.queryByText("Expense Ops")).not.toBeInTheDocument();
+  });
+
+  it("catalog viewer (keyholder): Inventory and My Receipts right after My Activities", () => {
+    setSession({ id: 4, isKeyholder: true });
+    renderFrame();
+    expect(hrefOf("Inventory")).toBe("/catalog/items");
+    expect(hrefOf("My Receipts")).toBe("/receipts");
+    const labels = screen.getAllByRole("link").map((a) => a.textContent);
+    expect(labels.indexOf("My Receipts")).toBe(labels.indexOf("My Activities") + 1);
+    expect(screen.queryByText("Revenue Ops")).not.toBeInTheDocument();
+  });
+
+  it("active youth program volunteer: Inventory", () => {
+    setSession({ id: 7, ageBand: "youth", isProgramVolunteer: true, isActiveOrgMember: true });
+    renderFrame();
+    expect(hrefOf("Inventory")).toBe("/catalog/items");
+  });
+
+  it("program volunteer without an ACTIVE membership: no Inventory", () => {
+    setSession({ id: 8, ageBand: "adult", isProgramVolunteer: true, isActiveOrgMember: false });
+    renderFrame();
+    expect(screen.queryByText("Inventory")).not.toBeInTheDocument();
+  });
+
+  it("hides an unreleased library's tab from non-Board and keeps it for Board", () => {
+    mockedUseTodoCounts.mockReturnValue(counts({ releasedLibraries: ["catalog", "local-inventory"] }));
+    setSession({ id: 2, isFinance: true });
+    const { unmount } = renderFrame();
+    expect(screen.queryByText("Revenue Ops")).not.toBeInTheDocument();
+    expect(screen.queryByText("Expense Ops")).not.toBeInTheDocument();
+    unmount();
+    setSession({ id: 1, isBoardMember: true });
+    renderFrame();
+    expect(hrefOf("Expense Ops")).toBe("/expense");
+  });
+
+  it("FINANCE with only workflow-mapping released: Inventory lands on Receiving", () => {
+    mockedUseTodoCounts.mockReturnValue(counts({ releasedLibraries: ["workflow-mapping"] }));
+    setSession({ id: 2, isFinance: true });
+    renderFrame();
+    expect(hrefOf("Inventory")).toBe("/inventory/receiving");
+  });
+
+  it("plain member: none of the library entries", () => {
+    setSession({ id: 5 });
+    renderFrame();
+    for (const label of ["Inventory", "Revenue Ops", "Expense Ops", "My Receipts", "My Programs"]) {
+      expect(screen.queryByText(label)).not.toBeInTheDocument();
+    }
+  });
+
+  it("folds a library tab's pill into its section entry and highlights the entry on its routes", () => {
+    setSession({ id: 2, isFinance: true });
+    setPathname("/expense/42");
+    mockedUseTodoCounts.mockReturnValue(counts({ libraries: { expense: { holds: 2, openFlags: 1 } } }));
+    renderFrame();
+    expect(screen.getByLabelText("3 expense holds and flags")).toHaveTextContent("3");
+    expect(screen.getByText("Expense Ops").closest("a")).toHaveAttribute("data-active", "true");
+    expect(screen.getByText("Revenue Ops").closest("a")).not.toHaveAttribute("data-active");
+  });
+});

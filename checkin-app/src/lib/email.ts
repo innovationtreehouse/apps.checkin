@@ -9,23 +9,52 @@ const resend = config.resendApiKey()
     : null;
 
 /**
+ * Recipient as stored in IntegrationErrorLog: first character and domain only
+ * (`j***@example.org`). Enough to spot a bad domain on System Status without
+ * keeping the address itself.
+ */
+export function maskRecipient(to: string): string {
+    return to
+        .split(',')
+        .map((addr) => addr.trim())
+        .map((addr) => {
+            const at = addr.lastIndexOf('@');
+            return at > 0 ? `${addr[0]}***${addr.slice(at)}` : '***';
+        })
+        .join(', ');
+}
+
+/** Stand-in shown on /dev/sent-mail when no sender is configured. */
+const UNCONFIGURED_FROM = '(no From configured)';
+
+/**
  * Send an email via Resend. Falls back to console.log if no API key is configured.
  *
  * The From (and optional Reply-To) come from getEmailSenderIdentity(): the board
- * can override the EMAIL_FROM env default and set a Reply-To in Settings → Email.
+ * can override the EMAIL_FROM env value and set a Reply-To in Settings → Email.
  */
 export async function sendEmail(to: string, subject: string, html: string): Promise<boolean> {
     const { from, replyTo } = await getEmailSenderIdentity();
 
-    if (!resend) {
-        console.log(`[Email (no RESEND_API_KEY)] To: ${to} | Subject: ${subject}`);
+    // Nothing can be delivered without a key, and nothing may be sent without a
+    // sender — an unverified From is rejected by Resend for every recipient.
+    if (!resend || !from) {
+        console.log(`[Email (${resend ? 'no From address' : 'no RESEND_API_KEY'})] To: ${to} | Subject: ${subject}`);
         // Dev/local: capture the email so link/token flows are retrievable at /dev/sent-mail,
-        // and report success so gating callers follow the prod happy-path. Gated on
-        // devToolsActive (CHECKIN_ENV, fails safe to prod — NOT a NODE_ENV fuse, which is
-        // 'production' on every deployed instance incl. cloud-dev): a prod box that somehow
-        // lost its key still falls through to `return false` (fail loud, not fake success).
+        // and report success so gating callers follow the prod happy-path. devToolsActive
+        // fails safe to prod, so a prod box that somehow lost its key still falls through
+        // to `return false` (fail loud, not fake success).
         if (config.devToolsActive()) {
-            return captureSentEmail(from, to, subject, html);
+            return captureSentEmail(from ?? UNCONFIGURED_FROM, to, subject, html);
+        }
+        if (!from) {
+            // A missing key is reported by the config-health check; a missing sender is
+            // not, so put it on System Status > Link Status instead of dropping silently.
+            await logIntegrationError(
+                'email',
+                'No From address configured — set EMAIL_FROM or the From address in Settings → Email.',
+                { to: maskRecipient(to), subject },
+            );
         }
         return false;
     }
@@ -43,7 +72,7 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
             console.error(`[Email Error] Failed to send to ${to}:`, error);
             // System Status > Link Status tab (see logIntegrationError). Deliberately no
             // `html` in context — log-hygiene contract asserted in email.test.ts.
-            await logIntegrationError('email', error.message, { to, subject });
+            await logIntegrationError('email', error.message, { to: maskRecipient(to), subject });
             return false;
         }
 
@@ -51,7 +80,7 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
         return true;
     } catch (err) {
         console.error(`[Email Exception] Failed to send to ${to}:`, err);
-        await logIntegrationError('email', err, { to, subject });
+        await logIntegrationError('email', err, { to: maskRecipient(to), subject });
         return false;
     }
 }

@@ -30,9 +30,7 @@ export const POST = withAuth({ roles: ["isBoardMember", "isSysadmin"] }, async (
         return apiError("reviewId and action (approve|deny|revoke) are required", 400);
     }
     try {
-        const outcome = await overrideReview(body.reviewId, auth.user.id, body.action!, body.sharedNote, {
-            isSysadmin: auth.user.isSysadmin === true,
-        });
+        const outcome = await overrideReview(body.reviewId, auth.user.id, body.action!, body.sharedNote);
         return NextResponse.json({ status: outcome.status });
     } catch (error) {
         if (error instanceof TrustedAdultError) {

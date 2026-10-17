@@ -8,11 +8,11 @@ import type { BulkSend } from "@/generated/prisma/client";
 export const dynamic = "force-dynamic";
 
 const ROLES: BusinessRole[] = ["isBoardMember", "isSysadmin", "isOperations"];
-const STATUSES = ["queued", "sent", "failed", "skipped_unsubscribed", "sending"] as const;
+const STATUSES = ["queued", "sent", "failed", "skipped_unsubscribed", "skipped_denied", "sending"] as const;
 
 async function countsFor(bulkSendId: number) {
     const groups = await prisma.bulkSendItem.groupBy({ by: ["status"], where: { bulkSendId }, _count: { _all: true } });
-    const counts: Record<(typeof STATUSES)[number], number> = { queued: 0, sent: 0, failed: 0, skipped_unsubscribed: 0, sending: 0 };
+    const counts: Record<(typeof STATUSES)[number], number> = { queued: 0, sent: 0, failed: 0, skipped_unsubscribed: 0, skipped_denied: 0, sending: 0 };
     let total = 0;
     for (const g of groups) {
         if ((STATUSES as readonly string[]).includes(g.status)) counts[g.status as (typeof STATUSES)[number]] = g._count._all;

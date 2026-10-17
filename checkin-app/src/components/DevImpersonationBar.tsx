@@ -6,7 +6,7 @@ import { useSession, signIn } from "next-auth/react";
 import { useIsDevInstance } from "@/components/EnvProvider";
 
 /**
- * Persistent dev-instance bar (DEV_INSTANCE_DESIGN.md §5/§7, minimal slice).
+ * Persistent dev-instance bar (docs/ops/dev-instance.md, "Impersonation" + "The dev dashboard").
  *
  * Rendered only on the dev/local instance for a signed-in user. Shows who you really are while
  * impersonating (derived from the inert `impersonatedBy` claim) and lets you return to yourself.

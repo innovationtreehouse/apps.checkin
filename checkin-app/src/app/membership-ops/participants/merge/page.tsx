@@ -2,13 +2,16 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Alert, Box, Button, Card, Group, List, Paper, Radio, SimpleGrid, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Box, Button, Card, Group, List, Paper, Radio, SimpleGrid, Stack, Text, TextInput, Title } from "@mantine/core";
+import Link from "next/link";
 import { notifications } from "@mantine/notifications";
 import { AlertBanner } from "@/components/admin/AlertBanner";
 import { MergedBadge } from "@/components/ui/MergedBadge";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { formatPhone } from "@/lib/phone";
+import { formatDateOnly } from "@/lib/time";
+import { searchId } from "@/lib/searchId";
 
 interface ParticipantMergeView {
   id: number;
@@ -16,6 +19,7 @@ interface ParticipantMergeView {
   name?: string;
   phone?: string;
   googleId?: string;
+  emailVerified?: string | null;
   dateOfBirth?: string | null;
   mergedIntoId?: number | null;
   _count: { visits: number, rawBadgeLogs: number, programParticipants: number, programVolunteers: number };
@@ -23,17 +27,23 @@ interface ParticipantMergeView {
   [key: string]: unknown;
 }
 
-// The 5 fields eligible for a conflict radio — mirrors the server's CONFLICT_FIELDS
-// (route.ts). image/lastBackgroundCheck/lastWaiverSign always auto-resolve, never a radio.
-const CONFLICT_FIELDS = ["name", "email", "phone", "googleId", "dateOfBirth"] as const;
+// Per-field conflict radios — mirrors the server's CONFLICT_FIELDS (route.ts).
+// email/googleId/emailVerified are NOT here: they're the login identity, minted
+// together at sign-in and resolved as ONE unit under the `identity` key (never
+// split field-by-field). image/lastBackgroundCheck/lastWaiverSign auto-resolve.
+const CONFLICT_FIELDS = ["name", "phone", "dateOfBirth"] as const;
 type ConflictField = typeof CONFLICT_FIELDS[number];
 const FIELD_LABELS: Record<ConflictField, string> = {
-  name: "Name", email: "Email", phone: "Phone", googleId: "Google Account", dateOfBirth: "Date of Birth",
+  name: "Name", phone: "Phone", dateOfBirth: "Date of Birth",
 };
 
+// A login identity is present iff email OR googleId is set.
+function hasIdentity(p: { email?: string; googleId?: string }): boolean {
+  return !!p.email || !!p.googleId;
+}
+
 // googleId has no human-readable value of its own — a raw "Connected" label reads
-// identically for both sides of a conflict, so the radio can't tell the admin what
-// they're actually choosing between. Show the identity behind it instead: the
+// identically for both sides of a conflict. Show the identity behind it instead: the
 // person's own email (the account you'd recognize), falling back to the tail of
 // the googleId itself when there's no email to show.
 function googleIdIdentity(person: { email?: string; googleId?: string }): string {
@@ -42,14 +52,49 @@ function googleIdIdentity(person: { email?: string; googleId?: string }): string
   return "—";
 }
 
-function formatFieldValue(field: ConflictField, value: unknown, person: { email?: string; googleId?: string }): string {
+// One option in the "which login identity survives?" radio: the side's email, the
+// account behind its googleId, and whether that address is verified/controlled.
+function identityOptionLabel(p: { email?: string; googleId?: string; emailVerified?: string | null }): string {
+  const parts = [p.email || "no email"];
+  if (p.googleId) parts.push(`Google: ${googleIdIdentity(p)}`);
+  parts.push(p.emailVerified ? "verified" : "unverified");
+  return parts.join(" · ");
+}
+
+function formatFieldValue(field: ConflictField, value: unknown): string {
+  // dateOfBirth is the only date-kind field in CONFLICT_FIELDS, so the calendar-date
+  // (UTC-pinned) read is right for every value that reaches this branch.
   if (field === "dateOfBirth" && typeof value === "string") {
     const d = new Date(value);
-    return isNaN(d.getTime()) ? String(value) : d.toLocaleDateString();
+    return isNaN(d.getTime()) ? String(value) : formatDateOnly(d);
   }
   if (field === "phone" && typeof value === "string") return formatPhone(value);
-  if (field === "googleId") return googleIdIdentity(person);
   return String(value ?? "—");
+}
+
+// Two characters are too little to search on — except for an id, which is a whole
+// query at one digit.
+function isSearchable(query: string) {
+  return query.trim().length > 2 || searchId(query) !== null;
+}
+
+// Results for a picker that is still searching. They clear once a person is picked
+// or the query gets too short, and otherwise stay up until the next response lands.
+function usePeopleSearch(query: string, picked: boolean) {
+  const [people, setPeople] = useState<ParticipantMergeView[]>([]);
+  const active = !picked && isSearchable(query);
+  const [wasActive, setWasActive] = useState(active);
+  if (wasActive !== active) {
+    setWasActive(active);
+    if (!active) setPeople([]);
+  }
+  useEffect(() => {
+    if (!active) return;
+    fetch(`/api/people/search?q=${encodeURIComponent(query)}`)
+      .then(r => r.json())
+      .then(d => setPeople(d.people || []));
+  }, [query, active]);
+  return people;
 }
 
 export default function MergeParticipants() {
@@ -58,11 +103,11 @@ export default function MergeParticipants() {
   const [searchA, setSearchA] = useState("");
   const [searchB, setSearchB] = useState("");
 
-  const [resultsA, setResultsA] = useState<ParticipantMergeView[]>([]);
-  const [resultsB, setResultsB] = useState<ParticipantMergeView[]>([]);
-
   const [pA, setPA] = useState<ParticipantMergeView | null>(null);
   const [pB, setPB] = useState<ParticipantMergeView | null>(null);
+
+  const resultsA = usePeopleSearch(searchA, !!pA);
+  const resultsB = usePeopleSearch(searchB, !!pB);
 
   const [analyzedA, setAnalyzedA] = useState<ParticipantMergeView | null>(null);
   const [analyzedB, setAnalyzedB] = useState<ParticipantMergeView | null>(null);
@@ -76,13 +121,24 @@ export default function MergeParticipants() {
 
   const [previewMode, setPreviewMode] = useState(false);
 
+  // Why the merge is refused on household-membership grounds, per direction —
+  // the rule turns on which record is merged away (see lib/person/merge/guard.ts).
+  const [membershipBlock, setMembershipBlock] = useState<{ aAsKeeper: string | null; bAsKeeper: string | null } | null>(null);
+
   // One choice per true conflict field ('keep' | 'merge'); default 'keep' (the
-  // keeper's value). Recomputed below (derived from analyzedA/analyzedB + keepId)
-  // and reset whenever the keeper flips (Swap Kept/Merged).
+  // keeper's value). Reset below whenever the keeper flips (Swap Kept/Merged) or
+  // analysis lands.
   const [fieldChoices, setFieldChoices] = useState<Record<string, "keep" | "merge">>({});
 
   const mergeParticipant = keepId === analyzedA?.id ? analyzedB : analyzedA;
   const keepParticipant = keepId === analyzedA?.id ? analyzedA : analyzedB;
+
+  // The membership rule turns on which record is merged away, so the block
+  // follows the current keeper — and Swap Kept/Merged can clear it outright.
+  const keeperIsA = keepId === analyzedA?.id;
+  const membershipBlockReason = (keeperIsA ? membershipBlock?.aAsKeeper : membershipBlock?.bAsKeeper) ?? null;
+  const swapDirectionBlock = (keeperIsA ? membershipBlock?.bAsKeeper : membershipBlock?.aAsKeeper) ?? null;
+  const swapClearsMembershipBlock = !!membershipBlockReason && !swapDirectionBlock;
 
   const conflicts: ConflictField[] = keepParticipant && mergeParticipant
     ? CONFLICT_FIELDS.filter((f) => {
@@ -92,45 +148,38 @@ export default function MergeParticipants() {
       })
     : [];
 
-  useEffect(() => {
-    if (!keepParticipant || !mergeParticipant) return;
-    const defaults: Record<string, "keep" | "merge"> = {};
-    for (const f of conflicts) defaults[f] = "keep";
-    setFieldChoices(defaults);
-    // Reset defaults only when the keeper flips (or analysis first lands) — not on
-    // every keystroke the picker itself causes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keepId, analyzedA?.id, analyzedB?.id]);
+  // Both sides carry a login identity => an unavoidable conflict (unique
+  // constraints guarantee they differ); the admin picks which whole identity survives.
+  const identityConflict = !!(keepParticipant && mergeParticipant
+    && hasIdentity(keepParticipant) && hasIdentity(mergeParticipant));
 
-  useEffect(() => {
-    if (searchA.length > 2 && !pA) {
-      fetch(`/api/people/search?q=${encodeURIComponent(searchA)}`)
-        .then(r => r.json())
-        .then(d => setResultsA(d.people || []));
-    } else {
-      setResultsA([]);
+  // Reset defaults only when the keeper flips (or analysis first lands) — not on
+  // every keystroke the picker itself causes.
+  const choicesFor = `${keepId}:${analyzedA?.id}:${analyzedB?.id}`;
+  const [choicesSetFor, setChoicesSetFor] = useState(choicesFor);
+  if (choicesSetFor !== choicesFor) {
+    setChoicesSetFor(choicesFor);
+    if (keepParticipant && mergeParticipant) {
+      const defaults: Record<string, "keep" | "merge"> = {};
+      for (const f of conflicts) defaults[f] = "keep";
+      if (identityConflict) defaults.identity = "keep";
+      setFieldChoices(defaults);
     }
-  }, [searchA, pA]);
+  }
 
-  useEffect(() => {
-    if (searchB.length > 2 && !pB) {
-      fetch(`/api/people/search?q=${encodeURIComponent(searchB)}`)
-        .then(r => r.json())
-        .then(d => setResultsB(d.people || []));
-    } else {
-      setResultsB([]);
-    }
-  }, [searchB, pB]);
-
-  useEffect(() => {
-    if (pA && pB) {
+  // Picking (or un-picking) either side re-runs the analysis for the pair.
+  const pick = (a: ParticipantMergeView | null, b: ParticipantMergeView | null) => {
+    setPA(a);
+    setPB(b);
+    if (a && b) {
       setLoading(true);
-      fetch(`/api/membership-ops/participants/merge/analyze?a=${pA.id}&b=${pB.id}`)
+      fetch(`/api/membership-ops/participants/merge/analyze?a=${a.id}&b=${b.id}`)
         .then(r => r.json())
         .then(d => {
           if (d.participants) {
             setAnalyzedA(d.participants[0]);
             setAnalyzedB(d.participants[1]);
+            setMembershipBlock(d.membershipBlock ?? null);
 
             // Recommend keeping the one with more activity or better data
             const score = (p: ParticipantMergeView) => {
@@ -147,7 +196,7 @@ export default function MergeParticipants() {
             const sA = score(d.participants[0]);
             const sB = score(d.participants[1]);
 
-            setKeepId(sA >= sB ? pA.id : pB.id);
+            setKeepId(sA >= sB ? a.id : b.id);
           }
         })
         .catch(() => setError("Failed to analyze participants"))
@@ -157,8 +206,9 @@ export default function MergeParticipants() {
       setAnalyzedB(null);
       setKeepId(null);
       setPreviewMode(false);
+      setMembershipBlock(null);
     }
-  }, [pA, pB]);
+  };
 
   if (authLoading) {
     return <PageLoader />;
@@ -188,8 +238,7 @@ export default function MergeParticipants() {
         notifications.show({ color: "red", message: data.error, autoClose: 4000 });
         // No page-level reload here; clear the stale analyzed selection so the
         // user re-picks (and re-analyzes) against current household state.
-        setPA(null);
-        setPB(null);
+        pick(null, null);
       } else {
         setError(data.error || "Failed to merge");
       }
@@ -218,7 +267,7 @@ export default function MergeParticipants() {
             label={label}
             value={value}
             onChange={(e) => setValue(e.currentTarget.value)}
-            placeholder="Search by name or email..."
+            placeholder="Search by name, email, or ID..."
           />
           {results.length > 0 && (
             <Paper withBorder shadow="md" radius="sm" pos="absolute" left={0} right={0} style={{ zIndex: 10, maxHeight: 320, overflowY: "auto" }}>
@@ -295,7 +344,7 @@ export default function MergeParticipants() {
         <Group justify="center">
           <Button variant="default" onClick={() => {
             setSuccess(false);
-            setPA(null); setPB(null);
+            pick(null, null);
             setSearchA(""); setSearchB("");
           }}>Merge More</Button>
           <Button onClick={() => router.push('/membership-ops/participants')}>Back to Participants</Button>
@@ -318,6 +367,9 @@ export default function MergeParticipants() {
           Combine two participant records. The data from the merged record (visits, programs, etc)
           will be moved to the kept record. The merged record will be tombstoned.
         </Text>
+        <Anchor component={Link} href="/membership-ops/participants/tombstones" size="sm">
+          View tombstone census
+        </Anchor>
       </div>
 
       {!previewMode && <AlertBanner message={error} tone="error" />}
@@ -328,8 +380,8 @@ export default function MergeParticipants() {
               otherwise clips the search results dropdown below to a sliver — see renderSearch. */}
           <Card withBorder radius="md" padding="lg" style={{ overflow: "visible" }}>
             <Group align="flex-start" gap="xl" grow>
-              {renderSearch("Participant 1", searchA, setSearchA, resultsA, pA, setPA)}
-              {renderSearch("Participant 2", searchB, setSearchB, resultsB, pB, setPB)}
+              {renderSearch("Participant 1", searchA, setSearchA, resultsA, pA, (p) => pick(p, pB))}
+              {renderSearch("Participant 2", searchB, setSearchB, resultsB, pB, (p) => pick(pA, p))}
             </Group>
           </Card>
 
@@ -343,15 +395,35 @@ export default function MergeParticipants() {
                 </Button>
               </Group>
 
+              {membershipBlockReason && (
+                <Alert color="red" variant="light" fw={700} title="Household membership blocks this merge">
+                  {membershipBlockReason}
+                  {swapClearsMembershipBlock && " Swapping which record is kept clears this."}
+                </Alert>
+              )}
+
               <SimpleGrid cols={{ base: 1, md: 2 }}>
                 {renderStats(analyzedA, keepId === analyzedA.id, analyzedA.id !== keepId ? isLeadWithOthers : false)}
                 {renderStats(analyzedB, keepId === analyzedB.id, analyzedB.id !== keepId ? isLeadWithOthers : false)}
               </SimpleGrid>
 
-              {conflicts.length > 0 && keepParticipant && mergeParticipant && (
+              {(conflicts.length > 0 || identityConflict) && keepParticipant && mergeParticipant && (
                 <Card withBorder radius="md" padding="lg">
                   <Title order={5} mb="sm">Resolve conflicting fields</Title>
                   <Stack gap="md">
+                    {identityConflict && (
+                      <Radio.Group
+                        label="Login identity"
+                        description="Email, Google sign-in, and verified status move together as one unit — picking a side replaces the kept record's whole login, so choosing an email-only side drops the other's Google sign-in."
+                        value={fieldChoices.identity ?? "keep"}
+                        onChange={(v) => setFieldChoices((prev) => ({ ...prev, identity: v as "keep" | "merge" }))}
+                      >
+                        <Stack mt="xs" gap="xs">
+                          <Radio value="keep" label={identityOptionLabel(keepParticipant)} />
+                          <Radio value="merge" label={identityOptionLabel(mergeParticipant)} />
+                        </Stack>
+                      </Radio.Group>
+                    )}
                     {conflicts.map((field) => {
                       const radioGroup = (
                         <Radio.Group
@@ -360,8 +432,8 @@ export default function MergeParticipants() {
                           onChange={(v) => setFieldChoices((prev) => ({ ...prev, [field]: v as "keep" | "merge" }))}
                         >
                           <Group mt="xs">
-                            <Radio value="keep" label={formatFieldValue(field, keepParticipant[field], keepParticipant)} />
-                            <Radio value="merge" label={formatFieldValue(field, mergeParticipant[field], mergeParticipant)} />
+                            <Radio value="keep" label={formatFieldValue(field, keepParticipant[field])} />
+                            <Radio value="merge" label={formatFieldValue(field, mergeParticipant[field])} />
                           </Group>
                         </Radio.Group>
                       );
@@ -385,7 +457,7 @@ export default function MergeParticipants() {
               )}
 
               <Group justify="flex-end">
-                <Button size="md" disabled={isLeadWithOthers} onClick={() => setPreviewMode(true)}>
+                <Button size="md" disabled={isLeadWithOthers || !!membershipBlockReason} onClick={() => setPreviewMode(true)}>
                   Proceed to Preview
                 </Button>
               </Group>

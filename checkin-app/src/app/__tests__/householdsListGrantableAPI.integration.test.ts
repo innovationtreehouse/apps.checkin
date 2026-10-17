@@ -4,12 +4,13 @@
 /**
  * Integration tests for GET /api/membership-ops/households (list branch):
  * per-household `renewalGrantable` (the coming-year-button gate) and the
- * per-household derived `validUntil` (upcoming boundary; +1y when settled) / `orgMembership.memberSince`
- * date fields introduced alongside it.
+ * per-household derived `validUntil` (the boundary closing the live membership year when
+ * settled for it, else the one that opened it) / `orgMembership.memberSince` date fields.
  */
 import { GET } from '@/app/api/membership-ops/households/route';
 import prisma from '@/lib/prisma';
-import { nextBoundary } from '@/lib/membership/renewal';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
+import { nextBoundary, membershipYearCycle, coveredThrough } from '@/lib/membership/renewal';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -28,7 +29,7 @@ async function get(url = 'http://localhost:4000/api/membership-ops/households') 
 
 describe('GET /api/membership-ops/households — renewalGrantable + dates', () => {
     let adminId: number;
-    let prevBoardSettings: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number } | null = null;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     let notStartedHouseholdId: number;
     let grantableHouseholdId: number;
@@ -49,10 +50,7 @@ describe('GET /api/membership-ops/households — renewalGrantable + dates', () =
     }
 
     beforeAll(async () => {
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevBoardSettings = existing
-            ? { orgMembershipYearBoundary: existing.orgMembershipYearBoundary, bgRecheckMonths: existing.bgRecheckMonths }
-            : null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await wipe();
 
         await prisma.boardSettings.upsert({
@@ -105,7 +103,7 @@ describe('GET /api/membership-ops/households — renewalGrantable + dates', () =
 
     afterAll(async () => {
         await wipe();
-        if (prevBoardSettings) await prisma.boardSettings.update({ where: { id: 1 }, data: prevBoardSettings });
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 
@@ -146,30 +144,31 @@ describe('GET /api/membership-ops/households — renewalGrantable + dates', () =
         expect(h.renewalGrantable).toBe(true);
     });
 
-    it('derives per-household validUntil from the boundary and includes orgMembership.memberSince', async () => {
+    it('derives per-household validUntil from the live membership year and includes orgMembership.memberSince', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
         const res = await get();
         const data = await res.json();
         const h = data.households.find((x: { id: number }) => x.id === grantableHouseholdId);
-        // Not settled for the coming year ⇒ valid until the UPCOMING Dec 25 boundary
-        // occurrence (membership is exactly one year; nothing stored, nothing to update).
-        const expected = nextBoundary(new Date(Date.UTC(2000, 11, 25)), new Date());
+        // Not settled for the live year ⇒ valid until the boundary that OPENED it (in
+        // season: the upcoming boundary; after it: the one just passed, i.e. lapsed).
+        // Nothing stored, nothing to update.
+        const expected = coveredThrough(membershipYearCycle(new Date(Date.UTC(2000, 11, 25)), new Date()), false);
         expect(h.validUntil).toEqual(expect.stringMatching(new RegExp(`^${expected.toISOString().slice(0, 10)}`)));
         expect(h.orgMembership.memberSince).toBeTruthy();
     });
 });
 
 /**
- * settledForComingYear (docs/designs/LIFECYCLE.md, fix #4). The route's "handled this
- * cycle" probe now consumes settledThisCycleWhere = kind=RENEWAL, status IN
- * (ACTIVE, ARCHIVED), stageEnteredAt≥windowStart. Requires a boundary that puts
+ * settledForComingYear. The route's "settled this
+ * cycle" probe consumes settledThisCycleWhere = kind-agnostic, status ACTIVE,
+ * stageEnteredAt≥windowStart (ARCHIVED never paid — sweep-only). Requires a boundary that puts
  * `now` inside the renewal window so the probe is live (out of season it matches
  * nothing, and settledForComingYear is trivially false — see the describe above).
  */
 describe('GET /api/membership-ops/households — settledForComingYear (fix #4)', () => {
     const TAG4 = 'households-settled-fix4-test';
     let adminId: number;
-    let prev: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number } | null = null;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     // A boundary ~1 month ahead ⇒ windowStart ~1 month ago ⇒ now is in-season and a
     // stageEnteredAt of `now` sits inside the window.
@@ -182,6 +181,7 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
     let initialActiveHouseholdId: number; // stray INITIAL activation in-window
     let archivedRenewalHouseholdId: number; // board-archived RENEWAL in-window
     let activeRenewalHouseholdId: number; // finished RENEWAL in-window (control)
+    let bareGrantHouseholdId: number; // ACTIVE with no process at all (bare manual grant / import)
 
     async function wipe() {
         const hhs = await prisma.household.findMany({ where: { name: { contains: TAG4 } }, select: { id: true } });
@@ -197,8 +197,7 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
     }
 
     beforeAll(async () => {
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prev = existing ? { orgMembershipYearBoundary: existing.orgMembershipYearBoundary, bgRecheckMonths: existing.bgRecheckMonths } : null;
+        restoreBoardSettings = await snapshotBoardSettings();
         await wipe();
         await prisma.boardSettings.upsert({
             where: { id: 1 },
@@ -238,11 +237,19 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
         activeRenewalHouseholdId = c.householdId;
         const cm = await prisma.orgMembership.create({ data: { householdId: activeRenewalHouseholdId, status: 'ACTIVE' } });
         await prisma.orgMembershipProcess.create({ data: { orgMembershipId: cm.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: now } });
+
+        // ACTIVE with no process at all: what a bare manual grant or an import records.
+        // Coverage is what was bought, and nothing was — not settled, whatever its age.
+        const d = await prisma.person.create({
+            data: { email: `bare-${TAG4}@example.com`, name: 'Bare Grant', isHouseholdLead: true, household: { create: { name: `Bare HH ${TAG4}` } } },
+        });
+        bareGrantHouseholdId = d.householdId;
+        await prisma.orgMembership.create({ data: { householdId: bareGrantHouseholdId, status: 'ACTIVE', memberSince: now } });
     });
 
     afterAll(async () => {
         await wipe();
-        if (prev) await prisma.boardSettings.update({ where: { id: 1 }, data: prev });
+        await restoreBoardSettings();
         await prisma.$disconnect();
     });
 
@@ -256,25 +263,26 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
         return data.households as { id: number; settledForComingYear: boolean; validUntil: string | null }[];
     }
 
-    it('a stray INITIAL activation in-window is NOT settled (kind=RENEWAL filter)', async () => {
+    it('an INITIAL activated in-window IS settled — a family joining in-window buys the coming year', async () => {
         const households = await fetchHouseholds();
         const h = households.find((x) => x.id === initialActiveHouseholdId);
         expect(h).toBeDefined();
-        expect(h!.settledForComingYear).toBe(false);
-        // validUntil stays the upcoming boundary — NOT flipped a year forward.
-        const expected = nextBoundary(boundaryConfig, new Date());
-        expect(h!.validUntil).toEqual(expect.stringMatching(new RegExp(`^${expected.toISOString().slice(0, 10)}`)));
-    });
-
-    it('a board-archived RENEWAL in-window IS settled (ARCHIVED counted)', async () => {
-        const households = await fetchHouseholds();
-        const h = households.find((x) => x.id === archivedRenewalHouseholdId);
-        expect(h).toBeDefined();
         expect(h!.settledForComingYear).toBe(true);
-        // settled ⇒ validUntil is the boundary a year later.
+        // Joining in-window buys the coming year: validUntil is one boundary further.
         const boundary = nextBoundary(boundaryConfig, new Date());
         const plusYear = new Date(Date.UTC(boundary.getUTCFullYear() + 1, boundary.getUTCMonth(), boundary.getUTCDate()));
         expect(h!.validUntil).toEqual(expect.stringMatching(new RegExp(`^${plusYear.toISOString().slice(0, 10)}`)));
+    });
+
+    it('a board-archived RENEWAL in-window is NOT settled — archive never completed payment', async () => {
+        // ARCHIVED is the sweep's business only (handledThisCycleWhere: do not
+        // reopen a process the board closed); the money horizon must not extend.
+        const households = await fetchHouseholds();
+        const h = households.find((x) => x.id === archivedRenewalHouseholdId);
+        expect(h).toBeDefined();
+        expect(h!.settledForComingYear).toBe(false);
+        const expected = nextBoundary(boundaryConfig, new Date());
+        expect(h!.validUntil).toEqual(expect.stringMatching(new RegExp(`^${expected.toISOString().slice(0, 10)}`)));
     });
 
     it('a finished RENEWAL (ACTIVE) in-window IS settled (control)', async () => {
@@ -282,5 +290,26 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
         const h = households.find((x) => x.id === activeRenewalHouseholdId);
         expect(h).toBeDefined();
         expect(h!.settledForComingYear).toBe(true);
+    });
+
+    it('an ACTIVE membership with no fee-paid process is NOT settled, however new (bare manual grant / import)', async () => {
+        const households = await fetchHouseholds();
+        const h = households.find((x) => x.id === bareGrantHouseholdId);
+        expect(h).toBeDefined();
+        expect(h!.settledForComingYear).toBe(false);
+        const expected = nextBoundary(boundaryConfig, new Date());
+        expect(h!.validUntil).toEqual(expect.stringMatching(new RegExp(`^${expected.toISOString().slice(0, 10)}`)));
+    });
+
+    it('the single-household detail branch (?id=) derives validUntil by the same rule', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+        const boundary = nextBoundary(boundaryConfig, new Date());
+        const plusYear = new Date(Date.UTC(boundary.getUTCFullYear() + 1, boundary.getUTCMonth(), boundary.getUTCDate()));
+
+        const settled = await (await get(`http://localhost:4000/api/membership-ops/households?id=${activeRenewalHouseholdId}`)).json();
+        expect(settled.validUntil).toEqual(expect.stringMatching(new RegExp(`^${plusYear.toISOString().slice(0, 10)}`)));
+
+        const unsettled = await (await get(`http://localhost:4000/api/membership-ops/households?id=${archivedRenewalHouseholdId}`)).json();
+        expect(unsettled.validUntil).toEqual(expect.stringMatching(new RegExp(`^${boundary.toISOString().slice(0, 10)}`)));
     });
 });

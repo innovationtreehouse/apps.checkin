@@ -21,4 +21,27 @@ describe("parseImportDob", () => {
         expect(parseImportDob(undefined)).toBeUndefined();
         expect(parseImportDob("not a date")).toBeUndefined();
     });
+
+    // F11: a DOB is a calendar date, so every branch stores UTC midnight — same
+    // convention as the interactive writers (normalizeAdultDob).
+    describe("UTC-midnight convention west of UTC", () => {
+        const realTz = process.env.TZ;
+        beforeAll(() => { process.env.TZ = "America/Chicago"; });
+        afterAll(() => { if (realTz === undefined) delete process.env.TZ; else process.env.TZ = realTz; });
+
+        it("pins a non-ISO spreadsheet date to UTC midnight of the written day", () => {
+            // "5/4/1990" parses as LOCAL midnight; unpinned it stores 1990-05-04T05:00Z
+            // in Chicago, and any other zone's rows disagree with it.
+            expect(parseImportDob("5/4/1990")!.toISOString()).toBe("1990-05-04T00:00:00.000Z");
+        });
+
+        it("pins a bare ISO date to UTC midnight", () => {
+            expect(parseImportDob("1991-01-01")!.toISOString()).toBe("1991-01-01T00:00:00.000Z");
+        });
+
+        it("truncates a fractional Excel serial's time of day", () => {
+            // 33239.75 is 1991-01-01 18:00 — the day is the DOB, the time is noise.
+            expect(parseImportDob("33239.75")!.toISOString()).toBe("1991-01-01T00:00:00.000Z");
+        });
+    });
 });

@@ -8,10 +8,12 @@ import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { useCheckinEnv } from "@/components/EnvProvider";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
+import { useSession } from "next-auth/react";
+import { LibraryReleaseCard } from "@/components/admin/LibraryReleaseCard";
 
 interface Settings {
-  normalDuesCents: number;
-  volunteerDuesCents: number;
+  standardMembershipFeeCents: number;
+  volunteerMembershipFeeCents: number;
   orgMembershipYearBoundary: string | null;
   orgMembershipVariantId: string | null;
   orgMembershipProductUrl: string | null;
@@ -19,6 +21,7 @@ interface Settings {
   bgRecheckMonths: number;
   devSigningTarget: string | null;
   scholarshipDenialGraceDays: number | null;
+  releasedLibraries: string[];
 }
 
 const dollars = (cents: number) => (cents / 100).toFixed(2);
@@ -35,8 +38,8 @@ const currentBoundaryLabel = (iso: string) => {
 };
 
 export default function MembershipSettingsPage() {
-  const [normalDues, setNormalDues] = useState("0");
-  const [volunteerDues, setVolunteerDues] = useState("0");
+  const [standardFee, setStandardFee] = useState("0");
+  const [volunteerFee, setVolunteerFee] = useState("0");
   const [bgRecheckMonths, setBgRecheckMonths] = useState("0");
   const [scholarshipGraceDays, setScholarshipGraceDays] = useState("");
   const [boundary, setBoundary] = useState("");
@@ -46,12 +49,12 @@ export default function MembershipSettingsPage() {
   const [extracting, setExtracting] = useState(false);
   const [discountCode, setDiscountCode] = useState("");
   // Dev-instance-only: where contract signing requests go ('zoho' | 'debug').
-  // Strictly CHECKIN_ENV=dev, not useIsDevInstance()'s not-prod: the API rejects
-  // devSigningTarget on any other env, and one rejected field 400s the whole PUT.
+  // Strictly CHECKIN_ENV=dev, not useIsDevInstance()'s not-prod: the API only
+  // honours devSigningTarget on a dev instance, so only send it there.
   const isDev = useCheckinEnv() === "dev";
   const [signingTarget, setSigningTarget] = useState("zoho");
 
-  // Snapshot of the dues-form values as last loaded/saved; isDirty compares it to
+  // Snapshot of the fee-form values as last loaded/saved; isDirty compares it to
   // current state to drive the unsaved-changes guard.
   // ponytail: guards the main Save-button form only. The go-live card below is a
   // separate save flow — wire it if it grows edits.
@@ -61,19 +64,19 @@ export default function MembershipSettingsPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState<{ normalDues?: string; volunteerDues?: string; variantId?: string; scholarshipGraceDays?: string }>({});
+  const [fieldErrors, setFieldErrors] = useState<{ standardFee?: string; volunteerFee?: string; variantId?: string; scholarshipGraceDays?: string }>({});
   const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
   const [renewalNotice, setRenewalNotice] = useState<{ text: string; err: boolean } | null>(null);
+  const [releasedLibraries, setReleasedLibraries] = useState<string[]>([]);
+  const isBoardMember = !!useSession().data?.user?.isBoardMember;
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const sRes = await fetch("/api/settings/membership");
+  const load = useCallback(() => fetch("/api/settings/membership")
+    .then(async (sRes) => {
       if (sRes.ok) {
         const { settings } = (await sRes.json()) as { settings: Settings };
         const snap = {
-          normalDues: dollars(settings.normalDuesCents),
-          volunteerDues: dollars(settings.volunteerDuesCents),
+          standardFee: dollars(settings.standardMembershipFeeCents),
+          volunteerFee: dollars(settings.volunteerMembershipFeeCents),
           bgRecheckMonths: String(settings.bgRecheckMonths ?? 0),
           scholarshipGraceDays: settings.scholarshipDenialGraceDays != null ? String(settings.scholarshipDenialGraceDays) : "",
           boundary: settings.orgMembershipYearBoundary ? settings.orgMembershipYearBoundary.slice(0, 10) : "",
@@ -82,8 +85,8 @@ export default function MembershipSettingsPage() {
           discountCode: settings.volunteerDiscountCode ?? "",
           signingTarget: settings.devSigningTarget ?? "zoho",
         };
-        setNormalDues(snap.normalDues);
-        setVolunteerDues(snap.volunteerDues);
+        setStandardFee(snap.standardFee);
+        setVolunteerFee(snap.volunteerFee);
         setBgRecheckMonths(snap.bgRecheckMonths);
         setScholarshipGraceDays(snap.scholarshipGraceDays);
         setBoundary(snap.boundary);
@@ -91,12 +94,14 @@ export default function MembershipSettingsPage() {
         setProductUrl(snap.productUrl);
         setDiscountCode(snap.discountCode);
         setSigningTarget(snap.signingTarget);
+        setReleasedLibraries(settings.releasedLibraries ?? []);
         setInitial(snap);
       }
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -107,23 +112,23 @@ export default function MembershipSettingsPage() {
   const saveSettings = async () => {
     setSaveNotice(null);
     setFieldErrors({});
-    const fe: { normalDues?: string; volunteerDues?: string; variantId?: string; scholarshipGraceDays?: string } = {};
-    const nd = parseFloat(normalDues); if (normalDues.trim() === "" || isNaN(nd) || nd < 0) fe.normalDues = "Enter a dollar amount of 0 or more.";
-    const vd = parseFloat(volunteerDues); if (volunteerDues.trim() === "" || isNaN(vd) || vd < 0) fe.volunteerDues = "Enter a dollar amount of 0 or more.";
+    const fe: { standardFee?: string; volunteerFee?: string; variantId?: string; scholarshipGraceDays?: string } = {};
+    const nd = parseFloat(standardFee); if (standardFee.trim() === "" || isNaN(nd) || nd < 0) fe.standardFee = "Enter a dollar amount of 0 or more.";
+    const vd = parseFloat(volunteerFee); if (volunteerFee.trim() === "" || isNaN(vd) || vd < 0) fe.volunteerFee = "Enter a dollar amount of 0 or more.";
     if (variantId.trim() !== "" && !/^\d+$/.test(variantId.trim())) fe.variantId = "Must be a numeric Shopify variant ID.";
     if (scholarshipGraceDays.trim() !== "") {
       const g = parseInt(scholarshipGraceDays.trim(), 10);
       if (!Number.isInteger(g) || g <= 0 || String(g) !== scholarshipGraceDays.trim()) fe.scholarshipGraceDays = "Enter a positive whole number of days, or leave blank to disable.";
     }
-    if (fe.normalDues || fe.volunteerDues || fe.variantId || fe.scholarshipGraceDays) { setFieldErrors(fe); return; }
+    if (fe.standardFee || fe.volunteerFee || fe.variantId || fe.scholarshipGraceDays) { setFieldErrors(fe); return; }
     setSaving(true);
     try {
       const res = await fetch("/api/settings/membership", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          normalDuesCents: Math.round(parseFloat(normalDues || "0") * 100),
-          volunteerDuesCents: Math.round(parseFloat(volunteerDues || "0") * 100),
+          standardMembershipFeeCents: Math.round(parseFloat(standardFee || "0") * 100),
+          volunteerMembershipFeeCents: Math.round(parseFloat(volunteerFee || "0") * 100),
           orgMembershipVariantId: variantId.trim() || null,
           orgMembershipProductUrl: productUrl.trim() || null,
           volunteerDiscountCode: discountCode.trim() || null,
@@ -136,7 +141,7 @@ export default function MembershipSettingsPage() {
           ...(boundaryUnlocked || !boundaryWasSet ? { orgMembershipYearBoundary: boundary || null } : {}),
         }),
       });
-      if (res.ok) { notifications.show({ message: "Settings saved." }); setBoundaryUnlocked(false); notifyNavRefresh(); await load(); }
+      if (res.ok) { notifications.show({ message: "Settings saved." }); setBoundaryUnlocked(false); notifyNavRefresh(); setLoading(true); await load(); }
       else { const d = await res.json().catch(() => ({})); setSaveNotice({ text: d.error || "Save failed.", err: true }); }
     } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
     finally { setSaving(false); }
@@ -182,7 +187,7 @@ export default function MembershipSettingsPage() {
 
   const isDirty =
     !!initial &&
-    !shallowEqual(initial, { normalDues, volunteerDues, bgRecheckMonths, scholarshipGraceDays, boundary, variantId, productUrl, discountCode, signingTarget });
+    !shallowEqual(initial, { standardFee, volunteerFee, bgRecheckMonths, scholarshipGraceDays, boundary, variantId, productUrl, discountCode, signingTarget });
   useUnsavedGuard(isDirty);
 
   return (
@@ -194,25 +199,25 @@ export default function MembershipSettingsPage() {
       ) : (
         <>
           <Card withBorder radius="md" padding="lg">
-            <Title order={3} mb="md">Dues &amp; configuration</Title>
+            <Title order={3} mb="md">Membership fees &amp; configuration</Title>
             <Group align="flex-end" gap="lg" wrap="wrap">
               <TextInput
-                label="Annual dues (normal)"
+                label="Standard annual membership fee"
                 leftSection="$"
                 inputMode="decimal"
                 w={160}
-                error={fieldErrors.normalDues}
-                value={normalDues}
-                onChange={(e) => { setNormalDues(e.currentTarget.value); setFieldErrors((f) => ({ ...f, normalDues: undefined })); }}
+                error={fieldErrors.standardFee}
+                value={standardFee}
+                onChange={(e) => { setStandardFee(e.currentTarget.value); setFieldErrors((f) => ({ ...f, standardFee: undefined })); }}
               />
               <TextInput
-                label="Annual dues (volunteer)"
+                label="Volunteer annual membership fee"
                 leftSection="$"
                 inputMode="decimal"
                 w={160}
-                error={fieldErrors.volunteerDues}
-                value={volunteerDues}
-                onChange={(e) => { setVolunteerDues(e.currentTarget.value); setFieldErrors((f) => ({ ...f, volunteerDues: undefined })); }}
+                error={fieldErrors.volunteerFee}
+                value={volunteerFee}
+                onChange={(e) => { setVolunteerFee(e.currentTarget.value); setFieldErrors((f) => ({ ...f, volunteerFee: undefined })); }}
               />
               <TextInput
                 label="Background check valid for"
@@ -353,6 +358,8 @@ export default function MembershipSettingsPage() {
               Save settings
             </Button>
           </Card>
+
+          {isBoardMember && <LibraryReleaseCard initial={releasedLibraries} />}
 
           <Card withBorder radius="md" padding="lg" style={{ borderColor: "var(--mantine-color-yellow-5)" }}>
             <Title order={3} mb="xs">Go-live: open renewals</Title>

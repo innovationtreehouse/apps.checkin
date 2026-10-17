@@ -3,6 +3,7 @@ import { sendEmail } from "@/lib/email";
 import { GET } from "../api/cron/post-event/route";
 
 jest.mock("@/lib/email", () => ({
+    runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())),
     sendEmail: jest.fn().mockResolvedValue(true)
 }));
 
@@ -32,7 +33,7 @@ describe("GET /api/cron/post-event", () => {
         });
 
         const program = await prisma.program.create({
-            data: { name: "Test Program", leadMentorId: lead.id }
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Test Program", leadMentorId: lead.id }
         });
 
         const now = new Date();
@@ -87,7 +88,7 @@ describe("GET /api/cron/post-event", () => {
 
     it("should not send emails for events that haven't finished yet", async () => {
         const program = await prisma.program.create({
-            data: { name: "Test Program" }
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Test Program" }
         });
 
         const now = new Date();
@@ -117,7 +118,7 @@ describe("GET /api/cron/post-event", () => {
 
     it("should not double-send emails if postEventEmailSent is true", async () => {
         const program = await prisma.program.create({
-            data: { name: "Test Program" }
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Test Program" }
         });
 
         const now = new Date();

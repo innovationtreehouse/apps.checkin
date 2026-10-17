@@ -13,6 +13,12 @@ import { getServerSession } from 'next-auth/next';
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
 }));
+// The route fires check-in notifications without awaiting; stub them so no
+// query outlives the suite's teardown.
+jest.mock('@/lib/notifications', () => ({
+    ...jest.requireActual('@/lib/notifications'),
+    sendCheckinNotifications: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('@/lib/verify-kiosk', () => ({
     getKioskPublicKeys: jest.fn().mockReturnValue([Buffer.from('mock-key')]),
     verifyKioskSignature: jest.fn()
@@ -177,10 +183,12 @@ describe('Attendance API Integration Tests', () => {
             });
 
             const res = await DELETE(req as unknown as import("next/server").NextRequest);
-            expect(res.status).toBe(403);
-            
+            // 404, not 403: a visit id the caller may not touch must be
+            // indistinguishable from one that does not exist.
+            expect(res.status).toBe(404);
+
             const data = await res.json();
-            expect(data.error).toContain('Forbidden');
+            expect(data.error).toBe('Visit not found');
         });
     });
 

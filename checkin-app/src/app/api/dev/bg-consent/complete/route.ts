@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * POST /api/dev/bg-consent/complete — dev-only consent trigger for the background-check
- * mock (see docs/designs/BG_CHECK_DEV_MOCK.md). Reached from the dev interstitial's
+ * mock (see docs/ops/background-check-mock.md). Reached from the dev interstitial's
  * "Consent" button, standing in for the applicant consenting on Averity. Records real
  * consent (markBgConsent) on the caller's own in-flight application, driving the same
  * advance → parallel board review path prod does.

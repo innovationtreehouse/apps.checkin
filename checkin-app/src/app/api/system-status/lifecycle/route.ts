@@ -5,7 +5,7 @@ import { apiError } from "@/lib/api-response";
 import { scanLifecycleViolations } from "@/lib/lifecycleDrift";
 
 /**
- * System Status "Lifecycle" data source (docs/designs/LIFECYCLE.md): the current
+ * System Status "Lifecycle" data source: the current
  * off-diagram row set across both lifecycle models, computed live from the same
  * `validate()` the reconciler cron uses — so the board sees drift without waiting
  * for the cron email. Read-only; no predicate is re-derived here.

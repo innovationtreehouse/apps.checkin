@@ -89,6 +89,33 @@ describe("getKioskDisplayNames", () => {
         expect(map.get(2)).toBe("Sarah K.");
     });
 
+    it("initializes the last name, not the middle name", () => {
+        const map = getKioskDisplayNames([
+            { id: 1, name: "John Frank Doe", email: "j1@example.com" },
+            { id: 2, name: "John Smith", email: "j2@example.com" },
+        ]);
+        expect(map.get(1)).toBe("John D.");
+        expect(map.get(2)).toBe("John S.");
+    });
+
+    it("initializes the final word of a multi-word last name", () => {
+        const map = getKioskDisplayNames([
+            { id: 1, name: "Maria De La Cruz", email: "m1@example.com" },
+            { id: 2, name: "Maria Diaz", email: "m2@example.com" },
+        ]);
+        expect(map.get(1)).toBe("Maria C.");
+        expect(map.get(2)).toBe("Maria D.");
+    });
+
+    it("initializes the final word of a multi-word last name in comma format", () => {
+        const map = getKioskDisplayNames([
+            { id: 1, name: "De La Cruz, Maria", email: "m1@example.com" },
+            { id: 2, name: "Diaz, Maria", email: "m2@example.com" },
+        ]);
+        expect(map.get(1)).toBe("Maria C.");
+        expect(map.get(2)).toBe("Maria D.");
+    });
+
     it("handles three-way collision with mixed last initials", () => {
         const map = getKioskDisplayNames([
             { id: 1, name: "Sarah Morris", email: "s1@example.com" },
@@ -99,5 +126,53 @@ describe("getKioskDisplayNames", () => {
         expect(map.get(1)).toBe("Sarah Mo.");
         expect(map.get(2)).toBe("Sarah Ma.");
         expect(map.get(3)).toBe("Sarah K.");
+    });
+
+    it("shows the nickname in place of the first name", () => {
+        const map = getKioskDisplayNames([
+            { id: 1, name: "Robert Johnson", nickname: "Bo", email: "rob@example.com" },
+        ]);
+        expect(map.get(1)).toBe("Bo");
+    });
+
+    it("disambiguates colliding nicknames on the last name from `name`", () => {
+        const map = getKioskDisplayNames([
+            { id: 1, name: "Robert Miller", nickname: "Bo", email: "r.m@example.com" },
+            { id: 2, name: "Bonnie Kim", nickname: "Bo", email: "b.k@example.com" },
+        ]);
+        expect(map.get(1)).toBe("Bo M.");
+        expect(map.get(2)).toBe("Bo K.");
+    });
+
+    it("groups a nickname against a matching plain first name", () => {
+        const map = getKioskDisplayNames([
+            { id: 1, name: "Robert Miller", nickname: "Sarah", email: "r.m@example.com" },
+            { id: 2, name: "Sarah Kim", email: "s.k@example.com" },
+        ]);
+        expect(map.get(1)).toBe("Sarah M.");
+        expect(map.get(2)).toBe("Sarah K.");
+    });
+
+    it("takes the nickname from comma-format names too", () => {
+        const map = getKioskDisplayNames([
+            { id: 1, name: "Johnson, Robert", nickname: "Bo", email: "r.j@example.com" },
+        ]);
+        expect(map.get(1)).toBe("Bo");
+    });
+
+    it("uses the nickname ahead of the email prefix when there is no name", () => {
+        const map = getKioskDisplayNames([
+            { id: 1, name: null, nickname: "Bo", email: "rjohnson@example.com" },
+        ]);
+        expect(map.get(1)).toBe("Bo");
+    });
+
+    it("ignores a blank or absent nickname", () => {
+        const map = getKioskDisplayNames([
+            { id: 1, name: "Robert Johnson", nickname: "   ", email: "r.j@example.com" },
+            { id: 2, name: "Mike Smith", nickname: null, email: "m.s@example.com" },
+        ]);
+        expect(map.get(1)).toBe("Robert");
+        expect(map.get(2)).toBe("Mike");
     });
 });

@@ -2,7 +2,7 @@
 
 import { useSession } from "next-auth/react";
 import { Box, Center, Group, Loader, Stack, Text } from "@mantine/core";
-import { MEMBERSHIP_OPS_NAV_LINKS } from "@/lib/membershipOpsNav";
+import { MEMBERSHIP_OPS_SECTION_ROLES, isMembershipOpsAdmin, canReviewMembership, visibleMembershipOpsLinks } from "@/lib/membershipOpsNav";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { tabBadgeFor, reviewBadges } from "@/components/navBadges";
@@ -13,25 +13,14 @@ import { PageContainer } from "@/components/ui/PageContainer";
 export default function MembershipOpsLayout({ children }: { children: React.ReactNode }) {
   const { data: session } = useSession();
   const sessionUser = session?.user as { isSysadmin?: boolean; isBoardMember?: boolean; isBackgroundCheckReviewer?: boolean; isOperations?: boolean } | undefined;
-  const isAdmin = !!(sessionUser?.isSysadmin || sessionUser?.isBoardMember);
-  // Operations gets the Participants tab only (read-only directory + add-contact) —
-  // every other admin tool stays sysadmin/board-only and each page 403s independently.
-  const isOps = !!sessionUser?.isOperations;
-  // Reviewers are let in so they can reach the Review tab (linked from their notifications);
-  // the admin tools below stay scoped to sysadmin/board and each page 403s independently.
-  const { loading, ready } = useRequireRole(["isSysadmin", "isBoardMember", "isBackgroundCheckReviewer", "isOperations"]);
+  const isAdmin = isMembershipOpsAdmin(sessionUser);
+  const { loading, ready } = useRequireRole(MEMBERSHIP_OPS_SECTION_ROLES);
 
-  // Review tab is for reviewers + board members (implicit reviewers); all other tabs
-  // are admin-only. A reviewer-only user therefore sees just the Review tab.
-  const canReview = !!(sessionUser?.isBackgroundCheckReviewer || sessionUser?.isBoardMember);
   // Fetch counts for reviewers too (not just admins), so the Review tab badges
   // work for a reviewer-only user.
+  const canReview = canReviewMembership(sessionUser);
   const todoCounts = useTodoCounts(isAdmin || canReview);
-  const navLinks = MEMBERSHIP_OPS_NAV_LINKS.filter((l) => {
-    if (l.href === "/membership-ops/review") return canReview;
-    if (l.href === "/membership-ops/participants") return isAdmin || isOps;
-    return isAdmin;
-  });
+  const navLinks = visibleMembershipOpsLinks(sessionUser);
 
   if (loading) {
     return (

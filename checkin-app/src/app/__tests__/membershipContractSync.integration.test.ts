@@ -20,7 +20,7 @@ import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 // Advancing to PENDING_PAYMENT pings reviewers; don't hit Resend in tests.
-jest.mock('@/lib/email', () => ({ sendEmail: jest.fn().mockResolvedValue(true) }));
+jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
 // Mock the whole Zoho client so no real OAuth/HTTP happens. Only getAccessToken +
 // getRequestStatus are exercised by syncContractStatus; the rest are stubs.
 jest.mock('@/lib/membership/contract/zohoClient', () => ({

@@ -1,8 +1,6 @@
-import { NextResponse } from "next/server";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { logger } from "@/lib/logger";
-import { withAuth } from "@/lib/auth";
-import { apiError } from "@/lib/api-response";
+import { handler } from "@/security/handler";
 import { config } from "@/lib/config";
 import { countSyncRuns, latestSyncRun } from "@/lib/shopifyRead/client";
 import { relTime } from "@/lib/time";
@@ -11,7 +9,7 @@ import { relTime } from "@/lib/time";
  * GET /api/finance-ops/s-read/diagnose — walk the s-read feature's dependency
  * chain and report the FIRST broken link with its specific cause.
  *
- * Why this exists (docs/designs/S_READ_DIAGNOSTICS.md): the sync-status feature
+ * Why this exists (docs/ops/shopify-mirror.md): the sync-status feature
  * sits at the end of a nine-link chain (env → derived URL → network → auth → DB
  * exists → table exists → SELECT grant → rows exist → trigger IAM), and without
  * this endpoint every broken link collapses into "the status line doesn't render"
@@ -92,13 +90,9 @@ function classifyMirrorError(err: unknown, dbName: string): { detail: string; co
 
 const skipped = (id: string): DiagStep => ({ id, ok: null, detail: "Skipped — an earlier step already failed." });
 
-export const GET = withAuth(
-    { roles: ['isBoardMember'] },
-    async (_req, auth) => {
-        if (auth.type !== 'session') {
-            return apiError("Unauthorized", 401);
-        }
-
+export const GET = handler(
+    "GET /api/finance-ops/s-read/diagnose",
+    async () => {
         const steps: DiagStep[] = [];
 
         // env — pure inspection, no I/O. Which resolution path won, and where it
@@ -207,6 +201,6 @@ export const GET = withAuth(
             }
         }
 
-        return NextResponse.json({ steps });
+        return { SReadDiagnoseStep: steps };
     },
 );

@@ -6,23 +6,31 @@ import { useSession } from "next-auth/react";
 import { usePolling, POLL_IDLE_STOP_MS } from "@/hooks/usePolling";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
+import { IconHeartHandshake, IconKey, IconSchool, type Icon } from "@tabler/icons-react";
 import {
   Alert, Anchor, Badge, Box, Button, Card, Center, Group, Loader, Modal, Paper,
   SimpleGrid, Stack, Text, TextInput, Title,
 } from "@mantine/core";
-import { formatTime, isYouth } from "@/lib/time";
+import { isYouth } from "@/lib/time";
+import { useOrgTime } from '@/components/TimezoneProvider';
 import { PageContainer } from "@/components/ui/PageContainer";
 import { formatPhone } from "@/lib/phone";
 import { getKioskDisplayNames } from "@/lib/kiosk-names";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { AttendanceTabs } from "../AttendanceTabs";
+import { isCloseChoiceWarning, useCloseChoice, type CloseChoiceAnswer } from "@/components/CloseChoiceDialog";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 import { CountBadge } from "@/components/ui/CountBadge";
+import { BuildingUnconfirmedAlert } from "@/components/BuildingUnconfirmedAlert";
+import type { BuildingLink } from "@/lib/kioskSeen";
+import { personQueryMatcher } from "@/lib/searchId";
+
 type Person = {
   id: number;
   email: string;
   name?: string | null;
+  nickname?: string | null;
   isKeyholder: boolean;
   isSysadmin: boolean;
   // Server-computed youth classification. The kiosk payload carries this INSTEAD of
@@ -37,25 +45,32 @@ type Person = {
 type Visit = {
   id: number;
   arrivedAt: string;
+  // Checked in with no keyholder in the building (server-derived).
+  noKeyholder?: boolean;
   participant: Person;
   event?: { program?: { id: number; name: string } };
 };
 
-type Counts = { keyholders: number; volunteers: number; youth: number; total: number };
-type SafetyFlags = { isLastKeyholder: boolean; isTwoDeepViolation: boolean };
-type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety: SafetyFlags };
-type LimitedResponse = { access: "limited"; counts: Counts; safety: SafetyFlags; self: Visit | null; household: Visit[] };
+type Counts = { keyholders: number; volunteers: number; youth: number; total: number; needReview?: number };
+type SafetyFlags = { facilityOpen: boolean; isLastKeyholder: boolean; isTwoDeepViolation: boolean };
+// kioskAsOf: the kiosk proxy served its own view (server unreachable)
+// from the roster it received at this time; null when it never had one.
+type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; kioskAsOf?: string | null };
+type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; self: Visit | null; household: Visit[] };
 type AttendanceResponse = FullResponse | LimitedResponse;
 
-type SessionUser = { id: number; isSysadmin?: boolean; isKeyholder?: boolean; isBoardMember?: boolean; householdId?: number | null; householdLead?: boolean };
-
 function KioskDisplayInner() {
+  const { formatTime } = useOrgTime();
   const searchParams = useSearchParams();
   const [isKioskMode, setIsKioskMode] = useState(searchParams.get("mode") === "kiosk");
   const { data: session } = useSession();
   const [data, setData] = useState<AttendanceResponse | null>(null);
+  // When `data` was current: the kiosk's roster time, else when it was loaded.
+  const [asOf, setAsOf] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The kiosk proxy answers 204 while the building is known empty.
+  const [kioskResting, setKioskResting] = useState(false);
   const [checkingOut, setCheckingOut] = useState<number | null>(null);
   const [household, setHousehold] = useState<{ householdMembers: Person[] } | null>(null);
   const [showSignOutModal, setShowSignOutModal] = useState(false);
@@ -63,28 +78,45 @@ function KioskDisplayInner() {
   const [selectedParticipant, setSelectedParticipant] = useState<Person | null>(null);
   const [confirmCheckoutOpened, { open: openConfirmCheckout, close: closeConfirmCheckout }] = useDisclosure(false);
   const [pendingCheckoutVisitId, setPendingCheckoutVisitId] = useState<number | null>(null);
+  const { ask: askCloseChoice, dialog: closeChoiceDialog } = useCloseChoice();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Person[]>([]);
   const [checkingInId, setCheckingInId] = useState<number | null>(null);
 
-  const currentUserIsSysadmin = (session?.user as SessionUser)?.isSysadmin || false;
-  const currentUserIsKeyholder = (session?.user as SessionUser)?.isKeyholder || false;
-  const currentUserIsBoardMember = (session?.user as SessionUser)?.isBoardMember || false;
-  const currentUserHouseholdId = (session?.user as SessionUser)?.householdId || null;
+  const currentUserIsSysadmin = session?.user?.isSysadmin || false;
+  const currentUserIsKeyholder = session?.user?.isKeyholder || false;
+  const currentUserIsBoardMember = session?.user?.isBoardMember || false;
+  const currentUserHouseholdId = session?.user?.householdId || null;
   const canManuallyCheckInGlobal = currentUserIsSysadmin || currentUserIsKeyholder || currentUserIsBoardMember;
   const canAdminCheckout = currentUserIsSysadmin || currentUserIsKeyholder || currentUserIsBoardMember;
   const canCheckInHousehold = Boolean(currentUserHouseholdId);
 
   const isFull = data?.access === "full";
+  // Absent attendance is UNKNOWN, never "empty and compliant": every count and
+  // safety flag below is only meaningful while `data` is non-null, so each one is
+  // rendered behind that check.
   const counts = data?.counts || { keyholders: 0, volunteers: 0, youth: 0, total: 0 };
-  const safety = data?.safety || { isLastKeyholder: false, isTwoDeepViolation: false };
+  // Missing OR malformed `safety` is UNKNOWN, never all-clear (see
+  // docs/rules/attendance-checkin.md, kiosk resilience). Both flags must be
+  // actual booleans — a partial object like `{}` must not read as compliant.
+  const rawSafety = data?.safety;
+  const safety =
+    typeof rawSafety?.isTwoDeepViolation === "boolean" && typeof rawSafety?.isLastKeyholder === "boolean"
+      && typeof rawSafety?.facilityOpen === "boolean"
+      ? rawSafety
+      : null;
+  // Off the kiosk, building state is stated as fact only while the server can
+  // reach the kiosk; a missing link reads as unreachable.
+  const unconfirmed = !isKioskMode && data !== null && data.building?.reachable !== true;
 
   // Prefer the server-computed flag (the only youth signal the kiosk payload carries),
-  // fall back to the birth date the privileged payload still ships.
-  const visitIsYouth = (v: Visit) => v.participant.isYouth ?? isYouth(v.participant.dateOfBirth);
+  // fall back to the birth date the privileged payload still ships. This feeds the
+  // supervision columns, so an unknown birth date fails closed as youth.
+  const visitIsYouth = (v: Visit) => v.participant.isYouth ?? isYouth(v.participant.dateOfBirth, { unknownIs: "youth" });
 
   const fullAttendance = isFull ? (data as FullResponse).attendance : [];
+  const matchesSignOutQuery = personQueryMatcher(searchSignOutQuery);
   const keyholderList = fullAttendance.filter(v => v.participant.isKeyholder);
   const volunteerList = fullAttendance.filter(v => !v.participant.isKeyholder && !visitIsYouth(v));
   const youthList = fullAttendance.filter(v => visitIsYouth(v));
@@ -96,7 +128,7 @@ function KioskDisplayInner() {
   const householdYouth = limitedHousehold.filter(v => visitIsYouth(v));
 
   const isCheckedIn = isFull
-    ? fullAttendance.some(v => v.participant.id === (session?.user as SessionUser)?.id)
+    ? fullAttendance.some(v => v.participant.id === session?.user?.id)
     : limitedSelf !== null;
 
   useEffect(() => {
@@ -115,10 +147,12 @@ function KioskDisplayInner() {
     if (canCheckInHousehold) fetchHousehold();
   }, [canCheckInHousehold, currentUserHouseholdId]);
 
-  // A signed kiosk display (sig/ts/nonce present) is unattended, so it must not
-  // idle-stop — only the interactive staff view does. Either way the visibility
-  // gate applies; a cookieless kiosk poll can't wake a slept env anyway.
+  // Unattended kiosk displays must not idle-stop. The Pi proxy never puts
+  // sig/ts/nonce on the iframe URL, so keying on those params froze the
+  // door screen after 10 quiet minutes. Gate on mode=kiosk (the URL the
+  // proxy actually loads) or the signedRequest response flag.
   const isSignedKiosk = !!(searchParams.get("sig") && searchParams.get("ts") && searchParams.get("nonce"));
+  const isKioskDisplay = searchParams.get("mode") === "kiosk" || isSignedKiosk;
 
   const fetchAttendance = useCallback(async () => {
     try {
@@ -133,9 +167,15 @@ function KioskDisplayInner() {
       }
 
       const res = await fetch("/api/attendance", { headers });
+      setKioskResting(res.status === 204);
+      if (res.status === 204) {
+        setError(null);
+        return;
+      }
       const json = await res.json().catch(() => ({}));
       if (res.ok && (json.access === "full" || json.access === "limited")) {
         setData(json);
+        setAsOf(json.kioskAsOf !== undefined ? json.kioskAsOf : new Date().toISOString());
         setError(null);
         if (json.signedRequest === true) setIsKioskMode(true);
       } else if (!res.ok) {
@@ -143,20 +183,25 @@ function KioskDisplayInner() {
       }
     } catch (error) {
       console.error("Failed to fetch attendance:", error);
-      notifications.show({ color: "red", message: "Network error", autoClose: false });
+      setError("Network error occurred.");
+      if (!isKioskDisplay) notifications.show({ color: "red", message: "Network error", autoClose: false });
     } finally {
       setLoading(false);
     }
-  }, [searchParams]);
+  }, [searchParams, isKioskDisplay]);
 
-  usePolling(fetchAttendance, 60000, { idleStopMs: isSignedKiosk ? undefined : POLL_IDLE_STOP_MS });
+  // The door screen never blanks, and never passes a kept or kiosk-served roster off as fresh.
+  const kioskStale = isKioskDisplay && data !== null && (error !== null || (isFull && (data as FullResponse).kioskAsOf !== undefined));
+  usePolling(fetchAttendance, 60000, { idleStopMs: isKioskDisplay ? undefined : POLL_IDLE_STOP_MS });
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      // Only the kiosk wrapper that frames this page, served from the same Pi proxy origin, may push a roster.
+      if (event.source !== window.parent || event.origin !== window.location.origin) return;
       if (typeof event.data === "object" && event.data?.type === "refresh-attendance" && event.data.attendance) {
         setData({ access: "full", attendance: event.data.attendance, counts: event.data.counts, safety: event.data.safety });
+        setAsOf(new Date().toISOString());
         setLoading(false);
-        if (event.data.signedRequest) setIsKioskMode(true);
       } else if (event.data === "refresh-attendance") {
         fetchAttendance();
       }
@@ -175,11 +220,8 @@ function KioskDisplayInner() {
         const res = await fetch(`/api/roles`);
         if (res.ok) {
           const data = await res.json();
-          const filtered = data.people.filter(
-            (p: Person) =>
-              (p.name || "").toLowerCase().includes((searchQuery || "").toLowerCase()) ||
-              (p.email || "").toLowerCase().includes((searchQuery || "").toLowerCase())
-          );
+          const matchesSearch = personQueryMatcher(searchQuery);
+          const filtered = data.people.filter((p: Person) => matchesSearch(p));
           setSearchResults(filtered);
         }
       } catch (error) {
@@ -201,9 +243,10 @@ function KioskDisplayInner() {
       headers["x-kiosk-nonce"] = nonceParamsUrl;
     }
     const attRes = await fetch("/api/attendance", { headers });
-    const json = await attRes.json();
+    const json = await attRes.json().catch(() => ({}));
     if (attRes.ok && (json.access === "full" || json.access === "limited")) {
       setData(json);
+      setAsOf(json.kioskAsOf !== undefined ? json.kioskAsOf : new Date().toISOString());
       if (json.signedRequest) setIsKioskMode(true);
     }
     // Refresh nav/sub-tab building counts too — they read a separate cached fetch.
@@ -219,22 +262,33 @@ function KioskDisplayInner() {
     await doForceCheckout(visitId, true);
   };
 
-  const doForceCheckout = async (visitId: number, isSelf: boolean = false) => {
+  const doForceCheckout = async (visitId: number, isSelf: boolean = false, answer?: CloseChoiceAnswer) => {
     setCheckingOut(visitId);
+    let next: CloseChoiceAnswer | null = null;
     try {
       const res = await fetch("/api/attendance", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ visitId }),
+        body: JSON.stringify({ visitId, ...answer }),
       });
-      if (res.ok) refreshAttendance();
-      else notifications.show({ color: "red", message: isSelf ? "Failed to check out." : "Failed to force checkout.", autoClose: false });
+      const resData = await res.json().catch(() => ({}));
+      if (res.ok) {
+        if (resData.facilityClosed) {
+          notifications.show({ color: "yellow", message: "Facility closed — all remaining visits ended.", autoClose: 5000 });
+        }
+        refreshAttendance();
+      } else if (isCloseChoiceWarning(resData)) {
+        next = await askCloseChoice(resData);
+      } else {
+        notifications.show({ color: "red", message: isSelf ? "Failed to check out." : "Failed to force checkout.", autoClose: false });
+      }
     } catch (e) {
-      console.error(e);
+      console.error("Attendance action failed:", e);
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
     } finally {
       setCheckingOut(null);
     }
+    if (next) await doForceCheckout(visitId, isSelf, next);
   };
 
   const confirmForceCheckout = async () => {
@@ -267,7 +321,7 @@ function KioskDisplayInner() {
         }
       }
     } catch (e) {
-      console.error(e);
+      console.error("Attendance action failed:", e);
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
     } finally {
       setCheckingInId(null);
@@ -282,7 +336,7 @@ function KioskDisplayInner() {
   const kioskDisplayNames = useMemo(() => {
     if (!isKioskMode) return new Map<number, string>();
     const allVisits = [...keyholderList, ...volunteerList, ...youthList];
-    return getKioskDisplayNames(allVisits.map(v => ({ id: v.participant.id, name: v.participant.name || null, email: v.participant.email })));
+    return getKioskDisplayNames(allVisits.map(v => ({ id: v.participant.id, name: v.participant.name || null, nickname: v.participant.nickname, email: v.participant.email })));
   }, [isKioskMode, keyholderList, volunteerList, youthList]);
 
   const canSeeNames = !isKioskMode && (currentUserIsKeyholder || currentUserIsSysadmin || currentUserIsBoardMember);
@@ -304,6 +358,11 @@ function KioskDisplayInner() {
             </Text>
             <Group gap={6} align="center">
               <Text c="dimmed" size="xs">{formatTime(visit.arrivedAt)}</Text>
+              {visit.noKeyholder && (
+                <Badge size="xs" color="orange" variant="light" title="Checked in with no keyholder in the building">
+                  No keyholder
+                </Badge>
+              )}
               {visit.event?.program?.name && (
                 <Badge size="xs" variant="light" style={{ background: `hsl(${hue}, 60%, 20%)`, color: `hsl(${hue}, 80%, 80%)` }} title={visit.event.program.name}>
                   {visit.event.program.name}
@@ -315,7 +374,7 @@ function KioskDisplayInner() {
             )}
           </Box>
           {showCheckout && (
-            <Button size="compact-xs" color="red" variant="light" onClick={() => handleForceCheckout(visit.id, visit.participant.id === (session?.user as SessionUser)?.id)} disabled={checkingOut === visit.id}>
+            <Button size="compact-xs" color="red" variant="light" onClick={() => handleForceCheckout(visit.id, visit.participant.id === session?.user?.id)} disabled={checkingOut === visit.id}>
               {checkingOut === visit.id ? "..." : "Out"}
             </Button>
           )}
@@ -325,15 +384,15 @@ function KioskDisplayInner() {
   };
 
   const canCheckoutVisit = (visit: Visit): boolean => Boolean(
-    visit.participant.id === (session?.user as SessionUser)?.id ||
-    ((session?.user as SessionUser)?.householdLead &&
+    visit.participant.id === session?.user?.id ||
+    (session?.user?.householdLead &&
       visit.participant.householdId === currentUserHouseholdId)
   );
 
-  const renderColumn = (icon: string, count: number, label: string, color: string, list: Visit[]) => (
+  const renderColumn = (ColumnIcon: Icon, count: number, label: string, color: string, list: Visit[]) => (
     <div>
       <Group gap={8} mb="sm" pb="xs" style={{ borderBottom: `2px solid var(--mantine-color-${color}-5)` }}>
-        <Text fz="xl">{icon}</Text>
+        <ColumnIcon size={28} stroke={1.75} color={`var(--mantine-color-${color}-6)`} aria-hidden />
         <div>
           <Text fz="xl" fw={800} c={color} lh={1}>{count}</Text>
           <Text size="xs" tt="uppercase" c="dimmed">{label}</Text>
@@ -345,7 +404,7 @@ function KioskDisplayInner() {
     </div>
   );
 
-  const userId = (session?.user as SessionUser)?.id;
+  const userId = session?.user?.id;
 
   const pageBody = (
     <>
@@ -378,12 +437,20 @@ function KioskDisplayInner() {
                 Sign out a user
               </Button>
             )}
-            <CountBadge intent="info" size="lg">People Present: {counts.total}</CountBadge>
+            {kioskStale && <Text size="sm" c="dimmed">Not up to date{asOf ? ` — as of ${formatTime(asOf)}` : ""}</Text>}
+            <CountBadge intent="info" size="lg">
+              {unconfirmed ? "Checked in (unconfirmed)" : "People Present"}: {data ? counts.total : "—"}
+            </CountBadge>
+            {/* A number only — no names, no reasons, no link that invites a
+                login on the kiosk. The panel is the copy of record. */}
+            {isKioskDisplay && (counts.needReview ?? 0) > 0 && (
+              <CountBadge intent="alert" size="lg">⚠ {counts.needReview} need review</CountBadge>
+            )}
           </Group>
         </Group>
 
         {/* Household check-in buttons — hidden in kiosk mode */}
-        {!isKioskMode && canCheckInHousehold && household && (session?.user as SessionUser)?.householdLead && (
+        {!isKioskMode && canCheckInHousehold && household && session?.user?.householdLead && (
           <Box mb="lg">
             <Title order={4} c="blue" mb="sm">Check In Household Members</Title>
             <Group gap="xs" wrap="wrap">
@@ -403,7 +470,7 @@ function KioskDisplayInner() {
         {!isKioskMode && canManuallyCheckInGlobal && (
           <Box mb="lg" pos="relative">
             <TextInput
-              placeholder="Manually check someone in (Search by name or email)..."
+              placeholder="Manually check someone in (Search by name, email, or ID)..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.currentTarget.value)}
             />
@@ -425,14 +492,28 @@ function KioskDisplayInner() {
           </Box>
         )}
 
-        {/* Safety warnings */}
-        {safety.isTwoDeepViolation && (
+        {/* Safety warnings — a missing roster reads as unknown, not as all-clear */}
+        {unconfirmed && <BuildingUnconfirmedAlert lastSeenAt={data?.building?.lastSeenAt} mb="lg" />}
+        {!loading && !unconfirmed && !safety && (
+          <Alert color="orange" icon="⚠️" title="Supervision status unknown" mb="lg">
+            {data
+              ? "Attendance loaded without safety flags, so Two-Deep Compliance and keyholder coverage cannot be checked. Verify supervision in the building."
+              : "Attendance could not be loaded, so Two-Deep Compliance and keyholder coverage cannot be checked. Verify supervision in the building."}
+          </Alert>
+        )}
+        {data && !unconfirmed && safety?.isTwoDeepViolation && (
           <Alert color="red" icon="🚨" title="Critical Warning" mb="lg">
             Two-Deep Compliance is failing! An unaccompanied youth is present without sufficient
             adult supervision.
           </Alert>
         )}
-        {!safety.isTwoDeepViolation && safety.isLastKeyholder && (
+        {data && !unconfirmed && safety && !safety.facilityOpen && counts.total > 0 && (
+          <Alert color="orange" icon="🔒" title="Facility closed — no keyholder present" mb="lg">
+            The people below checked in without a keyholder in the building. The facility is not
+            open until a keyholder checks in.
+          </Alert>
+        )}
+        {data && !unconfirmed && safety && !safety.isTwoDeepViolation && safety.isLastKeyholder && (
           <Alert color="yellow" icon="⚠️" title="Warning" mb="lg">
             Only one isKeyholder is currently in the building.
           </Alert>
@@ -441,15 +522,19 @@ function KioskDisplayInner() {
         {/* Main content */}
         {loading ? (
           <Center py="xl"><Loader /></Center>
-        ) : error ? (
+        ) : error && !kioskStale ? (
           <Alert color="red">{error === "Unauthorized" ? "Access Denied: Please sign in to view attendance." : error}</Alert>
+        ) : !data && kioskResting ? (
+          <Center py="xl"><Text c="dimmed">Kiosk resting — zzz. Badge in to wake it.</Text></Center>
+        ) : !data ? (
+          <Alert color="red">Attendance is unavailable — the roster could not be loaded.</Alert>
         ) : counts.total === 0 ? (
-          <Center py="xl"><Text c="dimmed">The facility is currently empty.</Text></Center>
+          <Center py="xl"><Text c="dimmed">{unconfirmed ? "No open visits recorded." : "The facility is currently empty."}</Text></Center>
         ) : (
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="lg">
-            {renderColumn("🔑", counts.keyholders, "Keyholders", "blue", isFull ? keyholderList : householdKeyholders)}
-            {renderColumn("🤝", counts.volunteers, "Volunteers/Adults", "teal", isFull ? volunteerList : householdVolunteers)}
-            {renderColumn("🎓", counts.youth, "Students", "grape", isFull ? youthList : householdYouth)}
+            {renderColumn(IconKey, counts.keyholders, "Keyholders", "blue", isFull ? keyholderList : householdKeyholders)}
+            {renderColumn(IconHeartHandshake, counts.volunteers, "Volunteers/Adults", "teal", isFull ? volunteerList : householdVolunteers)}
+            {renderColumn(IconSchool, counts.youth, "Students", "grape", isFull ? youthList : householdYouth)}
           </SimpleGrid>
         )}
 
@@ -478,7 +563,7 @@ function KioskDisplayInner() {
             <Text c="dimmed" ta="center" py="xl">No one is checked in.</Text>
           ) : (
             fullAttendance
-              .filter(v => ((v.participant.name || "").toLowerCase().includes((searchSignOutQuery || "").toLowerCase()) || (v.participant.email || "").toLowerCase().includes((searchSignOutQuery || "").toLowerCase())))
+              .filter(v => matchesSignOutQuery(v.participant))
               .sort((a, b) => (a.participant.name || "").localeCompare(b.participant.name || ""))
               .map(v => (
                 <Paper key={v.id} withBorder radius="md" p="sm">
@@ -554,6 +639,8 @@ function KioskDisplayInner() {
           <Button color="red" onClick={confirmForceCheckout}>Force Checkout</Button>
         </Group>
       </Modal>
+
+      {closeChoiceDialog}
     </>
   );
 

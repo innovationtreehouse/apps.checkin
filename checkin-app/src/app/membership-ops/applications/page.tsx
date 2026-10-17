@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, Suspense } from "react";
-import { Alert, Button, Card, Center, Group, Loader, Modal, Stack, Switch, Text, Textarea } from "@mantine/core";
+import { Alert, Button, Card, Center, Group, Loader, Modal, Radio, Stack, Switch, Text, Textarea } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { AlertBanner } from "@/components/admin/AlertBanner";
 import { notifications } from "@mantine/notifications";
@@ -11,7 +11,8 @@ import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { StatusFilterBadge, ActiveFilterNotice, useStatusFilter } from "@/components/StatusFilter";
-import { awaitingBgReview, type ProcessStatus } from "@/lib/membership/lifecycle";
+import { ARCHIVABLE_STATUSES, awaitingBgReview, type ProcessStatus } from "@/lib/membership/lifecycle";
+import { clearingApprovals } from "@/lib/membership/approvals";
 
 interface Person {
   id: number;
@@ -22,6 +23,7 @@ interface Person {
 interface Attestation {
   id: number;
   result: string;
+  subjectPersonId: number | null;
   isMarkedVolunteer: boolean;
 }
 interface ProcessRow {
@@ -54,13 +56,17 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const statusColor = (status: string) => STATUS_COLORS[status] || "gray";
-const statusLabel = (status: string) => status.replace(/_/g, " ");
+const statusLabel = (status: string) => (status === "ARCHIVED" ? "CLOSED" : status.replace(/_/g, " "));
 
 // The background check is a parallel track: an application still needs review
 // when it hasn't cleared and is past consent. ONE definition, shared with the
 // server (fix #1): awaitingBgReview.has — client-safe (booleans in, no Prisma).
 const awaitingBg = (r: ProcessRow) =>
   awaitingBgReview.has({ status: r.status as ProcessStatus, bgConsentAt: !!r.bgConsentAt, bgClearedAt: !!r.bgClearedAt });
+
+// Mirrors archiveApplication's gate; the server re-checks.
+const closable = (r: ProcessRow) => !r.paidAt && (ARCHIVABLE_STATUSES as readonly string[]).includes(r.status);
+const refundable = (r: ProcessRow) => !!r.paidAt && (r.status === "PENDING_BG_CLEARANCE" || r.status === "BLOCKED");
 
 export default function AdminMembershipPage() {
   return (
@@ -73,12 +79,12 @@ export default function AdminMembershipPage() {
 function ApplicationsBoard() {
   const { data: session } = useSession();
   const me = session?.user;
-  // Conflict of interest: a board member may not certify/override their OWN household's
-  // application (mirrors the server guards in certifyPaymentPlan/overrideBlocked). Sysadmin
-  // is the deliberate remedy and keeps the buttons. The disabled state is UX only — the
-  // server is the real enforcement.
+  // Conflict of interest: no actor may advance/certify/override their OWN household's
+  // application (mirrors the server guards in certifyPaymentPlan, overrideBlocked and
+  // the EXTERNAL-phase route).
+  // The disabled state is UX only — the server is the real enforcement.
   const ownHousehold = (r: ProcessRow) =>
-    me?.isSysadmin !== true && sharesHousehold(me?.householdId, r.orgMembership?.householdId);
+    sharesHousehold(me?.householdId, r.orgMembership?.householdId);
   const [rows, setRows] = useState<ProcessRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -89,21 +95,24 @@ function ApplicationsBoard() {
   const [pendingCertify, setPendingCertify] = useState<number | null>(null);
   const [certifyReason, setCertifyReason] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [refundOpened, { open: openRefund, close: closeRefund }] = useDisclosure(false);
+  const [pendingRefund, setPendingRefund] = useState<number | null>(null);
+  const [refundReason, setRefundReason] = useState("");
+  // processId -> the lead a force-approve asserts was checked. The board asserts it
+  // because a blocked review has no second approval to count.
+  const [overrideSubjects, setOverrideSubjects] = useState<Record<number, number>>({});
 
-  const load = useCallback(async (archived: boolean) => {
+  const fetchRows = useCallback((archived: boolean) =>
+    fetch(`/api/membership-ops/applications${archived ? "?archived=1" : ""}`)
+      .then(async (res) => { if (res.ok) setRows((await res.json()).processes || []); })
+      .finally(() => setLoading(false)), []);
+
+  const load = (archived: boolean) => {
     setLoading(true);
-    try {
-      const res = await fetch(`/api/membership-ops/applications${archived ? "?archived=1" : ""}`);
-      if (res.ok) {
-        const data = await res.json();
-        setRows(data.processes || []);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    return fetchRows(archived);
+  };
 
-  useEffect(() => { load(showArchived); }, [load, showArchived]);
+  useEffect(() => { fetchRows(showArchived); }, [fetchRows, showArchived]);
 
   const act = async (processId: number, action: string, extra?: Record<string, unknown>) => {
     setBusyId(processId);
@@ -138,7 +147,7 @@ function ApplicationsBoard() {
       const res = await fetch("/api/membership-ops/applications/review-override", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, action }),
+        body: JSON.stringify({ processId, action, subjectPersonIds: overrideSubjects[processId] === undefined ? [] : [overrideSubjects[processId]] }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -170,11 +179,11 @@ function ApplicationsBoard() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Application archived." });
+        notifications.show({ message: "Application closed." });
         await load(showArchived);
         notifyNavRefresh();
       } else {
-        setMessage(data.error || "Archive failed.");
+        setMessage(data.error || "Couldn't close the application.");
       }
     } catch {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
@@ -183,25 +192,46 @@ function ApplicationsBoard() {
     }
   };
 
-  // Disposing an abandoned application removes it from the board list. Confirm
+  // An awaiting row only ever holds APPROVE attestations (any REJECT blocks it).
+  const approvals = (r: ProcessRow) => r.attestations.filter((a) => a.result === "APPROVE").length;
+  // Approvals that count toward clearing; unnamed or other-adult approvals don't.
+  const counted = (r: ProcessRow) => clearingApprovals(r.attestations, r.kind === "PERSON_BG");
+
+  const confirmResetReview = (r: ProcessRow) => {
+    modals.openConfirmModal({
+      title: "Start this background-check review over?",
+      children: (
+        <Text size="sm">
+          This discards the {approvals(r)} approval(s) recorded for <strong>{householdLabel(r)}</strong>{" "}
+          and asks the reviewers to start again. Use it when an approval was recorded by
+          mistake — the check itself has not cleared yet, so nothing else changes.
+        </Text>
+      ),
+      labels: { confirm: "Discard approvals", cancel: "Cancel" },
+      onConfirm: () => override(r.id, "reset"),
+    });
+  };
+
+  // Closing a long-idle, unpaid application removes it from the board list. Confirm
   // because it's a deliberate cleanup action (kept in the audit log, not deleted).
   const confirmArchive = (r: ProcessRow) => {
     modals.openConfirmModal({
-      title: "Archive this application?",
+      title: "Close this application?",
       children: (
         <Text size="sm">
           This removes <strong>{householdLabel(r)}</strong> (application #{r.id}) from the board list.
-          A record is kept in the audit log. Only do this for abandoned applications.
+          A record is kept in the audit log, and the board can reopen it. Only do this for
+          applications that have sat idle and unpaid.
         </Text>
       ),
-      labels: { confirm: "Archive", cancel: "Cancel" },
+      labels: { confirm: "Close application", cancel: "Cancel" },
       confirmProps: { color: "red" },
       onConfirm: () => archive(r.id),
     });
   };
 
-  // Board recovery of a wrongly-archived application — restores it to whatever
-  // in-flight status it was archived from (server-determined from the audit trail).
+  // Board reopen of a closed application — the server restores the step it was
+  // closed from, or refuses with the reason.
   const unarchive = async (processId: number) => {
     setBusyId(processId);
     setMessageId(processId);
@@ -214,11 +244,11 @@ function ApplicationsBoard() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Application unarchived." });
+        notifications.show({ message: "Application reopened." });
         await load(showArchived);
         notifyNavRefresh();
       } else {
-        notifications.show({ color: "red", message: data.error || "Unarchive failed.", autoClose: 4000 });
+        notifications.show({ color: "red", message: data.error || "Couldn't reopen the application.", autoClose: 4000 });
       }
     } catch {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
@@ -255,6 +285,45 @@ function ApplicationsBoard() {
     }
   };
 
+  const recordRefund = async (processId: number, reason: string) => {
+    setBusyId(processId);
+    setMessageId(processId);
+    setMessage("");
+    try {
+      const res = await fetch("/api/membership-ops/applications/refund", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ processId, reason }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        notifications.show({ message: "Refund recorded." });
+        await load(showArchived);
+        notifyNavRefresh();
+      } else {
+        setMessage(data.error || "Couldn't record the refund.");
+      }
+    } catch {
+      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleRefund = (processId: number) => {
+    setPendingRefund(processId);
+    setRefundReason("");
+    openRefund();
+  };
+
+  const confirmRefund = async () => {
+    if (pendingRefund === null || !refundReason.trim()) return;
+    closeRefund();
+    const processId = pendingRefund;
+    setPendingRefund(null);
+    await recordRefund(processId, refundReason.trim());
+  };
+
   const handleCertify = (processId: number) => {
     setPendingCertify(processId);
     setCertifyReason("");
@@ -270,6 +339,11 @@ function ApplicationsBoard() {
     await certify(processId, reason);
   };
 
+  const leads = (r: ProcessRow) => (r.orgMembership?.household?.householdMembers ?? []).filter((p) => p.isHouseholdLead);
+
+  const pickOverrideSubject = (processId: number, personId: number) =>
+    setOverrideSubjects((s) => ({ ...s, [processId]: personId }));
+
   const householdLabel = (r: ProcessRow) => {
     const hh = r.orgMembership?.household;
     if (!hh) return `Household #${r.orgMembership?.householdId ?? "?"}`;
@@ -278,7 +352,7 @@ function ApplicationsBoard() {
   };
 
   const statusCounts = rows.reduce<Record<string, number>>((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; }, {});
-  // The status-filter badges/notice are meaningless on the archived view (every
+  // The status-filter badges/notice are meaningless on the closed view (every
   // row is ARCHIVED) — the filter itself is ignored there too.
   const visibleRows = rows.filter((r) => showArchived || !active || r.status === active);
 
@@ -291,9 +365,9 @@ function ApplicationsBoard() {
       </Text>
 
       <Switch
-        label="Show archived"
+        label="Show closed applications"
         checked={showArchived}
-        onChange={(e) => setShowArchived(e.currentTarget.checked)}
+        onChange={(e) => { setLoading(true); setShowArchived(e.currentTarget.checked); }}
       />
 
       {!loading && rows.length > 0 && !showArchived && (
@@ -327,7 +401,7 @@ function ApplicationsBoard() {
         <Center py="xl"><Loader /></Center>
       ) : rows.length === 0 ? (
         <Card withBorder radius="md" padding="xl" ta="center">
-          <Text c="dimmed">{showArchived ? "No archived applications." : "No in-flight membership applications."}</Text>
+          <Text c="dimmed">{showArchived ? "No closed applications." : "No in-flight membership applications."}</Text>
         </Card>
       ) : visibleRows.length === 0 ? (
         <Card withBorder radius="md" padding="xl" ta="center">
@@ -362,7 +436,7 @@ function ApplicationsBoard() {
                     {r.contractSignedAt ? (
                       <Text c="green" fw={600}>✓ Signed</Text>
                     ) : (
-                      <Button size="xs" fz={15} disabled={busyId === r.id} onClick={() => act(r.id, "mark-contract")}>
+                      <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r)} onClick={() => act(r.id, "mark-contract")}>
                         Confirm contract signed
                       </Button>
                     )}
@@ -372,28 +446,43 @@ function ApplicationsBoard() {
                     {r.bgConsentAt ? (
                       <Text c="green" fw={600}>✓ Received</Text>
                     ) : (
-                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id} onClick={() => act(r.id, "mark-bg-consent")}>
+                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => act(r.id, "mark-bg-consent")}>
                         Confirm BG consent
                       </Button>
                     )}
                   </div>
+                  {ownHousehold(r) && (
+                    <Text size="xs" c="dimmed">You can&apos;t confirm your own household&apos;s contract or consent — someone outside your household must.</Text>
+                  )}
                 </Group>
               )}
 
               {awaitingBg(r) && (
-                <Text size="sm" c="dimmed" mt="md">
-                  Background check (in parallel) — <Text component="span" fw={600}>{r.attestations.filter((a) => a.result === "APPROVE").length}/2</Text> approvals recorded.
-                </Text>
+                <Group mt="md" gap="md" wrap="wrap" align="center">
+                  <Text size="sm" c="dimmed">
+                    Background check (in parallel) — <Text component="span" fw={600}>{counted(r)}/2</Text> approvals toward clearance.
+                    {approvals(r) > counted(r) && ` ${approvals(r) - counted(r)} more recorded that name no one or a different adult — start the review over to clear it.`}
+                  </Text>
+                  {/* The board's way back from a reviewer's misclick: the review is still
+                      open, so discarding the attestations undoes it with nothing to unwind. */}
+                  {approvals(r) > 0 && (
+                    <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmResetReview(r)}>
+                      Discard approvals — start the review over
+                    </Button>
+                  )}
+                </Group>
               )}
 
               {r.status === "PENDING_PAYMENT" && (
                 <Group mt="md" gap="md" wrap="wrap" align="center">
                   <Text size="sm" c="dimmed">Awaiting payment.</Text>
-                  <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r)} onClick={() => handleCertify(r.id)}>
-                    Certify payment plan → {r.bgClearedAt ? "activate" : "(holds for background check)"}
-                  </Button>
-                  {ownHousehold(r) && (
-                    <Text size="xs" c="dimmed">You can&apos;t certify your own household&apos;s application — another board member (or a sysadmin) must.</Text>
+                  {me?.isBoardMember && (
+                    <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r)} onClick={() => handleCertify(r.id)}>
+                      Certify payment plan → {r.bgClearedAt ? "activate" : "(holds for background check)"}
+                    </Button>
+                  )}
+                  {me?.isBoardMember && ownHousehold(r) && (
+                    <Text size="xs" c="dimmed">You can&apos;t certify your own household&apos;s application — someone outside your household must.</Text>
                   )}
                 </Group>
               )}
@@ -411,18 +500,58 @@ function ApplicationsBoard() {
                       💸 This household already paid — a refund is likely needed (membership was not activated).
                     </Text>
                   )}
+                  {/* A force-approve must say which adult it covers: a blocked review has
+                      no second approval to count, so an unnamed override would set
+                      bgClearedAt with nobody recorded as checked. */}
+                  <Stack gap={4} mb="sm">
+                    {leads(r).length === 0 ? (
+                      <Text size="sm" c="dimmed">No household leads on file — this application cannot be overridden.</Text>
+                    ) : (
+                      <Radio.Group
+                        label="Whose background check does an override cover?"
+                        value={String(overrideSubjects[r.id] ?? "")}
+                        onChange={(v) => pickOverrideSubject(r.id, Number(v))}
+                      >
+                        <Stack gap={4} mt={4}>
+                          {leads(r).map((p) => (
+                            <Radio key={p.id} size="xs" value={String(p.id)} label={p.name || p.email || `Person #${p.id}`} />
+                          ))}
+                        </Stack>
+                      </Radio.Group>
+                    )}
+                  </Stack>
                   <Group gap="sm" wrap="wrap">
                     <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => override(r.id, "reset")}>
                       Reset for re-review
                     </Button>
-                    <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r)} onClick={() => override(r.id, "approve")}>
+                    <Button
+                      size="xs"
+                      fz={15}
+                      disabled={busyId === r.id || ownHousehold(r) || overrideSubjects[r.id] === undefined}
+                      onClick={() => override(r.id, "approve")}
+                    >
                       Override → {r.paidAt ? "activate" : "payment"}
                     </Button>
                   </Group>
                   {ownHousehold(r) && (
-                    <Text size="xs" c="dimmed" mt="sm">You can&apos;t override your own household&apos;s application — another board member (or a sysadmin) must.</Text>
+                    <Text size="xs" c="dimmed" mt="sm">You can&apos;t override your own household&apos;s application — someone outside your household must.</Text>
                   )}
                 </Alert>
+              )}
+
+              {!showArchived && refundable(r) && (
+                <Group mt="md" gap="md" wrap="wrap" align="center">
+                  <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => handleRefund(r.id)}>
+                    Record refund
+                  </Button>
+                  <Text size="xs" c="dimmed">
+                    {ownHousehold(r)
+                      ? "You can't record a refund on your own household's application — someone outside your household must."
+                      : r.status === "BLOCKED"
+                        ? "After refunding in Shopify. The application stays blocked."
+                        : "After refunding in Shopify. The application goes back to awaiting payment; the background check is unchanged."}
+                  </Text>
+                </Group>
               )}
 
               {messageId === r.id && (
@@ -431,12 +560,12 @@ function ApplicationsBoard() {
 
               <Group justify="flex-end" mt="md">
                 {showArchived ? (
-                  <Button size="xs" fz={15} disabled={busyId === r.id} onClick={() => unarchive(r.id)}>
-                    Unarchive
+                  <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r)} onClick={() => unarchive(r.id)}>
+                    Reopen
                   </Button>
-                ) : (
-                  <Button size="xs" fz={15} variant="subtle" color="red" disabled={busyId === r.id} onClick={() => confirmArchive(r)}>
-                    Archive
+                ) : closable(r) && (
+                  <Button size="xs" fz={15} variant="subtle" color="red" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmArchive(r)}>
+                    Close application
                   </Button>
                 )}
               </Group>
@@ -468,6 +597,32 @@ function ApplicationsBoard() {
         <Group justify="flex-end">
           <Button variant="default" onClick={closeCertify}>Cancel</Button>
           <Button onClick={confirmCertify} disabled={!certifyReason.trim()}>Certify</Button>
+        </Group>
+      </Modal>
+      <Modal
+        opened={refundOpened}
+        onClose={closeRefund}
+        title={<Text span fw={700} fz="lg">Record refund</Text>}
+        centered
+      >
+        <Text mb="sm">
+          Record that this household&apos;s membership payment was refunded in Shopify. This does
+          not refund anything itself. The payment is cleared from the application; the background
+          check is left as it is.
+        </Text>
+        <Textarea
+          value={refundReason}
+          onChange={(e) => setRefundReason(e.currentTarget.value)}
+          label="Reason"
+          placeholder="Why was this refunded?"
+          autosize
+          minRows={3}
+          mb="lg"
+          required
+        />
+        <Group justify="flex-end">
+          <Button variant="default" onClick={closeRefund}>Cancel</Button>
+          <Button onClick={confirmRefund} disabled={!refundReason.trim()}>Record refund</Button>
         </Group>
       </Modal>
     </Stack>

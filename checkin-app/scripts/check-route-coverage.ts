@@ -3,10 +3,15 @@
  * CI lint — verifies the security policy layer can't be routed around.
  *
  * Checks (advisory in Sprint 1; flipped to blocking in Sprint 4):
- *   1. Every src/app/api/<x>/route.ts file exports HTTP verbs registered in src/security/registry.ts.
+ *   1. Every src/app/api/<x>/route.ts file exports HTTP verbs registered in src/security/registry.ts
+ *      (or a per-library module under src/security/registry/) — by defineRoute, or by
+ *      defineFileRoute for a file route served through fileHandler().
  *   2. Every registry entry corresponds to an existing route file.
  *   3. Migrated routes (listed in scripts/migrated-routes.txt) must NOT call NextResponse.json / Response.json directly.
  *   4. Calls to third-party hosts (shopify.com, myshopify.com, resend.com, SHOPIFY_STORE_DOMAIN) live only in src/lib/shopify.ts and src/lib/email.ts.
+ *   4b. In packages/* and *-function source (tests, fixtures and generated code excluded), any
+ *      non-loopback URL literal, third-party host or API SDK lives only in a file of PACKAGE_EGRESS_FILES,
+ *      and every surface that map names is a defineOutbound entry in the registry.
  *   5. src/security/generated/classifications.ts is up to date with prisma/schema.prisma.
  *   6. RATCHET (blocking even in advisory mode): every exported route method is
  *      either in src/security/registry.ts or in the frozen legacy baseline
@@ -42,8 +47,41 @@ const ALLOWED_THIRD_PARTY_FETCH_FILES = new Set<string>([
     path.join(REPO_ROOT, 'src/lib/email.ts'),
 ]);
 
-const THIRD_PARTY_HOST_RE = /(shopify\.com|myshopify\.com|resend\.com|SHOPIFY_STORE_DOMAIN)/;
+// Each package egress file names the outbound surfaces it serves; every surface
+// must be a defineOutbound entry in the registry, so adding a file here is a
+// boundary change.
+// Keys are relative to the monorepo root.
+const MONOREPO_ROOT = path.resolve(REPO_ROOT, '..');
+export const PACKAGE_EGRESS_FILES: ReadonlyMap<string, readonly string[]> = new Map([
+    ['packages/quickbooks/src/client.ts', ['quickbooks.query', 'quickbooks.create', 'quickbooks.vendor']],
+    ['packages/quickbooks/src/oauth.ts', ['quickbooks.oauth']],
+    ['packages/receipt/src/lib/ocr.ts', ['anthropic.receipt-ocr']],
+    ['packages/receipt/src/lib/gmail.ts', ['gmail.read']],
+    // Builds the endpoint; s-read-function makes the call.
+    ['packages/s-ingest-core/src/config.ts', ['shopify.admin-read']],
+    ['s-read-function/src/shopify/token.ts', ['shopify.oauth']],
+]);
+
+export const THIRD_PARTY_HOST_RE =
+    /(shopify\.com|myshopify\.com|resend\.com|SHOPIFY_STORE_DOMAIN|intuit\.com|api\.anthropic\.com|gmail\.googleapis\.com)/;
+/** An absolute URL with a host (literal, `${…}` or `[ipv6]`), except loopback. A bare
+ *  scheme prefix (`"https://" + host`) is not a fixed destination and does not match. */
+const NON_LOOPBACK_URL_RE = /\bhttps?:\/\/(?!(?:localhost|127\.0\.0\.1|\[::1\])(?![\w.-]))[\w$[]/;
+/** An API SDK hides its host (the Anthropic SDK defaults to api.anthropic.com, resend to
+ *  api.resend.com). @aws-sdk/* is absent: it reaches only AWS, the platform the code runs on. */
+const THIRD_PARTY_SDK_RE = /['"](@anthropic-ai\/sdk|resend|googleapis|@googleapis\/gmail)['"]/;
+const PACKAGE_SKIP_DIR_RE = /^(node_modules|dist|generated|__tests__|__fixtures__|fixtures|test|tests)$/;
+const PACKAGE_SOURCE_FILE_RE = /\.(tsx?|[cm]?js)$/;
+const PACKAGE_SKIP_FILE_RE = /\.(test|spec)\.(tsx?|[cm]?js)$/;
 const VERB_EXPORT_RE = /export\s+(?:const|async\s+function|function)\s+(GET|POST|PUT|PATCH|DELETE)\b/g;
+/** `export { a as GET, POST }` — each specifier exports its `as` alias, else its own name. */
+const EXPORT_LIST_RE = /export\s*\{([^}]*)\}/g;
+const EXPORT_SPECIFIER_RE = /^[A-Za-z_$][\w$]*(?:\s+as\s+([A-Za-z_$][\w$]*))?$/;
+/** `export const { GET, b: POST } = x` — each binding exports its local name (after any `:`). */
+const DESTRUCTURED_EXPORT_RE = /export\s+(?:const|let|var)\s*\{([^}]*)\}/g;
+const HTTP_VERBS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+/** A registry entry for an endpoint: a JSON route or a file route. */
+export const REGISTRY_ENTRY_RE = /define(?:File)?Route\s*\(\s*\{\s*endpoint\s*:\s*['"]([^'"]+)['"]/;
 const JSON_CALL_RE = /\b(NextResponse|Response)\.json\s*\(/;
 
 /**
@@ -109,7 +147,7 @@ export function findUnregisteredBareIncludeLegs(
     return findBareIncludeLegs(content);
 }
 
-interface Finding {
+export interface Finding {
     severity: 'error' | 'warn';
     rule: string;
     file: string;
@@ -119,6 +157,33 @@ interface Finding {
 const findings: Finding[] = [];
 function report(severity: Finding['severity'], rule: string, file: string, message: string, line?: number) {
     findings.push({ severity, rule, file, line, message });
+}
+
+/** Registry entries no route method serves, split by which half is missing.
+ *  No route FILE is the sanctioned register-first state — inert, nothing serves
+ *  the endpoint — so it warns. A file that exists but no longer exports the verb
+ *  is live policy/code drift, so it blocks. */
+export function findOrphanRegistryEntries(
+    registered: Iterable<string>,
+    routeMethods: ReadonlySet<string>,
+    routePaths: ReadonlySet<string>,
+): Finding[] {
+    return Array.from(registered)
+        .filter(key => !routeMethods.has(key))
+        .map(key => {
+            const [method, routePath] = key.split(' ');
+            const stale = routePaths.has(routePath);
+            return {
+                severity: stale ? ('error' as const) : ('warn' as const),
+                rule: 'orphan-registry',
+                file: 'src/security/registry.ts',
+                message: stale
+                    ? `registry entry ${key} is stale — ${routePath} has a route file, but it ` +
+                      `exports no ${method}. Drop the entry, or restore the export.`
+                    : `registry entry ${key} has no route file at ${routePath} — the ` +
+                      `register-first state while its route PR is pending.`,
+            };
+        });
 }
 
 function loadMigratedRoutes(): Set<string> {
@@ -154,6 +219,52 @@ function loadLegacyAuthzRoutes(): Set<string> {
     );
 }
 
+/** The direct-json baseline: `<file> <exact trimmed line>` entries, each
+ *  excusing ONE occurrence of that line in that file. Frozen; see its header. */
+function loadDirectJsonBaseline(): Map<string, number> {
+    const file = path.join(REPO_ROOT, 'scripts/direct-json-baseline.txt');
+    if (!fs.existsSync(file)) return new Map();
+    return countDirectJsonEntries(fs.readFileSync(file, 'utf-8'));
+}
+
+export function countDirectJsonEntries(text: string): Map<string, number> {
+    const allowance = new Map<string, number>();
+    for (const entry of text.split('\n').map(l => l.trim())) {
+        if (entry && !entry.startsWith('#')) allowance.set(entry, (allowance.get(entry) ?? 0) + 1);
+    }
+    return allowance;
+}
+
+/** Direct `.json(` calls in a migrated route, minus baseline-excused ones.
+ *  Consumes `allowance` (keyed `<relFile> <trimmed line>`), so an entry still
+ *  above zero after every file is scanned is stale. */
+export function findDirectJsonCalls(
+    relFile: string, content: string, allowance: Map<string, number>,
+): { line: number; caller: string }[] {
+    const hits: { line: number; caller: string }[] = [];
+    content.split('\n').forEach((line, i) => {
+        const trimmed = line.trim();
+        const m = JSON_CALL_RE.exec(line);
+        if (!m || trimmed.startsWith('//')) return;
+        const key = `${relFile} ${trimmed}`;
+        const left = allowance.get(key) ?? 0;
+        if (left > 0) allowance.set(key, left - 1);
+        else hits.push({ line: i + 1, caller: m[1] });
+    });
+    return hits;
+}
+
+export function findStaleDirectJsonEntries(allowance: ReadonlyMap<string, number>): Finding[] {
+    return Array.from(allowance)
+        .filter(([, left]) => left > 0)
+        .map(([key, left]) => ({
+            severity: 'warn' as const,
+            rule: 'stale-direct-json-baseline',
+            file: 'scripts/direct-json-baseline.txt',
+            message: `baseline entry "${key}" is listed ${left} more time(s) than it matches — remove the line`,
+        }));
+}
+
 function findRouteFiles(dir: string, out: string[] = []): string[] {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
@@ -168,27 +279,45 @@ function fileToEndpointPath(file: string): string {
     return '/api' + (rel ? '/' + rel : '');
 }
 
-function extractExportedVerbs(content: string): string[] {
+export function extractExportedVerbs(source: string): string[] {
+    const content = blankComments(source);
     const found = new Set<string>();
-    let m: RegExpExecArray | null;
-    VERB_EXPORT_RE.lastIndex = 0;
-    while ((m = VERB_EXPORT_RE.exec(content)) !== null) found.add(m[1]);
+    for (const m of content.matchAll(VERB_EXPORT_RE)) found.add(m[1]);
+    for (const list of content.matchAll(DESTRUCTURED_EXPORT_RE)) {
+        for (const binding of list[1].split(',')) {
+            const name = binding.split('=')[0].split(':').pop()?.trim();
+            if (name && HTTP_VERBS.has(name)) found.add(name);
+        }
+    }
+    for (const list of content.matchAll(EXPORT_LIST_RE)) {
+        for (const spec of list[1].split(',')) {
+            const s = EXPORT_SPECIFIER_RE.exec(spec.trim());
+            const name = s && (s[1] ?? spec.trim());
+            if (name && HTTP_VERBS.has(name)) found.add(name);
+        }
+    }
     return Array.from(found);
 }
 
 function loadRegisteredEndpoints(): { routes: Set<string>; outbounds: Set<string> } {
-    // Parse the registry file directly rather than evaluating it — keeps this
+    // Parse the registry files directly rather than evaluating them — keeps this
     // lint independent of module-resolution quirks. The registry follows a
-    // strict shape: defineRoute({ endpoint: '...' }) / defineOutbound({ surface: '...' }).
+    // strict shape: defineRoute({ endpoint: '...' }) / defineFileRoute({ endpoint: '...' }) /
+    // defineOutbound({ surface: '...' }).
+    // registry.ts aggregates the per-library modules under registry/.
     const registryPath = path.join(REPO_ROOT, 'src/security/registry.ts');
+    const libRegistryDir = path.join(REPO_ROOT, 'src/security/registry');
     const routes = new Set<string>();
     const outbounds = new Set<string>();
     if (!fs.existsSync(registryPath)) {
         report('error', 'registry-load', registryPath, 'registry.ts not found');
         return { routes, outbounds };
     }
-    const content = fs.readFileSync(registryPath, 'utf-8');
-    const routeRe = /defineRoute\s*\(\s*\{\s*endpoint\s*:\s*['"]([^'"]+)['"]/g;
+    const libRegistryPaths = fs.existsSync(libRegistryDir)
+        ? fs.readdirSync(libRegistryDir).filter(f => f.endsWith('.ts')).map(f => path.join(libRegistryDir, f))
+        : [];
+    const content = [registryPath, ...libRegistryPaths].map(p => fs.readFileSync(p, 'utf-8')).join('\n');
+    const routeRe = new RegExp(REGISTRY_ENTRY_RE.source, 'g');
     const outboundRe = /defineOutbound\s*\(\s*\{\s*surface\s*:\s*['"]([^'"]+)['"]/g;
     let m: RegExpExecArray | null;
     while ((m = routeRe.exec(content)) !== null) routes.add(m[1]);
@@ -203,6 +332,53 @@ function walkTsFiles(dir: string, out: string[] = []): string[] {
         else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) out.push(full);
     }
     return out;
+}
+
+/** Package egress entries whose surface has no defineOutbound in the registry. */
+export function findUnregisteredPackageSurfaces(
+    egressFiles: ReadonlyMap<string, readonly string[]>, outbounds: ReadonlySet<string>,
+): Finding[] {
+    return Array.from(egressFiles).flatMap(([file, surfaces]) => surfaces
+        .filter(surface => !outbounds.has(surface))
+        .map(surface => ({
+            severity: 'error' as const,
+            rule: 'package-third-party-egress',
+            file,
+            message: `serves outbound surface '${surface}', which has no defineOutbound entry in the registry`,
+        })));
+}
+
+/** Rule 4b. Any host, URL or SDK reference counts, not just `fetch(` on the same line:
+ *  package clients keep the base URL in a constant, and an SDK names no host. */
+export function findPackageEgressLines(source: string): number[] {
+    const hits: number[] = [];
+    blankComments(source).split('\n').forEach((line, i) => {
+        if (THIRD_PARTY_HOST_RE.test(line) || NON_LOOPBACK_URL_RE.test(line) || THIRD_PARTY_SDK_RE.test(line)) {
+            hits.push(i + 1);
+        }
+    });
+    return hits;
+}
+
+function walkPackageSourceFiles(dir: string, out: string[] = []): string[] {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            if (!PACKAGE_SKIP_DIR_RE.test(entry.name)) walkPackageSourceFiles(full, out);
+        } else if (PACKAGE_SOURCE_FILE_RE.test(entry.name) && !PACKAGE_SKIP_FILE_RE.test(entry.name)) {
+            out.push(full);
+        }
+    }
+    return out;
+}
+
+/** Rule 4b scan set: source under packages/ and every root-level *-function dir,
+ *  as paths relative to monorepoRoot. */
+export function listEgressScanFiles(monorepoRoot: string): string[] {
+    const roots = fs.readdirSync(monorepoRoot, { withFileTypes: true })
+        .filter(e => e.isDirectory() && (e.name === 'packages' || e.name.endsWith('-function')))
+        .map(e => path.join(monorepoRoot, e.name));
+    return roots.flatMap(root => walkPackageSourceFiles(root)).map(f => path.relative(monorepoRoot, f));
 }
 
 function checkGeneratedFileFresh() {
@@ -220,12 +396,15 @@ function checkGeneratedFileFresh() {
 function main() {
     const migrated = loadMigratedRoutes();
     const legacyAuthz = loadLegacyAuthzRoutes();
-    const { routes: registered } = loadRegisteredEndpoints();
+    const directJsonAllowance = loadDirectJsonBaseline();
+    const { routes: registered, outbounds } = loadRegisteredEndpoints();
     const routeFiles = findRouteFiles(API_DIR);
 
     const allRouteEndpoints = new Set<string>();
+    const allRoutePaths = new Set<string>();
     for (const file of routeFiles) {
         const endpointPath = fileToEndpointPath(file);
+        allRoutePaths.add(endpointPath);
         const content = fs.readFileSync(file, 'utf-8');
         const verbs = extractExportedVerbs(content);
 
@@ -250,14 +429,11 @@ function main() {
 
         const fullyMigrated = verbs.length > 0 && verbs.every(v => migrated.has(`${v} ${endpointPath}`));
         if (fullyMigrated && !ALLOWED_DIRECT_JSON_FILES.has(file)) {
-            const lines = content.split('\n');
-            lines.forEach((line, i) => {
-                if (JSON_CALL_RE.test(line) && !line.trim().startsWith('//')) {
-                    report('error', 'direct-json', file,
-                        `migrated route uses ${RegExp.$1}.json() — return ModelBag from handler() body instead`,
-                        i + 1);
-                }
-            });
+            for (const hit of findDirectJsonCalls(path.relative(REPO_ROOT, file), content, directJsonAllowance)) {
+                report('error', 'direct-json', file,
+                    `migrated route uses ${hit.caller}.json() — return ModelBag from handler() body instead`,
+                    hit.line);
+            }
         }
 
         // Rule 7. ponytail: warn, not error — there are pre-existing hits and CI
@@ -282,12 +458,8 @@ function main() {
         }
     }
 
-    for (const key of registered) {
-        if (!allRouteEndpoints.has(key)) {
-            report('error', 'orphan-registry', 'src/security/registry.ts',
-                `registry entry ${key} has no corresponding route file`);
-        }
-    }
+    findings.push(...findOrphanRegistryEntries(registered, allRouteEndpoints, allRoutePaths));
+    findings.push(...findStaleDirectJsonEntries(directJsonAllowance));
 
     // Keep the ratchet honest: a baseline entry whose route no longer exists
     // (deleted or migrated) must be pruned, or a later re-creation of the same
@@ -315,6 +487,24 @@ function main() {
                     i + 1);
             }
         });
+    }
+
+    findings.push(...findUnregisteredPackageSurfaces(PACKAGE_EGRESS_FILES, outbounds));
+    for (const rel of PACKAGE_EGRESS_FILES.keys()) {
+        if (!fs.existsSync(path.join(MONOREPO_ROOT, rel))) {
+            report('error', 'package-third-party-egress', rel,
+                'PACKAGE_EGRESS_FILES names a file that does not exist — remove or fix the entry');
+        }
+    }
+    for (const rel of listEgressScanFiles(MONOREPO_ROOT)) {
+        if (PACKAGE_EGRESS_FILES.has(rel)) continue;
+        for (const line of findPackageEgressLines(fs.readFileSync(path.join(MONOREPO_ROOT, rel), 'utf-8'))) {
+            report('error', 'package-third-party-egress', rel,
+                `third-party host, URL or SDK outside a package egress file — register an ` +
+                `outbound surface in src/security/registry.ts and map the file to it in ` +
+                `PACKAGE_EGRESS_FILES`,
+                line);
+        }
     }
 
     checkGeneratedFileFresh();

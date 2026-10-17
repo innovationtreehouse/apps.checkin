@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Alert, Badge, Button, Card, Group, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { notifications } from "@mantine/notifications";
-import { formatDateTime, formatTime } from '@/lib/time';
+import { useOrgTime } from '@/components/TimezoneProvider';
 import type { RSVPStatus } from '@/types/rsvp';
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -24,6 +24,7 @@ type EventData = {
   participant: { id: number; name: string | null };
   rsvp: RsvpStatus | null;
   isVolunteer: boolean;
+  isLead: boolean;
 };
 
 // Group (event, member) rows into one bucket per event, preserving first-seen order.
@@ -44,26 +45,28 @@ const RSVP_OPTIONS: { status: RsvpStatus; label: string; color: string }[] = [
 ];
 
 export default function ParticipantEventsDashboard() {
+  const { formatDateTime, formatTime } = useOrgTime();
   const { data: session, status } = useSession();
   const router = useRouter();
   const [events, setEvents] = useState<EventData[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
-  const fetchEvents = useCallback(async () => {
-    try {
-      const res = await fetch('/api/events/mine');
+  const fetchEvents = useCallback(() => fetch('/api/events/mine')
+    .then(async (res) => {
       if (res.ok) {
         setEvents(await res.json());
       } else {
         setMessage("Failed to load your events.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -114,7 +117,7 @@ export default function ParticipantEventsDashboard() {
         <Card withBorder radius="md" padding="xl" ta="center">
           <Title order={3}>No Upcoming Events</Title>
           <Text c="dimmed" mt="sm">
-            You have no scheduled events for the programs you are enrolled in.
+            You have no scheduled events for the programs you take part in.
           </Text>
           <Group justify="center" mt="lg">
             <Button component={Link} href="/programs" variant="light">Browse Programs</Button>
@@ -140,9 +143,14 @@ export default function ParticipantEventsDashboard() {
                       <Title order={4}>{ev.name}</Title>
                       <Text size="sm" c="dimmed">📅 {startStr} – {endStr}</Text>
                     </div>
-                    {rows.some((r) => r.isVolunteer) && (
-                      <Badge color="grape" variant="light" style={{ flexShrink: 0 }}>Volunteer</Badge>
-                    )}
+                    <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+                      {rows.some((r) => r.isLead) && (
+                        <Badge color="indigo" variant="light">Lead Mentor</Badge>
+                      )}
+                      {rows.some((r) => r.isVolunteer) && (
+                        <Badge color="grape" variant="light">Volunteer</Badge>
+                      )}
+                    </Group>
                   </Group>
 
                   {ev.description && (

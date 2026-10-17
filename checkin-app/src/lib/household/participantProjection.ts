@@ -11,6 +11,9 @@ import type { Prisma } from "@/generated/prisma/client";
 export const HOUSEHOLD_PEER_SELECT = {
     id: true,
     name: true,
+    // The name the member goes by, printed on their badge. @sensitivity:public, same
+    // as `name`, and a household lead edits it from the my-household cards.
+    nickname: true,
     email: true,
     phone: true,
     dateOfBirth: true,
@@ -24,4 +27,10 @@ export const HOUSEHOLD_PEER_SELECT = {
     // Leadership (a1). @sensitivity:public — already surfaced as the "Household
     // Lead" badge on the my-household cards; peers legitimately see who leads.
     isHouseholdLead: true,
+} satisfies Prisma.PersonSelect;
+
+/** The peer projection plus a linked-sign-in count, mapped to a `hasSignIn` boolean before it leaves. */
+export const HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT = {
+    ...HOUSEHOLD_PEER_SELECT,
+    _count: { select: { accounts: true } },
 } satisfies Prisma.PersonSelect;

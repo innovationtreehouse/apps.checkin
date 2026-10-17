@@ -17,10 +17,6 @@ import prisma from "@/lib/prisma";
  * signing from the settings page without a redeploy.
  */
 export async function signingMockActive(): Promise<boolean> {
-    // CHECKIN_ENV only — NOT a NODE_ENV fuse: every deployed instance (cloud-dev
-    // included) runs the production image, so a NODE_ENV check would make the
-    // radio inert on the one instance it exists for (see #951 / devToolsActive).
-    // readCheckinEnv fails safe to 'prod' when unset/unrecognized.
     if (config.isProd()) return false;
     if (config.zohoMockActive()) return true; // no real creds on a non-prod instance
     if (config.checkinEnv() !== "dev") return false;

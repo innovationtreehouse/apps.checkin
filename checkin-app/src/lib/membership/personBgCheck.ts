@@ -16,9 +16,9 @@ import { calculateAge } from "@/lib/time";
  *    minor cannot be background-checked. Unknown age (no DOB, not declared-adult) is a
  *    data-hygiene item, NEVER auto-checked and NEVER treated as cleared.
  *  • Checks are PER-ADULT. One person's check must never satisfy another's — in particular a
- *    household lead's check does not cover a second volunteering spouse. (The legacy household
- *    clearBackgroundCheck still blanket-stamps all leads; PERSON_BG stamps only its subject.
- *    Removing the household blanket-stamp is deferred work.)
+ *    household lead's check does not cover a second volunteering spouse. Both paths obey this:
+ *    PERSON_BG stamps its subject, and the household clearance stamps only the adults the
+ *    reviewers named off the Averity reports.
  *  • Posture is WARN-ONLY. An un-cleared obligation never blocks participation/check-in/renewal.
  *  • Consent for the (manual) path is IMPLICIT in the self-initiated external check; the board/
  *    lead submits "a check exists, review it". No in-app consent orchestration was shipped.

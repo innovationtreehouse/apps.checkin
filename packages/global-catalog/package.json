@@ -1,0 +1,52 @@
+{
+  "name": "@checkin/global-catalog",
+  "version": "0.0.0",
+  "private": true,
+  "library": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./components": {
+      "types": "./src/components/index.ts",
+      "import": "./src/components/index.ts"
+    },
+    "./pages/*": {
+      "types": "./src/pages/*.tsx",
+      "import": "./src/pages/*.tsx"
+    },
+    "./nav": {
+      "types": "./src/nav.ts",
+      "import": "./src/nav.ts"
+    }
+  },
+  "scripts": {
+    "postinstall": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:deploy": "node --env-file=.env node_modules/.bin/prisma migrate deploy",
+    "db:seed": "tsx prisma/seed.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@checkin/gtin": "*",
+    "@checkin/receipt-types": "*",
+    "@checkin/workflows": "*",
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "xstate": "^5.32.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@checkin/pg-test-harness": "*",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.0.0",
+    "dotenv": "^17.0.0",
+    "prisma": "^7.8.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  }
+}

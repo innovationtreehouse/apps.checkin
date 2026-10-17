@@ -3,7 +3,7 @@
  */
 /**
  * Integration tests for POST /api/scan that exercise the REAL check-in /
- * check-out logic in scan-service.ts against a live database.
+ * check-out logic in lib/attendance/ against a live database.
  *
  * The pre-existing scanRoute.test.ts mocks processCheckin/processCheckout away,
  * so the facility-open gate, visit creation, the check-in→check-out transition,
@@ -82,15 +82,20 @@ describe('POST /api/scan — real check-in/out logic', () => {
         await prisma.household.deleteMany({ where: { id: { in: [keyholderHouseholdId, normalHouseholdId] } } });
     });
 
-    it('rejects a non-keyholder check-in with 403 when the facility is closed', async () => {
+    it('checks in a non-keyholder kiosk scan with no keyholder present', async () => {
         const res = await POST(scanReq(normalId));
-        expect(res.status).toBe(403);
+        expect(res.status).toBe(200);
         const json = await res.json();
-        expect(json.error).toMatch(/Facility is closed/);
+        expect(json.type).toBe('checkin');
 
-        // Negative side-effect assertion: no visit row was created.
-        const visits = await prisma.visit.count({ where: { personId: normalId } });
-        expect(visits).toBe(0);
+        const visits = await prisma.visit.count({ where: { personId: normalId, departedAt: null } });
+        expect(visits).toBe(1);
+        const badge = await prisma.rawBadgeLog.findFirst({
+            where: { personId: normalId },
+            orderBy: { timestamp: 'desc' },
+        });
+        expect(badge?.reviewReason).toBeNull();
+        await prisma.visit.deleteMany({ where: { personId: normalId } });
     });
 
     it('lets a isKeyholder check in (opening the facility) and creates an open visit', async () => {

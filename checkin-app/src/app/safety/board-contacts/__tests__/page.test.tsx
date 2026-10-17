@@ -2,8 +2,10 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
+import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
 import BoardContactInfoPage from "../page";
 
@@ -30,5 +32,20 @@ describe("safety/board-contacts page", () => {
     renderWithProviders(<BoardContactInfoPage />);
 
     expect(await screen.findByText("No board members found.")).toBeInTheDocument();
+  });
+
+  it("toasts a network-error notification when the fetch rejects", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    setSession({ id: 1, isBoardMember: true });
+    global.fetch = jest.fn(() => Promise.reject(new Error("network down"))) as unknown as typeof fetch;
+    renderWithProviders(<BoardContactInfoPage />);
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", message: "Network error loading board contacts." }),
+      ),
+    );
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining("Failed to load"), expect.anything());
+    spy.mockRestore();
   });
 });

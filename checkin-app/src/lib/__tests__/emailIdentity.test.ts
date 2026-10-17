@@ -1,11 +1,15 @@
 const mockFindUnique = jest.fn();
+let mockEnvFrom: string | null = 'env-default@example.com';
 jest.mock('../prisma', () => ({ __esModule: true, default: { boardSettings: { findUnique: (...a: unknown[]) => mockFindUnique(...a) } } }));
-jest.mock('../config', () => ({ config: { emailFrom: () => 'env-default@example.com' } }));
+jest.mock('../config', () => ({ config: { emailFrom: () => mockEnvFrom } }));
 
 import { getEmailSenderIdentity } from '../emailIdentity';
 
 describe('getEmailSenderIdentity', () => {
-    beforeEach(() => mockFindUnique.mockReset());
+    beforeEach(() => {
+        mockFindUnique.mockReset();
+        mockEnvFrom = 'env-default@example.com';
+    });
 
     it('falls back to the env From with no Reply-To when nothing is configured', async () => {
         mockFindUnique.mockResolvedValue(null);
@@ -35,5 +39,17 @@ describe('getEmailSenderIdentity', () => {
     it('never blocks mail: falls back to the env From if the settings read throws', async () => {
         mockFindUnique.mockRejectedValue(new Error('db down'));
         expect(await getEmailSenderIdentity()).toEqual({ from: 'env-default@example.com' });
+    });
+
+    it('reports a null From when neither the board nor the env configures a sender', async () => {
+        mockEnvFrom = null;
+        mockFindUnique.mockResolvedValue({ emailFromAddress: null, emailReplyToAddress: null });
+        expect(await getEmailSenderIdentity()).toEqual({ from: null, replyTo: undefined });
+    });
+
+    it('uses the board From when the env has none', async () => {
+        mockEnvFrom = null;
+        mockFindUnique.mockResolvedValue({ emailFromAddress: 'Org <no-reply@org.test>', emailReplyToAddress: null });
+        expect(await getEmailSenderIdentity()).toEqual({ from: 'Org <no-reply@org.test>', replyTo: undefined });
     });
 });

@@ -4,7 +4,7 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
 import { screen, fireEvent, waitFor } from "@testing-library/react";
-import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
+import { renderWithProviders, mockFetchJson, setSession, setSearchParams, resetRtl, router } from "@/test-helpers/rtl";
 import NewEventPage from "../page";
 
 beforeEach(() => resetRtl());
@@ -34,6 +34,30 @@ describe("NewEventPage", () => {
       ),
     );
     expect(router.push).toHaveBeenCalledWith("/program-ops/events");
+  });
+
+  it("redirects to the program page when programId is set", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    setSearchParams("programId=5");
+    const fetchMock = mockFetchJson({ "/api/programs": programs, "/api/events": { id: 100 } });
+    renderWithProviders(<NewEventPage />);
+
+    await screen.findByText("Schedule Event");
+
+    fireEvent.change(screen.getByLabelText("Event Name", { exact: false }), { target: { value: "Session 2" } });
+    fireEvent.change(screen.getByLabelText("Date", { exact: false }), { target: { value: "2026-03-01" } });
+    fireEvent.change(screen.getByLabelText("Start Time", { exact: false }), { target: { value: "10:00" } });
+    fireEvent.change(screen.getByLabelText("End Time", { exact: false }), { target: { value: "12:00" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Event(s)" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/events",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    expect(router.push).toHaveBeenCalledWith("/program-ops/programs/5");
   });
 
   it("flags an end time before the start time", async () => {

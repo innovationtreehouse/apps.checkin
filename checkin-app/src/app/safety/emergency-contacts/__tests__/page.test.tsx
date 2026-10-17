@@ -2,8 +2,10 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 
-import { screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
 import EmergencyContactsPage from "../page";
 
@@ -35,7 +37,7 @@ const households = [
 describe("safety/emergency-contacts page", () => {
   it("loads and renders households, pinning present ones first", async () => {
     setSession({ id: 1, isSysadmin: true });
-    mockFetchJson({ "/api/safety/emergency-contacts": { households } });
+    mockFetchJson({ "/api/safety/emergency-contacts": { households, building: { reachable: true, lastSeenAt: null } } });
     renderWithProviders(<EmergencyContactsPage />);
 
     expect(await screen.findByText("Keyholder House")).toBeInTheDocument();
@@ -48,13 +50,22 @@ describe("safety/emergency-contacts page", () => {
     expect(screen.getByText("Not Configured")).toBeInTheDocument();
   });
 
+  it("labels presence unconfirmed when the kiosk is unreachable", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/safety/emergency-contacts": { households, building: { reachable: false, lastSeenAt: null } } });
+    renderWithProviders(<EmergencyContactsPage />);
+
+    expect(await screen.findByText("Checked in (unconfirmed)")).toBeInTheDocument();
+    expect(screen.queryByText("Present Now")).not.toBeInTheDocument();
+  });
+
   it("filters households by search query", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/safety/emergency-contacts": { households } });
     renderWithProviders(<EmergencyContactsPage />);
     await screen.findByText("Keyholder House");
 
-    fireEvent.change(screen.getByPlaceholderText("Search by Household Name, Parent Name, or Household Member Name..."), {
+    fireEvent.change(screen.getByPlaceholderText("Search by Household Name, Parent Name, Member Name, or ID..."), {
       target: { value: "Away" },
     });
 
@@ -68,5 +79,20 @@ describe("safety/emergency-contacts page", () => {
     renderWithProviders(<EmergencyContactsPage />);
 
     expect(await screen.findByText(/Failed to load emergency contacts/)).toBeInTheDocument();
+  });
+
+  it("toasts a network-error notification when the fetch rejects", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    setSession({ id: 1, isSysadmin: true });
+    global.fetch = jest.fn(() => Promise.reject(new Error("network down"))) as unknown as typeof fetch;
+    renderWithProviders(<EmergencyContactsPage />);
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", message: "Network error loading contacts." }),
+      ),
+    );
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining("Failed to load"), expect.anything());
+    spy.mockRestore();
   });
 });

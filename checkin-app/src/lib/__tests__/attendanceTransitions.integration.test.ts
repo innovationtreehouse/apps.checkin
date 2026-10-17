@@ -9,6 +9,7 @@
  * already-closed/missing visits) was untested.
  */
 import { findAssociatedEventAt, processVisitCheckout } from '@/lib/attendanceTransitions';
+import { MAX_VISIT_MS } from '@/lib/visitTimes';
 import prisma from '@/lib/prisma';
 
 const TAG = 'attendance-transitions-test';
@@ -22,7 +23,7 @@ describe('attendanceTransitions', () => {
 
     beforeAll(async () => {
         const program = await prisma.program.create({
-            data: { name: `AT Program ${TAG}`, enrollmentStatus: 'OPEN' },
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `AT Program ${TAG}`, enrollmentStatus: 'OPEN' },
         });
         programId = program.id;
 
@@ -102,7 +103,7 @@ describe('attendanceTransitions', () => {
             const checkout = new Date();
             const visit = await prisma.visit.create({ data: { personId: participantId, arrivedAt } });
 
-            const result = await processVisitCheckout(visit.id, checkout);
+            const result = await processVisitCheckout(visit.id, checkout, prisma, "TYPED");
             expect(result).toHaveLength(1);
             expect(result[0].departedAt).toEqual(checkout);
             expect(result[0].associatedEventId).toBeNull();
@@ -116,7 +117,7 @@ describe('attendanceTransitions', () => {
             const ev = await makeEvent('mid', eventStart, eventEnd);
             const visit = await prisma.visit.create({ data: { personId: participantId, arrivedAt: t0 } });
 
-            const result = await processVisitCheckout(visit.id, checkout);
+            const result = await processVisitCheckout(visit.id, checkout, prisma, "TYPED");
 
             // Original open visit is replaced by the chunks.
             const original = await prisma.visit.findUnique({ where: { id: visit.id } });
@@ -144,7 +145,7 @@ describe('attendanceTransitions', () => {
             const e2 = await makeEvent('back2', e2Start, e2End);
             const visit = await prisma.visit.create({ data: { personId: participantId, arrivedAt: t0 } });
 
-            const result = await processVisitCheckout(visit.id, checkout);
+            const result = await processVisitCheckout(visit.id, checkout, prisma, "TYPED");
 
             const v1 = result.find(v => v.associatedEventId === e1.id);
             const v2 = result.find(v => v.associatedEventId === e2.id);
@@ -156,16 +157,58 @@ describe('attendanceTransitions', () => {
             expect(v2!.departedAt).toEqual(checkout);
         });
 
+        it('caps a stamped-now close at MAX_VISIT_MS after arrival', async () => {
+            const arrivedAt = new Date(Date.now() - 30 * HOUR);
+            const visit = await prisma.visit.create({ data: { personId: unenrolledId, arrivedAt } });
+
+            const result = await processVisitCheckout(visit.id, new Date(), undefined, 'AUTO_CLOSE');
+
+            expect(result).toHaveLength(1);
+            expect(result[0].departedAt).toEqual(new Date(arrivedAt.getTime() + MAX_VISIT_MS));
+            expect(result[0].departedVia).toBe('AUTO_CLOSE');
+        });
+
+        it('caps the chunked span as a whole: an event past the cap yields no chunk', async () => {
+            const t0 = new Date(Date.now() - 30 * HOUR);
+            const cap = new Date(t0.getTime() + MAX_VISIT_MS);
+            const early = await makeEvent('capped-early', new Date(t0.getTime() + HOUR), new Date(t0.getTime() + 2 * HOUR));
+            // Starts after the cap but before the uncapped checkout time.
+            await makeEvent('capped-late', new Date(cap.getTime() + HOUR), new Date(cap.getTime() + 2 * HOUR));
+            const visit = await prisma.visit.create({ data: { personId: participantId, arrivedAt: t0 } });
+
+            const result = await processVisitCheckout(visit.id, new Date(), undefined, 'AUTO_CLOSE');
+
+            // Gap then the early event, ending at the cap — the late event is out of span.
+            expect(result.map(v => v.associatedEventId)).toEqual([null, early.id]);
+            expect(result[0].arrivedAt).toEqual(t0);
+            expect(result[result.length - 1].departedAt).toEqual(cap);
+        });
+
+        it('closes a checkout at or before arrival as a zero-length visit, never deleting it', async () => {
+            const t0 = new Date(Date.now() - HOUR);
+            await makeEvent('covering', new Date(t0.getTime() - HOUR), new Date(t0.getTime() + HOUR));
+            const visit = await prisma.visit.create({ data: { personId: participantId, arrivedAt: t0 } });
+
+            const result = await processVisitCheckout(visit.id, new Date(t0.getTime() - 60_000), prisma, "TYPED");
+
+            expect(result).toHaveLength(1);
+            expect(result[0].id).toBe(visit.id);
+            expect(result[0].departedAt).toEqual(t0);
+            const row = await prisma.visit.findUnique({ where: { id: visit.id } });
+            expect(row?.departedAt).toEqual(t0);
+            expect(row?.departedVia).toBe('TYPED');
+        });
+
         it('returns [] for an already-departedAt visit (idempotent)', async () => {
             const visit = await prisma.visit.create({
                 data: { personId: participantId, arrivedAt: new Date(Date.now() - HOUR), departedAt: new Date() },
             });
-            const result = await processVisitCheckout(visit.id, new Date());
+            const result = await processVisitCheckout(visit.id, new Date(), prisma, "TYPED");
             expect(result).toEqual([]);
         });
 
         it('returns [] for a non-existent visit id', async () => {
-            const result = await processVisitCheckout(99999999, new Date());
+            const result = await processVisitCheckout(99999999, new Date(), prisma, "TYPED");
             expect(result).toEqual([]);
         });
     });

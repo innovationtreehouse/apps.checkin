@@ -6,7 +6,7 @@ import type { BackgroundCheckProvider } from "./provider";
  *
  * Consent link comes from the AVERITY_CONSENT_URL env var (Averity exposes no API,
  * so it's a static hosted deep link, configured out-of-band rather than board-edited).
- * After submitting on Averity the applicant self-attests in-app (#875); a board
+ * After submitting on Averity the applicant self-reports in-app (#875); a board
  * member — who receives Averity's email — can also mark it as the backstop.
  */
 export class ManualBackgroundCheckProvider implements BackgroundCheckProvider {
@@ -16,7 +16,7 @@ export class ManualBackgroundCheckProvider implements BackgroundCheckProvider {
 }
 
 /**
- * Dev/local mock provider (see BG_CHECK_DEV_MOCK.md). Averity has no dev sandbox, so
+ * Dev/local mock provider (see docs/ops/background-check-mock.md). Averity has no dev sandbox, so
  * when its consent URL is unset on a non-prod instance the mock hands the applicant an
  * in-app consent page (/dev/bg-consent) that records consent for real — driving the
  * same markBgConsent → parallel review path prod does. Board members then sign off

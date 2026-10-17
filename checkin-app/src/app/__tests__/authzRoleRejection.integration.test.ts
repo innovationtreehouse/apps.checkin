@@ -44,15 +44,19 @@ import { POST as ONBOARDING_POST } from '@/app/api/profile/onboarding/route';
 import { GET as BROKEN_HH_GET } from '@/app/api/admin/broken-households/route';
 import { GET as LOCALIZATION_GET, PUT as LOCALIZATION_PUT } from '@/app/api/admin/settings/localization/route';
 import { GET as BADGES_GET } from '@/app/api/facility/badges/route';
-import { GET as FAC_VISITS_GET, PATCH as FAC_VISITS_PATCH } from '@/app/api/facility/visits/route';
+import { GET as FAC_VISITS_GET, PATCH as FAC_VISITS_PATCH, DELETE as FAC_VISITS_DELETE } from '@/app/api/facility/visits/route';
+import { POST as FAC_VISITS_INSERT_POST } from '@/app/api/facility/visits/insert/route';
 import { GET as MISSING_CONTACT_GET } from '@/app/api/membership-audit/households-missing-contact/route';
 import { GET as UNCLAIMED_GET } from '@/app/api/membership-audit/unclaimed-households/route';
+import { GET as TURNING_18_GET } from '@/app/api/membership-audit/turning-18/route';
 import { POST as CERTIFY_PAYMENT_POST } from '@/app/api/membership-ops/applications/certify-payment/route';
 import { POST as APP_EXTERNAL_POST } from '@/app/api/membership-ops/applications/external/route';
 import { POST as REVIEW_OVERRIDE_POST } from '@/app/api/membership-ops/applications/review-override/route';
 import { POST as APP_ARCHIVE_POST } from '@/app/api/membership-ops/applications/archive/route';
 import { POST as APP_UNARCHIVE_POST } from '@/app/api/membership-ops/applications/unarchive/route';
+import { DELETE as BG_ATTEST_DELETE } from '@/app/api/membership-ops/bg-attestations/[id]/route';
 import { GET as MOPS_HH_GET, POST as MOPS_HH_POST } from '@/app/api/membership-ops/households/route';
+import { GET as VOL_ROSTER_GET } from '@/app/api/membership-ops/volunteer-memberships/route';
 import { POST as REVIEWS_POST } from '@/app/api/membership/reviews/route';
 import { GET as ROLES_GET, PATCH as ROLES_PATCH } from '@/app/api/roles/route';
 import { GET as BOARD_CONTACTS_GET } from '@/app/api/safety/board-contacts/route';
@@ -68,7 +72,7 @@ import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
-jest.mock('@/lib/email', () => ({ sendEmail: jest.fn().mockResolvedValue(true) }));
+jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
 
 const TAG = 'authz-rolereject-test';
 
@@ -124,7 +128,7 @@ describe('Protected-route role rejection', () => {
         plainId = (await prisma.person.create({ data: { name: `Plain ${TAG}`, householdId: plainHh } })).id;
         // A real event so events/[id] GET reaches its in-handler staff gate
         // (a missing event short-circuits to 404 before the 403).
-        const prog = await prisma.program.create({ data: { name: `Prog ${TAG}` } });
+        const prog = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog ${TAG}` } });
         programId = prog.id;
         eventId = (await prisma.event.create({
             data: { programId, name: `Evt ${TAG}`, startAt: new Date('2030-01-01T10:00:00Z'), endAt: new Date('2030-01-01T12:00:00Z') },
@@ -135,13 +139,13 @@ describe('Protected-route role rejection', () => {
         // not staff of ownedEvent — the cross-program attacker).
         const ownerHh = (await prisma.household.create({ data: { name: `Owner HH ${TAG}` } })).id;
         ownerLeadId = (await prisma.person.create({ data: { name: `OwnerLead ${TAG}`, householdId: ownerHh } })).id;
-        const ownedProgram = await prisma.program.create({ data: { name: `Owned Prog ${TAG}`, leadMentorId: ownerLeadId } });
+        const ownedProgram = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Owned Prog ${TAG}`, leadMentorId: ownerLeadId } });
         ownedEventId = (await prisma.event.create({
             data: { programId: ownedProgram.id, name: `Owned Evt ${TAG}`, startAt: new Date('2030-02-01T10:00:00Z'), endAt: new Date('2030-02-01T12:00:00Z') },
         })).id;
         const foreignHh = (await prisma.household.create({ data: { name: `Foreign HH ${TAG}` } })).id;
         foreignLeadId = (await prisma.person.create({ data: { name: `ForeignLead ${TAG}`, householdId: foreignHh } })).id;
-        await prisma.program.create({ data: { name: `Foreign Prog ${TAG}`, leadMentorId: foreignLeadId } });
+        await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Foreign Prog ${TAG}`, leadMentorId: foreignLeadId } });
     });
 
     afterAll(async () => {
@@ -186,15 +190,22 @@ describe('Protected-route role rejection', () => {
         { name: 'PATCH /api/finance-ops/payments/[id]', invoke: () => FIN_PAYMENTS_PATCH(nreq('http://localhost/api/finance-ops/payments/1', 'PATCH', {}), idCtx(1)) },
         { name: 'GET /api/facility/visits', invoke: () => FAC_VISITS_GET(nreq('http://localhost/api/facility/visits')) },
         { name: 'PATCH /api/facility/visits', invoke: () => FAC_VISITS_PATCH(nreq('http://localhost/api/facility/visits', 'PATCH', {})) },
+        { name: 'DELETE /api/facility/visits', invoke: () => FAC_VISITS_DELETE(nreq('http://localhost/api/facility/visits', 'DELETE', {})) },
+        // Staff insert-for-others: personId comes from the body, so the role gate
+        // is the entire subject boundary — a wrong-role caller must never reach it.
+        { name: 'POST /api/facility/visits/insert', invoke: () => FAC_VISITS_INSERT_POST(nreq('http://localhost/api/facility/visits/insert', 'POST', {})) },
         { name: 'GET /api/membership-audit/households-missing-contact', invoke: () => MISSING_CONTACT_GET(nreq('http://localhost/api/membership-audit/households-missing-contact')) },
         { name: 'GET /api/membership-audit/unclaimed-households', invoke: () => UNCLAIMED_GET(nreq('http://localhost/api/membership-audit/unclaimed-households')) },
+        { name: 'GET /api/membership-audit/turning-18', invoke: () => TURNING_18_GET(nreq('http://localhost/api/membership-audit/turning-18')) },
         { name: 'POST /api/membership-ops/applications/certify-payment', invoke: () => CERTIFY_PAYMENT_POST(nreq('http://localhost/api/membership-ops/applications/certify-payment', 'POST', {})) },
         { name: 'POST /api/membership-ops/applications/external', invoke: () => APP_EXTERNAL_POST(nreq('http://localhost/api/membership-ops/applications/external', 'POST', {})) },
         { name: 'POST /api/membership-ops/applications/review-override', invoke: () => REVIEW_OVERRIDE_POST(nreq('http://localhost/api/membership-ops/applications/review-override', 'POST', {})) },
         { name: 'POST /api/membership-ops/applications/archive', invoke: () => APP_ARCHIVE_POST(nreq('http://localhost/api/membership-ops/applications/archive', 'POST', {})) },
         { name: 'POST /api/membership-ops/applications/unarchive', invoke: () => APP_UNARCHIVE_POST(nreq('http://localhost/api/membership-ops/applications/unarchive', 'POST', {})) },
+        { name: 'DELETE /api/membership-ops/bg-attestations/[id] (board-only)', invoke: () => BG_ATTEST_DELETE(nreq('http://localhost/api/membership-ops/bg-attestations/1', 'DELETE', { reason: 'test' }), idCtx(1)) },
         { name: 'GET /api/membership-ops/households (collection)', invoke: () => MOPS_HH_GET(nreq('http://localhost/api/membership-ops/households')) },
         { name: 'POST /api/membership-ops/households (collection)', invoke: () => MOPS_HH_POST(nreq('http://localhost/api/membership-ops/households', 'POST', {})) },
+        { name: 'GET /api/membership-ops/volunteer-memberships', invoke: () => VOL_ROSTER_GET(nreq('http://localhost/api/membership-ops/volunteer-memberships')) },
         { name: 'POST /api/membership/reviews (backgroundCheckReviewer-only)', invoke: () => REVIEWS_POST(nreq('http://localhost/api/membership/reviews', 'POST', {})) },
         { name: 'GET /api/roles', invoke: () => ROLES_GET(nreq('http://localhost/api/roles')) },
         { name: 'PATCH /api/roles', invoke: () => ROLES_PATCH(nreq('http://localhost/api/roles', 'PATCH', {})) },
@@ -206,7 +217,7 @@ describe('Protected-route role rejection', () => {
         { name: 'GET /api/settings/membership/volunteer-designations', invoke: () => VOL_DESIG_GET(nreq('http://localhost/api/settings/membership/volunteer-designations')) },
         { name: 'POST /api/settings/membership/volunteer-designations', invoke: () => VOL_DESIG_POST(nreq('http://localhost/api/settings/membership/volunteer-designations', 'POST', {})) },
         { name: 'DELETE /api/settings/membership/volunteer-designations', invoke: () => VOL_DESIG_DELETE(nreq('http://localhost/api/settings/membership/volunteer-designations', 'DELETE')) },
-        { name: 'GET /api/system-status/audit-log (sysadmin-only)', invoke: () => AUDIT_LOG_GET(nreq('http://localhost/api/system-status/audit-log')) },
+        { name: 'GET /api/system-status/audit-log', invoke: () => AUDIT_LOG_GET(nreq('http://localhost/api/system-status/audit-log')) },
         { name: 'GET /api/system-status/errors', invoke: () => SS_ERRORS_GET(nreq('http://localhost/api/system-status/errors')) },
         { name: 'GET /api/system-status/links', invoke: () => SS_LINKS_GET(nreq('http://localhost/api/system-status/links')) },
         // links/[id] is a GLOBAL admin resource (integrationErrorLog keyed by a
@@ -226,6 +237,24 @@ describe('Protected-route role rejection', () => {
         });
     });
 
+    // ---- bg-attestations DELETE — Board only; a sysadmin off the Board is denied
+    describe('DELETE /api/membership-ops/bg-attestations/[id] — sysadmin alone is denied', () => {
+        it('403s a sysadmin who is not on the Board', async () => {
+            as(plainId, { householdId: plainHh, isSysadmin: true });
+            const res = await BG_ATTEST_DELETE(nreq('http://localhost/api/membership-ops/bg-attestations/1', 'DELETE', { reason: 'test' }), idCtx(1));
+            expect(res.status).toBe(403);
+        });
+    });
+
+    // ---- certify-payment — Board only; a sysadmin off the Board is denied ------
+    describe('POST /api/membership-ops/applications/certify-payment — sysadmin alone is denied', () => {
+        it('403s a sysadmin who is not on the Board', async () => {
+            as(plainId, { householdId: plainHh, isSysadmin: true });
+            const res = await CERTIFY_PAYMENT_POST(nreq('http://localhost/api/membership-ops/applications/certify-payment', 'POST', {}));
+            expect(res.status).toBe(403);
+        });
+    });
+
     // ---- Operations gets the Participants directory (read + membership-ops/
     // contacts create) only — every edit/rich-create participants endpoint stays
     // board/sysadmin-only. isOperations must still 403 here (contrast with
@@ -233,6 +262,45 @@ describe('Protected-route role rejection', () => {
     // own integration suite).
     const participantsEditRoutes = roleGated.filter((c) => c.name.includes('/membership-ops/participants'));
     describe.each(participantsEditRoutes)('$name — operations-only is denied', ({ invoke }) => {
+        it('403s an operations-only actor', async () => {
+            as(plainId, { householdId: plainHh, isOperations: true });
+            expect((await invoke()).status).toBe(403);
+        });
+    });
+
+    // ---- Facility Ops — operations reaches the aggregate, not the record ------
+    // #1633 [Decision]: operations reach attendance in aggregate only — the
+    // trends, and printing the ID badges (whose /api/people/search + /api/programs
+    // already admit them). One person's record sits outside that reach: they do
+    // not record, correct or remove a visit, and do not read the raw badge events
+    // behind one. So trends must NOT 401/403 an operations actor, and every
+    // /api/facility/visits verb plus the raw badge log must 403 them.
+    const facilityOpsGrantedNames = ['GET /api/facility/trends'];
+    const facilityOpsWithheldNames = [
+        'GET /api/facility/badges',
+        'GET /api/facility/visits',
+        'PATCH /api/facility/visits',
+        'DELETE /api/facility/visits',
+        'POST /api/facility/visits/insert',
+    ];
+    const byName = (names: string[]) => roleGated.filter((c) => names.includes(c.name));
+    const facilityOpsGranted = byName(facilityOpsGrantedNames);
+    const facilityOpsWithheld = byName(facilityOpsWithheldNames);
+    // Guard: the filters match on literal names, so a renamed or removed case
+    // would silently shrink a sweep instead of failing it.
+    it('guard: every Facility Ops route named above is present in the harness', () => {
+        expect([...facilityOpsGranted, ...facilityOpsWithheld].map((c) => c.name).sort())
+            .toEqual([...facilityOpsGrantedNames, ...facilityOpsWithheldNames].sort());
+    });
+    describe.each(facilityOpsGranted)('$name — operations clears the gate', ({ invoke }) => {
+        it('does not 401/403 an operations actor', async () => {
+            as(plainId, { householdId: plainHh, isOperations: true });
+            const status = (await invoke()).status;
+            expect(status).not.toBe(401);
+            expect(status).not.toBe(403);
+        });
+    });
+    describe.each(facilityOpsWithheld)('$name — operations is denied', ({ invoke }) => {
         it('403s an operations-only actor', async () => {
             as(plainId, { householdId: plainHh, isOperations: true });
             expect((await invoke()).status).toBe(403);

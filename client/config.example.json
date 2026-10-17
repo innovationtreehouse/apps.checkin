@@ -3,6 +3,8 @@
   "private_key_path": "./client.key",
   "usb_device": "Newtologic",
   "listen_port": 8083,
-  "kiosk_path": "/kioskdisplay?mode=kiosk",
-  "attendance_path": "/api/attendance"
+  "kiosk_path": "/attendance/current?mode=kiosk",
+  "attendance_path": "/api/attendance",
+  "allow_reboot": false,
+  "allow_wifi_bounce": false
 }

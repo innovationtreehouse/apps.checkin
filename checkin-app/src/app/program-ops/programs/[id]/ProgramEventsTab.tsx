@@ -3,11 +3,12 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Anchor, Button, Group, Table, Text, Title } from '@mantine/core';
-import { formatDateTime } from '@/lib/time';
+import { useOrgTime } from '@/components/TimezoneProvider';
 
 type ProgramEvent = { id: number; name: string; startAt: string; endAt: string; attendanceConfirmedAt: string | null };
 
 export function ProgramEventsTab({ programId, events }: { programId: number; events: ProgramEvent[] }) {
+  const { formatDateTime } = useOrgTime();
   const router = useRouter();
 
   return (

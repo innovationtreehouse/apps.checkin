@@ -7,7 +7,7 @@ import type { PrismaClient } from "../db/client.js";
 import { EventSource, ObjectType } from "../generated/prisma/client.js";
 import { appendRawEvent } from "./rawLog.js";
 import { projectNode } from "../loader/index.js";
-import { logger } from "../logger.js";
+import { logger } from "@checkin/telemetry";
 
 export interface IngestNodeArgs {
   storeId: string;
@@ -30,7 +30,7 @@ export async function ingestNode(prisma: PrismaClient, args: IngestNodeArgs): Pr
 
   // 2. Project into live tables atomically.
   try {
-    await prisma.$transaction((tx) => projectNode(tx, args.storeId, args.objectType, args.node));
+    await prisma.$transaction((tx) => projectNode(tx, args.storeId, args.objectType, args.node, args.source));
   } catch (err) {
     logger.error("projection failed; raw event retained for replay", {
       rawEventId: raw.rawEventId.toString(),

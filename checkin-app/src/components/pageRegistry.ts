@@ -3,16 +3,20 @@
 // `visible` predicate mirrors the route's real gate (NAV_ITEMS[].visible +
 // the section layout's useRequireRole). Over-listing here never grants access:
 // every target re-enforces its own gate on arrival, so a drifted predicate at
-// worst shows a link that 403s. See docs/designs/INDEX_PAGE_SCOPING.md.
+// worst shows a link that 403s. See docs/rules/principles.md, "Reachability is not permission".
 
-import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
-import { leadsAnyProgram } from '@/components/navBadges';
+import type { TodoCounts } from '@/lib/nav/todoCounts';
+import type { NavRole } from '@/types/auth';
+import { leadsAnyProgram, libraryCount } from '@/components/navBadges';
+import { shopRoles } from '@/lib/shopNav';
+import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
+import { SAFETY_SECTION_ROLES } from '@/lib/safetyNav';
+import { membershipOpsRouteVisible } from '@/lib/membershipOpsNav';
+import { isLibraryVisible, type LibraryKey } from '@/lib/libraryRelease';
+import { canSeeManualInKind, canSeeReceiving } from '@/lib/libraryNav';
+import { canSeeCatalog, canSubmitReceipts, type VolunteerClaims } from '@/lib/volunteer';
 
-export type RegistryUser = {
-  isSysadmin?: boolean;
-  isBoardMember?: boolean;
-  isKeyholder?: boolean;
-  isOperations?: boolean;
+export type RegistryUser = VolunteerClaims & {
   householdLead?: boolean;
   toolStatuses?: Array<{ level: string }>;
 };
@@ -28,19 +32,48 @@ const SIGNED_IN: Visible = (_u, signedIn) => signedIn;
 const HOUSEHOLD_LEAD: Visible = (u, signedIn) => signedIn && !!u?.householdLead;
 // Program lead mentors only — mirrors the staff "My Programs" nav gate.
 const LEADS_PROGRAM: Visible = (_u, signedIn, counts) => signedIn && leadsAnyProgram(counts);
+// Program leads and treasurers; the expense nav counts carry the treasurer signal.
+const EXPENSE_APPROVER: Visible = (u, signedIn, counts) =>
+  LEADS_PROGRAM(u, signedIn, counts) || (signedIn && libraryCount(counts, 'expense', 'approver') > 0);
 const BOARD: Visible = (u) => !!u?.isSysadmin || !!u?.isBoardMember;
 // Participants is the one Membership Ops page operations can also reach (read-only
 // directory + add-contact) — see membership-ops/layout.tsx's nav gate. Outreach is
 // the one settings/* page operations can also reach (see settings/layout.tsx).
 const BOARD_OR_OPS: Visible = (u) => !!u?.isSysadmin || !!u?.isBoardMember || !!u?.isOperations;
-// Finance Ops is board-only — sysadmin has no access (issue #1083).
-const BOARD_ONLY: Visible = (u) => !!u?.isBoardMember;
 const SYSADMIN: Visible = (u) => !!u?.isSysadmin;
-const SAFETY: Visible = (u) => !!u?.isSysadmin || !!u?.isBoardMember || !!u?.isKeyholder;
-const SHOP: Visible = (u) =>
-  !!u?.isSysadmin ||
-  !!u?.isBoardMember ||
-  !!u?.toolStatuses?.some((ts) => ts.level === 'MAY_CERTIFY_OTHERS');
+// Section gates read from the module that owns the section, never a second copy
+// (#1569). A role-list gate becomes a Visible via roleGate; sections with a
+// richer predicate (Shop resolves toolStatuses, Membership Ops gates per tab)
+// call their own exported function.
+const roleGate = (roles: readonly NavRole[]): Visible => (u) => roles.some((r) => !!u?.[r]);
+const SAFETY = roleGate(SAFETY_SECTION_ROLES);
+// Revenue Ops' finance tools are board-only — sysadmin has no access (issue #1083).
+const FINANCE = roleGate(FINANCE_SECTION_ROLES);
+const SHOP: Visible = (u) => shopRoles(u).isCertifier;
+const SHOP_ADMIN: Visible = (u) => shopRoles(u).isAdmin;
+// Membership Ops gates per tab (Review admits reviewers, Participants admits
+// operations, the rest are admin-only). One definition in membershipOpsNav.
+const MOPS = (href: string): Visible => (u) => membershipOpsRouteVisible(href, u);
+// Global catalog (#1286 §7): the server 'catalog-viewer' predicate.
+const CATALOG_VIEWER: Visible = (u, signedIn) => signedIn && canSeeCatalog(u);
+
+// Expense Ops: FINANCE or BOARD, no sysadmin (docs/rules/revenue.md).
+const FINANCE_OR_BOARD: Visible = (u) => !!u?.isFinance || !!u?.isBoardMember;
+
+// Receipts: an adult member or a Treehouse Volunteer submits (canSubmitReceipts);
+// the review side is FINANCE or BOARD (the routes' finance-or-board gate); the mail
+// queue is FINANCE alone (the sender address is read by FINANCE only).
+const RECEIPT_SUBMITTER: Visible = (u, signedIn) => signedIn && canSubmitReceipts(u);
+const RECEIPT_FINANCE: Visible = (u) => !!u?.isFinance;
+
+const INVENTORY_MANAGER: Visible = (u, signedIn) => signedIn && !!u?.isInventoryManager;
+// A library's pages stay listed for board members only until the board releases it.
+const released = (lib: LibraryKey, gate: Visible): Visible => (u, signedIn, counts) =>
+  gate(u, signedIn, counts) && isLibraryVisible(lib, { isBoardMember: u?.isBoardMember, releasedLibraries: counts?.releasedLibraries });
+// Bulk donation (#1280 §5): FINANCE or BOARD, like its routes, until the board releases it.
+const DONATIONS = released('bulk-donation', FINANCE_OR_BOARD);
+const RECEIVING: Visible = (u, signedIn) => signedIn && canSeeReceiving(u);
+const MANUAL_IN_KIND = released('bulk-donation', (u, signedIn) => signedIn && canSeeManualInKind(u));
 
 export type PageEntry = {
   href: string;
@@ -57,10 +90,11 @@ export const PAGES: PageEntry[] = [
   { href: '/my-activities/events', label: 'My Events', section: 'Personal', visible: SIGNED_IN },
   { href: '/my-activities/programs', label: 'My Programs (as Participant)', section: 'Personal', visible: SIGNED_IN },
   { href: '/profile', label: 'My Profile', section: 'Personal', visible: SIGNED_IN },
-  // Staff home for program lead mentors. Lead status rides in on the todo-counts
+  // Home for program lead mentors. Lead status rides in on the todo-counts
   // payload (leadsAnyProgram), matching the nav gate. Distinct from the attendee
   // "My Programs" tab above.
-  { href: '/my-programs/attendance', label: 'My Programs (as Volunteer)', section: 'Personal', keywords: 'lead mentor program staff attendance', visible: LEADS_PROGRAM },
+  { href: '/my-programs/attendance', label: 'My Programs (as Volunteer)', section: 'Personal', keywords: 'lead mentor program volunteer attendance', visible: LEADS_PROGRAM },
+  { href: '/my-programs/expense-approvals', label: 'Expense approvals', section: 'Personal', keywords: 'budget bucket sign-off approve expense reimbursement', visible: released('expense', EXPENSE_APPROVER) },
   { href: '/my-programs/conflicts', label: 'Attendance Conflicts', section: 'Personal', keywords: 'lead mentor duplicate overlapping visit attendance', visible: LEADS_PROGRAM },
   // Stays visible to all members: also the Join/renewal entry for new applicants
   // who aren't a household lead yet (gating it on lead would break joining).
@@ -70,6 +104,7 @@ export const PAGES: PageEntry[] = [
   // Attendance — any signed-in member
   { href: '/attendance/current', label: 'Attendance', section: 'Attendance', visible: SIGNED_IN },
   { href: '/attendance/manual', label: 'Manual Check-In', section: 'Attendance', visible: SIGNED_IN },
+  { href: '/attendance/my-visits', label: 'My Visits', section: 'Attendance', keywords: 'hours correction edit delete', visible: SIGNED_IN },
   { href: '/attendance/household', label: 'Household Check-ins', section: 'Attendance', keywords: 'visits history dependents', visible: SIGNED_IN },
   { href: '/attendance/certifications', label: 'Certifications', section: 'Attendance', visible: SIGNED_IN },
 
@@ -88,28 +123,72 @@ export const PAGES: PageEntry[] = [
 
   // Shop Ops — board or certifier
   { href: '/shop-ops', label: 'Shop Ops', section: 'Shop Ops', visible: SHOP },
-  { href: '/shop-ops/create', label: 'Create', section: 'Shop Ops', visible: SHOP },
+  { href: '/shop-ops/create', label: 'Create', section: 'Shop Ops', visible: SHOP_ADMIN },
   { href: '/shop-ops/live', label: 'Live', section: 'Shop Ops', visible: SHOP },
   { href: '/shop-ops/manage', label: 'Manage', section: 'Shop Ops', visible: SHOP },
 
-  // Facility Ops — board
-  { href: '/facility-ops', label: 'Facility Ops', section: 'Facility Ops', visible: BOARD },
-  { href: '/facility-ops/badges', label: 'Badges', section: 'Facility Ops', visible: BOARD },
-  { href: '/facility-ops/print-badges', label: 'Print Badges', section: 'Facility Ops', visible: BOARD },
-  { href: '/facility-ops/trends', label: 'Trends', section: 'Facility Ops', visible: BOARD },
-  { href: '/facility-ops/visits', label: 'Visits', section: 'Facility Ops', visible: BOARD },
+  // Inventory (global catalog, #1286) — any catalog viewer. The index redirects
+  // to Items. Write controls within each screen are INVENTORY_MANAGER-gated.
+  { href: '/catalog', label: 'Inventory', section: 'Inventory', keywords: 'catalog parts items reference gtin', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/items', label: 'Items', section: 'Inventory', keywords: 'catalog parts gtin', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/categories', label: 'Categories', section: 'Inventory', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/proposals', label: 'Proposals', section: 'Inventory', keywords: 'item reference provisional', visible: released('catalog', CATALOG_VIEWER) },
+  { href: '/catalog/conversion-challenges', label: 'Conversion Challenges', section: 'Inventory', visible: released('catalog', CATALOG_VIEWER) },
+  // Org inventory (#1287) — same viewer gate; the work-queue screens are
+  // INVENTORY_MANAGER-only, like their routes.
+  { href: '/inventory/org-items', label: 'Org Inventory', section: 'Inventory', keywords: 'stock on hand quantity location', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/locations', label: 'Locations', section: 'Inventory', keywords: 'shelf bin backstock', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/receive-queue', label: 'Receive Queue', section: 'Inventory', keywords: 'backorder receiving', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/received-deltas', label: 'Applied Deltas', section: 'Inventory', keywords: 'receipt delta', visible: released('local-inventory', CATALOG_VIEWER) },
+  { href: '/inventory/merge-conflicts', label: 'Merge Conflicts', section: 'Inventory', keywords: 'uom mismatch', visible: released('local-inventory', INVENTORY_MANAGER) },
+  { href: '/inventory/provisional-items', label: 'Provisional Map', section: 'Inventory', keywords: 'provisional part', visible: released('local-inventory', INVENTORY_MANAGER) },
+  { href: '/inventory/org-events', label: 'Org Events', section: 'Inventory', keywords: 'catalog events', visible: released('local-inventory', INVENTORY_MANAGER) },
+  // Receiving (#1289) — receipt mapping. Mirrors the routes' read gate:
+  // INVENTORY_MANAGER, FINANCE or BOARD; writes inside are manager-only.
+  { href: '/inventory/receiving', label: 'Receiving', section: 'Inventory', keywords: 'receipt mapping proceed apply failed', visible: released('workflow-mapping', RECEIVING) },
+  // No-receipt in-kind gifts — FINANCE, BOARD, OPERATIONS or INVENTORY_MANAGER, like the list route.
+  { href: '/inventory/in-kind', label: 'In-kind Gifts', section: 'Inventory', keywords: 'donation donor gift no receipt', visible: MANUAL_IN_KIND },
+  { href: '/inventory/receiving/audit-log', label: 'Receiving Audit Log', section: 'Inventory', keywords: 'receipt mapping history', visible: released('workflow-mapping', RECEIVING) },
 
-  // Membership Ops — board
-  { href: '/membership-ops', label: 'Membership Ops', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/applications', label: 'Applications', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/households', label: 'Households', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/volunteer-memberships', label: 'Volunteer Memberships', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/participants', label: 'Participants', section: 'Membership Ops', visible: BOARD_OR_OPS },
-  { href: '/membership-ops/participants/new', label: 'New Participant', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/participants/import', label: 'Import Participants', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/participants/merge', label: 'Merge Participants', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/review', label: 'Membership Review', section: 'Membership Ops', visible: BOARD },
-  { href: '/membership-ops/roles', label: 'Roles', section: 'Membership Ops', visible: BOARD },
+  // Income — FINANCE works it, BOARD reads it (the routes' finance-or-board gate).
+  // The index redirects to the reconciliation queue.
+  { href: '/income', label: 'Income', section: 'Income', keywords: 'shopify payout quickbooks', visible: released('income', FINANCE_OR_BOARD) },
+  { href: '/income/payouts', label: 'Payouts', section: 'Income', keywords: 'shopify payout deposit', visible: released('income', FINANCE_OR_BOARD) },
+  { href: '/income/reconciliation', label: 'Income Reconciliation', section: 'Income', keywords: 'payout deposit quickbooks drift', visible: released('income', FINANCE_OR_BOARD) },
+  { href: '/income/items', label: 'Item Categories', section: 'Income', keywords: 'budget owner bucket class', visible: released('income', FINANCE_OR_BOARD) },
+  { href: '/income/exclusions', label: 'QB Exclusions', section: 'Income', keywords: 'quickbooks deposit exclude', visible: released('income', FINANCE_OR_BOARD) },
+
+  // Receipts — "My receipts" for anyone who may upload; review and settings for finance.
+  { href: '/receipts', label: 'My Receipts', section: 'Receipts', keywords: 'receipt reimbursement upload purchase', visible: released('receipt', RECEIPT_SUBMITTER) },
+  { href: '/receipts/upload', label: 'Upload Receipt', section: 'Receipts', keywords: 'receipt photo pdf purchase donation', visible: released('receipt', RECEIPT_SUBMITTER) },
+  { href: '/receipts/review', label: 'Receipts Review', section: 'Receipts', keywords: 'receipt finance tax duplicate', visible: released('receipt', FINANCE_OR_BOARD) },
+  { href: '/receipts/mail', label: 'Receipt Mail Queue', section: 'Receipts', keywords: 'receipt email gmail held assign discard', visible: released('receipt', RECEIPT_FINANCE) },
+  { href: '/receipts/settings', label: 'Receipt Settings', section: 'Receipts', keywords: 'tax exempt age limit', visible: released('receipt', FINANCE_OR_BOARD) },
+
+  // Facility Ops — board, plus operations on the two aggregate tools (#1633:
+  // operations reach attendance in aggregate only). Visits, Badges (the raw
+  // badge-event log) and Corrections are one person's record, so they stay
+  // board-only. The index redirects to the caller's first visible tab, so it is
+  // listed to anyone the section admits.
+  { href: '/facility-ops', label: 'Facility Ops', section: 'Facility Ops', visible: BOARD_OR_OPS },
+  { href: '/facility-ops/badges', label: 'Badges', section: 'Facility Ops', visible: BOARD },
+  { href: '/facility-ops/print-badges', label: 'Print Badges', section: 'Facility Ops', visible: BOARD_OR_OPS },
+  { href: '/facility-ops/trends', label: 'Trends', section: 'Facility Ops', visible: BOARD_OR_OPS },
+  { href: '/facility-ops/visits', label: 'Visits', section: 'Facility Ops', visible: BOARD },
+  { href: '/facility-ops/corrections', label: 'Corrections', section: 'Facility Ops', keywords: 'audit attendance edit delete flagged significance review', visible: BOARD },
+
+  // Membership Ops — admin tools, plus operations (Participants) and background-check
+  // reviewers (Review). Gates read from membershipOpsNav, not retyped here.
+  { href: '/membership-ops', label: 'Membership Ops', section: 'Membership Ops', visible: MOPS('/membership-ops') },
+  { href: '/membership-ops/applications', label: 'Applications', section: 'Membership Ops', visible: MOPS('/membership-ops/applications') },
+  { href: '/membership-ops/households', label: 'Households', section: 'Membership Ops', visible: MOPS('/membership-ops/households') },
+  { href: '/membership-ops/volunteer-memberships', label: 'Volunteers', section: 'Membership Ops', visible: MOPS('/membership-ops/volunteer-memberships') },
+  { href: '/membership-ops/participants', label: 'Participants', section: 'Membership Ops', visible: MOPS('/membership-ops/participants') },
+  { href: '/membership-ops/participants/new', label: 'New Participant', section: 'Membership Ops', visible: MOPS('/membership-ops/participants/new') },
+  { href: '/membership-ops/participants/merge', label: 'Merge Participants', section: 'Membership Ops', visible: MOPS('/membership-ops/participants/merge') },
+  { href: '/membership-ops/participants/tombstones', label: 'Tombstone Census', section: 'Membership Ops', visible: MOPS('/membership-ops/participants/tombstones') },
+  { href: '/membership-ops/review', label: 'Membership Review', section: 'Membership Ops', visible: MOPS('/membership-ops/review') },
+  { href: '/membership-ops/roles', label: 'Roles', section: 'Membership Ops', visible: MOPS('/membership-ops/roles') },
 
   // Membership Audit — board
   { href: '/membership-audit', label: 'Membership Audit', section: 'Membership Audit', visible: BOARD },
@@ -117,6 +196,8 @@ export const PAGES: PageEntry[] = [
   { href: '/membership-audit/unclaimed', label: 'Unclaimed Accounts', section: 'Membership Audit', visible: BOARD },
   { href: '/membership-audit/broken', label: 'Broken Households', section: 'Membership Audit', keywords: 'lead leadless no lead unclaimed', visible: BOARD },
   { href: '/membership-audit/compliance', label: 'Membership Compliance', section: 'Membership Audit', keywords: 'violations background check revoked denied stale follow-up', visible: BOARD },
+  { href: '/membership-audit/bg-attestations', label: 'BG Attestations', section: 'Membership Audit', keywords: 'background check attestation reviewer signed off who approved', visible: BOARD },
+  { href: '/membership-audit/turning-18', label: 'Students 18+', section: 'Membership Audit', keywords: 'age 18 adult turning eighteen agreement member year sept 1 september', visible: BOARD },
 
   // Program Ops — board
   { href: '/program-ops', label: 'Program Ops', section: 'Program Ops', visible: BOARD },
@@ -126,17 +207,43 @@ export const PAGES: PageEntry[] = [
   { href: '/program-ops/sessions', label: 'Sessions', section: 'Program Ops', visible: BOARD },
   { href: '/program-ops/sessions/new', label: 'New Session', section: 'Program Ops', visible: BOARD },
 
-  // Finance Ops — board
-  { href: '/finance-ops', label: 'Finance Ops', section: 'Finance Ops', visible: BOARD_ONLY },
-  { href: '/finance-ops/payment-plan', label: 'Program Payment Plan', section: 'Finance Ops', visible: BOARD_ONLY },
-  { href: '/finance-ops/membership-payment-plan', label: 'Membership Payment Plan', section: 'Finance Ops', visible: BOARD_ONLY },
-  { href: '/finance-ops/shopify-holds', label: 'Shopify Hold Reconciliation', section: 'Finance Ops', keywords: 'seat hold failed inventory scholarship manual reconcile shopify', visible: BOARD_ONLY },
-  { href: '/finance-ops/payments', label: 'Payment problems', section: 'Finance Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: BOARD_ONLY },
+  // Revenue Ops (path /finance-ops) — the finance tools are board-only
+  { href: '/finance-ops', label: 'Revenue Ops', section: 'Revenue Ops', visible: FINANCE },
+  { href: '/finance-ops/payment-plan', label: 'Program Payment Plan', section: 'Revenue Ops', visible: FINANCE },
+  { href: '/finance-ops/membership-payment-plan', label: 'Membership Payment Plan', section: 'Revenue Ops', visible: FINANCE },
+  { href: '/finance-ops/shopify-holds', label: 'Shopify Hold Reconciliation', section: 'Revenue Ops', keywords: 'seat hold failed inventory scholarship manual reconcile shopify', visible: FINANCE },
+  { href: '/finance-ops/shopify-stock', label: 'Unconfirmed Shopify stock', section: 'Revenue Ops', keywords: 'inventory seats unconfirmed settle carry shopify stock', visible: FINANCE },
+  { href: '/finance-ops/payments', label: 'Payment problems', section: 'Revenue Ops', keywords: 'reconcile exception refund chargeback unmatched shopify', visible: FINANCE },
+
+  // Expense Ops — FINANCE or BOARD
+  { href: '/budgets', label: 'Budgets', section: 'Expense Ops', keywords: 'budget owner bucket treasurer quickbooks class', visible: FINANCE_OR_BOARD },
+  { href: '/expense/expenses', label: 'Expenses', section: 'Expense Ops', keywords: 'receipt reimbursement approval sign-off queue', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/holds', label: 'Account Holds', section: 'Expense Ops', keywords: 'no match quickbooks account resubmit', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/flags', label: 'Expense Flags', section: 'Expense Ops', keywords: 'checkoff threshold tax conflict', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/account-mapping', label: 'Account Mapping', section: 'Expense Ops', keywords: 'quickbooks rule category', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/qb-accounts', label: 'QuickBooks Accounts', section: 'Expense Ops', keywords: 'qb account list', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/ownership-map', label: 'Ownership Map', section: 'Expense Ops', keywords: 'budget owner bucket part', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/capital-seed', label: 'Capital Seed', section: 'Expense Ops', keywords: 'itfa capital register asset', visible: released('expense', FINANCE_OR_BOARD) },
+  { href: '/expense/settings', label: 'Expense Settings', section: 'Expense Ops', keywords: 'threshold capital board review note in lieu', visible: released('expense', FINANCE_OR_BOARD) },
+
+  // Donations — FINANCE or BOARD
+  { href: '/donations', label: 'Donations', section: 'Donations', visible: DONATIONS },
+  { href: '/donations/uploads', label: 'Benevity Uploads', section: 'Donations', keywords: 'benevity csv import corporate giving', visible: DONATIONS },
+  { href: '/donations/unassigned', label: 'Unassigned Gifts', section: 'Donations', keywords: 'owner bucket assign organizational level', visible: DONATIONS },
+  { href: '/donations/transactions', label: 'Gifts', section: 'Donations', keywords: 'donation donor match benevity', visible: DONATIONS },
+  { href: '/donations/holds', label: 'Disbursement Holds', section: 'Donations', keywords: 'account map no match resubmit', visible: DONATIONS },
+  { href: '/donations/in-kind', label: 'In-kind Queue', section: 'Donations', keywords: 'in-kind receipt donor needed withdrawn anomaly', visible: DONATIONS },
+  { href: '/donations/events', label: 'Booking Batches', section: 'Donations', keywords: 'disbursement quickbooks deposit', visible: DONATIONS },
+  { href: '/donations/qb-queue', label: 'QuickBooks Queue', section: 'Donations', keywords: 'quickbooks deposit match ambiguous retry held disbursement', visible: DONATIONS },
+  { href: '/donations/comment-rules', label: 'Comment Rules', section: 'Donations', keywords: 'donor comment owner rule', visible: DONATIONS },
+  { href: '/donations/account-map', label: 'Account Map', section: 'Donations', keywords: 'ledger gl account donation match fees', visible: DONATIONS },
+  { href: '/donations/qb-exclusions', label: 'QuickBooks Exclusions', section: 'Donations', keywords: 'quickbooks match exclude', visible: DONATIONS },
 
   // System Status — board
   { href: '/system-status', label: 'System Status', section: 'System Status', visible: BOARD },
   { href: '/system-status/health', label: 'Health', section: 'System Status', visible: BOARD },
   { href: '/system-status/errors', label: 'Errors', section: 'System Status', visible: BOARD },
+  { href: '/system-status/unsynced-scans', label: 'Unsynced Scans', section: 'System Status', keywords: 'kiosk parked replay badge scan review stale out of order offline queue', visible: SAFETY },
   { href: '/system-status/audit-log', label: 'Audit Log', section: 'System Status', visible: BOARD },
   { href: '/system-status/links', label: 'Links', section: 'System Status', visible: BOARD },
   { href: '/system-status/lifecycle', label: 'Lifecycle', section: 'System Status', keywords: 'invariant validate off-diagram drift reconcile enrollment membership state machine', visible: BOARD },
@@ -159,9 +266,11 @@ export const REGISTRY_EXCLUDED: string[] = [
   '/settings',               // redirects to /settings/membership
   '/attendance',             // redirects to /attendance/current
   '/my-programs',            // redirects to /my-programs/attendance
+  '/expense',                // redirects to /expense/expenses
   '/dev',                    // dev-tools hub, redirects to /dev/sent-mail
   '/dev/sent-mail',          // dev-only captured-email inbox (EMAIL_DEV_MOCK.md); 404s off dev
   '/dev/zoho-sign',          // dev-only Zoho Sign mock interstitial (404 in prod)
   '/dev/shopify',            // dev-only Shopify orders/paid mock (SHOPIFY_DEV_STORE_WEBHOOK.md); 404s off dev
-  '/dev/bg-consent',         // dev-only background-check consent mock (BG_CHECK_DEV_MOCK.md); 404s off dev
+  '/membership-ops/participants/import', // optional CSV import module; 404s unless CSV_IMPORT_ENABLED=true, reached from Participants
+  '/dev/bg-consent',         // dev-only background-check consent mock (docs/ops/background-check-mock.md); 404s off dev
 ];

@@ -17,6 +17,7 @@ import { GET as PlansGet, POST as PlansPost } from '@/app/api/finance-ops/member
 import { POST as DenyPost } from '@/app/api/finance-ops/membership-payment-plans/refuse/route';
 import { POST as RequestPost } from '@/app/api/membership/request-payment-plan/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_MEMBERSHIP_BODY, renderAckBody } from '@/lib/scholarshipEmails';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -185,7 +186,7 @@ describe('Membership payment-plan routes', () => {
             const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: leadProcessId } });
             expect(proc?.status).toBe('ACTIVE'); // bgClearedAt was set, so certify -> ACTIVE
             expect(proc?.isPaymentPlanRequested).toBe(false);
-            expect(proc?.certifiedById).toBe(boardId);
+            expect(proc?.manualPaymentById).toBe(boardId);
             expect(proc?.certificationNote).toBe('Board approved scholarship');
 
             const membership = await prisma.orgMembership.findUnique({ where: { id: leadMembershipId } });
@@ -197,7 +198,7 @@ describe('Membership payment-plan routes', () => {
             });
             expect(audits.length).toBeGreaterThan(0);
             // Written inside activate() (via certifyPaymentPlan) — carries the reason.
-            const certifyAudit = audits.find(a => (a.newData as { via?: string })?.via === 'certified');
+            const certifyAudit = audits.find(a => (a.newData as { via?: string })?.via === 'manual');
             expect(certifyAudit).toBeTruthy();
             expect((certifyAudit!.newData as { certificationNote?: string }).certificationNote).toBe('Board approved scholarship');
             // Supplementary marker written by the route itself.
@@ -236,7 +237,7 @@ describe('Membership payment-plan routes', () => {
             const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: leadProcessId } });
             expect(proc?.isPaymentPlanRequested).toBe(false);
             expect(proc?.status).toBe('PENDING_PAYMENT'); // stays awaiting payment — no seat, no grace, pay-to-activate
-            expect(proc?.certifiedById).toBeNull(); // denial never certifies/activates
+            expect(proc?.manualPaymentById).toBeNull(); // denial never records a payment/activates
 
             const membership = await prisma.orgMembership.findUnique({ where: { id: leadMembershipId } });
             expect(membership?.status).toBe('NONE'); // untouched by denial
@@ -275,7 +276,7 @@ describe('Membership payment-plan routes', () => {
             await prisma.person.delete({ where: { id: boardKin.id } });
         });
 
-        it('a sysadmin may deny their own household (COI bypass)', async () => {
+        it('a board+sysadmin may NOT deny their own household either', async () => {
             const own = await makeProc('DenySysadmin', { requested: true });
             const sysKin = await prisma.person.create({
                 data: { name: 'Sys Kin', email: `sys-kin-${own.processId}-${TAG}@example.com`, isBoardMember: true, householdId: own.householdId },
@@ -283,9 +284,9 @@ describe('Membership payment-plan routes', () => {
             mockSession.mockResolvedValue({ user: { id: sysKin.id, isBoardMember: true, isSysadmin: true } });
 
             const res = await DenyPost(denyReq({ processId: own.processId }));
-            expect(res.status).toBe(200);
+            expect(res.status).toBe(403);
             const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: own.processId } });
-            expect(proc?.isPaymentPlanRequested).toBe(false);
+            expect(proc?.isPaymentPlanRequested).toBe(true); // flag NOT flipped by the refused deny
 
             await prisma.person.delete({ where: { id: sysKin.id } }); // keep it out of the board-member fallback set
         });
@@ -353,14 +354,13 @@ describe('Membership payment-plan routes', () => {
         // fallback emails EVERY isBoardMember row, and other suites' board
         // personas share the DB in a full CI run.
         const REVIEW_TEAM = `review-team-${TAG}@example.com`;
-        let prevNotify: string | null = null;
+        let restoreBoardSettings: () => Promise<void> = async () => {};
         beforeAll(async () => {
-            const s = await prisma.boardSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
-            prevNotify = s.scholarshipNotifyEmail;
-            await prisma.boardSettings.update({ where: { id: 1 }, data: { scholarshipNotifyEmail: REVIEW_TEAM } });
+            restoreBoardSettings = await snapshotBoardSettings();
+            await prisma.boardSettings.upsert({ where: { id: 1 }, update: { scholarshipNotifyEmail: REVIEW_TEAM }, create: { id: 1, scholarshipNotifyEmail: REVIEW_TEAM } });
         });
         afterAll(async () => {
-            await prisma.boardSettings.update({ where: { id: 1 }, data: { scholarshipNotifyEmail: prevNotify } });
+            await restoreBoardSettings();
         });
         it('a fresh request sends the review-team notify and the household ack, each once', async () => {
             const fresh = await makeProc('EmailFreshReq', { requested: false, withLead: true });
@@ -447,13 +447,13 @@ describe('Membership payment-plan routes', () => {
     });
 
     describe('scholarship ACK settings (subject + membership body)', () => {
-        let prevAck: { scholarshipAckSubject: string | null; scholarshipAckMembershipBody: string | null } | null = null;
+        let restoreBoardSettings: () => Promise<void> = async () => {};
         beforeAll(async () => {
-            const s = await prisma.boardSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
-            prevAck = { scholarshipAckSubject: s.scholarshipAckSubject, scholarshipAckMembershipBody: s.scholarshipAckMembershipBody };
+            restoreBoardSettings = await snapshotBoardSettings();
+            await prisma.boardSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
         });
         afterAll(async () => {
-            await prisma.boardSettings.update({ where: { id: 1 }, data: prevAck! });
+            await restoreBoardSettings();
         });
 
         it('a configured subject + body are used for the membership ACK', async () => {

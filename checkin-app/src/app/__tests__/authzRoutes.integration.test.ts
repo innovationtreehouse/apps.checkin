@@ -33,6 +33,7 @@ describe('Sensitive route authorization', () => {
     let searchTargetId: number;
     let personaId: number;
     let adultId: number;
+    let youngAdultId: number;
     let minorId: number;
     let declaredAdultId: number;
     const householdIds: number[] = [];
@@ -83,6 +84,13 @@ describe('Sensitive route authorization', () => {
         adultId = adult.id;
         householdIds.push(adult.householdId);
 
+        // 20 years old — an adult (18+) but below the leader floor (23).
+        const youngAdult = await prisma.person.create({
+            data: { name: `ZZYoungAdult ${TAG}`, email: `youngadult-${TAG}@example.com`, dateOfBirth: yearsAgo(20), household: { create: { name: "Test HH" } } },
+        });
+        youngAdultId = youngAdult.id;
+        householdIds.push(youngAdult.householdId);
+
         const minor = await prisma.person.create({
             data: { name: `ZZMinor ${TAG}`, email: `minor-${TAG}@example.com`, dateOfBirth: yearsAgo(10), household: { create: { name: "Test HH" } } },
         });
@@ -105,7 +113,7 @@ describe('Sensitive route authorization', () => {
 
     afterAll(async () => {
         process.env.CHECKIN_ENV = ENV_BEFORE;
-        await prisma.person.deleteMany({ where: { id: { in: [plainId, searchTargetId, personaId, adultId, minorId, declaredAdultId] } } });
+        await prisma.person.deleteMany({ where: { id: { in: [plainId, searchTargetId, personaId, adultId, youngAdultId, minorId, declaredAdultId] } } });
         // The target's orgMembership row must go before its household (RESTRICT FK).
         await prisma.orgMembership.deleteMany({ where: { householdId: { in: householdIds } } });
         await prisma.household.deleteMany({ where: { id: { in: householdIds } } });
@@ -207,8 +215,8 @@ describe('Sensitive route authorization', () => {
         });
 
         // ?filter=adults backs both lead-mentor pickers (program-ops/new and
-        // program-ops/programs/[id]). The param used to be read nowhere, so a minor
-        // could be picked as a program lead mentor.
+        // program-ops/programs/[id]). The floor is 23 (Policy: Sponsored Program
+        // Policy, Art. IV), not 18.
         describe('?filter=adults', () => {
             const ids = async (u: string) => {
                 mockSession.mockResolvedValue({ user: { id: plainId, isBoardMember: true } });
@@ -217,11 +225,12 @@ describe('Sensitive route authorization', () => {
                 return (await res.json()).people.map((p: { id: number }) => p.id);
             };
 
-            it('returns adults (by DoB and by isDeclaredAdult) and excludes minors', async () => {
+            it('returns 23+ adults and isDeclaredAdult, excludes minors and young adults', async () => {
                 const got = await ids(`http://localhost/api/people/search?q=ZZ&filter=adults`);
                 expect(got).toContain(adultId);
                 expect(got).toContain(declaredAdultId);
                 expect(got).not.toContain(minorId);
+                expect(got).not.toContain(youngAdultId);
             });
 
             it('applies no age filter without the param, or with an unrecognized value', async () => {

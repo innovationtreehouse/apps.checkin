@@ -1,9 +1,11 @@
 import type { PrismaClient } from "@/generated/prisma/client";
 import { addHouseholdLead } from "@/lib/household/leads";
 import { setRoleFlag, type RoleFlag } from "@/lib/roles";
+import { mintPersonId } from "@/lib/person/mintId";
+import { withTx } from "@/lib/db-client";
 
 /**
- * Dev seed + macro helpers (DEV_DASHBOARD_DESIGN.md §4) — the ONE source of truth for creating
+ * Dev seed + macro helpers (docs/ops/dev-instance.md, "Macros") — the ONE source of truth for creating
  * dev fixtures. Both `prisma/seed.ts` (the CLI seed + the reset baseline) and the dashboard's
  * one-click macros call into here, so there is no copy-paste drift between them.
  *
@@ -28,10 +30,10 @@ function yearsAgo(years: number): Date {
 }
 
 // System bypass: dev seed fixtures are the trusted source of their own grants — there is
-// no requesting user's authority to check, so this always passes actor "system" (the
+// no requesting user's authority to check, so this always passes a system actor (the
 // last-board-member guard still applies inside setRoleFlag; only the matrix is skipped).
 async function seedRole(prisma: Db, personId: number, flag: RoleFlag): Promise<void> {
-    await setRoleFlag(prisma, personId, flag, true, "system");
+    await setRoleFlag(prisma, personId, flag, true, { system: "system:dev-seed" });
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -41,6 +43,15 @@ async function seedRole(prisma: Db, personId: number, flag: RoleFlag): Promise<v
 // ──────────────────────────────────────────────────────────────────────────
 export async function seedBaseline(prisma: Db): Promise<void> {
     console.log("🌱 Seeding database with debug personas...\n");
+
+    // 0. The org registry row (#1286 §6). The stable well-known id "treehouse" is
+    // stamped as org_id on catalog rows and is the row configure.ts resolves,
+    // so dev/test/prod all resolve the same org identity.
+    await prisma.org.upsert({
+        where: { id: "treehouse" },
+        update: { name: "Treehouse" },
+        create: { id: "treehouse", name: "Treehouse" },
+    });
 
     // 1. Households (participants require one, so these come first)
     let household1 = await prisma.household.findFirst({ where: { name: "Family" } });
@@ -70,13 +81,14 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     // 2. The 9 debug personas (solo personas get a single-person household of their own)
     const isBoardMember = await prisma.person.upsert({
         where: { email: "boardmember@example.com" },
-        update: { name: "Board Member", phone: "555-555-0001", isSysadmin: true, isBoardMember: true },
+        update: { name: "Board Member", phone: "555-555-0001", isSysadmin: true, isBoardMember: true, isDeclaredAdult: true },
         create: {
             email: "boardmember@example.com",
             name: "Board Member",
             phone: "555-555-0001",
             isSysadmin: true,
             isBoardMember: true,
+            isDeclaredAdult: true,
             household: { create: { name: "Board Member Household" } },
         },
     });
@@ -176,6 +188,8 @@ export async function seedBaseline(prisma: Db): Promise<void> {
             household: { create: { name: "Certified Adult Household" } },
         },
     });
+    // A solo adult is their own household's lead, as sign-up makes every new adult.
+    await addHouseholdLead(prisma, certifiedAdult.householdId, certifiedAdult.id);
 
     // No carte-blanche "may certify others" role exists. This persona is a plain
     // member who holds the MAY_CERTIFY_OTHERS certification on a single tool (granted
@@ -187,9 +201,10 @@ export async function seedBaseline(prisma: Db): Promise<void> {
             email: "tool.certifier@example.com",
             name: "Tool Certifier",
             phone: "555-555-0008",
-            household: { create: { name: "Tool Certifier Household" } },
+            household: { create: { name: "Tool Certifier Household", orgMembership: { create: { status: "ACTIVE" } } } },
         },
     });
+    await addHouseholdLead(prisma, toolCertifier.householdId, toolCertifier.id);
 
     const bgReviewer = await prisma.person.upsert({
         where: { email: "bg.reviewer@example.com" },
@@ -204,6 +219,50 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     });
     await seedRole(prisma, bgReviewer.id, "isBackgroundCheckReviewer");
 
+    // Global catalog manager (#1286). INVENTORY_MANAGER is PersonRole-table-only
+    // (no mirror column, like isOperations), so the grant is seedRole, not a
+    // create field. Curates the catalog in flow tests; also a catalog viewer.
+    const inventoryManager = await prisma.person.upsert({
+        where: { email: "inventory.manager@example.com" },
+        update: { name: "Inventory Manager", phone: "555-555-0012", isDeclaredAdult: true },
+        create: {
+            email: "inventory.manager@example.com",
+            name: "Inventory Manager",
+            phone: "555-555-0012",
+            isDeclaredAdult: true,
+            household: { create: { name: "Inventory Manager Household" } },
+        },
+    });
+    await seedRole(prisma, inventoryManager.id, "isInventoryManager");
+
+    // Finance staff (FINANCE role): the finance libraries' screens and writes.
+    const financeStaff = await prisma.person.upsert({
+        where: { email: "finance@example.com" },
+        update: { name: "Finance Staff", phone: "555-555-0013", isDeclaredAdult: true },
+        create: {
+            email: "finance@example.com",
+            name: "Finance Staff",
+            phone: "555-555-0013",
+            isDeclaredAdult: true,
+            household: { create: { name: "Finance Staff Household" } },
+        },
+    });
+    await seedRole(prisma, financeStaff.id, "isFinance");
+
+    // A member household lead used by program-pricing flow tests: an ACTIVE
+    // OrgMembership so member pricing/discount-code paths have a claimable persona.
+    const memberPricingLead = await prisma.person.upsert({
+        where: { email: "member.pricing@example.com" },
+        update: { name: "Member Pricing Lead", phone: "555-555-0011", dateOfBirth: yearsAgo(40) },
+        create: {
+            email: "member.pricing@example.com",
+            name: "Member Pricing Lead",
+            phone: "555-555-0011",
+            dateOfBirth: yearsAgo(40),
+            household: { create: { name: "Member Pricing Family" } },
+        },
+    });
+
     // 3. Household assignments & leads
     await prisma.person.update({ where: { id: parentFamily.id }, data: { householdId: household1.id } });
     await prisma.person.update({ where: { id: parent2Family.id }, data: { householdId: household1.id } });
@@ -216,6 +275,13 @@ export async function seedBaseline(prisma: Db): Promise<void> {
 
     await prisma.person.update({ where: { id: parentFamily3.id }, data: { householdId: household3.id } });
     await addHouseholdLead(prisma, household3.id, parentFamily3.id);
+
+    await addHouseholdLead(prisma, memberPricingLead.householdId, memberPricingLead.id);
+    await prisma.orgMembership.upsert({
+        where: { householdId: memberPricingLead.householdId },
+        update: { status: "ACTIVE" },
+        create: { householdId: memberPricingLead.householdId, status: "ACTIVE" },
+    });
 
     // 4. Tools & certifications
     const tableSaw = await prisma.tool.upsert({
@@ -253,6 +319,8 @@ export async function seedBaseline(prisma: Db): Promise<void> {
                 leadMentorId: isBoardMember.id,
                 startAt: new Date(),
                 endAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+                // Stays on sale through its run so the seeded program accepts claims.
+                offSaleAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
                 phase: "UPCOMING",
                 enrollmentStatus: "OPEN",
                 orgMemberOnly: false,
@@ -260,6 +328,18 @@ export async function seedBaseline(prisma: Db): Promise<void> {
                 maxParticipants: 20,
             },
         });
+    }
+
+    // 6. Budget-owner buckets: one org-level, one for the first program.
+    const firstProgram = await prisma.program.findFirst({ orderBy: { id: "asc" } });
+    const buckets = [
+        { name: "Facility", programId: null },
+        ...(firstProgram ? [{ name: firstProgram.name, programId: firstProgram.id }] : []),
+    ];
+    for (const bucket of buckets) {
+        if (!(await prisma.budgetOwner.findFirst({ where: { name: bucket.name } }))) {
+            await prisma.budgetOwner.create({ data: bucket });
+        }
     }
 
     console.log("🎉 Seed complete — 9 debug personas, tools, and a sample program are ready.");
@@ -278,31 +358,42 @@ export async function createFamily(prisma: Db): Promise<string> {
     await prisma.orgMembership.create({
         data: { householdId: household.id, status: "ACTIVE" },
     });
-    const lead = await prisma.person.create({
-        data: {
-            name: `Lead ${tag}`,
-            email: `lead.${tag}@example.com`,
-            phone: "555-100-0000",
-            dateOfBirth: yearsAgo(38),
-            householdId: household.id,
-        },
-    });
+    // The + Family macro is click-repeatable, so it is the unbounded seed site —
+    // it mints like production. (The fixed persona upserts below stay on the
+    // sequence; see personIdMintGuard.test.ts.)
+    const lead = await withTx(prisma, async (tx) =>
+        tx.person.create({
+            data: {
+                id: await mintPersonId(tx),
+                name: `Lead ${tag}`,
+                email: `lead.${tag}@example.com`,
+                phone: "555-100-0000",
+                dateOfBirth: yearsAgo(38),
+                householdId: household.id,
+            },
+        }),
+    );
     await addHouseholdLead(prisma, household.id, lead.id);
-    await prisma.person.create({
-        data: {
-            name: `Partner ${tag}`,
-            email: `partner.${tag}@example.com`,
-            dateOfBirth: yearsAgo(36),
-            householdId: household.id,
-        },
-    });
-    await prisma.person.create({
-        data: { name: `Kid ${tag}`, dateOfBirth: yearsAgo(9), householdId: household.id },
-    });
+    await withTx(prisma, async (tx) =>
+        tx.person.create({
+            data: {
+                id: await mintPersonId(tx),
+                name: `Partner ${tag}`,
+                email: `partner.${tag}@example.com`,
+                dateOfBirth: yearsAgo(36),
+                householdId: household.id,
+            },
+        }),
+    );
+    await withTx(prisma, async (tx) =>
+        tx.person.create({
+            data: { id: await mintPersonId(tx), name: `Kid ${tag}`, dateOfBirth: yearsAgo(9), householdId: household.id },
+        }),
+    );
     return `Created household "Test Family ${tag}" (lead + partner + 1 youth)`;
 }
 
-/** + Program — a program with a materials fee and a couple of active participants. */
+/** + Program — a program with a couple of active participants. */
 export async function createProgram(prisma: Db): Promise<string> {
     const tag = uid();
     const startAt = new Date();
@@ -312,15 +403,12 @@ export async function createProgram(prisma: Db): Promise<string> {
             name: `Test Program ${tag}`,
             startAt,
             endAt,
+            offSaleAt: endAt,
             phase: "UPCOMING",
             enrollmentStatus: "OPEN",
             minAge: 8,
             maxParticipants: 20,
         },
-    });
-    await prisma.fee.create({
-        // Integer cents: $25.00 member / $40.00 non-member.
-        data: { programId: program.id, name: "Materials", orgMemberPriceCents: 2500, nonOrgMemberPriceCents: 4000 },
     });
     const enrollees = await prisma.person.findMany({ take: 2, orderBy: { id: "asc" } });
     for (const p of enrollees) {
@@ -328,7 +416,7 @@ export async function createProgram(prisma: Db): Promise<string> {
             data: { programId: program.id, personId: p.id, status: "ACTIVE" },
         });
     }
-    return `Created program "Test Program ${tag}" with a fee and ${enrollees.length} participants`;
+    return `Created program "Test Program ${tag}" with ${enrollees.length} participants`;
 }
 
 /** + Event — an event (tied to the latest program when one exists) with a few RSVPs. */

@@ -1,8 +1,8 @@
-import { dollarsToCents, dollarsToCentsOrNull, formatCents } from "@inventory/money";
+import { dollarsToCents, dollarsToCentsOrNull, formatCents } from "@checkin/money";
 
 // Guards the dollars→cents store / cents→dollars display round-trip used by the
-// Program + Fee price API boundary. Cents must not truncate $25.99 → $25.
-describe("program/fee price cents round-trip", () => {
+// Program price API boundary. Cents must not truncate $25.99 → $25.
+describe("program price cents round-trip", () => {
   it("stores $25.99 as cents and renders it back without truncation", () => {
     const cents = dollarsToCentsOrNull("25.99");
     expect(cents).toBe(2599);
@@ -15,7 +15,7 @@ describe("program/fee price cents round-trip", () => {
     expect(formatCents(null)).toBe("—");
   });
 
-  it("required Fee price round-trips through cents", () => {
+  it("required program price round-trips through cents", () => {
     expect(formatCents(dollarsToCents("40.00"))).toBe("$40.00");
   });
 });

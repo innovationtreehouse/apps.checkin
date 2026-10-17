@@ -195,6 +195,21 @@ describe('Household Member API Integration Tests', () => {
             expect(auditLogs.length).toBeGreaterThan(0);
         });
 
+        it('should reject a blank name and leave the stored name unchanged', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testLeadId } });
+
+            const req = new Request('http://localhost:4000/api/household/member', {
+                method: 'PATCH',
+                body: JSON.stringify({ participantId: testMemberId, name: '   ' })
+            });
+
+            const res = await PATCH(req as unknown as import("next/server").NextRequest);
+            expect(res.status).toBe(400);
+
+            const updatedProfile = await prisma.person.findUnique({ where: { id: testMemberId } });
+            expect(updatedProfile?.name).toBe('Updated Child');
+        });
+
         it('should blank out email and dob if empty strings are sent', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testLeadId } });
 
@@ -215,6 +230,35 @@ describe('Household Member API Integration Tests', () => {
             expect(updatedProfile?.email).toBeNull();
             expect(updatedProfile?.dateOfBirth).toBeNull();
             expect(updatedProfile?.phone).toBeNull();
+        });
+
+        // #1149 F1 / #1447: this form once stored DoB at noon UTC while every
+        // other writer stored midnight. A non-midnight DoB fails an SQL age
+        // filter cut at UTC midnight, so the student who turns 18 exactly on the
+        // member-year boundary — the row the 18+ roster exists to show — is
+        // silently dropped while calculateAge still reports them as 18.
+        it('stores a DoB at UTC midnight so a boundary birthday passes a UTC-midnight age cutoff', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testLeadId } });
+
+            const birthCutoff = new Date(Date.UTC(new Date().getUTCFullYear() - 18, 8, 1));
+            const dob = birthCutoff.toISOString().slice(0, 10);
+
+            const req = new Request('http://localhost:4000/api/household/member', {
+                method: 'PATCH',
+                body: JSON.stringify({ participantId: testMemberId, dob })
+            });
+
+            const res = await PATCH(req as unknown as import("next/server").NextRequest);
+            expect(res.status).toBe(200);
+
+            const updatedProfile = await prisma.person.findUnique({ where: { id: testMemberId } });
+            expect(updatedProfile?.dateOfBirth?.toISOString()).toBe(`${dob}T00:00:00.000Z`);
+
+            const onRoster = await prisma.person.findFirst({
+                where: { id: testMemberId, dateOfBirth: { lte: birthCutoff } },
+                select: { id: true }
+            });
+            expect(onRoster).not.toBeNull();
         });
 
         it('should allow a lead to designate another adult as a lead', async () => {

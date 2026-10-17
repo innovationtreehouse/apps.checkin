@@ -14,9 +14,6 @@ export const metadata = {
     title: "Dev — Sent Mail",
 };
 
-// devToolsActive, NOT a NODE_ENV check: cloud-dev runs the same production
-// image as prod, so a NODE_ENV fuse 404'd this page on the dev instance itself
-// (the Debug nav item's landing tab). See config.devToolsActive.
 function devOnlyOrNotFound() {
     if (!config.devToolsActive()) notFound();
 }
@@ -67,11 +64,13 @@ export default async function DevSentMailPage() {
                                 <span>{new Date(email.createdAt).toLocaleString()}</span>
                             </div>
                             <div style={{ fontWeight: 600, margin: "0.4rem 0 0.75rem" }}>{email.subject}</div>
-                            <div
-                                style={{ border: "1px solid rgba(0,0,0,0.08)", borderRadius: 6, padding: "0.75rem", background: "#fff", color: "#111" }}
+                            <iframe
+                                style={{ width: "100%", minHeight: "400px", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 6, padding: "0.75rem", background: "#fff", color: "#111" }}
                                 // Dev-only rendering of our own captured template HTML so embedded links/tokens
                                 // are clickable. Never runs in prod (page 404s); content is what we ourselves sent.
-                                dangerouslySetInnerHTML={{ __html: email.html }}
+                                srcDoc={email.html}
+                                sandbox="allow-popups allow-popups-to-escape-sandbox"
+                                title={`Email to ${email.to}`}
                             />
                         </li>
                     ))}

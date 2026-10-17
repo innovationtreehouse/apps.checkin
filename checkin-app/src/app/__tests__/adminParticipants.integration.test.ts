@@ -109,6 +109,54 @@ describe('Admin Participants API Integration Tests', () => {
             expect(data.error).toContain('Email, Parent Email, or Household assignment is required');
         });
 
+        it('should return 400 Bad Request if name is missing', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+
+            const req = new Request('http://localhost:4000/api/membership-ops/participants', {
+                method: 'POST',
+                body: JSON.stringify({ email: 'new-lone-participants-test-noname@example.com' })
+            });
+
+            const res = await POST(req as unknown as Parameters<typeof POST>[0]);
+            expect(res.status).toBe(400);
+            const data = await res.json();
+            expect(data.error).toMatch(/name/i);
+        });
+
+        it('should return 400 Bad Request if name is blank', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+
+            const req = new Request('http://localhost:4000/api/membership-ops/participants', {
+                method: 'POST',
+                body: JSON.stringify({ name: '   ', email: 'new-lone-participants-test-blank@example.com' })
+            });
+
+            const res = await POST(req as unknown as Parameters<typeof POST>[0]);
+            expect(res.status).toBe(400);
+            const data = await res.json();
+            expect(data.error).toMatch(/name/i);
+        });
+
+        it('trims leading/trailing whitespace from a submitted name', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+
+            const req = new Request('http://localhost:4000/api/membership-ops/participants', {
+                method: 'POST',
+                body: JSON.stringify({ name: '  Trimmed Name  ', email: 'new-lone-participants-test-trim@example.com' })
+            });
+
+            const res = await POST(req as unknown as Parameters<typeof POST>[0]);
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.participant.name).toBe('Trimmed Name');
+        });
+
         it('should return 400 Bad Request if email format is invalid', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
                 user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
@@ -180,7 +228,7 @@ describe('Admin Participants API Integration Tests', () => {
             expect(membership).toBeNull();
         });
 
-        it('should grant an ACTIVE membership when alreadyMember is true', async () => {
+        it('should reject alreadyMember with 400 and create no participant or membership', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
                 user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
             });
@@ -195,16 +243,12 @@ describe('Admin Participants API Integration Tests', () => {
             });
 
             const res = await POST(req as unknown as Parameters<typeof POST>[0]);
-            expect(res.status).toBe(200);
-            const data = await res.json();
+            expect(res.status).toBe(400);
 
             const created = await prisma.person.findUnique({
-                where: { id: data.participant.id }
+                where: { email: 'new-paid-participants-test@example.com' }
             });
-            const membership = await prisma.orgMembership.findUnique({
-                where: { householdId: created!.householdId! }
-            });
-            expect(membership?.status).toBe('ACTIVE');
+            expect(created).toBeNull();
         });
 
         it('should create a child participant and auto-generate a parent and household if parentEmail does not exist', async () => {
@@ -214,10 +258,11 @@ describe('Admin Participants API Integration Tests', () => {
 
             const req = new Request('http://localhost:4000/api/membership-ops/participants', {
                 method: 'POST',
-                body: JSON.stringify({ 
-                    name: 'Child User', 
+                body: JSON.stringify({
+                    name: 'Child User',
                     email: 'new-child-participants-test@example.com',
-                    parentEmail: 'new-parent-participants-test@example.com' 
+                    parentEmail: 'new-parent-participants-test@example.com',
+                    parentName: 'New Parent'
                 })
             });
 
@@ -229,12 +274,33 @@ describe('Admin Participants API Integration Tests', () => {
             expect(data.participant.email).toBe('new-child-participants-test@example.com');
             expect(data.participant.householdId).not.toBeNull();
 
-            // Verify the parent was created
+            // Verify the parent was created with the provided name
             const parent = await prisma.person.findUnique({
                 where: { email: 'new-parent-participants-test@example.com' }
             });
             expect(parent).toBeDefined();
+            expect(parent?.name).toBe('New Parent');
             expect(parent?.householdId).toBe(data.participant.householdId);
+        });
+
+        it('should reject creating a child with parentEmail but no parentName when parent does not exist', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+
+            const req = new Request('http://localhost:4000/api/membership-ops/participants', {
+                method: 'POST',
+                body: JSON.stringify({
+                    name: 'Child User',
+                    email: 'reject-child-participants-test@example.com',
+                    parentEmail: 'reject-parent-participants-test@example.com'
+                })
+            });
+
+            const res = await POST(req as unknown as Parameters<typeof POST>[0]);
+            expect(res.status).toBe(400);
+            const data = await res.json();
+            expect(data.error).toMatch(/parent name/i);
         });
     });
 
@@ -291,6 +357,110 @@ describe('Admin Participants API Integration Tests', () => {
             expect(auditJson(log.newData).name).toBe('Updated Name');
 
             // Cleanup is handled by afterEach
+        });
+
+        it('rejects blanking a participant name via PUT and leaves the stored name alone', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+
+            const editUser = await prisma.person.create({
+                data: { email: 'edit-test-user-blank@example.com', name: 'Keep This Name', household: { create: { name: "Test HH" } } }
+            });
+
+            const req = new Request(`http://localhost:4000/api/membership-ops/participants/${editUser.id}`, {
+                method: 'PUT',
+                body: JSON.stringify({ name: '   ' })
+            });
+
+            const res = await PUT(req as unknown as Parameters<typeof PUT>[0], { params: Promise.resolve({ id: editUser.id.toString() }) });
+            expect(res.status).toBe(400);
+
+            const dbCheck = await prisma.person.findUnique({ where: { id: editUser.id } });
+            expect(dbCheck?.name).toBe('Keep This Name');
+        });
+
+        it('sets the over-25 declaration on a person with no date of birth', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+
+            const adult = await prisma.person.create({
+                data: { email: 'edit-test-user-nodob@example.com', name: 'Adult No DOB', household: { create: { name: "Test HH" } } },
+            });
+
+            const req = new Request(`http://localhost:4000/api/membership-ops/participants/${adult.id}`, {
+                method: 'PUT',
+                body: JSON.stringify({ isDeclaredAdult: true })
+            });
+
+            const res = await PUT(req as unknown as Parameters<typeof PUT>[0], { params: Promise.resolve({ id: adult.id.toString() }) });
+            expect(res.status).toBe(200);
+
+            const dbCheck = await prisma.person.findUnique({ where: { id: adult.id } });
+            expect(dbCheck?.isDeclaredAdult).toBe(true);
+        });
+
+        it('drops the over-25 declaration when the person has a date of birth on file', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+
+            // A 12-year-old already carrying a stale flag, as a bulk import that writes
+            // a DOB without touching it leaves them. The edit form resubmits the whole
+            // record, so an unrelated name edit must still save AND heal the pair — a
+            // declared-adult flag here would make them match the adults filter in
+            // /api/people/search and count as a supervising adult in the safety calc.
+            const youth = await prisma.person.create({
+                data: {
+                    email: 'edit-test-user-dob@example.com',
+                    name: 'Youth With DOB',
+                    dateOfBirth: new Date(Date.UTC(2014, 0, 15)),
+                    isDeclaredAdult: true,
+                    household: { create: { name: "Test HH" } },
+                },
+            });
+
+            const req = new Request(`http://localhost:4000/api/membership-ops/participants/${youth.id}`, {
+                method: 'PUT',
+                body: JSON.stringify({ name: 'Youth Renamed', isDeclaredAdult: true })
+            });
+
+            const res = await PUT(req as unknown as Parameters<typeof PUT>[0], { params: Promise.resolve({ id: youth.id.toString() }) });
+            expect(res.status).toBe(200);
+
+            const dbCheck = await prisma.person.findUnique({ where: { id: youth.id } });
+            expect(dbCheck?.name).toBe('Youth Renamed');
+            expect(dbCheck?.isDeclaredAdult).toBe(false);
+            // The DOB is the authoritative value — dropping the flag must not clear it.
+            expect(dbCheck?.dateOfBirth).toEqual(new Date(Date.UTC(2014, 0, 15)));
+        });
+
+        it('allows clearing the over-25 declaration on a person with a date of birth', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+
+            const youth = await prisma.person.create({
+                data: {
+                    email: 'edit-test-user-dob@example.com',
+                    name: 'Youth With DOB',
+                    dateOfBirth: new Date(Date.UTC(2014, 0, 15)),
+                    isDeclaredAdult: true,
+                    household: { create: { name: "Test HH" } },
+                },
+            });
+
+            const req = new Request(`http://localhost:4000/api/membership-ops/participants/${youth.id}`, {
+                method: 'PUT',
+                body: JSON.stringify({ isDeclaredAdult: false })
+            });
+
+            const res = await PUT(req as unknown as Parameters<typeof PUT>[0], { params: Promise.resolve({ id: youth.id.toString() }) });
+            expect(res.status).toBe(200);
+
+            const dbCheck = await prisma.person.findUnique({ where: { id: youth.id } });
+            expect(dbCheck?.isDeclaredAdult).toBe(false);
         });
     });
 });

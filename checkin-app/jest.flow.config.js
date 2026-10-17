@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
+process.env.TZ = 'UTC';
 const nextJest = require('next/jest');
 
 const createJestConfig = nextJest({ dir: './' });

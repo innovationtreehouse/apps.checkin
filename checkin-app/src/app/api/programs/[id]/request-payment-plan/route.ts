@@ -3,8 +3,11 @@ import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
-import { adjustProgramInventory } from "@/lib/shopify";
+import { isKnownAdult } from "@/lib/programAge";
+import { changeProgramStock } from "@/lib/shopify";
 import { fromWhere } from "@/lib/programs/enrollmentState";
+import { ScholarshipRequestKind } from "@/generated/prisma/client";
+import { scholarshipRequestKindLabel } from "@/lib/scholarshipRequestKind";
 import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck, resolveAckCopy } from "@/lib/scholarshipEmails";
 import { config } from "@/lib/config";
 import { escapeHtml } from "@/lib/email-templates/base";
@@ -20,11 +23,24 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         }
 
         const body = await req.json();
-        const { participantId } = body;
+        const { participantId, kind } = body;
 
         if (!participantId) {
             return apiError("participantId is required", 400);
         }
+
+        // An absent kind records as null rather than 400: during a rolling deploy's
+        // drain window a stale tab still POSTs without one, and losing the request
+        // is worse than not knowing which ask it was. A present-but-wrong kind is
+        // still a client bug, so that does fail.
+        if (kind !== undefined && kind !== null && !Object.values(ScholarshipRequestKind).includes(kind)) {
+            return apiError("kind must be SCHOLARSHIP, PAYMENT_PLAN or UNSURE", 400);
+        }
+        // Spread, not a plain value: writing `null` would let a kind-less re-POST
+        // erase a kind the family already stated, and branch 2's where-clause also
+        // matches an idempotent no-op re-POST. A re-request that DOES carry one
+        // overwrites, which is how a family corrects a misclick after a denial.
+        const kindData = kind ? { scholarshipRequestKind: kind as ScholarshipRequestKind } : {};
 
         const participant = await prisma.programParticipant.findUnique({
             where: {
@@ -68,6 +84,16 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return apiError("Forbidden: Not authorized to request a payment plan for this participant", 403);
         }
 
+        // A scholarship request IS a payment situation, so it is not a youth's to
+        // make about themselves — a household lead does it. Same known-adult rule
+        // as the enroll route (docs/rules/programs.md).
+        if (isSelf && !isKnownAdult({
+            dateOfBirth: participant.person?.dateOfBirth ?? null,
+            isDeclaredAdult: participant.person?.isDeclaredAdult,
+        })) {
+            return apiError("A household lead must request a payment plan for a participant under 18.", 403);
+        }
+
         if (participant.status !== 'PENDING') {
             return apiError("This enrollment is not awaiting payment", 409);
         }
@@ -87,32 +113,40 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // time, and without this a concurrent approval (ACTIVE, hold consumed
         // to null) would match branch 1, re-stamp the hold, fire a second -1,
         // and reopen a resolved scholarship.
-        const wasRequested = participant.isPaymentPlanRequested; // pre-image (findUnique above)
+        // The request flag's false→true flip is the transition, claimed by one CAS so a
+        // double-submit notifies once: the loser sees the flag already set and matches 0.
+        const flipped = await prisma.programParticipant.updateMany({
+            // From PENDING_UNPAID or PENDING_HELD_DENIED; their status clause is shared.
+            where: { programId, personId: participantId, ...fromWhere('PENDING_UNPAID'), isPaymentPlanRequested: false },
+            data: { isPaymentPlanRequested: true },
+        });
         const holdResult = await prisma.programParticipant.updateMany({
             // T3 apply CAS from-state (PENDING_UNPAID); flag narrowing stays literal (#1080).
             where: { programId, personId: participantId, ...fromWhere('PENDING_UNPAID'), inventoryHeldAt: null },
-            data: { isPaymentPlanRequested: true, inventoryHeldAt: new Date(), paymentPlanDeniedAt: null },
+            data: { isPaymentPlanRequested: true, inventoryHeldAt: new Date(), paymentPlanDeniedAt: null, ...kindData },
         });
         let reCount = 0;
         if (holdResult.count === 0) {
             const re = await prisma.programParticipant.updateMany({
                 // T3 re-apply CAS from-state (PENDING_HELD_DENIED); status clause shared with UNPAID.
                 where: { programId, personId: participantId, ...fromWhere('PENDING_HELD_DENIED'), inventoryHeldAt: { not: null } },
-                data: { isPaymentPlanRequested: true, paymentPlanDeniedAt: null },
+                data: { isPaymentPlanRequested: true, paymentPlanDeniedAt: null, ...kindData },
             });
             reCount = re.count;
         }
         // fromWhere only narrows on `status` (PENDING) — both branches' where also match an
         // already-PENDING_HELD no-op re-POST, so a bare count>0 check would over-notify. Key
-        // on the pre-image flag instead: true for exactly the two real transitions (fresh hold,
-        // re-request after denial), false for both non-transitions (no-op re-POST, hold-failed
-        // retry whose request was already recorded).
-        const transitioned = !wasRequested && (holdResult.count > 0 || reCount > 0);
+        // on the flip instead: true for exactly the two real transitions (fresh hold, re-request
+        // after denial), false for both non-transitions (no-op re-POST, hold-failed retry whose
+        // request was already recorded) and for the losing half of a double-submit.
+        const transitioned = flipped.count > 0 && (holdResult.count > 0 || reCount > 0);
 
         let warning: string | undefined;
         if (holdResult.count > 0 && participant.program) {
-            const ok = await adjustProgramInventory(participant.program, -1);
-            if (!ok) {
+            // Recorded = owed in the stock carry, so the -1 lands later even if this
+            // push failed: the hold stands. Only an unrecorded -1 rolls it back.
+            const stock = await changeProgramStock(participant.program, -1, "scholarship-hold", { inRequest: true });
+            if (!stock.recorded) {
                 // The seat was never taken out of Shopify — leaving inventoryHeldAt
                 // set would be a phantom hold whose later release (+1) credits a
                 // seat that was never removed (oversell). Roll the stamp back to
@@ -123,8 +157,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
                 // placing the hold (Shopify Hold Reconciliation queue → Confirm
                 // manual hold). isPaymentPlanRequested stays true, so the 7-day
                 // non-payment sweep (which filters isPaymentPlanRequested:false)
-                // never auto-kicks it. adjustProgramInventory has already emailed
-                // sysadmins/board via reportShopifyFailure.
+                // never auto-kicks it. The stock writer has already emailed the board.
                 await prisma.programParticipant.updateMany({
                     where: { programId, personId: participantId, inventoryHeldAt: { not: null } },
                     data: { inventoryHeldAt: null },
@@ -143,6 +176,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
                 `New scholarship / payment-plan request: ${personName} — ${programName}`,
                 `<p>The Scholarship Review Team has a new request to review.</p>`
                 + `<p><strong>${escapeHtml(personName)}</strong> requested a scholarship / payment plan for <strong>${escapeHtml(programName)}</strong>.</p>`
+                + `<p>What they asked for: <strong>${escapeHtml(scholarshipRequestKindLabel(kind))}</strong></p>`
                 + `<p>Review it here: <a href="${base}/finance-ops/payment-plan">${base}/finance-ops/payment-plan</a></p>`,
                 "Scholarship review-team notify failed (program request):",
             );

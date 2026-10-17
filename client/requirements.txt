@@ -1,0 +1,5 @@
+# Runtime deps for client.py / badge.py. The Pi installs these as Debian
+# packages (python3-nacl, python3-requests — see README.md); this file is what
+# CI and a local venv install.
+PyNaCl==1.6.2
+requests==2.32.5

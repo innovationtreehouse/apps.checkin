@@ -1,5 +1,5 @@
 /**
- * @inventory/s-ingest-core — the shared core for the Shopify ingestion functions.
+ * @checkin/s-ingest-core — the shared core for the Shopify ingestion functions.
  *
  * Single source of truth for the database (Prisma schema + client + migrations), the
  * raw-event log, the projection/loader, normalization, watermark/cursor logic, run
@@ -15,7 +15,7 @@ export { prisma, getPrisma } from "./db/client.js";
 
 // Plumbing
 export * from "./config.js";
-export * from "./logger.js";
+export { logger, newCorrelationId, type Fields } from "@checkin/telemetry";
 export * from "./dates.js";
 export * from "./money.js";
 

@@ -1,0 +1,240 @@
+import { db, isUniqueConstraintError } from "../db";
+import type { QbDeposit } from "../contract";
+import { getIncomeConfig } from "../runtime";
+import {
+  RECON_KIND,
+  RECON_ORIGIN,
+  RECON_RESOLUTION,
+  RECON_STATUS,
+  addDays,
+  audit,
+  incomeKey,
+  lockReconciliation,
+  matchWindow,
+  otherLaneClaims,
+  runReconcile,
+  windowDays,
+  type ReconStatus,
+} from "../lib/reconcile";
+import { recordAudit, type TxClient } from "../lib/audit";
+import { depositsIn } from "../lib/qb-deposits";
+import { incomeTakeoverLine, isPostable, postPayout } from "../lib/outbox";
+import { ServiceError } from "./serviceError";
+
+export interface Actor {
+  userId: number;
+  username?: string;
+  correlationId?: string;
+}
+
+/** The three finance resolutions the resolve route accepts. */
+export type ResolveAction =
+  | { action: "match"; depositId: string; reason?: string }
+  | { action: "dismiss"; reason: string }
+  | { action: "retry" };
+
+async function openRow(orgId: string, id: number) {
+  const row = await db.payoutReconciliation.findUnique({ where: { id } });
+  if (!row || row.orgId !== orgId) throw new ServiceError(404, "Not found");
+  return row;
+}
+
+/** Deposits into the payout bank account dated within ±window of the payout, read live from QuickBooks. */
+async function windowDeposits(payoutDate: string): Promise<QbDeposit[]> {
+  const { deposits: source, bankAccountId: bank } = getIncomeConfig();
+  if (!source || !bank) throw new ServiceError(503, "QuickBooks is not connected");
+  const w = windowDays();
+  const from = addDays(payoutDate, -w);
+  const to = addDays(payoutDate, w);
+  return (await depositsIn(source, [[from, to]])).filter((d) => d.depositToAccount === bank);
+}
+
+/** Drop deposits a payout or another lane already holds, or finance excluded. */
+async function unclaimed(client: TxClient, orgId: string, deposits: QbDeposit[]): Promise<QbDeposit[]> {
+  const [foreign, claimed, excluded] = await Promise.all([
+    otherLaneClaims(orgId),
+    client.payoutReconciliation.findMany({
+      where: { orgId, depositId: { not: null } },
+      select: { depositId: true },
+    }),
+    client.incomeQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
+  ]);
+  const taken = new Set([...foreign, ...claimed.map((c) => c.depositId), ...excluded.map((e) => e.qbTxnId)]);
+  return deposits.filter((d) => !taken.has(d.id));
+}
+
+/** Whether a payout the create path may still book would match this deposit, so excluding it forces a second booking. */
+async function fitsPostablePayout(client: TxClient, orgId: string, qbTxnId: string): Promise<boolean> {
+  const rows = (
+    await client.payoutReconciliation.findMany({
+      where: { orgId, status: { in: [RECON_STATUS.WAITING, RECON_STATUS.OPEN] } },
+    })
+  ).filter(isPostable);
+  if (!rows.length) return false;
+  const { deposits: source, bankAccountId: bank } = getIncomeConfig();
+  if (!source || !bank) throw new ServiceError(503, "QuickBooks is not connected");
+  const windows = rows.map((r) => matchWindow(r.payoutDate));
+  const d = (await depositsIn(source, windows.map((w): [string, string] => [w.from, w.to]))).find((x) => x.id === qbTxnId);
+  if (!d) return false;
+  return rows.some((row, i) =>
+    d.txnDate >= windows[i].from && d.txnDate <= windows[i].to &&
+    (d.appKey === incomeKey(row.payoutGid) || (d.depositToAccount === bank && d.totalCents === row.payoutNetCents)));
+}
+
+export const reconciliationService = {
+  run(orgId: string, now?: Date) {
+    return runReconcile(orgId, now);
+  },
+
+  list(orgId: string, status?: ReconStatus) {
+    return db.payoutReconciliation.findMany({
+      where: { orgId, status },
+      orderBy: [{ payoutDate: "desc" }, { id: "desc" }],
+    });
+  },
+
+  count(orgId: string, status?: ReconStatus) {
+    return db.payoutReconciliation.count({ where: { orgId, status } });
+  },
+
+  async candidates(orgId: string, id: number) {
+    const row = await openRow(orgId, id);
+    return unclaimed(db, orgId, await windowDeposits(row.payoutDate));
+  },
+
+  /** A deposit whose amount differs from the payout's net needs finance's reason. */
+  async matchToDeposit(orgId: string, id: number, depositId: string, actor: Actor, reason?: string) {
+    const why = reason?.trim() || null;
+    const row = await openRow(orgId, id);
+    const inWindow = await windowDeposits(row.payoutDate);
+
+    try {
+      return await db.$transaction(async (tx) => {
+        await lockReconciliation(tx, orgId, true);
+        const deposit = (await unclaimed(tx, orgId, inWindow)).find((d) => d.id === depositId);
+        if (!deposit) throw new ServiceError(422, "Deposit is not an unclaimed candidate for this payout");
+        const current = await tx.payoutReconciliation.findUnique({ where: { id } });
+        if (current?.status !== RECON_STATUS.OPEN) throw new ServiceError(409, "Already resolved");
+        if (deposit.totalCents !== current.payoutNetCents && !why) {
+          throw new ServiceError(400, "A reason is required when the deposit amount differs from the payout");
+        }
+        const saved = await tx.payoutReconciliation.update({
+          where: { id },
+          data: {
+            status: RECON_STATUS.RESOLVED,
+            kind: null,
+            resolution: RECON_RESOLUTION.MANUAL,
+            origin: deposit.appKey === incomeKey(current.payoutGid) ? RECON_ORIGIN.CREATED : RECON_ORIGIN.MATCHED,
+            reason: why,
+            depositId: deposit.id,
+            depositTxnDate: deposit.txnDate,
+            depositTotalCents: deposit.totalCents,
+            resolvedByUserId: actor.userId,
+            resolvedAt: new Date(),
+          },
+        });
+        await audit(tx, orgId, "reconciliation.matched_manually", current, saved, { ...actor, reason: why });
+        return saved;
+      });
+    } catch (err) {
+      if (isUniqueConstraintError(err)) throw new ServiceError(409, "Deposit already backs another payout");
+      throw err;
+    }
+  },
+
+  async dismiss(orgId: string, id: number, reason: string, actor: Actor) {
+    const why = reason.trim();
+    if (!why) throw new ServiceError(400, "A reason is required");
+    await openRow(orgId, id);
+
+    return db.$transaction(async (tx) => {
+      await lockReconciliation(tx, orgId, true);
+      const current = await tx.payoutReconciliation.findUnique({ where: { id } });
+      if (current?.status !== RECON_STATUS.OPEN) throw new ServiceError(409, "Already resolved");
+      const saved = await tx.payoutReconciliation.update({
+        where: { id },
+        data: {
+          status: RECON_STATUS.RESOLVED,
+          kind: null,
+          resolution: RECON_RESOLUTION.DISMISSED,
+          reason: why,
+          resolvedByUserId: actor.userId,
+          resolvedAt: new Date(),
+        },
+      });
+      await audit(tx, orgId, "reconciliation.dismissed", current, saved, { ...actor, reason: why });
+      return saved;
+    });
+  },
+
+  listExclusions(orgId: string) {
+    return db.incomeQbMatchExclusion.findMany({ where: { orgId }, orderBy: { excludedAt: "desc" } });
+  },
+
+  /**
+   * Permanently remove a QuickBooks deposit from matching (D5); there is no undo. A held
+   * deposit, or one a payout the create path may still book would match, can't be excluded.
+   */
+  async excludeDeposit(orgId: string, qbTxnId: string, reason: string, actor: Actor) {
+    const why = reason.trim();
+    if (!why) throw new ServiceError(400, "A reason is required");
+
+    try {
+      return await db.$transaction(async (tx) => {
+        await lockReconciliation(tx, orgId, true);
+        const holder = await tx.payoutReconciliation.findUnique({
+          where: { orgId_depositId: { orgId, depositId: qbTxnId } },
+        });
+        if (holder) throw new ServiceError(409, "Deposit backs a payout; reopen that payout first");
+        if (await fitsPostablePayout(tx, orgId, qbTxnId)) {
+          throw new ServiceError(409, "Deposit fits a payout still awaiting its deposit");
+        }
+        const saved = await tx.incomeQbMatchExclusion.create({
+          data: { orgId, qbTxnId, reason: why, excludedByUserId: actor.userId },
+        });
+        await recordAudit(tx, {
+          orgId,
+          actorUserId: actor.userId,
+          actorUsername: actor.username,
+          action: "deposit.excluded",
+          entityType: "qb_match_exclusion",
+          entityId: saved.id,
+          after: saved,
+          reason: why,
+          correlationId: actor.correlationId,
+        });
+        return saved;
+      }, { timeout: 60_000 });
+    } catch (err) {
+      if (isUniqueConstraintError(err)) throw new ServiceError(409, "Deposit is already excluded");
+      throw err;
+    }
+  },
+
+  /**
+   * Finance's go-ahead for a POST_FAILED or OVER_CAP payout: match before create, outside the
+   * per-run caps. The drain never touches these rows.
+   */
+  async retry(orgId: string, id: number, actor: Actor) {
+    const row = await openRow(orgId, id);
+    if (row.status !== RECON_STATUS.OPEN || (row.kind !== RECON_KIND.POST_FAILED && row.kind !== RECON_KIND.OVER_CAP)) {
+      throw new ServiceError(409, "Only a failed or over-cap deposit create can be retried");
+    }
+    const { mirror, posting } = getIncomeConfig();
+    if (!mirror || !posting?.mirrorNewestWins) throw new ServiceError(503, "QuickBooks deposit creation is not available");
+    const turn = await postPayout(orgId, id, await incomeTakeoverLine(orgId), true, actor);
+    if (!turn) throw new ServiceError(409, "A reconciliation run is in progress");
+    return turn.row;
+  },
+
+  resolve(orgId: string, id: number, req: ResolveAction, actor: Actor) {
+    switch (req.action) {
+      case "match":
+        return reconciliationService.matchToDeposit(orgId, id, req.depositId, actor, req.reason);
+      case "dismiss":
+        return reconciliationService.dismiss(orgId, id, req.reason, actor);
+      case "retry":
+        return reconciliationService.retry(orgId, id, actor);
+    }
+  },
+};

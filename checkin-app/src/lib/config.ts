@@ -10,7 +10,7 @@ function requireEnv(name: string): string {
 }
 
 /**
- * The single environment-personality switch (see docs/designs/DEV_INSTANCE_DESIGN.md).
+ * The single environment-personality switch (see docs/ops/dev-instance.md).
  *   prod  — production (default when unset). Real data, public landing, no impersonation.
  *   dev   — cloud dev instance. Entire site behind org login.
  *   local — a developer laptop. Permits offline credential login + keyless kiosk.
@@ -24,6 +24,12 @@ export type CheckinEnv = 'prod' | 'dev' | 'local';
 /** Verified Google Workspace hosted-domain (`hd`) allowed on the dev instance. */
 export const ORG_DOMAIN = 'innovationtreehouse.org';
 
+/**
+ * The single environment fuse. Every deployed instance — prod, cloud-dev, ops-stg —
+ * runs the same production image, so NODE_ENV is 'production' everywhere and cannot
+ * tell them apart: environment branches gate on this (through the config predicates
+ * below), never NODE_ENV. Enforced by the NODE_ENV ban in eslint.config.mjs.
+ */
 function readCheckinEnv(): CheckinEnv {
     const value = process.env.CHECKIN_ENV;
     // Anything unrecognized — including unset — fails safe to prod.
@@ -98,7 +104,7 @@ function zohoConfiguredEnv(): boolean {
 
 /**
  * The dev/local Zoho Sign MOCK is active when the real integration is unconfigured
- * AND we're on a non-prod instance (see docs/designs/ZOHO_SIGN_DEV_MOCK.md).
+ * AND we're on a non-prod instance (see docs/ops/contract-signing-mock.md).
  * CHECKIN_ENV is the single, server-only fuse (see the note above
  * shopifyMockActiveEnv for why NODE_ENV was eliminated as a second fuse) — it
  * fails safe to prod, so no mock path is reachable in prod by construction.
@@ -110,8 +116,8 @@ function zohoMockActiveEnv(): boolean {
 }
 
 /**
- * Fixed shared secret the dev mock signs its self-fired webhook with (§4a of the
- * design). It guards nothing real — the payload is generated locally — it exists
+ * Fixed shared secret the dev mock signs its self-fired webhook with. It guards
+ * nothing real — the payload is generated locally — it exists
  * only so verifyZohoToken's real timing-safe compare has a value in dev.
  * Exported for the same reason as DEV_MOCK_SHOPIFY_WEBHOOK_SECRET below.
  */
@@ -164,12 +170,12 @@ export const DEV_MOCK_SHOPIFY_WEBHOOK_SECRET = 'dev-shopify-mock-webhook-secret'
 
 /**
  * Synthetic membership variant id used when the Shopify mock is active. Programs
- * synthesize dev-mock-variant ids at creation (shopify.ts › createShopifyProgramVariants),
+ * synthesize a dev-mock-variant id at creation (shopify.ts › createShopifySingleVariantProgram),
  * but the membership variant is manual BoardSettings config that a local seed never
  * populates — so with no fallback the mock orders/paid webhook can't match a membership
  * order (webhooks/shopify/route.ts) and the dev fire tool 409s. Both the mock firer and
  * the inbound handler fall back to this id when shopifyMockActive(), so local membership
- * dues settle end-to-end with zero setup. Same shape as the program dev-mock ids.
+ * the membership fee settles end-to-end with zero setup. Same shape as the program dev-mock ids.
  */
 export const DEV_MOCK_MEMBERSHIP_VARIANT_ID = 'dev-mock-variant-membership';
 
@@ -182,7 +188,7 @@ export const DEV_MOCK_MEMBERSHIP_VARIANT_ID = 'dev-mock-variant-membership';
  * (/dev/bg-consent) instead of Averity's hosted page, so the check can be started
  * in debug mode; board members then sign off through the normal two-reviewer
  * attestation. Setting AVERITY_CONSENT_URL opts back into the real link.
- * See docs/designs/BG_CHECK_DEV_MOCK.md.
+ * See docs/ops/background-check-mock.md.
  */
 function bgMockActiveEnv(): boolean {
     return !process.env.AVERITY_CONSENT_URL && readCheckinEnv() !== 'prod';
@@ -203,7 +209,12 @@ export const config = {
 
     // Email
     resendApiKey: (): string | null => process.env.RESEND_API_KEY || null,
-    emailFrom: () => process.env.EMAIL_FROM || 'CheckMeIn <onboarding@resend.dev>',
+    // The env-level From. Null when unset so an unconfigured instance is
+    // distinguishable from a configured one: getEmailSenderIdentity prefers
+    // BoardSettings.emailFromAddress and falls back here, and sendEmail refuses to
+    // send when neither supplies an address. A hardcoded default would be a sender
+    // no domain has verified, so every send would be attempted and rejected.
+    emailFrom: (): string | null => process.env.EMAIL_FROM || null,
     // Resend's inbound bounce/complaint webhook signs with Svix under this shared
     // secret (Resend dashboard → Webhooks → signing secret, "whsec_..."). Null when
     // unset — the webhook route's verify fn fails closed with a 500 config error,
@@ -256,7 +267,7 @@ export const config = {
 
     // s-read mirror — read-only connection string to the `shopify_read` Postgres
     // (the s-read-function's Shopify order/refund/payout mirror). Null when not
-    // wired → the reconciler (lib/finance/reconcile.ts) short-circuits as "not
+    // wired → the reconciler (lib/finance/reconcile/) short-circuits as "not
     // wired" instead of throwing, so an env without the mirror simply runs no
     // reconciliation.
     //
@@ -320,16 +331,14 @@ export const config = {
     // True on the cloud dev instance OR a local laptop (i.e. not prod). Server-only.
     isDevInstance: (): boolean => readCheckinEnv() !== 'prod',
     // Gate for the /dev tools + their capture paths (sent-mail inbox, email
-    // capture). The design docs paired isDevInstance() with a
-    // `NODE_ENV !== 'production'` build fuse (the persona-mint idiom), but every
-    // DEPLOYED instance — cloud-dev included — runs the same production image
-    // (checkin-app/Dockerfile sets NODE_ENV=production), so that clause made the
-    // tools 404 on the very instance they exist for. Prod safety rests on
-    // CHECKIN_ENV, which is server-only and FAILS SAFE to 'prod' for any
-    // unset/unrecognized value (readCheckinEnv); cloud-dev pages are additionally
-    // behind the org-member login gate. Use this — not a hand-rolled
-    // NODE_ENV check — to gate any future dev tool.
+    // capture) — use this to gate any future dev tool. Prod safety rests on
+    // CHECKIN_ENV alone, which is server-only and fails safe to 'prod' for any
+    // unset/unrecognized value; cloud-dev pages are additionally behind the
+    // org-member login gate.
     devToolsActive: (): boolean => readCheckinEnv() !== 'prod',
+    // Optional CSV participant import module (page + API). Off unless CSV_IMPORT_ENABLED=true;
+    // when off the page and its routes 404.
+    csvImportEnabled: (): boolean => process.env.CSV_IMPORT_ENABLED === 'true',
     // True only on a developer laptop. Gates offline credential login + keyless kiosk.
     isLocal: (): boolean => readCheckinEnv() === 'local',
     // True on ops-stg (CHECKIN_ENV=stg; see isStagingEnv) — gates the access

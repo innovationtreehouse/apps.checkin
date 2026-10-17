@@ -52,7 +52,7 @@ function webhookReq(body: string, secret: string) {
     const signature = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('base64');
     return new Request('http://localhost/api/webhooks/shopify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-shopify-hmac-sha256': signature },
+        headers: { 'Content-Type': 'application/json', 'x-shopify-topic': 'orders/paid', 'x-shopify-hmac-sha256': signature },
         body,
     });
 }
@@ -80,7 +80,7 @@ describe('Shopify variant round-trip: create -> persist -> webhook match', () =>
         });
         boardId = board.id;
         const lead = await prisma.person.create({
-            data: { email: `lead-${TAG}@example.com`, name: 'Lead', household: { create: { name: `Lead HH ${TAG}` } } },
+            data: { email: `lead-${TAG}@example.com`, name: 'Lead', isDeclaredAdult: true, household: { create: { name: `Lead HH ${TAG}` } } },
         });
         leadId = lead.id;
         const participant = await prisma.person.create({
@@ -112,6 +112,8 @@ describe('Shopify variant round-trip: create -> persist -> webhook match', () =>
         const res = await programsPOST(programsReq({
             name: `Roundtrip Program ${TAG}`,
             leadMentorId: leadId,
+            startAt: '2026-01-01',
+            endAt: '2026-12-31',
             memberPrice: '25.00',
             nonMemberPrice: '35.00',
             maxParticipants: 50,
@@ -122,11 +124,8 @@ describe('Shopify variant round-trip: create -> persist -> webhook match', () =>
         expect(data.warning).toBeUndefined();
         programIds.push(data.program.id);
 
-        // Synthetic mock id, not a real Shopify product/variant. Single pool: no
-        // legacy org/non-org pair minted for a new program.
+        // Synthetic mock id, not a real Shopify product/variant.
         expect(data.program.shopifyVariantId).toMatch(/^dev-mock-variant-/);
-        expect(data.program.shopifyOrgMemberVariantId).toBeNull();
-        expect(data.program.shopifyNonOrgMemberVariantId).toBeNull();
 
         // Actually PERSISTED, not just echoed in the response.
         const persisted = await prisma.program.findUnique({ where: { id: data.program.id } });
@@ -143,6 +142,7 @@ describe('Shopify variant round-trip: create -> persist -> webhook match', () =>
         // above, not a hand-seeded literal (the gap every other Shopify test
         // leaves open).
         const orderBody = JSON.stringify({
+            financial_status: 'paid',
             id: `roundtrip-order-${data.program.id}`,
             line_items: [{ variant_id: data.program.shopifyVariantId }],
             note_attributes: [
@@ -167,6 +167,8 @@ describe('Shopify variant round-trip: create -> persist -> webhook match', () =>
             const res = await programsPOST(programsReq({
                 name: `Warning Path Program ${TAG}`,
                 leadMentorId: leadId,
+                startAt: '2026-01-01',
+                endAt: '2026-12-31',
                 memberPrice: '25.00',
                 nonMemberPrice: '35.00',
                 maxParticipants: 50,

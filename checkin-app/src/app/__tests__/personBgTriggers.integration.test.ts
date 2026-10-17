@@ -11,12 +11,13 @@
  */
 
 import { runPersonBgAnnualSweep } from '@/lib/membership/personBgTriggers';
+import { nextBoundary } from '@/lib/membership/renewal';
 import { attest, eligibleReviewProcessIds, ReviewError } from '@/lib/membership/review';
 import { activate } from '@/lib/membership/payment';
 import prisma from '@/lib/prisma';
 
 // Congrats/reviewer pings must not hit Resend.
-jest.mock('@/lib/email', () => ({ sendEmail: jest.fn().mockResolvedValue(true) }));
+jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
 
 const TAG = 'person-bg-trigger-test';
 const RECHECK_MONTHS = 12;
@@ -25,6 +26,16 @@ const BOUNDARY_SEED = new Date('2000-09-01');
 
 /** Adult born long ago → ≥18 at any as-of date. */
 const ADULT_DOB = new Date('1990-01-01');
+
+/**
+ * The boundary the sweep itself will compute, and a DOB whose 18th birthday lands
+ * two months past it → 17 as of the boundary → MINOR. Derived, never a literal:
+ * nextBoundary() rolls with the real clock, so a fixed DOB ages past the boundary
+ * on a date nobody wrote down. The age gate is boundary-inclusive (a birthday
+ * exactly on the boundary counts as ≥18), hence the two-month margin.
+ */
+const BOUNDARY = nextBoundary(BOUNDARY_SEED, new Date());
+const NOT_YET_18_DOB = new Date(Date.UTC(BOUNDARY.getUTCFullYear() - 18, BOUNDARY.getUTCMonth() + 2, BOUNDARY.getUTCDate()));
 
 async function makeHousehold(slug: string) {
     return prisma.household.create({ data: { name: `${TAG} ${slug}` } });
@@ -45,7 +56,14 @@ async function makePerson(slug: string, householdId: number, data: Partial<{ dat
 
 /** Attach a person to a fresh program as a participant so they count as program-attached. */
 async function attachToProgram(slug: string, personId: number) {
-    const program = await prisma.program.create({ data: { name: `${TAG} ${slug} program` } });
+    const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${TAG} ${slug} program` } });
+    await prisma.programParticipant.create({ data: { programId: program.id, personId } });
+    return program.id;
+}
+
+/** Attach a person to a program that ended well outside the 12-month lookback. */
+async function attachToStaleProgram(slug: string, personId: number) {
+    const program = await prisma.program.create({ data: { startAt: new Date('2020-01-01'), endAt: new Date('2020-12-31'), name: `${TAG} ${slug} program` } });
     await prisma.programParticipant.create({ data: { programId: program.id, personId } });
     return program.id;
 }
@@ -103,7 +121,10 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
 
     afterAll(async () => {
         await cleanup();
+        // Unconditional: a row this suite created must go, or its boundary leaks into
+        // suites that share this DB and expect none.
         if (savedSettings) await prisma.boardSettings.update({ where: { id: 1 }, data: savedSettings });
+        else await prisma.boardSettings.delete({ where: { id: 1 } }).catch(() => {});
         await prisma.$disconnect();
     });
 
@@ -111,8 +132,8 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
         await setRecheckMonths(RECHECK_MONTHS);
         const hh = await makeHousehold('cohortA');
         const adult = await makePerson('cohort-adult', hh.id, { dateOfBirth: ADULT_DOB });
-        // Turns 18 AFTER the Sept-1 boundary → 17 as of the boundary → MINOR, not opened.
-        const notYet18 = await makePerson('cohort-notyet', hh.id, { dateOfBirth: new Date('2008-10-01') });
+        // Turns 18 AFTER the boundary → 17 as of the boundary → MINOR, not opened.
+        const notYet18 = await makePerson('cohort-notyet', hh.id, { dateOfBirth: NOT_YET_18_DOB });
         const fresh = await makePerson('cohort-fresh', hh.id, { dateOfBirth: ADULT_DOB, lastBackgroundCheck: new Date() });
         for (const p of [adult, notYet18, fresh]) await attachToProgram(`cohort-${p.id}`, p.id);
         // Not program-attached → out of scope even though ≥18.
@@ -129,6 +150,15 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
         const rerun = await runPersonBgAnnualSweep(new Date());
         expect(rerun.opened).toBe(0);
         expect(await personBgCountFor(adult.id)).toBe(1);
+    });
+
+    it('Trigger A opens nothing for a person attached only to a program that ended before the lookback', async () => {
+        const hh = await makeHousehold('staleProg');
+        const adult = await makePerson('stale-adult', hh.id, { dateOfBirth: ADULT_DOB });
+        await attachToStaleProgram('stale', adult.id);
+
+        await runPersonBgAnnualSweep(new Date());
+        expect(await personBgCountFor(adult.id)).toBe(0);
     });
 
     it('Trigger A opens nothing when bgRecheckMonths <= 0 (policy unset)', async () => {
@@ -156,7 +186,7 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
             data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() },
         });
 
-        await activate(proc.id, { via: 'certified', actorId: lead.id });
+        await activate(proc.id, { via: 'manual', actorId: lead.id });
 
         expect((await prisma.orgMembership.findUnique({ where: { id: membership.id } }))?.status).toBe('ACTIVE');
         expect(await personBgCountFor(joiner.id)).toBe(1); // Trigger C fired for the program adult
@@ -165,7 +195,7 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
         // no role-assignment trigger, and the annual run judges age as-of the boundary —
         // so nothing opens until the next annual run.
         const existingHh = await makeHousehold('existingHh');
-        const roleTaker = await makePerson('role-taker', existingHh.id, { dateOfBirth: new Date('2008-10-01') });
+        const roleTaker = await makePerson('role-taker', existingHh.id, { dateOfBirth: NOT_YET_18_DOB });
         await attachToProgram('role-taker', roleTaker.id);
         await runPersonBgAnnualSweep(new Date());
         expect(await personBgCountFor(roleTaker.id)).toBe(0);
@@ -181,7 +211,7 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
         // The subject's household has NO OrgMembership (a program lead in a non-member
         // household) — the gate must still work off the subject's household.
         const proc = await prisma.orgMembershipProcess.create({
-            data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW' },
+            data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW', bgConsentAt: new Date() },
         });
 
         // First distinct reviewer: not enough (2 required) → still awaiting.
@@ -232,13 +262,90 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
         expect(ids).toContain(household.id); // household review is unaffected
     });
 
+    /** A household lead — a signing adult, whether or not they join a program. */
+    async function makeLead(slug: string, householdId: number, data: Parameters<typeof makePerson>[2] = {}) {
+        const p = await makePerson(slug, householdId, data);
+        await prisma.person.update({ where: { id: p.id }, data: { isHouseholdLead: true } });
+        return p;
+    }
+
+    it('Trigger C covers the signing adult the household clearance did not name', async () => {
+        const hh = await makeHousehold('secondLeadHh');
+        // Clearance names one adult and stamps only them; the other signing adult holds
+        // no check and is attached to no program, so program attachment cannot find them.
+        const named = await makeLead('secondlead-named', hh.id, { dateOfBirth: ADULT_DOB, lastBackgroundCheck: new Date() });
+        const unnamed = await makeLead('secondlead-unnamed', hh.id, { dateOfBirth: ADULT_DOB });
+        const membership = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
+        const proc = await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() },
+        });
+
+        await activate(proc.id, { via: 'manual', actorId: named.id });
+
+        expect(await personBgCountFor(unnamed.id)).toBe(1);
+        expect(await personBgCountFor(named.id)).toBe(0); // already fresh
+    });
+
+    it('Trigger A covers a member household lead with no program attachment', async () => {
+        const hh = await makeHousehold('sweepLeadHh');
+        await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'ACTIVE' } });
+        const lead = await makeLead('sweep-lead', hh.id, { dateOfBirth: ADULT_DOB });
+        // Not a lead and in no program: an adult child the household never put forward.
+        const bystander = await makePerson('sweep-bystander', hh.id, { dateOfBirth: ADULT_DOB });
+
+        await runPersonBgAnnualSweep(new Date());
+        expect(await personBgCountFor(lead.id)).toBe(1);
+        expect(await personBgCountFor(bystander.id)).toBe(0);
+    });
+
+    it('Trigger A leaves alone the leads of households that never became members', async () => {
+        // isHouseholdLead marks the lead of EVERY household the app creates. A bare lead
+        // arm on the daily cron would open a PERSON_BG — closable only by a board member
+        // recording an external check and two reviewers attesting — on people who never
+        // applied. startIntake anchors an abandoned application's membership at NONE; a
+        // denial writes DENIED; an import-only or program-only household has none at all.
+        const abandoned = await makeHousehold('sweepAbandonedHh');
+        await prisma.orgMembership.create({ data: { householdId: abandoned.id, status: 'NONE' } });
+        const abandonedLead = await makeLead('sweep-abandoned-lead', abandoned.id, { dateOfBirth: ADULT_DOB });
+
+        const denied = await makeHousehold('sweepDeniedHh');
+        await prisma.orgMembership.create({ data: { householdId: denied.id, status: 'DENIED' } });
+        const deniedLead = await makeLead('sweep-denied-lead', denied.id, { dateOfBirth: ADULT_DOB });
+
+        const revoked = await makeHousehold('sweepRevokedHh');
+        await prisma.orgMembership.create({ data: { householdId: revoked.id, status: 'REVOKED' } });
+        const revokedLead = await makeLead('sweep-revoked-lead', revoked.id, { dateOfBirth: ADULT_DOB });
+
+        const noMembership = await makeHousehold('sweepNoMembershipHh');
+        const strangerLead = await makeLead('sweep-stranger-lead', noMembership.id, { dateOfBirth: ADULT_DOB });
+
+        await runPersonBgAnnualSweep(new Date());
+        expect(await personBgCountFor(abandonedLead.id)).toBe(0);
+        expect(await personBgCountFor(deniedLead.id)).toBe(0);
+        expect(await personBgCountFor(revokedLead.id)).toBe(0);
+        expect(await personBgCountFor(strangerLead.id)).toBe(0);
+    });
+
     it('gate: a REJECT moves the PERSON_BG to BLOCKED', async () => {
         const hh = await makeHousehold('rejectHh');
         const subject = await makePerson('reject-subject', hh.id, { dateOfBirth: ADULT_DOB });
         const proc = await prisma.orgMembershipProcess.create({
-            data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW' },
+            data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW', bgConsentAt: new Date() },
         });
         await attest(rev1, proc.id, { result: 'REJECT' });
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } }))?.status).toBe('BLOCKED');
+    });
+
+    it('gate: attest refuses a PERSON_BG that has not been submitted (no consent) and records nothing', async () => {
+        const hh = await makeHousehold('noConsentHh');
+        const subject = await makePerson('noconsent-subject', hh.id, { dateOfBirth: ADULT_DOB });
+        const proc = await prisma.orgMembershipProcess.create({
+            data: { kind: 'PERSON_BG', subjectPersonId: subject.id, orgMembershipId: null, status: 'PENDING_BG_REVIEW' },
+        });
+        for (const result of ['APPROVE', 'REJECT'] as const) {
+            await expect(attest(rev1, proc.id, { result })).rejects.toMatchObject({ code: 'wrong_phase' } as Partial<ReviewError>);
+        }
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId: proc.id } })).toBe(0);
+        expect((await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } }))?.status).toBe('PENDING_BG_REVIEW');
     });
 });

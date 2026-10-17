@@ -44,10 +44,8 @@ export default function EmailSettingsPage() {
   const [saveNotice, setSaveNotice] = useState<{ text: string; err: boolean } | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ from?: string; replyTo?: string; scholarshipNotify?: string }>({});
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/settings/email");
+  const load = useCallback(() => fetch("/api/settings/email")
+    .then(async (res) => {
       if (res.ok) {
         const { settings } = (await res.json()) as { settings: Settings };
         const snap = {
@@ -66,10 +64,11 @@ export default function EmailSettingsPage() {
         setAckProgramBody(snap.ackProgramBody);
         setInitial(snap);
       }
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
 
@@ -106,7 +105,7 @@ export default function EmailSettingsPage() {
           scholarshipAckProgramBody: ackProgramBody.trim() || null,
         }),
       });
-      if (res.ok) { notifications.show({ message: "Email settings saved." }); setUnlocked(false); await load(); }
+      if (res.ok) { notifications.show({ message: "Email settings saved." }); setUnlocked(false); setLoading(true); await load(); }
       else { const d = await res.json().catch(() => ({})); setSaveNotice({ text: d.error || "Save failed.", err: true }); }
     } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
     finally { setSaving(false); }
@@ -131,7 +130,8 @@ export default function EmailSettingsPage() {
           <Title order={3} mb="xs">Email sender identity</Title>
           <Text size="sm" c="dimmed" mb="md">
             Controls the sender on <strong>every</strong> outbound email (check-in receipts, membership
-            notices, board alerts). Leave blank to use the environment default sender.
+            notices, board alerts). Leave blank to use the sender configured in the environment —
+            with neither set, outbound email is disabled.
           </Text>
 
           <Alert color={wasSet ? "yellow" : "blue"} variant="light" mb="md">
@@ -161,7 +161,7 @@ export default function EmailSettingsPage() {
           <Stack gap="md">
             <TextInput
               label="From address"
-              description={'Bare address or "Name <addr@domain>". Blank = environment default.'}
+              description={'Bare address or "Name <addr@domain>". Blank = the environment sender.'}
               placeholder="Innovation Treehouse <noreply@updates.innovationtreehouse.org>"
               w={440}
               value={emailFrom}
@@ -199,7 +199,7 @@ export default function EmailSettingsPage() {
               disabled={locked}
             />
             <Textarea
-              label="Scholarship ACK body — membership dues request"
+              label="Scholarship ACK body — membership fee request"
               description="Plain text (blank lines separate paragraphs) — not HTML. Blank = default shown below."
               placeholder={DEFAULT_ACK_MEMBERSHIP_BODY}
               minRows={3}

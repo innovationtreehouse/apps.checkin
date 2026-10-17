@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Index-parity drift alarm (docs/designs/LIFECYCLE.md, fix #2).
+ * Index-parity drift alarm.
  *
  * The two partial unique indexes are hand-written raw SQL in migrations; the
  * TS in-flight status lists are `IN_FLIGHT_INITIAL` / `IN_FLIGHT_RENEWAL` in

@@ -1,4 +1,10 @@
 /**
+ * @jest-environment node
+ *
+ * Node, not jsdom: the merge route's graph reaches @aws-sdk/client-s3, and jsdom
+ * resolves the SDK's `browser` export condition to an ESM build jest cannot
+ * transform. Every SDK-touching suite here runs on node.
+ *
  * Integration Test for Audit Logs
  * Ensures that various actions across the system correctly generate an AuditLog.
  * Using Next.js testing practices with local Prisma DB.
@@ -6,9 +12,9 @@
 
 import { POST as createProgram } from '@/app/api/programs/route';
 import { normalizeAuditData } from '@/lib/auditPayload';
-import { PATCH as updateProgramSettings } from '@/app/api/programs/[id]/settings/route';
+import { PATCH as updateProgramSettings } from '@/app/api/programs/[id]/route';
 import { POST as enrollParticipant } from '@/app/api/programs/[id]/participants/route';
-import { POST as markAttendance } from '@/app/api/events/[id]/attendance/route';
+import { PATCH as editAttendance } from '@/app/api/events/[id]/route';
 import { PUT as editParticipant } from '@/app/api/membership-ops/participants/[id]/route';
 import { POST as reassignHousehold } from '@/app/api/membership-ops/participants/[id]/household/route';
 import { PATCH as updateRoles } from '@/app/api/roles/route';
@@ -29,6 +35,7 @@ jest.mock('@/lib/notifications', () => ({
 describe('AuditLog Integration Tests', () => {
     let testAdminId: number;
     let testParticipantId: number;
+    let testLeadId: number;
     let testProgramId: number;
     let testEventId: number;
     let testVisitId: number;
@@ -59,6 +66,7 @@ describe('AuditLog Integration Tests', () => {
         await prisma.programParticipant.deleteMany({});
         await prisma.programVolunteer.deleteMany({});
         await prisma.event.deleteMany({});
+        await prisma.programInstance.deleteMany({});
         await prisma.program.deleteMany({});
         await prisma.person.deleteMany({
             where: { email: { contains: 'audit-test' } }
@@ -66,7 +74,7 @@ describe('AuditLog Integration Tests', () => {
 
         // Setup mock database records
         const admin = await prisma.person.create({
-            data: { email: 'admin-audit-test@example.com', name: 'Admin Test', isSysadmin: true, household: { create: { name: "Test HH" } } }
+            data: { email: 'admin-audit-test@example.com', name: 'Admin Test', isSysadmin: true, isDeclaredAdult: true, household: { create: { name: "Test HH" } } }
         });
         testAdminId = admin.id;
 
@@ -74,6 +82,11 @@ describe('AuditLog Integration Tests', () => {
             data: { email: 'participant-audit-test@example.com', name: 'Participant Test', household: { create: { name: "Test HH" } } }
         });
         testParticipantId = participant.id;
+
+        const lead = await prisma.person.create({
+            data: { email: 'lead-audit-test@example.com', name: 'Lead Test', isDeclaredAdult: true, household: { create: { name: "Test HH" } } }
+        });
+        testLeadId = lead.id;
     });
 
     afterAll(async () => {
@@ -83,6 +96,9 @@ describe('AuditLog Integration Tests', () => {
             await prisma.visit.deleteMany({ where: { id: { in: createdVisitIds } } });
         }
         if (createdParticipantIds.length > 0) {
+            // A merge case here archives to PersonMerge, whose toId is RESTRICT — the
+            // archive row has to go before the survivor it names (#1456 2b).
+            await prisma.personMerge.deleteMany({ where: { OR: [{ toId: { in: createdParticipantIds } }, { fromId: { in: createdParticipantIds } }] } });
             await prisma.person.deleteMany({ where: { id: { in: createdParticipantIds } } });
         }
         if (createdHouseholdIds.length > 0) {
@@ -98,10 +114,11 @@ describe('AuditLog Integration Tests', () => {
         if (testProgramId !== undefined) {
             await prisma.event.deleteMany({ where: { programId: testProgramId } });
             await prisma.programParticipant.deleteMany({ where: { programId: testProgramId } });
+            await prisma.programInstance.deleteMany({ where: { programId: testProgramId } });
             await prisma.program.deleteMany({ where: { id: testProgramId } });
         }
 
-        const actorIds = [testAdminId, testParticipantId].filter(id => id !== undefined);
+        const actorIds = [testAdminId, testParticipantId, testLeadId].filter(id => id !== undefined);
         if (actorIds.length > 0) {
             await prisma.auditLog.deleteMany({
                 where: { actorId: { in: actorIds } }
@@ -135,8 +152,9 @@ describe('AuditLog Integration Tests', () => {
             body: JSON.stringify({
                 name: 'Audit Test Program',
                 enrollmentStatus: 'OPEN',
-                startAt: new Date(),
-                leadMentorId: testAdminId,
+                startAt: '2026-01-01',
+                endAt: '2026-12-31',
+                leadMentorId: testLeadId,
                 maxParticipants: 50
             })
         });
@@ -163,7 +181,7 @@ describe('AuditLog Integration Tests', () => {
     });
 
     it('should generate an AuditLog when Program Settings are updated', async () => {
-        const req = new Request(`http://localhost:4000/api/programs/${testProgramId}/settings`, {
+        const req = new Request(`http://localhost:4000/api/programs/${testProgramId}`, {
             method: 'PATCH',
             body: JSON.stringify({ leadMentorNotificationSettings: { notifyRsvp: true } })
         });
@@ -213,35 +231,44 @@ describe('AuditLog Integration Tests', () => {
         expect(log).toBeDefined();
     });
 
-    it('should generate an AuditLog when attendance is validated', async () => {
-        // First create an event and visit manually to test validation
+    it('should generate an AuditLog when a lead corrects attendance', async () => {
+        const arrivedAt = new Date(Date.now() - 100000);
+        const departedAt = new Date(Date.now() - 50000);
+
         const event = await prisma.event.create({
-            data: { programId: testProgramId, name: 'Audit Test Event', startAt: new Date(), endAt: new Date() }
+            data: { programId: testProgramId, name: 'Audit Test Event', startAt: arrivedAt, endAt: departedAt }
         });
         testEventId = event.id;
 
         const visit = await prisma.visit.create({
-            data: { personId: testParticipantId, arrivedAt: new Date(Date.now() - 100000), departedAt: new Date(Date.now() + 100000) }
+            data: { personId: testParticipantId, arrivedAt, departedAt, associatedEventId: event.id }
         });
         testVisitId = visit.id;
 
-        const req = new Request(`http://localhost:4000/api/events/${testEventId}/attendance`, {
-            method: 'POST',
-            body: JSON.stringify({ participantIds: [testParticipantId] })
+        const req = new Request(`http://localhost:4000/api/events/${testEventId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+                action: 'manualEditAttendance',
+                participantId: testParticipantId,
+                status: 'Present',
+                arrivedAt: arrivedAt.toISOString(),
+                departedAt: departedAt.toISOString()
+            })
         });
 
-        const res = await markAttendance(req as unknown as import("next/server").NextRequest, { params: Promise.resolve({ id: testEventId.toString() }) });
+        const res = await editAttendance(req as unknown as import("next/server").NextRequest, { params: Promise.resolve({ id: testEventId.toString() }) });
         expect(res.status).toBe(200);
 
-        // Verify Audit Log: one row per validated Visit, keyed by the Visit PK
-        // with the event as secondary (see attendance route, commit #467).
+        // One row per corrected Visit, keyed by the Visit PK.
         const log = await prisma.auditLog.findFirst({
             where: {
                 actorId: testAdminId,
                 action: 'EDIT',
                 tableName: 'Visit',
                 affectedEntityId: testVisitId,
-                secondaryAffectedEntity: testEventId
+                // The SUBJECT, not the event — a Visit audit row names whose
+                // visit it is, so actorId !== this marks acting-for-another.
+                secondaryAffectedEntity: testParticipantId
             },
             orderBy: { timestamp: 'desc' }
         });
@@ -249,8 +276,11 @@ describe('AuditLog Integration Tests', () => {
         expect(log).toBeDefined();
         // newData is now a raw JSON object (legacy rows may still be strings).
         const newData = normalizeAuditData(log?.newData) as Record<string, unknown>;
-        expect(newData.participantId).toBe(testParticipantId);
-        expect(newData.associatedEventId).toBe(testEventId);
+        expect(newData.type).toBe('lead_attendance_correction');
+        // The update branch leaves arrivedVia alone, so the audit must not claim
+        // it changed; the departure the lead typed IS staff-asserted.
+        expect(newData).not.toHaveProperty('arrivedVia');
+        expect(newData.departedVia).toBe('LEAD_MARKED');
     });
 
     it('should generate an AuditLog when an Admin edits participant PII', async () => {
@@ -327,10 +357,10 @@ describe('AuditLog Integration Tests', () => {
 
         const req = new Request('http://localhost:4000/api/membership-ops/participants/merge', {
             method: 'POST',
-            // name/email differ between the two fixtures (real conflicts) — resolve
-            // both to "keep" so this audit-log assertion doesn't depend on the
-            // field-picker's validation, which is exercised by its own suite.
-            body: JSON.stringify({ keepId: keep.id, mergeId: merge.id, fieldChoices: { name: 'keep', email: 'keep' } }),
+            // name differs and both carry a login identity (email) — real conflicts.
+            // Resolve name + the identity unit to "keep" so this audit-log assertion
+            // doesn't depend on the field-picker's validation (its own suite covers that).
+            body: JSON.stringify({ keepId: keep.id, mergeId: merge.id, fieldChoices: { name: 'keep', identity: 'keep' } }),
         });
 
         const res = await mergeParticipants(req as never);
@@ -398,5 +428,8 @@ describe('AuditLog Integration Tests', () => {
         expect(logs).toHaveLength(1);
         expect(logs[0].actorId).toBe(testAdminId);
         expect((logs[0].newData as { id?: number }).id).toBe(visit.id);
+        // oldData comes from the in-lock re-read (`previous`), not the
+        // pre-lock `existing` snapshot — same row here, but pins the swap.
+        expect((logs[0].oldData as { id?: number }).id).toBe(visit.id);
     });
 });

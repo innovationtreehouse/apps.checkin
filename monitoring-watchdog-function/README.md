@@ -13,7 +13,7 @@ relay to deliver.
 > connection string to *every* watched service's financial database and read `sync_run`
 > directly — making the monitor the highest-value target in the fleet. Now each service
 > **pushes** its own run freshness into the monitoring DB's `service_heartbeat` table (see
-> [`@inventory/monitoring-db`](../packages/monitoring-db)), and the watchdog reads only that.
+> [`@checkin/monitoring-db`](../packages/monitoring-db)), and the watchdog reads only that.
 > It holds **no credential** to any watched service's database; its blast radius is the
 > monitoring DB alone.
 
@@ -50,7 +50,7 @@ timeline), but the SNS **alert** is deduped: a persistent incident for the same
 an outage doesn't re-page every cron tick. The shared `correlationId` is carried onto the
 alert (and the incident id = `health_event.id`) so a responder can pivot alert → logs.
 
-Metric contract (from `@inventory/telemetry`): `serviceError`, `dbUnreachable`,
+Metric contract (from `@checkin/telemetry`): `serviceError`, `dbUnreachable`,
 `monitorHeartbeat`, dimensions `{service, env}` only. Detail lives in `health_event`,
 never in a metric.
 
@@ -60,7 +60,7 @@ never in a metric.
 | --- | --- |
 | `MONITORING_SERVICES` | JSON array registry `[{service, staleAfterSeconds}]` — see `.env.example` |
 | `MONITORING_DATABASE_URL` | dedicated monitoring Postgres (health_event + outbox + service_heartbeat) — the **only** DB this function connects to |
-| `MONITORING_ENV` | `env` dimension, e.g. `prod` — must match the env services push under |
+| `MONITORING_ENV` | **required**, no default: `env` dimension, e.g. `prod` — must match the env services push under |
 | `MONITOR_NAME` | `service` dimension on the heartbeat (default `monitoring-watchdog`) |
 | `RENOTIFY_AFTER_SECONDS` | re-alert window for a persistent incident (default `3600`) |
 

@@ -6,7 +6,7 @@ import { Badge, Button, Card, Group, Stack, Table, Text } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { IconTrash } from "@tabler/icons-react";
-import { formatDate, formatVisitRange } from "@/lib/time";
+import { useOrgTime } from '@/components/TimezoneProvider';
 import { useConflicts } from "@/hooks/useConflicts";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import type { AttendanceConflict, ConflictVisit } from "@/lib/attendanceConflicts";
@@ -116,6 +116,7 @@ function VisitRow({
   deleting: number | null;
   onDelete: (visitId: number) => void;
 }) {
+  const { formatDate, formatVisitRange } = useOrgTime();
   const via = [visit.arrivedVia, visit.departedVia].filter(Boolean).join(" / ") || "—";
   return (
     <Table.Tr>

@@ -15,6 +15,7 @@
 import { GET } from '@/app/api/nav/todo-counts/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { CRON_STALE_AFTER_MS, getCronJobStatuses } from '@/lib/cronRuns';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -107,8 +108,8 @@ describe('Nav todo-counts API', () => {
 
         // Two pending program enrollments for household members. One has a payment
         // plan requested (the board's approval queue), one does not.
-        const program1 = await prisma.program.create({ data: { name: `Prog1 ${TAG}` } });
-        const program2 = await prisma.program.create({ data: { name: `Prog2 ${TAG}` } });
+        const program1 = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog1 ${TAG}` } });
+        const program2 = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog2 ${TAG}` } });
         program1Id = program1.id;
         program2Id = program2.id;
         await prisma.programParticipant.create({ data: { programId: program1Id, personId: leadId, status: 'PENDING' } });
@@ -119,7 +120,7 @@ describe('Nav todo-counts API', () => {
         // The lead also *runs* a program (leadMentorId). Three events: one ended
         // and unconfirmed (the inbox item), one ended but already confirmed, one
         // still in the future. Only the first should surface in the lead bucket.
-        const ledProgram = await prisma.program.create({ data: { name: `Led ${TAG}`, leadMentorId: leadId } });
+        const ledProgram = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Led ${TAG}`, leadMentorId: leadId } });
         ledProgramId = ledProgram.id;
         const pendingEvent = await prisma.event.create({
             data: { programId: ledProgramId, name: `Pending ${TAG}`, startAt: daysFromNow(-1), endAt: daysFromNow(-1) },
@@ -181,10 +182,63 @@ describe('Nav todo-counts API', () => {
         // Items carry a label + a deep link so the UI can show *what* is due.
         expect(data.member.household).toEqual(
             expect.arrayContaining([
-                expect.objectContaining({ label: 'Pay your membership dues', href: '/membership' }),
+                expect.objectContaining({ label: 'Pay your membership fee', href: '/membership' }),
                 expect.objectContaining({ key: 'household-address', href: '/my-household' }),
             ]),
         );
+    });
+
+    // Unpaid enrollments are payment status: only the adult household lead (per
+    // the DB, whatever the session claims) gets those items.
+    it('gives a non-lead adult member no payment items, even with a stale lead claim', async () => {
+        const data = await (await callAs({ id: secondMemberId, householdId: householdAId, householdLead: true, ageBand: 'adult' })).json();
+        expect(data.member.programs).toHaveLength(0);
+        expect(data.member.programsAwaitingFinance).toBe(0);
+    });
+
+    it('gives a youth household member no payment items', async () => {
+        const youth = await prisma.person.create({
+            data: { email: `youth-${TAG}@example.com`, name: 'Youth A3', dateOfBirth: new Date('2014-01-01'), householdId: householdAId },
+        });
+        try {
+            const data = await (await callAs({ id: youth.id, householdId: householdAId, ageBand: 'youth' })).json();
+            expect(data.member.programs).toHaveLength(0);
+            expect(data.member.programsAwaitingFinance).toBe(0);
+        } finally {
+            await prisma.person.delete({ where: { id: youth.id } });
+        }
+    });
+
+    // Regression (#1618): a household that renewed a trusted adult early carries a stale
+    // in-window approval PLUS a live renewal that outlives it. "Expiring" is per adult on
+    // the current authorization, so this adds NO "Renew an expiring trusted adult" todo —
+    // the household kept its 5, not 6.
+    it('does not add an expiring-trusted-adult todo for an adult with a live renewal', async () => {
+        const renewed = await prisma.trustedAdult.create({
+            data: {
+                householdId: householdAId,
+                trustedAdultName: 'Renewed Early',
+                trustedAdultEmail: 'renewed@example.com',
+                familyContext: 'renewed early',
+                disclosedById: leadId,
+                reviews: {
+                    create: [
+                        { householdId: householdAId, kind: 'INITIAL', status: 'APPROVED', sharedNote: 'note', effectiveFrom: daysFromNow(-355), reviewBy: daysFromNow(10) },
+                        { householdId: householdAId, kind: 'RENEWAL', status: 'APPROVED', sharedNote: 'note', effectiveFrom: daysFromNow(0), reviewBy: daysFromNow(300) },
+                    ],
+                },
+            },
+        });
+        try {
+            const res = await callAs({ id: leadId, householdId: householdAId });
+            const data = await res.json();
+            const expiring = data.member.household.filter((t: { label: string }) => t.label === 'Renew an expiring trusted adult');
+            // Only slExpiring's genuinely-expiring adult, not the renewed one.
+            expect(expiring).toHaveLength(1);
+        } finally {
+            await prisma.trustedAdultReview.deleteMany({ where: { trustedAdultId: renewed.id } });
+            await prisma.trustedAdult.delete({ where: { id: renewed.id } });
+        }
     });
 
     it('drops the address todo once the household has a full valid address', async () => {
@@ -264,6 +318,16 @@ describe('Nav todo-counts API', () => {
         expect(typeof data.admin.unclaimedHouseholds).toBe('number'); // households with an unclaimed account
     });
 
+    it('zeroes the finance counts for a sysadmin who is not on the Board', async () => {
+        const res = await callAs({ id: boardId, householdId: householdBId, isSysadmin: true });
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.admin).toBeDefined();
+        expect(data.admin.paymentPlanPending).toBe(0);
+        expect(data.admin.membershipPaymentPlanPending).toBe(0);
+        expect(data.admin.openPaymentExceptions).toBe(0);
+    });
+
     it('counts BLOCKED for the board but not the reviewer-owned review states', async () => {
         const boardMembershipCount = async () => {
             const res = await callAs({ id: boardId, householdId: householdBId, isBoardMember: true });
@@ -291,5 +355,88 @@ describe('Nav todo-counts API', () => {
 
         await prisma.orgMembershipProcess.deleteMany({ where: { id: { in: [...reviewerProcs.map((p) => p.id), blocked.id] } } });
         await prisma.orgMembership.delete({ where: { id: reviewerMembership.id } });
+    });
+
+    // Nothing in this repo schedules the crons, so a sweep that stops firing is
+    // invisible until the ledger goes cold. That has to reach the board's red System
+    // Status pill — and only the board's — as does a sweep that runs but cannot
+    // finish its work.
+    describe('unhealthy cron jobs', () => {
+        const JOB = `nav-badge-${TAG}`;
+
+        const unhealthyCount = async (user: object) => {
+            const res = await callAs(user);
+            const data = await res.json();
+            return data.configHealth?.unhealthyCronJobs as number | undefined;
+        };
+
+        // Functions, not constants: the ids are assigned in beforeAll, which runs
+        // after this describe body is evaluated.
+        const board = () => ({ id: boardId, householdId: householdBId, isBoardMember: true });
+        const nonAdmin = () => ({ id: leadId, householdId: householdAId });
+
+        afterEach(async () => {
+            await prisma.cronRunLog.deleteMany({ where: { job: JOB } });
+        });
+
+        it('a recent success does not count', async () => {
+            const before = (await unhealthyCount(board()))!;
+            await prisma.cronRunLog.create({
+                data: { job: JOB, startedAt: new Date(), finishedAt: new Date(), success: true },
+            });
+
+            expect(await unhealthyCount(board())).toBe(before);
+        });
+
+        // The freeze this split exists to prevent: one poison row must not make a job
+        // that ran last night read as stopped, and must not go unreported either.
+        it('a completed-but-unclean run raises the count without ever going stale', async () => {
+            const before = (await unhealthyCount(board()))!;
+            await prisma.cronRunLog.create({
+                data: { job: JOB, startedAt: new Date(), finishedAt: new Date(), success: true, error: '1 item(s) failed' },
+            });
+
+            expect(await unhealthyCount(board())).toBe(before + 1);
+
+            // ...and the panel shows it as run-recently, not as stopped.
+            const status = (await getCronJobStatuses()).find((j) => j.job === JOB);
+            expect(status?.stale).toBe(false);
+            expect(status?.lastError).toBe('1 item(s) failed');
+        });
+
+        it('a job whose last success is older than the threshold raises the count', async () => {
+            const before = (await unhealthyCount(board()))!;
+            const long = new Date(Date.now() - (CRON_STALE_AFTER_MS + 60 * 60 * 1000));
+            await prisma.cronRunLog.create({
+                data: { job: JOB, startedAt: long, finishedAt: long, success: true },
+            });
+
+            expect(await unhealthyCount(board())).toBe(before + 1);
+        });
+
+        it('failed runs do not refresh a stale job — only a success clears it', async () => {
+            const before = (await unhealthyCount(board()))!;
+            const long = new Date(Date.now() - (CRON_STALE_AFTER_MS + 60 * 60 * 1000));
+            await prisma.cronRunLog.createMany({
+                data: [
+                    { job: JOB, startedAt: long, finishedAt: long, success: true },
+                    { job: JOB, startedAt: new Date(), finishedAt: new Date(), success: false, error: 'boom' },
+                ],
+            });
+
+            expect(await unhealthyCount(board())).toBe(before + 1);
+        });
+
+        it('a non-board, non-admin caller gets no count at all', async () => {
+            const long = new Date(Date.now() - (CRON_STALE_AFTER_MS + 60 * 60 * 1000));
+            await prisma.cronRunLog.create({
+                data: { job: JOB, startedAt: long, finishedAt: long, success: true },
+            });
+
+            const res = await callAs(nonAdmin());
+            const data = await res.json();
+            expect(data.configHealth).toBeUndefined();
+            expect(await unhealthyCount(board())).toBeGreaterThanOrEqual(1);
+        });
     });
 });

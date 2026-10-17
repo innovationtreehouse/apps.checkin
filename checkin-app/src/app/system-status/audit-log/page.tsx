@@ -1,20 +1,9 @@
 "use client";
 
-
 import { AuditLogPanel } from "@/components/admin/AuditLogPanel";
-import { useRequireRole } from "@/hooks/useRequireRole";
 
-import { PageLoader } from "@/components/ui/PageLoader";
+// Admission (sysadmin or board) is the /system-status layout's gate; this page
+// adds nothing on top of it.
 export default function SystemStatusAuditLogPage() {
-  // Audit Log is isSysadmin-only; boardMembers reaching this URL directly are bounced.
-  const { loading, ready } = useRequireRole(["isSysadmin"], { redirectTo: "/system-status/health" });
-
-  if (loading) {
-    return (
-      <PageLoader minHeight="40vh" />
-    );
-  }
-  if (!ready) return null;
-
   return <AuditLogPanel />;
 }

@@ -7,7 +7,9 @@
  */
 
 import { GET, PATCH, DELETE } from '@/app/api/facility/visits/route';
+import { POST } from '@/app/api/facility/visits/insert/route';
 import prisma from '@/lib/prisma';
+import { getFullAttendance } from '@/lib/getFullAttendance';
 import { getServerSession } from 'next-auth/next';
 
 // Mock NextAuth
@@ -267,7 +269,7 @@ describe('Admin Visits API Integration Tests', () => {
             expect(res.status).toBe(200);
             const data = await res.json();
             expect(new Date(data.visit.departedAt).toISOString()).toBe(now.toISOString());
-            expect(data.visit.departedVia).toBe('WEB');
+            expect(data.visit.departedVia).toBe('TYPED');
 
             const updatedVisit = await prisma.visit.findUnique({ where: { id: testVisitId } });
             expect(updatedVisit?.departedAt?.toISOString()).toBe(now.toISOString());
@@ -276,6 +278,84 @@ describe('Admin Visits API Integration Tests', () => {
                 where: { actorId: testAdminId, action: 'EDIT', tableName: 'Visit' }
             });
             expect(currentAuditLogs).toBe(previousAuditLogs + 1);
+
+            // Only departedAt moved (from null, closing the visit) — no weighted
+            // shift on either field, so significance is the zero floor.
+            const auditLog = await prisma.auditLog.findFirst({
+                where: { actorId: testAdminId, action: 'EDIT', tableName: 'Visit', affectedEntityId: testVisitId },
+                orderBy: { id: 'desc' },
+            });
+            expect((auditLog?.newData as { significance?: { score: number; flagged: boolean } })?.significance)
+                .toEqual({ score: 0, flagged: false });
+        });
+
+        // Correcting a time replaces where it came from: a corrected badge
+        // arrival becomes a typed clock (arrivedVia TYPED). This edit's own
+        // significance still weighs the pre-edit SCANNER measurement, but the
+        // stored value is now a self-report, so a SECOND correction weighs TYPED.
+        it('restamps arrivedVia to TYPED when the board corrects a scanned arrival', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true }
+            });
+
+            const scanned = await prisma.visit.create({
+                data: {
+                    personId: testUserId,
+                    arrivedAt: new Date(Date.now() - 4 * 3600000),
+                    departedAt: new Date(Date.now() - 2 * 3600000),
+                    arrivedVia: 'SCANNER',
+                    departedVia: 'SCANNER',
+                }
+            });
+
+            const corrected = new Date(Date.now() - 3 * 3600000).toISOString();
+            const req = new Request('http://localhost:4000/api/facility/visits', {
+                method: 'PATCH',
+                body: JSON.stringify({ visitId: scanned.id, arrivedAt: corrected })
+            });
+
+            const res = await PATCH(req as unknown as import("next/server").NextRequest);
+            expect(res.status).toBe(200);
+
+            const stored = await prisma.visit.findUnique({ where: { id: scanned.id } });
+            expect(stored?.arrivedAt.toISOString()).toBe(corrected);
+            expect(stored?.arrivedVia).toBe('TYPED');    // re-timed → now a typed clock
+            expect(stored?.departedVia).toBe('SCANNER'); // not sent — untouched
+        });
+
+        it('leaves an arrival echoed back at minute precision untouched', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true }
+            });
+
+            const arrivedAt = new Date(Date.now() - 4 * 3600000);
+            arrivedAt.setUTCSeconds(45, 0);
+            const scanned = await prisma.visit.create({
+                data: {
+                    personId: testUserId,
+                    arrivedAt,
+                    departedAt: new Date(Date.now() - 2 * 3600000),
+                    arrivedVia: 'SCANNER',
+                    departedVia: 'SCANNER',
+                }
+            });
+
+            const echoed = new Date(arrivedAt);
+            echoed.setUTCSeconds(0, 0);
+            const departed = new Date(Date.now() - 3600000).toISOString();
+            const req = new Request('http://localhost:4000/api/facility/visits', {
+                method: 'PATCH',
+                body: JSON.stringify({ visitId: scanned.id, arrivedAt: echoed.toISOString(), departedAt: departed })
+            });
+
+            const res = await PATCH(req as unknown as import("next/server").NextRequest);
+            expect(res.status).toBe(200);
+
+            const stored = await prisma.visit.findUnique({ where: { id: scanned.id } });
+            expect(stored?.arrivedAt.toISOString()).toBe(arrivedAt.toISOString());
+            expect(stored?.arrivedVia).toBe('SCANNER');
+            expect(stored?.departedAt?.toISOString()).toBe(departed);
+            expect(stored?.departedVia).toBe('TYPED');
         });
     });
 
@@ -338,7 +418,7 @@ describe('Admin Visits API Integration Tests', () => {
             expect(data.error).toBe('Visit not found.');
         });
 
-        it('should delete the visit and log to audit with oldData when an admin requests it', async () => {
+        it('should tombstone the visit and log to audit with oldData when an admin requests it', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
                 user: { id: testAdminId, isSysadmin: true }
             });
@@ -358,14 +438,129 @@ describe('Admin Visits API Integration Tests', () => {
             const data = await res.json();
             expect(data.success).toBe(true);
 
-            const gone = await prisma.visit.findUnique({ where: { id: doomed.id } });
-            expect(gone).toBeNull();
+            // Staff deletes tombstone like member self-deletes: the row survives,
+            // stamped with who erased it.
+            const tombstoned = await prisma.visit.findUnique({ where: { id: doomed.id } });
+            expect(tombstoned?.deletedAt).toBeInstanceOf(Date);
+            expect(tombstoned?.deletedById).toBe(testAdminId);
 
             const auditLog = await prisma.auditLog.findFirst({
                 where: { actorId: testAdminId, action: 'DELETE', tableName: 'Visit', affectedEntityId: doomed.id }
             });
             expect(auditLog).not.toBeNull();
             expect((auditLog?.oldData as { id?: number })?.id).toBe(doomed.id);
+
+            // Resolved (#1630): the visit is still open, so its score is elapsed
+            // time-on-site (~1h, no arrivedVia so weight 1) rather than the old
+            // hardcoded 0 — deleting a live check-in no longer scores lowest.
+            // The admin (testAdminId) isn't the visit's own person (testUserId),
+            // so this delete is byProxy too — the route doubles the weight
+            // (significance.ts PROXY_MULTIPLIER), giving ~120, not ~60.
+            const significance = (auditLog?.newData as { significance?: { score: number; flagged: boolean } })?.significance;
+            expect(significance?.flagged).toBe(true);
+            expect(significance?.score).toBeGreaterThanOrEqual(120);
+            expect(significance?.score).toBeLessThan(130);
+        });
+    });
+
+    // AT3 §3: the walk-in path. Neither the kiosk (live only) nor the event
+    // roster mark (program-scoped, event window) can record a past visit for
+    // someone who was simply never badged in.
+    describe('POST /api/facility/visits — staff insert for others', () => {
+        const post = (body: unknown) => POST(new Request('http://localhost:4000/api/facility/visits/insert', {
+            method: 'POST', body: JSON.stringify(body),
+        }) as unknown as import("next/server").NextRequest);
+
+        const arrived = new Date(Date.now() - 3 * 3600000);
+        const departed = new Date(Date.now() - 2 * 3600000);
+
+        it('403s a non-admin — the role gate is the whole boundary here', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId } });
+            const res = await post({ personId: testUserId, arrivedAt: arrived.toISOString(), departedAt: departed.toISOString() });
+            expect(res.status).toBe(403);
+        });
+
+        it('creates a closed TYPED visit for another person and audits actor + subject', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testAdminId, isSysadmin: true } });
+            const res = await post({ personId: testUserId, arrivedAt: arrived.toISOString(), departedAt: departed.toISOString() });
+
+            expect(res.status).toBe(200);
+            const { visit } = await res.json();
+            const stored = await prisma.visit.findUnique({ where: { id: visit.id } });
+            expect(stored).toMatchObject({ personId: testUserId, arrivedVia: 'TYPED', departedVia: 'TYPED' });
+            expect(stored?.departedAt).toBeInstanceOf(Date);
+
+            const audit = await prisma.auditLog.findFirst({
+                where: { actorId: testAdminId, action: 'CREATE', tableName: 'Visit', affectedEntityId: visit.id },
+            });
+            expect(audit).not.toBeNull();
+            // actor ≠ subject is what marks this as acting-for-another.
+            expect(audit?.secondaryAffectedEntity).toBe(testUserId);
+        });
+
+        it('refuses an open visit — live presence belongs to the kiosk', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testAdminId, isSysadmin: true } });
+            const res = await post({ personId: testUserId, arrivedAt: arrived.toISOString() });
+            expect(res.status).toBe(400);
+        });
+
+        it('rejects a future time, an inverted range, and a >24h span', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testAdminId, isSysadmin: true } });
+            const future = new Date(Date.now() + 3600000).toISOString();
+            expect((await post({ personId: testUserId, arrivedAt: future, departedAt: future })).status).toBe(400);
+            expect((await post({ personId: testUserId, arrivedAt: departed.toISOString(), departedAt: arrived.toISOString() })).status).toBe(400);
+            expect((await post({
+                personId: testUserId,
+                arrivedAt: new Date(Date.now() - 30 * 3600000).toISOString(),
+                departedAt: departed.toISOString(),
+            })).status).toBe(400);
+        });
+
+        it('400s a missing or malformed body rather than 500ing', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testAdminId, isSysadmin: true } });
+            const bodyless = POST(new Request('http://localhost:4000/api/facility/visits/insert', {
+                method: 'POST',
+            }) as unknown as import("next/server").NextRequest);
+            expect((await bodyless).status).toBe(400);
+
+            const malformed = POST(new Request('http://localhost:4000/api/facility/visits/insert', {
+                method: 'POST', headers: { 'content-type': 'application/json' }, body: '{oops',
+            }) as unknown as import("next/server").NextRequest);
+            expect((await malformed).status).toBe(400);
+        });
+
+        it('refreshes the live roster: a keyholder visit covering an arrival clears its no-keyholder mark', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testAdminId, isSysadmin: true } });
+            const kh = await prisma.person.create({
+                data: { email: 'kh-visits-api-test@example.com', name: 'KH Visits Test', isKeyholder: true, household: { create: { name: 'Test HH' } } },
+            });
+            const walkIn = await prisma.person.create({
+                data: { email: 'walkin-visits-api-test@example.com', name: 'Walkin Visits Test', household: { create: { name: 'Test HH' } } },
+            });
+            const arrivedAt = new Date(Date.now() - 3600000);
+            await prisma.visit.create({ data: { personId: walkIn.id, arrivedAt } });
+            try {
+                const row = async () => (await getFullAttendance()).attendance.find(v => v.participant.id === walkIn.id);
+                expect((await row())?.noKeyholder).toBe(true);
+
+                const res = await post({
+                    personId: kh.id,
+                    arrivedAt: new Date(arrivedAt.getTime() - 5 * 60000).toISOString(),
+                    departedAt: new Date(arrivedAt.getTime() + 30 * 60000).toISOString(),
+                });
+                expect(res.status).toBe(200);
+                expect((await row())?.noKeyholder).toBe(false);
+            } finally {
+                await prisma.visit.deleteMany({ where: { personId: { in: [kh.id, walkIn.id] } } });
+                await prisma.auditLog.deleteMany({ where: { secondaryAffectedEntity: kh.id } });
+                await prisma.person.deleteMany({ where: { id: { in: [kh.id, walkIn.id] } } });
+            }
+        });
+
+        it('404s an unknown person instead of creating an orphan visit', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testAdminId, isSysadmin: true } });
+            const res = await post({ personId: 999999999, arrivedAt: arrived.toISOString(), departedAt: departed.toISOString() });
+            expect(res.status).toBe(404);
         });
     });
 });

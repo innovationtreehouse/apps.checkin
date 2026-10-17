@@ -52,10 +52,35 @@ describe('sendNotification return contract', () => {
         await expect(sendNotification(1, 'CHECKIN', {})).resolves.toBe(true);
         expect(mockSendEmail).not.toHaveBeenCalled();
     });
+
+    it('PROGRAM_ASSIGNMENT sends the welcome email with a manage link, not the generic "System Action" copy (#1220)', async () => {
+        mockFindUnique.mockResolvedValue({ email: 'lead@b.com', name: 'Lead', notificationSettings: {} });
+        mockSendEmail.mockResolvedValue(true);
+
+        await sendNotification(7, 'PROGRAM_ASSIGNMENT', { programName: 'FLL Team A', programId: 42 });
+
+        expect(mockSendEmail).toHaveBeenCalledTimes(1);
+        const [to, subject, html] = mockSendEmail.mock.calls[0];
+        expect(to).toBe('lead@b.com');
+        expect(subject).toBe('Your Innovation Treehouse Program has been Created!');
+        expect(html).not.toContain('System Action');
+        expect(html).toContain('FLL Team A');
+        expect(html).toContain('/program-ops/programs/42');
+        expect(html).toContain('href=');
+    });
 });
 
 describe('notifyNewProgramAnnounced opt-in filtering', () => {
-    beforeEach(() => jest.clearAllMocks());
+    // clearAllMocks() wipes call data but NOT implementations, so the
+    // mockRejectedValue('boom') set in the sendNotification describe above would
+    // leak in and make these sends reject — recording the calls these tests
+    // assert on while incidentally logging "Failed to send new-program
+    // notifications:". Reset sendEmail to succeed: these tests exercise the
+    // recipient-filtering logic, not the send failure path.
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockSendEmail.mockResolvedValue(true);
+    });
 
     const program = { name: 'Robotics', startAt: null, endAt: new Date('2026-12-01') };
 

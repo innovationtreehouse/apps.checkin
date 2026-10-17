@@ -55,13 +55,13 @@ beforeEach(() => {
 });
 
 describe("SystemStatusLayout role gate", () => {
-  it("admits a board member but hides the sysadmin-only Audit Log tab", () => {
+  it("admits a board member to every tab, Audit Log included", () => {
     renderLayout("/system-status/health", {
       data: { user: { id: 1, isBoardMember: true } },
       status: "authenticated",
     });
     expect(screen.getByText(CHILD)).toBeInTheDocument();
-    expect(screen.queryByText("Audit Log")).not.toBeInTheDocument();
+    expect(screen.getByText("Audit Log")).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });
 
@@ -85,6 +85,36 @@ describe("SystemStatusLayout role gate", () => {
 
   it("redirects unauthenticated callers", () => {
     renderLayout("/system-status/health", { data: null, status: "unauthenticated" });
+    expect(push).toHaveBeenCalledWith("/");
+  });
+
+  it("admits a keyholder on unsynced-scans and hides every other tab", () => {
+    renderLayout("/system-status/unsynced-scans", {
+      data: { user: { id: 4, isKeyholder: true } },
+      status: "authenticated",
+    });
+    expect(screen.getByText(CHILD)).toBeInTheDocument();
+    expect(screen.getByText("Unsynced Scans")).toBeInTheDocument();
+    expect(screen.queryByText("Errors")).not.toBeInTheDocument();
+    expect(screen.queryByText("Audit Log")).not.toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("redirects a keyholder off the other System Status tabs", () => {
+    renderLayout("/system-status/health", {
+      data: { user: { id: 4, isKeyholder: true } },
+      status: "authenticated",
+    });
+    expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
+    expect(push).toHaveBeenCalledWith("/");
+  });
+
+  it("does not admit operations on unsynced-scans (#1633)", () => {
+    renderLayout("/system-status/unsynced-scans", {
+      data: { user: { id: 5, isOperations: true } },
+      status: "authenticated",
+    });
+    expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
     expect(push).toHaveBeenCalledWith("/");
   });
 });

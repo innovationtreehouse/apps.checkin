@@ -1,3 +1,4 @@
+import type { AgeBand } from "@/lib/programAge";
 import "next-auth";
 import "next-auth/jwt";
 
@@ -15,8 +16,15 @@ declare module "next-auth" {
       isBoardMember?: boolean;
       isBackgroundCheckReviewer?: boolean;
       isOperations?: boolean;
+      isInventoryManager?: boolean;
+      isFinance?: boolean;
       householdId?: number | null;
       householdLead?: boolean;
+      // adult / youth / unknown — the derived band only, never the date
+      // (dateOfBirth is @sensitivity:personal). Gates the youth surfaces in
+      // docs/rules/programs.md ("What a youth sees of money"); the routes are
+      // the boundary.
+      ageBand?: AgeBand;
       // Program ids this user is the lead mentor of. Client-side row gate only
       // (the API is the real boundary); mirrors access-resolvers' programsLed.
       programsLed?: number[];
@@ -30,6 +38,12 @@ declare module "next-auth" {
       // ops-stg access gate escape hatch — sysadmin-settable, NOT one of the
       // five PersonRole flags above. See lib/config.ts isStagingAccessAllowed.
       canAccessStaging?: boolean;
+      // Treehouse Volunteer inputs (lib/volunteer.ts): on a program's volunteer
+      // list, in a Volunteer Family household, and whether that household's
+      // membership is ACTIVE. All forced false on DENIED.
+      isProgramVolunteer?: boolean;
+      isVolunteerFamily?: boolean;
+      isActiveOrgMember?: boolean;
     };
   }
 
@@ -40,11 +54,15 @@ declare module "next-auth" {
     isBoardMember?: boolean;
     isBackgroundCheckReviewer?: boolean;
     isOperations?: boolean;
+    isInventoryManager?: boolean;
+    isFinance?: boolean;
     householdId?: number | null;
     householdLead?: boolean;
     toolStatuses?: { toolId: number; level: string }[];
     // Set by the persona-mint provider; carried into the JWT by the jwt callback.
     impersonatedBy?: string | null;
+    // Set by the persona-mint provider: the caller's sign-in time, carried onto the minted token.
+    signedInAt?: number | null;
   }
 }
 
@@ -58,16 +76,26 @@ declare module "next-auth/jwt" {
     emailVerified?: boolean;
     // Inert impersonation provenance — display/audit only, never read by authz.
     impersonatedBy?: string | null;
+    // Epoch seconds of the sign-in that minted this session; bounds its absolute lifetime.
+    signedInAt?: number;
     isSysadmin?: boolean;
     isKeyholder?: boolean;
     isBoardMember?: boolean;
     isBackgroundCheckReviewer?: boolean;
     isOperations?: boolean;
+    isInventoryManager?: boolean;
+    isFinance?: boolean;
     householdId?: number | null;
     householdLead?: boolean;
+    // See Session.user.ageBand above — derived band, never the DOB.
+    ageBand?: AgeBand;
     programsLed?: number[];
     toolStatuses?: { toolId: number; level: string }[];
     // ops-stg access gate escape hatch — see Session.user.canAccessStaging above.
     canAccessStaging?: boolean;
+    // See Session.user.isProgramVolunteer above (Treehouse Volunteer inputs).
+    isProgramVolunteer?: boolean;
+    isVolunteerFamily?: boolean;
+    isActiveOrgMember?: boolean;
   }
 }

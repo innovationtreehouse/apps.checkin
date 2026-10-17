@@ -11,6 +11,9 @@
  */
 import { z } from "zod";
 
+/** The production Shopify store. Test fixtures must never be injected against it. */
+export const PROD_STORE_DOMAIN = "9jhydb-ka.myshopify.com";
+
 const dbSchema = z.object({
   SHOPIFY_READ_DATABASE_URL: z.string().min(1, "SHOPIFY_READ_DATABASE_URL is required"),
   STORE_ID: z.string().min(1).optional(),

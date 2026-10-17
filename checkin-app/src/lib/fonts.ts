@@ -1,30 +1,36 @@
 /**
  * Font loading for the Innovation Treehouse brand (Next.js App Router).
- *   Fredoka    → headings / brand wordmark (Google Fonts, SIL OFL)
- *   Nunito     → body / UI text
- *   Space Mono → IDs, codes, mono accents
+ *   Fredoka    → headings / brand wordmark (SIL OFL)
+ *   Nunito     → body / UI text (SIL OFL)
+ *   Space Mono → IDs, codes, mono accents (SIL OFL)
  *
- * All three load from next/font/google; put `fontVariables` on <html> (see layout.tsx).
+ * Vendored under ./fonts/ and served via next/font/local: a build must never
+ * depend on fonts.gstatic.com being up or Google keeping old file URLs alive
+ * (they 404'd the pinned Fredoka files and broke the v1.1.2 prod build).
+ * Latin subset only, matching the previous next/font/google config.
+ * Put `fontVariables` on <html> (see layout.tsx).
  */
-import { Fredoka, Nunito, Space_Mono } from 'next/font/google';
+import localFont from 'next/font/local';
 
-export const fredoka = Fredoka({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
+export const fredoka = localFont({
+  src: './fonts/fredoka-latin-var.woff2',
+  weight: '300 700',
   variable: '--font-fredoka',
   display: 'swap',
 });
 
-export const nunito = Nunito({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700', '800'],
+export const nunito = localFont({
+  src: './fonts/nunito-latin-var.woff2',
+  weight: '200 1000',
   variable: '--font-nunito',
   display: 'swap',
 });
 
-export const spaceMono = Space_Mono({
-  subsets: ['latin'],
-  weight: ['400', '700'],
+export const spaceMono = localFont({
+  src: [
+    { path: './fonts/space-mono-latin-400.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/space-mono-latin-700.woff2', weight: '700', style: 'normal' },
+  ],
   variable: '--font-space-mono',
   display: 'swap',
 });

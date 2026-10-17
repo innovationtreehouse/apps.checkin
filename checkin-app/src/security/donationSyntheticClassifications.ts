@@ -1,0 +1,142 @@
+/**
+ * Non-Prisma response models the bulk-donation library ships through handler()
+ * (the catalogSyntheticClassifications.ts pattern).
+ *
+ * DonationNavCounts — the Finance tab badges: two scalar queue sizes, `public`
+ * like every count model (no actor, no donor, no amount).
+ *
+ * DonationQbCandidateView — one QuickBooks entry offered to finance as a match
+ * for a disbursement. id/type/date/amountCents are financial plumbing (`internal`);
+ * `memo` is hand-entered QuickBooks free text that may name a donor, so `pii`.
+ *
+ * InKindQueueItemView — one in-kind gift in the finance queue, from either source
+ * (`receipt` or `manual`): waiting on its donor, waiting to be accepted, or
+ * withdrawn after its money arrived. It carries what the accept screen shows:
+ * receipt and join timestamps, the bucket, the value and its lines, the uploader
+ * and recorder, when the donor was replaced, the four accept warnings and the
+ * caller's conflict state, plus the gift's queue state and what it waits on, its
+ * outcome and decision time, a replay conflict, a bucket hold, each booking
+ * side's state and when finance settled a withdrawal, all as `internal` facts.
+ * It carries no donor field, so a donor name on the row is stripped from every
+ * view.
+ *
+ * InKindQueueLineView — one line of a queued gift: the item and its description,
+ * its quantity, the value finance set and the value ops suggested, all `internal`.
+ *
+ * InKindDecisionView — the reply to accepting, refusing or returning a gift:
+ * which gift, the outcome, who decided and when, the bucket and the total value,
+ * all `internal`. It names the decider by id and carries no donor.
+ *
+ * InKindBucketGiftView — one in-kind gift in a bucket the caller approves: what
+ * was given, its value and date, all `internal`. It carries no donor field, so
+ * a donor name on the row is stripped from every view, finance's included.
+ *
+ * InKindBucketGiftLineView — one line of that gift: item and its description,
+ * quantity and value, all `internal`.
+ *
+ * InKindSettleResult — the reply to finance settling a receipt gift's anomaly (a
+ * withdrawal or a replay conflict): which gift, which kind, and when, all
+ * `internal`. Settling a withdrawal clears the donor, so the reply carries none.
+ *
+ * ManualInKindRecordResult — the reply to recording a no-receipt in-kind
+ * donation: its id and whether its goods loaded into inventory, both `internal`.
+ *
+ * Hand-authored, not generated: these describe API responses, not tables. This
+ * is a security-boundary artifact — changes ship in a boundary PR.
+ */
+export const classifications = {
+  DonationNavCounts: {
+    unassignedQueue: "public",
+    disbursementHolds: "public",
+  },
+  DonationQbCandidateView: {
+    id: "internal",
+    type: "internal",
+    date: "internal",
+    amountCents: "internal",
+    memo: "pii",
+  },
+  InKindQueueItemView: {
+    id: "internal",
+    receiptId: "internal",
+    receiptTotalCents: "internal",
+    receiptDate: "internal",
+    moneyReceivedAt: "internal",
+    donorRecordedAt: "internal",
+    withdrawnAfterMoneyAt: "internal",
+    source: "internal",
+    budgetOwnerId: "internal",
+    budgetOwnerName: "internal",
+    bucketAssignedAt: "internal",
+    totalValueCents: "internal",
+    uploadedByUserId: "internal",
+    recordedByUserId: "internal",
+    donorReplacedAt: "internal",
+    warnDonorSurnameMatch: "internal",
+    warnDonorIsRecorder: "internal",
+    warnLargeValue: "internal",
+    warnDonorReplaced: "internal",
+    callerConflicted: "internal",
+    allFinanceConflicted: "internal",
+    state: "internal",
+    waitingOn: "internal",
+    outcome: "internal",
+    decidedAt: "internal",
+    replayConflictAt: "internal",
+    bucketHeld: "internal",
+    revenueBooking: "internal",
+    expenseBooking: "internal",
+    withdrawalSettledAt: "internal",
+    donationDate: "internal",
+  },
+  InKindQueueLineView: {
+    id: "internal",
+    gtin13: "internal",
+    description: "internal",
+    quantity: "internal",
+    valueCents: "internal",
+    suggestedValueCents: "internal",
+  },
+  InKindDecisionView: {
+    id: "internal",
+    source: "internal",
+    giftId: "internal",
+    outcome: "internal",
+    decidedByUserId: "internal",
+    decidedAt: "internal",
+    budgetOwnerId: "internal",
+    totalValueCents: "internal",
+  },
+  InKindBucketGiftView: {
+    id: "internal",
+    source: "internal",
+    budgetOwnerId: "internal",
+    donationDate: "internal",
+    totalValueCents: "internal",
+  },
+  InKindBucketGiftLineView: {
+    id: "internal",
+    gtin13: "internal",
+    description: "internal",
+    quantity: "internal",
+    valueCents: "internal",
+  },
+  InKindSettleResult: {
+    id: "internal",
+    kind: "internal",
+    settledAt: "internal",
+  },
+  ManualInKindRecordResult: {
+    id: "internal",
+    inventoryLoaded: "internal",
+  },
+} as const;
+
+export const relations = {
+  InKindQueueItemView: {
+    lines: { model: "InKindQueueLineView", isList: true },
+  },
+  InKindBucketGiftView: {
+    lines: { model: "InKindBucketGiftLineView", isList: true },
+  },
+} as const;

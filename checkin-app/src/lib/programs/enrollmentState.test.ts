@@ -15,11 +15,12 @@ import {
 } from './enrollmentState';
 import { assertEnumParity, reachability, type Expect, type Equal } from '@/lib/lifecycle';
 
-const LOCAL_STATUSES = ['PENDING', 'ACTIVE'] as const;
+const LOCAL_STATUSES = ['PENDING', 'ACTIVE', 'WITHDRAWN'] as const;
+type Status = (typeof LOCAL_STATUSES)[number];
 
 // A DB-shaped row: nullable timestamps as Date|null, req as a real boolean.
 type DbRow = {
-    status: 'PENDING' | 'ACTIVE';
+    status: Status;
     inventoryHeldAt: Date | null;
     isPaymentPlanRequested: boolean;
     paymentPlanDeniedAt: boolean; // presence, kept boolean for matrix brevity
@@ -27,10 +28,10 @@ type DbRow = {
 
 const D = new Date('2026-01-01T00:00:00Z');
 
-function db(status: 'PENDING' | 'ACTIVE', held: boolean, req: boolean, den: boolean): DbRow {
+function db(status: Status, held: boolean, req: boolean, den: boolean): DbRow {
     return { status, inventoryHeldAt: held ? D : null, isPaymentPlanRequested: req, paymentPlanDeniedAt: den };
 }
-function row(status: 'PENDING' | 'ACTIVE', held: boolean, req: boolean, den: boolean): EnrollmentRow {
+function row(status: Status, held: boolean, req: boolean, den: boolean): EnrollmentRow {
     return { status, inventoryHeldAt: held, isPaymentPlanRequested: req, paymentPlanDeniedAt: den };
 }
 
@@ -66,6 +67,7 @@ describe('classify — the legal states (§3 table)', () => {
         expect(classify(row('PENDING', true, true, false))).toBe('PENDING_HELD');
         expect(classify(row('PENDING', true, false, true))).toBe('PENDING_HELD_DENIED');
         expect(classify(row('ACTIVE', false, false, false))).toBe('ACTIVE');
+        expect(classify(row('WITHDRAWN', false, false, false))).toBe('WITHDRAWN');
     });
 
     test('the two held=null PENDING states classify APART on req', () => {
@@ -82,6 +84,7 @@ describe('classify — the legal states (§3 table)', () => {
 
     test('off-diagram tuples classify to null', () => {
         expect(classify(row('ACTIVE', true, false, false))).toBeNull(); // I1: held on ACTIVE
+        expect(classify(row('WITHDRAWN', true, false, false))).toBeNull(); // I2: held on WITHDRAWN
         expect(classify(row('PENDING', false, false, true))).toBeNull(); // I4: den on held=null (unpaid)
         expect(classify(row('PENDING', false, true, true))).toBeNull(); // I4: den on held=null (hold-failed)
         expect(classify(row('PENDING', true, false, false))).toBeNull(); // I3: held, neither awaiting nor denied
@@ -209,7 +212,7 @@ describe('enum parity', () => {
     });
 
     test('compile-time parity holds', () => {
-        type _P = Expect<Equal<'PENDING' | 'ACTIVE', ProgramParticipantStatus>>;
+        type _P = Expect<Equal<Status, ProgramParticipantStatus>>;
         const ok: _P = true;
         expect(ok).toBe(true);
     });

@@ -14,7 +14,7 @@ beforeEach(() => resetRtl());
 const mentor = { id: 7, name: "Mona Mentor", email: "mona@example.com" };
 
 async function pickMentor() {
-  fireEvent.change(screen.getByPlaceholderText("Search by name or email..."), { target: { value: "Mona" } });
+  fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "Mona" } });
   fireEvent.click(await screen.findByText("Mona Mentor", { exact: false }));
 }
 
@@ -60,8 +60,8 @@ describe("CreateProgramPage", () => {
     renderWithProviders(<CreateProgramPage />);
     await screen.findByLabelText("Program Name", { exact: false });
 
-    fireEvent.change(screen.getByLabelText("Start Date"), { target: { value: "2026-06-10" } });
-    fireEvent.change(screen.getByLabelText("End Date"), { target: { value: "2026-06-01" } });
+    fireEvent.change(screen.getByLabelText("Start Date", { exact: false }), { target: { value: "2026-06-10" } });
+    fireEvent.change(screen.getByLabelText("End Date", { exact: false }), { target: { value: "2026-06-01" } });
 
     expect(screen.getByText("End date must be on or after start date.")).toBeInTheDocument();
   });
@@ -90,6 +90,8 @@ describe("CreateProgramPage", () => {
 
     fireEvent.change(nameInput, { target: { value: "FRC Robotics 2026" } });
     await pickMentor();
+    fireEvent.change(screen.getByLabelText("Start Date", { exact: false }), { target: { value: "2026-01-01" } });
+    fireEvent.change(screen.getByLabelText("End Date", { exact: false }), { target: { value: "2026-12-31" } });
     expect(screen.getByRole("button", { name: "Create Program" })).toBeEnabled();
 
     fireEvent.change(maxInput, { target: { value: "" } });
@@ -115,7 +117,7 @@ describe("CreateProgramPage", () => {
     renderWithProviders(<CreateProgramPage />);
     await screen.findByLabelText("Program Name", { exact: false });
 
-    fireEvent.change(screen.getByPlaceholderText("Search by name or email..."), { target: { value: "nobody" } });
+    fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "nobody" } });
     // 404 (unmatched route) -> `if (!res.ok) return [];` branch; no dropdown/Clear button appears.
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(screen.queryByRole("button", { name: "Clear" })).not.toBeInTheDocument();
@@ -132,6 +134,8 @@ describe("CreateProgramPage", () => {
     fireEvent.change(nameInput, { target: { value: "FRC Robotics 2026" } });
     await pickMentor();
 
+    fireEvent.change(screen.getByLabelText("Start Date", { exact: false }), { target: { value: "2026-01-15" } });
+    fireEvent.change(screen.getByLabelText("End Date", { exact: false }), { target: { value: "2026-06-15" } });
     fireEvent.change(screen.getByLabelText("Min Age (Optional)"), { target: { value: "10" } });
     fireEvent.change(screen.getByLabelText("Max Age (Optional)"), { target: { value: "18" } });
     fireEvent.click(screen.getByLabelText("Treehouse Members-Only Program"));
@@ -147,9 +151,10 @@ describe("CreateProgramPage", () => {
           method: "POST",
           body: JSON.stringify({
             name: "FRC Robotics 2026",
-            startAt: null,
-            endAt: null,
+            startAt: "2026-01-15",
+            endAt: "2026-06-15",
             orgMemberOnly: true,
+            publiclyVisible: false,
             minAge: 10,
             maxAge: 18,
             memberPrice: null,
@@ -161,6 +166,36 @@ describe("CreateProgramPage", () => {
       ),
     );
     expect(router.push).toHaveBeenCalledWith("/program-ops/programs/42");
+  });
+
+  it("reveals 'Show to non-members' only for a members-only program and sends publiclyVisible", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({
+      "/api/people/search": { people: [mentor] },
+      "/api/programs": { program: { id: 42 } },
+    });
+    renderWithProviders(<CreateProgramPage />);
+    const nameInput = await screen.findByLabelText("Program Name", { exact: false });
+    fireEvent.change(nameInput, { target: { value: "FRC Robotics 2026" } });
+    await pickMentor();
+    fireEvent.change(screen.getByLabelText("Start Date", { exact: false }), { target: { value: "2026-01-15" } });
+    fireEvent.change(screen.getByLabelText("End Date", { exact: false }), { target: { value: "2026-06-15" } });
+
+    // Hidden until the program is members-only.
+    expect(screen.queryByLabelText("Show to non-members")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Treehouse Members-Only Program"));
+    fireEvent.click(screen.getByLabelText("Show to non-members"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Program" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/programs",
+        expect.objectContaining({
+          body: expect.stringContaining('"publiclyVisible":true'),
+        }),
+      ),
+    );
   });
 
   it("shows a server error message when creation fails", async () => {
@@ -181,6 +216,8 @@ describe("CreateProgramPage", () => {
     const nameInput = await screen.findByLabelText("Program Name", { exact: false });
     fireEvent.change(nameInput, { target: { value: "FRC Robotics 2026" } });
     await pickMentor();
+    fireEvent.change(screen.getByLabelText("Start Date", { exact: false }), { target: { value: "2026-01-01" } });
+    fireEvent.change(screen.getByLabelText("End Date", { exact: false }), { target: { value: "2026-12-31" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Create Program" }));
 
@@ -195,6 +232,8 @@ describe("CreateProgramPage", () => {
     const nameInput = await screen.findByLabelText("Program Name", { exact: false });
     fireEvent.change(nameInput, { target: { value: "FRC Robotics 2026" } });
     await pickMentor();
+    fireEvent.change(screen.getByLabelText("Start Date", { exact: false }), { target: { value: "2026-01-01" } });
+    fireEvent.change(screen.getByLabelText("End Date", { exact: false }), { target: { value: "2026-12-31" } });
 
     global.fetch = jest.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();

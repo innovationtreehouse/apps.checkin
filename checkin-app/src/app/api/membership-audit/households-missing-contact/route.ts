@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { findHouseholdsMissingValidContact } from "@/lib/emergencyContacts/service";
+import { LIVE_PERSON } from "@/lib/person/filters";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async ()
         where: { id: { in: ids } },
         include: {
             householdMembers: {
-                where: { isHouseholdLead: true },
+                where: { isHouseholdLead: true, ...LIVE_PERSON },
                 select: { id: true, name: true, phone: true, email: true },
             },
         },

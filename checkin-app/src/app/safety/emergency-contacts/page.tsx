@@ -7,6 +7,8 @@ import { useRequireRole } from "@/hooks/useRequireRole";
 import { formatPhone } from "@/lib/phone";
 
 import { PageLoader } from "@/components/ui/PageLoader";
+import { householdQueryMatcher, personQueryMatcher } from "@/lib/searchId";
+
 type ParticipantInfo = {
   id: number;
   name: string | null;
@@ -47,10 +49,11 @@ export default function EmergencyContactsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [error, setError] = useState("");
+  // Without a recent kiosk heartbeat an open visit is a record, not presence.
+  const [presenceConfirmed, setPresenceConfirmed] = useState(false);
 
-  const fetchContacts = useCallback(async () => {
-    try {
-      const res = await fetch('/api/safety/emergency-contacts');
+  const fetchContacts = useCallback(() => fetch('/api/safety/emergency-contacts')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
 
@@ -62,29 +65,33 @@ export default function EmergencyContactsPage() {
         });
 
         setHouseholds(sorted);
+        setPresenceConfirmed(data.building?.reachable === true);
       } else {
         setError("Failed to load emergency contacts. Ensure you have the proper authorizations.");
       }
-    } catch (e) {
-      console.error(e);
+    })
+    .catch((e) => {
+      console.error("Failed to load emergency contacts:", e);
       notifications.show({ color: "red", message: "Network error loading contacts.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchContacts();
   }, [ready, fetchContacts]);
 
-  // Derived state for searching
-  const filteredHouseholds = households.filter((h) => {
-    const query = searchQuery.toLowerCase();
-    if (h.name && h.name.toLowerCase().includes(query)) return true;
-    if (h.leads.some(l => l.name && l.name.toLowerCase().includes(query))) return true;
-    if (h.householdMembers.some(p => p.name && p.name.toLowerCase().includes(query))) return true;
-    return false;
-  });
+  // Derived state for searching. Leads match on name and id but not email — this
+  // page has never searched contact addresses.
+  const matchesHousehold = householdQueryMatcher(searchQuery);
+  const matchesPerson = personQueryMatcher(searchQuery);
+  const filteredHouseholds = households.filter((h) =>
+    matchesHousehold(h)
+    || h.leads.some((l) => matchesPerson({ id: l.id, name: l.name }))
+    || h.householdMembers.some(matchesPerson)
+  );
 
   if (authLoading || loading) {
     return <PageLoader />;
@@ -110,7 +117,7 @@ export default function EmergencyContactsPage() {
         <TextInput
           mt="md"
           size="md"
-          placeholder="Search by Household Name, Parent Name, or Household Member Name..."
+          placeholder="Search by Household Name, Parent Name, Member Name, or ID..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.currentTarget.value)}
         />
@@ -130,7 +137,9 @@ export default function EmergencyContactsPage() {
               <div>
                 <Group gap="xs" mb="xs">
                   <Text fw={600} fz="lg">{h.name || `Household #${h.id}`}</Text>
-                  {h.isPresent && <Badge color="cyan" variant="light">Present Now</Badge>}
+                  {h.isPresent && (presenceConfirmed
+                    ? <Badge color="cyan" variant="light">Present Now</Badge>
+                    : <Badge color="gray" variant="light" title="The kiosk hasn't been heard from recently, so presence can't be confirmed">Checked in (unconfirmed)</Badge>)}
                 </Group>
                 <Text size="sm" c="dimmed">Household members:</Text>
                 {h.householdMembers.length > 0 ? (

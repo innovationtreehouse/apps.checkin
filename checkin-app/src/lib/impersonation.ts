@@ -1,7 +1,7 @@
 import { ORG_DOMAIN, type CheckinEnv } from './config';
 
 /**
- * Impersonation = mint the session AS the persona (see DEV_INSTANCE_DESIGN.md §5).
+ * Impersonation = mint the session AS the persona (docs/ops/dev-instance.md, "Impersonation").
  *
  * This module holds the pure policy that decides whether a persona-mint is allowed and what
  * provenance to stamp on the resulting session. It reads no I/O so it can be unit-tested

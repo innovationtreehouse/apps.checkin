@@ -23,7 +23,7 @@ Verified against the tree; each is greppable:
 - **#10 API response consistency** → `apiSuccess`/`apiError`/`apiJson` in
   `src/lib/api-response.ts`.
 - **#16 Env/config management** → `src/lib/config.ts` (typed `config.*`,
-  server-only `CHECKIN_ENV`; see `DEV_INSTANCE_DESIGN.md`).
+  server-only `CHECKIN_ENV`; see `docs/ops/dev-instance.md`).
 - **#11 Debug artifacts removed** → the `fs.writeFileSync` and the `/api/scan`
   `console.log` spew are gone.
 - **#7 `/api/scan` refactor** → `src/lib/scan-service.ts` (`processCheckin`,

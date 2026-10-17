@@ -2,7 +2,6 @@
 
 import React, { useMemo } from 'react';
 import { Document, Page, Text, View, StyleSheet, Image, Font } from '@react-pdf/renderer';
-import { computeDisplayNames, membershipYearLabel } from './badgeNames';
 
 // Font registration for a modern sans-serif look
 Font.register({
@@ -35,7 +34,6 @@ const styles = StyleSheet.create({
     badge: {
         width: '3.5in',
         height: '2.25in',
-        border: '1px dashed #cccccc', // Faint dashed line to help with cutting if not using perforated sheets
         padding: '0.2in',
         display: 'flex',
         flexDirection: 'column',
@@ -45,9 +43,11 @@ const styles = StyleSheet.create({
     badgeBack: {
         width: '3.5in',
         height: '2.25in',
-        border: '1px dashed #cccccc',
         display: 'flex',
         flexDirection: 'column',
+        // The clip covers the top third of the badge back, so pad past 0.75in of the
+        // 2.25in height and centre the QR in the clip-free bottom two thirds.
+        paddingTop: '0.75in',
         justifyContent: 'center',
         alignItems: 'center',
         position: 'relative'
@@ -74,31 +74,14 @@ const styles = StyleSheet.create({
         fontSize: 22,
         textAlign: 'center',
     },
-    roleContainer: {
-        flexDirection: 'row',
-        justifyContent: 'center',
-        alignItems: 'center',
-        gap: 6,
-        marginTop: 10,
-    },
-    rolePill: {
-        backgroundColor: '#4ade80', // green
-        paddingVertical: 4,
-        paddingHorizontal: 8,
-        borderRadius: 4,
-    },
-    roleText: {
-        fontFamily: 'Roboto-Bold',
-        fontSize: 10,
-        color: '#fff',
-    },
     logo: {
         width: 150,
         height: 71, // source 1198x568 ≈ 2.11:1
     },
     qrCode: {
-        width: 100,
-        height: 100,
+        // Sized with the id caption to fit the 1.5in (108pt) clip-free strip.
+        width: 80,
+        height: 80,
     },
     qrIdText: {
         fontFamily: 'Roboto',
@@ -110,17 +93,16 @@ const styles = StyleSheet.create({
 
 interface ParticipantBadge {
     id: number;
-    name: string;
-    isMember: boolean;
-    isBoardMember: boolean;
-    isKeyholder: boolean;
+    // Already resolved by the page against the ACTIVE roster. Computing it here would
+    // make it a function of the current print batch, which is the #1625 bug.
+    displayName: string;
+    // The membership year, per badge — null for a household that has not settled this
+    // renewal cycle, which prints no year at all rather than an unearned one.
+    year: string | null;
     qrDataUri: string;
 }
 
 export default function BadgeDocument({ badges }: { badges: ParticipantBadge[] }) {
-    const displayNames = useMemo(() => computeDisplayNames(badges), [badges]);
-    const yearLabel = useMemo(() => membershipYearLabel(new Date()), []);
-
     // We chunk the badges into arrays of 8, because Avery 5390 takes 8 per page
     const chunkedBadges: ParticipantBadge[][] = useMemo(() => {
         const chunks = [];
@@ -167,24 +149,11 @@ export default function BadgeDocument({ badges }: { badges: ParticipantBadge[] }
                                     <View style={styles.headerRow}>
                                         {/* eslint-disable-next-line jsx-a11y/alt-text */}
                                         <Image src={TREEHOUSE_LOGO_URL} style={styles.logo} />
-                                        <Text style={styles.yearText}>{yearLabel}</Text>
+                                        {badge.year ? <Text style={styles.yearText}>{badge.year}</Text> : null}
                                     </View>
 
                                     <View style={styles.nameContainer}>
-                                        <Text style={styles.nameText}>{displayNames.get(badge.id) || `User #${badge.id}`}</Text>
-                                    </View>
-
-                                    <View style={styles.roleContainer}>
-                                        {badge.isBoardMember && (
-                                            <View style={{ ...styles.rolePill, backgroundColor: '#3b82f6' }}>
-                                                <Text style={styles.roleText}>BOARD</Text>
-                                            </View>
-                                        )}
-                                        {badge.isKeyholder && (
-                                            <View style={{ ...styles.rolePill, backgroundColor: '#f59e0b' }}>
-                                                <Text style={styles.roleText}>KEYHOLDER</Text>
-                                            </View>
-                                        )}
+                                        <Text style={styles.nameText}>{badge.displayName}</Text>
                                     </View>
                                 </View>
                             ))}

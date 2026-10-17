@@ -36,6 +36,7 @@ function ctx(opts: Partial<CallerContext> = {}): CallerContext {
         householdIdsInScopePrograms: new Set(),
         eventIdsInScopePrograms: new Set(),
         activeVisitorIds: new Set(),
+        ledHouseholdMemberIds: new Set(),
         ...opts,
     };
 }

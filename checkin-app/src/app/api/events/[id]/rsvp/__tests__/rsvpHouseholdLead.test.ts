@@ -58,6 +58,31 @@ it('forbids a non-lead from RSVPing for someone else', async () => {
     expect(mockRsvpUpsert).not.toHaveBeenCalled();
 });
 
+it("lets a program's lead mentor RSVP to that program's event", async () => {
+    (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 7 } });
+    // Neither enrolled nor a listed volunteer — the lead-mentor tie is the only one.
+    mockEventFindUnique.mockResolvedValue({
+        id: 5, programId: 3, endAt: new Date(Date.now() + 3600_000), program: { id: 3, leadMentorId: 7 },
+    });
+
+    const res = await PATCH(body({ status: 'ATTENDING' }), { params });
+
+    expect(res.status).toBe(200);
+    expect(mockRsvpUpsert.mock.calls[0][0].create.personId).toBe(7);
+});
+
+it('forbids RSVPing to a program event with no tie to the program', async () => {
+    (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 7 } });
+    mockEventFindUnique.mockResolvedValue({
+        id: 5, programId: 3, endAt: new Date(Date.now() + 3600_000), program: { id: 3, leadMentorId: 99 },
+    });
+
+    const res = await PATCH(body({ status: 'ATTENDING' }), { params });
+
+    expect(res.status).toBe(403);
+    expect(mockRsvpUpsert).not.toHaveBeenCalled();
+});
+
 it('forbids a lead from RSVPing for someone outside their household', async () => {
     (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 1, householdId: 10, householdLead: true } });
     mockParticipantFindMany.mockResolvedValue([{ id: 1, name: 'Lead' }, { id: 2, name: 'Kid' }]);

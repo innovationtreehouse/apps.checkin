@@ -56,9 +56,16 @@ import { Pool } from "pg";
 import { loginAs, api } from "./helpers";
 
 type State = { process: { id: number; status: string } | null; membershipStatus: string | null };
+// The reviewer queue, narrowed to what this test needs: the household leads a
+// reviewer picks from when naming whose background check they reviewed.
+type ReviewQueue = {
+    queue: { id: number; orgMembership: { household: { householdMembers: { id: number }[] } | null } | null }[];
+};
 
-// payment.ts › sendCongrats — the one and only activation email. Kept in sync by hand;
-// if the copy changes, this literal must change with it (that's the point — it pins the send).
+// payment.ts › sendCongrats — the one and only activation email, in its INITIAL
+// wording (this journey activates a brand-new membership; a RENEWAL is thanked for
+// renewing instead). Kept in sync by hand; if the copy changes, this literal must
+// change with it (that's the point — it pins the send).
 const CONGRATS_SUBJECT = "Welcome to the Treehouse — your membership is active!";
 const APPLICANT_EMAIL = "parent.family@example.com";
 
@@ -145,11 +152,25 @@ describe("flow: membership post-payment activation fan-out", () => {
         const afterExternal = await api<State>(applicant, "/api/membership");
         expect(afterExternal.json.process?.status).toBe("PENDING_PAYMENT");
 
-        // Two DISTINCT reviewers approve the background check. Second approval clears it;
-        // unpaid, so it stays at PENDING_PAYMENT (bgClearedAt now set) — payment will activate.
-        const a1 = await api(board, "/api/membership/reviews", { method: "POST", body: JSON.stringify({ processId, result: "APPROVE" }) });
+        // A check is recorded against a NAMED adult, so a reviewer must say whose report
+        // they read. The queue GET is where a real reviewer gets those ids, so read them
+        // the same way rather than reaching into the DB.
+        const queue = await api<ReviewQueue>(board, "/api/membership/reviews");
+        expect(queue.status).toBe(200);
+        const queued = queue.json.queue.find((q) => q.id === processId);
+        expect(queued).toBeDefined();
+        const leadIds = (queued!.orgMembership?.household?.householdMembers ?? []).map((p) => p.id);
+        expect(leadIds.length).toBeGreaterThan(0);
+        // A review covers ONE adult, and the first approval settles which — so both
+        // reviewers name the same person.
+        const subjectPersonIds = [leadIds[0]];
+
+        // Two DISTINCT reviewers approve the background check, both naming the same adult.
+        // The second approval on a named adult clears it; unpaid, so it stays at
+        // PENDING_PAYMENT (bgClearedAt now set) — payment will activate.
+        const a1 = await api(board, "/api/membership/reviews", { method: "POST", body: JSON.stringify({ processId, result: "APPROVE", subjectPersonIds }) });
         expect(a1.status).toBe(200);
-        const a2 = await api(reviewer2, "/api/membership/reviews", { method: "POST", body: JSON.stringify({ processId, result: "APPROVE" }) });
+        const a2 = await api(reviewer2, "/api/membership/reviews", { method: "POST", body: JSON.stringify({ processId, result: "APPROVE", subjectPersonIds }) });
         expect(a2.status).toBe(200);
 
         const afterBg = await api<State>(applicant, "/api/membership");

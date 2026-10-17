@@ -38,7 +38,7 @@ describe('Enroll into a CLOSED program is rejected', () => {
         const user = await prisma.person.create({ data: { email: `user-${TAG}@example.com`, name: 'Self Enroller', household: { create: { name: "Test HH" } } } });
         userId = user.id;
         const program = await prisma.program.create({
-            data: { name: `Closed ${TAG}`, phase: 'RUNNING', enrollmentStatus: 'CLOSED', orgMemberPriceCents: null, nonOrgMemberPriceCents: null },
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Closed ${TAG}`, phase: 'RUNNING', enrollmentStatus: 'CLOSED', orgMemberPriceCents: null, nonOrgMemberPriceCents: null },
         });
         closedProgramId = program.id;
     });
@@ -61,5 +61,34 @@ describe('Enroll into a CLOSED program is rejected', () => {
         expect((await res.json()).error).toMatch(/closed/i);
         // No enrollment row written.
         expect(await prisma.programParticipant.count({ where: { programId: closedProgramId } })).toBe(0);
+    });
+
+    it('refuses a new claim once the off-sale date has arrived, before the daily sweep closes it', async () => {
+        const program = await prisma.program.create({
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2099-12-31'), name: `Sale Ended ${TAG}`, phase: 'RUNNING', enrollmentStatus: 'OPEN', orgMemberPriceCents: null, nonOrgMemberPriceCents: null },
+        });
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: userId } });
+        const req = new Request(`http://localhost:4000/api/programs/${program.id}/participants`, {
+            method: 'POST',
+            body: JSON.stringify({ participantId: userId }),
+        });
+        const res = await ENROLL(req as unknown as import('next/server').NextRequest, params(program.id) as unknown as never);
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toMatch(/sales .* ended/i);
+        expect(await prisma.programParticipant.count({ where: { programId: program.id } })).toBe(0);
+    });
+
+    it('still sends a claim made in time back to its checkout after the sale ended', async () => {
+        const program = await prisma.program.create({
+            data: { startAt: new Date('2026-01-01'), endAt: new Date('2099-12-31'), name: `Sale Ended Claim ${TAG}`, phase: 'RUNNING', enrollmentStatus: 'OPEN', orgMemberPriceCents: null, nonOrgMemberPriceCents: null },
+        });
+        await prisma.programParticipant.create({ data: { programId: program.id, personId: userId, status: 'PENDING' } });
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: userId } });
+        const req = new Request(`http://localhost:4000/api/programs/${program.id}/participants`, {
+            method: 'POST',
+            body: JSON.stringify({ participantId: userId }),
+        });
+        const res = await ENROLL(req as unknown as import('next/server').NextRequest, params(program.id) as unknown as never);
+        expect(res.status).toBe(409);
     });
 });

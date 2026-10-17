@@ -5,14 +5,15 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Alert, Badge, Button, Card, Container, Group, SimpleGrid, Text, Title } from '@mantine/core';
-import { formatDate } from '@/lib/time';
+import { formatDateOnly } from '@/lib/time';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 type UserProgram = {
   programId: number;
   personId: number;
-  status: 'PENDING' | 'ACTIVE';
-  isPaymentPlanRequested: boolean;
+  // Absent unless the viewer may see payment status (lib/programs/paymentVisibility).
+  status?: 'PENDING' | 'ACTIVE';
+  isPaymentPlanRequested?: boolean;
   person: { id: number; name: string | null };
   program: {
     id: number;
@@ -22,16 +23,15 @@ type UserProgram = {
   };
 };
 
-// Payment pill: ACTIVE (paid/free) shows nothing; a still-owed enrollment is
-// either the household's to pay (theme-primary, actionable) or waiting on finance to
-// approve a payment plan (gray, not actionable — don't imply it's settled).
-// ponytail: "Payment due" reads more like a warning than a success state — mechanical
-// off-palette-sweep target is theme-primary green; a maintainer may prefer gray/yellow here.
-function paymentPill(status: string, planRequested: boolean) {
-  if (status === 'ACTIVE') return null;
+// Payment pill: only a still-owed enrollment shows one — either the household's to
+// pay (theme-primary, actionable) or waiting on finance to approve a payment plan
+// (gray, not actionable — don't imply it's settled). The API sends no status to a
+// viewer who may not see it, so youth and non-lead members get no pill.
+function paymentPill(status: string | undefined, planRequested: boolean | undefined) {
+  if (status !== 'PENDING') return null;
   return planRequested
     ? <Badge color="gray" variant="filled">Awaiting finance approval</Badge>
-    : <Badge variant="filled">Payment due</Badge>;
+    : <Badge variant="filled">Not paid yet</Badge>;
 }
 
 export default function MyProgramsDashboard() {
@@ -106,9 +106,14 @@ export default function MyProgramsDashboard() {
               </Group>
               <Title order={4} mb="sm">{program.name}</Title>
               <Text c="dimmed" style={{ flex: 1 }}>
-                {program.startAt ? formatDate(program.startAt) : 'Start Date TBD'}
-                {program.endAt ? ` - ${formatDate(program.endAt)}` : ' (Ongoing)'}
+                {formatDateOnly(program.startAt)} - {formatDateOnly(program.endAt)}
               </Text>
+              {/* The program page's enroll button resumes the existing checkout. */}
+              {enrollStatus === 'PENDING' && !isPaymentPlanRequested && (
+                <Button component={Link} href={`/programs/${program.id}`} fullWidth mt="md">
+                  Pay now
+                </Button>
+              )}
               <Button component={Link} href={`/programs/${program.id}`} variant="light" fullWidth mt="md">
                 View Details
               </Button>

@@ -81,7 +81,7 @@ describe('Cron Pending-Participants API Integration Tests', () => {
             await prisma.program.deleteMany({ where: { name: { contains: 'Pending Cron Test' } } });
 
             const program = await prisma.program.create({
-                data: { name: 'Pending Cron Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN' }
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Pending Cron Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN' }
             });
             programId = program.id;
 
@@ -161,7 +161,7 @@ describe('Cron Pending-Participants API Integration Tests', () => {
             await prisma.program.deleteMany({ where: { name: 'Pending Cron NoDigest Test Program' } });
 
             const program = await prisma.program.create({
-                data: { name: 'Pending Cron NoDigest Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN' }
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Pending Cron NoDigest Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN' }
             });
             programId = program.id;
 
@@ -218,7 +218,7 @@ describe('Cron Pending-Participants API Integration Tests', () => {
             await prisma.program.deleteMany({ where: { name: 'Pending Cron Email Test Program' } });
 
             const program = await prisma.program.create({
-                data: { name: 'Pending Cron Email Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN' }
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Pending Cron Email Test Program', phase: 'UPCOMING', enrollmentStatus: 'OPEN' }
             });
             emailProgramId = program.id;
 

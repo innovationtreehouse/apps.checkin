@@ -32,6 +32,15 @@ export function departureAfterArrival(arrived: Date, departed: Date): boolean {
  * checkout or a typo, not a real visit. Applies only to closed visits. */
 export const MAX_VISIT_MS = 24 * 60 * 60 * 1000;
 
+/** Kiosk-vs-server clock skew a close absorbs on the arrival side. */
+export const LATE_CLOSE_SKEW_MS = 2 * 60_000;
+
 export function withinMaxDuration(arrived: Date, departed: Date): boolean {
   return departed.getTime() - arrived.getTime() <= MAX_VISIT_MS;
+}
+
+/** Edit forms use minute-precision datetime-local inputs, so a submitted time
+ * inside the stored time's minute is the untouched field echoed back, not an edit. */
+export function isUnchangedTime(submitted: Date, stored: Date | null): boolean {
+  return stored !== null && Math.floor(submitted.getTime() / 60000) === Math.floor(stored.getTime() / 60000);
 }

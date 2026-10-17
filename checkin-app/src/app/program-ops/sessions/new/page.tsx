@@ -163,7 +163,7 @@ export function NewEventForm() {
 
       if (res.ok) {
         setSubmitted(true); // clear unsaved-changes guard before redirect
-        router.push('/program-ops/events');
+        router.push(programId ? `/program-ops/programs/${programId}` : '/program-ops/events');
       } else {
         const err = await res.json().catch(() => ({}));
         setMessage(err.error || "Failed to create event");

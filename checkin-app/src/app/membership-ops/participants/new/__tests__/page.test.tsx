@@ -22,6 +22,7 @@ describe("membership-ops/participants/new page", () => {
 
     expect(await screen.findByText("Register New User")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create Participant" })).toBeDisabled();
+    expect(screen.getByText(/Printed on name badges exactly as typed/)).toBeInTheDocument();
   });
 
   it("submits a new adult participant", async () => {
@@ -48,9 +49,9 @@ describe("membership-ops/participants/new page", () => {
             name: "Jane Doe",
             email: "jane@example.com",
             parentEmail: null,
+            parentName: null,
             dob: null,
             householdId: null,
-            alreadyMember: false,
           }),
         }),
       ),
@@ -140,7 +141,7 @@ describe("membership-ops/participants/new page", () => {
     consoleError.mockRestore();
   });
 
-  it("searches, selects, and clears a household, hiding the already-member checkbox while one is set", async () => {
+  it("searches, selects, and clears a household", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/membership-ops/households": { households: [household] } });
     renderWithProviders(<NewParticipantPage />);
@@ -149,14 +150,29 @@ describe("membership-ops/participants/new page", () => {
     fireEvent.change(screen.getByPlaceholderText("Search households..."), { target: { value: "Does" } });
     fireEvent.click(await screen.findByText("The Does", { exact: false }));
     expect(screen.getByDisplayValue("The Does")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Confirm this household is already a paid member")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Clear" }));
     expect(screen.queryByDisplayValue("The Does")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Confirm this household is already a paid member")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/already a paid member/)).not.toBeInTheDocument();
   });
 
-  it("submits an adult assigned to a household, with alreadyMember forced false", async () => {
+  it("requires a name before allowing submit", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({});
+    renderWithProviders(<NewParticipantPage />);
+    await screen.findByText("Register New User");
+
+    fireEvent.change(screen.getByPlaceholderText("jane.doe@example.com"), { target: { value: "jane@example.com" } });
+    expect(screen.getByRole("button", { name: "Create Participant" })).toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "  " } });
+    expect(screen.getByRole("button", { name: "Create Participant" })).toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "Jane Doe" } });
+    expect(screen.getByRole("button", { name: "Create Participant" })).toBeEnabled();
+  });
+
+  it("submits an adult assigned to a household", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({
       "/api/membership-ops/households": { households: [household] },
@@ -165,6 +181,7 @@ describe("membership-ops/participants/new page", () => {
     renderWithProviders(<NewParticipantPage />);
     await screen.findByText("Register New User");
 
+    fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "Household Member" } });
     fireEvent.change(screen.getByPlaceholderText("Search households..."), { target: { value: "Does" } });
     fireEvent.click(await screen.findByText("The Does", { exact: false }));
 
@@ -175,12 +192,12 @@ describe("membership-ops/participants/new page", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
-            name: "", email: null, parentEmail: null, dob: null, householdId: 9, alreadyMember: false,
+            name: "Household Member", email: null, parentEmail: null, parentName: null, dob: null, householdId: 9,
           }),
         }),
       ),
     );
-    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Participant member@example.com successfully!" })));
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Participant Household Member successfully!" })));
   });
 
   it("submits a student with a parent email and no household", async () => {
@@ -191,10 +208,12 @@ describe("membership-ops/participants/new page", () => {
     renderWithProviders(<NewParticipantPage />);
     await screen.findByText("Register New User");
 
+    fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "Kid Name" } });
     fireEvent.change(screen.getByLabelText("Date of Birth"), { target: { value: "2015-01-01" } });
     await screen.findByText("Student Detected");
     fireEvent.change(screen.getByLabelText(/Parent \/ Guardian Google Email/), { target: { value: "parent@example.com" } });
-    fireEvent.click(screen.getByLabelText("Confirm this household is already a paid member"));
+    fireEvent.change(screen.getByPlaceholderText("e.g. John Doe"), { target: { value: "Parent Name" } });
+    expect(screen.queryByLabelText(/already a paid member/)).not.toBeInTheDocument();
 
     const submitBtn = screen.getByRole("button", { name: "Create Participant" });
     expect(submitBtn).toBeEnabled();
@@ -206,7 +225,7 @@ describe("membership-ops/participants/new page", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
-            name: "", email: null, parentEmail: "parent@example.com", dob: "2015-01-01", householdId: null, alreadyMember: true,
+            name: "Kid Name", email: null, parentEmail: "parent@example.com", parentName: "Parent Name", dob: "2015-01-01", householdId: null,
           }),
         }),
       ),
@@ -217,6 +236,7 @@ describe("membership-ops/participants/new page", () => {
     setSession({ id: 1, isSysadmin: true });
     renderWithProviders(<NewParticipantPage />);
     await screen.findByText("Register New User");
+    fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "Jane Doe" } });
     fireEvent.change(screen.getByPlaceholderText("jane.doe@example.com"), { target: { value: "jane@example.com" } });
 
     global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Email taken." }) })) as unknown as typeof fetch;
