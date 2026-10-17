@@ -98,5 +98,7 @@ defineRoute({ endpoint: 'POST /api/expense/capital-assets/seed', authorize: 'fin
 // QuickBooks matching per expense: the expense's candidates, and pick one.
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/qb-candidates', authorize: 'finance', envelope: null, returns: ['ExpenseQbCandidateView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/qb-match', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
+// Finance books an expense the drain may not create, or skips it with a reason.
+defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/qb-resolve', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
 // QuickBooks matching: exclude a QuickBooks transaction from matching.
 defineRoute({ endpoint: 'POST /api/expense/qb-exclusions', authorize: 'finance', envelope: null, returns: ['ExpenseQbMatchExclusion'], orderedView: FINANCE_VIEW });
