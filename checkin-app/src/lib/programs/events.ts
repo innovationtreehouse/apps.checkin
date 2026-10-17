@@ -234,7 +234,7 @@ export async function manualEditAttendance(
                 return "Participant is currently checked in — check them out before marking Absent";
             }
             // Only closed visits remain; safe to clear on an Absent
-            // correction — as a TOMBSTONE, never a row removal (design §3).
+            // correction — as a TOMBSTONE, never a row removal.
             // A lead's Absent mark must be as reversible and reviewable as
             // the member's own delete, and an already-tombstoned row is
             // left alone: it is the record of an earlier deletion.
@@ -246,7 +246,7 @@ export async function manualEditAttendance(
                     where: { id: { in: doomed.map(v => v.id) }, ...LIVE_VISIT },
                     data: { deletedAt: new Date(), deletedById: userId }
                 });
-                // Every human visit-write logs (design "Audit substrate").
+                // Every human visit-write logs.
                 // Inside the lock, so the rows audited are exactly the rows
                 // tombstoned — no racing delete can strand a DELETE row
                 // crediting this lead with someone else's deletion.
@@ -312,7 +312,7 @@ export async function manualEditAttendance(
         } satisfies Prisma.VisitUncheckedUpdateInput;
         const createTimes = { ...times, arrivedVia: "LEAD_MARKED" } satisfies Prisma.VisitUncheckedUpdateInput;
 
-        // Every human visit-write logs (design "Audit substrate"), with
+        // Every human visit-write logs, with
         // secondaryAffectedEntity = the subject so a correction review
         // reads actor ≠ subject without a join (§6.6).
         // Never reopen a closed visit: a Present mark with no departure

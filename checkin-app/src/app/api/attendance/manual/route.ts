@@ -16,7 +16,7 @@ import { appendPresenceEvent, PresenceClass } from "@/lib/presence/events";
 
 // Self-service manual visit entry. INTENTIONAL by design: a member records a
 // visit for THEMSELVES, or — as a household lead — for a member of their own
-// household (design §3; a minor cannot self-serve at all). The subject is
+// household (a minor cannot self-serve at all). The subject is
 // resolved server-side by visitSubject, so a personId off the body is only ever
 // a target checked against the actor's own household, never the scope itself.
 // Every entry is audit-logged (see below). A member CAN backdate a closed visit
@@ -181,7 +181,7 @@ export const POST = withAuth({}, async (req, auth) => {
         }
 
         // actorId ≠ secondaryAffectedEntity is what marks a lead's entry for a
-        // household member as acting-for-another, without a join (design §6.6).
+        // household member as acting-for-another, without a join.
         await prisma.auditLog.create({
             data: {
                 actorId: userId,

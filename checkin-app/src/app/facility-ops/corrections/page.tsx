@@ -51,7 +51,7 @@ const TYPE_LABEL: Record<string, string> = {
 // `newData.type` names the ROUTE, not the actor relationship — a household lead
 // correcting a member still writes "self_correction". It's a label here, never
 // the self/proxy axis; see actorClass below for that.
-// Governing design: docs/designs/1256_ATTENDANCE_CORRECTION_SURFACE.md §4.
+// Governing rules: docs/rules/attendance-checkin.md, "The visit record".
 function kindLabel(row: AuditRow): string {
   if (row.newData.type && TYPE_LABEL[row.newData.type]) return TYPE_LABEL[row.newData.type];
   switch (row.action) {

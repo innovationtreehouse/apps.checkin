@@ -22,7 +22,7 @@ type Visit = {
 
 // Self-correction of the member's own visits: every row is editable and
 // deletable, no approval step — significant changes are flagged to the board
-// server-side (trust-first, design doc 1256_ATTENDANCE_CORRECTION_SURFACE.md).
+// server-side (trust-first, docs/rules/attendance-checkin.md).
 export default function MyVisits() {
   const { formatVisitRange } = useOrgTime();
   const { ready, loading: authLoading } = useRequireRole([]);

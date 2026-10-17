@@ -27,7 +27,7 @@ const guardResults = new WeakMap<Request, CloseGuardContext & { guard: CloseGuar
 
 // Self-correction of a member's own visits, and a household lead's correction
 // of their household members' (trust-first, see
-// docs/designs/1256_ATTENDANCE_CORRECTION_SURFACE.md §2/§3): the edit always
+// docs/rules/attendance-checkin.md): the edit always
 // applies — the only gates are validity (times parse, departure after arrival,
 // ≤ 24h, no reopening) and scope. Integrity is post-hoc: every change is
 // audited, and a significant one (big delta × trusted old source, doubled when

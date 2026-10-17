@@ -9,7 +9,7 @@ import { SYSTEM_ACTOR } from "@/lib/auditActor";
 /**
  * Board/sysadmin review of attendance corrections (AT12, #1258). Reads the
  * existing AuditLog trail for tableName='Visit' — nothing new is stored.
- * Governing design: docs/designs/1256_ATTENDANCE_CORRECTION_SURFACE.md §4.
+ * Governing rules: docs/rules/attendance-checkin.md, "The visit record".
  *
  * The bag is SYNTHESIZED, not passed through (§4):
  * `oldData`/`newData` are internal-tier JSON blobs that carry personal-tier

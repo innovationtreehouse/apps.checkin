@@ -65,7 +65,7 @@ where a move breaks one of their pointers, that doc's session gets the new path
 
 | File | Action | Status |
 |---|---|---|
-| `1256_ATTENDANCE_CORRECTION_SURFACE.md` | Retire | in flight, sibling session (#2261 also edits it) |
+| `1256_ATTENDANCE_CORRECTION_SURFACE.md` | Retire | in flight, #2275 |
 | `975-LEGACY_VARIANT_CONTRACT.md` | Retire | in flight, sibling session |
 | `1441_PROGRAM_DATES.md` | Retire | in flight, #2262 |
 | `1333-EMAIL_TEMPLATES.md` | Not built; move to `docs/in-design/` | todo, PR 1 |
