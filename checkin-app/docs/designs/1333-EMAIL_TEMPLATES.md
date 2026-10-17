@@ -58,8 +58,8 @@ interface TokenSpec { kind: TokenKind; label?: string } // label: anchor text fo
 interface TemplateSpec {
   allowedTokens: Record<string, TokenSpec>;
   sampleCtx: Record<string, string>;   // powers the admin preview
-  defaultSubject: string;              // seed + never-blank fallback
-  defaultBody: string;                 // seed + never-blank fallback
+  defaultSubject: string;              // today's copy; sent when no row exists
+  defaultBody: string;                 // today's copy; sent when no row exists
 }
 export const REGISTRY: Record<string, TemplateSpec> = { ... }
 ```
@@ -111,16 +111,21 @@ non-goal.
 - **One grep-to-zero test** asserts no `sendEmail(` call exists outside `email.ts` and the
   renderer. A new flow physically cannot ship inline copy — it won't pass CI.
 
-### 6. Never-blank guarantee — seeds are today's copy
+### 6. Never-blank guarantee — registry defaults are today's copy
 
-- The migration seeds every `key` with the **exact current** subject/body.
-- `sendTemplated` falls back to the registry default if a row is missing or blank.
+- Each registry entry's `defaultSubject`/`defaultBody` is the **exact current** subject/body.
+- The table starts **empty**. A row exists only once the Board saves an override, and
+  `sendTemplated` sends the registry default whenever a row is missing or blank.
 - Result: the sweep is **copy-neutral** — no email's wording changes. Editing is an override,
   not a requirement.
+- No migration seeds rows: the registry is the one copy of the default wording, and a
+  wording fix in code reaches every un-edited email without a data migration. (Rows seeded
+  from code would be a second copy that overrides the registry, so later fixes would not
+  ship.)
 
 ### 7. The sweep — one conversion, no partial state
 
-Migrate all ~27 flows to `sendTemplated` in a single pass. Because seeds == current copy, the
+Migrate all ~27 flows to `sendTemplated` in a single pass. Because the registry defaults == current copy, the
 diff is behavior-neutral on wording. The old inline builders and hardcoded subjects are
 **deleted**, not left beside the new path. Folds the two existing deploy-free systems in too
 (see D). After the sweep there is exactly one way to send mail.
@@ -158,7 +163,7 @@ Grouped by prefix. `link` tokens noted; everything else is `text`.
 
 > `program.assignment` migrates the **already-shipped** `programAssignmentTemplate` (#1220,
 > `email-templates/program-assignment.ts`), which renders a `manageUrl` link
-> (`/program-ops/programs/{programId}`). That link is **required** — the seed body must include
+> (`/program-ops/programs/{programId}`). That link is **required** — the default body must include
 > the `{{actionLink}}` token so the sweep doesn't regress #1220's lead welcome email down to a
 > link-less version. (An earlier draft of this doc called PROGRAM_ASSIGNMENT a live "System
 > Action" bug — that was stale: #1220 fixed it on `main` before this design; the row above
@@ -272,8 +277,8 @@ not a zero-visual-change one. Uniform branding is a stated goal of this work.
 
 ## Build order
 
-1. `EmailTemplate` model + migration (RENAME-safe; seed all 27 keys from current copy).
-2. `registry.ts` (27 specs) + generalize `substituteTokens`/`findUnknownTokens` to per-key.
+1. `EmailTemplate` model + migration (creates the empty table; no seed, see §6).
+2. `registry.ts` (27 specs, whose defaults are today's copy) + generalize `substituteTokens`/`findUnknownTokens` to per-key.
 3. `sendTemplated` + generalized `renderAckBody`-style body→`<p>` + `baseEmailLayout` wrap.
 4. Sweep all call sites to `sendTemplated`; delete inline builders + hardcoded subjects.
 5. Fold outreach + scholarship — **expand only**: migrate `BoardSettings` copy → rows, update
