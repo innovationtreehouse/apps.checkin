@@ -153,8 +153,9 @@ async function settle(
         }
 
         if (opts.shopifyOrderId && process.shopifyOrderId === opts.shopifyOrderId) return { outcome: "noop" as const };
-        if (process.paidAt || process.status === "ACTIVE") return { outcome: "nothing_due" as const };
+        // DENIED before "already paid": any money reaching a denied household goes to the Board as DENIED activity.
         if (membership.status === "DENIED") return { outcome: "denied" as const, householdId: membership.householdId };
+        if (process.paidAt || process.status === "ACTIVE") return { outcome: "nothing_due" as const };
 
         const now = new Date();
         const certificationNote = opts.via === "manual" && opts.reason && opts.reason.trim() !== "" ? opts.reason : undefined;
