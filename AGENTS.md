@@ -64,7 +64,8 @@ Two runners, split by workspace type — no file ever runs under both (issue #22
 
 Root aggregate scripts (run from the repo root): `test` (app Jest, the default),
 `test:packages` (`vitest run` across every `packages/*`), `test:functions`
-(across every `*-function`), `test:all` (all three). CI runs the Jest tiers and
+(across every `*-function`), `test:all` (all three), `test:affected` (only the
+areas the diff touches, no database or Docker). CI runs the Jest tiers and
 the Vitest tier (`package-tests` job) as separate path-filtered lanes. Jest's
 `rootDir` is `checkin-app/`, so it never collects a sibling workspace's
 `.test.ts` — a Vitest file cannot leak into the Jest run.

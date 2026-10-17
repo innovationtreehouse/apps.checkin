@@ -30,7 +30,7 @@ suite exactly as it does today.
   6 s, and a shared-package change about 21 s, warm.
 - **Opt-in heavy tiers, scoped to one area:** `--db` runs that library's
   database tier and the area's integration files. `--flow` runs that library's
-  one flow file. `--all` refuses unless it is confirmed. **Neither `--db` nor
+  flow files. `--all` refuses unless it is confirmed. **Neither `--db` nor
   `--flow` has been run; both are UNPROVEN.**
 - **Unchanged:** CI, the existing test scripts, and every test file.
 - **Cost:** one script with no new dependencies, plus two small enabling changes
@@ -54,11 +54,11 @@ flight; they are listed so the map is right when it lands.
 |---|---|---|---|---|
 | catalog | `packages/global-catalog` | `src/lib/catalog/`, `src/lib/catalogNav.ts`, `src/app/catalog/`, `src/app/api/catalog/` | `src/security/registry/catalog.ts`, `src/security/catalogSyntheticClassifications.ts` | `flow-tests/catalog.flow.test.ts` |
 | inventory | `packages/local-inventory` | `src/lib/localInventory/`, `src/app/inventory/`, `src/app/api/inventory/` | `registry/inventory.ts`, `inventorySyntheticClassifications.ts` | `flow-tests/local-inventory.flow.test.ts` |
-| income | `packages/income` | `src/lib/income/`, `src/app/income/`, `src/app/api/income/` | `registry/income.ts`, `incomeSyntheticClassifications.ts` | none yet |
-| expense | `packages/expense` | `src/lib/expense/`, `src/app/expense/`, `src/app/api/expense/` | `registry/expense.ts`, `expenseSyntheticClassifications.ts` | none yet |
-| receipt | `packages/receipt` | `src/lib/receipt/`, `src/app/receipts/`, `src/app/api/receipts/` | `registry/receipt.ts`, `receiptSyntheticClassifications.ts` | none yet |
-| workflow | `packages/workflow-mapping` | `src/lib/workflowMapping/`, `src/app/api/workflow-mapping/` | `registry/workflow.ts`, `workflowSyntheticClassifications.ts` | none yet |
-| donation | `packages/bulk-donation` | `src/lib/bulkDonation/`, `src/app/donations/`, `src/app/api/donations/` | `registry/donation.ts`, `donationSyntheticClassifications.ts` | none yet |
+| income | `packages/income` | `src/lib/income/`, `src/app/income/`, `src/app/api/income/` | `registry/income.ts`, `incomeSyntheticClassifications.ts` | `flow-tests/income.flow.test.ts` |
+| expense | `packages/expense` | `src/lib/expense/`, `src/app/expense/`, `src/app/api/expense/` | `registry/expense.ts`, `expenseSyntheticClassifications.ts` | `flow-tests/expense.flow.test.ts` |
+| receipt | `packages/receipt` | `src/lib/receipt/`, `src/app/receipts/`, `src/app/api/receipts/` | `registry/receipt.ts`, `receiptSyntheticClassifications.ts` | `flow-tests/receipt.flow.test.ts`, `flow-tests/receipt-pipeline.flow.test.ts` |
+| workflow | `packages/workflow-mapping` | `src/lib/workflowMapping/`, `src/app/api/workflow-mapping/` | `registry/workflow.ts`, `workflowSyntheticClassifications.ts` | `flow-tests/workflow-mapping.flow.test.ts` |
+| donation | `packages/bulk-donation` | `src/lib/bulkDonation/`, `src/app/donations/`, `src/app/api/donations/` | `registry/donation.ts`, `donationSyntheticClassifications.ts` | `flow-tests/bulk-donation.flow.test.ts` |
 
 **A library's tests** are its package's vitest suites, both the unit tier and
 the database tier that the shared Postgres test harness boots. **The area's app
@@ -106,8 +106,9 @@ Three details matter.
   only for checkin core and for checkin files that import a changed shared
   package.
 - **Wide changes go to CI.** If the related-tests search returns more than 80
-  unit files, or more than 15 integration files, the command prints the list and
-  stops. `--wide` overrides this. A change to a core file such as the database
+  unit files, or more than 15 integration files, the command skips that step,
+  names the count, runs the rest of the plan and exits 1. `--wide` overrides
+  this. A change to a core file such as the database
   client is CI's to test. Both caps are guesses, not measurements (see Open
   before adoption).
 
@@ -118,7 +119,7 @@ With no flags, the command runs only tiers that need no database or Docker:
 1. `prisma generate` for checkin, if the worktree has no generated client yet. A
    fresh worktree fails tsc without it.
 2. `tsc --noEmit` for each affected workspace that CI type-checks: checkin
-   and the four `*-function` workspaces. CI does not type-check the
+   and the five `*-function` workspaces. CI does not type-check the
    `packages/*` workspaces, so the local run does not either. Otherwise it
    would fail where CI passes (see Known findings).
 3. eslint, with no warnings allowed, on the changed checkin files. This matches
@@ -160,8 +161,10 @@ All of this section is **UNPROVEN**: none of it has been run.
 ### `--db`
 
 - **Library database tier.** For each library area, it runs the package's
-  vitest normally: the shared harness boots one throwaway Postgres container and
-  applies the package's migrations. This needs Docker. Its cost is one
+  vitest with `PG_TEST_HARNESS` unset and `REQUIRE_DB=1`: the shared harness
+  boots one throwaway Postgres container and applies the package's migrations.
+  This needs Docker, and with no container the database suites fail instead of
+  skipping. Its cost is one
   container start per library, about 1–2 s, plus migrations.
 - **Checkin integration files for the area.** It builds the integration list in
   the same way as the unit list, but with the integration script's own pattern,
@@ -186,7 +189,7 @@ All of this section is **UNPROVEN**: none of it has been run.
 
 ### `--flow`
 
-- It runs the area's one flow file. If `FLOW_BASE_URL` is set, it runs against
+- It runs the area's flow files. If `FLOW_BASE_URL` is set, it runs against
   that server (`npm run test:flow -- --runTestsByPath <file>`). Otherwise it runs
   on the standalone stack, through `test:flow:standalone` with the file passed
   in.

@@ -74,6 +74,9 @@ pointing at their own Postgres) always wins.
 
 ## Knobs
 
+- `PG_TEST_HARNESS=off` — start no container and provide no URL, as if Docker were
+  absent: `describeDb` suites skip (or fail under `CI` / `REQUIRE_DB=1`). For light
+  local runs.
 - `pgGlobalSetup({ image })` — override the pinned Postgres image (default
   `public.ecr.aws/docker/library/postgres:17-alpine`, the ECR Public mirror of the
   official image; pin to your deployed RDS major).
