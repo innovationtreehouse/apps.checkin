@@ -29,17 +29,14 @@
  *      leak). Writes are out of scope here (GAP-2), so only GET/HEAD handlers
  *      are scanned.
  *
- *      Rule 3 follows a route's `@/lib/...` named imports one module deep. A
- *      finding is attributed to the route, so allowlist keys stay route dirs.
- *      Attribution is per imported FUNCTION, not per module: an import counts
- *      only when the GET/HEAD handler body names it, and only that symbol plus
- *      the same-module declarations it references (transitively) are scanned.
- *      That keeps widely imported libs (scan-service, getFullAttendance) from
- *      flagging every route that touches any of their exports — a route is
- *      flagged only when the function it calls reaches an edge read. Imports a
- *      lib makes of other libs, and `export … from` re-exports, are not
- *      followed; edge reads that deep rely on the validator gate's
- *      `returns:`/stripping.
+ *      Rule 3 also follows a GET/HEAD handler's `@/lib/...` imports (named,
+ *      default, namespace) one module deep, scanning only the called function
+ *      and the same-module declarations it references. A query root is
+ *      `prisma`, `db`, `tx`, or any name typed DbClient/TxClient. Known limits:
+ *      lib→lib imports and re-exports are not followed; a lib import used only
+ *      in a route-local helper defined above the first handler is missed; and
+ *      the reference walk over-approximates (a GET that only calls
+ *      invalidateAttendanceCache reaches computeFullAttendance → Visit).
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -159,7 +156,17 @@ const REL = relations as Record<string, Record<string, { model: string }>>;
 const PROP_TO_MODEL = new Map(Object.keys(REL).map((m) => [m[0].toLowerCase() + m.slice(1), m]));
 
 const READ_OPS = 'findMany|findUnique|findFirst|findUniqueOrThrow|findFirstOrThrow|count|aggregate|groupBy';
-const ROOT_RE = new RegExp(`prisma\\.(\\w+)\\.(?:${READ_OPS})\\s*(?:<[^>]*>)?\\s*\\(`, 'g');
+const CLIENT_PARAM_RE = /([A-Za-z_$][\w$]*)\??\s*:\s*(?:DbClient|TxClient|Prisma\.TransactionClient)\b/g;
+
+/** Query roots in `code`: `<client>.<model>.<readOp>(`, where a client is
+ * `prisma`, the conventional `db`/`tx`, or any name the file types as
+ * DbClient/TxClient. Only a Prisma model property counts, so a stray `db.` or
+ * `tx.` on a non-client object is ignored. */
+function clientRootRe(code: string): RegExp {
+    const names = new Set(['prisma', 'db', 'tx']);
+    for (const m of code.matchAll(CLIENT_PARAM_RE)) names.add(m[1].replace(/\$/g, '\\$'));
+    return new RegExp(`(?<![\\w$])(?:${[...names].join('|')})\\.(\\w+)\\.(?:${READ_OPS})\\s*(?:<[^>]*>)?\\s*\\(`, 'g');
+}
 const HANDLER_RE = new RegExp(
     `export\\s+(?:const|async\\s+function)\\s+(${HTTP_METHODS})\\b`,
     'g',
@@ -285,7 +292,7 @@ function findEdgeReadsInReads(code: string): string[] {
 /** Edge models read by query roots whose index satisfies `inScope`. */
 function edgeReadsWhere(code: string, inScope: (idx: number) => boolean): string[] {
     const found = new Set<string>();
-    const rootRe = new RegExp(ROOT_RE.source, 'g');
+    const rootRe = clientRootRe(code);
     let m: RegExpExecArray | null;
     while ((m = rootRe.exec(code))) {
         if (!inScope(m.index)) continue;
@@ -302,7 +309,7 @@ function edgeReadsWhere(code: string, inScope: (idx: number) => boolean): string
 
 // --- one module deep into @/lib --------------------------------------------
 const SRC_DIR = path.resolve(__dirname, '../../src');
-const LIB_IMPORT_RE = /import\s+(type\s+)?\{([^}]*)\}\s*from\s*['"]@\/lib\/([^'"]+)['"]/g;
+const LIB_IMPORT_RE = /import\s+(type\s+)?([^'";]*?)\s*from\s*['"]@\/lib\/([^'"]+)['"]/g;
 const TOP_DECL_RE =
     /^(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:function\s*\*?|const|let|var|class|type|interface|enum)\s+([A-Za-z_$][\w$]*)/gm;
 
@@ -350,17 +357,37 @@ function libSymbolEdgeReads(code: string, name: string): string[] {
     return [...found];
 }
 
-/** Rule 3, one module deep: edge models reached through `@/lib/...` functions
- * that a GET/HEAD handler names. Each finding reads `Model via @/lib/<mod>#<fn>`. */
-function findLibEdgeReads(code: string, readLib: ReadLibModule = readLibFromDisk): string[] {
+/** The declaration a module's `export default` names, or null if it is anonymous. */
+function defaultExportName(code: string): string | null {
+    const m = /export\s+default\s+(?:async\s+)?(?:function\s*\*?\s*|class\s+)?([A-Za-z_$][\w$]*)/.exec(code);
+    return m && m[1] !== 'function' && m[1] !== 'class' ? m[1] : null;
+}
+
+/** Local name → imported `@/lib` binding, for named, default and namespace
+ * imports in any combination (`import d, { a as b }`, `import d, * as ns`).
+ * A namespace binding has `name: '*'`. */
+function libImports(code: string): Map<string, { mod: string; name: string }> {
     const imports = new Map<string, { mod: string; name: string }>();
     for (const m of code.matchAll(LIB_IMPORT_RE)) {
         if (m[1]) continue;
-        for (const spec of m[2].split(',').map((s) => s.trim())) {
+        const [, , clause, mod] = m;
+        const dflt = /^([A-Za-z_$][\w$]*)\s*(?:,|$)/.exec(clause);
+        if (dflt) imports.set(dflt[1], { mod, name: 'default' });
+        const ns = /\*\s*as\s+([A-Za-z_$][\w$]*)/.exec(clause);
+        if (ns) imports.set(ns[1], { mod, name: '*' });
+        const named = /\{([^}]*)\}/.exec(clause)?.[1] ?? '';
+        for (const spec of named.split(',').map((s) => s.trim())) {
             const sm = /^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/.exec(spec);
-            if (sm) imports.set(sm[2] ?? sm[1], { mod: m[3], name: sm[1] });
+            if (sm) imports.set(sm[2] ?? sm[1], { mod, name: sm[1] });
         }
     }
+    return imports;
+}
+
+/** Rule 3, one module deep: edge models reached through `@/lib/...` functions
+ * that a GET/HEAD handler names. Each finding reads `Model via @/lib/<mod>#<fn>`. */
+function findLibEdgeReads(code: string, readLib: ReadLibModule = readLibFromDisk): string[] {
+    const imports = libImports(code);
     if (!imports.size) return [];
 
     const handlers = [...code.matchAll(new RegExp(HANDLER_RE.source, 'g'))];
@@ -374,7 +401,14 @@ function findLibEdgeReads(code: string, readLib: ReadLibModule = readLibFromDisk
         if (!readBodies.some((b) => mentions(b, local))) continue;
         const lib = readLib(mod);
         if (!lib) continue;
-        for (const model of libSymbolEdgeReads(lib, name)) found.add(`${model} via @/lib/${mod}#${name}`);
+        const names =
+            name === '*'
+                ? readBodies.flatMap((b) => [...b.matchAll(new RegExp(`(?<![\\w$])${local.replace(/\$/g, '\\$')}\\.([A-Za-z_$][\\w$]*)`, 'g'))].map((x) => x[1]))
+                : [name === 'default' ? defaultExportName(lib) : name];
+        for (const fn of new Set(names)) {
+            if (!fn) continue;
+            for (const model of libSymbolEdgeReads(lib, fn)) found.add(`${model} via @/lib/${mod}#${fn}`);
+        }
     }
     return [...found];
 }
@@ -662,6 +696,12 @@ describe('route auth drift-guard — detectors catch violations', () => {
         'nav/counts': `export async function counts(u) { return { lead: await leadCounts(u) }; }
 async function leadCounts(u) { return prisma.programParticipant.groupBy({ by: ['programId'] }); }
 export async function unrelated() { return prisma.program.count(); }`,
+        supervision: `export async function roster(db: DbClient, id) { return db.programVolunteer.findMany({ where: { programId: id } }); }
+export async function peek(conn: TxClient) { return conn.visit.count(); }
+export async function tally(db: DbClient) { return db.program.count(); }`,
+        'nav/summary': `export default async function summary(u) { return attendees(u); }
+async function attendees(u) { return prisma.rSVP.findMany({}); }
+export async function heading() { return 'x'; }`,
     };
     const readFixture = (mod: string) => (mod in LIB_FIXTURES ? stripComments(LIB_FIXTURES[mod]) : null);
 
@@ -684,6 +724,43 @@ export async function unrelated() { return prisma.program.count(); }`,
     it('does NOT flag a lib whose called function reaches no edge read (per-symbol, not per-module)', () => {
         const synthetic = `import { unrelated } from "@/lib/nav/counts";\nexport const GET = withAuth({}, async () => unrelated());`;
         expect(findLibEdgeReads(stripComments(synthetic), readFixture)).toEqual([]);
+    });
+
+    it('flags an edge read on a db: DbClient parameter in a lib the GET handler calls', () => {
+        const synthetic = `import { roster } from "@/lib/supervision";\nexport const GET = withAuth({}, async () => roster(prisma, 1));`;
+        expect(findLibEdgeReads(stripComments(synthetic), readFixture)).toEqual(['ProgramVolunteer via @/lib/supervision#roster']);
+    });
+
+    it('flags an edge read on a non-conventional parameter typed TxClient', () => {
+        const synthetic = `import { peek } from "@/lib/supervision";\nexport const GET = withAuth({}, async () => peek(prisma));`;
+        expect(findLibEdgeReads(stripComments(synthetic), readFixture)).toEqual(['Visit via @/lib/supervision#peek']);
+    });
+
+    it('does NOT flag a db-param lib function that reads no edge model', () => {
+        const synthetic = `import { tally } from "@/lib/supervision";\nexport const GET = withAuth({}, async () => tally(prisma));`;
+        expect(findLibEdgeReads(stripComments(synthetic), readFixture)).toEqual([]);
+    });
+
+    it('flags a tx.<edgeModel> read in the route file itself', () => {
+        const synthetic = `export const GET = withAuth({}, async () => withTx((tx) => tx.programParticipant.findMany()));`;
+        expect(findEdgeReadsInReads(stripComments(synthetic))).toContain('ProgramParticipant');
+    });
+
+    it('follows a default import', () => {
+        const synthetic = `import summary from "@/lib/nav/summary";\nexport const GET = withAuth({}, async (_r, a) => summary(a.user));`;
+        expect(findLibEdgeReads(stripComments(synthetic), readFixture)).toEqual(['RSVP via @/lib/nav/summary#summary']);
+    });
+
+    it('follows the default half of an `import x, { … }` import', () => {
+        const synthetic = `import s, { heading } from "@/lib/nav/summary";\nexport const GET = withAuth({}, async () => [heading(), await s()]);`;
+        expect(findLibEdgeReads(stripComments(synthetic), readFixture)).toEqual(['RSVP via @/lib/nav/summary#summary']);
+    });
+
+    it('follows a namespace import, per member used', () => {
+        const flagged = `import * as sup from "@/lib/supervision";\nexport const GET = withAuth({}, async () => sup.roster(prisma, 1));`;
+        const clean = `import * as sup from "@/lib/supervision";\nexport const GET = withAuth({}, async () => sup.tally(prisma));`;
+        expect(findLibEdgeReads(stripComments(flagged), readFixture)).toEqual(['ProgramVolunteer via @/lib/supervision#roster']);
+        expect(findLibEdgeReads(stripComments(clean), readFixture)).toEqual([]);
     });
 
     it('does NOT flag an edge-reading lib function called only from a write handler', () => {
