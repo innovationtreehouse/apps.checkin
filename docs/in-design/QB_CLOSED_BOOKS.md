@@ -32,7 +32,7 @@ ships.
 
 ## Rules this changes
 
-- `docs/rules/revenue.md` § Income, "Finance's own bookings come first. The app
+- `docs/rules/revenue.md` § Income (line 198), "Finance's own bookings come first. The app
   books only payouts newer than the last one finance booked by hand…" becomes:
   the app never books anything dated on or before the books closing date in
   QuickBooks; before income's posting is switched on it only matches, and finance
@@ -53,13 +53,13 @@ changes or deletes anything already in QuickBooks".
 | Lane | Derivation | Gate | Outcome when not found and too old |
 |---|---|---|---|
 | Shared | `packages/quickbooks/src/match.ts:86` `takeoverLine()`; request field `match.ts:26-27`, checked at `:57`, decided at `:75-76` | `write.ts:8` passes it through (`:69`) | `write.ts:76-81` returns `too-old` or `no-line` |
-| Expense | `packages/expense/src/lib/expense-qb-poster.ts:64-74` (configured `takeoverDate` or newest hand match, whichever is later); `ExpensePosting.takeoverDate` at `src/contract.ts:210`; `qbMatchInputs` repeats it at `src/services/qbMatchService.ts:38,58` | no date → `no_takeover_date` at `expense-qb-poster.ts:252-255` and `:390-393`; line computed at `:331`, passed at `:338` | `:365-366` parks `BEFORE_LINE`; `:369-370` leaves it waiting |
+| Expense | `packages/expense/src/lib/expense-qb-poster.ts:65-75` (configured `takeoverDate` or newest hand match, whichever is later); `ExpensePosting.takeoverDate` at `src/contract.ts:240`; `qbMatchInputs` repeats it at `src/services/qbMatchService.ts:39,59` | no date → `no_takeover_date` at `expense-qb-poster.ts:253-255` and `:393-395`; line computed at `:332`, passed at `:339` | `:368-369` parks `BEFORE_LINE`; `:372` leaves it waiting |
 | Income | `packages/income/src/lib/outbox.ts:54-66` (newest hand match in the audit log) | drain `:249`, post `:162`; finance retry `src/services/reconciliationService.ts:225`; reconcile matches with no line at `src/lib/reconcile.ts:227` | `outbox.ts:207-209` leaves the payout waiting; once the match window passes, reconcile opens it as `NO_DEPOSIT` (`reconcile.ts:270-274`) |
-| Donation (Benevity) | `packages/bulk-donation/src/lib/qb-match.ts:30-41,67-73` (newest `QB_MATCHED` event) | `src/lib/qb-poster.ts:286,296` | `:317-318` parks `BEFORE_LINE`; `:319-322` leaves it waiting |
+| Donation (Benevity) | `packages/bulk-donation/src/lib/qb-match.ts:40-46,71-77` (newest `QB_MATCHED` event) | `src/lib/qb-poster.ts:304,314` | `:340-341` parks `BEFORE_LINE`; `:342-345` leaves it waiting |
 
-Expense posting is not bound in the host today (`checkin-app/src/lib/expense/configure.ts:177`
-passes only the reader), so expense has created nothing and its `BEFORE_LINE`
-rows, if any, came from tests or dev. Donation posting binds when
+Expense posting is not bound in the host today (`checkin-app/src/lib/expense/configure.ts:207`
+binds the reader, refs and Vendor picker, not the posting writer), so expense has
+created nothing and its `BEFORE_LINE` rows, if any, came from tests or dev. Donation posting binds when
 `QBO_DONATION_BANK_ACCOUNT_ID` is set (`checkin-app/src/lib/bulkDonation/configure.ts:29-37`).
 
 ---
@@ -152,7 +152,7 @@ than the stamp:
 | Expense | `ExpenseOrgSettings` (new column) | `Expense.submittedAt` |
 | Income | `IncomeOrgSettings` (new column) | `PayoutReconciliation.createdAt`, the time the app first saw the payout |
 | Donation, Benevity | new `DonationOrgSettings` row (the package has no settings model) | `DisbursementEvent.createdAt` |
-| Donation, in-kind (#2182) | same row, its own column | the in-kind record's creation time |
+| Donation, in-kind (#2182) | same row, its own column, added when in-kind posting is built | the in-kind record's creation time |
 
 The migration is additive: nullable columns and one new table. Old code never
 reads them. Null means not switched on, so the lane creates nothing on its own.
@@ -201,7 +201,7 @@ lane already offers. The new actions are "book it" and "skip".
 |---|---|---|---|
 | Expense | `POST /api/expense/expenses/[id]/qb-match` (match only) | book, skip | new `POST /api/expense/expenses/[id]/qb-resolve`, finance, returns `Expense` |
 | Income | `POST /api/income/reconciliation/[id]/resolve` with match, dismiss, retry | book | same route, new action |
-| Donation | `POST /api/donations/disbursement-events/[disbursementId]/qb-resolve`, registered; #2215 implements match, dismiss, retry | book | same route, new action |
+| Donation | `POST /api/donations/disbursement-events/[disbursementId]/qb-resolve` with match, dismiss, retry (`src/lib/qb-queue.ts:22-25`) | book | same route, new action |
 
 Only expense needs a new registry entry. The other two add an action to a
 finance-only route whose role and response types stay the same.
@@ -215,18 +215,30 @@ finance-only route whose role and response types stay the same.
   never posts or matches it again. Income's and donation's `dismiss` already do
   exactly this, so skip is `dismiss` under its existing name; expense gains it.
 
+"Book it" goes through the same post path as the drain, so everything that path
+checks today still holds: an expense still needs every sign-off seat and, for a
+card charge that is not Everyday, the Board authorization (the Everyday result
+frozen at intake); a reimbursement still needs its reimbursee's Vendor link; a
+match by amount still records the drift baseline. A held drift (donation
+`DRIFT`, or an expense `QB_DRIFT` flag) is not a "finance decides" state and
+never offers "book it".
+
 The states each lane uses for "finance decides" are:
 
 - **Expense:** a new `UNBOOKED` replaces `BEFORE_LINE`, plus `SKIPPED` for a
-  skip. `MATCHABLE_STATES` (`qbMatchService.ts:93`) swaps `BEFORE_LINE` for
+  skip. `MATCHABLE_STATES` (`qbMatchService.ts:94`) swaps `BEFORE_LINE` for
   `UNBOOKED`.
 - **Income:** no new kind. A payout the drain may not create is opened as
   `NO_DEPOSIT` at once, rather than waiting out the match window, since waiting
   cannot change the answer. "Book it" is offered on `NO_DEPOSIT`.
-- **Donation:** `UNBOOKED` replaces `BEFORE_LINE` in `QB_HELD_STATES`, and the
-  `DISMISSED` state from #2215 serves as skipped.
+- **Donation:** `UNBOOKED` replaces `BEFORE_LINE` in `QB_HELD_STATES`
+  (`src/lib/qb-queue-states.ts:5`), and the existing `DISMISSED` state serves as
+  skipped. `UNBOOKED` is not added to `QB_RETRYABLE_STATES`; "book it" is its
+  way back to the drain.
 
-**Income's NEEDS_MAPPING hold (#2236) wins over all of this.** A payout held
+**Income's NEEDS_MAPPING hold wins over all of this.** It is designed in the
+merged #2236 and not built yet; whichever of it and the income lane PR lands
+second applies this ordering. A payout held
 because an item has no Class decision never turns into `NO_DEPOSIT` and is never
 opened by the open-period rule while it waits; "book it" on it is refused until
 finance maps the item. The order inside a run is: match, then the mapping check,
@@ -256,39 +268,47 @@ One kind per PR. Registry entries first, each in its own PR based on `main`.
 2. **Shared gate:** `packages/quickbooks` replaces `takeoverLine` with
    `closedThrough` and `mayCreate`, and adds `bookCloseDate()`. It confirms the
    field in the sandbox. Until each lane PR lands, its caller passes its old line
-   as `closedThrough` with `mayCreate: true`, which behaves exactly as today
-   (`closed` is today's `too-old`, and no line still creates nothing).
+   as `closedThrough` with `mayCreate: true` (or `mayCreate: false` when it has no
+   line), and maps `closed` to today's `too-old` and `needs-finance` to today's
+   `no-line`, so behaviour is unchanged.
 3. **Expense:** gate wiring, `UNBOOKED` and `SKIPPED`, the `qb-resolve` route
    and its screen, the self-set stamp, and its migration (the switch-on
    column and the `BEFORE_LINE` rewrite).
 4. **Income:** gate wiring, immediate `NO_DEPOSIT`, the "book" action, the
    late-payout path (reconcile before the stamp, no window cut-off after it),
    the self-set stamp, the NEEDS_MAPPING ordering, and its switch-on column.
-5. **Donation:** gate wiring, `UNBOOKED`, the "book" action, switch-on for
-   Benevity and in-kind, and its migration (`DonationOrgSettings` and the
-   `BEFORE_LINE` rewrite). Lands after #2215.
+5. **Donation:** gate wiring, `UNBOOKED`, the "book" action, the self-set
+   Benevity stamp, and its migration (`DonationOrgSettings` and the
+   `BEFORE_LINE` rewrite). In-kind has no posting lane yet; its column comes
+   with that lane (#2182).
 6. **Rules:** `revenue.md` and, if it has merged, the `principles.md` line from
    #2210.
 
 Each lane keeps its own Prisma schema and migrations, so each lane's migration
 ships with that lane's code.
 
+Only PR 1 changes the security boundary. The new columns and
+`DonationOrgSettings` carry `@sensitivity:internal`, like their neighbours, and
+no route returns them; the income and donation "book" actions ride on routes
+whose role and response types stay as registered.
+
 PRs 3, 4 and 5 touch different packages and can run in parallel once 1 and 2
 have landed.
 
 ## What this supersedes
 
-- **#2236** (income design for #2180): its takeover-date question is already
+- **#2236** (merged income design for #2180): its takeover-date question was
   withdrawn in favour of this design. Only the NEEDS_MAPPING constraint carries
   over, in section 4.
-- **#2215** (donation queue): its `BEFORE_LINE` handling (held, never retryable)
-  becomes `UNBOOKED` with "book it"; its match, dismiss and retry stay. Its PR
-  body's "moves the takeover line" stops being true.
+- **#2215** (merged donation queue): its `BEFORE_LINE` handling (held, never
+  retryable) becomes `UNBOOKED` with "book it"; its match, dismiss and retry
+  stay. The comments in `qb-queue.ts:92` and `qb-poster.ts:283-290` that a hand
+  match "moves the takeover line" go with the line.
 - **The expense takeover date:** `ExpensePosting.takeoverDate` and the
   `no_takeover_date` gate.
-- **#2210**'s "finance's own bookings come first" bullet.
+- **#2210** (open)'s "finance's own bookings come first" bullet.
 - The takeover-line passages of `1272_EXPENSE_QB_INTEGRATION.md`
-  (around lines 1139-1148), `1280_BULK_DONATION_INTEGRATION.md` (424-442) and
+  (around lines 1140-1149), `1280_BULK_DONATION_INTEGRATION.md` (429-447) and
   `1283_INCOME_INTEGRATION.md` (160-170), which the lane PRs update.
 
 ---
