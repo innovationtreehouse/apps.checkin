@@ -57,7 +57,7 @@ where a move breaks one of their pointers, that doc's session gets the new path
 | `ARCHITECT_IDEAS_o46.md` | Still-open items (#15 no error boundary, #17 no Zod, and any others still true) become backlog rows; delete | todo, PR 2 |
 | `COMPONENT_ARCHITECTURE.md` | Standing architecture reference; moves to the home Q4 decides | todo, PR 4, blocked on Q4 |
 | `DESIGN.md` | Check each use case against the register; add any missing rule; delete | todo, PR 2 |
-| `INDEX_PAGE_SCOPING.md` | Extract and delete | in flight, its own planning session |
+| `INDEX_PAGE_SCOPING.md` | Moves to `docs/in-design/` with its own retirement plan | in flight, #2274 |
 | `PRODUCTION_PLAN.md` | Move to `docs/ops/production-runbook.md` with a freshness pass; never delete | todo, PR 3, see Q7 |
 | `PROGRAM_INSTANCE_RESTRUCTURE.md` | Active working doc; leaves `docs/designs/` for `docs/in-design/` | in flight, its own session |
 
