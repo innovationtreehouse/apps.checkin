@@ -39,7 +39,7 @@ export const itemCategoryService = {
       const ownerId = mapped.get(item.variantId);
       if (ownerId !== undefined) {
         item.budgetOwnerId = ownerId;
-        item.budgetOwnerName = bucketName.get(ownerId) ?? null;
+        item.budgetOwnerName = ownerId === null ? null : (bucketName.get(ownerId) ?? null);
       }
     }
     return items.sort((a, b) => a.title.localeCompare(b.title) || a.variantId.localeCompare(b.variantId));
