@@ -2,7 +2,7 @@ name: openrouter pr review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
 
 permissions:
   contents: read
@@ -14,8 +14,11 @@ concurrency:
 
 jobs:
   review:
-    # Trusted same-repo PRs only: fork PRs get no secrets, and Dependabot has its own secret store.
+    # Spends the OpenRouter key, so a maintainer must opt the PR in with the ai-review
+    # label (applying labels needs triage access). Fork PRs get no secrets anyway.
     if: >-
+      contains(github.event.pull_request.labels.*.name, 'ai-review') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'ai-review') &&
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]'
