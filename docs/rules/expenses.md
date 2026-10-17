@@ -1,10 +1,32 @@
 # Expenses
 
+Rules for money the Treehouse spends: receipts, expenses, budget buckets, who
+signs off on spending, and how expenses reach QuickBooks.
+
 Income and donation rules are in `revenue.md`.
+
+Goods received into stock are covered in `inventory.md`.
+
+A few terms used throughout:
+
+- **Finance** means anyone holding the finance role in the app.
+- **Household** means the person's household as the app records it.
+- An **expense** is the app's record of one receipt's spending, split into
+  **lines**, one per item.
+- A **budget bucket** is the accounting category a line is charged to, such as a
+  program's budget or an org-wide one like Facility.
 
 ---
 
 ## Assumptions
+
+Things the app takes as true because they are handled outside it.
+
+- Finance pays reimbursements in QuickBooks. The app records what is owed and
+  reads the payment back; it never pays anyone.
+
+- The Board appoints only adults as program treasurers, as corporate policy
+  requires.
 
 - The Treasurer enforces the limits on a signed note in place of a receipt
   outside the app. The app does not model notes in lieu of receipts.
@@ -34,12 +56,51 @@ Income and donation rules are in `revenue.md`.
   is a decision on the record.
   [Decision — owner]
 
+- Only the person who paid is reimbursed: the adult who uploaded the receipt
+  and said they paid for it themselves.
+  [Decision]
+
+- Only finance approves and rejects receipts, imports old ones, and changes
+  receipt settings.
+  [Decision — *Principle: least privilege*]
+
+- Only finance and the Board see every expense. A program's leader and
+  treasurers see only the lines in their program's bucket.
+  [Decision — *Principle: least privilege*]
+
+- Every review of a receipt or expense is made by someone outside the households
+  of its submitter and the person reimbursed. That covers approving or rejecting
+  it, finance's changes to its tax or date, naming the person reimbursed, and
+  checking off its flags. A Board member standing in for someone is also
+  reviewed by someone outside the households of everyone who signed. The
+  submitter's own part is to correct their receipt before it is finalized and to
+  sign their seat.
+  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
 ### Receipts
 
-- Nobody makes a finance decision on a receipt that they or their household
-  uploaded or is reimbursed for. Tax and the receipt date drive financial
-  review, so only an independent finance person changes them.
-  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+- Until a receipt is finalized, its submitter may correct its tax and date. A
+  receipt whose tax or date was corrected by its submitter goes to finance
+  review.
+  [Decision]
+
+- Finance writes a reason when approving a receipt held for tax review.
+  [Decision]
+
+- A receipt that looks like a duplicate goes to finance to decide; it is never
+  refused automatically.
+  [Decision — deliberate limit]
+
+- A gift of goods (an in-kind receipt) names its donor, is never reimbursed, and
+  needs no spending sign-off.
+  [Decision]
+
+- Finance may record old receipts for purchases already booked in QuickBooks.
+  Doing so never reimburses anyone and never books anything a second time.
+  [Decision]
+
+- A finalized receipt is read-only.
+  [Decision]
 
 ### Budget buckets
 
@@ -54,17 +115,35 @@ Income and donation rules are in `revenue.md`.
 
 - A program treasurer is set by the board alone, because the role comes from the
   board-approved program budget. Nobody sets it on themself or anyone in their
-  own household. Treasurers are adult-only by corporate policy, and the app does
-  not check that.
+  own household.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- Finance decides which bucket each line is charged to, before the program
+  approver signs it.
+  [Decision]
+
 ### Expenses
+
+- Every expense starts from a receipt. Past spending with no receipt stays in
+  QuickBooks only; the app never imports it.
+  [Decision — deliberate limit]
 
 - Every expense that is not a reimbursement is treated as a Treehouse Card
   charge. The app records no payment method.
   [Decision — owner]
 
+- The app flags an expense for review when it carries tax, crosses a dollar
+  threshold, includes capital equipment, has no known person to reimburse, has a
+  Board member standing in for someone, or fails to reach QuickBooks. Every
+  check-off records who made it. Thresholds only raise flags; sign-off is what
+  holds money back.
+  [Decision — *Principle: accountability*]
+
 ### Spending sign-off
+
+Each line of a reimbursement or card charge has three sign-off seats: the
+submitter, a program approver (the program's leader or a Program Treasurer), and
+the Treasurer.
 
 - A reimbursement or card charge reaches the books only once each of its lines
   is signed by the submitter, a program approver, and the Treasurer — three
@@ -123,3 +202,26 @@ Income and donation rules are in `revenue.md`.
   Treasurer conflict rule: a finance holder without a conflict records it, and
   if there is none, a Board member without a conflict.
   [Decision — owner]
+
+- A line in an org-wide bucket takes a Board member without a conflict as
+  program approver.
+  [Decision]
+
+- When nobody eligible can sign a seat, a Board member without a conflict may
+  sign in their place. On any one line that happens at most twice for a
+  reimbursement and once for a card charge. A line that would need more is held
+  for the Board to resolve.
+  [Decision]
+
+### Sending expenses to QuickBooks
+
+The rules in *Principle: QuickBooks is finance's book* apply throughout. These
+are the parts specific to expenses.
+
+- Every expense reaches the books charged to the budget it was spent from, so
+  each program's spending can be read against its budget.
+  [Decision]
+
+- A reimbursement counts as paid only when QuickBooks shows it fully paid, on
+  the date of the last payment.
+  [Decision]
