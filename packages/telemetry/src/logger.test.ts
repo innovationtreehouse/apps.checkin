@@ -111,6 +111,35 @@ describe("logger — Error serialization", () => {
     expect(line.err.stack).toContain("GET [url] as [email]");
   });
 
+  it("redacts secrets in msg and any top-level string field, including unlisted ones", () => {
+    const c = capture();
+    logger.error("SHOPIFY_API_KEY=abc123def rejected", {
+      err: "connect postgresql://app:hunter2pass@db/app failed",
+      detail: "CRON_SECRET=s3cr3tvalue",
+    });
+    const raw = String(vi.mocked(console.error).mock.calls[0][0]);
+    expect(raw).not.toContain("abc123def");
+    expect(raw).not.toContain("hunter2pass");
+    expect(raw).not.toContain("s3cr3tvalue");
+    const [line] = c.error();
+    expect(line.msg).toBe("SHOPIFY_API_KEY=[redacted] rejected");
+    expect(line.err).toBe("connect postgresql://app:[redacted]@db/app failed");
+    expect(line.detail).toBe("CRON_SECRET=[redacted]");
+    expect(line.level).toBe("error");
+  });
+
+  it("keeps id-shaped *Id fields (UUID, digits, short slug) but redacts an opaque token in one", () => {
+    const c = capture();
+    const correlationId = newCorrelationId();
+    const opaque = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+    logger.info("x", { correlationId, outboxId: "4821", storeId: "main-store", fooId: opaque });
+    const [line] = c.log();
+    expect(line.correlationId).toBe(correlationId);
+    expect(line.outboxId).toBe("4821");
+    expect(line.storeId).toBe("main-store");
+    expect(line.fooId).toBe("[redacted]");
+  });
+
   it("omits the stack when the Error has none", () => {
     const c = capture();
     const err = new Error("no stack");

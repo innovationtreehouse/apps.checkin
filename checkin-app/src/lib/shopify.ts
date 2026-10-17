@@ -205,7 +205,7 @@ export async function fetchStorefrontProductVariants(productUrl: string): Promis
 /**
  * Shared failure path for Shopify write operations: log to IntegrationErrorLog
  * (System Status > Link Status) and best-effort email admins/board, with the
- * error text redacted (lib/redact) since it leaves the app. Never
+ * error text redacted (redactSecrets) since it leaves the app. Never
  * throws — callers return false/null regardless of whether this succeeds.
  */
 export async function reportShopifyFailure(
