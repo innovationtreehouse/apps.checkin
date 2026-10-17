@@ -14,11 +14,14 @@
  * withdrawn after its money arrived. It carries what the accept screen shows:
  * receipt and join timestamps, the bucket, the value and its lines, the uploader
  * and recorder, when the donor was replaced, the four accept warnings and the
- * caller's conflict state, all as `internal` facts. It carries no donor field,
- * so a donor name on the row is stripped from every view.
+ * caller's conflict state, plus the gift's queue state and what it waits on, its
+ * outcome and decision time, a replay conflict, a bucket hold, each booking
+ * side's state and when finance settled a withdrawal, all as `internal` facts.
+ * It carries no donor field, so a donor name on the row is stripped from every
+ * view.
  *
- * InKindQueueLineView — one line of a queued gift: the item, its quantity, the
- * value finance set and the value ops suggested, all `internal`.
+ * InKindQueueLineView — one line of a queued gift: the item and its description,
+ * its quantity, the value finance set and the value ops suggested, all `internal`.
  *
  * InKindDecisionView — the reply to accepting, refusing or returning a gift:
  * which gift, the outcome, who decided and when, the bucket and the total value,
@@ -28,8 +31,12 @@
  * was given, its value and date, all `internal`. It carries no donor field, so
  * a donor name on the row is stripped from every view, finance's included.
  *
- * InKindBucketGiftLineView — one line of that gift: item, quantity and value,
- * all `internal`.
+ * InKindBucketGiftLineView — one line of that gift: item and its description,
+ * quantity and value, all `internal`.
+ *
+ * InKindSettleResult — the reply to finance settling a receipt gift's anomaly (a
+ * withdrawal or a replay conflict): which gift, which kind, and when, all
+ * `internal`. Settling a withdrawal clears the donor, so the reply carries none.
  *
  * ManualInKindRecordResult — the reply to recording a no-receipt in-kind
  * donation: its id and whether its goods loaded into inventory, both `internal`.
@@ -71,10 +78,21 @@ export const classifications = {
     warnDonorReplaced: "internal",
     callerConflicted: "internal",
     allFinanceConflicted: "internal",
+    state: "internal",
+    waitingOn: "internal",
+    outcome: "internal",
+    decidedAt: "internal",
+    replayConflictAt: "internal",
+    bucketHeld: "internal",
+    revenueBooking: "internal",
+    expenseBooking: "internal",
+    withdrawalSettledAt: "internal",
+    donationDate: "internal",
   },
   InKindQueueLineView: {
     id: "internal",
     gtin13: "internal",
+    description: "internal",
     quantity: "internal",
     valueCents: "internal",
     suggestedValueCents: "internal",
@@ -99,8 +117,14 @@ export const classifications = {
   InKindBucketGiftLineView: {
     id: "internal",
     gtin13: "internal",
+    description: "internal",
     quantity: "internal",
     valueCents: "internal",
+  },
+  InKindSettleResult: {
+    id: "internal",
+    kind: "internal",
+    settledAt: "internal",
   },
   ManualInKindRecordResult: {
     id: "internal",

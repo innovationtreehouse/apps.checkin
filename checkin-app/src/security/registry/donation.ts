@@ -4,7 +4,8 @@ import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 // Reads admit FINANCE or BOARD (the board acts as finance's superuser); writes
 // admit FINANCE only, except the in-kind decision, which also admits BOARD. Both
 // see donor identity (`pii`) and the amounts and plumbing (`internal`), except
-// on the in-kind decision and bucket routes, whose responses carry no donor.
+// on the in-kind decision, settle and bucket routes, whose responses carry no
+// donor.
 // Ops (OPERATIONS or INVENTORY_MANAGER) is admitted only to the no-receipt
 // in-kind routes, with no `pii`: it records donors but never reads them back.
 // No sysadmin view: Finance Ops excludes sysadmins (docs/rules/revenue.md). No
@@ -35,6 +36,7 @@ const DECISION_VIEW: readonly OrderedViewEntry[] = [
     ['isFinance', NO_PII_TOKENS],
     ['isBoardMember', NO_PII_TOKENS],
 ];
+const SETTLE_VIEW: readonly OrderedViewEntry[] = [['isFinance', NO_PII_TOKENS]];
 const IN_KIND_WRITE_VIEW: readonly OrderedViewEntry[] = [
     ...FINANCE_VIEW,
     ['isOperations', NO_PII_TOKENS],
@@ -81,6 +83,10 @@ defineRoute({ endpoint: 'POST /api/donations/in-kind/manual/[id]/load-inventory'
 // conflicted caller. The reply carries no donor, so no view grants `pii`.
 defineRoute({ endpoint: 'POST /api/donations/in-kind/receipt/[id]/decision', authorize: 'finance-or-board', envelope: null, returns: ['InKindDecisionView'], orderedView: DECISION_VIEW });
 defineRoute({ endpoint: 'POST /api/donations/in-kind/manual/[id]/decision', authorize: 'finance-or-board', envelope: null, returns: ['InKindDecisionView'], orderedView: DECISION_VIEW });
+
+// Settling a receipt gift's anomaly (a withdrawal or a replay conflict) —
+// FINANCE only. Settling a withdrawal clears the donor, so no view grants `pii`.
+defineRoute({ endpoint: 'POST /api/donations/in-kind/receipt/[id]/settle', authorize: 'finance', envelope: null, returns: ['InKindSettleResult'], orderedView: SETTLE_VIEW });
 
 // In-kind gifts in the caller's buckets — FINANCE, BOARD or a bucket approver,
 // who sees them and does not decide them.
