@@ -150,7 +150,9 @@ on QuickBooks refusing to post into a closed period (fault 6200).
 `findOrCreate` reports fault 6200 as `closed`, the same result as a date the
 gate stopped itself. The lane holds the record as closed, never as
 `POST_FAILED`, so it is never retried as a failed post. The next run reads the
-closing date again and keeps the record held under the new date.
+closing date again and keeps the record held under the new date. The shared
+gate PR's sandbox check confirms that QuickBooks returns fault 6200 for a create
+dated in a closed period, in the closing mode finance uses.
 
 ### 3. Switch-on timestamp
 
@@ -357,6 +359,33 @@ attempted record, the route runs the lookup:
 
 Skip and dismiss on a record that was never attempted need no lookup.
 
+### 7. Daily orphan sweep
+
+The rules in section 6 run inside the post path, so they cannot see a create
+that lands after every other path has looked. A post can stall past its claim's
+10 minutes, send its create after the reclaimer and finance have checked, and
+then die before it settles; or its create can time out after QuickBooks applied
+it, so the post settles with a failure rather than `created` and raises no flag.
+Either way the app's second entry sits in QuickBooks with nobody told.
+QuickBooks offers no way to fence off a stalled caller, so a check after the
+fact closes this.
+
+Once a day the `qbo-posting` cron runs a sweep for each lane:
+
+- **One read per lane.** It runs the section 6 created-since query from the
+  oldest `qbCreateAttemptedAt` in the lane within the last 30 days. It reads at
+  most 1,000 entries, the same cap as the lookup; a full page alerts finance that
+  the sweep could not see every entry.
+- **Match the keys.** It reads the `[checkin:<key>]` marker from each entry's
+  memo and finds the lane's record with that key.
+- **Report what does not fit.** An app-keyed entry whose record does not link
+  it, or whose record links a different entry, raises the lane's finance flag or
+  queue note: "app entry X is not linked; void or link it". Expense raises
+  `QB_POST_FAILED`; income and donation put the note on the record.
+
+The sweep only reads QuickBooks and fixes nothing itself. Finance voids or links
+the entry. A stalled post's stray entry therefore reaches finance within a day.
+
 ---
 
 ## Related fixes
@@ -390,9 +419,9 @@ One kind per PR. Registry entries first, each in its own PR based on `main`.
 2. **Shared gate:** `packages/quickbooks` replaces `takeoverLine` with
    `closedThrough` and `mayCreate`, and adds `bookCloseDate()`. It re-reads the
    closing date just before each create and reports fault 6200 as `closed`
-   (section 2). It adds the created-since read for the key lookup (section 6).
-   It confirms the closing date field and the created-since query in the
-   sandbox. Until each lane PR lands, its caller passes its old line
+   (section 2). It adds the created-since read used by the key lookup and the
+   sweep (sections 6 and 7). It confirms the closing date field, fault 6200 for
+   a closed period, and the created-since query in the sandbox. Until each lane PR lands, its caller passes its old line
    as `closedThrough` with `mayCreate: true` (or `mayCreate: false` when it has no
    line), and maps `closed` to today's `too-old` and `needs-finance` to today's
    `no-line`. Behaviour is unchanged, except that a create QuickBooks refuses
@@ -400,17 +429,20 @@ One kind per PR. Registry entries first, each in its own PR based on `main`.
 3. **Expense:** gate wiring, `UNBOOKED` and `SKIPPED`, `BEFORE_LINE` read as
    `UNBOOKED` (section 5, expand), the `qb-resolve` route and its screen, the
    self-set stamp, the key lookup, the lost-claim flag and the lookup before
-   finance's match and skip (section 6), and its migration (the switch-on and
+   finance's match and skip (section 6), the daily sweep (section 7), and its
+   migration (the switch-on and
    create-attempt columns).
 4. **Income:** gate wiring, immediate `NO_DEPOSIT`, the "book" action, the
    late-payout path (reconcile before the stamp, no window cut-off after it),
    the self-set stamp, the NEEDS_MAPPING ordering, the key lookup, the
    lost-claim note and the lookup before finance's match and dismiss
-   (section 6), and its switch-on and create-attempt columns.
+   (section 6), the daily sweep (section 7), and its switch-on and
+   create-attempt columns.
 5. **Donation:** gate wiring, `UNBOOKED`, the "book" action, the self-set
    Benevity stamp, `BEFORE_LINE` read as `UNBOOKED` (section 5, expand), the key
    lookup, the lost-claim note and the lookup before finance's match and dismiss
-   (section 6), and its migration (`DonationOrgSettings` and the create-attempt
+   (section 6), the daily sweep (section 7), and its migration
+   (`DonationOrgSettings` and the create-attempt
    column). In-kind has no posting lane yet; its column comes
    with that lane (#2182).
 6. **Rules:** `revenue.md` and, if it has merged, the `principles.md` line from
