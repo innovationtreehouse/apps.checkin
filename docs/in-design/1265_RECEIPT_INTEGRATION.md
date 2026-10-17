@@ -247,10 +247,11 @@ check instead.
     nothing here needs it yet.
   - **Scope.** The list filters the mailbox only. A file a person uploads by
     hand is theirs to send, and upload never consults it.
-  - **Sensitivity.** Hash, reason, actor and time are `internal`. A hash is a
-    fingerprint of a file, not its content. Adding an entry writes an audit row
-    (actor, the mail item or receipt it came from, the reason); the row carries
-    no file bytes.
+  - **Sensitivity** (owner ruling 2026-10-16). Hash, reason, actor and time
+    are `internal`. A hash is a
+    fingerprint of a file, not its content. Adding or removing an entry writes an audit
+    row (actor, the mail item or receipt it came from, the reason); the row
+    carries no file bytes.
 
 Inline images change how much mail the step turns into work. A trusted sender's
 logos spend that sender's upload limits and the run's OCR cap, and an untrusted
@@ -731,9 +732,6 @@ All PRs are based on `main`; none stacks.
   prod until Q5 is confirmed and recorded on #1266. Until then prod OCR fails
   closed into `ocr_failed` ("not configured", §3), and manual entry and the
   Gmail and import paths keep working without automatic reading.
-- **Q6. Ignore-list tier and audit** (§2a). Proposed: entries `internal`; every
-  add and remove writes an audit row with no file bytes.
-
 Routes the ignore list needs, each a registry entry PR before its route PR
 (boundary isolation, `AGENTS.md`): the mail-item discard takes an optional
 `ignoreFile: true` (no new route); `POST /api/receipts/[id]/ignore-file`
