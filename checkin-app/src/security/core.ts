@@ -75,8 +75,8 @@ import type { BusinessRole } from '@/types/auth';
 import { assertNever } from '@/lib/lifecycle/classify';
 
 // Every classification source: checkin's schema, each vendored library's schema
-// (#1286 §5, its own `generator security` map), and hand-authored synthetic
-// response models (e.g. CatalogItemCount — #1286 §7). The flat merge below is
+// (its own `generator security` map), and hand-authored synthetic response
+// models (e.g. CatalogItemCount). The flat merge below is
 // the whole-system map every boundary consumer (stripper, outbound, registry)
 // reads through — import `classifications` / `relations` from here, not from a
 // source file. Model keys must be disjoint across sources, or a later source
@@ -157,10 +157,10 @@ export type Role =
     | 'isKeyholder'
     | 'isBackgroundCheckReviewer'
     | 'isOperations'
-    // Curates the global catalog (#1286 §6). A Person role boolean, stamped on
+    // Curates the global catalog. A Person role boolean, stamped on
     // the session like the others; grants the manager view on catalog routes.
     | 'isInventoryManager'
-    // Finance staff (#1272 §6). A Person role boolean, stamped on the session
+    // Finance staff. A Person role boolean, stamped on the session
     // like the others; grants the finance view on finance-library routes.
     | 'isFinance'
     // Holds a MAY_CERTIFY_OTHERS toolStatus (a shop certifier). Not a Person
@@ -181,8 +181,8 @@ const VALID_SCOPES = new Set<Scope>([
     'all_current_visitors',
 ]);
 const VALID_SENSITIVE_TIERS = new Set<SensitiveTier>(['pii', 'personal', 'internal']);
-// Exported so a guard test can assert BusinessRole (types/auth.ts) ⊆ VALID_ROLES —
-// the gap that let #1104 add isOperations to BusinessRole without adding it here.
+// Exported so a guard test can assert BusinessRole (types/auth.ts) ⊆ VALID_ROLES:
+// a role added to BusinessRole must be added here too.
 export const VALID_ROLES = new Set<Role>([
     'anyone',
     'unauthenticated',
@@ -228,28 +228,29 @@ export type Authorize =
     | 'self'
     // Admits a caller holding any listed role flag. No sysadmin/board auto-admit.
     | { anyRole: SessionFlagRole[] }
-    // Catalog read admission (#1286 §6): the single chokepoint for reading the
-    // global catalog — INVENTORY_MANAGER, any RBAC-role holder, a program leader,
-    // or a volunteer (keyed by email). Broader than the ops roles, deliberately:
-    // the catalog is non-pii reference data (writes stay INVENTORY_MANAGER-only).
+    // Catalog read admission: the single chokepoint for reading the global
+    // catalog — the catalog audience (canSeeCatalog, lib/volunteer.ts), decided
+    // from session claims (docs/rules/inventory.md, Access). Broader than the ops
+    // roles, deliberately: the catalog is non-pii reference data (writes stay
+    // INVENTORY_MANAGER-only).
     | 'catalog-viewer'
-    // Receipt submission (#1265 §6): an adult whose household membership is
+    // Receipt submission: an adult whose household membership is
     // ACTIVE, or a Treehouse Volunteer (role holder or staff account) whatever
     // their age or membership. No background check (docs/rules/expenses.md).
     | 'receipt-submitter'
-    // Catalog write admission (#1286 §6): INVENTORY_MANAGER only.
+    // Catalog write admission: INVENTORY_MANAGER only.
     | 'inventory-manager'
-    // FINANCE only (#1272 §6). No sysadmin auto-admit: Finance Ops excludes
+    // FINANCE only. No sysadmin auto-admit: Finance Ops excludes
     // sysadmins (docs/rules/revenue.md).
     | 'finance'
-    // FINANCE or BOARD (#1272 §6, #1280 §4): the board acts as finance's
+    // FINANCE or BOARD: the board acts as finance's
     // superuser. No sysadmin auto-admit, as above.
     | 'finance-or-board'
-    // A budget-bucket approver (#1272 §5/§6): FINANCE, BOARD, a program leader,
+    // A budget-bucket approver: FINANCE, BOARD, a program leader,
     // or a program treasurer. No sysadmin auto-admit. Rows stay handler-filtered
     // to the buckets the caller approves.
     | 'expense-approver'
-    // Expense sign-off admission (#1272 §6): `receipt-submitter` (an adult member or
+    // Expense sign-off admission: `receipt-submitter` (an adult member or
     // Treehouse Volunteer, for the submitter seat) or `expense-approver` (program
     // approver, Treasurer, Board seats). Far wider than the seat holders; the
     // library refuses a caller who holds no seat on the line.
@@ -299,7 +300,7 @@ export interface RouteSpec {
     /**
      * The models this route's handler is declared to return (top-level bag keys
      * + the models reached through their relations). Optional documentation of
-     * the response surface; consumed by the §8 seam validator to check the
+     * the response surface; consumed by the seam validator (validateRouteGrants) to check the
      * declared set against what the handler actually ships. Not enforced by the
      * runtime stripper (that gates per-field regardless of this list).
      */

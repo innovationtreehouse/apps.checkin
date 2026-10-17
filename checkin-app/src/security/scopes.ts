@@ -1,21 +1,18 @@
 /**
  * Declarative scope-resolution engine.
  *
- * The per-row scope resolver used to be an imperative `switch (modelName)` in
- * access-resolvers.ts. This file is the data-driven replacement: a small
- * `Match` vocabulary, the `evalMatch` interpreter, and `makeScopesHeld` which
- * turns a binding table into a resolver with the IDENTICAL signature
+ * A small `Match` vocabulary, the `evalMatch` interpreter, and `makeScopesHeld`,
+ * which turns a binding table into the per-row scope resolver
  * `(modelName, row, ctx) => Set<Scope>`.
  *
  * Why this exists: making resolution *data* (scopeBindings.ts) instead of code
  * is the minimum needed for the CI security validators below — `validateBindings`
  * (field-typo + forgotten-model catchers) and `validateRouteGrants` (the
  * route-grant ↔ binding-scope seam check). None of them can run against an
- * opaque switch. See docs/security/auth-consistency-analysis.md §7.
+ * imperative switch. See docs/security/auth-consistency-analysis.md §7.
  *
  * The bindings + table live in scopeBindings.ts; this file is the generic
- * engine. Kept deliberately local to checkin-app/src/security — no package
- * extraction (that is §7.7, out of scope).
+ * engine, kept deliberately local to checkin-app/src/security.
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
@@ -97,9 +94,8 @@ export function evalMatch(m: Match, row: Record<string, unknown>, ctx: CallerCon
  *   - a null / non-object row: row-scoped models fail closed; others get the
  *     broad scope.
  *
- * `rowScopeKeys` is the new home of the old ROW_SCOPE_KEY map. The §7.3 doc
- * sketch dropped it; the live switch has it and the equivalence test (and the
- * existing EmergencyContact fail-closed unit tests) require it.
+ * `rowScopeKeys` is the ROW_SCOPE_KEY map; the EmergencyContact fail-closed
+ * unit tests require it.
  */
 export function makeScopesHeld(
     bindings: ScopeBindings,
@@ -131,7 +127,7 @@ export function makeScopesHeld(
     };
 }
 
-// ─── Validators (authored for CI; NOT wired as gates in this chip — see §7.6) ──
+// ─── Validators (CI gates, armed by __tests__/scopeValidators.test.ts) ──
 
 /** Walk a model's scope map, descending into `all` combinators, yielding leaf+compound matches. */
 function allMatches(scopeMap: Partial<Record<Scope, Match>>): Match[] {
@@ -233,12 +229,8 @@ export function validateBindings(
 /**
  * The seam check: every `scope:tier` token a route GRANTS in its orderedView
  * must be RESOLVABLE on at least one model that route returns — else the grant
- * silently strips to nothing (over-restriction). See §8.
- *
- * NOTE: this cannot be wired as a CI gate until RouteSpec declares a `returns`
- * field listing the model(s) its bag may contain. That arrives with the
- * route-migration track (Step 3); this chip deliberately does NOT add `returns`
- * to RouteSpec. Authored here so it exists and is tested in isolation.
+ * silently strips to nothing (over-restriction). A route that declares no
+ * `returns` is skipped.
  */
 export interface RouteGrantSpec {
     endpoint: string;

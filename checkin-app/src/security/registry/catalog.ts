@@ -1,22 +1,22 @@
-// Global catalog (#1286 §5/§6) route policy. Aggregated by ../registry.ts.
+// Global catalog route policy. Aggregated by ../registry.ts.
 import { defineRoute, type OrderedViewEntry } from '../core';
 
-// Reads admit any catalog viewer — the single read chokepoint (§6); writes are
+// Reads admit any catalog viewer — the single read chokepoint; writes are
 // INVENTORY_MANAGER-only. Catalog reference data is `public`; the only non-public
-// fields are `internal` (actor attribution, free text, cross-app plumbing — §5),
+// fields are `internal` (actor attribution, free text, cross-app plumbing),
 // granted to the manager view. The catalog schema has no pii/personal/member
 // tier, so the viewer view is `public` only and the manager view adds
-// `everyones:internal`. Every route returns model bags through handler() (§5.4);
+// `everyones:internal`. Every route returns model bags through handler();
 // envelope null ships the single model payload directly (arrays for lists).
 //
 // NOT registered here, deliberately:
-//   • POST/GET /api/internal/[...path] — the S4 receipt RPC (§8). It authenticates
+//   • POST/GET /api/internal/[...path] — the receipt RPC. It authenticates
 //     with a machine org-bearer token, not a checkin session, so it carries its
 //     own gate and lives in the legacy-authz baseline (scripts/legacy-authz-routes.txt),
 //     like every other machine route (webhooks/cron). The overlap-window reads
 //     that the source served at /api/catalog(/items) are folded onto this surface.
-//   • proposals/counts, reference-conflicts/count — badge counts, "not
-//     first-landing" (§7); deferred to track 5 with the nav badges.
+//   • proposals/counts, reference-conflicts/count — badge counts; checkin
+//     serves no such route.
 const CATALOG_VIEW: readonly OrderedViewEntry[] = [
     ['isInventoryManager', ['everyones:internal', 'public']],
     ['authenticated', ['public']],
@@ -29,7 +29,7 @@ const CATALOG_MANAGER_VIEW: readonly OrderedViewEntry[] = [
 defineRoute({ endpoint: 'GET /api/catalog/categories', authorize: 'catalog-viewer', envelope: null, returns: ['Category'], orderedView: CATALOG_VIEW });
 defineRoute({ endpoint: 'GET /api/catalog/subcategories', authorize: 'catalog-viewer', envelope: null, returns: ['Subcategory'], orderedView: CATALOG_VIEW });
 defineRoute({ endpoint: 'GET /api/catalog/items', authorize: 'catalog-viewer', envelope: null, returns: ['Item', 'Category', 'Subcategory'], orderedView: CATALOG_VIEW });
-// Item count for the paginated list UI (#1286 §7). Returns the synthetic
+// Item count for the paginated list UI. Returns the synthetic
 // CatalogItemCount model ({ total } — public); a scalar total can't ride a Prisma
 // model bag, so it is declared in catalogSyntheticClassifications.ts.
 defineRoute({ endpoint: 'GET /api/catalog/items/count', authorize: 'catalog-viewer', envelope: null, returns: ['CatalogItemCount'], orderedView: CATALOG_VIEW });

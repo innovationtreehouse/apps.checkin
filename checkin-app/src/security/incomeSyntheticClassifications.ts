@@ -1,10 +1,10 @@
 /**
  * Non-Prisma response models the income library ships through handler()
- * (#1283 §6; the catalogSyntheticClassifications.ts pattern).
+ * (the catalogSyntheticClassifications.ts pattern).
  *
  * Mirror payouts, balance transactions and items, live QuickBooks deposits and
  * reconciliation counts are not Prisma models, and handler()'s stripper drops any
- * bag key that isn't a known model. Every field is `internal` (§7): income data is
+ * bag key that isn't a known model. Every field is `internal`: income data is
  * FINANCE's, with BOARD read.
  *
  * These field lists are also the tiering's precondition: no customer column from
