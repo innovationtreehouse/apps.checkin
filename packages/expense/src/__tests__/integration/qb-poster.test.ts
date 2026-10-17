@@ -205,6 +205,7 @@ describeDb("QB-2 posting — match before create", () => {
     expect(await postExpenseToQb(ORG, id)).toBe("matched");
     expect(qbo.posts).toHaveLength(0);
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "MATCHED", qbTxnId: "900" });
+    expect(JSON.parse((await expenseRow(id)).qbMatchBaseline ?? "null")).toEqual({ amountCents: 1000, accounts: [], vendorId: null });
   });
 
   it("posts nothing at all without a configured takeover date, even past a hand match", async () => {

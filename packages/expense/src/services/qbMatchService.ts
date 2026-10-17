@@ -4,6 +4,7 @@ import { db, isUniqueConstraintError, type Db } from "../db";
 import type { ExpensePrincipal, QbTxn } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { writeAudit } from "../lib/audit";
+import { matchBaseline } from "../lib/expense-qb-drift";
 import { actorOf } from "../lib/caller";
 import { lockExpense, unsignedLines } from "../lib/signoff-facts";
 import { reimburseeUnknown } from "../lib/signoff";
@@ -149,6 +150,7 @@ export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: s
   }
   const { entity, txns } = await candidatesFor(expense);
   if (!txns.some((t) => t.id === qbTxnId)) throw new ServiceError(409, "That QuickBooks entry is not a candidate for this expense");
+  const qbMatchBaseline = await matchBaseline(entity, qbTxnId, expense.receiptDate);
   try {
     await db.$transaction(async (tx) => {
       // Sign-offs are read under the expense lock, so a concurrent void cannot slip past the check.
@@ -159,7 +161,7 @@ export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: s
       }
       const linked = await tx.expense.updateMany({
         where: { id: expenseId, qbTxnId: null, qbMatchState: { in: MATCHABLE_STATES } },
-        data: { qbMatchState: "MATCHED", qbTxnId, qbTxnEntity: entity },
+        data: { qbMatchState: "MATCHED", qbTxnId, qbTxnEntity: entity, qbMatchBaseline },
       });
       if (linked.count === 0) throw new ServiceError(409, "Expense is already linked to QuickBooks");
       if (!(await claimQbTxn(tx, current.orgId, entity, qbTxnId))) throw new ServiceError(409, "That QuickBooks entry is already claimed");

@@ -1,7 +1,7 @@
 /** QB-3 drift: which fields of a created QuickBooks entry no longer match what was posted. */
 import { describe, it, expect } from "vitest";
 import { qbKey, type QboBill } from "@inventory/quickbooks";
-import { driftOf, todaysSlice, type PostedEntry } from "../../lib/expense-qb-drift";
+import { baselineOf, driftOf, todaysSlice, type PostedEntry } from "../../lib/expense-qb-drift";
 
 const key = qbKey("expense", "e1");
 const posted: PostedEntry = { key, amountCents: 1000, accounts: ["60", "61"], vendorId: "77" };
@@ -46,6 +46,21 @@ describe("driftOf", () => {
 
   it("checks no vendor on a Purchase", () => {
     expect(driftOf({ ...posted, vendorId: null }, entry({ VendorRef: undefined }))).toEqual([]);
+  });
+});
+
+describe("baselineOf", () => {
+  const hand = entry({ PrivateNote: "hand-booked" });
+
+  it("holds a hand-booked entry as it is, so the same entry shows no drift", () => {
+    expect(baselineOf(hand)).toEqual({ key: undefined, amountCents: 1000, accounts: ["60", "61"], vendorId: "77" });
+    expect(driftOf(baselineOf(hand), hand)).toEqual([]);
+  });
+
+  it("survives a JSON round trip with no key", () => {
+    const stored = JSON.parse(JSON.stringify(baselineOf(hand))) as PostedEntry;
+    expect(driftOf(stored, hand)).toEqual([]);
+    expect(driftOf(stored, { ...hand, TotalAmt: 11 })).toEqual(["amount"]);
   });
 });
 
