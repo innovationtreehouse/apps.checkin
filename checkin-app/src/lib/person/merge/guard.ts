@@ -4,9 +4,8 @@ import type { OrgMembershipStatus, PersonRoleKind } from "@/generated/prisma/cli
  * The part of `BackgroundCheckAttestation`'s
  * `@@unique([processId, reviewerId, subjectPersonId])` that a `subjectPersonId`
  * repoint does NOT change — two rows sharing it cannot both name the same
- * subject. Lives here rather than in either route because #1686's original
- * collision key drifted between the POST and its analyze GET; one definition
- * is what stops that recurring.
+ * subject. The merge and its analyze preview share this one definition so
+ * their collision keys cannot drift apart.
  */
 export function bgSubjectKey(a: { processId: number; reviewerId: number }): string {
     return `${a.processId}:${a.reviewerId}`;
@@ -68,7 +67,7 @@ export function membershipMergeBlock(
  * null. The merge moves each role with `setRoleFlag` (revoke from the tombstone,
  * grant to the keeper), so it must pass that function's refusals; checking them
  * here refuses the merge before anything is written. The own-household rule is
- * the route's household conflict check.
+ * prepareMerge's household conflict check.
  */
 export function roleMergeBlock(
     actor: { isBoardMember?: boolean } | null,

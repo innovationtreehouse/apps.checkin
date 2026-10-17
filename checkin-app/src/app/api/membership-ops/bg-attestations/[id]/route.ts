@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 /**
  * DELETE /api/membership-ops/bg-attestations/[id] — cleanup for a
  * BackgroundCheckAttestation the participant-merge route refuses to carry
- * forward ("Both attested the same background check", merge/route.ts): the
+ * forward ("Both attested the same background check", lib/person/merge/plan.ts): the
  * same human reviewed under two Person identities, and nothing else removes
  * the duplicate. Body: { reason: string } (mandatory, non-empty). Who may call
  * it is the registry entry's grant.

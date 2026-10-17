@@ -122,7 +122,7 @@ export default function MergeParticipants() {
   const [previewMode, setPreviewMode] = useState(false);
 
   // Why the merge is refused on household-membership grounds, per direction —
-  // the rule turns on which record is merged away (see the API's membershipGuard).
+  // the rule turns on which record is merged away (see lib/person/merge/guard.ts).
   const [membershipBlock, setMembershipBlock] = useState<{ aAsKeeper: string | null; bAsKeeper: string | null } | null>(null);
 
   // One choice per true conflict field ('keep' | 'merge'); default 'keep' (the

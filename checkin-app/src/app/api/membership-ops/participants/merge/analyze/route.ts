@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
-import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock } from "../membershipGuard";
+import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock } from "@/lib/person/merge/guard";
 
 export const dynamic = 'force-dynamic';
 
@@ -30,8 +30,8 @@ export const GET = withAuth(
                     // `householdMembers: true` returns full Person rows one level down for
                     // people who aren't even being merged.
                     // googleId/dateOfBirth ARE deliberately kept on the two merge subjects:
-                    // they're 2 of the 5 CONFLICT_FIELDS the merge field-picker compares
-                    // (see ../route.ts), and googleIdIdentity() renders the account behind a
+                    // the merge field-picker compares dateOfBirth and the googleId identity
+                    // (see @/lib/person/merge/plan.ts), and googleIdIdentity() renders the account behind a
                     // googleId conflict. Stripping them silently breaks the picker.
                     // Household members get only id/name/isHouseholdLead — all the merge page
                     // renders (name, "(This)" self-marker, [Lead] marker, isLeadWithOthers
@@ -44,7 +44,7 @@ export const GET = withAuth(
                         googleId: true,
                         // Lets the merge picker label which side's identity is
                         // verified/controlled (the login identity resolves as one
-                        // unit — see ../route.ts). Kept explicit, not a bare include.
+                        // unit — see @/lib/person/merge/plan.ts). Kept explicit, not a bare include.
                         emailVerified: true,
                         dateOfBirth: true,
                         mergedIntoId: true,
@@ -53,7 +53,7 @@ export const GET = withAuth(
                                 id: true,
                                 name: true,
                                 // Public-tier; feeds the membership warning the POST guard
-                                // enforces (see ../membershipGuard.ts).
+                                // enforces (see @/lib/person/merge/guard.ts).
                                 orgMembership: { select: { status: true } },
                                 householdMembers: {
                                     // Tombstones are not members: the page's
