@@ -77,6 +77,7 @@ enum EnrollmentStatus {
 enum ProgramParticipantStatus {
   PENDING
   ACTIVE
+  WITHDRAWN
 }
 
 /// What a household asked for when they requested help with a fee. Recorded at
@@ -1191,6 +1192,10 @@ model ProgramParticipant {
   /// hold was really taken. Withdrawal returns the seat (+1) only when set.
   /// @sensitivity:internal
   seatTakenWithoutSaleAt DateTime?
+  /// When the person withdrew: set with status WITHDRAWN, null otherwise.
+  /// Same tier as pendingSince — a workflow timestamp lead mentors need.
+  /// @sensitivity:personal
+  endedAt              DateTime?
 
   program Program     @relation(fields: [programId], references: [id])
   person  Person @relation(fields: [personId], references: [id])

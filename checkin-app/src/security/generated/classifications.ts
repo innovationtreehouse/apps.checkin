@@ -276,6 +276,7 @@ export const classifications = {
         paymentPlanDeniedAt: 'personal',
         shopifyOrderId: 'internal',
         seatTakenWithoutSaleAt: 'internal',
+        endedAt: 'personal',
     },
     Event: {
         id: 'public',
