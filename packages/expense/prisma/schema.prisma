@@ -629,6 +629,9 @@ model ExpenseFlag {
   audience             String
   /// @sensitivity:personal
   detail               String?
+  // What the raiser saw (JSON); a QB_DRIFT check-off holds only while QuickBooks still shows it.
+  /// @sensitivity:internal
+  observed             String?
   /// @sensitivity:internal
   raisedAt             DateTime  @default(now()) @map("raised_at")
   /// @sensitivity:internal

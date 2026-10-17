@@ -1,7 +1,7 @@
 /** QB-3 drift: which fields of a created QuickBooks entry no longer match what was posted. */
 import { describe, it, expect } from "vitest";
 import { qbKey, type QboBill } from "@inventory/quickbooks";
-import { baselineOf, driftOf, todaysSlice, type PostedEntry } from "../../lib/expense-qb-drift";
+import { baselineOf, driftOf, observedOf, todaysSlice, type PostedEntry } from "../../lib/expense-qb-drift";
 
 const key = qbKey("expense", "e1");
 const posted: PostedEntry = { key, amountCents: 1000, accounts: ["60", "61"], vendorId: "77" };
@@ -61,6 +61,27 @@ describe("baselineOf", () => {
     const stored = JSON.parse(JSON.stringify(baselineOf(hand))) as PostedEntry;
     expect(driftOf(stored, hand)).toEqual([]);
     expect(driftOf(stored, { ...hand, TotalAmt: 11 })).toEqual(["amount"]);
+  });
+});
+
+describe("observedOf", () => {
+  it("holds what QuickBooks shows for each drifted field only", () => {
+    const edited = entry({ TotalAmt: 2010.01, VendorRef: { value: "78" } });
+    expect(JSON.parse(observedOf(edited, ["amount", "vendor"]))).toEqual({ amount: 201001, vendor: "78" });
+    expect(JSON.parse(observedOf(entry({ PrivateNote: "Acme" }), ["key"]))).toEqual({ key: null });
+    expect(JSON.parse(observedOf(entry({ Line: [line(10, "62"), line(0, "60")] }), ["accounts"]))).toEqual({ accounts: ["60", "62"] });
+    expect(JSON.parse(observedOf(undefined, ["missing"]))).toEqual({ missing: true });
+  });
+
+  it("differs when a drifted field moves again", () => {
+    expect(observedOf(entry({ TotalAmt: 10.01 }), ["amount"])).not.toBe(observedOf(entry({ TotalAmt: 2010.01 }), ["amount"]));
+  });
+
+  it("ignores a line's Class", () => {
+    const classedLine = { Amount: 10, AccountBasedExpenseLineDetail: { AccountRef: { value: "62" }, ClassRef: { value: "8" } } };
+    const classed = entry({ Line: [classedLine] });
+    const plain = entry({ Line: [line(10, "62")] });
+    expect(observedOf(classed, ["accounts"])).toBe(observedOf(plain, ["accounts"]));
   });
 });
 

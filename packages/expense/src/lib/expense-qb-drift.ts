@@ -52,6 +52,19 @@ export function baselineOf(entry: QboPurchase | QboBill): PostedEntry {
   };
 }
 
+/** What QuickBooks shows for each drifted field, as JSON; equal JSON means the same drift. */
+export function observedOf(entry: QboPurchase | QboBill | undefined, drift: DriftField[]): string {
+  if (!entry) return JSON.stringify({ missing: true });
+  const shown: Record<DriftField, unknown> = {
+    missing: false,
+    amount: dollarsToCents(entry.TotalAmt),
+    key: appKeyOf(entry) ?? null,
+    accounts: sorted(lineAccounts(entry)),
+    vendor: entry.VendorRef?.value ?? null,
+  };
+  return JSON.stringify(Object.fromEntries(drift.map((field) => [field, shown[field]])));
+}
+
 function shiftDate(isoDate: string, days: number): string {
   const d = new Date(`${isoDate}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -69,14 +82,20 @@ export function todaysSlice<T>(ids: T[], cap: number, now = new Date()): T[] {
 }
 
 /**
- * Raises QB_DRIFT with the drifted field names. Drift finance already checked off with the
- * same fields stays checked off; different drift reopens the flag.
+ * Raises QB_DRIFT with the drifted field names, storing what QuickBooks showed for them; an open
+ * flag keeps the latest values. Drift finance checked off stays checked off only while
+ * QuickBooks still shows the values last stored.
  */
-async function flagDrift(expenseId: string, drift: DriftField[]): Promise<void> {
+async function flagDrift(expenseId: string, drift: DriftField[], entry: QboPurchase | QboBill | undefined): Promise<void> {
   const detail = drift.join(", ");
+  const observed = observedOf(entry, drift);
   const existing = await db.expenseFlag.findFirst({ where: { expenseId, kind: "QB_DRIFT" } });
-  if (existing?.checkedOffAt && existing.detail === detail) return;
-  await raiseFlag(expenseId, "QB_DRIFT", detail);
+  if (existing?.observed === observed) return;
+  if (existing && !existing.checkedOffAt) {
+    await db.expenseFlag.update({ where: { id: existing.id }, data: { detail, observed } });
+    return;
+  }
+  await raiseFlag(expenseId, "QB_DRIFT", detail, db, observed);
 }
 
 /** The entry `qbTxnId` through the windowed reader around `receiptDate`; undefined when it is gone. */
@@ -151,7 +170,7 @@ export async function checkQbDrift(now = new Date()): Promise<DriftCounts | "unb
       const drift: DriftField[] = expected ? driftOf(expected, entry) : ["missing"];
       if (drift.length === 0) continue;
       counts.drifted++;
-      await flagDrift(id, drift);
+      await flagDrift(id, drift, entry);
     } catch (err) {
       counts.failed++;
       logError("qb_drift_check_failed", { expenseId: id }, err);
