@@ -215,6 +215,32 @@ on the thread. Do not leave it and start something else.
 - Same rule for a finding already **rejected**. Re-raising it needs new evidence
   named in the body, not a new PR number.
 
+## AI review and approval
+
+Every PR carries the **`ai-review`** label. Add it when you open the PR, or
+when you mark a draft ready for review. The label starts the OpenRouter AI
+review (`.github/workflows/openrouter-pr-review.yml`); without it no AI review
+runs. Applying a label needs triage access, so the public cannot trigger it.
+
+The approval sequence for each PR:
+
+1. **AI review round.** Routing picks the review checklists and the model, the
+   review posts, and a completeness check may rerun it once on a stronger
+   model. It usually finishes in under ten minutes. Every later push re-reviews
+   while the label stays on.
+2. **Agent and human reviews start after the AI review posts**, and build on its
+   findings instead of repeating them. Reply on its threads: fixed (name the
+   commit), or accepted or disputed with a reason. Settled threads stay settled
+   in later rounds, because each AI review reads the PR's review history.
+3. **Recommendation.** The final AI review carries a
+   `Recommendation:` line (approve, comment or request changes) and, for
+   approve, the `ai-recommends-approve` label. It is advisory only.
+4. **Approval is a maintainer's.** A maintainer approves after reading the AI
+   review and the other reviews. The AI review never submits an approval.
+
+Remove `ai-review` only to stop further reviews on a PR, for example while it
+is parked. Each run spends the OpenRouter key.
+
 ## Reviewing a PR
 
 A review comment earns its place only if a careful human reading the diff would
