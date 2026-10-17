@@ -181,15 +181,19 @@ joins the two halves on `receiptId`, and either may arrive first:
   is recorded and shows in the finance queue as *donor needed*. It is not booked
   to QuickBooks until the donor arrives, and the entry clears itself when it
   does. An entry that stays means the receipt side's delivery is stuck.
-- **Both present:** the donation is ready to book (§7).
+- **Both present:** the donation waits for finance to accept it, and only then
+  is ready to book (§7). Every in-kind gift, with or without a receipt, is
+  accepted, refused or returned by an independent finance holder first; see
+  `2182_IN_KIND_EXPENSE.md`.
 
 X9 and X13 also change the receipt and orchestrator designs: receipt intake
 needs an "in-kind" mark with the donor fields above and calls X13 itself, and
 the orchestrator sends that receipt's money side to X9 instead of the expense
 crossing (X5). Donor details are `pii` (§4) and are held by donations, which
 links them to no checkin person (§6). If the receipt library persists them, it
-tiers them `pii` too. How goods are valued for QuickBooks, and what the donor's acknowledgement
-says, belong to the in-kind design.
+tiers them `pii` too. How goods are valued for QuickBooks and the accept step
+are in `2182_IN_KIND_EXPENSE.md`; the donor's acknowledgement is #2237, sent
+only for an accepted gift.
 
 ## 3. Database and renames
 
@@ -396,7 +400,8 @@ out and is never booked against a card or bank account.
   decision): a Deposit into clearing (credit in-kind contribution income) and a
   Purchase out of clearing (debit the in-kind expense), same date and amount, so
   clearing nets to zero. Not a bank Deposit and no JournalEntry; both reuse the
-  Deposit and Purchase writers. The clearing account is a configured account
+  Deposit and Purchase writers. Only an accepted gift posts, and both sides
+  carry its bucket's Class (`2182_IN_KIND_EXPENSE.md`). The clearing account is a configured account
   reference whose exact name finance confirms.
 
 **Matching model** (owner decision, shared with income and expense). Matching is
