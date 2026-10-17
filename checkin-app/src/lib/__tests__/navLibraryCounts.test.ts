@@ -1,6 +1,6 @@
 import { collectLibraryCounts, type LibraryCountProvider } from "../navLibraryCounts";
 import { foldBadges, libraryCount, sectionBadges, sectionTabBadge } from "@/components/navBadges";
-import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 
 const finance = { id: 1, isFinance: true };
 const member = { id: 2 };

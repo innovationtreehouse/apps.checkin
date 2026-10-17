@@ -6,7 +6,7 @@ import { z } from "zod";
 const schema = z.object({
   /** SNS topic all alerts are published to. SNS → Slack is wired separately. */
   SNS_TOPIC_ARN: z.string().min(1, "SNS_TOPIC_ARN is required"),
-  MONITORING_ENV: z.string().min(1).default("dev"),
+  MONITORING_ENV: z.string().min(1, "MONITORING_ENV is required"),
   MONITOR_NAME: z.string().min(1).default("monitoring-relay"),
   /** Max outbox rows to drain per run. */
   RELAY_BATCH_LIMIT: z.coerce.number().int().positive().default(50),

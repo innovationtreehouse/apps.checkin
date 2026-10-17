@@ -53,6 +53,9 @@ Copy `.env.example` to `.env` (git-ignored) and fill it in:
 | `SHOPIFY_API_VERSION` | API version to pin, e.g. `2025-07`. |
 | `STORE_ID` | Seed used **only** by offline `inject` (defaults to `SHOPIFY_SHOP`). Real syncs ignore it and derive `store_id` from the live store's `myshopifyDomain` (recorded in the `store` registry table); a mismatch is logged as a warning. |
 | `CUTOVER_DATE` | ISO date — backfill starts here and moves forward. |
+| `MONITORING_DATABASE_URL` | Optional. Monitoring Postgres the run-freshness heartbeat is pushed to; unset = no push. |
+| `MONITORING_ENV` | **Required when `MONITORING_DATABASE_URL` is set**, no default: the heartbeat's `env`, e.g. `prod`. Must match the watchdog's `MONITORING_ENV`. If it is missing, the sync still runs, but the push is disabled and an error is logged. |
+| `SERVICE_NAME` | Heartbeat `service` (default `shopify-read`). Must match the watchdog registry entry. |
 
 **Required Admin API scopes:**
 - `read_orders` — orders, line items, money, refunds.

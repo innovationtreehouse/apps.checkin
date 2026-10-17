@@ -5,7 +5,7 @@
 // every target re-enforces its own gate on arrival, so a drifted predicate at
 // worst shows a link that 403s. See docs/designs/INDEX_PAGE_SCOPING.md.
 
-import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
+import type { TodoCounts } from '@/lib/nav/todoCounts';
 import type { NavRole } from '@/types/auth';
 import { leadsAnyProgram, libraryCount } from '@/components/navBadges';
 import { shopRoles } from '@/lib/shopNav';

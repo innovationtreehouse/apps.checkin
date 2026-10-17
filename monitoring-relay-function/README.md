@@ -47,7 +47,7 @@ accepted (an SNS FIFO topic + dedup id is the lever if duplicates ever become no
 | --- | --- |
 | `SNS_TOPIC_ARN` | topic all alerts publish to |
 | `MONITORING_DATABASE_URL` | dedicated monitoring Postgres (outbox) |
-| `MONITORING_ENV` | `env` dimension, e.g. `prod` |
+| `MONITORING_ENV` | **required**, no default: `env` dimension, e.g. `prod` |
 | `MONITOR_NAME` | `service` dimension on the heartbeat + the unhealthy `serviceError` (default `monitoring-relay`) |
 | `RELAY_BATCH_LIMIT` | max rows per run (default 50) |
 | `RELAY_MAX_ATTEMPTS` | failed deliveries reaching this attempt count are dead-lettered (default 5) |

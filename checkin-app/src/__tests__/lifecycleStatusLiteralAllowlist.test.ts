@@ -134,7 +134,7 @@ const ALLOWLIST: Record<string, string> = {
     // ── multi-status read / query filters (not yet migrated onto a StateSet.where) ──
     'app/api/membership-ops/applications/route.ts':
         'Board application list: live view is a set — status notIn {ACTIVE,ARCHIVED}.',
-    'app/api/nav/todo-counts/route.ts':
+    'lib/nav/todoCounts.ts':
         'Dashboard counts: status+flag probes — {PENDING,isPaymentPlanRequested,inventoryHeldAt,paymentPlanDeniedAt} and {PENDING_PAYMENT,isPaymentPlanRequested}.',
     'lib/finance/reconcile.ts':
         'Reconciler paid-order set: where status in {ACTIVE,PENDING_BG_CLEARANCE} on OrgMembershipProcess.',

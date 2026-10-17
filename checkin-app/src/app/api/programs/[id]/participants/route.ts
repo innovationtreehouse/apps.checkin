@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { sendNotification } from "@/lib/notifications";
 import { lockProgramAndCheckCapacity, ProgramCapacityError, withdrawAndReleaseHold } from "@/lib/program/capacity";
@@ -318,11 +319,19 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         // conditional delete below, not a separate read, so a payment landing
         // mid-request cannot slip through.
         const isHouseholdLeadPath = !isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard;
-        // Same for an adult removing themselves from a priced program: a paid place is
-        // not the household's to withdraw — the board, a sysadmin or the program's
-        // leader removes it. A free program's place was never paid, so it stays theirs.
+        // Same for an adult removing themselves: a paid place is not the household's
+        // to withdraw — the board, a sysadmin or the program's leader removes it.
+        // "Paid" is decided on the place, not the program's price today: a place with
+        // an order or an approved scholarship/payment plan stays paid even if the Board
+        // later zeroes the price. A free program's never-paid place stays theirs.
+        // ponytail: places paid before shopifyOrderId existed carry no order, so on a
+        // still-priced program only PENDING goes; a backfill would let this drop isFree.
         const isFree = (currentProgram.orgMemberPriceCents ?? 0) === 0 && (currentProgram.nonOrgMemberPriceCents ?? 0) === 0;
-        const unpaidOnly = isHouseholdLeadPath || (isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard && !isFree);
+        const isSelfOnly = isSelfRemoval && !isLeadMentor && !isSysAdminOrBoard;
+        const unpaidOnly = isHouseholdLeadPath || isSelfOnly;
+        const unpaidWhere: Prisma.ProgramParticipantWhereInput = isHouseholdLeadPath || !isFree
+            ? { status: 'PENDING' }
+            : { OR: [{ status: 'PENDING' }, { shopifyOrderId: null, wasOrgMemberAtApproval: null }] };
         if (isHouseholdLeadPath && !(await isLeadOfParticipant(currentUserId, participantId))) {
             return apiError("Forbidden: Not authorized to remove this participant", 403);
         }
@@ -345,7 +354,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         // exactly once (see withdrawAndReleaseHold).
         let withdrawal: Awaited<ReturnType<typeof withdrawAndReleaseHold>>;
         try {
-            withdrawal = await withdrawAndReleaseHold(programId, participantId, currentProgram, unpaidOnly ? 'PENDING' : undefined, { inRequest: true });
+            withdrawal = await withdrawAndReleaseHold(programId, participantId, currentProgram, unpaidOnly ? unpaidWhere : undefined, { inRequest: true });
         } catch (error) {
             if (unpaidOnly && isPrismaError(error, 'P2025')) {
                 const row = await prisma.programParticipant.findUnique({

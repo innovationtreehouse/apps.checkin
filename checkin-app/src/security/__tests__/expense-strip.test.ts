@@ -149,6 +149,15 @@ describe('expense stripper', () => {
         expect(strip('ExpenseReimburseeVendor', link, FINANCE_VIEW)).toEqual(link);
     });
 
+    it('an internal-only view strips a QuickBooks Vendor name and the reimbursee', () => {
+        const option = { id: '81', displayName: 'Pat Doe' };
+        expect(strip('ExpenseQbVendorOption', option, INTERNAL_ONLY)).toEqual({ id: '81' });
+        expect(strip('ExpenseQbVendorOption', option, FINANCE_VIEW)).toEqual(option);
+        const reimbursee = { personId: 8, name: 'Pat Doe' };
+        expect(strip('ExpenseReimburseeView', reimbursee, INTERNAL_ONLY)).toEqual({});
+        expect(strip('ExpenseReimburseeView', reimbursee, FINANCE_VIEW)).toEqual(reimbursee);
+    });
+
     it('a public-only view sees nothing, settings included', () => {
         const settings = { orgId: 'treehouse', boardReviewTotalCents: 200000, noteInLieuLimitCents: 5000 };
         expect(strip('ExpenseOrgSettings', settings, ['public'])).toEqual({});

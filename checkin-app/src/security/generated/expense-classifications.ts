@@ -59,6 +59,7 @@ export const classifications = {
         qbVendorId: 'internal',
         qbPostAttempts: 'internal',
         qbClaimedAt: 'internal',
+        qbMatchBaseline: 'internal',
         isTestData: 'internal',
         singleSource: 'internal',
         financeNotEveryday: 'internal',

@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useTodoCounts } from "../useTodoCounts";
 import { NAV_COUNTS_EVENT } from "@/lib/nav-refresh";
-import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 
 const makeCounts = (building: number): TodoCounts =>
   ({

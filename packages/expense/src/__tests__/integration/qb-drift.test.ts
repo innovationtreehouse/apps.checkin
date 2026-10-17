@@ -1,5 +1,5 @@
 /**
- * QB-3 drift: the cron step re-reads each app-created QuickBooks entry through the windowed
+ * QB-3 drift: the cron step re-reads each app-created or matched QuickBooks entry through the windowed
  * readers, over an in-memory QBO company, and flags finance on edits. It only ever reads.
  */
 import { it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -7,7 +7,7 @@ import { QuickBooksClient, qbKey, type QboBill, type QboPurchase } from "@invent
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, seedExpense, seedLineItem, ORG } from "../helpers/seed";
-import { MAX_DRIFT_CHECKS_PER_RUN, checkQbDrift } from "../../lib/expense-qb-drift";
+import { MAX_DRIFT_CHECKS_PER_RUN, baselineOf, checkQbDrift } from "../../lib/expense-qb-drift";
 import { runExpenseQbPosting } from "../../services/sweeps";
 import { raiseFlag } from "../../services/flagService";
 
@@ -89,6 +89,33 @@ async function created(day: string, opts: { bill?: boolean; state?: string } = {
   return { id, entry };
 }
 
+/**
+ * An expense matched to finance's hand-booked Purchase: $10 on accounts 60 and 61, no app key.
+ * The baseline is stored as at match unless `legacy`, a row matched before baselines existed.
+ */
+async function matched(day: string, opts: { legacy?: boolean } = {}) {
+  const id = await seedExpense({ state: "qb_complete", receiptTotalCents: 1000 });
+  const entry: QboPurchase = {
+    Id: String(nextQbId++),
+    TxnDate: day,
+    TotalAmt: 10,
+    PrivateNote: "hand-booked",
+    AccountRef: { value: "41" },
+    Line: [line(7, "60"), line(3, "61")],
+  };
+  qbo.purchases.push(entry);
+  await db.expense.update({
+    where: { id },
+    data: {
+      receiptDate: day, qbMatchState: "MATCHED", qbTxnId: entry.Id, qbTxnEntity: "Purchase",
+      qbMatchBaseline: opts.legacy ? null : JSON.stringify(baselineOf(entry)),
+    },
+  });
+  return { id, entry };
+}
+
+const baseline = async (id: string) => (await db.expense.findUniqueOrThrow({ where: { id } })).qbMatchBaseline;
+
 const driftFlag = (expenseId: string) => db.expenseFlag.findFirst({ where: { expenseId, kind: "QB_DRIFT" } });
 const checkOff = (expenseId: string) =>
   db.expenseFlag.updateMany({ where: { expenseId, kind: "QB_DRIFT" }, data: { checkedOffAt: new Date(), checkedOffByUserId: 5, checkedOffByUsername: "finance" } });
@@ -153,12 +180,49 @@ describeDb("QB-3 drift", () => {
     expect(await db.expenseFlag.findFirst({ where: { expenseId: id, kind: "COI" } })).toMatchObject({ checkedOffAt: null });
   });
 
-  it("never checks a hand-booked match", async () => {
-    const { id, entry } = await created("2026-09-10", { state: "MATCHED" });
-    entry.TotalAmt = 99;
+  it("raises nothing for a matched entry still as it was at match", async () => {
+    const { id } = await matched("2026-09-10");
 
-    expect(await checkQbDrift()).toEqual({ checked: 0, drifted: 0, failed: 0 });
+    expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 0, failed: 0 });
     expect(await driftFlag(id)).toBeNull();
+  });
+
+  it("flags a matched entry finance edited after the match", async () => {
+    const { id, entry } = await matched("2026-09-10");
+    entry.TotalAmt = 12;
+
+    expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 1, failed: 0 });
+    expect(await driftFlag(id)).toMatchObject({ audience: "FINANCE", detail: "amount", checkedOffAt: null });
+    expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ qbMatchState: "MATCHED", qbTxnId: entry.Id });
+  });
+
+  it("flags a matched entry finance deleted as missing", async () => {
+    const { id } = await matched("2026-09-10");
+    qbo.purchases = [];
+
+    await checkQbDrift();
+    expect(await driftFlag(id)).toMatchObject({ detail: "missing" });
+  });
+
+  it("ignores a re-classed line on a matched entry", async () => {
+    const { id, entry } = await matched("2026-09-10");
+    entry.Line = entry.Line!.map((l) => ({ ...l, AccountBasedExpenseLineDetail: { ...l.AccountBasedExpenseLineDetail!, ClassRef: { value: "8" } } }));
+
+    expect(await checkQbDrift()).toMatchObject({ drifted: 0 });
+    expect(await driftFlag(id)).toBeNull();
+  });
+
+  it("takes a legacy matched row's baseline on first read, then checks against it", async () => {
+    const { id, entry } = await matched("2026-09-10", { legacy: true });
+    entry.TotalAmt = 11;
+
+    expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 0, failed: 0 });
+    expect(await driftFlag(id)).toBeNull();
+    expect(JSON.parse((await baseline(id)) ?? "null")).toEqual({ amountCents: 1100, accounts: ["60", "61"], vendorId: null });
+
+    entry.TotalAmt = 12;
+    await checkQbDrift();
+    expect(await driftFlag(id)).toMatchObject({ detail: "amount" });
   });
 
   it("counts a QuickBooks outage as failed and raises nothing", async () => {
