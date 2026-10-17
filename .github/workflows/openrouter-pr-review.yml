@@ -8,8 +8,9 @@ permissions:
   contents: read
   pull-requests: write
 
+# Unrelated label events get their own group so they cannot cancel a running review.
 concurrency:
-  group: openrouter-review-${{ github.event.pull_request.number }}
+  group: openrouter-review-${{ github.event.pull_request.number }}-${{ (github.event.action == 'labeled' && github.event.label.name != 'ai-review') && github.run_id || 'review' }}
   cancel-in-progress: true
 
 jobs:
