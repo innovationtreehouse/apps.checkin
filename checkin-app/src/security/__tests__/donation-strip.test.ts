@@ -134,7 +134,17 @@ describe('bulk-donation field-stripping (comment rules and QB candidates)', () =
             warnDonorReplaced: true,
             callerConflicted: false,
             allFinanceConflicted: false,
-            lines: [{ id: 5, gtin13: '0000000000017', quantity: 2, valueCents: 60000, suggestedValueCents: 50000 }],
+            state: 'waiting',
+            waitingOn: ['donor', 'acceptance'],
+            outcome: null,
+            decidedAt: null,
+            replayConflictAt: '2026-10-04T00:00:00.000Z',
+            bucketHeld: false,
+            revenueBooking: 'unbooked',
+            expenseBooking: 'unbooked',
+            withdrawalSettledAt: null,
+            donationDate: '2026-10-01',
+            lines: [{ id: 5, gtin13: null, description: 'Bench vise', quantity: 2, valueCents: 60000, suggestedValueCents: 50000 }],
         };
         const row = {
             ...accept,

@@ -52,6 +52,7 @@ const reads = endpoints.filter(e => e.startsWith('GET '));
 const writes = endpoints.filter(e => !e.startsWith('GET '));
 const DECISIONS = endpoints.filter(e => e.endsWith('/decision'));
 const BY_BUCKET = 'GET /api/donations/in-kind/by-bucket';
+const SETTLE = 'POST /api/donations/in-kind/receipt/[id]/settle';
 const financeWrites = writes.filter(e => !DECISIONS.includes(e));
 const IN_KIND_MANUAL = endpoints.filter(e => e.includes('/api/donations/in-kind/manual') && !DECISIONS.includes(e));
 const OPS = [{ isOperations: true }, { isInventoryManager: true }];
@@ -75,10 +76,10 @@ beforeEach(() => {
 });
 
 describe('donation registry — shape', () => {
-    it('registers 29 JSON routes (14 reads, 15 writes) and the blob file route', () => {
-        expect(endpoints).toHaveLength(29);
+    it('registers 30 JSON routes (14 reads, 16 writes) and the blob file route', () => {
+        expect(endpoints).toHaveLength(30);
         expect(reads).toHaveLength(14);
-        expect(writes).toHaveLength(15);
+        expect(writes).toHaveLength(16);
         expect(DECISIONS).toEqual([
             'POST /api/donations/in-kind/receipt/[id]/decision',
             'POST /api/donations/in-kind/manual/[id]/decision',
@@ -259,8 +260,8 @@ describe('UploadedFile.fileBlob is file-only', () => {
     });
 });
 
-describe('in-kind decision and by-bucket routes never grant pii', () => {
-    it.each([...DECISIONS, BY_BUCKET])('%s: no view holds a pii token', endpoint => {
+describe('in-kind decision, settle and by-bucket routes never grant pii', () => {
+    it.each([...DECISIONS, SETTLE, BY_BUCKET])('%s: no view holds a pii token', endpoint => {
         const tokens = (getRoute(endpoint)?.orderedView ?? []).flatMap(([, t]) => [...t]);
         expect(tokens.length).toBeGreaterThan(0);
         expect(tokens.some(t => t.endsWith(':pii'))).toBe(false);
@@ -280,7 +281,7 @@ describe('in-kind by-bucket route — bucket approvers', () => {
                 donorFirstName: 'Pat',
                 donorLastName: 'Doe',
                 donorCompanyName: 'Acme',
-                lines: [{ id: 2, gtin13: '0000000000017', quantity: 3, valueCents: 900, donorLastName: 'Doe' }],
+                lines: [{ id: 2, gtin13: null, description: 'Bench vise', quantity: 3, valueCents: 900, donorLastName: 'Doe' }],
             }],
         }));
         const res = await handler(BY_BUCKET, impl)(
@@ -299,7 +300,7 @@ describe('in-kind by-bucket route — bucket approvers', () => {
             budgetOwnerId: 4,
             donationDate: '2026-10-01',
             totalValueCents: 900,
-            lines: [{ id: 2, gtin13: '0000000000017', quantity: 3, valueCents: 900 }],
+            lines: [{ id: 2, gtin13: null, description: 'Bench vise', quantity: 3, valueCents: 900 }],
         });
     });
 
@@ -344,5 +345,19 @@ describe('in-kind decision routes', () => {
         );
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual(decision);
+    });
+});
+
+describe('in-kind settle route', () => {
+    it('replies to finance with the settle result and no donor', async () => {
+        signIn(7, { isFinance: true });
+        const settled = { id: 1, kind: 'withdrawal', settledAt: '2026-10-17T00:00:00.000Z' };
+        const impl = jest.fn(async () => ({ InKindSettleResult: { ...settled, donorLastName: 'Doe' } }));
+        const res = await handler(SETTLE, impl)(
+            new NextRequest('http://localhost/api/donations/in-kind/receipt/1/settle', { method: 'POST' }),
+            { params: Promise.resolve({ id: '1' }) },
+        );
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual(settled);
     });
 });
