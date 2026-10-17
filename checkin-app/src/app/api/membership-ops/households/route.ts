@@ -182,10 +182,13 @@ export const GET = withAuth(
                                 where: {
                                     OR: [
                                         grantableRenewalWhere,
+                                        // An application awaiting payment: a current-year grant
+                                        // certifies it, which only the Board may do.
+                                        { kind: "INITIAL", status: "PENDING_PAYMENT" },
                                         settledThisCycleWhere(cycle?.settledSince ?? MAX_DATE),
                                     ],
                                 },
-                                select: { id: true, status: true },
+                                select: { id: true, status: true, kind: true },
                             },
                         },
                     },
@@ -213,7 +216,8 @@ export const GET = withAuth(
                 // finished renewal, admin override, or a family that joined inside
                 // the window).
                 const { processes = [], ...orgMembership } = h.orgMembership ?? {};
-                const renewalGrantable = processes.some((p) => p.status === "PENDING_PAYMENT");
+                const awaitingPayment = processes.some((p) => p.status === "PENDING_PAYMENT");
+                const renewalGrantable = processes.some((p) => p.status === "PENDING_PAYMENT" && p.kind === "RENEWAL");
                 const settledForComingYear = processes.some((p) => p.status !== "PENDING_PAYMENT");
                 // Household-level BG "valid until" — later lastBackgroundCheck among leads
                 // who passed; no per-member values in the list response.
@@ -225,6 +229,7 @@ export const GET = withAuth(
                     ...withFlatContact(h),
                     orgMembership: h.orgMembership ? orgMembership : null,
                     renewalGrantable,
+                    awaitingPayment,
                     settledForComingYear,
                     bgValidUntil,
                     validUntil: h.orgMembership?.status === "ACTIVE" && cycle ? coveredThrough(cycle, settledForComingYear) : null,

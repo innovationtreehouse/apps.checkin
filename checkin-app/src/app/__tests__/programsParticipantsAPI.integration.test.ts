@@ -902,6 +902,29 @@ describe('Program Participants API Integration Tests', () => {
              expect(data.success).toBe(true);
         });
 
+        it('refuses self-withdrawal of a paid place even when the program is free now', async () => {
+             // Paid while priced (order on the place), then the Board zeroed the price.
+             await prisma.programParticipant.create({
+                 data: { programId: freeProgramId, personId: commonId, status: 'ACTIVE', shopifyOrderId: '9900123' },
+             });
+             try {
+                 (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } });
+                 const res = await DELETE(
+                     new Request(`http://localhost:4000/api/programs/${freeProgramId}/participants`, {
+                         method: 'DELETE',
+                         body: JSON.stringify({ participantId: commonId }),
+                     }) as unknown as import("next/server").NextRequest,
+                     createParams(freeProgramId) as unknown as never,
+                 );
+                 expect(res.status).toBe(403);
+                 expect(await prisma.programParticipant.findUnique({
+                     where: { programId_personId: { programId: freeProgramId, personId: commonId } },
+                 })).not.toBeNull();
+             } finally {
+                 await prisma.programParticipant.deleteMany({ where: { programId: freeProgramId, personId: commonId } });
+             }
+        });
+
         // Hold-ledger (product decision 2026-07-06): withdrawal is release path
         // (a) — a denied applicant who withdraws instead of paying gets their
         // held seat back, exactly once (double-withdraw is the existing
