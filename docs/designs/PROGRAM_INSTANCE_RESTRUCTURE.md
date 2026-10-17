@@ -6,7 +6,7 @@
 **Progress:** P1 (table + backfill, no readers) merged in September 2026 (issue #1361). P2–P5 remain. The `ProgramInstance` table stays; it is not to be dropped.
 **Baseline:** today's `main` (2026-10-16). The earlier draft assumed the member-segment pricing proposal (#929) would ship first; it has not (`checkin-app/docs/designs/SHOPIFY_MEMBER_SEGMENT_PRICING.md` is still a proposal). Member pricing today is a minted single-use discount code per household checkout (§2a). `Fee`/`FeePayment` were dropped with issue #354 and are not part of this plan.
 
-**Naming.** This doc says **program leader** for the person who runs a program, matching the rules register (`docs/rules/programs.md`). The schema still says `leadMentor` (`Program.leadMentorId`, `ProgramInstance.leadMentorId`, the `programsLed` claim, the `program-lead-mentor` resolver). The architectural review's WI 4.5 renames "lead mentor" to "program leader" in code; that review is not on `main` yet. The two pieces of work touch the same files — see open question Q6.
+**Naming.** This doc says **program leader** for the person who runs a program, matching the rules register (`docs/rules/programs.md`). The schema still says `leadMentor` (`Program.leadMentorId`, `ProgramInstance.leadMentorId`, the `programsLed` claim, the `program-lead-mentor` resolver). The architectural review's WI 4.5 renames "lead mentor" to "program leader" in code; that review is not on `main` yet. The two pieces of work touch the same files — see open question Q6. No step of this plan renames a leader column or claim in place.
 
 ---
 
@@ -57,7 +57,8 @@ None of this is visible yet because nothing reads instances. P2 handles it (§4)
 ### Consumers of the program tier that the phases must move
 
 - **Security boundary (`src/security/`):** `access-resolvers.ts` (`buildCallerContext`; `program-lead-mentor` / `program-core-volunteer` cases), `core.ts`, `scopes.ts` (`programsLed`), `scopeBindings.ts` (`their_program_participants` / `their_program_households`), `registry.ts`, `generated/classifications.ts` (regenerated).
-- **Claim and its other readers:** `lib/auth-options.ts`, `lib/authClaims.ts`, `types/next-auth.d.ts`, `program-ops/layout.tsx`, `lib/libraryNav.ts`, `lib/volunteer.ts`, `lib/person/filters.ts`, `lib/receipt/configure.ts`, `lib/membership/personAgreementTriggers.ts`, `api/household/member/route.ts`, `api/membership-audit/compliance/route.ts`.
+- **The `programsLed` claim and its readers:** `lib/auth-options.ts`, `lib/authClaims.ts`, `types/next-auth.d.ts`, `program-ops/layout.tsx`, `lib/libraryNav.ts`, `lib/volunteer.ts`.
+- **The `Person.programsLed` relation (Prisma, not the claim):** `lib/person/filters.ts`, `lib/receipt/configure.ts`, `lib/membership/personAgreementTriggers.ts`, `api/household/member/route.ts`, `api/membership-audit/compliance/route.ts`. These move to `Person.instancesLed` with the reads in P3.
 - **Capacity:** `lib/program/capacity.ts` locks `SELECT id FROM "Program" … FOR UPDATE`.
 - **Store and sale:** `lib/shopify.ts` (product create, claimant product, stock writer, price sync, off-sale, `mintMemberDiscountCode`), `lib/programs/variants.ts`, `lib/programs/memberDiscountCode.ts`, `lib/programs/saleSweep.ts`, `lib/programs/saleState.ts`, `lib/programs/activateEnrollment.ts`, `api/programs/[id]/sync-shopify`, `api/programs/[id]/discount-code`, the `orders/paid` webhook, `lib/finance/reconcile.ts`, `lib/finance/matchAudit.ts`.
 - **Routes and pages:** `api/programs/[id]/*`, `api/events/*`, the `program-ops`, `finance-ops`, `facility-ops` pages, `programs/` and `my-activities/programs`.
@@ -221,8 +222,7 @@ All of this is tsc-blind on Prisma where-clauses; integration tests are the net.
 ### Repo rules that shape the cut
 
 - **Boundary isolation** (`.github/workflows/security-boundary-isolation.yml`, AGENTS.md): any change to `src/security/**` (except `generated/` and `__tests__/`), `src/middleware.ts` or the generator ships in its own PR with only tests, docs and schema annotations. A new registered route lands its registry entry first (inert), then the route.
-- **Migrations** go in their own PR in the migrations group.
-- Security-group and migrations-group PRs merge one at a time.
+- **This plan's convention (not a repo rule):** migrations go in their own PR, and migration and security PRs merge one at a time. It is the coordinators' working practice; CI does not enforce it.
 
 So the earlier draft's "swap the claim and all its consumers in one PR" cannot be built: `access-resolvers.ts`, `scopes.ts`, `scopeBindings.ts` and `registry.ts` are boundary files; `auth-options.ts`, `layout.tsx` and the rest are not. The swap becomes **add alongside, move consumers, remove the old**:
 
@@ -250,13 +250,13 @@ Live-site consequences to accept before P4: one card per open run, not per progr
 
 ## 7. Phased plan
 
-Each phase is an ordered list of PRs. **[mig]** = migrations group, **[sec]** = security group (boundary-only), **[app]** = feature. Each PR is green and shippable on its own; [mig] and [sec] PRs merge one at a time. "Keeps" lists the `docs/rules/programs.md` rules (and recent fixes) the phase's tests must keep passing — the phase is not done if one of them regresses.
+Each phase is an ordered list of PRs. **[mig]** = migrations group, **[sec]** = security group (boundary-only), **[app]** = feature. Each PR is green and shippable on its own. Only the [sec] split is a repo rule (boundary isolation); keeping [mig] separate and merging [mig]/[sec] one at a time is this plan's convention. "Keeps" lists the `docs/rules/programs.md` rules (and recent fixes) the phase's tests must keep passing — the phase is not done if one of them regresses.
 
 **P1 — Done** (#1361): table, `Event.instanceId`, one-off id-aliased backfill.
 
 **P2 — Make the instance complete and keep it in step (expand + dual-write).**
 
-1. [mig] Add the P2 columns (§3) to `ProgramInstance` and nullable `instanceId` (+ FK, index) to `ProgramParticipant` and `ProgramVolunteer` (and `BudgetOwner` if Q4 says instance). Run the re-sync (§4). Additive only.
+1. [mig] Add the P2 columns (§3) to `ProgramInstance` and nullable `instanceId` (+ FK, index) to `ProgramParticipant` and `ProgramVolunteer` (and `BudgetOwner` if Q4 says instance). Add the index on `Event.instanceId` that P1 shipped without. Run the re-sync (§4). Additive only.
 2. [app] One writer for the pair: program create also creates the aliased instance; every program write (PATCH, sync-shopify, stock writer, sale sweep, publish, person merge) writes the instance's copy in the same transaction; enroll/volunteer writes set `instanceId`; event create sets `instanceId`. Seed uses the same writer. Reads unchanged.
 3. [mig] Run the re-sync again, closing the window between 1 and 2. Same SQL.
 
@@ -285,7 +285,7 @@ Keeps: only the Board and sysadmins set a price or a store variant; the off-sale
 
 1. [sec] Remove `programsLed`/`programsCoreVolIn` and the `programId` bindings (§5 step 4).
 2. [app] Stop minting `programsLed`; grep-to-zero the old fields across `src` and all three test roots.
-3. [mig] In a later release: drop `Program`'s operational columns (§2, keep prices and whatever Q2–Q4 leave), the two `@ignore` legacy variant columns, child `programId`s and `Event.programId`; set child `instanceId` NOT NULL; swap the composite PKs to `[instanceId, personId]`; rename leader columns if Q6 says so. Hand-written SQL.
+3. [mig] In a later release: drop `Program`'s operational columns (§2, keep prices and whatever Q2–Q4 leave), the two `@ignore` legacy variant columns, child `programId`s and `Event.programId`; set child `instanceId` NOT NULL; swap the composite PKs to `[instanceId, personId]`. Hand-written SQL. No leader-column rename here: renaming `ProgramInstance.leadMentorId` in the release that ships readers of the new name breaks deploy rule 3 (draining old tasks fail on the missing column). That rename belongs to WI 4.5 (Q6).
 
 Keeps: every rule above, on the contracted schema.
 
@@ -322,4 +322,4 @@ Keeps: every rule above, on the contracted schema.
 - **Q3 — Announce on open.** Today it fires once in a program's life and never again. With several runs: once per definition, or once per run?
 - **Q4 — Program budget (`BudgetOwner.programId`).** Does a budget, and its QuickBooks class, belong to the definition or to each run? Policy says every sponsored program has a budget and a leader identified in writing; the leader is moving to the run.
 - **Q5 — Member discount code.** Should a minted code name the instance (so a code from one run is never evidence for another) rather than the program? Aliased ids keep live codes valid across the switch.
-- **Q6 — Leader rename overlap.** The architectural review's WI 4.5 renames "lead mentor" to "program leader" in code. P3–P5 touch the same claim, resolver and columns. Fold the field and claim renames into this plan's contract (one rename), or land WI 4.5 first and have this plan use the new names?
+- **Q6 — Leader rename ordering.** The architectural review's WI 4.5 renames "lead mentor" to "program leader" in code; P3–P5 touch the same claim, resolver and columns. This plan never renames in place, and WI 4.5 must not either: it adds the new column, dual-writes, moves readers, and drops the old column in a later release. Which lands first — WI 4.5, so this plan's remaining steps use the new names, or this plan, with WI 4.5 following on the instance columns? (The coordinator recommends WI 4.5 first.)
