@@ -322,7 +322,9 @@ stacks on another's branch.
 **Migration** (A1): additive only, inside `BEGIN; … COMMIT;`: one `CREATE TABLE`
 for `PersonMailAlias`, a unique index on `address`, an index on `canonicalKey`,
 an index on `personId`, the FK to `Person`, and `ALTER TYPE "AuditAction" ADD
-VALUE` for each new action, none of which is used in the same transaction. No
+VALUE IF NOT EXISTS` for each new action. Postgres 12+ allows `ADD VALUE` inside
+the transaction only because nothing in this migration uses the new values; the
+pattern is `20261013120000_program_surplus_payment_kinds`. No
 existing column is touched and no backfill is needed, so old code serving
 through the deploy drain never sees a difference.
 
