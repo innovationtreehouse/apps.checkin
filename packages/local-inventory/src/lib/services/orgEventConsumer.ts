@@ -1,7 +1,7 @@
 // S5 consumer: catalog provisional-resolution events. The reaction runs first and the
 // ledger row (InventoryReceivedOrgEvent) records its outcome; every reaction is idempotent
 // (resolution upsert, status short-circuit), so a crash between the two replays safely.
-import { parseOrgEvent } from "@inventory/receipt-types";
+import { parseOrgEvent } from "@checkin/receipt-types";
 import { db } from "../db";
 import type { OrgEventRecord } from "../../contract";
 import { getCatalogEventSource, getOrgId, getServices } from "../../runtime";

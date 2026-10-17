@@ -1,5 +1,5 @@
 import { beforeEach, expect, it } from "vitest";
-import { CompletedReceiptSchema } from "@inventory/receipt-types";
+import { CompletedReceiptSchema } from "@checkin/receipt-types";
 import { db } from "../../db";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";

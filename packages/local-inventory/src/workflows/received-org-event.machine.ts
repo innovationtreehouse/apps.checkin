@@ -23,7 +23,7 @@
 import { setup } from "xstate";
 import type { ReceivedOrgEventStatus } from "../lib/db/schema";
 import type { ReceivedOrgEventEvent, ReceivedOrgEventEventType } from "./received-org-event.events";
-import { makeWorkflowInvariants } from '@inventory/workflows';
+import { makeWorkflowInvariants } from '@checkin/workflows';
 
 export const receivedOrgEventMachine = setup({
   types: {

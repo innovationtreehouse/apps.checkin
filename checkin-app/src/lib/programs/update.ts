@@ -2,7 +2,7 @@ import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { maybeAnnounceOnOpen } from "@/lib/programAnnounce";
 import { adjustProgramInventory, setProgramInventory, STOCK_BOOKKEEPING_RESET, syncProgramPrice } from "@/lib/shopify";
-import { dollarsToCentsOrNull } from "@inventory/money";
+import { dollarsToCentsOrNull } from "@checkin/money";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { validateProgramAgeBounds, isLeaderAgeEligible, checkProgramAge } from "@/lib/programAge";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";

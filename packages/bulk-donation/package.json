@@ -1,5 +1,5 @@
 {
-  "name": "@inventory/bulk-donation",
+  "name": "@checkin/bulk-donation",
   "version": "0.0.0",
   "private": true,
   "library": true,
@@ -28,12 +28,12 @@
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@inventory/donations": "*",
-    "@inventory/money": "*",
-    "@inventory/quickbooks": "*",
-    "@inventory/receipt-types": "*",
-    "@inventory/utils": "*",
-    "@inventory/workflows": "*",
+    "@checkin/donations": "*",
+    "@checkin/money": "*",
+    "@checkin/quickbooks": "*",
+    "@checkin/receipt-types": "*",
+    "@checkin/utils": "*",
+    "@checkin/workflows": "*",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "csv-parse": "^5.6.0",
@@ -41,7 +41,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@inventory/pg-test-harness": "*",
+    "@checkin/pg-test-harness": "*",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.0.0",
     "dotenv": "^17.0.0",

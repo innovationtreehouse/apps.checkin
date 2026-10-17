@@ -15,7 +15,7 @@
 import { setup, createActor } from "xstate";
 import type { ProvisionalItemStatus } from "../lib/db/schema";
 import type { ProvisionalItemEvent, ProvisionalItemEventType } from "./provisional-item.events";
-import { WorkflowTransitionError } from '@inventory/workflows';
+import { WorkflowTransitionError } from '@checkin/workflows';
 
 export const provisionalItemMachine = setup({
   types: {

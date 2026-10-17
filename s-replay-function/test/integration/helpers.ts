@@ -2,7 +2,7 @@
  * Shared helpers for the DB-gated integration tests. Not a `*.test.ts` file, so vitest
  * does not collect it as a suite (include = test/**\/*.test.ts).
  */
-import { type PrismaClient, ObjectType, EventSource } from "@inventory/s-ingest-core";
+import { type PrismaClient, ObjectType, EventSource } from "@checkin/s-ingest-core";
 
 /** Remove every row this store owns across all tables the replay ops touch. */
 export async function wipeStore(prisma: PrismaClient, storeId: string): Promise<void> {

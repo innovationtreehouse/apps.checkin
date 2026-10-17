@@ -1,5 +1,5 @@
 {
-  "name": "@inventory/monitoring-db",
+  "name": "@checkin/monitoring-db",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -25,7 +25,7 @@
     "pg": "^8.18.0"
   },
   "devDependencies": {
-    "@inventory/pg-test-harness": "*",
+    "@checkin/pg-test-harness": "*",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.16.0",
     "@vitest/coverage-v8": "^4.1.8",

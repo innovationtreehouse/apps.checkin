@@ -5,8 +5,8 @@
  * ApiResponseError. The translation happens here, in the route's module graph,
  * because the instrumentation bundle holds a separate copy of that class.
  */
-import { CatalogHttpError } from "@inventory/global-catalog";
-import type { CatalogRouteHandler } from "@inventory/global-catalog";
+import { CatalogHttpError } from "@checkin/global-catalog";
+import type { CatalogRouteHandler } from "@checkin/global-catalog";
 import { ApiResponseError } from "@/security/handler";
 
 export function catalogRoute(factory: CatalogRouteHandler): CatalogRouteHandler {

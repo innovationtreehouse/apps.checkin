@@ -8,12 +8,12 @@
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { routes, ExpenseHttpError } from '@inventory/expense';
+import { routes, ExpenseHttpError } from '@checkin/expense';
 import type { AuthenticatedUser } from '@/types/auth';
 import { POST as boardAuthorization } from '../expenses/[id]/board-authorization/route';
 import { POST as notEveryday } from '../expenses/[id]/not-everyday/route';
 
-jest.mock('@inventory/expense', () => {
+jest.mock('@checkin/expense', () => {
     class ExpenseHttpError extends Error {
         constructor(
             public readonly status: number,

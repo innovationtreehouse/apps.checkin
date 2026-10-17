@@ -3,7 +3,7 @@ import {
   ResolvedInventoryDeltaSchema,
   type CompletedReceipt,
   type CompletedReceiptLineItem,
-} from "@inventory/receipt-types";
+} from "@checkin/receipt-types";
 import { db } from "../db";
 import type { ReceivedReceipt } from "../db/schema";
 import { ports } from "../runtime";

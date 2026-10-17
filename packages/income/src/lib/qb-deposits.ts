@@ -1,5 +1,5 @@
-import { dollarsToCents } from "@inventory/money";
-import { MAX_WINDOW_DAYS, QuickBooksClient, appKeyOf, type AccessTokenSource, type QboDeposit, type QboRealm } from "@inventory/quickbooks";
+import { dollarsToCents } from "@checkin/money";
+import { MAX_WINDOW_DAYS, QuickBooksClient, appKeyOf, type AccessTokenSource, type QboDeposit, type QboRealm } from "@checkin/quickbooks";
 import type { QbDeposit, QbDepositSource } from "../contract";
 import { isoDay } from "../runtime";
 

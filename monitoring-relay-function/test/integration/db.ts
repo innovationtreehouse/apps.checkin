@@ -5,7 +5,7 @@
  * with only SNS and telemetry mocked — so the actual claim→publish→mark queries and their
  * ordering/persistence are exercised end to end, not just at the query-builder level.
  *
- * We deliberately reuse @inventory/monitoring-db's `prisma` singleton (the same client
+ * We deliberately reuse @checkin/monitoring-db's `prisma` singleton (the same client
  * runRelay uses) for seeding and assertions, so there is exactly one DB session in play.
  * runRelay's drain holds a SESSION-scoped advisory lock across the whole batch; keeping all
  * traffic on the one pooled connection (every query awaited, never Promise.all'd) keeps that
@@ -13,8 +13,8 @@
  * is proven in packages/monitoring-db/test/integration/lock.test.ts and the relay's unit
  * skip test, so it is not re-litigated here.
  */
-import { describeDb } from "@inventory/pg-test-harness";
-import { prisma, IncidentKind } from "@inventory/monitoring-db";
+import { describeDb } from "@checkin/pg-test-harness";
+import { prisma, IncidentKind } from "@checkin/monitoring-db";
 
 export const runIfDb = describeDb("MONITORING_DATABASE_URL");
 

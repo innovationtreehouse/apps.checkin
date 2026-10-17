@@ -3,7 +3,7 @@ import {
   catalogItemReferenceProposalSchema,
   catalogProvisionalItemProposalSchema,
   catalogReferenceConflictSchema,
-} from "@inventory/receipt-types";
+} from "@checkin/receipt-types";
 import { z } from "zod";
 import { db } from "../db";
 import { createdIdSchema, gtin13Schema, refCheckResultSchema } from "../contract";

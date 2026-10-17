@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1075.0",
-    "@inventory/quickbooks": "*"
+    "@checkin/quickbooks": "*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

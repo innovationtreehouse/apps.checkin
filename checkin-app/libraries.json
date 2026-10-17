@@ -1,9 +1,9 @@
 [
-  { "name": "catalog", "package": "@inventory/global-catalog", "routePrefixes": ["/api/catalog/"] },
-  { "name": "local_inventory", "package": "@inventory/local-inventory", "routePrefixes": ["/api/inventory/"] },
-  { "name": "bulk_donation", "package": "@inventory/bulk-donation", "routePrefixes": ["/api/donations/"] },
-  { "name": "expense", "package": "@inventory/expense", "routePrefixes": ["/api/expense/"] },
-  { "name": "workflow_mapping", "package": "@inventory/workflow-mapping", "routePrefixes": ["/api/workflow-mapping/"] },
-  { "name": "income", "package": "@inventory/income", "routePrefixes": ["/api/income/"] },
-  { "name": "receipt", "package": "@inventory/receipt", "routePrefixes": ["/api/receipts/"] }
+  { "name": "catalog", "package": "@checkin/global-catalog", "routePrefixes": ["/api/catalog/"] },
+  { "name": "local_inventory", "package": "@checkin/local-inventory", "routePrefixes": ["/api/inventory/"] },
+  { "name": "bulk_donation", "package": "@checkin/bulk-donation", "routePrefixes": ["/api/donations/"] },
+  { "name": "expense", "package": "@checkin/expense", "routePrefixes": ["/api/expense/"] },
+  { "name": "workflow_mapping", "package": "@checkin/workflow-mapping", "routePrefixes": ["/api/workflow-mapping/"] },
+  { "name": "income", "package": "@checkin/income", "routePrefixes": ["/api/income/"] },
+  { "name": "receipt", "package": "@checkin/receipt", "routePrefixes": ["/api/receipts/"] }
 ]

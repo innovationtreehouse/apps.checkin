@@ -58,7 +58,7 @@ Two runners, split by workspace type — no file ever runs under both (issue #22
   below are all Jest; run their commands from `checkin-app/`.
 - **`packages/*` and `*-function` → Vitest.** Each such workspace owns its own
   `vitest.config.ts` + `vitest` devDep — no shared root config. Real-Postgres
-  integration tiers boot a throwaway container via `@inventory/pg-test-harness`
+  integration tiers boot a throwaway container via `@checkin/pg-test-harness`
   (testcontainers), so they need a running Docker daemon and self-skip without
   one.
 

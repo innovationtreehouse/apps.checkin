@@ -7,12 +7,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { recordHeartbeat } = vi.hoisted(() => ({ recordHeartbeat: vi.fn() }));
-vi.mock("@inventory/monitoring-db", () => ({
+vi.mock("@checkin/monitoring-db", () => ({
   prisma: { __fake: true },
   recordHeartbeat,
 }));
 const { logError } = vi.hoisted(() => ({ logError: vi.fn() }));
-vi.mock("@inventory/s-ingest-core", () => ({ logger: { error: logError } }));
+vi.mock("@checkin/s-ingest-core", () => ({ logger: { error: logError } }));
 
 import { buildHeartbeatSink } from "../../src/monitoring.js";
 

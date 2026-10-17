@@ -1,5 +1,5 @@
 {
-  "name": "@inventory/workflow-mapping",
+  "name": "@checkin/workflow-mapping",
   "version": "0.0.0",
   "private": true,
   "library": true,
@@ -24,16 +24,16 @@
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@inventory/receipt-types": "*",
-    "@inventory/workflows": "*",
+    "@checkin/receipt-types": "*",
+    "@checkin/workflows": "*",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "xstate": "^5.32.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@inventory/pg-test-harness": "*",
-    "@inventory/receipt-contract-fixtures": "*",
+    "@checkin/pg-test-harness": "*",
+    "@checkin/receipt-contract-fixtures": "*",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.0.0",
     "dotenv": "^17.0.0",

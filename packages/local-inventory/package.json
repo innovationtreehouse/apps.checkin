@@ -1,5 +1,5 @@
 {
-  "name": "@inventory/local-inventory",
+  "name": "@checkin/local-inventory",
   "version": "0.0.0",
   "private": true,
   "library": true,
@@ -28,16 +28,16 @@
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@inventory/gtin": "*",
-    "@inventory/receipt-types": "*",
-    "@inventory/workflows": "*",
+    "@checkin/gtin": "*",
+    "@checkin/receipt-types": "*",
+    "@checkin/workflows": "*",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "xstate": "^5.32.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@inventory/pg-test-harness": "*",
+    "@checkin/pg-test-harness": "*",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.0.0",
     "dotenv": "^17.0.0",

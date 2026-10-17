@@ -1,6 +1,6 @@
 /** Stock enters under a provisional GTIN only when the GTIN is in the provisional range. */
 import { expect, it } from "vitest";
-import { buildProvisionalGtin13 } from "@inventory/gtin";
+import { buildProvisionalGtin13 } from "@checkin/gtin";
 import { describeDb } from "../helpers/db";
 import { db } from "../../lib/db/index";
 import { createInventoryRepository } from "../../lib/repositories/inventoryRepository";

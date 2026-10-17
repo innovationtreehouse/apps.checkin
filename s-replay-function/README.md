@@ -2,7 +2,7 @@
 
 Admin operations for the Shopify ingestion pipeline. A **pure database consumer** —
 it never calls Shopify, so it needs no Shopify credentials. Shares all DB/projection
-logic with `s-read-function` via [`@inventory/s-ingest-core`](../packages/s-ingest-core),
+logic with `s-read-function` via [`@checkin/s-ingest-core`](../packages/s-ingest-core),
 so a replay projects **identically** to live ingestion.
 
 Three idempotent operations:

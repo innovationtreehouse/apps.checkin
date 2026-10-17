@@ -1,6 +1,6 @@
 // S2 callee: the orchestrator hands over a completed receipt's money side. Idempotent on
 // receiptId — the "already applied" check lives here, so the in-process caller gets it.
-import { CompletedReceiptSchema, type CompletedReceipt } from "@inventory/receipt-types";
+import { CompletedReceiptSchema, type CompletedReceipt } from "@checkin/receipt-types";
 import { db, isUniqueConstraintError } from "../db";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { logError } from "../lib/logger";

@@ -2,12 +2,12 @@
  * @jest-environment node
  */
 import type { NextRequest as NextRequestType } from "next/server";
-import { recordReceiptDonorReads } from "@inventory/bulk-donation";
+import { recordReceiptDonorReads } from "@checkin/bulk-donation";
 import type { Role } from "@/security/core";
 import { ApiResponseError, type HandlerContext } from "@/security/handler";
 import { accessOf, mapServiceErrors, readJsonCapped, receiptRoute } from "@/lib/receipt/route";
 
-jest.mock("@inventory/bulk-donation", () => ({ recordReceiptDonorReads: jest.fn() }));
+jest.mock("@checkin/bulk-donation", () => ({ recordReceiptDonorReads: jest.fn() }));
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>("next/server");
 

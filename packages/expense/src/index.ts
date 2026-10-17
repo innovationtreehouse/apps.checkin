@@ -1,4 +1,4 @@
-// Public surface of the @inventory/expense library. Pages and nav are the ./pages/* and ./nav
+// Public surface of the @checkin/expense library. Pages and nav are the ./pages/* and ./nav
 // subpath exports.
 export * from "./contract";
 export * from "./runtime";

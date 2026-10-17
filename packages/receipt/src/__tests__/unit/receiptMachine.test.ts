@@ -8,7 +8,7 @@ import {
   isTerminalState,
 } from '../../workflows/receipt.invariants';
 import type { ReceiptMachineContext } from '../../workflows/receipt.guards';
-import { WorkflowTransitionError } from '@inventory/workflows';
+import { WorkflowTransitionError } from '@checkin/workflows';
 import { NEUTRAL_CONTEXT } from '../../workflows/receipt.guards';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

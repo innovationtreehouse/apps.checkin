@@ -1,4 +1,4 @@
-# @inventory/quickbooks
+# @checkin/quickbooks
 
 QuickBooks Online client (QB-0 to QB-2 of `docs/in-design/1272_EXPENSE_QB_INTEGRATION.md` §9): windowed
 reads plus one closed-enum, create-only writer.
@@ -59,7 +59,7 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
 - `qboString` / `qboDate` — the only way a value enters a query: escaped / validated literals.
 - Not on the main entry, because they read `QBO_CLIENT_SECRET` or token files and the app never
   holds either:
-  - `@inventory/quickbooks/oauth` (`src/oauth.ts`): `oauthConfigFromEnv`, `authUrl`, `exchangeCode`,
+  - `@checkin/quickbooks/oauth` (`src/oauth.ts`): `oauthConfigFromEnv`, `authUrl`, `exchangeCode`,
     `refreshTokens`, `isExpired`. Only `qbo-refresher-function` and the operator scripts import it.
   - `src/local.ts`, operator scripts only (no export): `envAccessTokenSource()` (`QBO_ACCESS_TOKEN`),
     `fileAccessTokenSource(path)` (refreshes and re-saves the consent token file),
@@ -120,13 +120,13 @@ null while off). Its token comes from the refresher Lambda (`QBO_REFRESHER_FN`):
 5. Run consent — opens a URL, you sign in and authorize; tokens land in `$QBO_TOKEN_FILE`:
 
    ```bash
-   npm run consent -w @inventory/quickbooks
+   npm run consent -w @checkin/quickbooks
    ```
 
 ## Pull ground truth
 
 ```bash
-npm run pull -w @inventory/quickbooks -- 2024-01-01 2024-12-31
+npm run pull -w @checkin/quickbooks -- 2024-01-01 2024-12-31
 ```
 
 Reads in 93-day chunks. Against the production company it also needs `CHECKIN_ENV=prod`.

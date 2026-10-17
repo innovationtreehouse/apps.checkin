@@ -2,7 +2,7 @@
 // checkin's handler(). The endpoint string MUST match its src/security/registry/expense.ts entry.
 import { handler } from "@/security/handler";
 import { expenseRoute } from "@/lib/expense/route";
-import { routes } from "@inventory/expense";
+import { routes } from "@checkin/expense";
 
 export const GET = handler("GET /api/expense/ownership-map", expenseRoute(routes.finance.ownershipMap));
 export const PUT = handler("PUT /api/expense/ownership-map", expenseRoute(routes.finance.setOwnership));

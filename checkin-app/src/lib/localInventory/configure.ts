@@ -4,7 +4,7 @@
  * lazy Org-registry accessor, so both libraries stamp the same org id and
  * person ids, and boot stays DB-free. The S5 replay read is bound to the catalog's events.
  */
-import { configureLocalInventory } from "@inventory/local-inventory";
+import { configureLocalInventory } from "@checkin/local-inventory";
 import { catalogEventsSince, getOrg, getPrincipal } from "@/lib/catalog/configure";
 
 export function configureLocalInventoryRuntime(): void {

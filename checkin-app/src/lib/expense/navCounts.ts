@@ -3,7 +3,7 @@
  * "Expense approvals" tab (lines awaiting the viewer's sign-off), and `approver` (1 when
  * the viewer approves any program bucket: its leader or a treasurer). Server only.
  */
-import { expenseOpsCounts, getExpenseRuntime, signoffsAwaitingCount } from "@inventory/expense";
+import { expenseOpsCounts, getExpenseRuntime, signoffsAwaitingCount } from "@checkin/expense";
 import type { SessionUser } from "@/types/auth";
 
 export async function expenseLibraryCounts(user: SessionUser): Promise<Record<string, number>> {

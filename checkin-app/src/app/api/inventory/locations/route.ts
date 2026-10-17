@@ -3,7 +3,7 @@
 // its src/security/registry/inventory.ts entry.
 import { handler } from "@/security/handler";
 import { inventoryRoute } from "@/lib/localInventory/route";
-import { routes } from "@inventory/local-inventory";
+import { routes } from "@checkin/local-inventory";
 
 export const GET = handler("GET /api/inventory/locations", inventoryRoute(routes.locations.list));
 export const POST = handler("POST /api/inventory/locations", inventoryRoute(routes.locations.create));

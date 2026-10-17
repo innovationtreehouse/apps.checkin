@@ -5,8 +5,8 @@
  * ApiResponseError, so the library's HTTP error is translated here, in the
  * route's module graph.
  */
-import { InventoryHttpError } from "@inventory/local-inventory";
-import type { InventoryRouteHandler } from "@inventory/local-inventory";
+import { InventoryHttpError } from "@checkin/local-inventory";
+import type { InventoryRouteHandler } from "@checkin/local-inventory";
 import { ApiResponseError } from "@/security/handler";
 
 export function inventoryRoute(factory: InventoryRouteHandler): InventoryRouteHandler {

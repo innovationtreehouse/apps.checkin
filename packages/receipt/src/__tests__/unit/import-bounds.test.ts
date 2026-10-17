@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_LINE_QUANTITY } from "@inventory/receipt-types";
+import { MAX_LINE_QUANTITY } from "@checkin/receipt-types";
 import { ImportReceiptSchema } from "../../lib/schemas";
 
 const line = { lineNumber: 1, description: "Nut", quantity: 1, unitPriceCents: 500, totalPriceCents: 500, isDelayed: false };

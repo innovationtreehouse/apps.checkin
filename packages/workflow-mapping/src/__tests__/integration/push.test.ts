@@ -1,6 +1,6 @@
 /** Push and settle: S2 / X9 money side, S3 inventory side, failure semantics, retry. */
 import { beforeEach, expect, it } from "vitest";
-import { CompletedReceiptSchema, ResolvedInventoryDeltaSchema } from "@inventory/receipt-types";
+import { CompletedReceiptSchema, ResolvedInventoryDeltaSchema } from "@checkin/receipt-types";
 import { db } from "../../db";
 import { executePushAndSettle } from "../../lib/apply-receipt";
 import { receiptService } from "../../services/receiptService";

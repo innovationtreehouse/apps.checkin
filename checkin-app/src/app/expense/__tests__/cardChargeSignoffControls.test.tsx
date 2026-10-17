@@ -1,12 +1,12 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import ExpenseDetailPage from "@inventory/expense/pages/expenseDetail";
+import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
 
 let mockLoads: Record<string, unknown> = {};
 let mockRoles = { isFinance: false, isBoard: false };
 const mockSend: jest.Mock<Promise<boolean>, unknown[]> = jest.fn(async () => true);
 
-jest.mock("@inventory/expense/components/api", () => ({
+jest.mock("@checkin/expense/components/api", () => ({
   useLoad: (path: string | null) => ({ data: path ? mockLoads[path] ?? null : null, error: null, reload: () => {} }),
   useRoles: () => mockRoles,
   useBuckets: () => [],

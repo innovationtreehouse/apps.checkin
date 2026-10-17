@@ -1,6 +1,6 @@
 /** S5 consumer: remap on editable receipts, audit-only rejection, org check, cursor, catch-up. */
 import { beforeEach, expect, it } from "vitest";
-import { fixturesForSeam } from "@inventory/receipt-contract-fixtures";
+import { fixturesForSeam } from "@checkin/receipt-contract-fixtures";
 import { db } from "../../db";
 import type { OrgEventRecord } from "../../contract";
 import { catchUpOrgEvents, orgEventConsumer } from "../../services/orgEventConsumer";

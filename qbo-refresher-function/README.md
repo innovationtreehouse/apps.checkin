@@ -22,7 +22,7 @@ function's role. JSON shape:
   "obtainedAt": 0, "expiresIn": 3600, "realmId": "" }
 ```
 
-Seed it once from the operator consent flow (`npm run consent -w @inventory/quickbooks`).
+Seed it once from the operator consent flow (`npm run consent -w @checkin/quickbooks`).
 Every refresh writes the rotated pair back before returning. Intuit invalidates the old
 refresh token on refresh, so a failed write is retried with short backoff; if it still
 fails, the function logs `QBO_INVALID_GRANT` and fails without returning a token.

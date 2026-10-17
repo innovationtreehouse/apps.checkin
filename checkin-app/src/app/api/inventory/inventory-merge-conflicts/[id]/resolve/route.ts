@@ -3,6 +3,6 @@
 // its src/security/registry/inventory.ts entry.
 import { handler } from "@/security/handler";
 import { inventoryRoute } from "@/lib/localInventory/route";
-import { routes } from "@inventory/local-inventory";
+import { routes } from "@checkin/local-inventory";
 
 export const PUT = handler("PUT /api/inventory/inventory-merge-conflicts/[id]/resolve", inventoryRoute(routes.provisional.resolveMergeConflict));

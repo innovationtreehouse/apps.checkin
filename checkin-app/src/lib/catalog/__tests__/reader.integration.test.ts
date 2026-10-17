@@ -11,10 +11,10 @@
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
-import { getPrisma as getCatalogPrisma } from '@inventory/global-catalog';
-import { getCatalogItem, searchCatalog } from '@inventory/bulk-donation';
-import { getExpenseRuntime } from '@inventory/expense';
-import { ports } from '@inventory/workflow-mapping';
+import { getPrisma as getCatalogPrisma } from '@checkin/global-catalog';
+import { getCatalogItem, searchCatalog } from '@checkin/bulk-donation';
+import { getExpenseRuntime } from '@checkin/expense';
+import { ports } from '@checkin/workflow-mapping';
 import { configureRuntime as configureBulkDonationRuntime } from '@/lib/bulkDonation/configure';
 import { configureRuntime as configureExpenseRuntime } from '@/lib/expense/configure';
 import { configureRuntime as configureWorkflowRuntime } from '@/lib/workflowMapping/configure';

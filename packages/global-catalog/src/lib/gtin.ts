@@ -7,4 +7,4 @@ export {
   formatProvisionalDisplay,
   formatGtinDisplay,
   formatItemId,
-} from "@inventory/gtin";
+} from "@checkin/gtin";

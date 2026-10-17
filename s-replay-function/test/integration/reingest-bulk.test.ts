@@ -3,8 +3,8 @@
  * exports with no Shopify calls. Skipped unless SHOPIFY_READ_DATABASE_URL is set.
  */
 import { it, expect, beforeEach, afterAll } from "vitest";
-import { describeDb } from "@inventory/pg-test-harness";
-import { prisma, ingestBulkOrders, EventSource } from "@inventory/s-ingest-core";
+import { describeDb } from "@checkin/pg-test-harness";
+import { prisma, ingestBulkOrders, EventSource } from "@checkin/s-ingest-core";
 import { reingestBulk } from "../../src/replay.js";
 import { wipeStore, orderNode } from "./helpers.js";
 

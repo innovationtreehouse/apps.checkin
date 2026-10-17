@@ -16,7 +16,7 @@ import {
   withSyncRun,
   SyncKind,
   PROD_STORE_DOMAIN,
-} from "@inventory/s-ingest-core";
+} from "@checkin/s-ingest-core";
 import { handler, armSyncDeadline } from "./handler.js";
 import { createShopifyClient } from "./shopify/client.js";
 import {

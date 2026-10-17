@@ -10,7 +10,7 @@ import { SCHOLARSHIP_REQUEST_KIND_OPTIONS } from '@/lib/scholarshipRequestKind';
 import { formatDateOnly } from '@/lib/time';
 import { checkProgramAge } from '@/lib/programAge';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
-import { formatCents } from '@inventory/money';
+import { formatCents } from '@checkin/money';
 import { aggregateEnrollOutcomes, buildShopifyCheckoutUrl, findRepeatPayments, type EnrollOutcome, type RepeatPayment } from './enroll';
 import { checkoutVariantId } from '@/lib/programs/variants';
 import FirstTimeIntakePanel from './FirstTimeIntakePanel';

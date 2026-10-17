@@ -9,7 +9,7 @@ import {
   catalogItemsLookupSchema,
   catalogItemReferenceProposalSchema,
   catalogReferenceConflictSchema,
-} from "@inventory/receipt-types";
+} from "@checkin/receipt-types";
 
 const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
 

@@ -3,7 +3,7 @@
  * QuickBooksClient over an in-memory QBO company. Match before create; the key makes a retry safe.
  */
 import { it, expect, beforeEach, afterEach, vi } from "vitest";
-import { QuickBooksClient, qbKey, type QboDeposit } from "@inventory/quickbooks";
+import { QuickBooksClient, qbKey, type QboDeposit } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureBulkDonation } from "../../runtime";

@@ -8,8 +8,8 @@
  * sink → no failed-push noise). withSyncRun fires the returned sink on each terminal
  * DATA-run transition (never for ADMIN runs).
  */
-import { prisma as monitoringPrisma, recordHeartbeat } from "@inventory/monitoring-db";
-import { logger, type HeartbeatSink } from "@inventory/s-ingest-core";
+import { prisma as monitoringPrisma, recordHeartbeat } from "@checkin/monitoring-db";
+import { logger, type HeartbeatSink } from "@checkin/s-ingest-core";
 
 /** Build the heartbeat sink, or `undefined` when monitoring isn't configured for this env. */
 export function buildHeartbeatSink(env: NodeJS.ProcessEnv = process.env): HeartbeatSink | undefined {

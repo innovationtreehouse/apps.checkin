@@ -1,4 +1,4 @@
-import type { CatalogRuntimeConfig } from "@inventory/global-catalog";
+import type { CatalogRuntimeConfig } from "@checkin/global-catalog";
 import { getServerSession } from "next-auth";
 import { config } from "@/lib/config";
 
@@ -8,14 +8,14 @@ jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { org: { findUniqu
 // The library's root entry pulls in its generated Prisma client, which the
 // jest env does not build; only configureCatalog is needed, to capture the config.
 const configureCatalog = jest.fn<void, [CatalogRuntimeConfig]>();
-jest.mock("@inventory/global-catalog", () => ({ configureCatalog }));
+jest.mock("@checkin/global-catalog", () => ({ configureCatalog }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
 const consumeCatalogEvent = jest.fn();
 const inventoryOnOrgEvents = jest.fn();
 const workflowOnOrgEvents = jest.fn();
-jest.mock("@inventory/expense", () => ({ consumeCatalogEvent }));
-jest.mock("@inventory/local-inventory", () => ({ orgEventConsumer: { onOrgEvents: inventoryOnOrgEvents } }));
-jest.mock("@inventory/workflow-mapping", () => ({ orgEventConsumer: { onOrgEvents: workflowOnOrgEvents } }));
+jest.mock("@checkin/expense", () => ({ consumeCatalogEvent }));
+jest.mock("@checkin/local-inventory", () => ({ orgEventConsumer: { onOrgEvents: inventoryOnOrgEvents } }));
+jest.mock("@checkin/workflow-mapping", () => ({ orgEventConsumer: { onOrgEvents: workflowOnOrgEvents } }));
 jest.mock("@/lib/config", () => ({
   config: { isStaging: jest.fn(() => false) },
   isStagingAccessAllowed: jest.requireActual("@/lib/config").isStagingAccessAllowed,

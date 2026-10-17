@@ -1,4 +1,4 @@
-import { findMatch, qbKey, type MatchCandidate } from "@inventory/quickbooks";
+import { findMatch, qbKey, type MatchCandidate } from "@checkin/quickbooks";
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorPayout, MirrorSource, PayoutMirror, QbDeposit } from "../contract";

@@ -1,5 +1,5 @@
 {
-  "name": "@inventory/quickbooks",
+  "name": "@checkin/quickbooks",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -22,7 +22,7 @@
     "pull": "tsx scripts/pull.ts"
   },
   "dependencies": {
-    "@inventory/money": "*"
+    "@checkin/money": "*"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

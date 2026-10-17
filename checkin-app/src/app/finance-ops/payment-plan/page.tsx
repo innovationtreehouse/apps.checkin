@@ -11,7 +11,7 @@ import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
-import { formatCents } from '@inventory/money';
+import { formatCents } from '@checkin/money';
 import { landsNextYear } from '@/lib/programYear';
 import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 

@@ -6,7 +6,7 @@ import { adjustProgramInventory, createClaimantProduct, createShopifySingleVaria
 import { logBackendError, logger } from "@/lib/logger";
 import { isDuesSettled } from "@/lib/orgMembership";
 import { config } from "@/lib/config";
-import { dollarsToCentsOrNull } from "@inventory/money";
+import { dollarsToCentsOrNull } from "@checkin/money";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { staleWhileRevalidate } from "@/lib/staleCache";

@@ -5,7 +5,7 @@
  * (see src/__tests__/helpers/db.ts) — `npm test` stays green without Docker.
  */
 import { fileURLToPath } from "node:url";
-import { pgGlobalSetup } from "@inventory/pg-test-harness";
+import { pgGlobalSetup } from "@checkin/pg-test-harness";
 
 export default pgGlobalSetup({
   migrateCwd: fileURLToPath(new URL("..", import.meta.url)),

@@ -43,7 +43,7 @@ const checkinModels = new Set(
 
 const DB_CLIENT_FILE = /^src\/(lib\/)?db\/index\.ts$/;
 // global-catalog's deployed DB env var is CATALOG_DATABASE_URL, not GLOBAL_CATALOG_….
-const DB_ENV_NAME = { '@inventory/global-catalog': 'catalog' };
+const DB_ENV_NAME = { '@checkin/global-catalog': 'catalog' };
 const ownDbEnv = (name) =>
   `${(DB_ENV_NAME[name] ?? name.replace(/^@[^/]+\//, '')).toUpperCase().replace(/-/g, '_')}_DATABASE_URL`;
 // ponytail: matches process.env.X, process.env['X'] and env('X') reads of a name

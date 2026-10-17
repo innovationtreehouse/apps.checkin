@@ -2,7 +2,7 @@
 // here; an unbound port behaves as that adapter, so nothing reaches another library, checkin
 // or QuickBooks until the host binds it.
 import { z } from "zod";
-import type { QuickBooksClient } from "@inventory/quickbooks";
+import type { QuickBooksClient } from "@checkin/quickbooks";
 import {
   CatalogCategorySchema,
   CatalogSubcategorySchema,
@@ -227,7 +227,7 @@ export const inertPeopleDirectory: PeopleDirectory = { nameOf: async () => null 
 
 /**
  * QB-2 posting: the host's QuickBooks client (the create-only writer lives in
- * `@inventory/quickbooks`) and the card or bank account a non-reimbursement expense is paid from.
+ * `@checkin/quickbooks`) and the card or bank account a non-reimbursement expense is paid from.
  */
 export interface ExpensePosting {
   client: QuickBooksClient;

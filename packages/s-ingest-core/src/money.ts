@@ -1,9 +1,9 @@
 /**
  * Money is signed integer cents everywhere. Parsing/rounding is delegated to the
- * shared @inventory/money library so this service rounds identically to the rest of
+ * shared @checkin/money library so this service rounds identically to the rest of
  * the monorepo — important for the later cross-DB reconciliation with income-app.
  */
-import { dollarsToCents } from "@inventory/money";
+import { dollarsToCents } from "@checkin/money";
 
 /** Signed integer cents from a Shopify money amount; 0 for null/blank, throws on garbage. */
 export function toCents(amount: string | number | null | undefined): number {

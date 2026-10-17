@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { PendingAlert } from "@inventory/monitoring-db";
+import type { PendingAlert } from "@checkin/monitoring-db";
 
 // Capture what the relay hands to SNS. PublishCommand is stubbed to a thin
 // `{ input }` carrier and SNSClient#send to a shared spy, so we can assert the

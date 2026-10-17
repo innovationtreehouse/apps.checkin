@@ -1,18 +1,18 @@
-import { configureReceipt, type ReceiptConfig } from '@inventory/receipt';
+import { configureReceipt, type ReceiptConfig } from '@checkin/receipt';
 import prisma from '@/lib/prisma';
 import { notifyFinanceAlert } from '@/lib/emailRecipients';
 import { configureRuntime } from '../configure';
 
 jest.mock('@aws-sdk/client-lambda', () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
-jest.mock('@inventory/receipt', () => ({
+jest.mock('@checkin/receipt', () => ({
     configureReceipt: jest.fn(),
     createAnthropicOcr: jest.fn(),
     createGmailReader: jest.fn(() => ({ listRecent: jest.fn() })),
     fixtureOcr: {},
 }));
-jest.mock('@inventory/expense', () => ({ reimbursementStatus: {} }));
-jest.mock('@inventory/workflow-mapping', () => ({ ingestReceipt: jest.fn() }));
-jest.mock('@inventory/bulk-donation', () => ({ recordInKindDonor: jest.fn(), withdrawInKind: jest.fn() }));
+jest.mock('@checkin/expense', () => ({ reimbursementStatus: {} }));
+jest.mock('@checkin/workflow-mapping', () => ({ ingestReceipt: jest.fn() }));
+jest.mock('@checkin/bulk-donation', () => ({ recordInKindDonor: jest.fn(), withdrawInKind: jest.fn() }));
 jest.mock('@/lib/catalog/configure', () => ({ getOrg: jest.fn() }));
 jest.mock('@/lib/emailRecipients', () => ({ notifyFinanceAlert: jest.fn() }));
 

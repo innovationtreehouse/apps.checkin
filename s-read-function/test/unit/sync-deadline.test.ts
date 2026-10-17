@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("@inventory/s-ingest-core", () => ({
+vi.mock("@checkin/s-ingest-core", () => ({
   prisma: {},
   loadDbConfig: vi.fn(),
   loadShopifyConfig: vi.fn(),

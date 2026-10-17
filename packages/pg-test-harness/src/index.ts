@@ -1,5 +1,5 @@
 /**
- * @inventory/pg-test-harness — the fleet's template for Postgres integration testing.
+ * @checkin/pg-test-harness — the fleet's template for Postgres integration testing.
  *
  * Every package with a real-Postgres integration tier boots a throwaway, migration-fresh
  * container via this harness instead of assuming a hand-provisioned local/shared Postgres.

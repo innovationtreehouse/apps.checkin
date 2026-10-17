@@ -6,10 +6,10 @@
  * search and create go through checkin's one guarded client (off = no rows, no Vendors).
  * The posting writer stays unbound (inert); it is a later crossing.
  */
-import { configureExpense, reimburseeVendorId } from "@inventory/expense";
-import type { ExpensePrincipal, OwnerDirectory, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@inventory/expense";
-import { dollarsToCents } from "@inventory/money";
-import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@inventory/quickbooks";
+import { configureExpense, reimburseeVendorId } from "@checkin/expense";
+import type { ExpensePrincipal, OwnerDirectory, PeopleDirectory, QbReader, QbTxn, QbVendors, SignoffDirectory } from "@checkin/expense";
+import { dollarsToCents } from "@checkin/money";
+import { createVendor, type QboBill, type QboPurchase, type QboVendor } from "@checkin/quickbooks";
 import type { PersonRoleKind, Prisma } from "@/generated/prisma/client";
 import { catalogEventsSince, getOrg, sessionUser } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";

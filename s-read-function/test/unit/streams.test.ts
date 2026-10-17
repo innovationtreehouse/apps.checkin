@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@inventory/s-ingest-core", () => ({
+vi.mock("@checkin/s-ingest-core", () => ({
   EventSource: { INCREMENTAL: "INCREMENTAL", BACKFILL: "BACKFILL" },
   ObjectType: { ORDER: "ORDER", PAYOUT: "PAYOUT", BALANCE_TXN: "BALANCE_TXN" },
   ingestNode: vi.fn(),
@@ -25,7 +25,7 @@ vi.mock("../../src/shopify/fetchers.js", () => ({
 }));
 
 import { ingestStream, syncOrders, syncPayouts, syncBalanceTransactions } from "../../src/sync/streams.js";
-import { ingestNode, readSinceIso, advanceWatermark, EventSource, ObjectType } from "@inventory/s-ingest-core";
+import { ingestNode, readSinceIso, advanceWatermark, EventSource, ObjectType } from "@checkin/s-ingest-core";
 import { fetchOrders, fetchPayouts, fetchBalanceTransactions } from "../../src/shopify/fetchers.js";
 import { fakeClient } from "../helpers/fakeClient.js";
 import { prismaSentinel } from "../helpers/fakePrisma.js";

@@ -4,7 +4,7 @@
  * provisional dance (event after ingest, event before ingest).
  */
 import { describe, it, expect } from "vitest";
-import { fixture } from "@inventory/receipt-contract-fixtures";
+import { fixture } from "@checkin/receipt-contract-fixtures";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, ORG } from "../helpers/seed";

@@ -4,7 +4,7 @@
  * the /donations layout and the page registry share.
  */
 import type { NavLink } from "@/lib/nav/types";
-import { DONATION_NAV_LINKS } from "@inventory/bulk-donation/nav";
+import { DONATION_NAV_LINKS } from "@checkin/bulk-donation/nav";
 
 export { DONATION_NAV_LINKS };
 

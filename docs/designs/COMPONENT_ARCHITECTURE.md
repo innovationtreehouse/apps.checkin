@@ -22,7 +22,7 @@ worked example because it is the first component built.
 ## One process, many component packages
 
 Each component lands as an isolated library under `packages/` (the catalog is
-`@inventory/global-catalog`): its services, repositories, workflows, Prisma
+`@checkin/global-catalog`): its services, repositories, workflows, Prisma
 schema/client/migrations, React components, pages, and route handlers. It
 compiles into `checkin-app`'s single Next process and ships in checkin's
 existing container — no second service, no second login.
@@ -61,7 +61,7 @@ change, not just "add rows."
 A component that owns data gets its own dedicated database (its own
 `*_DATABASE_URL`) on the **same** Postgres server as checkin — separate
 `schema.prisma`, separate Prisma client, own migration history. Precedent:
-`@inventory/monitoring-db`.
+`@checkin/monitoring-db`.
 
 - A dedicated database namespaces the component's generic tables (`items`,
   `categories`, `org_events`), so no table/model renames are needed.

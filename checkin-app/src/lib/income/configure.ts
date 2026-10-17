@@ -30,7 +30,7 @@ import {
   type OwnerDirectory,
   type PayoutMirror,
   type QbDepositSource,
-} from "@inventory/income";
+} from "@checkin/income";
 import { getOrg, getPrincipal } from "@/lib/catalog/configure";
 import {
   incomeItemsSeen,
@@ -107,7 +107,7 @@ function depositSource(): QbDepositSource | undefined {
 }
 
 async function donationClaimedDepositIds(orgId: string): Promise<string[]> {
-  return (await import("@inventory/bulk-donation")).donationClaimedDepositIds(orgId);
+  return (await import("@checkin/bulk-donation")).donationClaimedDepositIds(orgId);
 }
 
 export function configureRuntime(): void {

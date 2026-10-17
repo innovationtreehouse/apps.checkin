@@ -1,4 +1,4 @@
-import type { QuickBooksClient } from "@inventory/quickbooks";
+import type { QuickBooksClient } from "@checkin/quickbooks";
 import type {
   IncomeAuth,
   IncomePrincipal,

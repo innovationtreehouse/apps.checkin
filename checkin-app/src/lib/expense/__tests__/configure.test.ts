@@ -1,4 +1,4 @@
-import type { PeopleDirectory, QbReader, QbRefs, QbVendors, SignoffDirectory } from "@inventory/expense";
+import type { PeopleDirectory, QbReader, QbRefs, QbVendors, SignoffDirectory } from "@checkin/expense";
 
 const personRoleFindMany = jest.fn();
 const budgetOwnerFindUnique = jest.fn();
@@ -19,9 +19,9 @@ jest.mock("@/lib/prisma", () => ({
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
 const configureExpense = jest.fn<void, [{ signoff: SignoffDirectory; people: PeopleDirectory; quickbooks: { reader: QbReader; refs: QbRefs; vendors: QbVendors } }]>();
 const reimburseeVendorId = jest.fn();
-jest.mock("@inventory/expense", () => ({ configureExpense, reimburseeVendorId }));
+jest.mock("@checkin/expense", () => ({ configureExpense, reimburseeVendorId }));
 const createVendor = jest.fn();
-jest.mock("@inventory/quickbooks", () => ({ createVendor }));
+jest.mock("@checkin/quickbooks", () => ({ createVendor }));
 jest.mock("@/lib/catalog/configure", () => ({ getOrg: jest.fn() }));
 const getQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks }));

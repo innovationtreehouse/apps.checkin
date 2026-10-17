@@ -13,9 +13,9 @@ import {
     configureWorkflowMapping,
     getPrisma as getWorkflowPrisma,
     receiptService,
-} from '@inventory/workflow-mapping';
-import { configureExpense, expenseIntake, getPrisma as getExpensePrisma } from '@inventory/expense';
-import type { CompletedReceipt } from '@inventory/receipt-types';
+} from '@checkin/workflow-mapping';
+import { configureExpense, expenseIntake, getPrisma as getExpensePrisma } from '@checkin/expense';
+import type { CompletedReceipt } from '@checkin/receipt-types';
 import { expenseSink } from '../configure';
 
 // The integration global setup's database helpers (CommonJS, untyped).

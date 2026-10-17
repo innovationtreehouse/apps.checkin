@@ -7,7 +7,7 @@ const createItemReferenceProposal = jest.fn();
 const reportConflict = jest.fn();
 const allocateNextProvisionalGtin = jest.fn();
 const createProvisionalItem = jest.fn();
-jest.mock('@inventory/global-catalog', () => ({
+jest.mock('@checkin/global-catalog', () => ({
     proposalService: { createItemReferenceProposal: (...a: unknown[]) => createItemReferenceProposal(...a) },
     conflictResolutionService: { reportConflict: (...a: unknown[]) => reportConflict(...a) },
     provisionalGtinService: {

@@ -137,7 +137,7 @@ runs:
         # (Prisma fails fast with P1001).
         jq -n --arg NAME "$CONTAINER_NAME" '
           {containerOverrides: [{name: $NAME, command: ["sh", "-c",
-            "for i in 1 2 3 4 5; do npm run db:deploy -w @inventory/s-ingest-core && exit 0; echo \"attempt $i failed — DB may be resuming from auto-pause; retrying in 20s\"; sleep 20; done; exit 1"
+            "for i in 1 2 3 4 5; do npm run db:deploy -w @checkin/s-ingest-core && exit 0; echo \"attempt $i failed — DB may be resuming from auto-pause; retrying in 20s\"; sleep 20; done; exit 1"
           ]}]}' > "$RUNNER_TEMP/migrate-overrides.json"
 
         # FARGATE_SPOT strategy (associated on the cluster — infra#131), not

@@ -1,4 +1,4 @@
-// Public surface of the @inventory/local-inventory library: the domain, plus the
+// Public surface of the @checkin/local-inventory library: the domain, plus the
 // route factories and runtime seams below. Pages and nav are subpath exports.
 export * from "./lib/db";
 export * from "./lib/gtin";

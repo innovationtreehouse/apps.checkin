@@ -1,10 +1,10 @@
-import { CatalogHttpError } from "@inventory/global-catalog";
+import { CatalogHttpError } from "@checkin/global-catalog";
 import { ApiResponseError } from "@/security/handler";
 import { catalogRoute } from "../route";
 
 // The library's root entry pulls in its generated Prisma client, which the
 // jest env does not build; only the error class is needed here.
-jest.mock("@inventory/global-catalog", () => ({
+jest.mock("@checkin/global-catalog", () => ({
   CatalogHttpError: class CatalogHttpError extends Error {
     constructor(
       public readonly status: number,

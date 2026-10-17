@@ -1,7 +1,7 @@
 // QB-3 drift detection: re-reads each QuickBooks entry the app created or matched and flags finance
 // when it was edited or removed in QuickBooks afterwards. Read-only: QuickBooks is never changed.
-import { dollarsToCents, sumCents } from "@inventory/money";
-import { appKeyOf, qbKey, type QboBill, type QboPurchase } from "@inventory/quickbooks";
+import { dollarsToCents, sumCents } from "@checkin/money";
+import { appKeyOf, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import type { ExpensePosting } from "../contract";
 import { db } from "../db";
 import { getExpenseRuntime } from "../runtime";
