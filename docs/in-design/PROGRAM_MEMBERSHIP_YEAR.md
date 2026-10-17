@@ -310,13 +310,15 @@ and no fallback for a missing one: a new program gets its year on the write that
 creates it.
 
 For a program inside one membership year the rule usually agrees with its dates,
-and where it does, nothing moves. It can disagree in two places. A program that
-ended in August 2026 has its dates in `2025-2026` but is filled as `2026`; it has
-ended, so only a reconciled old order would read it. A program already created for
-a year after `2026-2027` would be filled as `2026`, an earlier year than its dates,
-and households covered only to the end of `2026-2027` would get the member price
-for it. The fill does not adjust either; the owner's rule is the answer, and the
-Board can restate a program's year afterwards.
+and where it does, nothing moves. It disagrees in one place: a program that ended
+in August 2026 has its dates in `2025-2026` but is filled as `2026`. It has ended,
+so only a reconciled old order would read it.
+
+The rule assumes no existing program starts in `2027-2028` or later; none does
+today. A program that did would be filled as `2026`, an earlier year than its
+dates, and households covered only to the end of `2026-2027` would get the member
+price for it. So the fill refuses rather than guess: if any program still without
+a year starts on or after 1 September 2027, the fill stops and fills nothing.
 
 A fill does not re-derive later. An edit to a filled program's dates follows the
 write rules above like any other edit: if the new dates fall inside one year, the
@@ -366,8 +368,9 @@ Above that, the ones a pure function cannot cover:
   stated as the earlier year, because the function being right does not prove the
   column reached the select;
 - the fill of existing rows, against a real database: a program ending 31 July
-  2026 gets `2025`, one ending 1 August 2026 gets `2026`, a crossing program and a
-  future program get `2026`, and the column then accepts no empty value.
+  2026 gets `2025`, one ending 1 August 2026 gets `2026`, a crossing program gets
+  `2026`, a program without a year starting 1 September 2027 stops the fill with
+  nothing changed, and the column then accepts no empty value.
 
 ## Alternatives considered
 

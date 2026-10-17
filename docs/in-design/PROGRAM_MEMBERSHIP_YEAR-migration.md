@@ -47,6 +47,10 @@ Stable IDs; a resolved question is marked in place, never renumbered.
   2026 gets `2025` (`2025-2026`); every other program gets `2026` (`2026-2027`).
   Every row is then filled, so the column becomes required in the same PR and no
   badge or to-do count is built: nothing can be left without a year.
+- **`PMY-Q5` (resolved): What if a program for `2027-2028` or later exists when the
+  fill runs?** The `PMY-Q4` rule stands as written; none exists today. The fill
+  fails closed: it refuses to run if any program still without a year starts on or
+  after 1 September 2027, so such a program can never be filled as `2026`.
 
 ## Build plan
 
@@ -152,6 +156,12 @@ behaves exactly as today until rows carry a year. PRs 2 and 3 both edit
     extraction, as the restructure's first migration does:
 
     ```sql
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM "Program"
+                 WHERE "appliesToYear" IS NULL AND "startAt" >= DATE '2027-09-01') THEN
+        RAISE EXCEPTION 'program year fill: a program without a year starts in 2027-2028 or later';
+      END IF;
+    END $$;
     UPDATE "Program" SET "appliesToYear" =
       CASE WHEN "endAt" <= DATE '2026-07-31' THEN 2025 ELSE 2026 END
       WHERE "appliesToYear" IS NULL;
@@ -159,7 +169,9 @@ behaves exactly as today until rows carry a year. PRs 2 and 3 both edit
     ```
 
     The rule is the owner's (`PMY-Q4`) and applies to every program, crossing or
-    not; it reads no boundary.
+    not; it reads no boundary. The guard is `PMY-Q5`: only programs without a year
+    are checked, so a later program created after PR 3, which carries its derived
+    year, never trips it.
   - `checkin-app/prisma/schema.prisma`: `appliesToYear Int`.
   - `programCoverageDate` in `checkin-app/src/lib/orgMembership.ts` loses the
     no-year fallback, and its parameter type makes the year required, so a reader
@@ -168,7 +180,8 @@ behaves exactly as today until rows carry a year. PRs 2 and 3 both edit
     test roots for `program.create`.
 - **Tests:** an integration test (heavy) that extracts the fill and checks a
   program ending 31 July 2026 gets `2025`, one ending 1 August 2026 gets `2026`, a
-  crossing program and a later program get `2026`, and a stated year is left alone;
+  crossing program gets `2026`, a stated year is left alone, and a program without
+  a year starting 1 September 2027 makes the migration fail and change nothing;
   then full `npm run test:ci` and the integration suites for the four
   `programCoverageDate` callers.
 - **Migration safety:** the fill runs before `SET NOT NULL` in one transaction, so
@@ -177,7 +190,13 @@ behaves exactly as today until rows carry a year. PRs 2 and 3 both edit
   constraint. This must therefore deploy in a release after PR 3 is deployed, never
   in the same release. Before merging, count programs created since PR 3 deployed
   with no year in production; it must be zero (anything else means a writer the
-  plan missed).
+  plan missed). Also confirm no program without a year starts on or after 1
+  September 2027. If one does, the guard fails the migration, and a failed
+  migration wedges every later deploy until a human resolves it
+  (`checkin-app/docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` rule 6). The guard is
+  there for a fill that slips past the date it was planned for, not as a check to
+  rely on. Clear such a program first: saving it under PR 3's rules gives it a
+  year, derived or stated by the Board.
 - **Rules:** the Last step below.
 - **Blocked on:** PR 3 deployed.
 
