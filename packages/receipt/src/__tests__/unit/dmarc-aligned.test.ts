@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { dmarcAligned } from "../../services/mailIntake";
 
-const aligned = (...auth: string[]) =>
-  dmarcAligned(
-    auth.map((value) => ({ name: "Authentication-Results", value })),
-    "alice@example.org",
-  );
+const header = (name: string) => (value: string) => ({ name, value });
+
+const aligned = (...auth: string[]) => dmarcAligned(auth.map(header("Authentication-Results")), "alice@example.org");
 
 // The shape Gmail writes, folded across lines, with a base64 header.b and an ARC comment.
 const GMAIL = [
@@ -54,5 +52,40 @@ describe("dmarcAligned", () => {
     expect(aligned('mx.google.com; dmarc=pass header.from="example.org')).toBe(false);
     expect(aligned("mx.google.com; dmarc=pass (p=NONE header.from=example.org")).toBe(false);
     expect(aligned("mx.google.com extra; dmarc=pass header.from=example.org")).toBe(false);
+  });
+
+  describe("envelope sender", () => {
+    const withReturnPath = (returnPath: string, auth: string, address = "alice@example.org") =>
+      dmarcAligned([header("Return-Path")(returnPath), header("Authentication-Results")(auth)], address);
+
+    // Gmail echoes MAIL FROM into the spf= comment and smtp.mailfrom; a quoted local part can close that comment.
+    const breakout = '"x);dmarc=pass header.from=victim.org policy.x=y ("@attacker.net';
+    const gmailFor = (mailFrom: string) =>
+      `mx.google.com; spf=softfail (google.com: domain of transitioning ${mailFrom} does not designate 192.0.2.9 as permitted sender) smtp.mailfrom=${mailFrom}`;
+
+    it("rejects a quoted local part that ends Gmail's comment early", () => {
+      expect(withReturnPath(`<${breakout}>`, gmailFor(breakout), "bob@victim.org")).toBe(false);
+      expect(dmarcAligned([header("Authentication-Results")(gmailFor(breakout))], "bob@victim.org")).toBe(false);
+      const withSemicolon = '"x);dmarc=pass header.from=victim.org policy.x=y; ("@attacker.net';
+      expect(dmarcAligned([header("Authentication-Results")(gmailFor(withSemicolon))], "bob@victim.org")).toBe(false);
+    });
+
+    it("rejects a Return-Path or smtp.mailfrom holding a quote, parenthesis, semicolon, or backslash", () => {
+      for (const c of ['"', "(", ")", ";", "\\"]) {
+        expect(withReturnPath(`<a${c}b@example.org>`, GMAIL)).toBe(false);
+      }
+      expect(aligned(GMAIL.replace("smtp.mailfrom=alice@example.org", 'smtp.mailfrom="a b"@example.org'))).toBe(false);
+    });
+
+    it("fails the parse on a quote inside a comment, whatever else the header holds", () => {
+      expect(aligned('mx.google.com; spf=pass (domain of "x"@example.org); dmarc=pass header.from=example.org')).toBe(false);
+    });
+
+    it("accepts an ordinary envelope sender, including forwarding and bounce addresses", () => {
+      expect(withReturnPath("<alice@example.org>", GMAIL)).toBe(true);
+      expect(withReturnPath("<SRS0=Ab12=ZZ=example.org=alice@forwarder.example.net>", GMAIL)).toBe(true);
+      expect(withReturnPath("<prvs=1234abcd=alice@example.org>", GMAIL)).toBe(true);
+      expect(withReturnPath("<>", GMAIL)).toBe(true);
+    });
   });
 });

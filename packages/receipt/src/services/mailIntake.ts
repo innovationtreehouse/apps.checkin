@@ -44,7 +44,8 @@ type AuthResToken = { word: string } | { sep: ";" | "=" };
  * RFC 8601 lexer. Comments are dropped and act as whitespace; a quoted string joins its word as
  * plain text, so a `;` or `=` inside it never separates. Outside quotes `;` separates, and so
  * does the first `=` of each whitespace-delimited run: later ones stay literal, as in a base64
- * `header.b` value. Null when a comment or quoted string is unterminated.
+ * `header.b` value. Null when a comment or quoted string is unterminated, or a comment holds a
+ * `"`: Google's own comments never do, so one there is sender text echoed into the comment.
  */
 function lexAuthResults(value: string): AuthResToken[] | null {
   const tokens: AuthResToken[] = [];
@@ -66,6 +67,7 @@ function lexAuthResults(value: string): AuthResToken[] | null {
         i++;
         if (i >= value.length) return null;
         if (value[i] === "\\") i++;
+        else if (value[i] === '"') return null;
         else if (value[i] === "(") depth++;
         else if (value[i] === ")") depth--;
       }
@@ -128,15 +130,25 @@ function parseAuthResults(value: string): { authservId: string; results: ResInfo
   return { authservId, results };
 }
 
+// Characters an envelope local part can hold only when quoted; quoted, it can end Gmail's comment early.
+const UNSAFE_ENVELOPE = /["();\\]/;
+
+/** False when the envelope sender, in any `Return-Path` or `smtp.mailfrom` value, holds an UNSAFE_ENVELOPE character. */
+const envelopeSafe = (headers: Headers | undefined, authResults: string): boolean =>
+  headerValues(headers, "Return-Path").every((v) => !UNSAFE_ENVELOPE.test(v)) &&
+  [...authResults.matchAll(/smtp\.mailfrom=([^\s;]*)/gi)].every((m) => !UNSAFE_ENVELOPE.test(m[1]));
+
 /**
  * True when Google's own verdict says the `From` domain passed DMARC. Only the topmost
  * `Authentication-Results` header counts, and only when Google wrote it: a sender can write
- * any header below it. Anything ambiguous (unparseable, two dmarc results, two header.from
- * properties) fails closed.
+ * any header below it. Gmail echoes the envelope sender into the header, so a sender that could
+ * break its syntax fails before parsing; anything ambiguous after (unparseable, two dmarc
+ * results, two header.from properties) fails closed too.
  */
 export function dmarcAligned(headers: Headers | undefined, address: string): boolean {
   const topmost = headerValues(headers, "Authentication-Results")[0];
-  const parsed = topmost === undefined ? null : parseAuthResults(topmost);
+  if (topmost === undefined || !envelopeSafe(headers, topmost)) return false;
+  const parsed = parseAuthResults(topmost);
   if (!parsed || parsed.authservId.toLowerCase() !== "mx.google.com") return false;
   const dmarc = parsed.results.filter((r) => r.method.toLowerCase() === "dmarc");
   if (dmarc.length !== 1 || dmarc[0].result.toLowerCase() !== "pass") return false;
