@@ -10,7 +10,7 @@
 import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
-import { executePendingCloses } from '@/lib/scan-service';
+import { executePendingCloses } from '@/lib/attendance/close';
 import { getFullAttendance, invalidateAttendanceCache } from '@/lib/getFullAttendance';
 import type { Person, Visit } from '@/generated/prisma/client';
 

@@ -17,6 +17,7 @@ import {
   createGmailReader,
   fixtureOcr,
   type MailboxReader,
+  type ReceiptAlerts,
   type ReceiptPrincipal,
 } from "@inventory/receipt";
 import { ingestReceipt } from "@inventory/workflow-mapping";
@@ -118,6 +119,17 @@ function receiptMailbox(): MailboxReader | undefined {
   return createGmailReader(mailboxAddress, refresherAccessToken(functionName, mailboxAddress));
 }
 
+const alerts: ReceiptAlerts = {
+  async mailHoldCeilingReached({ unresolved, refused }) {
+    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
+    await notifyFinanceAlert(
+      "Receipts: mail intake stopped holding mail",
+      `<p>${unresolved} mailed item(s) are held for finance, the most the receipt mailbox holds. Today's mail run did not hold ${refused} more file(s) from unknown or unverified senders; they stay in the mailbox only. Receipts from known members are still read. Resolve held items to resume holding. <a href="${config.baseUrl()}/receipts/mail">Open the mail queue</a></p>`,
+      "Receipt mail ceiling alert failed:",
+    );
+  },
+};
+
 /** Live members of every household holding one of these people; a merged-away person's household still counts. */
 async function householdOf(personIds: number[]): Promise<number[]> {
   if (personIds.length === 0) return [];
@@ -135,6 +147,7 @@ export function configureRuntime(): void {
     org: getOrg,
     households: { householdOf },
     people: { submitterByEmail },
+    alerts,
     mailbox: receiptMailbox(),
     reimbursementStatus,
     receiptSink: { ingestReceipt },

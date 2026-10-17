@@ -5,7 +5,7 @@ import { getKioskPublicKeys, verifyKioskSignature } from "@/lib/verify-kiosk";
 import { buildingLink } from "@/lib/kioskSeen";
 import { getFullAttendance, invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
-import { closeActor, finishCloseGuard, lastKeyholderGuard, recordWebClose } from "@/lib/scan-service";
+import { closeActor, finishCloseGuard, lastKeyholderGuard, recordWebClose } from "@/lib/attendance/keyholderGuard";
 import { lockFacility } from "@/lib/facilityLock";
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { logBackendError, logger } from "@/lib/logger";

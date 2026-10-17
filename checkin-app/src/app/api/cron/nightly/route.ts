@@ -4,7 +4,7 @@ import { withCron } from "@/lib/cronAuth";
 import prisma from "@/lib/prisma";
 import { processPostEventEmails } from "@/lib/postEventEmails";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
-import { type DepartureChange, executePendingCloses, logCloseDepartures } from "@/lib/scan-service";
+import { type DepartureChange, executePendingCloses, logCloseDepartures } from "@/lib/attendance/close";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { LIVE_VISIT } from "@/lib/visit/filters";
 import { runPersonAgreementSweep } from "@/lib/membership/personAgreementTriggers";

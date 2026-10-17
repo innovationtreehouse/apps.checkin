@@ -204,6 +204,10 @@ Things the app takes as true because they are handled outside it.
 
 ### Pricing
 
+- A program sells at its full price only. The member price comes from a discount
+  code the server mints, never from the buyer picking a cheaper store item, so
+  nobody can choose the member price for themselves.  [Decision]
+
 - A failed discount degrades to undiscounted checkout, never an error.  [Decision — deliberate limit]
 
 - A member discount code is minted for one household's unpaid claims, names that

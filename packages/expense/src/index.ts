@@ -32,6 +32,7 @@ export * from "./services/intakeService";
 export * from "./services/provisionalItemMapService";
 export * from "./services/qbMatchService";
 export * from "./services/reimbursementStatus";
+export * from "./services/reimburseeVendorService";
 export * from "./services/serviceError";
 export * from "./services/settingsService";
 export * from "./services/signoffService";

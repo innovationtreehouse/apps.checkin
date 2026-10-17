@@ -1,23 +1,27 @@
-import type { QbReader, SignoffDirectory } from "@inventory/expense";
+import type { PeopleDirectory, QbReader, QbRefs, QbVendors, SignoffDirectory } from "@inventory/expense";
 
 const personRoleFindMany = jest.fn();
 const budgetOwnerFindUnique = jest.fn();
 const budgetOwnerFindMany = jest.fn();
 const personFindUnique = jest.fn();
 const personMergeFindUnique = jest.fn();
+const personFindFirst = jest.fn();
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: {
     personRole: { findMany: personRoleFindMany },
     budgetOwner: { findUnique: budgetOwnerFindUnique, findMany: budgetOwnerFindMany },
-    person: { findUnique: personFindUnique },
+    person: { findUnique: personFindUnique, findFirst: personFindFirst },
     personMerge: { findUnique: personMergeFindUnique },
   },
 }));
 
 // The library's root entry pulls in its generated Prisma client, which the jest env does not build.
-const configureExpense = jest.fn<void, [{ signoff: SignoffDirectory; quickbooks: { reader: QbReader } }]>();
-jest.mock("@inventory/expense", () => ({ configureExpense }));
+const configureExpense = jest.fn<void, [{ signoff: SignoffDirectory; people: PeopleDirectory; quickbooks: { reader: QbReader; refs: QbRefs; vendors: QbVendors } }]>();
+const reimburseeVendorId = jest.fn();
+jest.mock("@inventory/expense", () => ({ configureExpense, reimburseeVendorId }));
+const createVendor = jest.fn();
+jest.mock("@inventory/quickbooks", () => ({ createVendor }));
 jest.mock("@/lib/catalog/configure", () => ({ getOrg: jest.fn() }));
 const getQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks }));
@@ -150,5 +154,45 @@ describe("expense QuickBooks reader", () => {
       { id: "2", txnDate: "2026-01-03", totalCents: 500, accountRef: null, vendorRef: "8" },
     ]);
     await expect(qb.billPaymentsBetween("2026-01-01", "2026-01-31")).resolves.toEqual([{ id: "3", txnDate: "2026-01-04", billIds: ["2"] }]);
+  });
+});
+
+describe("expense reimbursee Vendor ports", () => {
+  async function ports() {
+    await jest.isolateModulesAsync(async () => {
+      (await import("../configure")).configureRuntime();
+    });
+    return configureExpense.mock.calls.at(-1)![0];
+  }
+
+  it("opens no Vendor client while QuickBooks is off", async () => {
+    getQuickBooks.mockResolvedValue(null);
+    await expect((await ports()).quickbooks.vendors.open()).resolves.toBeNull();
+  });
+
+  it("searches, reads by id and finds or creates through the guarded client", async () => {
+    const qb = {
+      vendorsMatching: jest.fn(async () => [{ Id: "3", DisplayName: "Pat Lee" }]),
+      vendorById: jest.fn(async (id: string) => (id === "3" ? { Id: "3", DisplayName: "Pat Lee" } : null)),
+    };
+    getQuickBooks.mockResolvedValue(qb);
+    createVendor.mockResolvedValue({ kind: "found", via: "name", id: "61", displayName: "Pat Lee (Vendor)" });
+    const vendors = (await (await ports()).quickbooks.vendors.open())!;
+
+    await expect(vendors.search("Pat")).resolves.toEqual([{ id: "3", displayName: "Pat Lee" }]);
+    await expect(vendors.byId("3")).resolves.toEqual({ id: "3", displayName: "Pat Lee" });
+    await expect(vendors.byId("4")).resolves.toBeNull();
+    await expect(vendors.findOrCreate("Pat Lee", "k")).resolves.toEqual({ id: "61", displayName: "Pat Lee (Vendor)", created: false });
+    expect(createVendor).toHaveBeenCalledWith(qb, "Pat Lee", "k");
+  });
+
+  it("matches a Bill against the reimbursee's linked Vendor", async () => {
+    expect((await ports()).quickbooks.refs.vendorIdFor).toBe(reimburseeVendorId);
+  });
+
+  it("names a live person", async () => {
+    personFindFirst.mockResolvedValue({ name: "Pat Lee" });
+    await expect((await ports()).people.nameOf(9)).resolves.toBe("Pat Lee");
+    expect(personFindFirst.mock.calls[0][0].where).toEqual({ id: 9, mergedIntoId: null });
   });
 });

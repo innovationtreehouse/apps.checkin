@@ -1,5 +1,5 @@
 /**
- * Nav descriptors for org inventory (#1287 §7). The library declares its
+ * Nav descriptors for org inventory. The library declares its
  * screens; the host places them in its Inventory section tabs, orders them,
  * and hides the manager-only ones from viewers.
  */

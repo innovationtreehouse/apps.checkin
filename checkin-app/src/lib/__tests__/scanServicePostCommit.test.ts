@@ -5,7 +5,8 @@
  */
 import prisma from "@/lib/prisma";
 import { Prisma, type Person, type Visit } from "@/generated/prisma/client";
-import { executePendingCloses, notifyScanOutcome } from "@/lib/scan-service";
+import { executePendingCloses } from "@/lib/attendance/close";
+import { notifyScanOutcome } from "@/lib/attendance/scanNotify";
 import { sendCheckinNotifications } from "@/lib/notifications";
 import { logBackendError } from "@/lib/logger";
 

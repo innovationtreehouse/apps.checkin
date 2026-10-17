@@ -19,6 +19,7 @@ import {
   resolveUnknown,
 } from "../services/approvalService";
 import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
+import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
 import { markNotEveryday, recordBoardAuthorization, setReimbursee, signLine, signoffStatus } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";
 import {
@@ -282,6 +283,34 @@ export const reimbursee: ExpenseRouteHandler = async ({ req, params }) => {
   const orgId = await getOrgId();
   await mapServiceErrors(() => setReimbursee(orgId, params.id, personId, principal));
   return { Expense: await db.expense.findFirst({ where: { id: params.id, orgId } }) };
+};
+
+const vendorChoiceSchema = z.union([
+  z.object({ qbVendorId: z.string().trim().regex(/^\d+$/, "qbVendorId is a QuickBooks id") }).strict(),
+  z.object({ createForReimbursee: z.literal(true) }).strict(),
+]);
+
+export const reimburseeVendor: ExpenseRouteHandler = async ({ params }) => {
+  const orgId = await getOrgId();
+  const { link, reimbursee } = await mapServiceErrors(() => reimburseeVendorFor(orgId, params.id));
+  return { ExpenseReimburseeVendor: link, ExpenseReimburseeView: reimbursee };
+};
+
+export const reimburseeVendorOptions: ExpenseRouteHandler = async ({ req, params }) => {
+  const principal = await getPrincipal();
+  const orgId = await getOrgId();
+  const options = await mapServiceErrors(async () => {
+    const text = z.string().trim().min(2, "Type at least two letters").max(100).parse(query(req).get("q") ?? "");
+    return vendorOptions(orgId, params.id, text, principal);
+  });
+  return { ExpenseQbVendorOption: options };
+};
+
+export const linkVendor: ExpenseRouteHandler = async ({ req, params }) => {
+  const choice = await parseBody(req, vendorChoiceSchema);
+  const principal = await getPrincipal();
+  const orgId = await getOrgId();
+  return { ExpenseReimburseeVendor: await mapServiceErrors(() => linkReimburseeVendor(orgId, params.id, choice, principal)) };
 };
 
 export const testData: ExpenseRouteHandler = async ({ req, params }) => {

@@ -8,7 +8,7 @@ import { parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTi
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 import { handler } from "@/security/handler";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
-import { correctCloseTime } from "@/lib/scan-service";
+import { correctCloseTime } from "@/lib/attendance/close";
 
 // Registry-governed (GET /api/facility/visits): admission anyRole
 // sysadmin/board; envelope 'visits'. Nested person carries email (pii) —

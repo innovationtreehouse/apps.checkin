@@ -195,6 +195,36 @@ export const inertQbRefs: QbRefs = {
   vendorIdFor: async () => null,
 };
 
+/** A QuickBooks Vendor offered to finance for a reimbursee. */
+export interface QbVendorOption {
+  id: string;
+  displayName: string;
+}
+
+/** Finance's Vendor reads and create, on a live QuickBooks connection. */
+export interface QbVendorClient {
+  /** Active Vendors whose name contains the text. */
+  search(text: string): Promise<QbVendorOption[]>;
+  byId(id: string): Promise<QbVendorOption | null>;
+  /** An existing Vendor with that name is returned (`created: false`), not created again. */
+  findOrCreate(name: string, key: string): Promise<QbVendorOption & { created: boolean }>;
+}
+
+/** The connection, or null while QuickBooks is off for this deployment. */
+export interface QbVendors {
+  open(): Promise<QbVendorClient | null>;
+}
+
+export const inertQbVendors: QbVendors = { open: async () => null };
+
+/** Display names of checkin people. */
+export interface PeopleDirectory {
+  /** A live person's name; null when unknown. */
+  nameOf(personId: number): Promise<string | null>;
+}
+
+export const inertPeopleDirectory: PeopleDirectory = { nameOf: async () => null };
+
 /**
  * QB-2 posting: the host's QuickBooks client (the create-only writer lives in
  * `@inventory/quickbooks`) and the card or bank account a non-reimbursement expense is paid from.

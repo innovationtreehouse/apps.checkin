@@ -4,7 +4,7 @@ import {
   Anchor, Badge, Button, Checkbox, Group, Modal, NumberInput, Paper, Select, Stack, Switch, Table, Text, TextInput, Textarea, Title,
 } from "@mantine/core";
 import { formatCents } from "@inventory/money";
-import { STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
+import { QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { CLOSED_STATES, reimburseeUnknown } from "../lib/signoff";
 import { send, useBuckets, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
@@ -96,6 +96,61 @@ function actionsFor(a: Approval, state: string, isFinance: boolean): Action[] {
   return [];
 }
 
+interface VendorLink {
+  ExpenseReimburseeVendor: { qbVendorId: string } | null;
+  ExpenseReimburseeView: { personId: number; name: string | null } | null;
+}
+interface VendorOption {
+  id: string;
+  displayName: string;
+}
+
+/**
+ * Finance searches QuickBooks Vendors and links one after confirming its name, or creates one
+ * under the reimbursee's recorded name.
+ */
+function VendorPicker({ base, reimbursee, onLinked }: { base: string; reimbursee: string | null; onLinked: () => void }) {
+  const initial = reimbursee ?? "";
+  const [text, setText] = useState(initial);
+  const [query, setQuery] = useState(initial.trim().length >= 2 ? initial.trim() : "");
+  const [picked, setPicked] = useState<VendorOption | null>(null);
+  const options = useLoad<VendorOption[]>(query ? `${base}/reimbursee-vendor/options?q=${encodeURIComponent(query)}` : null);
+  const link = async (body: unknown) => { if (await send(`${base}/reimbursee-vendor`, "PUT", body, "Vendor linked")) onLinked(); };
+
+  if (options.error === QB_OFF) return <Text size="sm" c="dimmed">{options.error}</Text>;
+  if (picked) {
+    return (
+      <Stack gap="xs">
+        <Text size="sm">Link QuickBooks Vendor “{picked.displayName}” (#{picked.id}) as {reimbursee ?? "the reimbursee"}’s Vendor? Their Bills will be paid to it.</Text>
+        <Group>
+          <Button size="xs" onClick={() => link({ qbVendorId: picked.id })}>Confirm link</Button>
+          <Button size="xs" variant="default" onClick={() => setPicked(null)}>Cancel</Button>
+        </Group>
+      </Stack>
+    );
+  }
+  return (
+    <Stack gap="xs">
+      <Group>
+        <TextInput placeholder="Search QuickBooks Vendors" value={text} onChange={(ev) => setText(ev.currentTarget.value)}
+          onKeyDown={(ev) => { if (ev.key === "Enter") setQuery(text.trim()); }} />
+        <Button variant="light" disabled={text.trim().length < 2} onClick={() => setQuery(text.trim())}>Search</Button>
+      </Group>
+      {options.error && <Text size="sm" c="red">{options.error}</Text>}
+      {(options.data ?? []).map((v) => (
+        <Group key={v.id}>
+          <Text size="sm">{v.displayName}</Text>
+          <Button size="xs" onClick={() => setPicked(v)}>Link</Button>
+        </Group>
+      ))}
+      {options.data && options.data.length === 0 && <Text size="sm" c="dimmed">No unlinked Vendor matches “{query}”.</Text>}
+      {reimbursee && (
+        <Button size="xs" variant="subtle" w="fit-content" onClick={() => link({ createForReimbursee: true })}>Create “{reimbursee}” in QuickBooks</Button>
+      )}
+    </Stack>
+  );
+}
+
 /**
  * /expense/expenses/[id] — lines, bucket approvals, sign-off seats, and FINANCE's actions.
  * `testDataToggle` is the host's word that this is dev or local; the route 404s anywhere else.
@@ -106,6 +161,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const expense = useLoad<Expense>(base);
   const approvals = useLoad<Approval[] | { LineItemOwnerApproval: Approval[]; ExpenseBucketView: Bucket[] }>(`${base}/line-item-approvals`);
   const signoffs = useLoad<SignoffStatus[]>(`${base}/signoffs`);
+  const vendor = useLoad<VendorLink>(isFinance ? `${base}/reimbursee-vendor` : null);
   const bucketOptions = useBuckets(isFinance || isBoard);
   const [dialog, setDialog] = useState<{ action: Action; approval: Approval } | null>(null);
   const [text, setText] = useState("");
@@ -115,7 +171,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const [authorization, setAuthorization] = useState("");
   const [capital, setCapital] = useState<Record<number, { isCapital: boolean; years: number | ""; owner: string }>>({});
 
-  const reloadAll = () => { expense.reload(); approvals.reload(); signoffs.reload(); };
+  const reloadAll = () => { expense.reload(); approvals.reload(); signoffs.reload(); vendor.reload(); };
   const e = expense.data;
   const approvalBag = approvals.data;
   const approvalRows = Array.isArray(approvalBag) ? approvalBag : approvalBag?.LineItemOwnerApproval ?? [];
@@ -288,7 +344,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
 
       {isFinance && e.needsReimbursement && !e.backfill && (
         <Paper withBorder p="sm">
-          <Text fw={600} mb="xs">Reimbursee {e.reimburseePersonId ? `(person #${e.reimburseePersonId})` : "(unknown — held)"}</Text>
+          <Text fw={600} mb="xs">
+            Reimbursee {e.reimburseePersonId ? (vendor.data?.ExpenseReimburseeView?.name ?? `person #${e.reimburseePersonId}`) : "(unknown — held)"}
+          </Text>
           {!e.reimburseePersonId && (
             <Group>
               <TextInput placeholder="Person id" value={reimbursee} onChange={(ev) => setReimbursee(ev.currentTarget.value)} />
@@ -298,6 +356,9 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
               >Set reimbursee</Button>
             </Group>
           )}
+          {!!e.reimburseePersonId && vendor.data && (vendor.data.ExpenseReimburseeVendor
+            ? <Text size="sm">QuickBooks Vendor #{vendor.data.ExpenseReimburseeVendor.qbVendorId}</Text>
+            : <VendorPicker base={base} reimbursee={vendor.data.ExpenseReimburseeView?.name ?? null} onLinked={reloadAll} />)}
         </Paper>
       )}
 

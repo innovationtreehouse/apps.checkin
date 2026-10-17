@@ -5,9 +5,11 @@ import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
 import { markNotEveryday, recordBoardAuthorization, signoffStatus } from "../../services/signoffService";
 import { unsignedLines } from "../../lib/signoff-facts";
+import { updateExpenseSettings } from "../../services/settingsService";
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
 
 const FINANCE = principal(3, { isFinance: true });
+const BOARD = principal(5, { isBoard: true });
 
 describeDb("card charges", () => {
   // purchaser 1 · leader 2 · finance 3 and 4 · board 5 · 8 in the purchaser's household
@@ -46,9 +48,27 @@ describeDb("card charges", () => {
     expect(await holds(await signedCard({ receiptTotalCents: 25_001, unitPriceCents: 25_001 }))).toEqual(["BOARD_AUTHORIZATION"]);
   });
 
+  it("raising the limits leaves a held charge held and applies to new charges", async () => {
+    const held = await signedCard({ receiptTotalCents: 60_000 });
+    expect(await holds(held)).toEqual(["BOARD_AUTHORIZATION"]);
+    const row = (await db.expense.findUnique({ where: { id: held } }))!;
+    expect([row.everydayWithinLimits, row.everydayTotalLimitCents, row.everydayItemLimitCents]).toEqual([false, 50_000, 25_000]);
+
+    await updateExpenseSettings(ORG, { everydayTotalLimitCents: 100_000 }, BOARD);
+    expect(await holds(held)).toEqual(["BOARD_AUTHORIZATION"]);
+    expect((await signoffStatus(held))[0].missing).toEqual(["BOARD_AUTHORIZATION"]);
+
+    const fresh = await signedCard({ receiptTotalCents: 60_000 });
+    expect(await holds(fresh)).toEqual([]);
+
+    const marked = await signedCard({ receiptTotalCents: 60_000 });
+    await markNotEveryday(FINANCE, marked, "finance_override");
+    expect(await holds(marked)).toEqual(["BOARD_AUTHORIZATION"]);
+  });
+
   it("FINANCE marks it single-source or not Everyday, one-way; nobody else can", async () => {
     const id = await signedCard();
-    await expect(markNotEveryday(principal(5, { isBoard: true }), id, "single_source")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(markNotEveryday(BOARD, id, "single_source")).rejects.toMatchObject({ statusCode: 403 });
     await markNotEveryday(FINANCE, id, "single_source");
     expect(await holds(id)).toEqual(["BOARD_AUTHORIZATION"]);
 

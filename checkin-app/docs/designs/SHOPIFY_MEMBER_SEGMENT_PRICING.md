@@ -6,8 +6,8 @@ The **interim** mechanism shipped instead (#930): single-pool capacity +
 per-enrollee server-minted single-use discount codes (`createShopifySingleVariantProgram`,
 `mintMemberDiscountCode`; see `docs/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` §2) —
 which is exactly option (d) below, the narrow stopgap. Segment-gated automatic
-discounts remain the intended **end-state**. The current wiring (two-variant
-programs with client-side tier selection, `buildMembershipCheckoutUrl`, the #739
+discounts remain the intended **end-state**. The current wiring (one variant per
+program at the non-member price, `buildMembershipCheckoutUrl`, the #739
 variant-presence guard) is ground truth in the code; this doc keeps only the
 constraint that makes the feature hard, the options, and the open questions.
 

@@ -3,7 +3,7 @@
  * caller class on every web path (docs/rules/attendance-checkin.md).
  */
 import type { DbClient } from "@/lib/db-client";
-import { lastKeyholderGuard, FORCE_CLOSE_CONFIRM_SECONDS, WEB_CLOSE_CHOICE_TTL_MS, type CloseActor } from "@/lib/scan-service";
+import { lastKeyholderGuard, FORCE_CLOSE_CONFIRM_SECONDS, WEB_CLOSE_CHOICE_TTL_MS, type CloseActor } from "@/lib/attendance/keyholderGuard";
 
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("@/lib/notifications", () => ({

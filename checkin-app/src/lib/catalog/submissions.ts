@@ -1,5 +1,5 @@
 /**
- * X8 (#1289 §8d): workflow-mapping's CatalogSubmissions bound in-process to the catalog's
+ * X8: workflow-mapping's CatalogSubmissions bound in-process to the catalog's
  * proposal, conflict and provisional-GTIN services. Each payload is parsed with its
  * receipt-types schema, then stamped with the injected org. Catalog errors propagate, so
  * associate and propose fail rather than skip catalog curation.

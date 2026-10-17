@@ -10,7 +10,7 @@ import { POST } from '../route';
 import prisma from '@/lib/prisma';
 import { activateProgramEnrollment } from '@/lib/programs/activateEnrollment';
 import { adjustProgramInventory } from '@/lib/shopify';
-import { orderEntitlesEnrollment } from '@/lib/finance/reconcile';
+import { orderEntitlesEnrollment } from '@/lib/finance/reconcile/program';
 
 jest.mock('@/lib/programs/activateEnrollment', () => ({
     activateProgramEnrollment: jest.fn(),
@@ -18,9 +18,12 @@ jest.mock('@/lib/programs/activateEnrollment', () => ({
 jest.mock('@/lib/programs/memberDiscountCode', () => ({
     unentitledMemberCodeUse: jest.fn().mockResolvedValue(false),
 }));
-jest.mock('@/lib/finance/reconcile', () => ({
-    ...jest.requireActual('@/lib/finance/reconcile'),
+jest.mock('@/lib/finance/reconcile/program', () => ({
+    ...jest.requireActual('@/lib/finance/reconcile/program'),
     orderEntitlesEnrollment: jest.fn(),
+}));
+jest.mock('@/lib/finance/reconcile/exceptions', () => ({
+    ...jest.requireActual('@/lib/finance/reconcile/exceptions'),
     raisePaymentException: jest.fn(),
 }));
 jest.mock('@/lib/shopify', () => ({

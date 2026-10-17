@@ -2,7 +2,7 @@ import type { Expense, Prisma } from "../generated/prisma/client";
 import type { Db } from "../db";
 import { getExpenseRuntime } from "../runtime";
 import type { BucketApprovers } from "../contract";
-import { isEveryday, lineKind, missingSeats, needsBoardAuthorization, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
+import { isEveryday, lineKind, withinEverydayLimits, missingSeats, needsBoardAuthorization, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
 import { readExpenseSettings } from "../services/settingsService";
 import { writeAudit } from "./audit";
 import type { Actor } from "./workflow-engine";
@@ -18,6 +18,7 @@ type SignoffExpense = Pick<
   | "singleSource"
   | "financeNotEveryday"
   | "boardAuthorization"
+  | "everydayWithinLimits"
 >;
 
 /** Whether a reimbursement's payee is an org member; true for a card charge or an unknown payee. */
@@ -44,10 +45,25 @@ export async function seatedHouseholds(db: Db, expenseId: string): Promise<numbe
   return [...new Set(mates.flat())];
 }
 
+/**
+ * The expense's frozen Everyday amount check. An expense frozen at intake keeps its result; one
+ * with none freezes now against the current limits, and a concurrent freeze's result wins.
+ */
+async function frozenWithinLimits(db: Db, expense: SignoffExpense, unitPricesCents: number[]): Promise<boolean> {
+  if (expense.everydayWithinLimits !== null) return expense.everydayWithinLimits;
+  const limits = await readExpenseSettings(db, expense.orgId);
+  const withinLimits = withinEverydayLimits({ receiptTotalCents: expense.receiptTotalCents, unitPricesCents }, limits);
+  await db.expense.updateMany({
+    where: { id: expense.id, everydayWithinLimits: null },
+    data: { everydayWithinLimits: withinLimits, everydayTotalLimitCents: limits.everydayTotalLimitCents, everydayItemLimitCents: limits.everydayItemLimitCents },
+  });
+  return (await db.expense.findUniqueOrThrow({ where: { id: expense.id }, select: { everydayWithinLimits: true } })).everydayWithinLimits!;
+}
+
 /** Sign-off facts for each line of an expense, read once through the SignoffDirectory port. */
 export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promise<Map<number, SignoffFacts>> {
   const dir = getExpenseRuntime().signoff;
-  const [lines, approvals, finance, board, conflicted, seated, isMember, setterRow, settings] = await Promise.all([
+  const [lines, approvals, finance, board, conflicted, seated, isMember, setterRow] = await Promise.all([
     db.expenseLineItem.findMany({ where: { expenseId: expense.id }, select: { id: true, unitPriceCents: true } }),
     db.lineItemOwnerApproval.findMany({ where: { expenseId: expense.id }, select: { lineItemId: true, ownerId: true } }),
     dir.financeHolders(),
@@ -56,7 +72,6 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
     seatedHouseholds(db, expense.id),
     reimburseeIsMember(expense),
     db.expenseAuditLog.findFirst({ where: { expenseId: expense.id, action: "reimbursee_set" }, orderBy: { id: "desc" }, select: { userId: true } }),
-    readExpenseSettings(db, expense.orgId),
   ]);
   const bucketOf = new Map(approvals.map((a) => [a.lineItemId, a.ownerId]));
   const bucketsById = new Map<number, BucketApprovers>();
@@ -68,7 +83,8 @@ export async function signoffFactsByLine(db: Db, expense: SignoffExpense): Promi
     if (b.leader !== null) leaderHouseholds.set(bucket, [...new Set([b.leader, ...(await dir.householdOf([b.leader]))])]);
   }
   const kind = lineKind(expense);
-  const everyday = isEveryday({ ...expense, unitPricesCents: lines.map((l) => l.unitPriceCents) }, settings);
+  const withinLimits = await frozenWithinLimits(db, expense, lines.map((l) => l.unitPriceCents));
+  const everyday = isEveryday({ withinLimits, singleSource: expense.singleSource, financeNotEveryday: expense.financeNotEveryday });
   const authorizationNeeded = needsBoardAuthorization(kind, everyday, expense.boardAuthorization);
   return new Map(
     lines.map((l) => {

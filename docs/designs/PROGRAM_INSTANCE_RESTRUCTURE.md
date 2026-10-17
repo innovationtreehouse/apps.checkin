@@ -91,7 +91,6 @@ Grep `programId`, `leadMentorId` and `programsLed` repo-wide before each phase; 
 | `saleEndedAt`, `productHiddenAt`, `unpaidClaimsNotifiedAt` | instance | **no** | Sale-sweep markers for a run's sale. |
 | `publiclyVisible` | **open — Q2** | no | |
 | `announceOnOpen`, `announcedAt` | **open — Q3** | no | |
-| `shopifyOrgMemberVariantId`, `shopifyNonOrgMemberVariantId` (`@ignore`) | neither | — | Legacy; dropped with the P5 contract. |
 
 | Child of `Program` | Home | Why |
 |---|---|---|

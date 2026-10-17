@@ -8,8 +8,8 @@ When two duplicate person records are merged, the loser is not deleted — it st
 forever as a "tombstone". Every part of the app that reads people therefore has to remember to
 exclude tombstones, or it silently shows and counts a person who no longer exists.
 
-Remembering is left to the developer. There are **113 places** that have to get it right, across 40
-files. Getting it wrong produces no error of any kind — just a ghost in a roster, a wrong count, or
+Remembering is left to the developer. There are **about 150 places** that have to get it right,
+across about 75 files. Getting it wrong produces no error of any kind — just a ghost in a roster, a wrong count, or
 a write that lands on a dead record.
 
 It has gone wrong repeatedly. Three bugs shipped and were fixed one at a time; then the automated
@@ -33,7 +33,7 @@ exist to hide.
 | **The fix** | Stop creating tombstones. The merge either absorbs the loser completely or refuses to run. |
 | **Why that's possible** | The merge already moves everything to the survivor. Rows are left behind in one situation only: a unique-constraint collision (the same human enrolled in the same program twice). |
 | **What board members see** | Merges get stricter: "unenroll one of these from Program X first." Clear-up surfaces already exist for nearly all cases. |
-| **What developers stop doing** | Remembering `LIVE_PERSON` on 113 queries. It, the drift guard, and its 31-entry allowlist all get deleted. |
+| **What developers stop doing** | Remembering `LIVE_PERSON` on about 150 queries. It, the drift guard, and its 34-entry allowlist all get deleted. |
 | **What replaces the tombstone** | A `PersonMerge` record (from, to, when, snapshot). Badge scans and audit history keep working. |
 | **Done when** | No `Person` row has `mergedIntoId`; the column, the filter, and the guard are gone. |
 | **Deliberately not included** | #1134 (permission-based row visibility) and #1228 (`archivedAt`). See [Out of scope](#out-of-scope) — this issue has to be able to close. |
@@ -49,7 +49,8 @@ two tool certifications is real".
 `{ mergedIntoId: null }` — an **opt-out** convention. A merged-away Person is a tombstone: the row
 survives forever, so every Person query must remember the filter or silently read a ghost.
 
-**113 usages across 40 files, plus a 37-entry allowlist** on the drift guard. Forgetting produces no
+**About 150 usages across about 75 files, plus a 34-entry allowlist** on the drift guard (counted
+on `main`, 2026-10-16, production code only, imports excluded). Forgetting produces no
 compiler error and no runtime error — a stale row in a list, or a write landing on a dead record.
 
 ### The failure rate is the argument
@@ -106,19 +107,26 @@ The merge already **repoints** to the survivor: visits, plus `programParticipant
 
 Rows stay behind in exactly one situation: a **unique-constraint collision** — the same human holds
 a row on both records for the same program / event / tool / process, so the FK cannot be repointed.
-[`merge/route.ts:257`](../../checkin-app/src/app/api/membership-ops/participants/merge/route.ts) states the
-coupling outright:
+When this doc was written the merge route stated the coupling outright:
 
 > leave the colliding row on the tombstone (both survive; §3's LIVE_PERSON filter excludes the
 > tombstone's from every count/roster)
 
+On `main` the decision-bearing collisions are refused before the merge runs (§1, shipped), and the
+merge route's `POST` handler keeps a `left` fallback only as defense against a race between the
+check and the write
+([`merge/route.ts`](../../checkin-app/src/app/api/membership-ops/participants/merge/route.ts)).
+
 That is the whole dependency. The tombstone is **a parking space for collision residue**, plus a
 redirect target for badge scans. Neither job requires it to be a `Person` row — and the parking
-space is what forces 113 call sites to know about it.
+space is what forces about 150 call sites to know about it.
 
 ## Design
 
 ### 1. Merge refuses ambiguity instead of parking it
+
+Shipped in #1686: the merge refuses the collisions marked **refuse** below and auto-dedupes the bare
+joins.
 
 **Rule: refuse when the collision carries a decision; auto-dedupe only bare join rows with no
 distinguishing payload.**
@@ -172,26 +180,32 @@ model PersonMerge {
 }
 ```
 
-- **Badge scan** ([`api/scan/route.ts:61-73`](../../checkin-app/src/app/api/scan/route.ts)) currently walks
-  `mergedIntoId` to the survivor; it reads `PersonMerge` instead. Same loop, same cap.
+- **Badge scan** resolves a badge through `resolveMergedPerson`
+  ([`lib/person/mergeChain.ts`](../../checkin-app/src/lib/person/mergeChain.ts)), which already
+  follows both `mergedIntoId` and `PersonMerge`; dropping the tombstone leaves only the archive arm.
+
+On `main` the `PersonMerge` model exists and every merge writes one (#1729); the tombstone row and
+its `mergedIntoId` are still kept alongside it.
 - **`AuditLog.affectedEntityId`** is a bare `Int` with no FK, so historical audit references survive
   a deleted `Person`.
 - `Person.mergedIntoId`, `mergedInto`, and `mergedFrom` are dropped.
 
 ### 4. Delete the guard
 
-`LIVE_PERSON`, `livePersonDriftGuard.test.ts`, and its 31-entry allowlist all go. Every one of the
-113 call sites loses its filter — mechanical, and `tsc` catches the import removals.
+`LIVE_PERSON`, `livePersonDriftGuard.test.ts`, and its 34-entry allowlist all go. Every one of the
+roughly 150 call sites loses its filter — mechanical, and `tsc` catches the import removals.
 
 ## Decisions needed (policy, not plumbing)
 
 1. **Per-table collision rules.** The table above is a proposal; the `ToolStatus` ladder (`DOF`
    outranks `CERTIFIED` despite the enum declaration order) and the `ProgramParticipant`
    seat/payment interaction want their owners' sign-off.
-2. **The open visit.** [`merge/route.ts:246-253`](../../checkin-app/src/app/api/membership-ops/participants/merge/route.ts)
-   deliberately leaves the tombstone's open visit when the keeper already has one — *"no delete, no
-   fabricated departedAt"*, with a `ponytail:` note preferring the left row to an invented departure
-   time. Removing tombstones forces the question: fabricate a `departedAt` (what the code refuses),
+2. **The open visit.** When this doc was written the merge deliberately left the tombstone's open
+   visit when the keeper already had one — *"no delete, no fabricated departedAt"*, with a
+   `ponytail:` note preferring the left row to an invented departure time. On `main` the merge
+   refuses up front when both have an open visit (the `openVisit` collision); the visit move in
+   [`merge/route.ts`](../../checkin-app/src/app/api/membership-ops/participants/merge/route.ts) still
+   leaves the tombstone's open visit behind if one opens between that check and the write. Removing tombstones forces the question: fabricate a `departedAt` (what the code refuses),
    move it and hold two open visits (breaks the invariant), or delete an attendance record (a safety
    record in a youth organisation). Refusing the merge until the visit is closed is the proposed
    answer, and it is the only one that invents nothing.

@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * X4 binding (#1289 §8c): workflow-mapping's InventorySink driven into the real
+ * X4 binding: workflow-mapping's InventorySink driven into the real
  * local-inventory apply, each library on its own throwaway database migrated
  * from its committed migrations. The receipt runs through the library services
  * (proceed → apply → retry-apply) exactly as the routes call them.

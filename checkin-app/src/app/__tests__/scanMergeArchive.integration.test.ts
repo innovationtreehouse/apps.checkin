@@ -18,7 +18,7 @@
  * scanned. The first test scans the loser BEFORE deleting it, so the fixture would
  * fail with P2003 if that repointing regressed.
  *
- * Real scan-service, real DB; only auth and notifications are stubbed.
+ * Real lib/attendance scan services, real DB; only auth and notifications are stubbed.
  */
 import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';

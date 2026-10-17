@@ -1,5 +1,5 @@
 /**
- * Wire the local-inventory library into checkin (#1287 §3/§6), called once at
+ * Wire the local-inventory library into checkin, called once at
  * server boot from instrumentation.ts. It shares the catalog's principal and
  * lazy Org-registry accessor, so both libraries stamp the same org id and
  * person ids, and boot stays DB-free. The S5 replay read is bound to the catalog's events.

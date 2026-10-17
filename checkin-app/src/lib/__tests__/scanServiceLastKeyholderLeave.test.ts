@@ -13,7 +13,8 @@
  */
 import type { Person } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
-import { processCheckout, FORCE_CLOSE_CONFIRM_SECONDS, type LegacyKiosk, type ScanOutcome } from "@/lib/scan-service";
+import { processCheckout, type LegacyKiosk, type ScanOutcome } from "@/lib/attendance/scan";
+import { FORCE_CLOSE_CONFIRM_SECONDS } from "@/lib/attendance/keyholderGuard";
 import { toResponse } from "@/app/api/scan/scanResponse";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 

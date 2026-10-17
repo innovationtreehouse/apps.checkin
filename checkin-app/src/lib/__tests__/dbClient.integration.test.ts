@@ -11,7 +11,8 @@ import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
 import { isRootClient, withTx } from '@/lib/db-client';
-import { processCloseRequest, type ScanOutcome } from '@/lib/scan-service';
+import { processCloseRequest } from '@/lib/attendance/close';
+import type { ScanOutcome } from '@/lib/attendance/scan';
 import { toResponse } from '@/app/api/scan/scanResponse';
 import { processPostEventEmails } from '@/lib/postEventEmails';
 

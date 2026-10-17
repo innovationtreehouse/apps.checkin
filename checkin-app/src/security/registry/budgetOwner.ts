@@ -1,4 +1,4 @@
-// Budget-owner buckets and program treasurers (#1280 §6) route policy.
+// Budget-owner buckets and program treasurers route policy.
 // Aggregated by ../registry.ts.
 import { defineRoute, type OrderedViewEntry } from '../core';
 

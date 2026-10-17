@@ -1,5 +1,5 @@
 /**
- * The local-inventory runtime singleton (#1287 §3). The host wires it once at
+ * The local-inventory runtime singleton. The host wires it once at
  * boot; routes read it through the accessors below. Binding touches no
  * database — the services below build lazily on first request.
  */
@@ -45,7 +45,7 @@ export async function getPrincipal(): Promise<InventoryPrincipal> {
   return principal;
 }
 
-/** Org identity for the current request (#1287 §6). */
+/** Org identity for the current request. */
 export function getOrg(): Promise<OrgIdentity> {
   return requireRuntime().org();
 }

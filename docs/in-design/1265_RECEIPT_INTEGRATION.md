@@ -29,8 +29,8 @@ whether a reimbursement has been paid.
   duplicate and validation queues, all under the
   `FINANCE` role the expense port introduces.
 - **Operators** add one secret, `ANTHROPIC_API_KEY`, and no new service: OCR is a
-  direct API call from the app process, and receipt files are stored in the
-  receipt database (§3).
+  direct API call from the app process. Receipt files are stored in a private
+  S3 bucket per environment, which Infra provisions (§3).
 - **Not changed:** the receipt state machine, duplicate rules and the
   `CompletedReceipt` contract port verbatim, plus one optional in-kind mark
   (§4). In-kind donations as a whole belong to donations (§5).
@@ -261,9 +261,23 @@ mailbox-flooding hardening, not here.
 
 The 3-day
 window plus the dedupe ledger makes a missed run harmless with no stored cursor.
-Each run reads oldest first and its cap (§4) counts only receipts, the OCR spend;
-held items are not capped, so untrusted mail can never push a member's receipt
-out of the window. Mail the mailbox sent itself is not read.
+Each run reads oldest first and its receipt cap (§4) counts only receipts, the OCR
+spend. Held items have caps of their own, so untrusted mail can never push a
+member's receipt out of the window:
+- A message whose files are all in the ledger is skipped before any download.
+- Each run spends at most 50 files and 50 MB on held mail; the rest wait for the
+  next run. The charging rule is one function (`chargeHold`): each file downloaded
+  from an unknown sender costs one file and its size, whether it is held, refused
+  by the type check, or already in the ledger, and so does each file held for a
+  known sender. Mail from an unknown sender cannot raise the run's download cost
+  past that budget.
+- At 500 held items awaiting finance, nothing more is held: finance gets one alert
+  per run while over it, and the run counts the files it did not hold. Receipts
+  from members are still read.
+- Each run starts no new message after 2 minutes; the rest wait for the next run.
+- A file over 10 MB, the manual upload limit, is refused before download.
+
+Mail the mailbox sent itself is not read.
 `ponytail:` ceiling is a cron outage longer than 3 days, or more than 30 mailed
 receipts in one window; widen the window or the cap if either happens.
 
@@ -361,9 +375,16 @@ dev seed), following `docs/ops/dev-instance.md`'s Zoho/Shopify pattern; `dev`/`p
 bind the real client, and a missing key there fails OCR into `ocr_failed` ("not
 configured") while manual entry keeps working.
 
-**File storage: `bytea` in the receipt database, as the source does.** Hundreds of
-files a year is under a gigabyte annually; lists already `omit` the blob. The file
-column (and a held mail item's file) is **`pii`** tier: it carries names and
+**File storage: a private S3 bucket, read and written only by the app**
+(amended; full design in `1265_RECEIPT_FILES_S3.md`). The first design stored
+files as `bytea` in the receipt database, on the assumption that only signed-in
+submitters upload. Gmail intake lets any sender store a held file, so files move
+to one private bucket per environment, keyed `receipts/<receiptId>` and
+`mail-items/<uuid>`, written once with a checksum, and read on the server only:
+the file route serves the bytes through `fileHandler` and no presigned URL is
+ever issued. Existing rows move by copy, verify, then switch; `file_blob` stays
+until the owner schedules its removal. The file (`file_blob`, and the new
+`file_key` that names its object) is **`pii`** tier: it carries names and
 delivery addresses. It is not `secret`, which `SECURITY-POLICY.md` reserves for
 cryptographic material that is never returned; a receipt file is returned, but only
 through the file route.
@@ -391,8 +412,8 @@ Every view or download writes an audit row (§6). A test asserts that no
 JSON route's response contains a receipt file column (`Receipt.fileBlob`,
 `ReceiptMailItem.fileBlob`). H6 is a boundary PR
 that lands before this lane's B and W.
-`ponytail:` ceiling is DB size and backup time; upgrade path is a private S3 bucket
-read with the task role, as `agreementDocument.ts` does.
+The S3 move in `1265_RECEIPT_FILES_S3.md` keeps this route and `fileHandler`
+unchanged: the route hands over bytes read from the bucket instead of the column.
 
 ---
 
@@ -429,7 +450,7 @@ budget of `reconcile-shopify`:
 | 1. OCR-interrupted sweep | none needed | one `UPDATE`; milliseconds |
 | 2. S1 re-push | 50 receipts | in-process calls; seconds |
 | 3. X13 re-send | 50 receipts | in-process calls; seconds |
-| 4. Gmail intake | 10 receipt files | one OCR call each, seconds to tens of seconds; worst case about 5 minutes |
+| 4. Gmail intake | 10 receipt files; 50 held files or 50 MB | one OCR call each, seconds to tens of seconds; starts no new message after 2 minutes |
 
 Gmail runs last because it is the only slow step; anything over its cap waits for
 the next day, which the 3-day window (§2a) allows. At hundreds of receipts a year
@@ -717,6 +738,7 @@ All PRs are based on `main`; none stacks.
 | **B** boundary | `@sensitivity` on the receipt schema (file columns `pii`); after H6; `security/registry/receipt.ts` with every route, including file, import and the mail queue (list, assign, discard); one merge-list line. Maintainers, alone. |
 | **W** wiring | route and page stubs, `pageRegistry`, nav (Finance area for queues; "My receipts" where staff can reach it), `configureReceipt()`, harness list entries, `RECEIPT_DATABASE_URL` in Infra, `ANTHROPIC_API_KEY` in dev (prod only after Q5), flow test. Needs `FINANCE` on `main`. |
 | **G** Gmail intake | the mailbox adapter, the step in `reconcile-shopify`, the finance mail-queue page; Infra: the two secrets, the refresher, the consent runbook. After W. |
+| **F** files to S3 | four PRs (infra, library behind a flag, backfill, removal of `bytea` reads); `1265_RECEIPT_FILES_S3.md` §8. After G's mail queue (#2239). |
 | **X6** | bind `ReceiptSink` to `ingestReceipt`; pipeline flow test. After L7 W. |
 | **X13** | bind `DonorSink` to donations' `recordInKindDonor` and `withdrawInKind`. After L6 W and L8 W. |
 | **X7** | promote `receipt-types`, delete temporary shims. After X6. |
@@ -740,7 +762,7 @@ Routes the ignore list needs, each a registry entry PR before its route PR
 
 ### Assumptions
 
-- Receipt volume stays in the hundreds a year (drives synchronous OCR and `bytea`).
+- Receipt volume stays in the hundreds a year (drives synchronous OCR and buffered file reads).
 - A QuickBooks reimbursement can be tied back to its receipt (expense lane to confirm).
 - No receipt data is migrated from the source app; the library starts from its seed.
 

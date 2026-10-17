@@ -1,17 +1,17 @@
-// Workflow-mapping (#1289 §6/§7) route policy. Aggregated by ../registry.ts.
+// Workflow-mapping route policy (docs/rules/inventory.md, Access). Aggregated by ../registry.ts.
 import { defineRoute, type Authorize, type OrderedViewEntry } from '../core';
 
 // Reads admit INVENTORY_MANAGER, FINANCE or BOARD — finance and the board oversee
-// spend (§6); none auto-admits sysadmins. Writes are INVENTORY_MANAGER-only. All
+// spend; none auto-admits sysadmins. Writes are INVENTORY_MANAGER-only. All
 // three read roles see `internal` + `public`; the `personal` receiptJson blob is
-// granted to no view, so the stripper removes it from every response (§5).
+// granted to no view, so the stripper removes it from every response.
 //
 // NOT registered here, deliberately:
-//   • the S1 intake — the source's org-bearer POST. checkin cannot gate a
+//   • the intake — the source's org-bearer POST. checkin cannot gate a
 //     machine-bearer route; receipt → workflow is the in-process ingestReceipt
-//     export (§8a).
-//   • /api/internal/* — every crossing (S2–S5) is an in-process port (§8).
-//   • PUT /api/system-data — the source's admin settings route is dropped (§6).
+//     export.
+//   • /api/internal/* — every crossing is an in-process port.
+//   • PUT /api/system-data — the source's admin settings route is dropped.
 const WORKFLOW_READ: Authorize = { anyRole: ['isInventoryManager', 'isFinance', 'isBoardMember'] };
 const WORKFLOW_VIEW: readonly OrderedViewEntry[] = [
     ['isInventoryManager', ['everyones:internal', 'public']],

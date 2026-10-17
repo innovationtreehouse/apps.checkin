@@ -45,9 +45,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         return apiError("Everyone in one checkout must be from your household. Pay for each household separately.", 400);
     }
 
-    // Legacy (two-variant) programs already charge the right tier via variant
-    // choice — no discount code needed. Both prices must be known to compute
-    // the discount amount.
+    // The discount is the gap between the two prices, so both must be known.
     const variantId = checkoutVariantId(program);
     if (!variantId || program.orgMemberPriceCents == null || program.nonOrgMemberPriceCents == null) {
         return NextResponse.json({ code: null });

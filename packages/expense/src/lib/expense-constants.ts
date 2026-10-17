@@ -25,3 +25,6 @@ export const STATE_COLORS: Record<string, string> = {
   qb_skipped: "gray",
   qb_error: "red",
 };
+
+/** The answer when finance searches or links a QuickBooks Vendor while QuickBooks is off. */
+export const QB_OFF = "QuickBooks isn't connected here, so Vendors can't be searched or linked";

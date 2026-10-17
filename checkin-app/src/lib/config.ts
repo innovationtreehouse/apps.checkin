@@ -267,7 +267,7 @@ export const config = {
 
     // s-read mirror — read-only connection string to the `shopify_read` Postgres
     // (the s-read-function's Shopify order/refund/payout mirror). Null when not
-    // wired → the reconciler (lib/finance/reconcile.ts) short-circuits as "not
+    // wired → the reconciler (lib/finance/reconcile/) short-circuits as "not
     // wired" instead of throwing, so an env without the mirror simply runs no
     // reconciliation.
     //

@@ -1,22 +1,22 @@
-// Local inventory (#1287 §5/§6) route policy. Aggregated by ../registry.ts.
+// Local inventory route policy (docs/rules/inventory.md, Access). Aggregated by ../registry.ts.
 import { defineRoute, type OrderedViewEntry } from '../core';
 
 // Reads admit any inventory viewer through the reused `catalog-viewer` resolver —
-// inventory read-eligibility is identical to catalog's (§6); writes and the
+// inventory read-eligibility is identical to catalog's; writes and the
 // manager work-queue reads are INVENTORY_MANAGER-only. Inventory reference data is `public`; the non-public
 // fields are `internal` (orgId, actor attribution, free text, cross-app
-// plumbing — §5), granted to the manager view. The schema has no pii/personal
+// plumbing), granted to the manager view. The schema has no pii/personal
 // tier, so the viewer view is `public` only. Verbs follow the source app's
 // route tree; DELETEs answer 204 with no bag.
 //
 // NOT registered here, deliberately:
 //   • the machine surface — org-bearer POST /api/inventory/apply and the
 //     X-Service-Key /api/internal/* RPC. checkin cannot gate a machine-bearer
-//     route; the apply crossing is in-process only (§8c).
+//     route; the apply crossing is in-process only.
 //   • the source's /api/global-catalog/items* proxies — replaced by an
-//     in-process catalog read (§8b).
+//     in-process catalog read.
 //   • GET/PUT /api/inventory/system-data — the source's settings routes; local
-//     inventory has no settings model (§7).
+//     inventory has no settings model.
 const INVENTORY_VIEW: readonly OrderedViewEntry[] = [
     ['isInventoryManager', ['everyones:internal', 'public']],
     ['authenticated', ['public']],
@@ -33,7 +33,7 @@ defineRoute({ endpoint: 'GET /api/inventory/receive-queue', authorize: 'catalog-
 defineRoute({ endpoint: 'GET /api/inventory/inventory-log', authorize: 'catalog-viewer', envelope: null, returns: ['InventoryLog'], orderedView: INVENTORY_VIEW });
 defineRoute({ endpoint: 'GET /api/inventory/received-inventory-deltas', authorize: 'catalog-viewer', envelope: null, returns: ['ReceivedInventoryDelta'], orderedView: INVENTORY_VIEW });
 
-// Totals for the numbered-pagination lists (§11 track 5): the unbounded log and
+// Totals for the numbered-pagination lists: the unbounded log and
 // delta ledger, plus org-items (catalog-sized, like GET /api/catalog/items/count).
 // Each returns the synthetic InventoryCount model (inventorySyntheticClassifications.ts).
 defineRoute({ endpoint: 'GET /api/inventory/inventory-log/count', authorize: 'catalog-viewer', envelope: null, returns: ['InventoryCount'], orderedView: INVENTORY_VIEW });
