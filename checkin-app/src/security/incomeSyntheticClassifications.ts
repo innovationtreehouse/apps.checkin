@@ -44,12 +44,16 @@ export const classifications = {
     depositToAccount: "internal",
   },
   // A variant the mirror has seen, with the injected org's bucket mapping.
+  // `decision` is "bucket" | "general" | "undecided"; `bucketIssue` says why the
+  // chosen bucket can't book (archived, no Class, Class inactive), else null.
   IncomeItemView: {
     variantId: "internal",
     title: "internal",
     sku: "internal",
     budgetOwnerId: "internal",
     budgetOwnerName: "internal",
+    decision: "internal",
+    bucketIssue: "internal",
   },
   // `total` for GET .../reconciliation/count; the rest is a run's outcome.
   IncomeReconciliationCount: {
