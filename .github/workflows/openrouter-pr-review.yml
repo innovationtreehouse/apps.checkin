@@ -64,6 +64,7 @@ jobs:
         run: python3 .github/scripts/ai-review-route.py adjudicate
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           TIER: ${{ steps.route.outputs.tier }}

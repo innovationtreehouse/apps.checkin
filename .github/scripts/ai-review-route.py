@@ -33,7 +33,8 @@ BARS = {"free": 0.0, "mid": 0.5, "high": 0.8, "top": 0.975}
 RUNG = {r[0]: r for r in LADDER}
 ORDER = [r[0] for r in LADDER]
 PROFILE_THRESHOLD = 0.5
-COMPLETE_THRESHOLD = 0.5
+# Jev scored clean verify reviews 0.31-0.39 and a failed one 0.06; recalibrate from the decision log.
+COMPLETE_THRESHOLD = 0.2
 LARGE_LINES, LARGE_FILES, VERY_LARGE_LINES = 800, 25, 2500
 # Shared by both repos: the last two are infra.aws profile names.
 HIGH_PROFILES = {"migrations", "security-boundary", "iam-and-secrets", "state-safety"}
@@ -80,6 +81,12 @@ def jev(state, questions):
         resp = json.load(r)
     print(f"jev {resp.get('model')}")
     return resp["answers"]
+
+
+def log_decision(step, **fields):
+    """One JSON line per decision, prefixed for grep, for calibrating the bars later."""
+    print("ai-review-decision " + json.dumps({"step": step, "pr": os.environ.get("PR_NUMBER"),
+                                              "head": os.environ.get("HEAD_SHA", "")[:7], **fields}, sort_keys=True))
 
 
 def gh(*args):
@@ -199,13 +206,13 @@ def route():
                         "criteria": {"true": p["instructions"],
                                      "false": "The change does none of this work, for example it only edits comments or unrelated files."}}
             for p in profiles})
-        probs = {n: a["noul"] for n, a in answers.items()}
+        probs = {n: round(a["noul"], 3) for n, a in answers.items()}
         chosen = [n for n, v in probs.items() if v >= PROFILE_THRESHOLD]
         p_by = f"{JEV} " + ", ".join(f"{n}={v:.2f}" for n, v in probs.items())
         applied = [dict(p, paths=["**"]) for p in profiles if p["name"] in chosen]
     except Exception as e:
         print(f"::warning::Jev profile call failed ({e}); using path matches", file=sys.stderr)
-        chosen, p_by, applied = hits, "fallback: path matches", profiles
+        chosen, p_by, applied, probs = hits, "fallback: path matches", profiles, None
 
     suggested = ladder(chosen, state["changed_lines"], state["file_count"])
     try:
@@ -213,11 +220,12 @@ def route():
             "reviewer": {"type": "choice",
                          "instructions": "Which reviewer should review this pull request? Cost matters: pick the cheapest reviewer that will reliably catch real bugs in this change. Moving up a tier needs strong evidence that the cheaper reviewer would miss something serious.",
                          "criteria": rung_choice(ORDER)}})["reviewer"]
+        tier_probs = {k: round(v, 3) for k, v in a["probabilities"].items()}
         tier = pick(a["probabilities"], ORDER)
         t_by = f"{JEV} top choice {a['choice']}, " + ", ".join(f"{k}={v:.2f}" for k, v in a["probabilities"].items())
     except Exception as e:
         print(f"::warning::Jev model call failed ({e}); using the fixed ladder", file=sys.stderr)
-        tier, t_by = suggested, "fallback: fixed ladder"
+        tier, t_by, tier_probs = suggested, "fallback: fixed ladder", None
 
     _, model, turns, diff_kb, _, effort = RUNG[tier]
     instructions = open(f"{CFG}/instructions.md").read()
@@ -230,6 +238,9 @@ def route():
                f"tier={tier} model={model} (ladder suggested {suggested}; {t_by})\n"
                f"prompt: {len(instructions.encode())} bytes including review history")
     print(summary)
+    log_decision("route", path_hint=hits, profile_probs=probs, profiles=chosen, suggested=suggested,
+                 tier_probs=tier_probs, tier=tier, model=model, changed_lines=state["changed_lines"],
+                 files=state["file_count"])
     with open(os.environ["GITHUB_OUTPUT"], "a") as o:
         o.write(f"tier={tier}\nmodel={model}\nmax_tool_turns={turns}\nmax_diff_kb={diff_kb}\neffort={effort}\n")
         o.write(f"profiles={json.dumps(chosen)}\n")
@@ -255,7 +266,7 @@ def adjudicate():
     tier, verdict = os.environ["TIER"], os.environ.get("VERDICT", "")
     chosen = json.loads(os.environ.get("PROFILES") or "[]")
     higher = ORDER[ORDER.index(tier) + 1:]
-    nxt, by = "none", "fallback"
+    nxt, by, p, mode, rerun_probs = "none", "fallback", None, None, None
     if higher:
         try:
             _, state = pr_state(pr, repo)
@@ -274,6 +285,7 @@ def adjudicate():
                                "criteria": rung_choice(higher)}}
             a = jev(state, qs)
             p = a["complete"]["noul"]
+            rerun_probs = {k: round(v, 3) for k, v in a["rerun_on"]["probabilities"].items()}
             rerun = pick(a["rerun_on"]["probabilities"], higher)
             # A rerun on a costlier rung also needs that rung's bar of confidence that the review is incomplete.
             while rerun != "none" and 1 - p < BARS[rerun]:
@@ -288,6 +300,9 @@ def adjudicate():
             by = f"fallback: verdict {verdict or 'missing'}"
     summary = f"completeness: tier={tier} verdict={verdict or 'none'} rerun={nxt} ({by})"
     print(summary)
+    log_decision("completeness", tier=tier, model=RUNG[tier][1], verdict=verdict or None, mode=mode,
+                 complete=None if p is None else round(p, 3), threshold=COMPLETE_THRESHOLD,
+                 rerun_probs=rerun_probs, rerun=nxt, decided_by="jev" if p is not None else "fallback")
     with open(os.environ["GITHUB_OUTPUT"], "a") as o:
         o.write(f"rerun_tier={nxt}\n")
         if nxt != "none":
