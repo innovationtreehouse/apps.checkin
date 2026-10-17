@@ -1,1 +1,3 @@
+BEGIN;
 ALTER TABLE "Program" ADD COLUMN "appliesToYear" INTEGER;
+COMMIT;

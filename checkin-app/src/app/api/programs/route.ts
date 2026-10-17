@@ -26,6 +26,7 @@ const PUBLIC_PROGRAM_SELECT = {
     leadMentorId: true,
     startAt: true,
     endAt: true,
+    appliesToYear: true,
     phase: true,
     enrollmentStatus: true,
     offSaleAt: true,
