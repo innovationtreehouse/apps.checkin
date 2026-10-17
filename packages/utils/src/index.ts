@@ -81,15 +81,15 @@ export async function readCapped(
  * key=value and NAME_SECRET=value assignments, JSON fields named like secrets,
  * provider token prefixes, and long opaque strings that look like keys.
  * Each run-matching pattern starts only at the start of its run (lookbehind),
- * which keeps the scan linear on long separator-free input; input past
- * REDACT_MAX_CHARS is dropped with a marker as a second bound on cost.
+ * and the JSON-key pattern tests the key in an atomic lookahead, so every
+ * pattern scans in linear time.
  */
 const PATTERNS: [RegExp, string][] = [
   [/(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/[^\s:/@]*:)[^\s@/]+@/gi, "$1[redacted]@"],
   [/\bhttps?:\/\/[^\s"'<>]*\?[^\s"'<>]*/gi, "[url]"],
   [/(?<![A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]"],
   [/\b(bearer|basic|zoho-oauthtoken)\s+[^\s"',]+/gi, "$1 [redacted]"],
-  [/("[^"]*(?:secret|token|password|passwd|api[_-]?key|private[_-]?key)[^"]*"\s*:\s*)"(?:[^"\\]|\\.)*"/gi, '$1"[redacted]"'],
+  [/("(?=[^"]*(?:secret|token|password|passwd|api[_-]?key|private[_-]?key))[^"]*"\s*:\s*)"(?:[^"\\]|\\.)*"/gi, '$1"[redacted]"'],
   [/\b([A-Z][A-Z0-9_]*_(?:SECRET|TOKEN|KEY|PASSWORD|PASS|PWD))=[^\s"',&}]+/g, "$1=[redacted]"],
   [/\b(x-shopify-access-token|authorization|access_token|refresh_token|client_secret|api[_-]?key|token|secret|password)(["']?\s*[:=]\s*["']?)[^\s"',&}]+/gi, "$1$2[redacted]"],
   [/\b(shpat|shpss|shpca|shppa|re|sk|pk)_[A-Za-z0-9_]{8,}/g, "[redacted]"],
@@ -97,11 +97,13 @@ const PATTERNS: [RegExp, string][] = [
   [/(?<![A-Za-z0-9+_-])(?=[A-Za-z_-]*\d)(?=[\d_-]*[A-Za-z])[A-Za-z0-9+_-]{32,}={0,2}/g, "[redacted]"],
 ];
 
+// Bounds the size of a redacted message; the patterns are linear, so this caps
+// output length rather than guarding against backtracking.
 export const REDACT_MAX_CHARS = 8192;
 
-export function redactSecrets(text: string): string {
-  const capped = text.length > REDACT_MAX_CHARS
-    ? `${text.slice(0, REDACT_MAX_CHARS)}…[truncated ${text.length - REDACT_MAX_CHARS} chars]`
+export function redactSecrets(text: string, maxChars = REDACT_MAX_CHARS): string {
+  const capped = text.length > maxChars
+    ? `${text.slice(0, maxChars)}…[truncated ${text.length - maxChars} chars]`
     : text;
   return PATTERNS.reduce((s, [re, sub]) => s.replace(re, sub), capped);
 }

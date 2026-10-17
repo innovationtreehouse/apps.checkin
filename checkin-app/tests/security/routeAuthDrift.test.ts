@@ -33,9 +33,9 @@
  *      default, namespace) one module deep, scanning only the called function
  *      and the same-module declarations it references. A query root is
  *      `prisma`, `db`, `tx`, or any name typed DbClient/TxClient. Known limits:
- *      lib→lib imports and re-exports are not followed; a lib import used only
- *      in a route-local helper defined above the first handler is missed; and
- *      the reference walk over-approximates (a GET that only calls
+ *      lib→lib imports and re-exports are not followed; an edge read made
+ *      directly (not through a lib import) in a route-local helper is missed;
+ *      and the reference walk over-approximates (a GET that only calls
  *      invalidateAttendanceCache reaches computeFullAttendance → Visit).
  */
 import * as fs from 'fs';
@@ -384,18 +384,35 @@ function libImports(code: string): Map<string, { mod: string; name: string }> {
     return imports;
 }
 
+/** Each GET/HEAD handler's text, plus every same-file top-level declaration
+ * those handlers reference, transitively, so a route-local helper is scanned
+ * wherever it sits in the file. */
+function readHandlerBodies(code: string): string[] {
+    const handlers = [...code.matchAll(new RegExp(HANDLER_RE.source, 'g'))];
+    const bodies = handlers
+        .map((h, i) => ({ method: h[1], body: code.slice(h.index, handlers[i + 1]?.index ?? code.length) }))
+        .filter((h) => h.method === 'GET' || h.method === 'HEAD')
+        .map((h) => h.body);
+    const isMethod = new RegExp(`^(?:${HTTP_METHODS})$`);
+    const spans = [...topLevelSpans(code)].filter(([name]) => !isMethod.test(name));
+    const seen = new Set<string>();
+    for (let i = 0; i < bodies.length; i++) {
+        for (const [name, span] of spans) {
+            if (seen.has(name) || !mentions(bodies[i], name)) continue;
+            seen.add(name);
+            bodies.push(code.slice(span.start, span.end));
+        }
+    }
+    return bodies;
+}
+
 /** Rule 3, one module deep: edge models reached through `@/lib/...` functions
  * that a GET/HEAD handler names. Each finding reads `Model via @/lib/<mod>#<fn>`. */
 function findLibEdgeReads(code: string, readLib: ReadLibModule = readLibFromDisk): string[] {
     const imports = libImports(code);
     if (!imports.size) return [];
 
-    const handlers = [...code.matchAll(new RegExp(HANDLER_RE.source, 'g'))];
-    const readBodies = handlers
-        .map((h, i) => ({ method: h[1], body: code.slice(h.index, handlers[i + 1]?.index ?? code.length) }))
-        .filter((h) => h.method === 'GET' || h.method === 'HEAD')
-        .map((h) => h.body);
-
+    const readBodies = readHandlerBodies(code);
     const found = new Set<string>();
     for (const [local, { mod, name }] of imports) {
         if (!readBodies.some((b) => mentions(b, local))) continue;
@@ -761,6 +778,16 @@ export async function heading() { return 'x'; }`,
         const clean = `import * as sup from "@/lib/supervision";\nexport const GET = withAuth({}, async () => sup.tally(prisma));`;
         expect(findLibEdgeReads(stripComments(flagged), readFixture)).toEqual(['ProgramVolunteer via @/lib/supervision#roster']);
         expect(findLibEdgeReads(stripComments(clean), readFixture)).toEqual([]);
+    });
+
+    it('follows a route-local helper declared above the first handler', () => {
+        const synthetic = `import { counts } from "@/lib/nav/counts";\nasync function load(u) { return counts(u); }\nexport const GET = withAuth({}, async (_r, a) => Response.json(await load(a.user)));`;
+        expect(findLibEdgeReads(stripComments(synthetic), readFixture)).toEqual(['ProgramParticipant via @/lib/nav/counts#counts']);
+    });
+
+    it('does NOT follow a route-local helper only a write handler references', () => {
+        const synthetic = `import { counts } from "@/lib/nav/counts";\nasync function load(u) { return counts(u); }\nexport const GET = withAuth({}, async () => Response.json({}));\nexport const POST = withAuth({}, async (_r, a) => load(a.user));`;
+        expect(findLibEdgeReads(stripComments(synthetic), readFixture)).toEqual([]);
     });
 
     it('does NOT flag an edge-reading lib function called only from a write handler', () => {
