@@ -2,12 +2,13 @@
 import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 
 // Reads admit FINANCE or BOARD (the board acts as finance's superuser); writes
-// admit FINANCE only. Both see donor identity (`pii`) and the amounts and
-// plumbing (`internal`). Ops (OPERATIONS or INVENTORY_MANAGER) is admitted only
-// to the no-receipt in-kind routes, with no `pii`: it records donors but never
-// reads them back. No sysadmin view: Finance Ops excludes sysadmins
-// (docs/rules/revenue.md). No model has a scope binding, so
-// `everyones:` is the only scope.
+// admit FINANCE only, except the in-kind decision, which also admits BOARD. Both
+// see donor identity (`pii`) and the amounts and plumbing (`internal`), except
+// on the in-kind decision and bucket routes, whose responses carry no donor.
+// Ops (OPERATIONS or INVENTORY_MANAGER) is admitted only to the no-receipt
+// in-kind routes, with no `pii`: it records donors but never reads them back.
+// No sysadmin view: Finance Ops excludes sysadmins (docs/rules/revenue.md). No
+// model has a scope binding, so `everyones:` is the only scope.
 //
 // UploadedFile.fileBlob (the raw Benevity CSV) leaves only through the file
 // route below, which makes it file-only: every JSON route strips it.
@@ -17,16 +18,27 @@ const FINANCE_OR_BOARD_VIEW: readonly OrderedViewEntry[] = [
     ['isBoardMember', FINANCE_TOKENS],
 ];
 const FINANCE_VIEW: readonly OrderedViewEntry[] = [['isFinance', FINANCE_TOKENS]];
-const OPS_TOKENS = ['everyones:internal', 'public'] as const;
+const NO_PII_TOKENS = ['everyones:internal', 'public'] as const;
 const IN_KIND_READ_VIEW: readonly OrderedViewEntry[] = [
     ...FINANCE_OR_BOARD_VIEW,
-    ['isOperations', OPS_TOKENS],
-    ['isInventoryManager', OPS_TOKENS],
+    ['isOperations', NO_PII_TOKENS],
+    ['isInventoryManager', NO_PII_TOKENS],
+];
+// A bucket approver (program leader or treasurer) passes `expense-approver` and
+// gets `internal` only; the route filters rows to the buckets the caller approves.
+const BUCKET_APPROVER_VIEW: readonly OrderedViewEntry[] = [
+    ['isFinance', NO_PII_TOKENS],
+    ['isBoardMember', NO_PII_TOKENS],
+    ['authenticated', ['everyones:internal']],
+];
+const DECISION_VIEW: readonly OrderedViewEntry[] = [
+    ['isFinance', NO_PII_TOKENS],
+    ['isBoardMember', NO_PII_TOKENS],
 ];
 const IN_KIND_WRITE_VIEW: readonly OrderedViewEntry[] = [
     ...FINANCE_VIEW,
-    ['isOperations', OPS_TOKENS],
-    ['isInventoryManager', OPS_TOKENS],
+    ['isOperations', NO_PII_TOKENS],
+    ['isInventoryManager', NO_PII_TOKENS],
 ];
 
 // Reads — FINANCE or BOARD.
@@ -63,3 +75,13 @@ defineRoute({ endpoint: 'POST /api/donations/qb-exclusions', authorize: 'finance
 // No-receipt in-kind entry — FINANCE or ops; never BOARD.
 defineRoute({ endpoint: 'POST /api/donations/in-kind/manual', authorize: { anyRole: ['isFinance', 'isOperations', 'isInventoryManager'] }, envelope: null, returns: ['ManualInKindRecordResult'], orderedView: IN_KIND_WRITE_VIEW });
 defineRoute({ endpoint: 'POST /api/donations/in-kind/manual/[id]/load-inventory', authorize: { anyRole: ['isFinance', 'isOperations', 'isInventoryManager'] }, envelope: null, orderedView: IN_KIND_WRITE_VIEW });
+
+// In-kind decision (accept, refuse or return) — FINANCE or BOARD. The board
+// decides when every finance holder is conflicted; the service refuses a
+// conflicted caller. The reply carries no donor, so no view grants `pii`.
+defineRoute({ endpoint: 'POST /api/donations/in-kind/receipt/[id]/decision', authorize: 'finance-or-board', envelope: null, returns: ['InKindDecisionView'], orderedView: DECISION_VIEW });
+defineRoute({ endpoint: 'POST /api/donations/in-kind/manual/[id]/decision', authorize: 'finance-or-board', envelope: null, returns: ['InKindDecisionView'], orderedView: DECISION_VIEW });
+
+// In-kind gifts in the caller's buckets — FINANCE, BOARD or a bucket approver,
+// who sees them and does not decide them.
+defineRoute({ endpoint: 'GET /api/donations/in-kind/by-bucket', authorize: 'expense-approver', envelope: null, returns: ['InKindBucketGiftView'], orderedView: BUCKET_APPROVER_VIEW });
