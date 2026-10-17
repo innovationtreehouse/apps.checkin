@@ -6,6 +6,7 @@ import type {
   OtherLaneClaims,
   OwnerDirectory,
   PayoutMirror,
+  QbClassSource,
   QbDepositSource,
 } from "./contract";
 import type { DepositAccount } from "./lib/deposit-lines";
@@ -33,9 +34,20 @@ export interface PostCapEvent {
   remaining: number;
 }
 
+/** A bucket items are assigned to became unusable: archived, Class-less, or its Class inactive. */
+export interface BucketUnusableEvent {
+  orgId: string;
+  budgetOwnerId: number;
+  bucketName: string | null;
+  issue: string;
+  itemCount: number;
+}
+
 /** Finance alerts the host binds. The drain creates nothing while they are unbound. */
 export interface IncomeAlerts {
   postCapReached(event: PostCapEvent): Promise<void>;
+  /** Fires once per bucket each time it becomes unusable, not once per sale. */
+  bucketUnusable(event: BucketUnusableEvent): Promise<void>;
 }
 
 export interface IncomeConfig {
@@ -46,6 +58,8 @@ export interface IncomeConfig {
   mirror?: PayoutMirror;
   deposits?: QbDepositSource;
   owners?: OwnerDirectory;
+  /** Active QuickBooks Classes. Unbound, no item can be assigned to a bucket and nothing with a bucket is created. */
+  classes?: QbClassSource;
   /** QuickBooks id of the bank account payouts land in. Unset, nothing is matched. */
   bankAccountId?: string;
   posting?: IncomePosting;

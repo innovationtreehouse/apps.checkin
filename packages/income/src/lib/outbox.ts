@@ -1,9 +1,10 @@
 import { findOrCreate, takeoverLine, type FindOrCreateResult, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
-import type { MirrorPayout, PayoutMirror } from "../contract";
+import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror } from "../contract";
 import { getIncomeConfig, isoDay, type IncomePosting } from "../runtime";
 import { readIncomeSettings } from "../services/settingsService";
+import { checkBuckets, unusableBuckets } from "./buckets";
 import { buildDepositLines } from "./deposit-lines";
 import { toQbDeposit } from "./qb-deposits";
 import {
@@ -23,7 +24,7 @@ import {
 } from "./reconcile";
 
 /** What one payout's turn through the outbox did. */
-export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "over_cap";
+export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "over_cap" | "held";
 
 export type PostCounts = Record<PostOutcome, number> & {
   /** The cap that stopped this drain with payouts still due, if one did. */
@@ -39,10 +40,16 @@ export interface DrainResult {
   post: PostCounts | "unbound" | "gated" | "busy";
 }
 
-/** WAITING rows are the drain's; POST_FAILED and OVER_CAP rows move only on finance's retry. */
+/** WAITING and NEEDS_MAPPING rows are the drain's; POST_FAILED and OVER_CAP rows move only on finance's retry. */
 export const isPostable = (r: Pick<PayoutReconciliation, "status" | "kind">) =>
   r.status === RECON_STATUS.WAITING ||
-  (r.status === RECON_STATUS.OPEN && (r.kind === RECON_KIND.POST_FAILED || r.kind === RECON_KIND.OVER_CAP));
+  (r.status === RECON_STATUS.OPEN &&
+    (r.kind === RECON_KIND.POST_FAILED || r.kind === RECON_KIND.OVER_CAP || r.kind === RECON_KIND.NEEDS_MAPPING));
+
+const isHeld = (r: Pick<PayoutReconciliation, "status" | "kind">) =>
+  r.status === RECON_STATUS.OPEN && r.kind === RECON_KIND.NEEDS_MAPPING;
+
+type RowActor = { userId: number | null; username?: string; correlationId?: string };
 
 /** Audit actions that tie a payout to a deposit by matching, automatic or by finance. */
 const MATCH_ACTIONS = ["reconciliation.matched", "reconciliation.matched_manually"];
@@ -65,25 +72,84 @@ export async function incomeTakeoverLine(orgId: string): Promise<string | null> 
   );
 }
 
-/** The deposit income would create for a payout: its lines split by bucket Class, summing to the payout net. */
-async function depositWrite(
-  orgId: string,
-  payout: MirrorPayout,
-  payoutDate: string,
-  mirror: PayoutMirror,
-  posting: IncomePosting,
-): Promise<TxnWrite> {
-  const txns = await mirror.transactions(payout.payoutGid);
+/** A payout's sales: its transactions, their order lines, and finance's decision for each item that has one. */
+interface PayoutSales {
+  txns: MirrorBalanceTxn[];
+  orderLines: MirrorOrderLine[];
+  /** variantId → bucket id, or null for general income. An item with no entry is undecided. */
+  categories: Map<string, number | null>;
+}
+
+async function payoutSales(orgId: string, payoutGid: string, mirror: PayoutMirror): Promise<PayoutSales> {
+  const txns = await mirror.transactions(payoutGid);
   const orderGids = [...new Set(txns.flatMap((t) => (t.orderGid ? [t.orderGid] : [])))];
   const orderLines = orderGids.length ? await mirror.orderLines(orderGids) : [];
   const variantIds = [...new Set(orderLines.flatMap((l) => (l.variantId ? [l.variantId] : [])))];
   const mapped = await db.incomeItemCategory.findMany({ where: { orgId, variantId: { in: variantIds } } });
-  const lines = buildDepositLines({
-    payoutNetCents: payout.netCents,
-    txns,
-    orderLines,
-    categories: new Map(mapped.map((m) => [m.variantId, m.budgetOwnerId])),
+  return { txns, orderLines, categories: new Map(mapped.map((m) => [m.variantId, m.budgetOwnerId])) };
+}
+
+/**
+ * Why a payout's deposit can't be built yet, naming its undecided items and unusable buckets,
+ * or null when every sale has a usable decision. Custom items carry no variant and book as
+ * general income.
+ */
+export function mappingGap(sales: PayoutSales, unusable: ReadonlyMap<number, string>): string | null {
+  const undecided = new Set<string>();
+  const broken = new Map<number, string>();
+  for (const l of sales.orderLines) {
+    if (!l.variantId) continue;
+    if (!sales.categories.has(l.variantId)) {
+      undecided.add(l.variantId);
+      continue;
+    }
+    const bucket = sales.categories.get(l.variantId);
+    const issue = bucket == null ? undefined : unusable.get(bucket);
+    if (bucket != null && issue) broken.set(bucket, issue);
+  }
+  const parts = [
+    ...(undecided.size ? [`undecided items: ${[...undecided].sort().join(", ")}`] : []),
+    ...[...broken].sort(([a], [b]) => a - b).map(([id, issue]) => `bucket ${id} ${issue}`),
+  ];
+  return parts.length ? parts.join("; ") : null;
+}
+
+/** Move a row under the lock when `from` still holds for it; otherwise return it unchanged. Null when busy. */
+async function moveRow(
+  orgId: string,
+  id: number,
+  wait: boolean,
+  from: (r: PayoutReconciliation) => boolean,
+  data: Partial<PayoutReconciliation>,
+  action: string,
+  actor: RowActor & { reason?: string },
+): Promise<PayoutReconciliation | null> {
+  return db.$transaction(async (tx) => {
+    if (!(await lockReconciliation(tx, orgId, wait))) return null;
+    const current = await tx.payoutReconciliation.findUniqueOrThrow({ where: { id } });
+    if (!from(current)) return current;
+    const saved = await tx.payoutReconciliation.update({ where: { id }, data });
+    await audit(tx, orgId, action, current, saved, actor);
+    return saved;
   });
+}
+
+/** Hold a payout as NEEDS_MAPPING, naming the gap. A row already held for the same gap is left as it is. */
+function holdForMapping(orgId: string, id: number, gap: string, wait: boolean, actor: RowActor = { userId: null }) {
+  return moveRow(
+    orgId,
+    id,
+    wait,
+    (r) => isPostable(r) && !(isHeld(r) && r.reason === gap),
+    { status: RECON_STATUS.OPEN, kind: RECON_KIND.NEEDS_MAPPING, reason: gap },
+    "reconciliation.needs_mapping",
+    { ...actor, reason: gap },
+  );
+}
+
+/** The deposit income would create for a payout: its lines split by bucket Class, summing to the payout net. */
+async function depositWrite(payout: MirrorPayout, payoutDate: string, sales: PayoutSales, posting: IncomePosting): Promise<TxnWrite> {
+  const lines = buildDepositLines({ payoutNetCents: payout.netCents, ...sales });
 
   const buckets = new Map(lines.some((l) => l.budgetOwnerId !== null) ? (await getIncomeConfig().owners?.list() ?? []).map((o) => [o.id, o]) : []);
   const { accounts } = posting;
@@ -118,7 +184,8 @@ export async function postPayout(
   id: number,
   line: string | null,
   wait: boolean,
-  actor: { userId: number | null; username?: string; correlationId?: string } = { userId: null },
+  actor: RowActor = { userId: null },
+  unusable?: ReadonlyMap<number, string>,
 ): Promise<{ outcome: PostOutcome; row: PayoutReconciliation } | null> {
   const { mirror, posting } = getIncomeConfig();
   if (!mirror || !posting?.mirrorNewestWins) throw new Error("income posting is not enabled");
@@ -134,11 +201,33 @@ export async function postPayout(
     return { outcome: "waiting", row };
   }
 
+  const sales = await payoutSales(orgId, payout.payoutGid, mirror);
+  if (line !== null && row.payoutDate > line) {
+    // Only a payout the app would create waits for finance's decisions.
+    const gap = mappingGap(sales, unusable ?? (await unusableBuckets(orgId)));
+    if (gap) {
+      const held = await holdForMapping(orgId, id, gap, wait, actor);
+      return held && { outcome: "held", row: held };
+    }
+  } else if (isHeld(row)) {
+    // On or before the line the app never creates, so a held payout goes back to the match window.
+    const released = await moveRow(
+      orgId,
+      id,
+      wait,
+      isHeld,
+      { status: RECON_STATUS.WAITING, kind: null, reason: null },
+      "reconciliation.released",
+      { ...actor, reason: "on or before the takeover line" },
+    );
+    return released && { outcome: "waiting", row: released };
+  }
+
   const window = matchWindow(row.payoutDate);
   let write: TxnWrite | null = null;
   let buildError = "";
   try {
-    write = await depositWrite(orgId, payout, row.payoutDate, mirror, posting);
+    write = await depositWrite(payout, row.payoutDate, sales, posting);
   } catch (e) {
     buildError = e instanceof Error ? e.message : String(e);
   }
@@ -166,7 +255,7 @@ export async function postPayout(
         : { kind: "failed", error: buildError };
 
       const settle = async (outcome: PostOutcome, action: string, data: Partial<PayoutReconciliation>, reason?: string) => {
-        const saved = await tx.payoutReconciliation.update({ where: { id }, data });
+        const saved = await tx.payoutReconciliation.update({ where: { id }, data: isHeld(current) ? { ...data, reason: null } : data });
         await audit(tx, orgId, action, current, saved, { ...actor, reason });
         return { outcome, row: saved };
       };
@@ -215,26 +304,24 @@ export async function postPayout(
 }
 
 /** Park a payout larger than the per-run cents cap for finance; it is never auto-created. */
-async function parkOverCap(orgId: string, id: number, maxCents: number): Promise<boolean> {
-  return db.$transaction(async (tx) => {
-    if (!(await lockReconciliation(tx, orgId, false))) return false;
-    const current = await tx.payoutReconciliation.findUniqueOrThrow({ where: { id } });
-    if (current.status !== RECON_STATUS.WAITING) return true;
-    const saved = await tx.payoutReconciliation.update({
-      where: { id },
-      data: { status: RECON_STATUS.OPEN, kind: RECON_KIND.OVER_CAP },
-    });
-    await audit(tx, orgId, "reconciliation.over_cap", current, saved, {
-      userId: null,
-      reason: `net ${current.payoutNetCents} cents is over the per-run cap of ${maxCents}`,
-    });
-    return true;
-  });
+async function parkOverCap(orgId: string, id: number, netCents: number, maxCents: number): Promise<boolean> {
+  const parked = await moveRow(
+    orgId,
+    id,
+    false,
+    (r) => r.status === RECON_STATUS.WAITING || isHeld(r),
+    { status: RECON_STATUS.OPEN, kind: RECON_KIND.OVER_CAP, reason: null },
+    "reconciliation.over_cap",
+    { userId: null, reason: `net ${netCents} cents is over the per-run cap of ${maxCents}` },
+  );
+  return parked !== null;
 }
 
 /**
- * The income cron step: match every paid payout, then post the outbox's WAITING rows still
- * inside their match window, oldest first. Creates stop at the org's count and cents caps,
+ * The income cron step: match every paid payout, check every assigned bucket (alerting finance
+ * once per bucket that has become unusable), then post the outbox's WAITING rows still inside
+ * their match window and every NEEDS_MAPPING row, oldest first. A payout after the line with an
+ * undecided item or unusable bucket holds as NEEDS_MAPPING until finance decides. Creates stop at the org's count and cents caps,
  * which fire the finance alert; failures and amount matches do not count. The host calls it in a
  * try/catch; it returns counts only.
  */
@@ -246,18 +333,22 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
   if (!mirror || !posting || !alerts) return { reconcile, post: "unbound" };
   if (!posting.mirrorNewestWins) return { reconcile, post: "gated" };
 
+  const unusable = await checkBuckets(orgId);
   const line = await incomeTakeoverLine(orgId);
   const caps = await readIncomeSettings(db, orgId);
   const today = isoDay(now);
   const due = (
     await db.payoutReconciliation.findMany({
-      where: { orgId, status: RECON_STATUS.WAITING },
+      where: {
+        orgId,
+        OR: [{ status: RECON_STATUS.WAITING }, { status: RECON_STATUS.OPEN, kind: RECON_KIND.NEEDS_MAPPING }],
+      },
       orderBy: [{ payoutDate: "asc" }, { id: "asc" }],
-      select: { id: true, payoutDate: true, payoutNetCents: true },
+      select: { id: true, payoutGid: true, payoutDate: true, payoutNetCents: true, status: true, kind: true },
     })
-  ).filter((r) => today <= addDays(r.payoutDate, windowDays()));
+  ).filter((r) => isHeld(r) || today <= addDays(r.payoutDate, windowDays()));
 
-  const post: PostCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, over_cap: 0, capped: null };
+  const post: PostCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, over_cap: 0, held: 0, capped: null };
   let createdCents = 0;
   const alert = (cap: "count" | "cents", remaining: number) =>
     alerts.postCapReached({ orgId, cap, created: post.posted, createdCents, remaining });
@@ -266,8 +357,16 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
     const cents = Math.abs(r.payoutNetCents);
     // Only a payout after the line can be created, so only it is held to the caps.
     if (line !== null && r.payoutDate > line) {
+      // The mapping check comes before the caps so a held payout keeps its reason.
+      // ponytail: postPayout reads the payout's sales again; pass them through if mirror reads get slow.
+      const gap = mappingGap(await payoutSales(orgId, r.payoutGid, mirror), unusable);
+      if (gap) {
+        if (!(await holdForMapping(orgId, r.id, gap, false))) return { reconcile, post: "busy" };
+        post.held++;
+        continue;
+      }
       if (cents > caps.maxCreateCentsPerRun) {
-        if (!(await parkOverCap(orgId, r.id, caps.maxCreateCentsPerRun))) return { reconcile, post: "busy" };
+        if (!(await parkOverCap(orgId, r.id, r.payoutNetCents, caps.maxCreateCentsPerRun))) return { reconcile, post: "busy" };
         post.over_cap++;
         await alert("cents", 1);
         continue;
@@ -278,7 +377,7 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
         break;
       }
     }
-    const turn = await postPayout(orgId, r.id, line, false);
+    const turn = await postPayout(orgId, r.id, line, false, { userId: null }, unusable);
     if (!turn) return { reconcile, post: "busy" };
     post[turn.outcome]++;
     if (turn.outcome === "posted") createdCents += cents;

@@ -13,6 +13,7 @@ interface ReconRow {
   payoutNetCents: number;
   status: string;
   kind: string | null;
+  reason: string | null;
 }
 
 interface Deposit {
@@ -36,6 +37,7 @@ const KIND_HELP: Record<string, string> = {
   DRIFT: "The payout or its deposit changed after it was reconciled",
   POST_FAILED: "Creating the deposit failed",
   OVER_CAP: "Larger than the per-run cap, so it is never created automatically; retry to create it",
+  NEEDS_MAPPING: "Waiting for item decisions on the Items page; books itself on the next run once they are made",
 };
 
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -173,6 +175,7 @@ export default function ReconciliationPage() {
                     <Table.Td>
                       <Badge size="sm" color="orange">{row.kind}</Badge>{" "}
                       <Text span size="sm" c="dimmed">{row.kind ? KIND_HELP[row.kind] : ""}</Text>
+                      {row.kind === "NEEDS_MAPPING" && row.reason && <Text size="sm">{row.reason}</Text>}
                     </Table.Td>
                     <Table.Td><Code>{row.payoutGid}</Code></Table.Td>
                     <Table.Td>

@@ -87,6 +87,11 @@ export interface OwnerDirectory {
   list(): Promise<OwnerInfo[]>;
 }
 
+/** QuickBooks Class ids that are active. A Class made inactive or removed is absent. */
+export interface QbClassSource {
+  activeClassIds(): Promise<string[]>;
+}
+
 /** A QuickBooks Deposit, reduced to the fields reconciliation needs. `txnDate` is YYYY-MM-DD. */
 export interface QbDeposit {
   id: string;

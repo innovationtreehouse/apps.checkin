@@ -112,8 +112,9 @@ function variantId(raw: string | undefined): string {
 export const setItemCategory: IncomeRouteHandler = async ({ req, params }) => {
   const variant = variantId(params.variantId);
   const budgetOwnerId = (await readBody(req)).budgetOwnerId;
-  if (typeof budgetOwnerId !== "number" || !Number.isInteger(budgetOwnerId) || budgetOwnerId <= 0) {
-    throw httpError(400, "budgetOwnerId must be a positive integer");
+  // null is finance's choice of general income.
+  if (budgetOwnerId !== null && (typeof budgetOwnerId !== "number" || !Number.isInteger(budgetOwnerId) || budgetOwnerId <= 0)) {
+    throw httpError(400, "budgetOwnerId must be a positive integer or null");
   }
   const [orgId, who] = await Promise.all([getOrgId(), actor()]);
   return {
