@@ -4,12 +4,10 @@
  *
  * Counts, the injected bucket list, per-line sign-off status, the capital-seed
  * result and QuickBooks match candidates are not Prisma models, and handler()'s
- * stripper drops any bag key that isn't a known model. Everything is `internal`
- * except a candidate's `vendorRef`: on a Bill the vendor is the reimbursee, so it
- * is `pii`.
- *
- * None of these shapes names a signer or the reimbursee by person id; those live
- * only on the Prisma models, as `pii`.
+ * stripper drops any bag key that isn't a known model. Who is reimbursed is `pii`
+ * wherever it appears: a candidate's `vendorRef` (on a Bill the vendor is the
+ * reimbursee), a QuickBooks Vendor's name, and the reimbursee's id and name.
+ * Everything else is `internal`. No shape names a signer.
  *
  * Hand-authored, not generated: it describes API responses, not tables. This is a
  * security-boundary artifact — changes ship in a boundary PR.
@@ -61,6 +59,16 @@ export const classifications = {
     totalCents: "internal",
     accountRef: "internal",
     vendorRef: "pii",
+  },
+  // A QuickBooks Vendor offered to finance for the reimbursee link; names are often people's.
+  ExpenseQbVendorOption: {
+    id: "internal",
+    displayName: "pii",
+  },
+  // The reimbursee named on the link screen.
+  ExpenseReimburseeView: {
+    personId: "pii",
+    name: "pii",
   },
 } as const;
 
