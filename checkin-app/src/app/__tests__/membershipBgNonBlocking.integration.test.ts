@@ -260,9 +260,9 @@ describe('background check is non-blocking', () => {
         await markContractSigned(processId);
         await markBgConsent(processId, revA); // → PENDING_PAYMENT; review not yet started
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
-        // The dues tier is read at PENDING_PAYMENT (ensurePaymentLink) — the
+        // The membership fee tier is read at PENDING_PAYMENT (ensurePaymentLink) — the
         // allowlist must already be applied here, not only at clearance, or a
-        // pay-first volunteer family is charged full dues.
+        // pay-first volunteer family is charged the full membership fee.
         expect(await isVolunteerOf(orgMembershipId)).toBe(true);
     });
 
@@ -292,8 +292,8 @@ describe('background check is non-blocking', () => {
         await beginRenewal(processId, leadId);
         expect(await statusOf(processId)).toBe('PENDING_EXTERNAL_ACTION');
 
-        // The advance's PENDING_PAYMENT transition applies the allowlist — dues
-        // are read at payment, which opens once the fresh agreement is signed.
+        // The advance's PENDING_PAYMENT transition applies the allowlist — the membership fee
+        // is read at payment, which opens once the fresh agreement is signed.
         await markContractSigned(processId);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
         expect(await isVolunteerOf(orgMembershipId)).toBe(true);

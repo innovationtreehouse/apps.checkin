@@ -623,7 +623,7 @@ describe('Program Participants API Integration Tests', () => {
         });
 
         // #1397: the write gate must admit exactly who the read gates show the
-        // program to — a household whose dues are paid and whose background check
+        // program to — a household whose membership fee is paid and whose background check
         // is still with the board sees this program, so it must be able to enroll.
         it('should allow a household that has paid but is awaiting background clearance', async () => {
              const paidPending = await prisma.person.create({

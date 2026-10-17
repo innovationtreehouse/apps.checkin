@@ -1757,7 +1757,7 @@ describe("Merge Participants API", () => {
         });
 
         it("activates a paid PENDING_BG_CLEARANCE household, without dating anyone's own check", async () => {
-            // The one state where the carried check is the SOLE block: dues are settled and
+            // The one state where the carried check is the SOLE block: the membership fee is settled and
             // the membership sits INACTIVE. A stamp that doesn't converge leaves it there.
             const process = await makeApplication("PENDING_BG_CLEARANCE", { contractSignedAt: new Date(), bgConsentAt: new Date(), paidAt: new Date() });
             const child = await prisma.person.create({ data: { name: "Adult Child", householdId, isHouseholdLead: false } });

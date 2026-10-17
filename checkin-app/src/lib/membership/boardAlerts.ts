@@ -33,7 +33,7 @@ const EXCEPTION_BLURB: Record<string, string> = {
     CHARGEBACK: "a chargeback/dispute was filed against an active membership/enrollment's payment",
     CANCELLED: "an active membership/enrollment's order was cancelled",
     REVERSED_BEFORE_ACTIVATION: "a payment was refunded/cancelled before the family was activated",
-    AMOUNT_MISMATCH: "a payment does not cover the expected dues/price",
+    AMOUNT_MISMATCH: "a payment does not cover the expected membership fee/price",
     DISCOUNT_UNAUTHORIZED: "an order used a discount its household isn't entitled to (the volunteer code on a non-volunteer membership, or a program member code from another household or an unsettled one)",
     ACTIVE_WITHOUT_PAYMENT: "a membership/enrollment is active with no matching payment on file",
     DENIED_HOUSEHOLD_ACTIVITY: "something happened to a household the board denied (a payment, an approval or an application) — its status was not changed",

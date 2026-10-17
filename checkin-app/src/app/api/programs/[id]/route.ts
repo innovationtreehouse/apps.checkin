@@ -3,7 +3,7 @@ import { logger } from "@/lib/logger";
 import { withAuth, authenticateRequest } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { handler, notFound, forbidden, badRequest } from "@/security/handler";
-import { isActiveOrgMember, isDuesSettled, isDuesSettledThrough, programCoverageDate } from "@/lib/orgMembership";
+import { isActiveOrgMember, isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { apiError } from "@/lib/api-response";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { householdPaymentViewer } from "@/lib/programs/paymentVisibility";
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     // paid household still awaiting background clearance.
     const [viewerIsMember, viewerMemberPricingEligible] = await Promise.all([
         isActiveOrgMember(auth.user.id),
-        isDuesSettledThrough(auth.user.id, coverageDate),
+        isMembershipFeeSettledThrough(auth.user.id, coverageDate),
     ]);
     return NextResponse.json({ ...body, viewerIsMember, viewerMemberPricingEligible });
 }
@@ -151,12 +151,12 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
 
     // A members-only program is hidden unless its leader opted it into the public
     // catalogue (publiclyVisible) — then anyone may view its detail, but the
-    // enrollment route still gates joining on a settled membership. Dues settled,
+    // enrollment route still gates joining on a settled membership. The membership fee is settled,
     // not "is a member": a paid household awaiting background clearance is admitted.
     if (program.orgMemberOnly && !program.publiclyVisible && !isPrivileged) {
         if (!sessionUser) throw notFound('Program not found');
-        const duesSettled = await isDuesSettled(sessionUser.id);
-        if (!duesSettled) throw forbidden('Forbidden: Member-Only Program');
+        const membershipFeeSettled = await isMembershipFeeSettled(sessionUser.id);
+        if (!membershipFeeSettled) throw forbidden('Forbidden: Member-Only Program');
     }
 
     // ── Association gate (deliberate inline exception) ──────────────────────────

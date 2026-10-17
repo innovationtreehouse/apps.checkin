@@ -33,7 +33,7 @@ export const POST = withAuth({}, async (req, auth) => {
         });
 
         if (!process || !process.orgMembership) {
-            // orgMembership is null only for a PERSON_BG process, which has no dues to
+            // orgMembership is null only for a PERSON_BG process, which has no membership fee to
             // plan — treat as not-found for this household-membership-only endpoint.
             return apiError("Membership application not found", 404);
         }

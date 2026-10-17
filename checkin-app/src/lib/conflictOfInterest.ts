@@ -5,7 +5,7 @@ import type { DbClient } from "@/lib/db-client";
  *
  * The policy is uniform across the app: an actor may not approve, certify, clear,
  * or grant something for their OWN household — approving your own family is the
- * same abuse whether it's a background-check review, membership dues, a program
+ * same abuse whether it's a background-check review, membership fee, a program
  * payment plan, or a direct membership grant.
  *
  * No role is exempt. `isSysadmin` is an application role with no counterpart in the

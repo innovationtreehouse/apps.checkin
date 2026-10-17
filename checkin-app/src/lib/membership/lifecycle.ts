@@ -176,13 +176,13 @@ export const awaitingBgReview: StateSet<AwaitingBgRow, Where> = {
     },
 };
 
-// ── dues settled, background check outstanding ────────────────────────────────
+// ── membership fee settled, background check outstanding ────────────────
 
 /**
- * Dues paid in full, waiting on the board's background-check clearance. PROGRAM
+ * The membership fee is paid in full, waiting on the board's background-check clearance. PROGRAM
  * ACCESS reads this set: a household here gets the member rate and sees
  * members-only programs even though its membership is not ACTIVE yet (#1397) —
- * see lib/orgMembership.ts's DUES_SETTLED_PERSON_WHERE. It is NOT an answer to
+ * see lib/orgMembership.ts's MEMBERSHIP_FEE_SETTLED_PERSON_WHERE. It is NOT an answer to
  * "is this a member"; ACTIVE stays that answer for every other benefit and every
  * member-only audience.
  *
@@ -190,7 +190,7 @@ export const awaitingBgReview: StateSet<AwaitingBgRow, Where> = {
  * always stamps it) and is asserted anyway — the money question must not rest on
  * a status invariant holding for a row some future path writes differently.
  */
-export const duesSettledAwaitingBg = defineStateSet<Where>()({
+export const membershipFeeSettledAwaitingBg = defineStateSet<Where>()({
     statuses: ["PENDING_BG_CLEARANCE"],
     flags: { paidAt: true },
 });
@@ -214,8 +214,8 @@ export const grantableRenewalWhere: Where = {
 
 /**
  * "Settled for the live membership year" — the MONEY question: a process whose
- * dues are paid — terminal ACTIVE, or paid and only waiting on background
- * clearance ({@link duesSettledAwaitingBg}) — stamped on or after the live
+ * membership fee is paid: terminal ACTIVE, or paid and only waiting on background
+ * clearance ({@link membershipFeeSettledAwaitingBg}) — stamped on or after the live
  * cycle's `settledSince` (membershipYearCycle), INITIAL and RENEWAL alike,
  * because a family that joins during the window buys the coming year exactly as
  * a renewer does (docs/rules/membership.md). ARCHIVED (a closed application) is
@@ -226,7 +226,7 @@ export const grantableRenewalWhere: Where = {
  * pre-window payment whose review clears in-window reads as coming-year.
  */
 export const settledThisCycleWhere = (settledSince: Date): Where => ({
-    OR: [{ status: "ACTIVE" }, duesSettledAwaitingBg.where],
+    OR: [{ status: "ACTIVE" }, membershipFeeSettledAwaitingBg.where],
     stageEnteredAt: { gte: settledSince },
 });
 

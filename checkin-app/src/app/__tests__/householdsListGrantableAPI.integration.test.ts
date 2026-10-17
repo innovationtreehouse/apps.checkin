@@ -292,7 +292,7 @@ describe('GET /api/membership-ops/households — settledForComingYear (fix #4)',
         expect(h!.settledForComingYear).toBe(true);
     });
 
-    it('an ACTIVE membership with no dues-paid process is NOT settled, however new (bare manual grant / import)', async () => {
+    it('an ACTIVE membership with no fee-paid process is NOT settled, however new (bare manual grant / import)', async () => {
         const households = await fetchHouseholds();
         const h = households.find((x) => x.id === bareGrantHouseholdId);
         expect(h).toBeDefined();

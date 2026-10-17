@@ -84,7 +84,7 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
             }
         }
 
-        // The volunteer flag discounts dues, so no actor may set it on their own household.
+        // The volunteer flag discounts the membership fee, so no actor may set it on their own household.
         if (isVolunteerChange && await refuseSelfGrant(prisma, auth.user.id, { householdId: id }, {
             table: "OrgMembership",
             attempted: { isVolunteer: isVolunteerChange.newValue },

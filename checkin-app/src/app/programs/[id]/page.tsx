@@ -353,7 +353,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
         notifyNavRefresh();
         // Every checkout starts at the server: it refuses a checkout naming
         // someone outside the household (400) or from a non-lead (403), and mints the member discount code for
-        // single-pool programs when the household's dues cover the program. A
+        // single-pool programs when the household's membership fee covers the program. A
         // mint or network failure is non-fatal: an undiscounted link is always a
         // safe fallback, per lib/shopify.ts's mintMemberDiscountCode contract.
         let discountCode: string | null = null;

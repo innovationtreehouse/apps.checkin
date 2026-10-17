@@ -33,7 +33,7 @@ import { reconcileReversals } from "./reversals";
  * ids since #1048, so recovery gates on the order containing one of checkin's known
  * membership variants — the exact set the webhook builds — not on order total.
  * (Orders synced before #1048 and not yet backfilled carry no line variant ids;
- * those fall back to a discount-aware dues amount gate — see reconcileForwardMembership.)
+ * those fall back to a discount-aware membership fee amount gate — see reconcileForwardMembership.)
  * Nothing is guessed: an attribute naming an unknown process, an ambiguous email
  * match, or an order with no membership item raises a problem for the board rather
  * than activating. One policy check rides on top of the variant gate: a
@@ -42,7 +42,7 @@ import { reconcileReversals } from "./reversals";
  *
  * The program side carries the parallel check, judged AT THE MONEY EVENT: a minted
  * `PRG{programId}-H{householdId}-XXXXXXXX` member-discount code redeemed on another
- * household's order, or by a household that isn't dues-settled through the program's
+ * household's order, or by a household that isn't fee-settled through the program's
  * coverage date, raises the same DISCOUNT_UNAUTHORIZED instead of activating. The
  * orders/paid webhook asks it for a live checkout; this forward pass asks it when
  * recovering a missed webhook. The reversal pass deliberately does NOT re-ask it:

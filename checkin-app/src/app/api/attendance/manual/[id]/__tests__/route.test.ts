@@ -237,7 +237,7 @@ describe("PATCH /api/attendance/manual/[id]", () => {
     });
 
     it("escapes the actor's self-editable name in the board email", async () => {
-        mockSession.mockResolvedValue({ user: { id: OWN_ID, name: '<a href="http://evil">Pay dues here</a>' } });
+        mockSession.mockResolvedValue({ user: { id: OWN_ID, name: '<a href="http://evil">Pay membership fee here</a>' } });
         visitFindUnique.mockResolvedValue({ ...baseVisit, arrivedVia: "SCANNER", departedVia: "SCANNER" });
         await PATCH(req("PATCH", { arrivedAt: "2026-07-20T12:00:00Z" }), ctx as never);
 

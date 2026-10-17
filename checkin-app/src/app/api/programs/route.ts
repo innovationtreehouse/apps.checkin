@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma";
 import { sendNotification } from "@/lib/notifications";
 import { adjustProgramInventory, createClaimantProduct, createShopifySingleVariantProgram } from "@/lib/shopify";
 import { logBackendError, logger } from "@/lib/logger";
-import { isDuesSettled } from "@/lib/orgMembership";
+import { isMembershipFeeSettled } from "@/lib/orgMembership";
 import { config } from "@/lib/config";
 import { dollarsToCentsOrNull } from "@inventory/money";
 import { apiError } from "@/lib/api-response";
@@ -50,7 +50,7 @@ const PUBLIC_PROGRAM_SELECT = {
 // anonymous). getOptionalSessionUser applies the shared denied-household gate: a
 // denied member is locked out of the whole app, so it collapses to undefined
 // (anonymous) — they see only the public list and never the hidden members-only
-// programs isDuesSettled would otherwise reveal.
+// programs isMembershipFeeSettled would otherwise reveal.
 export async function GET(req: Request) {
     const user = await getOptionalSessionUser(req);
 
@@ -78,9 +78,9 @@ export async function GET(req: Request) {
             if (user.isSysadmin || user.isBoardMember) {
                 canSeeMembersOnly = true;
             } else {
-                // Dues settled, not "is a member": a paid household awaiting
+                // The membership fee is settled, not "is a member": a paid household awaiting
                 // background clearance sees members-only programs too.
-                canSeeMembersOnly = await isDuesSettled(user.id);
+                canSeeMembersOnly = await isMembershipFeeSettled(user.id);
             }
         }
 

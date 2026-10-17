@@ -10,7 +10,7 @@
  * journey, wired through real auth, routes, and DB.
  *
  * Personas: boardmember@example.com (board, creates the program),
- * member.pricing@example.com (dues-settled household lead — ACTIVE OrgMembership
+ * member.pricing@example.com (fee-settled household lead — ACTIVE OrgMembership
  * from the seed), and certified.adult@example.com (solo household, no
  * OrgMembership row — a genuine non-member, used read-only here).
  */

@@ -375,7 +375,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
     it('coming-year grant: PENDING_PAYMENT + bgClearedAt + fresh lead BG → 200, completes payment (no archive, no 2nd process)', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
 
-        const res = await post({ householdId: grantableHouseholdId, comingYear: true, reason: 'Family confirmed dues in person at the board meeting.' });
+        const res = await post({ householdId: grantableHouseholdId, comingYear: true, reason: 'Family paid the membership fee in person at the board meeting.' });
         expect(res.status).toBe(200);
 
         const membership = await prisma.orgMembership.findUnique({ where: { householdId: grantableHouseholdId } });
@@ -386,7 +386,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         expect(process?.status).toBe('ACTIVE');
         expect(process?.paidAt).not.toBeNull();
         expect(process?.manualPaymentById).toBe(boardId);
-        expect(process?.certificationNote).toBe('Family confirmed dues in person at the board meeting.');
+        expect(process?.certificationNote).toBe('Family paid the membership fee in person at the board meeting.');
         const processCount = await prisma.orgMembershipProcess.count({ where: { orgMembershipId: grantableMembershipId } });
         expect(processCount).toBe(1);
 
@@ -400,10 +400,10 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         const activateAudit = audits.find(a => (a.newData as { status?: string })?.status === 'ACTIVE');
         expect(activateAudit).toBeTruthy();
         expect((activateAudit!.newData as { via: string }).via).toBe('manual');
-        expect((activateAudit!.newData as { certificationNote?: string }).certificationNote).toBe('Family confirmed dues in person at the board meeting.');
+        expect((activateAudit!.newData as { certificationNote?: string }).certificationNote).toBe('Family paid the membership fee in person at the board meeting.');
         const grantAudit = audits.find(a => (a.newData as { comingYearGrant?: boolean })?.comingYearGrant === true);
         expect(grantAudit).toBeTruthy();
-        expect((grantAudit!.newData as { reason?: string }).reason).toBe('Family confirmed dues in person at the board meeting.');
+        expect((grantAudit!.newData as { reason?: string }).reason).toBe('Family paid the membership fee in person at the board meeting.');
     });
 
     it('revokes an active household, sets REVOKED, and writes an audit row', async () => {

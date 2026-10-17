@@ -69,7 +69,7 @@ Program roles (all Treehouse Volunteers):
 | **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | Core's legal-authority rules are organizational (out of software scope) |
 | **Program Treasurer** | a Program Volunteer who keeps the program's money; a program may have several. With the Program Leader, approves within the program's budget-owner bucket | `ProgramVolunteer.isTreasurer` | policy term (*Sponsored Program Policy, Art. III §III.7*) |
 
-**Retired words (do not use):** `staff` / "program staff" (→ Treehouse Volunteers), `mentor` and `lead mentor` (→ Program Leader / Program Volunteer; program-specific "mentor" language is external), "program instructor" (→ `instructor` is **tool-only**, see Shop & Certification).
+**Retired words (do not use):** `staff` / "program staff" (→ Treehouse Volunteers), `mentor` and `lead mentor` (→ Program Leader / Program Volunteer; program-specific "mentor" language is external), "program instructor" (→ `instructor` is **tool-only**, see Shop & Certification), "dues" (→ **membership fee**; Treehouse is not a membership organization under the law, so what a household pays is a fee, the word used outside the software too).
 
 ## Roles & accounts
 
@@ -152,7 +152,7 @@ Rules:
 4. **"Attest" is the reviewer's word alone.** An applicant **consents**; a Tool
    Certifier **certifies** (see Shop & Certification).
 5. **`PENDING_BG_REVIEW` and `PENDING_BG_CLEARANCE` do not mark review vs
-   clearance** — they differ by whether dues are paid. A known misnomer; the enum
+   clearance** — they differ by whether the membership fee is paid. A known misnomer; the enum
    stays, because renaming a status reaches the schema, a migration, and the
    applicant-facing wire.
 

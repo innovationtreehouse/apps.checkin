@@ -280,7 +280,7 @@ describe("forward recovery", () => {
         expect(proc?.paidAt).toBeTruthy();
     });
 
-    it("raises AMOUNT_MISMATCH and does not activate when the order underpays dues", async () => {
+    it("raises AMOUNT_MISMATCH and does not activate when the order underpays the membership fee", async () => {
         const email = `short-${TAG}@ex.com`;
         const oid = `${TAG}-102`;
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
@@ -291,9 +291,9 @@ describe("forward recovery", () => {
         expect(await prisma.paymentException.findFirst({ where: { kind: "AMOUNT_MISMATCH", shopifyOrderId: oid } })).toBeTruthy();
     });
 
-    it("recovers a couponed order below gross dues (variant match), no AMOUNT_MISMATCH", async () => {
+    it("recovers a couponed order below the gross membership fee (variant match), no AMOUNT_MISMATCH", async () => {
         // #1048: the volunteer rate / promos are Shopify coupons, so a valid order's
-        // total is below gross dues. It carries a known membership variant line → recover.
+        // total is below the gross membership fee. It carries a known membership variant line → recover.
         const email = `coupon-${TAG}@ex.com`;
         const oid = `${TAG}-120`;
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
@@ -353,7 +353,7 @@ describe("forward recovery", () => {
         expect(await prisma.paymentException.findFirst({ where: { kind: "NO_ITEM", shopifyOrderId: oid } })).toBeTruthy();
     });
 
-    it("pre-backfill order (no variant ids) genuinely short of dues still raises AMOUNT_MISMATCH", async () => {
+    it("pre-backfill order (no variant ids) genuinely short of the membership fee still raises AMOUNT_MISMATCH", async () => {
         // orderLineVariantIds default [] = pre-#1048, no discount codes → amount fallback.
         const email = `prebackfill-${TAG}@ex.com`;
         const oid = `${TAG}-122`;
@@ -468,8 +468,8 @@ describe("reversal detection", () => {
         expect(ex?.severity).toBe("CRITICAL");
     });
 
-    it("does not raise AMOUNT_MISMATCH on a couponed order below gross dues (post-activation)", async () => {
-        // ACTIVE membership paid with a coupon: total is below gross dues but the
+    it("does not raise AMOUNT_MISMATCH on a couponed order below the gross membership fee (post-activation)", async () => {
+        // ACTIVE membership paid with a coupon: total is below the gross membership fee but the
         // discount explains the gap — not a post-activation edit-down. No exception.
         const oid = `${TAG}-203`;
         const { processId } = await makeApplicant({ email: `revcoupon-${TAG}@ex.com`, status: "ACTIVE", paid: true, shopifyOrderId: oid });
@@ -534,7 +534,7 @@ describe("program member-code entitlement (judged at the money event)", () => {
         expect(await prisma.paymentException.count({ where: { kind: "DISCOUNT_UNAUTHORIZED", shopifyOrderId: oid } })).toBe(0);
     });
 
-    it("activates normally when the paying household IS dues-settled through the program's coverage date", async () => {
+    it("activates normally when the paying household IS fee-settled through the program's coverage date", async () => {
         // The entitled money event: same code, same forward path, no flag.
         const oid = `${TAG}-502`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `prgent-${TAG}@ex.com`, status: "PENDING", membership: "ACTIVE" });

@@ -267,7 +267,7 @@ export async function reviewQueueCounts(reviewerId: number): Promise<{ canActOn:
 /**
  * Record a reviewer's attestation. Validates eligibility, then on REJECT blocks
  * the application and on the 2nd APPROVE of a named subject clears the check —
- * activating the membership if dues are already paid, else leaving it at
+ * activating the membership if the membership fee is already paid, else leaving it at
  * PENDING_PAYMENT.
  *
  * `subjectPersonIds` carries the ONE adult whose Averity report this reviewer read.
@@ -551,7 +551,7 @@ export async function notifyClearanceOutcome(outcome: ClearanceOutcome, opts?: {
 /**
  * True if any household-lead email matches any volunteer-designation email, under
  * the shared Gmail/+tag-aware canonicalization. Extracted (pure) so the money-path
- * match rule is unit-testable without a DB. DRIVES DUES via isVolunteer.
+ * match rule is unit-testable without a DB. DRIVES THE MEMBERSHIP FEE via isVolunteer.
  */
 export function matchesVolunteerDesignation(parentEmails: string[], designationEmails: string[]): boolean {
     const parents = new Set(parentEmails.map(canonicalizeEmail));
@@ -564,7 +564,7 @@ export function matchesVolunteerDesignation(parentEmails: string[], designationE
  * reviewer marked the family volunteer-only OR a household parent's sign-in-verified
  * email is pre-designated. Never clears it here. Runs at every PENDING_PAYMENT transition
  * (external advance, fresh-check intake shortcut, fresh-check renewal) so the
- * allowlist drives dues BEFORE the check clears (#874), and again at clearance
+ * allowlist drives the membership fee BEFORE the check clears (#874), and again at clearance
  * with the reviewers' volunteer marks.
  * Not a self-grant site: designations are guarded where written, and the
  * reviewer-marked pass runs only behind clearBackgroundCheck's guard.
@@ -691,7 +691,7 @@ function blockedResetStatus(process: BlockedResetRow): OrgMembershipProcessStatu
 }
 
 /**
- * The check cleared but dues aren't paid — the process just (re)entered
+ * The check cleared but the membership fee isn't paid — the process just (re)entered
  * PENDING_PAYMENT. The status cards/banner promise an email at clearance.
  * Best-effort (send failures log).
  */
@@ -704,8 +704,8 @@ export async function notifyPaymentOpenOnExistingCheck(householdId: number) {
     const base = config.baseUrl();
     await emailHouseholdLeads(
         householdId,
-        "Your background check is on file — you can now pay your membership dues",
-        `<p>Good news — your household already holds a current background check, so no new one is needed. The last step is paying your membership dues: <a href="${base}/membership">${base}/membership</a></p>`,
+        "Your background check is on file — you can now pay your membership fee",
+        `<p>Good news — your household already holds a current background check, so no new one is needed. The last step is paying your membership fee: <a href="${base}/membership">${base}/membership</a></p>`,
         "Payment-open notice failed:",
     );
 }
@@ -714,8 +714,8 @@ async function notifyPaymentOpen(householdId: number) {
     const base = config.baseUrl();
     await emailHouseholdLeads(
         householdId,
-        "Background check complete — you can now pay your membership dues",
-        `<p>Good news — your household's background-check review is complete. The last step is paying your membership dues: <a href="${base}/membership">${base}/membership</a></p>`,
+        "Background check complete — you can now pay your membership fee",
+        `<p>Good news — your household's background-check review is complete. The last step is paying your membership fee: <a href="${base}/membership">${base}/membership</a></p>`,
         "Payment-open notice failed:",
     );
 }

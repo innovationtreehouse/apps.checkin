@@ -152,7 +152,7 @@ describe('Programs API Integration Tests', () => {
              expect(orgMemberOnly).toBeDefined(); // Revealed because admin
         });
 
-        // #1397: dues paid, background check still with the board — the catalog
+        // #1397: membership fee paid, background check still with the board — the catalog
         // shows them members-only programs, same as an ACTIVE household.
         it('reveals member-only programs to a household that has paid but is awaiting background clearance', async () => {
              const paidPending = await prisma.person.create({

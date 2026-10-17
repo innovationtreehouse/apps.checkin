@@ -126,7 +126,7 @@ export async function advanceExternalIfComplete(processId: number) {
             data: { status: "PENDING_PAYMENT", stageEnteredAt: new Date() },
         });
         if (count !== 1) return null; // lost the race or no longer eligible — no audit, no notify
-        // Dues are read at PENDING_PAYMENT (ensurePaymentLink), normally BEFORE the
+        // The membership fee is read at PENDING_PAYMENT (ensurePaymentLink), normally BEFORE the
         // background check clears — so a pre-designated volunteer family must get
         // isVolunteer here, not only at clearance (#874). Sticky + idempotent;
         // clearBackgroundCheck's reviewer-marked pass remains the supplement.

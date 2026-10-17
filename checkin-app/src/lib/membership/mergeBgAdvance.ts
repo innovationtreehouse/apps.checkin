@@ -90,8 +90,8 @@ function uncleared(householdId: number, from: object, extra: object = {}): Promi
 /**
  * Stamp `bgClearedAt` under a CAS on the from-state, and apply the volunteer
  * allowlist: the fresh-check shortcut means `clearBackgroundCheck` never runs this
- * cycle, and without it a pre-designated volunteer household gets non-volunteer
- * dues (#874). Returns false when the row moved on under us.
+ * cycle, and without it a pre-designated volunteer household gets the non-volunteer
+ * membership fee (#874). Returns false when the row moved on under us.
  *
  * One transaction, FOR UPDATE first: the attestation count only excludes a review a
  * human is mid-way through if it is read under the lock, and the stamp, its audit
@@ -165,7 +165,7 @@ const HELD_STATES = [
 /**
  * Stamping `bgClearedAt` on a held row drops it out of the reviewer queue with no exit
  * but archival. So run the real clearance, which stamps and converges in one write —
- * to PENDING_PAYMENT if the dues are still owed, to ACTIVE if they are already paid.
+ * to PENDING_PAYMENT if the membership fee is still owed, to ACTIVE if it is already paid.
  * Zero attestations, re-read under the lock.
  */
 async function clearHeldRow(

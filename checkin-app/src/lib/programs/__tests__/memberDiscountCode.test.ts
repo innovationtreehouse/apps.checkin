@@ -16,17 +16,17 @@ jest.mock("@/lib/prisma", () => ({
     },
 }));
 jest.mock("@/lib/orgMembership", () => ({
-    isDuesSettledThrough: jest.fn(),
+    isMembershipFeeSettledThrough: jest.fn(),
     programCoverageDate: (p: { startAt: Date | null; endAt: Date | null }) => p.endAt ?? p.startAt ?? null,
 }));
 
 import prisma from "@/lib/prisma";
-import { isDuesSettledThrough } from "@/lib/orgMembership";
+import { isMembershipFeeSettledThrough } from "@/lib/orgMembership";
 import { usesProgramMemberCode, unentitledMemberCodeUse, memberCodeHousehold } from "../memberDiscountCode";
 
 const findUnique = prisma.program.findUnique as jest.Mock;
 const participants = prisma.programParticipant.findMany as jest.Mock;
-const settledThrough = isDuesSettledThrough as jest.Mock;
+const settledThrough = isMembershipFeeSettledThrough as jest.Mock;
 
 beforeEach(() => {
     jest.clearAllMocks();
@@ -73,13 +73,13 @@ describe("usesProgramMemberCode", () => {
 });
 
 describe("unentitledMemberCodeUse", () => {
-    it("flags when the order carries the program's code and no enrollee is dues-settled", async () => {
+    it("flags when the order carries the program's code and no enrollee is fee-settled", async () => {
         settledThrough.mockResolvedValue(false);
         expect(await unentitledMemberCodeUse(42, [1, 2], ["PRG42-ABCD1234"], "ord-1")).toBe(true);
         expect(settledThrough).toHaveBeenCalledTimes(2);
     });
 
-    it("does not flag when SOME enrollee's household is dues-settled through the coverage date", async () => {
+    it("does not flag when SOME enrollee's household is fee-settled through the coverage date", async () => {
         settledThrough.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
         expect(await unentitledMemberCodeUse(42, [1, 2], ["PRG42-ABCD1234"], "ord-1")).toBe(false);
     });
@@ -90,7 +90,7 @@ describe("unentitledMemberCodeUse", () => {
         expect(settledThrough).toHaveBeenCalledWith(1, new Date("2026-08-01"));
     });
 
-    it("still flags when a foreign dues-settled id is STUFFED into the cart permalink", async () => {
+    it("still flags when a foreign fee-settled id is STUFFED into the cart permalink", async () => {
         // CheckMeIn_Account_ID is customer-controlled: a non-member enrolls (PENDING,
         // unpaid), then builds the permalink as `<own id>,<any settled person's id>`
         // (ids are autoincrement, so one is easy to guess). Only person 1 is enrolled
@@ -113,7 +113,7 @@ describe("unentitledMemberCodeUse", () => {
 
 
     it("scopes the intersect to rows THIS order pays for — PENDING or stamped with this order id", async () => {
-        // A dues-settled co-enrollee who is already ACTIVE via some OTHER order must
+        // A fee-settled co-enrollee who is already ACTIVE via some OTHER order must
         // not lend entitlement (thpr's residual: guess an enrolled+settled id, ride
         // their status-blind row). The DB-side OR narrows to this order's own rows.
         settledThrough.mockResolvedValue(false);
@@ -196,7 +196,7 @@ describe("unentitledMemberCodeUse with a household-bound code", () => {
         expect(await unentitledMemberCodeUse(42, [1, 2], ["PRG42-H5-ABCD1234"], "ord-1")).toBe(true);
     });
 
-    it("flags the right household once its dues no longer cover the program", async () => {
+    it("flags the right household once its membership fee no longer covers the program", async () => {
         settledThrough.mockResolvedValue(false);
         expect(await unentitledMemberCodeUse(42, [1], ["PRG42-H5-ABCD1234"], "ord-1")).toBe(true);
     });

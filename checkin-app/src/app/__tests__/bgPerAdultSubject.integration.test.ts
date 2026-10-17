@@ -288,7 +288,7 @@ describe('Per-adult background-check subjects', () => {
         expect(proc?.status).toBe('PENDING_PAYMENT');
         expect(await bgDate(hh.alex)).not.toBeNull();
         expect(await bgDate(hh.sam)).toBeNull();
-        expect((sendEmail as jest.Mock).mock.calls.some((c: unknown[]) => String(c[1]).includes('you can now pay your membership dues'))).toBe(true);
+        expect((sendEmail as jest.Mock).mock.calls.some((c: unknown[]) => String(c[1]).includes('you can now pay your membership fee'))).toBe(true);
     });
 
     // ── Board force-approve ──────────────────────────────────────────────────

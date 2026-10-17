@@ -336,10 +336,10 @@ describe('income reads', () => {
 
     it('incomeOrderLines reads live lines in order and names the variant id', async () => {
         db.shopOrderLine.findMany.mockResolvedValue([
-            { orderGid: 'g1', variantLegacyId: '111', title: 'Dues', sku: null, quantity: 1, priceCents: 5000, discountCents: 0 },
+            { orderGid: 'g1', variantLegacyId: '111', title: 'Membership Fee', sku: null, quantity: 1, priceCents: 5000, discountCents: 0 },
         ]);
         expect(await freshClient().incomeOrderLines(['g1'])).toEqual([
-            { orderGid: 'g1', variantId: '111', title: 'Dues', sku: null, quantity: 1, priceCents: 5000, discountCents: 0 },
+            { orderGid: 'g1', variantId: '111', title: 'Membership Fee', sku: null, quantity: 1, priceCents: 5000, discountCents: 0 },
         ]);
         const args = db.shopOrderLine.findMany.mock.calls[0][0];
         expect(args.where).toEqual({ orderGid: { in: ['g1'] }, removed: false });

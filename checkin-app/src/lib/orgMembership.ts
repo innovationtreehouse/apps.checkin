@@ -1,7 +1,7 @@
 import type { OrgMembershipStatus, Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { membershipYearCycle, coveredThrough } from "@/lib/membership/renewal";
-import { duesSettledAwaitingBg, settledThisCycleWhere } from "@/lib/membership/lifecycle";
+import { membershipFeeSettledAwaitingBg, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 
 /**
  * Canonical "is this person an active Treehouse Member?" read model.
@@ -42,16 +42,16 @@ export function personRecordIsActiveOrgMember(p: {
 
 /**
  * Non-ACTIVE household statuses whose paid, uncleared application reads as
- * dues-settled. A returning REVOKED family that has paid is in the same position as
- * a new one. DENIED is never dues-settled; a status not listed here is excluded.
+ * fee-settled. A returning REVOKED family that has paid is in the same position as
+ * a new one. DENIED is never fee-settled; a status not listed here is excluded.
  */
 const PAID_PENDING_HOUSEHOLD_STATUSES: OrgMembershipStatus[] = ["NONE", "REVOKED"];
 
 /**
- * PROGRAM ACCESS — "has this household settled its dues?", deliberately WIDER
+ * PROGRAM ACCESS — "has this household settled its membership fee?", deliberately WIDER
  * than {@link ACTIVE_ORG_MEMBER_PERSON_WHERE}: it also matches a household whose
  * application is paid and waiting on background clearance
- * ({@link duesSettledAwaitingBg}). Such a household has paid in full and is
+ * ({@link membershipFeeSettledAwaitingBg}). Such a household has paid in full and is
  * waiting on the board, so for programs it gets the member rate and sees
  * members-only programs, rather than being held at the non-member tier for the
  * review's duration (#1397).
@@ -64,26 +64,26 @@ const PAID_PENDING_HOUSEHOLD_STATUSES: OrgMembershipStatus[] = ["NONE", "REVOKED
  *
  * Only NONE and REVOKED households' paid applications count ({@link PAID_PENDING_HOUSEHOLD_STATUSES}).
  */
-export const DUES_SETTLED_PERSON_WHERE: Prisma.PersonWhereInput = {
+export const MEMBERSHIP_FEE_SETTLED_PERSON_WHERE: Prisma.PersonWhereInput = {
     household: {
         orgMembership: {
             OR: [
                 { status: "ACTIVE" },
-                { status: { in: PAID_PENDING_HOUSEHOLD_STATUSES }, processes: { some: duesSettledAwaitingBg.where } },
+                { status: { in: PAID_PENDING_HOUSEHOLD_STATUSES }, processes: { some: membershipFeeSettledAwaitingBg.where } },
             ],
         },
     },
 };
 
 /**
- * Does this Person's household count as dues-settled for programs? See
- * {@link DUES_SETTLED_PERSON_WHERE} for why this isn't the same question as
+ * Does this Person's household count as fee-settled for programs? See
+ * {@link MEMBERSHIP_FEE_SETTLED_PERSON_WHERE} for why this isn't the same question as
  * {@link isActiveOrgMember}.
  */
-export async function isDuesSettled(personId: number): Promise<boolean> {
+export async function isMembershipFeeSettled(personId: number): Promise<boolean> {
     if (!Number.isInteger(personId)) return false;
     const match = await prisma.person.findFirst({
-        where: { AND: [{ id: personId }, DUES_SETTLED_PERSON_WHERE] },
+        where: { AND: [{ id: personId }, MEMBERSHIP_FEE_SETTLED_PERSON_WHERE] },
         select: { id: true },
     });
     return match !== null;
@@ -104,18 +104,18 @@ export function orgMembershipStatusBlocksLogin(
 }
 
 /**
- * How far a household's dues currently cover, as a boundary date — or null when
- * no horizon can be computed (dues not settled, or the board hasn't set
+ * How far a household's membership fee currently covers, as a boundary date — or null when
+ * no horizon can be computed (membership fee not settled, or the board hasn't set
  * {@link BoardSettings.orgMembershipYearBoundary}). A membership always runs
  * boundary-to-boundary. A household settled for the live membership year
  * ({@link settledThisCycleWhere} — a paid INITIAL or RENEWAL stamped since the
  * year's renewal window opened) is covered to the boundary that closes the year;
  * one that did not settle is covered only to the boundary that opened it, so off
  * season it reads as lapsed. Coverage is what was bought: a membership with no
- * dues-paid process (a bare manual grant, an import) has bought nothing the app
+ * fee-paid process (a bare manual grant, an import) has bought nothing the app
  * can see. Same rule households-ops renders as valid-until.
  *
- * "Dues settled" here is {@link DUES_SETTLED_PERSON_WHERE}'s rule, so a paid
+ * "Fee-settled" here is {@link MEMBERSHIP_FEE_SETTLED_PERSON_WHERE}'s rule, so a paid
  * application still awaiting background clearance gets the same horizon. That
  * doesn't widen {@link isActiveOrgMemberThrough}, which gates on ACTIVE before
  * ever asking for a horizon.
@@ -128,7 +128,7 @@ export async function membershipValidThrough(householdId: number, now = new Date
                 select: {
                     id: true,
                     status: true,
-                    processes: { where: duesSettledAwaitingBg.where, select: { id: true }, take: 1 },
+                    processes: { where: membershipFeeSettledAwaitingBg.where, select: { id: true }, take: 1 },
                 },
             },
         },
@@ -157,7 +157,7 @@ export async function membershipValidThrough(householdId: number, now = new Date
  * means the program has no dates to compare against, so status-only behavior
  * applies. When a horizon CAN'T be computed (no boundary configured) coverage
  * passes — preserves current behavior rather than penalizing every member for a
- * board settings gap. Callers gate on membership/dues status FIRST; this only
+ * board settings gap. Callers gate on membership or fee status FIRST; this only
  * answers the duration half.
  */
 async function coversThrough(personId: number, through: Date | null): Promise<boolean> {
@@ -178,14 +178,14 @@ export async function isActiveOrgMemberThrough(personId: number, through: Date |
 }
 
 /**
- * Are this Person's dues settled through a program running to `through`? Same
+ * Is this Person's membership fee settled through a program running to `through`? Same
  * duration rule as {@link isActiveOrgMemberThrough}, over the wider
- * {@link DUES_SETTLED_PERSON_WHERE} population. This is the member-PRICING
- * question; the members-only visibility gate is status-only ({@link isDuesSettled}),
+ * {@link MEMBERSHIP_FEE_SETTLED_PERSON_WHERE} population. This is the member-PRICING
+ * question; the members-only visibility gate is status-only ({@link isMembershipFeeSettled}),
  * matching what it replaced.
  */
-export async function isDuesSettledThrough(personId: number, through: Date | null): Promise<boolean> {
-    return (await isDuesSettled(personId)) && coversThrough(personId, through);
+export async function isMembershipFeeSettledThrough(personId: number, through: Date | null): Promise<boolean> {
+    return (await isMembershipFeeSettled(personId)) && coversThrough(personId, through);
 }
 
 /**

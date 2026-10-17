@@ -96,7 +96,7 @@ describe('Membership settings + volunteer designations API', () => {
     });
 
 
-    it('rejects negative dues and keeps the previous value', async () => {
+    it('rejects a negative membership fee and keeps the previous value', async () => {
         asBoard(boardId);
         // Establish a known good value.
         const seed = await SETTINGS_PUT(jsonReq('PUT', { standardMembershipFeeCents: 12000 }));

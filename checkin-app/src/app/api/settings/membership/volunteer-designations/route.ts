@@ -26,7 +26,7 @@ export const GET = handler('GET /api/settings/membership/volunteer-designations'
  * Only a person whose address is sign-in-verified counts as its holder. When one
  * such person's household has a membership, the address is never stored: only a
  * confirm naming that household sets its OrgMembership.isVolunteer (audited).
- * Otherwise the address is stored as a designation, the dues preload. Every
+ * Otherwise the address is stored as a designation, the membership fee preload. Every
  * response lists every person on file with the address, verified or not, so the
  * Board sees who else holds it.
  */
@@ -46,7 +46,7 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
         return apiError("A valid email is required", 400);
     }
 
-    // A designation discounts the household's dues, so no actor may designate
+    // A designation discounts the household's membership fee, so no actor may designate
     // themselves or anyone in their own household.
     if (await refuseSelfGrant(prisma, auth.user.id, { email }, { table: "VolunteerDesignation", attempted: { email } })) {
         return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);

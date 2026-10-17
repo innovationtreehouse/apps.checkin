@@ -1,6 +1,6 @@
 # Membership
 
-Application, background-check review, activation, dues, and renewal.
+Application, background-check review, activation, membership fee, and renewal.
 
 ---
 
@@ -104,7 +104,7 @@ Application, background-check review, activation, dues, and renewal.
   three-person committee kept as independent as possible from the original
   reviewers. — *Membership Policy, Art. VI §§VI.3–VI.4*
 
-### Dues, refunds, and plans
+### Membership fee, refunds, and plans
 
 - The board sets the cost of all memberships. The fee is a fee, not a charitable
   donation. — *Membership Policy, Art. XI*
@@ -325,9 +325,9 @@ Procedure below is built on them.
 - A household may have no membership. Facts only a membership carries are then
   absent, not zero.  [Decision — *Principle: fail closed*]
 
-### Dues
+### Membership fee
 
-- Dues have two rates, standard and volunteer household. The designation changes
+- The membership fee has two rates, standard and volunteer household. The designation changes
   what a household pays and nothing about its review.  [Decision]
 
 - A volunteer designation matches on canonical email, so address variants cannot
@@ -349,10 +349,10 @@ Procedure below is built on them.
 
 - A board member declines a membership scholarship or payment-plan request in the
   app, and the decline sends nothing: the request clears and the household returns
-  to owing its dues by the normal route. The decision is recorded; carrying it to
+  to owing its membership fee by the normal route. The decision is recorded; carrying it to
   the family is not the app's job.  [Decision — deliberate limit; *Principle: people decide about people*]
 
-- A household that has settled its dues but is still waiting on its background
+- A household that has settled its membership fee but is still waiting on its background
   check, and is not denied, is a member for program pricing and for reaching
   members-only programs, and for nothing else. Mailing audiences, outreach, the store's member list,
   people search and payment-plan eligibility all continue to ask whether the
@@ -382,7 +382,7 @@ Procedure below is built on them.
   for the membership year now in effect — by joining, renewing, or a granted
   year — is covered to the boundary that closes the year; one that did not
   settle is covered only to the boundary that opened it, and reads as lapsed
-  from that day. A membership with no dues recorded in the app has bought
+  from that day. A membership with no membership fee recorded in the app has bought
   nothing it can see. Lapsing changes what the membership covers and nothing
   else: status does not move, and only a person revokes.  [Decision — *Policy: Membership Policy, Art. III §III.1; Art. XI*; *Principle: people decide about people*]
 

@@ -133,7 +133,7 @@ export type LedProgram = {
 const MEMBERSHIP_TODO_LABEL: Record<string, string> = {
     INTAKE: "Finish your membership application",
     PENDING_EXTERNAL_ACTION: "Sign your membership contract and background-check consent",
-    PENDING_PAYMENT: "Pay your membership dues",
+    PENDING_PAYMENT: "Pay your membership fee",
     PENDING_RENEWAL: "Confirm your membership renewal",
 };
 
@@ -443,7 +443,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
                   where: { status: "PENDING", isPaymentPlanRequested: true, inventoryHeldAt: { not: null }, paymentPlanDeniedAt: null, person: LIVE_PERSON },
               })
             : 0,
-        // Households awaiting board approval of a membership-dues payment plan.
+        // Households awaiting board approval of a membership-fee payment plan.
         seesFinance ? prisma.orgMembershipProcess.count({ where: { status: "PENDING_PAYMENT", isPaymentPlanRequested: true } }) : 0,
         prisma.trustedAdultReview.count({
             where: { status: "PENDING_BOARD_REVIEW" },

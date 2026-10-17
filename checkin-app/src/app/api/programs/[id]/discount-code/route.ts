@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
-import { isDuesSettled, isDuesSettledThrough, programCoverageDate } from "@/lib/orgMembership";
+import { isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { mintMemberDiscountCode } from "@/lib/shopify";
 import { checkoutVariantId } from "@/lib/programs/variants";
 import { fromWhere } from "@/lib/programs/enrollmentState";
@@ -51,15 +51,15 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         return NextResponse.json({ code: null });
     }
 
-    // Dues settled, not "is a member": a household that has paid and is waiting on
+    // The membership fee is settled, not "is a member": a household that has paid and is waiting on
     // background clearance pays the member rate too (#1397).
-    const isMemberNow = await isDuesSettled(auth.user.id);
+    const isMemberNow = await isMembershipFeeSettled(auth.user.id);
     if (!isMemberNow) return NextResponse.json({ code: null });
 
-    // Settled dues don't necessarily cover the program's WHOLE run — a
+    // A settled membership fee doesn't necessarily cover the program's WHOLE run — a
     // not-yet-renewed household is valid only through the upcoming membership-year
     // boundary, so a program ending after that boundary must charge full price.
-    const covers = await isDuesSettledThrough(auth.user.id, programCoverageDate(program));
+    const covers = await isMembershipFeeSettledThrough(auth.user.id, programCoverageDate(program));
     if (!covers) return NextResponse.json({ code: null, reason: "membership_ends_before_program" });
 
     const amountOffCents = program.nonOrgMemberPriceCents - program.orgMemberPriceCents;

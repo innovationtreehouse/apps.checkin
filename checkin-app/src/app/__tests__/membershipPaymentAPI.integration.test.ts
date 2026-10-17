@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Integration tests for the payment phase: dues, the Shopify checkout link
+ * Integration tests for the payment phase: membership fee, the Shopify checkout link
  * (with the volunteer discount code), the orders/paid webhook -> activate(),
  * and the board certify override.
  */
@@ -147,10 +147,10 @@ describe('Membership payment API', () => {
         expect(res.amountCents).toBe(10000);
     });
 
-    // ── GET /api/membership/payment: dues + checkout are lead-only ────────────
+    // ── GET /api/membership/payment: membership fee + checkout are lead-only ────
     const paymentReq = () => new Request('http://localhost:4000/api/membership/payment') as never;
 
-    it('serves the dues amount and checkout link to a household lead', async () => {
+    it('serves the membership fee amount and checkout link to a household lead', async () => {
         asUser(gateLeadId);
         const res = await PAYMENT(paymentReq());
         expect(res.status).toBe(200);
@@ -159,7 +159,7 @@ describe('Membership payment API', () => {
         expect(body.checkoutUrl).toContain(`attributes[Membership_Process_ID]=${gateProc}`);
     });
 
-    it('refuses a non-lead household member (no dues, no checkout link)', async () => {
+    it('refuses a non-lead household member (no membership fee, no checkout link)', async () => {
         asUser(gateNonLeadId);
         const res = await PAYMENT(paymentReq());
         expect(res.status).toBe(403);

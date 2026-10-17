@@ -5,7 +5,7 @@ import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { LIVE_PERSON } from "@/lib/person/filters";
 
 /**
- * The one own-household check for grants that discount dues, clear a person, or
+ * The one own-household check for grants that discount the membership fee, clear a person, or
  * confer volunteer standing: the household volunteer flag, a volunteer designation,
  * a background-check date, a program volunteer row or its core flag, plus acting
  * on a payment problem. Every writer of one of these calls it (selfGrantGuard.test.ts

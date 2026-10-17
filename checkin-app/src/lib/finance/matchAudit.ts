@@ -51,7 +51,7 @@ export interface AuditOrderRow {
     financialStatus: string | null;
     totalCents: number;
     /** Order-level coupon codes (mirror shop_order.discount_codes, #1048). [] when un-couponed
-     *  or pre-#1048. Shown on UNCLAIMED_PAID rows only — a coupon can explain a sub-dues total the
+     *  or pre-#1048. Shown on UNCLAIMED_PAID rows only — a coupon can explain a sub-fee total the
      *  auditor is eyeballing. Absence is NOT "no coupon" (see MirrorOrder.discountCodes). */
     discountCodes: string[];
     /** Which membership/program the variant match points at, e.g. "membership", "program: Robotics". */

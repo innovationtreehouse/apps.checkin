@@ -78,7 +78,7 @@ export const GET = withAuth(
                 const detailCycle = settings?.orgMembershipYearBoundary
                     ? membershipYearCycle(settings.orgMembershipYearBoundary, new Date())
                     : null;
-                // "Settled for the live year" = ANY dues-paid process (settledThisCycleWhere)
+                // "Settled for the live year" = ANY fee-paid process (settledThisCycleWhere)
                 // stamped since the year's window opened — a family that JOINS in-window
                 // buys the coming year exactly as a renewer does, so INITIAL counts too.
                 // ARCHIVED never completed payment and does not extend the horizon (the
@@ -170,7 +170,7 @@ export const GET = withAuth(
                     },
                     // ONE probe serves both flags computed below, from the shared lifecycle
                     // definitions: grantableRenewalWhere (payable renewal → grantability)
-                    // and settledThisCycleWhere (ANY dues-paid process — INITIAL or
+                    // and settledThisCycleWhere (ANY fee-paid process — INITIAL or
                     // RENEWAL — stamped since the live year's window opened → settled for
                     // it, the same test membershipValidThrough uses; ARCHIVED never paid,
                     // so it is the sweep's business only). No boundary ⇒ "never" (matches
@@ -211,7 +211,7 @@ export const GET = withAuth(
             const withGrantable = households.map((h) => {
                 // Split the single OR probe by status: PENDING_PAYMENT = grantable renewal
                 // (grantableRenewalWhere — kind RENEWAL, so an in-flight INITIAL at
-                // payment never reads as grantable); any other row is a dues-paid process
+                // payment never reads as grantable); any other row is a fee-paid process
                 // of EITHER kind = the live year is settled (settledThisCycleWhere:
                 // finished renewal, admin override, or a family that joined inside
                 // the window).

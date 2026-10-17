@@ -64,7 +64,7 @@ describe("refuseSelfGrant", () => {
 });
 
 /**
- * Every source file that writes a dues-discount, background-check or program-volunteer grant must call
+ * Every source file that writes a fee-discount, background-check or program-volunteer grant must call
  * refuseSelfGrant, so a new writer cannot skip the own-household rule unnoticed.
  */
 describe("self-grant writers", () => {
