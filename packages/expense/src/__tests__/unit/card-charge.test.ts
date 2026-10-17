@@ -5,44 +5,52 @@ import {
   isEveryday,
   needsBoardAuthorization,
   signoffRefusal,
+  withinEverydayLimits,
+  type EverydayAmounts,
   type EverydayFacts,
   type SignoffFacts,
 } from "../../lib/signoff";
 import { DEFAULT_EXPENSE_SETTINGS } from "../../services/settingsService";
 
 const limits = DEFAULT_EXPENSE_SETTINGS;
-const plain: EverydayFacts = { receiptTotalCents: 10_000, unitPricesCents: [10_000], singleSource: false, financeNotEveryday: false };
+const amounts: EverydayAmounts = { receiptTotalCents: 10_000, unitPricesCents: [10_000] };
+const plain: EverydayFacts = { withinLimits: true, singleSource: false, financeNotEveryday: false };
 
 describe("Everyday", () => {
   it("defaults to under $500 in total and no item over $250", () => {
     expect(limits).toMatchObject({ everydayTotalLimitCents: 50_000, everydayItemLimitCents: 25_000 });
   });
 
-  it("a total of $499.99 is Everyday; $500.00 is not", () => {
-    expect(isEveryday({ ...plain, receiptTotalCents: 49_999 }, limits)).toBe(true);
-    expect(isEveryday({ ...plain, receiptTotalCents: 50_000 }, limits)).toBe(false);
+  it("a total of $499.99 is within the limits; $500.00 is not", () => {
+    expect(withinEverydayLimits({ ...amounts, receiptTotalCents: 49_999 }, limits)).toBe(true);
+    expect(withinEverydayLimits({ ...amounts, receiptTotalCents: 50_000 }, limits)).toBe(false);
   });
 
-  it("an item at $250.00 is Everyday; one at $250.01 is not", () => {
-    expect(isEveryday({ ...plain, unitPricesCents: [100, 25_000] }, limits)).toBe(true);
-    expect(isEveryday({ ...plain, unitPricesCents: [100, 25_001] }, limits)).toBe(false);
+  it("an item at $250.00 is within the limits; one at $250.01 is not", () => {
+    expect(withinEverydayLimits({ ...amounts, unitPricesCents: [100, 25_000] }, limits)).toBe(true);
+    expect(withinEverydayLimits({ ...amounts, unitPricesCents: [100, 25_001] }, limits)).toBe(false);
   });
 
-  it("the item limit reads unit prices: a 3 × $100 line under $500 is Everyday", () => {
-    expect(isEveryday({ ...plain, receiptTotalCents: 30_000, unitPricesCents: [10_000] }, limits)).toBe(true);
+  it("the item limit reads unit prices: a 3 × $100 line under $500 is within the limits", () => {
+    expect(withinEverydayLimits({ receiptTotalCents: 30_000, unitPricesCents: [10_000] }, limits)).toBe(true);
   });
 
   it("follows the Board's limits, not the defaults", () => {
     const tighter = { everydayTotalLimitCents: 20_000, everydayItemLimitCents: 5_000 };
-    expect(isEveryday(plain, tighter)).toBe(false);
+    expect(withinEverydayLimits(amounts, tighter)).toBe(false);
+  });
+
+  it("within the limits and unmarked is Everyday; outside them is not", () => {
+    expect(isEveryday(plain)).toBe(true);
+    expect(isEveryday({ ...plain, withinLimits: false })).toBe(false);
   });
 
   it("a single-source purchase is never Everyday", () => {
-    expect(isEveryday({ ...plain, singleSource: true }, limits)).toBe(false);
+    expect(isEveryday({ ...plain, singleSource: true })).toBe(false);
   });
 
   it("FINANCE's not-Everyday mark overrides the limits", () => {
-    expect(isEveryday({ ...plain, financeNotEveryday: true }, limits)).toBe(false);
+    expect(isEveryday({ ...plain, financeNotEveryday: true })).toBe(false);
   });
 });
 

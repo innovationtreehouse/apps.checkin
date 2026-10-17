@@ -7,6 +7,7 @@ import { logError } from "../lib/logger";
 import type { ExpenseIntake } from "../contract";
 import { initFinancialFlow, checkApprovalAutoTransition } from "../lib/financial-flow";
 import { FLAG_AUDIENCE, detectIntakeFlags } from "../lib/flags";
+import { withinEverydayLimits } from "../lib/signoff";
 import { SYSTEM_ACTOR } from "../lib/system-actor";
 import { createProvisionalItemMapRepository } from "../repositories/provisionalItemMap";
 import { createProvisionalResolutionRepository } from "../repositories/provisionalResolution";
@@ -104,6 +105,7 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
   const unresolvedDetail =
     receipt.reimburseePersonId != null && reimburseePersonId === null ? `receipt named Person ${receipt.reimburseePersonId}, not found` : null;
   await db.$transaction(async (tx) => {
+    const settings = await readExpenseSettings(tx, receipt.orgId);
     await tx.expense.create({
       data: {
         id: receipt.receiptId,
@@ -124,6 +126,12 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
         submittedAt: new Date(receipt.submittedAt),
         state: "pending",
         backfill: receipt.backfill,
+        everydayWithinLimits: withinEverydayLimits(
+          { receiptTotalCents: receipt.receiptTotalCents, unitPricesCents: receipt.lineItems.map((li) => li.unitPriceCents) },
+          settings,
+        ),
+        everydayTotalLimitCents: settings.everydayTotalLimitCents,
+        everydayItemLimitCents: settings.everydayItemLimitCents,
       },
     });
 
@@ -145,7 +153,6 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
       });
     }
 
-    const settings = await readExpenseSettings(tx, receipt.orgId);
     await tx.expenseFlag.createMany({
       data: detectIntakeFlags({ ...receipt, reimburseePersonId }, settings).map((kind) => ({
         orgId: receipt.orgId,
