@@ -3,7 +3,7 @@
 // `visible` predicate mirrors the route's real gate (NAV_ITEMS[].visible +
 // the section layout's useRequireRole). Over-listing here never grants access:
 // every target re-enforces its own gate on arrival, so a drifted predicate at
-// worst shows a link that 403s. See docs/designs/INDEX_PAGE_SCOPING.md.
+// worst shows a link that 403s. See docs/rules/principles.md, "Reachability is not permission".
 
 import type { TodoCounts } from '@/lib/nav/todoCounts';
 import type { NavRole } from '@/types/auth';
