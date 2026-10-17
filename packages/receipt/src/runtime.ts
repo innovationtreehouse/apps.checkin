@@ -5,6 +5,7 @@ import type {
   ReceiptConfig,
   MailboxReader,
   ReceiptHouseholds,
+  ReceiptAlerts,
   ReceiptPeople,
   ReceiptPrincipal,
   ReceiptSink,
@@ -52,6 +53,13 @@ export const inertPeople: ReceiptPeople = {
   submitterByEmail: async () => null,
 };
 
+/** Logs the alert: nothing reaches finance until the host binds alerts. */
+export const inertAlerts: ReceiptAlerts = {
+  mailHoldCeilingReached: async (event) => {
+    console.warn("[receipt] mail hold ceiling reached; finance alerts are not bound:", event);
+  },
+};
+
 export const inertOcr: OcrProvider = {
   extract: async () => ({ success: false, error: "OCR is not configured" }),
 };
@@ -86,6 +94,7 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" 
     households: r.households ?? inertHouseholds,
     ocr: r.ocr ?? inertOcr,
     people: r.people ?? inertPeople,
+    alerts: r.alerts ?? inertAlerts,
   };
 }
 

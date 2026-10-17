@@ -1,27 +1,40 @@
-import { beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
-import type { MailboxReader, MailMessage, MailPart } from "../../contract";
-import { MAIL_CAP, readMailbox } from "../../services/mailIntake";
+import type { MailboxReader, MailHoldCeilingEvent, MailMessage, MailPart } from "../../contract";
+import { MAX_FILE_BYTES } from "../../lib/file-type";
+import {
+  MAIL_CAP,
+  MAIL_HELD_BYTES,
+  MAIL_HELD_CAP,
+  MAIL_HELD_CEILING,
+  MAIL_TIME_BUDGET_MS,
+  readMailbox,
+} from "../../services/mailIntake";
 import { describeDb } from "../helpers/db";
-import { ALICE, clearAll, configure, okOcr, stateOf } from "../helpers/setup";
+import { ALICE, clearAll, configure, okOcr, stateOf, TEST_ORG_ID } from "../helpers/setup";
 
 const GOOGLE_PASS = "mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass (p=NONE sp=NONE) header.from=example.org";
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
 const pdf = (label: string) => `%PDF-1.4 receipt ${label}`;
 
-/** A fake Gmail mailbox: messages by id, attachments by id. */
+/** A fake Gmail mailbox: messages by id, attachments by id, and the ids of attachments downloaded. */
 function fakeMailbox() {
   const messages = new Map<string, MailMessage>();
   const attachments = new Map<string, string>();
+  const downloads: string[] = [];
   const reader: MailboxReader = {
     listRecent: async () => [...messages.keys()],
     getMessage: async (id) => messages.get(id) ?? Promise.reject(new Error(`no message ${id}`)),
-    getAttachment: async (_messageId, attachmentId) => Buffer.from(attachments.get(attachmentId) ?? ""),
+    getAttachment: async (_messageId, attachmentId) => {
+      downloads.push(attachmentId);
+      return Buffer.from(attachments.get(attachmentId) ?? "");
+    },
   };
-  return { messages, attachments, reader };
+  return { messages, attachments, downloads, reader };
 }
 
 let mail: ReturnType<typeof fakeMailbox>;
+let alerts: MailHoldCeilingEvent[];
 
 const attachment = (id: string, content: string, over: Partial<MailPart> = {}): MailPart => {
   mail.attachments.set(id, content);
@@ -50,9 +63,11 @@ function send(
 beforeEach(async () => {
   await clearAll();
   mail = fakeMailbox();
+  alerts = [];
   configure({
     ocr: okOcr(),
     mailbox: mail.reader,
+    alerts: { mailHoldCeilingReached: async (event) => void alerts.push(event) },
     people: { submitterByEmail: async (address) => (address === "alice@example.org" ? ALICE : null) },
   });
 });
@@ -135,6 +150,72 @@ describeDb("mail intake", () => {
     for (let i = 0; i < MAIL_CAP; i++) send(`later${i}`, { from: [`other${i}@example.org`] });
     expect(await readMailbox()).toMatchObject({ receipts: 1, held: 2 * MAIL_CAP });
     expect((await db.receipt.findFirstOrThrow()).uploadedByUserId).toBe(ALICE.id);
+  });
+});
+
+describeDb("mail intake flood limits", () => {
+  const stranger = (id: string, over: Partial<MailPart> = {}) =>
+    send(id, { from: [`${id}@example.org`], parts: [attachment(`att-${id}`, pdf(id), over)] });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("checks the ledger before downloading a message's files", async () => {
+    send("m1");
+    await readMailbox();
+    mail.downloads.length = 0;
+    expect(await readMailbox()).toMatchObject({ receipts: 0, skipped: 1 });
+    expect(mail.downloads).toEqual([]);
+  });
+
+  it("holds at most MAIL_HELD_CAP files per run, counts the rest, and never downloads them", async () => {
+    for (let i = 0; i < MAIL_HELD_CAP + 2; i++) stranger(`s${i}`);
+    send("member");
+    expect(await readMailbox()).toMatchObject({ receipts: 1, held: MAIL_HELD_CAP, deferred: 2 });
+    expect(mail.downloads).toHaveLength(MAIL_HELD_CAP + 1);
+    expect(await readMailbox()).toMatchObject({ held: 2, deferred: 0 });
+  });
+
+  it("stops holding at the per-run byte budget", async () => {
+    const fit = Math.floor(MAIL_HELD_BYTES / MAX_FILE_BYTES);
+    for (let i = 0; i <= fit; i++) stranger(`s${i}`, { body: { attachmentId: `att-s${i}`, size: MAX_FILE_BYTES } });
+    expect(await readMailbox()).toMatchObject({ held: fit, deferred: 1 });
+  });
+
+  it("past the held ceiling, holds nothing new, alerts finance, and still reads receipts", async () => {
+    await db.receiptMailItem.createMany({
+      data: Array.from({ length: MAIL_HELD_CEILING }, (_, i) => ({
+        orgId: TEST_ORG_ID,
+        gmailMessageId: `old${i}`,
+        attachmentHash: `h${i}`,
+        receivedAt: new Date(),
+        senderAddress: "old@example.org",
+      })),
+    });
+    stranger("s1");
+    send("member");
+    expect(await readMailbox()).toMatchObject({ receipts: 1, held: 0, overCeiling: 1 });
+    expect(mail.downloads).toEqual(["att-member"]);
+    expect(alerts).toEqual([{ orgId: TEST_ORG_ID, unresolved: MAIL_HELD_CEILING, refused: 1 }]);
+  });
+
+  it("refuses an attachment over the upload size limit without downloading it", async () => {
+    send("m1", { parts: [attachment("big", pdf("big"), { body: { attachmentId: "big", size: MAX_FILE_BYTES + 1 } })] });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 0, rejected: 1 });
+    expect(mail.downloads).toEqual([]);
+  });
+
+  it("stops at the time budget and leaves the rest for the next run", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    send("m1");
+    send("m2");
+    const { getMessage } = mail.reader;
+    mail.reader.getMessage = async (id) => {
+      vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS);
+      return getMessage(id);
+    };
+    expect(await readMailbox()).toMatchObject({ messages: 1, receipts: 1, unread: 1 });
   });
 });
 

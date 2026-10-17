@@ -11,12 +11,36 @@ import { ServiceError } from "./serviceError";
 // ponytail: no stored cursor; the ledger makes re-reads free. Ceiling is a cron outage longer than the
 // window, or more than MAIL_WINDOW_DAYS × MAIL_CAP mailed receipts inside one window; widen either then.
 export const MAIL_WINDOW_DAYS = 3;
-/** New receipts (OCR calls) per run, oldest mail first; the rest wait for the next run, inside the window. Held items are not capped. */
+/** New receipts (OCR calls) per run, oldest mail first; the rest wait for the next run, inside the window. Held items do not count. */
 export const MAIL_CAP = 10;
+/** Files held for finance per run; the rest wait for the next run. */
+export const MAIL_HELD_CAP = 50;
+/** Bytes held for finance per run, checked before each download. */
+export const MAIL_HELD_BYTES = 50 * 1024 * 1024;
+/** Held items awaiting finance past which nothing more is held, and finance is alerted. */
+export const MAIL_HELD_CEILING = 500;
+// ponytail: every listed message is fetched each run before the ledger is checked, so a flood larger than this
+// budget's worth of fetches can still push a later receipt past the window; record unheld message ids then.
+/** Wall time per run; messages not reached wait for the next run. */
+export const MAIL_TIME_BUDGET_MS = 2 * 60_000;
 
 export type MailIntakeResult =
   | { status: "unbound" }
-  | { status: "ok"; messages: number; receipts: number; held: number; skipped: number; rejected: number; failed: number };
+  | {
+      status: "ok";
+      messages: number;
+      receipts: number;
+      held: number;
+      skipped: number;
+      rejected: number;
+      failed: number;
+      /** Files put off by a per-run cap or byte budget; read again next run. */
+      deferred: number;
+      /** Files not held because the held ceiling was reached. */
+      overCeiling: number;
+      /** Messages not reached, past the time budget or with every cap spent; read again next run. */
+      unread: number;
+    };
 
 type Headers = { name: string; value: string }[];
 
@@ -192,22 +216,49 @@ const isUniqueViolation = (err: unknown) =>
 export async function readMailbox(): Promise<MailIntakeResult> {
   const reader = mailbox();
   if (!reader) return { status: "unbound" };
+  const started = Date.now();
   const orgId = (await getOrg()).id;
-  const counts = { messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0 };
+  const unresolved = await db.receiptMailItem.count({ where: { orgId, status: "held" } });
+  const counts = { messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overCeiling: 0, unread: 0 };
+  let heldBytes = 0;
   const capped = () => counts.receipts >= MAIL_CAP;
+  const holdsSpent = () => counts.held >= MAIL_HELD_CAP || unresolved + counts.held >= MAIL_HELD_CEILING;
+
+  /** Whether a file of this size may be held now; counts it as deferred or over the ceiling when not. */
+  function roomToHold(size: number): boolean {
+    if (unresolved + counts.held >= MAIL_HELD_CEILING) {
+      counts.overCeiling++;
+      return false;
+    }
+    if (counts.held >= MAIL_HELD_CAP || heldBytes + size > MAIL_HELD_BYTES) {
+      counts.deferred++;
+      return false;
+    }
+    return true;
+  }
 
   async function readMessage(msg: MailMessage, reader: MailboxReader): Promise<void> {
+    const files = mailFiles(msg, reader);
+    // Every file already in the ledger: nothing to download.
+    if (files.length > 0 && (await db.receiptMailItem.count({ where: { gmailMessageId: msg.id } })) >= files.length) {
+      counts.skipped += files.length;
+      return;
+    }
     const headers = msg.payload.headers;
     const address = fromAddress(headers);
     const sender: ReceiptPrincipal | null =
       address && dmarcAligned(headers, address) ? await ports().people.submitterByEmail(address) : null;
 
-    for (const file of mailFiles(msg, reader)) {
-      if (capped()) return;
+    for (const file of files) {
+      if (sender && capped()) {
+        counts.deferred++;
+        continue;
+      }
       if (file.size > MAX_FILE_BYTES) {
         counts.rejected++;
         continue;
       }
+      if (!sender && !roomToHold(file.size)) continue;
       const bytes = await file.read();
       const check = checkReceiptFile(bytes, file.declaredType);
       if (!check.ok) {
@@ -232,9 +283,11 @@ export async function readMailbox(): Promise<MailIntakeResult> {
             // Over the sender's daily upload limit: finance assigns it instead.
             if (!(err instanceof ServiceError && err.statusCode === 429)) throw err;
           }
+          if (!roomToHold(bytes.length)) continue;
         }
         await db.receiptMailItem.create({ data: { ...item, status: "held", fileBlob: new Uint8Array(bytes), mimeType: check.mimeType } });
         counts.held++;
+        heldBytes += Math.max(file.size, bytes.length);
       } catch (err) {
         // A concurrent run took this file first.
         if (!isUniqueViolation(err)) throw err;
@@ -243,14 +296,26 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     }
   }
 
-  for (const id of await reader.listRecent(MAIL_WINDOW_DAYS)) {
-    if (capped()) break;
+  const ids = await reader.listRecent(MAIL_WINDOW_DAYS);
+  for (const [i, id] of ids.entries()) {
+    if ((capped() && holdsSpent()) || Date.now() - started >= MAIL_TIME_BUDGET_MS) {
+      counts.unread = ids.length - i;
+      break;
+    }
     counts.messages++;
     try {
       await readMessage(await reader.getMessage(id), reader);
     } catch (err) {
       counts.failed++;
       console.error("[receipt] mail intake failed for one message:", err);
+    }
+  }
+
+  if (counts.overCeiling > 0) {
+    try {
+      await ports().alerts.mailHoldCeilingReached({ orgId, unresolved: unresolved + counts.held, refused: counts.overCeiling });
+    } catch (err) {
+      console.error("[receipt] mail hold ceiling alert failed:", err);
     }
   }
   return { status: "ok", ...counts };
