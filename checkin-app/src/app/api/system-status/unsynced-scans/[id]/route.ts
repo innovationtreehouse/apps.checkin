@@ -4,7 +4,7 @@ import { appendPresenceEvent, classifyPresenceEvent, PresenceClass } from "@/lib
 import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
 import { withinMaxDuration } from "@/lib/visitTimes";
 import { lockFacility } from "@/lib/facilityLock";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { resolveMergedPerson } from "@/lib/person/mergeChain";
 import { KEYHOLDER_IN_BUILDING, LIVE_VISIT } from "@/lib/visit/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
@@ -84,13 +84,14 @@ export const POST = handler<{ id: string }>(
             throw badRequest("A visit cannot be longer than 24 hours.");
         }
 
-        // A merge racing the review leaves a tombstone; one hop reaches the
-        // keeper (the archive design guarantees chains never exceed it).
-        const scanned = await prisma.person.findUnique({ where: { id: row.personId } });
-        if (!scanned) throw notFound("No scan awaiting review with that id.");
-        const person = scanned.mergedIntoId
-            ? ((await prisma.person.findFirst({ where: { id: scanned.mergedIntoId, ...LIVE_PERSON } })) ?? scanned)
-            : scanned;
+        // A merge racing the review leaves the scan naming a merged-away id;
+        // the visit is recorded on the survivor, never on the tombstone.
+        const resolved = await resolveMergedPerson(row.personId);
+        if (resolved.kind === "unknown") throw notFound("No scan awaiting review with that id.");
+        if (resolved.kind === "broken") {
+            throw new ApiResponseError(409, "This scan's person was merged into a record that can't be found — dismiss it once you have looked.");
+        }
+        const person = resolved.person;
 
         const associatedEventId = await findAssociatedEventAt(person.id, row.timestamp);
 
