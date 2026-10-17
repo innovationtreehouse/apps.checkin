@@ -25,9 +25,9 @@ export function presentLabels(visits: { id: number; person: Pick<Person, "name" 
     return visits.flatMap(v => labels.get(v.id) || []);
 }
 
-/** Seconds the kiosk counts down after showing the force-close warning. The
- *  countdown is display; the confirm is the token, which has no elapsed-time
- *  gate — see the confirm check in processCheckout. */
+/** Seconds a close offer counts down, at the kiosk and in the web dialog. The
+ *  kiosk times its same-badge-again window itself; a web confirm is bounded by
+ *  {@link WEB_CLOSE_CHOICE_TTL_MS}, not by this. */
 export const FORCE_CLOSE_CONFIRM_SECONDS = 15;
 
 /** How long a web close-choice dialog's answer is accepted; an older one was
