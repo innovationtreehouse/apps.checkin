@@ -8,13 +8,18 @@
  * X9 and X13 are bound by their callers (workflow-mapping and receipt). The
  * QuickBooks drain books through checkin's one guarded client, bound only where
  * QBO_REALM_ID and QBO_DONATION_BANK_ACCOUNT_ID are set; unbound, a run answers
- * "unbound". Deposits income holds are kept out of its matching. Boot stays DB-free.
+ * "unbound". Deposits income holds are kept out of its matching. The in-kind
+ * accept step reads roles, households and bucket approvers through the expense
+ * library's sign-off directory, and its large-value warning through the expense
+ * library's capital-equipment amount. Boot stays DB-free.
  */
 import { configureBulkDonation } from "@checkin/bulk-donation";
-import type { DonationQbPosting, OwnerInfo } from "@checkin/bulk-donation";
+import type { DonationQbPosting, InKindDirectory, OwnerInfo } from "@checkin/bulk-donation";
 import { getOrg, getPrincipal } from "@/lib/catalog/configure";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createLocalInventoryApply } from "@/lib/bulkDonation/inventoryApply";
+import { householdSharesSurname } from "@/lib/bulkDonation/donorSelfGuard";
+import { signoff } from "@/lib/expense/configure";
 import { config } from "@/lib/config";
 
 async function listOwners(): Promise<OwnerInfo[]> {
@@ -40,6 +45,21 @@ async function incomeClaimedDepositIds(orgId: string): Promise<string[]> {
   return (await import("@checkin/income")).incomeClaimedDepositIds(orgId);
 }
 
+const inKind: InKindDirectory = {
+  financeHolders: signoff.financeHolders,
+  boardMembers: signoff.boardMembers,
+  householdOf: async (personIds) => [...new Set([...personIds, ...(await signoff.householdOf(personIds))])],
+  async householdSharesSurname(personId, lastName) {
+    const { default: prisma } = await import("@/lib/prisma");
+    return householdSharesSurname(prisma, personId, lastName);
+  },
+  bucketsApprovedBy: signoff.bucketsApprovedBy,
+  async largeValueCents() {
+    const { getExpenseSettings } = await import("@checkin/expense");
+    return (await getExpenseSettings((await getOrg()).id)).capitalEquipmentUnitCents;
+  },
+};
+
 export function configureRuntime(): void {
   configureBulkDonation({
     auth: { getPrincipal },
@@ -49,5 +69,6 @@ export function configureRuntime(): void {
     inventory: createLocalInventoryApply(getOrg),
     qb: qbPosting(),
     otherLaneClaims: { claimedDepositIds: incomeClaimedDepositIds },
+    inKind,
   });
 }

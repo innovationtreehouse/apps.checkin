@@ -3,6 +3,7 @@ import type {
   BulkDonationPrincipal,
   CatalogLookup,
   DonationQbPosting,
+  InKindDirectory,
   InventoryApply,
   OrgIdentity,
   OwnerDirectory,
@@ -22,6 +23,16 @@ const INERT_INVENTORY: InventoryApply = {
   apply: async () => {
     throw new NotWiredError("InventoryApply (X11)");
   },
+};
+
+/** Nobody holds a role or is conflicted, so nobody can decide a gift. */
+const INERT_IN_KIND: InKindDirectory = {
+  financeHolders: async () => [],
+  boardMembers: async () => [],
+  householdOf: async (ids) => ids,
+  householdSharesSurname: async () => false,
+  bucketsApprovedBy: async () => [],
+  largeValueCents: async () => 50_000,
 };
 
 // Stored on globalThis so the boot chunk that configures and the route chunks that read see
@@ -62,6 +73,10 @@ export function getOwnerDirectory(): OwnerDirectory {
 
 export function getCatalogLookup(): CatalogLookup {
   return requireRuntime().catalog ?? INERT_CATALOG;
+}
+
+export function getInKindDirectory(): InKindDirectory {
+  return requireRuntime().inKind ?? INERT_IN_KIND;
 }
 
 export function getInventoryApply(): InventoryApply {

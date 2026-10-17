@@ -11,7 +11,8 @@ import { getServerSession } from 'next-auth/next';
 import { configureBulkDonation, manualInKindService } from '@checkin/bulk-donation';
 import { GET, POST } from '../manual/route';
 import { POST as LOAD } from '../manual/[id]/load-inventory/route';
-import { OWN_HOUSEHOLD_DONOR_MESSAGE, surname } from '@/lib/bulkDonation/donorSelfGuard';
+import { OWN_HOUSEHOLD_DONOR_MESSAGE, householdSharesSurname, surname } from '@/lib/bulkDonation/donorSelfGuard';
+import prisma from '@/lib/prisma';
 
 type PersonRow = { id: number; householdId: number; name: string; mergedIntoId?: number };
 const people: PersonRow[] = [
@@ -63,7 +64,7 @@ const post = (body: unknown) =>
 const valid = (lastName: string) => ({
     donor: { firstName: 'Pat', lastName, companyName: null },
     donationDate: '2026-10-01',
-    lines: [{ gtin13: '0000000000017', quantity: 2, valueCents: 1500 }],
+    lines: [{ gtin13: '0000000000017', quantity: 2, suggestedValueCents: 1500 }],
 });
 
 const donationRow = {
@@ -76,7 +77,7 @@ const donationRow = {
     donorFirstName: 'Pat',
     donorLastName: 'Rivera',
     donorCompanyName: 'Rivera Tools',
-    lines: [{ id: 11, gtin13: '0000000000017', quantity: 2, valueCents: 1500 }],
+    lines: [{ id: 11, gtin13: '0000000000017', description: 'Drill', quantity: 2, valueCents: null, suggestedValueCents: 1500 }],
 };
 
 let list: jest.SpyInstance;
@@ -118,7 +119,7 @@ describe('GET /api/donations/in-kind/manual', () => {
         expect(row).not.toHaveProperty('donorFirstName');
         expect(row).not.toHaveProperty('donorLastName');
         expect(row).not.toHaveProperty('donorCompanyName');
-        expect(row.lines).toEqual([{ id: 11, gtin13: '0000000000017', quantity: 2, valueCents: 1500 }]);
+        expect(row.lines).toEqual([{ id: 11, gtin13: '0000000000017', description: 'Drill', quantity: 2, valueCents: null, suggestedValueCents: 1500 }]);
         expect(list.mock.calls[0][1]).toBeNull();
     });
 
@@ -234,5 +235,21 @@ describe('surname', () => {
         ['--', ''],
     ])('%s → %s', (name, expected) => {
         expect(surname(name)).toBe(expected);
+    });
+});
+
+describe('householdSharesSurname (the accept screen\'s surname warning)', () => {
+    it('matches anyone live in the person\'s household', async () => {
+        await expect(householdSharesSurname(prisma, 7, 'Okafor')).resolves.toBe(true);
+        await expect(householdSharesSurname(prisma, 7, 'Lee')).resolves.toBe(true);
+    });
+
+    it('does not match another household or a merged-away person', async () => {
+        await expect(householdSharesSurname(prisma, 9, 'Okafor')).resolves.toBe(false);
+        await expect(householdSharesSurname(prisma, 9, 'Varga')).resolves.toBe(false);
+    });
+
+    it('never matches a donor with no usable surname', async () => {
+        await expect(householdSharesSurname(prisma, 7, 'Jr')).resolves.toBe(false);
     });
 });

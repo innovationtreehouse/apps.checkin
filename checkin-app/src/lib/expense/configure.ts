@@ -43,7 +43,7 @@ async function roleHolders(role: PersonRoleKind): Promise<number[]> {
 }
 
 /** Approvers are derived, never stored: a program bucket's lead mentor and its program treasurers. */
-const signoff: SignoffDirectory = {
+export const signoff: SignoffDirectory = {
   async bucketApprovers(bucketId) {
     const { orgMembershipStatusBlocksLogin } = await import("@/lib/orgMembership");
     const bucket = await (await db()).budgetOwner.findUnique({

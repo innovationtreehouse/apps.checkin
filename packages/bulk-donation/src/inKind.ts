@@ -27,12 +27,21 @@ async function receiptInOrg() {
   );
 }
 
-/** X9 callee: an in-kind receipt's money side. Idempotent on `receiptId`. */
+/** X9 callee: an in-kind receipt's money side. Written once per `receiptId`; a differing replay is raised, never merged. */
 export async function ingestInKind(receipt: CompletedReceipt): Promise<void> {
   const r = (await receiptInOrg()).parse(receipt);
   await inKindService.recordMoney(r.orgId, receiptIdSchema.parse(r.receiptId), {
     receiptTotalCents: r.receiptTotalCents,
     receiptDate: r.receiptDate,
+    uploadedByUserId: r.submitterId,
+    lines: r.lineItems.map((l) => ({
+      receiptLineItemId: l.receiptLineItemId,
+      lineNumber: l.lineNumber,
+      description: l.description,
+      gtin13: l.gtin13 ?? null,
+      quantity: l.quantity,
+      valueCents: l.totalPriceCents,
+    })),
   });
 }
 

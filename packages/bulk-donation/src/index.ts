@@ -16,6 +16,8 @@ export type {
   DonationQbMatchExclusion,
   ManualInKindDonation,
   ManualInKindDonationLine,
+  InKindDonationLine,
+  InKindBooking,
 } from "./generated/prisma/client";
 export * from "./lib/account-map-lookup";
 export * from "./lib/csv-parser";
@@ -27,12 +29,22 @@ export { recordEvent, recordDonorDataRead, type EntityType, type WorkflowEventIn
 export { accountMapService } from "./services/accountMapService";
 export { commentRuleService } from "./services/commentRuleService";
 export { disbursementService } from "./services/disbursementService";
-export { inKindService, type InKindMoney } from "./services/inKindService";
+export { inKindService, type InKindMoney, type InKindMoneyLine, type SettleKind } from "./services/inKindService";
+export {
+  inKindAcceptService,
+  InKindDecisionInputSchema,
+  type InKindDecisionInput,
+  type InKindOutcome,
+  type InKindSource,
+  type WaitingOn,
+} from "./services/inKindAcceptService";
 export {
   manualInKindService,
   ManualInKindInputSchema,
   MAX_IN_KIND_LINE_QUANTITY,
   MAX_IN_KIND_LINE_VALUE_CENTS,
+  MAX_IN_KIND_LINES,
+  MAX_IN_KIND_TOTAL_CENTS,
   type ManualInKindInput,
 } from "./services/manualInKindService";
 export { getNavCounts, type DonationNavCounts } from "./services/navCountsService";

@@ -55,15 +55,15 @@ describe("Expense Ops tabs", () => {
   });
 });
 
-describe("My Programs Expense approvals tab", () => {
+describe("My Programs library tabs", () => {
   it("shows to a program lead and not to FINANCE or a plain member", () => {
-    expect(names(visibleLinks(MY_PROGRAMS, lead, released))).toEqual(["Expense approvals"]);
+    expect(names(visibleLinks(MY_PROGRAMS, lead, released))).toEqual(["Expense approvals", "In-kind gifts"]);
     expect(visibleLinks(MY_PROGRAMS, finance, released)).toEqual([]);
     expect(visibleLinks(MY_PROGRAMS, member, released)).toEqual([]);
   });
 
-  it("hides from a program lead until expense is released", () => {
-    expect(visibleLinks(MY_PROGRAMS, lead, unreleased)).toEqual([]);
+  it("hides Expense approvals from a program lead until expense is released", () => {
+    expect(names(visibleLinks(MY_PROGRAMS, lead, unreleased))).toEqual(["In-kind gifts"]);
   });
 
   it("badges with lines awaiting the viewer's sign-off", () => {

@@ -85,6 +85,23 @@ export interface OtherLaneClaims {
   claimedDepositIds(orgId: string): Promise<string[]>;
 }
 
+/**
+ * Who may decide an in-kind gift, read from checkin's roles, programs and households. Person ids
+ * are checkin Person.id.
+ */
+export interface InKindDirectory {
+  financeHolders(): Promise<number[]>;
+  boardMembers(): Promise<number[]>;
+  /** Everyone in the given people's households, the people themselves included. */
+  householdOf(personIds: number[]): Promise<number[]>;
+  /** Whether anyone in this person's household, the person included, shares the given surname. */
+  householdSharesSurname(personId: number, lastName: string): Promise<boolean>;
+  /** The buckets whose approvers (program leader and treasurers) include this person. */
+  bucketsApprovedBy(personId: number): Promise<number[]>;
+  /** The expense library's large-spend amount; a gift valued at or over it warns its decider. */
+  largeValueCents(): Promise<number>;
+}
+
 export interface BulkDonationConfig {
   auth: BulkDonationAuth;
   /** Called once per request: the host may resolve it from its own store, so never at boot. */
@@ -94,6 +111,7 @@ export interface BulkDonationConfig {
   inventory?: InventoryApply;
   qb?: DonationQbPosting;
   otherLaneClaims?: OtherLaneClaims;
+  inKind?: InKindDirectory;
 }
 
 /** The slice of a route context a factory consumes: request + path params. */

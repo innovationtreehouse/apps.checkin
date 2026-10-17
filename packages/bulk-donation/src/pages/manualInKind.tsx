@@ -7,7 +7,7 @@ import { act, api, cents, errorMessage, paged, useLoad, when } from "../componen
 import LoadError from "../components/LoadError";
 import Pager from "../components/Pager";
 
-interface LineRow { id: number; gtin13: string; quantity: number; valueCents: number }
+interface LineRow { id: number; gtin13: string; description: string | null; quantity: number; valueCents: number | null; suggestedValueCents: number | null }
 interface DonationRow {
   id: number;
   donationDate: string;
@@ -21,7 +21,7 @@ interface DonationRow {
   donorCompanyName?: string | null;
 }
 interface CatalogItem { gtin13: string; name: string }
-interface FormLine { gtin13: string; name: string; quantity: number; valueDollars: number }
+interface FormLine { gtin13: string; name: string; description: string; quantity: number; suggestedDollars: number | null }
 
 // en-CA formats as YYYY-MM-DD in the viewer's own time zone.
 const today = () => new Date().toLocaleDateString("en-CA");
@@ -54,7 +54,7 @@ function useCatalogSearch(q: string): CatalogItem[] {
   return items;
 }
 
-/** /inventory/in-kind — goods given without a receipt: record each item, quantity and value, then load it into stock. */
+/** /inventory/in-kind — goods given without a receipt: record each item and quantity, then load it into stock. Finance sets the value when accepting. */
 export default function ManualInKindPage() {
   const canRecord = useCanRecord();
   const [page, setPage] = useState(1);
@@ -75,7 +75,7 @@ export default function ManualInKindPage() {
   function addItem(gtin13: string | null) {
     const item = found.find((i) => i.gtin13 === gtin13);
     if (item && !lines.some((l) => l.gtin13 === item.gtin13)) {
-      setLines([...lines, { gtin13: item.gtin13, name: item.name, quantity: 1, valueDollars: 0 }]);
+      setLines([...lines, { gtin13: item.gtin13, name: item.name, description: item.name, quantity: 1, suggestedDollars: null }]);
     }
     setSearch("");
   }
@@ -90,7 +90,12 @@ export default function ManualInKindPage() {
       const body = JSON.stringify({
         donor: { firstName: firstName.trim(), lastName: lastName.trim(), companyName: companyName.trim() || null },
         donationDate,
-        lines: lines.map((l) => ({ gtin13: l.gtin13, quantity: l.quantity, valueCents: Math.round(l.valueDollars * 100) })),
+        lines: lines.map((l) => ({
+          gtin13: l.gtin13,
+          quantity: l.quantity,
+          description: l.description.trim() || null,
+          suggestedValueCents: l.suggestedDollars === null ? null : Math.round(l.suggestedDollars * 100),
+        })),
       });
       const res = await api<{ inventoryLoaded: boolean }>("/in-kind/manual", { method: "POST", body });
       setFirstName(""); setLastName(""); setCompanyName(""); setDonationDate(today()); setLines([]);
@@ -112,7 +117,8 @@ export default function ManualInKindPage() {
         <Paper withBorder p="md" radius="md" mb="md" maw={820}>
           <Stack>
             <Text size="sm" c="dimmed">
-              Enter who gave the goods. You cannot record a gift from yourself or your own household.
+              Enter who gave the goods. You cannot record a gift from yourself or your own household. A value is optional:
+              it is a suggestion, and finance sets the value when accepting the gift.
             </Text>
             <Group grow align="flex-end">
               <TextInput label="Donor first name" required value={firstName} onChange={(e) => setFirstName(e.currentTarget.value)} />
@@ -135,17 +141,33 @@ export default function ManualInKindPage() {
             {lines.length > 0 && (
               <Table>
                 <Table.Thead>
-                  <Table.Tr><Table.Th>Item</Table.Th><Table.Th>Quantity</Table.Th><Table.Th>Total value ($)</Table.Th><Table.Th /></Table.Tr>
+                  <Table.Tr><Table.Th>Item</Table.Th><Table.Th>Description</Table.Th><Table.Th>Quantity</Table.Th><Table.Th>Suggested total value ($)</Table.Th><Table.Th /></Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
                   {lines.map((l, i) => (
                     <Table.Tr key={l.gtin13}>
                       <Table.Td>{l.name}</Table.Td>
                       <Table.Td>
+                        <TextInput
+                          aria-label={`Description of ${l.name}`}
+                          description="Describe the goods, not the donor"
+                          maxLength={500}
+                          value={l.description}
+                          onChange={(e) => setLine(i, { description: e.currentTarget.value })}
+                        />
+                      </Table.Td>
+                      <Table.Td>
                         <NumberInput aria-label={`Quantity of ${l.name}`} min={1} allowDecimal={false} value={l.quantity} onChange={(v) => setLine(i, { quantity: Number(v) || 1 })} w={100} />
                       </Table.Td>
                       <Table.Td>
-                        <NumberInput aria-label={`Total value of ${l.name}`} min={0} decimalScale={2} value={l.valueDollars} onChange={(v) => setLine(i, { valueDollars: Number(v) || 0 })} w={140} />
+                        <NumberInput
+                          aria-label={`Suggested total value of ${l.name}`}
+                          min={0}
+                          decimalScale={2}
+                          value={l.suggestedDollars ?? ""}
+                          onChange={(v) => setLine(i, { suggestedDollars: v === "" ? null : Number(v) || 0 })}
+                          w={140}
+                        />
                       </Table.Td>
                       <Table.Td>
                         <ActionIcon variant="subtle" color="red" aria-label={`Remove ${l.name}`} onClick={() => setLines(lines.filter((_, j) => j !== i))}>✕</ActionIcon>
@@ -168,7 +190,7 @@ export default function ManualInKindPage() {
             <Table.Th>Date given</Table.Th>
             {showDonor && <Table.Th>Donor</Table.Th>}
             <Table.Th>Items</Table.Th>
-            <Table.Th>Total value</Table.Th>
+            <Table.Th>Value</Table.Th>
             <Table.Th>Recorded</Table.Th>
             <Table.Th>Inventory</Table.Th>
           </Table.Tr>
@@ -184,7 +206,13 @@ export default function ManualInKindPage() {
                 </Table.Td>
               )}
               <Table.Td>{r.lines.reduce((n, l) => n + l.quantity, 0)} across {r.lines.length} line{r.lines.length === 1 ? "" : "s"}</Table.Td>
-              <Table.Td>{cents(r.lines.reduce((n, l) => n + l.valueCents, 0))}</Table.Td>
+              <Table.Td>
+                {r.lines.every((l) => l.valueCents !== null)
+                  ? cents(r.lines.reduce((n, l) => n + (l.valueCents ?? 0), 0))
+                  : r.lines.some((l) => l.suggestedValueCents !== null)
+                    ? `${cents(r.lines.reduce((n, l) => n + (l.suggestedValueCents ?? 0), 0))} suggested`
+                    : "—"}
+              </Table.Td>
               <Table.Td>{when(r.recordedAt)}{r.recordedByUsername ? ` by ${r.recordedByUsername}` : ""}</Table.Td>
               <Table.Td>
                 {r.inventoryLoadedAt ? (

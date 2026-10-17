@@ -18,6 +18,21 @@ export function surname(name: string): string {
 }
 
 /**
+ * Whether anyone live in this person's household, the person included, has the
+ * donor's surname. A person with no household is compared on their own name.
+ */
+export async function householdSharesSurname(db: DbClient, personId: number, lastName: string): Promise<boolean> {
+  const donorSurname = surname(lastName);
+  if (!donorSurname) return false;
+  const householdId = await resolveActorHouseholdId(db, personId);
+  const people = await db.person.findMany({
+    where: householdId === null ? { id: personId } : { householdId, ...LIVE_PERSON },
+    select: { name: true },
+  });
+  return people.some((p) => surname(p.name) === donorSurname);
+}
+
+/**
  * Throws 403 when the donor may be the recorder or someone in the recorder's
  * household. Donors are names, not linked people, so a donor whose last name
  * matches anyone in the household counts as the household. An unresolved

@@ -300,7 +300,7 @@ model DonationQbMatchExclusion {
 
 // An in-kind donation that arrived with a receipt (FR5). The money side (X9) and the donor
 // (X13) arrive separately, in either order, and join on receiptId. Money without a donor is
-// "donor needed"; both present is ready to book.
+// "donor needed"; with both present the gift waits for finance to accept, refuse or return it.
 model InKindDonation {
   /// @sensitivity:internal
   id                     Int       @id @default(autoincrement())
@@ -324,13 +324,43 @@ model InKindDonation {
   donorRecordedAt        DateTime? @map("donor_recorded_at")
   /// @sensitivity:internal
   withdrawnAfterMoneyAt  DateTime? @map("withdrawn_after_money_at")
+  // The receipt's uploader (CompletedReceipt.submitterId), who may not decide the gift.
+  /// @sensitivity:internal
+  uploadedByUserId           Int?       @map("uploaded_by_user_id")
+  // Set when a later donor replaced a different one already recorded.
+  /// @sensitivity:internal
+  donorReplacedAt            DateTime?  @map("donor_replaced_at")
+  // Set when a money-side replay differed from the first; cleared when finance settles it.
+  /// @sensitivity:internal
+  replayConflictAt           DateTime?  @map("replay_conflict_at")
+  // When finance settled a withdrawal after money; the donor is cleared at the same time.
+  /// @sensitivity:internal
+  withdrawalSettledAt        DateTime?  @map("withdrawal_settled_at")
+  // The accept step: one decision per gift (ACCEPTED, REFUSED or RETURNED), its decider, and
+  // when the decider attested to being outside the donor's household.
+  /// @sensitivity:internal
+  decisionOutcome            String?    @map("decision_outcome")
+  /// @sensitivity:internal
+  decidedByUserId            Int?       @map("decided_by_user_id")
+  /// @sensitivity:internal
+  decidedAt                  DateTime?  @map("decided_at")
+  /// @sensitivity:internal
+  donorHouseholdAttestedAt   DateTime?  @map("donor_household_attested_at")
+  // The budget bucket (checkin BudgetOwner id) finance assigns when accepting.
+  /// @sensitivity:internal
+  budgetOwnerId              Int?       @map("budget_owner_id")
+  /// @sensitivity:internal
+  bucketAssignedByUserId     Int?       @map("bucket_assigned_by_user_id")
+  /// @sensitivity:internal
+  bucketAssignedAt           DateTime?  @map("bucket_assigned_at")
+  lines                      InKindDonationLine[]
 
   @@unique([orgId, receiptId])
   @@map("in_kind_donations")
 }
 
 // An in-kind donation entered by ops with no receipt (FR5): each line is a catalog item with a
-// quantity and its total value. Its goods load into inventory under `donation:<id>` (X11);
+// quantity and ops' suggested value; finance sets the value when accepting it. Its goods load into inventory under `donation:<id>` (X11);
 // inventoryLoadedAt is set once that load succeeds.
 model ManualInKindDonation {
   /// @sensitivity:internal
@@ -353,6 +383,23 @@ model ManualInKindDonation {
   recordedAt         DateTime                   @default(now()) @map("recorded_at")
   /// @sensitivity:internal
   inventoryLoadedAt  DateTime?                  @map("inventory_loaded_at")
+  // The accept step: one decision per gift (ACCEPTED, REFUSED or RETURNED), its decider, and
+  // when the decider attested to being outside the donor's household.
+  /// @sensitivity:internal
+  decisionOutcome            String?    @map("decision_outcome")
+  /// @sensitivity:internal
+  decidedByUserId            Int?       @map("decided_by_user_id")
+  /// @sensitivity:internal
+  decidedAt                  DateTime?  @map("decided_at")
+  /// @sensitivity:internal
+  donorHouseholdAttestedAt   DateTime?  @map("donor_household_attested_at")
+  // The budget bucket (checkin BudgetOwner id) finance assigns when accepting.
+  /// @sensitivity:internal
+  budgetOwnerId              Int?       @map("budget_owner_id")
+  /// @sensitivity:internal
+  bucketAssignedByUserId     Int?       @map("bucket_assigned_by_user_id")
+  /// @sensitivity:internal
+  bucketAssignedAt           DateTime?  @map("bucket_assigned_at")
   lines              ManualInKindDonationLine[]
 
   @@index([orgId, recordedAt])
@@ -368,10 +415,69 @@ model ManualInKindDonationLine {
   gtin13      String
   /// @sensitivity:internal
   quantity    Int
+  /// What was given, in the recorder's words; never the donor.
   /// @sensitivity:internal
-  valueCents  Int                  @map("value_cents")
+  description String?
+  /// The line's total value as finance set it when accepting; null until then.
+  /// @sensitivity:internal
+  valueCents  Int?                 @map("value_cents")
+  /// The value ops suggested at recording; finance sees it and decides.
+  /// @sensitivity:internal
+  suggestedValueCents Int?         @map("suggested_value_cents")
   donation    ManualInKindDonation @relation(fields: [donationId], references: [id], onDelete: Cascade)
 
   @@index([donationId])
   @@map("manual_in_kind_donation_lines")
+}
+
+// One line of an in-kind receipt gift, as the receipt states it. Written once, by the first
+// money-side arrival.
+model InKindDonationLine {
+  /// @sensitivity:internal
+  id                Int            @id @default(autoincrement())
+  /// @sensitivity:internal
+  donationId        Int            @map("donation_id")
+  /// @sensitivity:internal
+  receiptLineItemId Int            @map("receipt_line_item_id")
+  /// @sensitivity:internal
+  lineNumber        Int            @map("line_number")
+  /// @sensitivity:internal
+  description       String
+  /// @sensitivity:internal
+  gtin13            String?
+  /// @sensitivity:internal
+  quantity          Float
+  /// @sensitivity:internal
+  valueCents        Int            @map("value_cents")
+  donation          InKindDonation @relation(fields: [donationId], references: [id], onDelete: Cascade)
+
+  @@unique([donationId, receiptLineItemId])
+  @@map("in_kind_donation_lines")
+}
+
+// One booking side of an in-kind gift: `source` is "receipt" or "manual", `side` is "revenue"
+// or "expense". At most one row per side, and each QuickBooks entry is claimed once per org.
+model InKindBooking {
+  /// @sensitivity:internal
+  id         Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId      String   @map("org_id")
+  /// @sensitivity:internal
+  source     String
+  /// @sensitivity:internal
+  giftId     Int      @map("gift_id")
+  /// @sensitivity:internal
+  side       String
+  /// @sensitivity:internal
+  matchState String   @map("match_state")
+  /// @sensitivity:internal
+  qbTxnId    String?  @map("qb_txn_id")
+  /// @sensitivity:internal
+  createdAt  DateTime @default(now()) @map("created_at")
+  /// @sensitivity:internal
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([orgId, source, giftId, side])
+  @@unique([orgId, qbTxnId])
+  @@map("in_kind_bookings")
 }

@@ -139,6 +139,17 @@ export const classifications = {
         donorCompanyName: 'pii',
         donorRecordedAt: 'internal',
         withdrawnAfterMoneyAt: 'internal',
+        uploadedByUserId: 'internal',
+        donorReplacedAt: 'internal',
+        replayConflictAt: 'internal',
+        withdrawalSettledAt: 'internal',
+        decisionOutcome: 'internal',
+        decidedByUserId: 'internal',
+        decidedAt: 'internal',
+        donorHouseholdAttestedAt: 'internal',
+        budgetOwnerId: 'internal',
+        bucketAssignedByUserId: 'internal',
+        bucketAssignedAt: 'internal',
     },
     ManualInKindDonation: {
         id: 'internal',
@@ -151,13 +162,43 @@ export const classifications = {
         recordedByUsername: 'internal',
         recordedAt: 'internal',
         inventoryLoadedAt: 'internal',
+        decisionOutcome: 'internal',
+        decidedByUserId: 'internal',
+        decidedAt: 'internal',
+        donorHouseholdAttestedAt: 'internal',
+        budgetOwnerId: 'internal',
+        bucketAssignedByUserId: 'internal',
+        bucketAssignedAt: 'internal',
     },
     ManualInKindDonationLine: {
         id: 'internal',
         donationId: 'internal',
         gtin13: 'internal',
         quantity: 'internal',
+        description: 'internal',
         valueCents: 'internal',
+        suggestedValueCents: 'internal',
+    },
+    InKindDonationLine: {
+        id: 'internal',
+        donationId: 'internal',
+        receiptLineItemId: 'internal',
+        lineNumber: 'internal',
+        description: 'internal',
+        gtin13: 'internal',
+        quantity: 'internal',
+        valueCents: 'internal',
+    },
+    InKindBooking: {
+        id: 'internal',
+        orgId: 'internal',
+        source: 'internal',
+        giftId: 'internal',
+        side: 'internal',
+        matchState: 'internal',
+        qbTxnId: 'internal',
+        createdAt: 'internal',
+        updatedAt: 'internal',
     },
 } as const;
 
@@ -183,12 +224,18 @@ export const relations = {
     DonationQbMatchExclusion: {
     },
     InKindDonation: {
+        lines: { model: 'InKindDonationLine', isList: true },
     },
     ManualInKindDonation: {
         lines: { model: 'ManualInKindDonationLine', isList: true },
     },
     ManualInKindDonationLine: {
         donation: { model: 'ManualInKindDonation', isList: false },
+    },
+    InKindDonationLine: {
+        donation: { model: 'InKindDonation', isList: false },
+    },
+    InKindBooking: {
     },
 } as const;
 

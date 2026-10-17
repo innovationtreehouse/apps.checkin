@@ -17,6 +17,17 @@ const incomeClaimedDepositIds = jest.fn();
 jest.mock("@checkin/income", () => ({ incomeClaimedDepositIds }));
 const getQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks }));
+// local-inventory's root entry pulls in its generated Prisma client too; only the GTIN check is used here.
+jest.mock("@checkin/local-inventory", () => ({ isProvisionalGtin13: (g: string) => g.startsWith("0200") && g.substring(6, 8) === "27" }));
+const signoff = {
+  financeHolders: jest.fn(),
+  boardMembers: jest.fn(),
+  householdOf: jest.fn(),
+  bucketsApprovedBy: jest.fn(),
+};
+jest.mock("@/lib/expense/configure", () => ({ signoff }));
+const getExpenseSettings = jest.fn();
+jest.mock("@checkin/expense", () => ({ getExpenseSettings }));
 
 async function config(): Promise<BulkDonationConfig> {
   await jest.isolateModulesAsync(async () => {
@@ -54,6 +65,39 @@ describe("bulk-donation wiring", () => {
     expect(applyDonation).toHaveBeenCalledWith(ORG.id, "42", [
       { gtin13: "0011111111116", quantityDelta: 3, conversionFactor: 1, conversionVersion: 1 },
     ]);
+  });
+
+  it("X11 marks a provisional GTIN's line so its stock merges once the catalog resolves it", async () => {
+    const { inventory } = await config();
+    const PROVISIONAL = "0200002700016";
+    await inventory!.apply({
+      receiptId: "donation:42",
+      orgId: ORG.id,
+      retailer: null,
+      lineItems: [
+        { lineItemId: 7, gtin13: PROVISIONAL, quantityDelta: 2, isDelayed: false, conversionFactor: 1, conversionVersion: 1, provisionalName: "Odd clamp" },
+        { lineItemId: 8, gtin13: "0011111111116", quantityDelta: 1, isDelayed: false, conversionFactor: 1, conversionVersion: 1, provisionalName: "Drill" },
+      ],
+    });
+
+    expect(applyDonation).toHaveBeenCalledWith(ORG.id, "42", [
+      { gtin13: PROVISIONAL, quantityDelta: 2, conversionFactor: 1, conversionVersion: 1, isProvisional: true, provisionalName: "Odd clamp" },
+      { gtin13: "0011111111116", quantityDelta: 1, conversionFactor: 1, conversionVersion: 1 },
+    ]);
+  });
+
+  it("binds the in-kind accept step to the expense sign-off directory and its capital-equipment amount", async () => {
+    const { inKind } = await config();
+    signoff.financeHolders.mockResolvedValue([10]);
+    signoff.householdOf.mockResolvedValue([11]);
+    signoff.bucketsApprovedBy.mockResolvedValue([4]);
+    getExpenseSettings.mockResolvedValue({ capitalEquipmentUnitCents: 50_000 });
+
+    await expect(inKind!.financeHolders()).resolves.toEqual([10]);
+    await expect(inKind!.householdOf([7])).resolves.toEqual([7, 11]);
+    await expect(inKind!.bucketsApprovedBy(3)).resolves.toEqual([4]);
+    await expect(inKind!.largeValueCents()).resolves.toBe(50_000);
+    expect(getExpenseSettings).toHaveBeenCalledWith(ORG.id);
   });
 
   it("X11 refuses a receipt key and another org's delta", async () => {

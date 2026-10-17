@@ -1,7 +1,7 @@
 /**
  * Nav descriptors for bulk donation. The library declares its screens; the host
- * places them: `DONATIONS_TAB` and `IN_KIND_TAB` as section tabs, and
- * `DONATION_NAV_LINKS` as the /donations second tab row.
+ * places them: `DONATIONS_TAB`, `IN_KIND_TAB` and `BUCKET_GIFTS_TAB` as section
+ * tabs, and `DONATION_NAV_LINKS` as the /donations second tab row.
  */
 
 export interface DonationNavLink {
@@ -31,3 +31,6 @@ export const DONATIONS_TAB = { name: "Donations", href: "/donations", icon: "�
 
 /** The no-receipt in-kind gift screen, placed under the host's Inventory section. */
 export const IN_KIND_TAB = { name: "In-kind gifts", href: "/inventory/in-kind", icon: "🎁" } as const;
+
+/** Accepted gifts of goods in the viewer's buckets, placed under the host's My Programs section. */
+export const BUCKET_GIFTS_TAB = { name: "In-kind gifts", href: "/my-programs/in-kind-gifts", icon: "🎁" } as const;
