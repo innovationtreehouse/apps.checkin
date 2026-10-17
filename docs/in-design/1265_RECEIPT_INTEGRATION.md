@@ -173,15 +173,30 @@ whose file is the body**:
   marked `inline`) **and** every inline part of an accepted non-text type (§2:
   JPEG, PNG, GIF, WebP, PDF), with or without a filename. Parts inside a
   forwarded message are still never read.
-- **The body is kept unless the message has a real attachment.** With an
-  attachment, the body is covering text and is ignored, as before. With only
-  inline images, the body is kept as well, as one more receipt beside the
-  images. The reason is the HTML order confirmation: its inline images are logos
-  and its body is the receipt, so dropping the body there would lose the one file
-  that matters. The cost falls on the other case: a member who pastes a photo and
-  types "for the lathe" also gets a near-empty text receipt, which they discard
-  at submitter review. A spare receipt is noise somebody clears; a lost one is
-  never noticed.
+- **The body is a receipt unless it is trivial or proven to repeat an
+  attachment** (owner ruling 2026-10-16). Dropping a body unread is how a
+  receipt gets lost without anyone noticing, so the step reads every body and
+  drops one only on evidence:
+  - **Trivial:** the body's text holds no money amount (a number with two
+    decimal places). "For the lathe, see photo" is trivial; any order
+    confirmation or emailed receipt is not. A trivial body is skipped and
+    counted under `ignored`. `ponytail:` ceiling is a receipt whose body prints
+    its total without cents; widen the pattern if one is found.
+  - **Same as an attachment:** when the message also has attachments or inline
+    images, those are read first, then the body. Once the body's reading is in,
+    it is compared with every receipt the same message produced. If one has the
+    same total and the same date, the body is discarded automatically, with the
+    reason "same as attachment" and the matching receipt named in its audit row.
+    It stays visible as discarded, so finance can restart it if the match was
+    wrong. Any mismatch, or a reading missing either field, keeps the body as
+    its own receipt.
+  - **Held mail:** a held item has no reading until finance assigns it, so the
+    comparison cannot run at intake. A non-trivial body from an untrusted sender
+    is held beside its attachments, and finance discards whichever is the copy.
+  - **Cost:** a non-trivial body beside an attachment spends one more reading,
+    against the sender's daily allowance and the run's cap. Bodies are read
+    after the message's other files, so a capped run defers the body to the next
+    run, inside the window, and never an attachment.
 - Inline images make logos candidates, which is what the next block exists to
   contain.
 - A file whose content fails the §2 type check is skipped and counted, as a
@@ -215,6 +230,15 @@ check instead.
     keys on do not change there. On a discarded receipt it adds the receipt's
     hash. Receipts already made from that file are left alone; each is
     discarded the ordinary way.
+  - **Who.** `FINANCE` only (owner ruling 2026-10-16), the audience that
+    already discards from the mail queue. A submitter discarding their own logo
+    receipt cannot add it.
+  - **Removing an entry.** Finance can remove one (owner ruling 2026-10-16): a
+    mistaken entry drops that exact file from every future email, leaving only a
+    count, so it must be undoable. The mail-queue page lists the entries with a
+    remove action, audited like adding. Removal applies from the next run; mail
+    it already skipped inside the window is read again then, since a skip writes
+    no ledger row.
   - **What it cannot do.** Matching is on exact bytes. A sender who re-encodes
     or resizes the same logo produces a new hash, and that copy arrives as a
     candidate until someone ignores it too. This is the ceiling, stated plainly:
@@ -707,22 +731,14 @@ All PRs are based on `main`; none stacks.
   prod until Q5 is confirmed and recorded on #1266. Until then prod OCR fails
   closed into `ocr_failed` ("not configured", §3), and manual entry and the
   Gmail and import paths keep working without automatic reading.
-- **Q6. Who may add to the ignore list** (§2a). Proposed: `FINANCE` only, the
-  same audience that discards from the mail queue. A submitter discarding their
-  own logo receipt cannot add it.
-- **Q7. Can an entry be removed** (§2a). Proposed: yes. A mistaken entry drops
-  that exact file from every future email with no trace but a count, so finance
-  needs a list of entries on the mail-queue page and a remove action, audited
-  like adding. If the answer is no, the list view and remove route drop out.
-- **Q8. Body beside inline images** (§2a). Proposed: kept, as one more receipt.
-  The alternative, keeping the body only when no inline image survives the
-  filters, loses an order confirmation whenever its logo is new.
+- **Q6. Ignore-list tier and audit** (§2a). Proposed: entries `internal`; every
+  add and remove writes an audit row with no file bytes.
 
-Routes this needs, each a registry entry PR before its route PR (boundary
-isolation, `AGENTS.md`): the mail-item discard takes an optional
+Routes the ignore list needs, each a registry entry PR before its route PR
+(boundary isolation, `AGENTS.md`): the mail-item discard takes an optional
 `ignoreFile: true` (no new route); `POST /api/receipts/[id]/ignore-file`
-(finance, discarded receipts only); and, if Q7 is yes,
-`GET /api/receipts/ignored-files` and `DELETE /api/receipts/ignored-files/[id]`.
+(finance, discarded receipts only); `GET /api/receipts/ignored-files`; and
+`DELETE /api/receipts/ignored-files/[id]`.
 
 ### Assumptions
 
