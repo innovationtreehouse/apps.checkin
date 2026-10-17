@@ -9,10 +9,27 @@
  * for a disbursement. id/type/date/amountCents are financial plumbing (`internal`);
  * `memo` is hand-entered QuickBooks free text that may name a donor, so `pii`.
  *
- * InKindQueueItemView — one in-kind donation in the finance queue: its money side
- * arrived with no donor yet, or it was withdrawn after the money arrived. Receipt
- * id, amount, date and the three join timestamps, all `internal`. It carries no
- * donor field, so a donor name on the row is stripped from every view.
+ * InKindQueueItemView — one in-kind gift in the finance queue, from either source
+ * (`receipt` or `manual`): waiting on its donor, waiting to be accepted, or
+ * withdrawn after its money arrived. It carries what the accept screen shows:
+ * receipt and join timestamps, the bucket, the value and its lines, the uploader
+ * and recorder, when the donor was replaced, the four accept warnings and the
+ * caller's conflict state, all as `internal` facts. It carries no donor field,
+ * so a donor name on the row is stripped from every view.
+ *
+ * InKindQueueLineView — one line of a queued gift: the item, its quantity, the
+ * value finance set and the value ops suggested, all `internal`.
+ *
+ * InKindDecisionView — the reply to accepting, refusing or returning a gift:
+ * which gift, the outcome, who decided and when, the bucket and the total value,
+ * all `internal`. It names the decider by id and carries no donor.
+ *
+ * InKindBucketGiftView — one in-kind gift in a bucket the caller approves: what
+ * was given, its value and date, all `internal`. It carries no donor field, so
+ * a donor name on the row is stripped from every view, finance's included.
+ *
+ * InKindBucketGiftLineView — one line of that gift: item, quantity and value,
+ * all `internal`.
  *
  * ManualInKindRecordResult — the reply to recording a no-receipt in-kind
  * donation: its id and whether its goods loaded into inventory, both `internal`.
@@ -40,6 +57,50 @@ export const classifications = {
     moneyReceivedAt: "internal",
     donorRecordedAt: "internal",
     withdrawnAfterMoneyAt: "internal",
+    source: "internal",
+    budgetOwnerId: "internal",
+    budgetOwnerName: "internal",
+    bucketAssignedAt: "internal",
+    totalValueCents: "internal",
+    uploadedByUserId: "internal",
+    recordedByUserId: "internal",
+    donorReplacedAt: "internal",
+    warnDonorSurnameMatch: "internal",
+    warnDonorIsRecorder: "internal",
+    warnLargeValue: "internal",
+    warnDonorReplaced: "internal",
+    callerConflicted: "internal",
+    allFinanceConflicted: "internal",
+  },
+  InKindQueueLineView: {
+    id: "internal",
+    gtin13: "internal",
+    quantity: "internal",
+    valueCents: "internal",
+    suggestedValueCents: "internal",
+  },
+  InKindDecisionView: {
+    id: "internal",
+    source: "internal",
+    giftId: "internal",
+    outcome: "internal",
+    decidedByUserId: "internal",
+    decidedAt: "internal",
+    budgetOwnerId: "internal",
+    totalValueCents: "internal",
+  },
+  InKindBucketGiftView: {
+    id: "internal",
+    source: "internal",
+    budgetOwnerId: "internal",
+    donationDate: "internal",
+    totalValueCents: "internal",
+  },
+  InKindBucketGiftLineView: {
+    id: "internal",
+    gtin13: "internal",
+    quantity: "internal",
+    valueCents: "internal",
   },
   ManualInKindRecordResult: {
     id: "internal",
@@ -47,4 +108,11 @@ export const classifications = {
   },
 } as const;
 
-export const relations = {} as const;
+export const relations = {
+  InKindQueueItemView: {
+    lines: { model: "InKindQueueLineView", isList: true },
+  },
+  InKindBucketGiftView: {
+    lines: { model: "InKindBucketGiftLineView", isList: true },
+  },
+} as const;

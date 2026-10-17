@@ -116,4 +116,31 @@ describe('bulk-donation field-stripping (comment rules and QB candidates)', () =
             withdrawnAfterMoneyAt: null,
         });
     });
+
+    it('a queue row keeps its accept-screen fields and strips a donor from the row and its lines', () => {
+        const accept = {
+            id: 2,
+            source: 'manual',
+            budgetOwnerId: 4,
+            budgetOwnerName: 'Shop',
+            bucketAssignedAt: '2026-10-03T00:00:00.000Z',
+            totalValueCents: 60000,
+            uploadedByUserId: null,
+            recordedByUserId: 9,
+            donorReplacedAt: '2026-10-02T00:00:00.000Z',
+            warnDonorSurnameMatch: true,
+            warnDonorIsRecorder: false,
+            warnLargeValue: true,
+            warnDonorReplaced: true,
+            callerConflicted: false,
+            allFinanceConflicted: false,
+            lines: [{ id: 5, gtin13: '0000000000017', quantity: 2, valueCents: 60000, suggestedValueCents: 50000 }],
+        };
+        const row = {
+            ...accept,
+            donorLastName: 'Doe',
+            lines: [{ ...accept.lines[0], donorLastName: 'Doe' }],
+        };
+        expect(stripValue('InKindQueueItemView', row, FINANCE_VIEW, ctx())).toEqual(accept);
+    });
 });
