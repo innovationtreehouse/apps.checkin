@@ -157,9 +157,10 @@ constraint to state plainly: no machine-facing route can be added to checkin
 today, so push is not an option without first changing that rule.
 
 **Reading the mailbox.** Each run lists messages from the last 3 days. A message
-with attachments of an accepted type (§2) yields one receipt per attachment. A
-message with none (an order confirmation, owner decision) yields **one receipt
-whose file is the body**:
+yields one receipt per file of an accepted type (§2): each attachment, each inline
+image, and **the body**, which is dropped only as the bullets below allow. A
+message with no attachment (an order confirmation, owner decision) is the common
+case of a body receipt:
 
 - The body's `text/plain` part when Gmail has one; otherwise the `text/html` part's
   source, stored as **`text/plain`**. OCR reads it as text, as the source's `.eml`
@@ -181,7 +182,9 @@ whose file is the body**:
     decimal places). "For the lathe, see photo" is trivial; any order
     confirmation or emailed receipt is not. A trivial body is skipped and
     counted under `ignored`. `ponytail:` ceiling is a receipt whose body prints
-    its total without cents; widen the pattern if one is found.
+    its total without cents; widen the pattern if one is found. With no
+    `text/plain` part the test runs on the HTML source, where CSS values such as
+    `0.50` or `1.25em` count as amounts, so most HTML bodies are non-trivial.
   - **Same as an attachment:** when the message also has attachments or inline
     images, those are read first, then the body. Once the body's reading is in,
     it is compared with every receipt the same message produced. If one has the
@@ -204,8 +207,8 @@ whose file is the body**:
 
 **Files that are never receipts.** Two filters run on every candidate file,
 before the ledger lookup, and each match is counted under a new `ignored` count
-in the run result. Neither writes a ledger row: the next run repeats the cheap
-check instead.
+in the run result. Neither writes a ledger row: the next run repeats the check
+instead.
 
 - **A size floor for inline images.** An inline image under 5 KB is skipped
   without downloading it; the part's declared size is enough. That drops tracking
@@ -219,7 +222,10 @@ check instead.
   SHA-256 of the file's bytes, a reason, the person who added it, and when.
   Unique on `(orgId, fileHash)`. Intake loads the org's list once per run and
   skips any candidate whose hash is on it. The hash is the one the ledger and
-  `Receipt.fileHash` already use, so no file needs re-reading to add it.
+  `Receipt.fileHash` already use, so no file needs re-reading to add it. A
+  candidate is downloaded to hash it, so an ignored file is charged like a
+  rejected one: from an unknown sender, through `chargeHold`. Only the size
+  floor skips a file without a download.
   - **Adding an entry.** Finance gets an "Ignore this file from now on" action
     in two places. On a held mail item it discards the item and adds its hash in
     one transaction, using the discard reason; the same transaction discards
@@ -255,15 +261,18 @@ check instead.
 
 Inline images change how much mail the step turns into work. A trusted sender's
 logos spend that sender's upload limits and the run's OCR cap, and an untrusted
-sender's land in the mail queue, which has no cap. The size floor and the ignore
+sender's land in the mail queue, bounded per run and in total (below). The size floor and the ignore
 list are the containment; the rate limits for flooding are designed with the
 mailbox-flooding hardening, not here.
 
 The 3-day
 window plus the dedupe ledger makes a missed run harmless with no stored cursor.
 Each run reads oldest first and its receipt cap (§4) counts only receipts, the OCR
-spend. Held items have caps of their own, so untrusted mail can never push a
-member's receipt out of the window:
+spend. Held items have caps of their own, so untrusted mail cannot push a
+member's receipt out of the window within the documented ceiling: each listed
+message still costs one fetch before the ledger check, so a flood of more
+messages than a run can fetch in its time budget can (the `ponytail:` note on
+`MAIL_TIME_BUDGET_MS` in `mailIntake.ts`).
 - A message whose files are all in the ledger is skipped before any download.
 - Each run spends at most 50 files and 50 MB on held mail; the rest wait for the
   next run. The charging rule is one function (`chargeHold`): each file downloaded
@@ -332,9 +341,10 @@ receipts in one window; widen the window or the cap if either happens.
 **Sensitivity.** Stored per item: Gmail message id, attachment hash, received
 time, sender address, status, and the file until it becomes a receipt. **Never
 stored:** subject, other recipients, any other header, and the body, **with one
-exception**: when the body itself is the receipt document (a message with no
-attachment), it is stored as that receipt's file, at the same tier and behind the
-same file route as an uploaded file, and nowhere else. The sender address is
+exception**: a body read as a receipt document (one that is neither trivial nor
+proven to repeat an attachment, above) is stored as that receipt's file, or as a
+held or deferred item's file, at the same tier and behind the same file route as
+an uploaded file, and nowhere else. The sender address is
 `pii`, read by `FINANCE` only; a held file is tiered like the receipt file and
 leaves only through the file route (§3). Every view of the mail queue writes an
 audit row (§6).
@@ -766,6 +776,7 @@ All PRs are based on `main`; none stacks.
   prod until Q5 is confirmed and recorded on #1266. Until then prod OCR fails
   closed into `ocr_failed` ("not configured", §3), and manual entry and the
   Gmail and import paths keep working without automatic reading.
+
 Routes the ignore list needs, each a registry entry PR before its route PR
 (boundary isolation, `AGENTS.md`): the mail-item discard takes an optional
 `ignoreFile: true` (no new route); `POST /api/receipts/[id]/ignore-file`
