@@ -29,9 +29,10 @@ attributes mail to anyone.
   on the person, not the address (§5).
 - **Changed elsewhere:** when anyone changes a person's sign-in email to an
   address that is an alias, the alias is removed in the same change (§2).
-- **Open:** whether a new alias needs confirming before it counts, and how
-  (ALIAS-7, §3). The rest of the design does not depend on the answer.
-- **Cost:** one new table on the checkin side, three or four routes, one
+- **A new alias counts only after finance approves it.** Its first mail lands
+  in the finance queue as today; finance assigns it and approves the alias, and
+  from then on its mail is automatic (§3).
+- **Cost:** one new table on the checkin side, four routes, one
   back-office page. Nothing under the receipt library changes now (§4).
 
 **Domain rules relied on.** `docs/rules/people-households.md`: an email address
@@ -93,8 +94,8 @@ One new model beside `Person`, named `PersonMailAlias`:
 | `canonicalKey` | `pii` | `canonicalizeEmail(address)`; unique |
 | `addedById` | `internal` | the finance or Board person who added it |
 | `createdAt` | `internal` | |
-
-ALIAS-7 adds one column if option (c) is chosen (§3).
+| `approvedAt` | `internal` | null until approved; only an approved alias counts (§3) |
+| `approvedById` | `internal` | who approved it |
 
 **Uniqueness when an alias is added.** The add takes `pg_advisory_xact_lock` on
 the canonical key and, inside that transaction, refuses an address whose
@@ -133,50 +134,44 @@ the intended signal.
 
 ---
 
-## 3. Does a new alias need confirming? (ALIAS-7, open)
+## 3. Approval: the first mail is held once
 
-**What goes wrong without a check.** Once an alias is recorded, every mail from
-that address is read automatically as that person's receipt: it spends their
-daily upload limit and their OCR allowance, appears in their "My receipts", and
-waits in their review step where they could claim it as owed to them. If
-finance types the address wrong, or records an address that is really another
-member's or a stranger's, the owner of that address can send mail that is
-processed as this person, without anyone looking at it. Today the same mail
-would sit in the finance queue until someone assigned it. The sender check does
-not help here: DMARC proves the mail came from the address, not that the address
-belongs to the person finance named.
+**A new alias does not count until finance or the Board approves it.** Until
+then the resolver ignores it, so mail from the address is held in the finance
+queue exactly as an unknown sender's is. Finance assigns that first item by
+hand, as today, having seen what the receipt is and whose it looks like, then
+approves the alias on the alias screen. From the next mail on, the address is
+automatic. Approval writes an audit row and is refused under the same conflict
+rule as adding: nobody approves an alias of their own or their household's.
 
-How likely that is depends on how the address reaches finance. A member who
-says "I send from my work account" and spells it out is usually right; a typo
-in a long address, or a household's shared account recorded against one adult,
-is the realistic failure.
+The two clicks are separate for now, because the mail queue is in the frozen
+receipt library. After the freeze, assigning a held item from an unapproved
+alias to that alias's person can approve the alias in the same action (§8).
 
-Three options:
+**Why a check is needed at all.** Once an alias counts, every mail from that
+address is read automatically as that person's receipt: it spends their daily
+upload limit and OCR allowance, appears in their "My receipts", and waits in
+their review step, where they could claim it as owed to them. If finance types
+the address wrong, or records an address that is really another member's or a
+stranger's, the owner of that address can send mail that is processed as this
+person without anyone looking at it. Today the same mail waits in the finance
+queue until someone assigns it. The sender check does not help: DMARC proves the
+mail came from the address, not that the address belongs to the person finance
+named. A typo in a long address, or a household's shared account recorded
+against one adult, is the realistic failure.
 
-| | (a) Finance's entry is trusted | (b) Confirmation link emailed to the alias | (c) First mail held once for finance |
+**Alternatives considered.**
+
+| | Finance's entry is trusted | Confirmation link emailed to the alias | First mail held once (chosen) |
 |---|---|---|---|
-| How | The alias counts as soon as it is saved. The audit row names who added it. | Saving emails a link to the alias; it counts once someone opens it. | The alias is saved but does not count. The first mail from it lands in the finance queue as today. Finance assigns it and, on the alias screen, approves the alias; from then on it counts. |
-| Catches a typo or wrong address | No; found only when the person notices strange receipts | Partly: proves someone reads that mailbox, not that it is this person | Yes: finance sees the first receipt's contents before anything is automatic |
+| Catches a typo or wrong address | No; found only when the person notices strange receipts | Partly: proves someone reads that mailbox, not that it is this person | Yes: a person sees the first receipt before anything is automatic |
 | Member-facing step | None | An email the member did not ask for, from a feature they never see | None |
-| Build | Nothing extra | Token table, email template, a confirm page and route, expiry | One nullable column (`approvedAt`), one approve route, a "waiting for first mail" badge |
-| Cost to finance | None | None, unless the link expires unread | One extra click, once per alias, on mail it would have handled by hand anyway |
+| Build | Nothing extra | Token table, email template, confirm page and route, expiry | Two columns, one approve route, a "waiting for first mail" badge |
+| Cost to finance | None | None, unless the link expires unread | One extra click per alias, on mail it would have assigned by hand anyway |
 
-**Recommendation: (c).** It keeps the tool back-office with no member-facing
-step, and the check it adds is a person looking at a real receipt from the
-address, which is the evidence that actually settles whose address it is. It
-costs finance one click on mail it was going to assign by hand regardless. (b)
-asks the member to act on a feature they cannot see, and proves less. (a) is
-the simplest and is reasonable if the owner judges a mistyped alias rare and
-cheap to undo; the audit row says who entered it.
-
-Under (c), the resolver counts only aliases with `approvedAt` set; an
-unapproved alias resolves to nobody, so its mail is held exactly as an unknown
-sender's is. Approval is a separate action on the alias screen, recorded with
-an audit row, and refused under the same conflict rule as adding. Finance
-approves after assigning the held item; the two are separate clicks now because
-the mail queue lives in the frozen receipt library. After the freeze, assigning
-a held item from an unapproved alias to that alias's person could approve it in
-the same action (§8).
+The held first mail keeps the tool back-office, and its check is a person
+looking at a real receipt from the address, which is the evidence that settles
+whose address it is.
 
 ---
 
@@ -185,8 +180,7 @@ the same action (§8).
 `submitterByEmail(address)` in `checkin-app/src/lib/receipt/configure.ts` widens
 its lookup from "a live, sign-in-verified person whose email equals this
 address" to "a live, sign-in-verified person whose email equals this address,
-**or** who holds an alias with exactly this address" (approved, under ALIAS-7
-(c)). Both are case-insensitive exact matches on the lowercased address; the
+**or** who holds an approved alias with exactly this address". Both are case-insensitive exact matches on the lowercased address; the
 canonical key is used only for uniqueness, never for resolution.
 
 Everything after the lookup is unchanged: more than one match returns null; the
@@ -225,7 +219,7 @@ limit keys on that id, not on the address:
 ## 6. Audit trail
 
 Every add, removal (including one caused by a sign-in email change or a merge),
-refused add and, under (c), approval writes an `AuditLog` row: actor,
+refused add and approval writes an `AuditLog` row: actor,
 `tableName = PersonMailAlias`, the alias id, the person id as the secondary
 entity, and the action. The payload carries no address, so the audit trail stays
 `internal`; the alias id leads back to the row while it exists, and once it is
@@ -254,7 +248,7 @@ None stacks on another's branch.
 | PR | Contents |
 |---|---|
 | **A1** schema | The `PersonMailAlias` model with its `@sensitivity` annotations, its migration, and the regenerated classifications. Annotating a new model's fields is not a re-tier, so this is not a boundary PR. The schema drift check needs the model and migration together, and this PR carries both. |
-| **A2** boundary | Registry entries, all `finance-or-board` with an `everyones:pii` view: `GET /api/finance/mail-aliases`, `POST /api/finance/mail-aliases`, `DELETE /api/finance/mail-aliases/[id]`, and under ALIAS-7 (c) `POST /api/finance/mail-aliases/[id]/approve`. No scope binding is needed. Nothing else. Maintainers, alone. |
+| **A2** boundary | Registry entries, all `finance-or-board` with an `everyones:pii` view: `GET /api/finance/mail-aliases`, `POST /api/finance/mail-aliases`, `DELETE /api/finance/mail-aliases/[id]`, `POST /api/finance/mail-aliases/[id]/approve`. No scope binding is needed. Nothing else. Maintainers, alone. |
 | **A3** feature | The routes, the service, the resolver change, the sign-in-email helper and its callers, the merge disposition, the back-office page and its nav entry, and tests. |
 
 **Migration** (A1): additive only, one `CREATE TABLE` for `PersonMailAlias`, its
@@ -269,7 +263,7 @@ addresses share one daily allowance; a removed alias's deferred items are held
 on the next run; a sign-in email change to an alias's address removes the alias
 with an audit row, on every write path; finance and the Board add and remove,
 nobody else does, and nobody adds for their own household; a merge moves
-aliases. Under (c): an unapproved alias's mail is held, and approval makes the
+aliases; an unapproved alias's mail is held, and approval makes the
 next mail a receipt.
 
 **After the package rename freeze lifts**, small library edits, none needed for
@@ -282,14 +276,14 @@ A1 to A3 to work:
   so a person over their limit with deferred items under two addresses costs
   one extra refused retry per run. A refused retry spends no cap and no reading,
   so this is waste, not a defect; keying the set on the person id fixes it;
-- under ALIAS-7 (c), assigning a held item from an unapproved alias to that
+- assigning a held item from an unapproved alias to that
   alias's person can approve the alias in the same action.
 
 ---
 
-## 9. Open questions for the owner
+## 9. Owner questions
 
-Resolved questions keep their IDs; the decision is in the design above.
+All resolved; IDs are kept, and each decision is in the design above.
 
 - **ALIAS-1.** Resolved: finance or the Board add and remove aliases (§1).
 - **ALIAS-2.** Resolved: a youth does not manage their own aliases; nobody
@@ -299,9 +293,8 @@ Resolved questions keep their IDs; the decision is in the design above.
 - **ALIAS-4.** Resolved: no notifications; aliases are not member-facing (§1).
 - **ALIAS-5.** Resolved by the model change: the expiry and per-person limits
   existed to stop self-service abuse, and with no self-service they are dropped.
-- **ALIAS-7. Does a new alias need confirming before it counts?** Options and
-  trade-offs in §3. Default: (c), the first mail from a new alias is held once
-  for finance, which approves the alias on the alias screen.
+- **ALIAS-7.** Resolved: a new alias counts only after finance or the Board
+  approves it, on the evidence of its first mail, held once (§3).
 
 ---
 
@@ -312,7 +305,7 @@ addresses for receipt mail only, recorded by finance or the Board and never for
 their own household, each unique across every person's sign-in address and
 alias; a sign-in email change to an alias's address removes the alias. Into
 `docs/rules/expenses.md`: mail from a person's alias is their own, on the same
-allowance, and (under (c)) an alias counts only after finance approves its first
+allowance, and an alias counts only after finance approves its first
 mail. The rest is mechanism and is deleted.
 
 ---
