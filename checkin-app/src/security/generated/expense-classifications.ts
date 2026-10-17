@@ -67,6 +67,9 @@ export const classifications = {
         boardAuthorizedByUserId: 'pii',
         boardAuthorizedByUsername: 'pii',
         boardAuthorizedAt: 'internal',
+        everydayWithinLimits: 'internal',
+        everydayTotalLimitCents: 'internal',
+        everydayItemLimitCents: 'internal',
     },
     ExpenseLineItem: {
         id: 'internal',

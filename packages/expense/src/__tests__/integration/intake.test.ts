@@ -6,9 +6,10 @@
 import { describe, it, expect } from "vitest";
 import { fixture } from "@inventory/receipt-contract-fixtures";
 import { describeDb } from "../helpers/db";
-import { bindPorts, directory, seedExpense } from "../helpers/seed";
+import { bindPorts, directory, principal, seedExpense, ORG } from "../helpers/seed";
 import { db } from "../../db";
 import { receiveCompletedReceipt, replayReceivedPayloads } from "../../services/intakeService";
+import { updateExpenseSettings } from "../../services/settingsService";
 
 type Receipt = { receiptId: string; orgId: string; taxCents: number; lineItems: Array<{ gtin13?: string | null; isProvisional?: boolean }> };
 
@@ -105,6 +106,14 @@ describeDb("S2 intake — all-recognized-gtin fixture", () => {
 
     const flags = await db.expenseFlag.findMany({ where: { expenseId: allRecognized.receiptId } });
     expect(flags.map((f) => [f.kind, f.audience])).toEqual([["TAX_ATTACHED", "FINANCE"]]);
+  });
+
+  it("freezes the Everyday amount check with the limits in force at intake", async () => {
+    await updateExpenseSettings(ORG, { everydayTotalLimitCents: 1 }, principal(3, { isFinance: true }));
+    await receiveCompletedReceipt(allRecognized);
+
+    const row = await db.expense.findUniqueOrThrow({ where: { id: allRecognized.receiptId } });
+    expect([row.everydayWithinLimits, row.everydayTotalLimitCents, row.everydayItemLimitCents]).toEqual([false, 1, 25_000]);
   });
 });
 

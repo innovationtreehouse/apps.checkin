@@ -178,6 +178,14 @@ model Expense {
   boardAuthorizedByUsername     String?   @map("board_authorized_by_username")
   /// @sensitivity:internal
   boardAuthorizedAt             DateTime? @map("board_authorized_at")
+  // The Everyday amount check and the limits it used, frozen when the expense is created, or on
+  // its first sign-off read when it has none. Later limit changes do not touch it.
+  /// @sensitivity:internal
+  everydayWithinLimits          Boolean?  @map("everyday_within_limits")
+  /// @sensitivity:internal
+  everydayTotalLimitCents       Int?      @map("everyday_total_limit_cents")
+  /// @sensitivity:internal
+  everydayItemLimitCents        Int?      @map("everyday_item_limit_cents")
 
   lineItems          ExpenseLineItem[]
   approvals          LineItemOwnerApproval[]
