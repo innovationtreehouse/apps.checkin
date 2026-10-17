@@ -16,15 +16,18 @@ JEV = "typesafe/jev-1.14"
 # Ordered cheapest to strongest; a rerun only moves up.
 LADDER = [
     ("free", "nvidia/nemotron-3.5-super-vl:free", "50", "300",
-     "Routine changes: docs, tests, small refactors, config, renames."),
+     "Costs nothing. Routine changes: docs, tests, small refactors, config, renames."),
     ("mid", "z-ai/glm-5.3", "30", "300",
-     "Real logic changes, one risky area, or a large diff."),
+     "About $0.30 a review. Real logic changes, one risky area, or a large diff. The default for anything beyond routine."),
     # ponytail: per-review spend caps via tool rounds and diff size; roughly $1 here and $2 below.
     ("high", "google/gemini-4-argon", "12", "150",
-     "Security-boundary or migration changes, two or more risky areas, concurrency or authorization logic, or a very large diff."),
+     "About $1 a review, three times the mid tier. Only when the mid reviewer is likely to miss something serious: security-boundary or migration changes, two or more risky areas, concurrency or authorization logic."),
     ("top", "anthropic/claude-opus-5.5", "8", "120",
-     "Rare: changes where a missed bug means lost money, leaked personal data or a broken production deploy, and the logic is subtle enough that the high tier may miss it."),
+     "About $2 a review and reserved for the rare case. Only when a missed bug would mean lost money, leaked personal data or a broken production deploy, AND the logic is subtle enough that the high tier would likely miss it. Choose this almost never."),
 ]
+# Escalation bars: move to a rung only when P(this rung or higher) clears its bar.
+# Odds 1:1, 4:1, 39:1, so reaching Opus takes about ten times the concern of Argon.
+BARS = {"free": 0.0, "mid": 0.5, "high": 0.8, "top": 0.975}
 RUNG = {r[0]: r for r in LADDER}
 ORDER = [r[0] for r in LADDER]
 PROFILE_THRESHOLD = 0.5
@@ -92,6 +95,15 @@ def pr_state(pr, repo):
                    "untrusted_diff": diff}
 
 
+def pick(probs, rungs):
+    """Highest rung whose cumulative probability (it or any stronger rung) clears its bar."""
+    chosen = rungs[0]
+    for i, name in enumerate(rungs):
+        if sum(probs.get(r, 0) for r in rungs[i:]) >= BARS[name]:
+            chosen = name
+    return chosen
+
+
 def rung_choice(rungs):
     return {name: f"{RUNG[name][1]}. {RUNG[name][4]}" for name in rungs}
 
@@ -121,9 +133,10 @@ def route():
     try:
         a = jev(dict(state, review_profiles_that_apply=chosen, guidance_ladder_suggests=suggested), {
             "reviewer": {"type": "choice",
-                         "instructions": "Which reviewer should review this pull request? Pick the cheapest reviewer that will reliably catch real bugs in this change.",
+                         "instructions": "Which reviewer should review this pull request? Cost matters: pick the cheapest reviewer that will reliably catch real bugs in this change. Moving up a tier needs strong evidence that the cheaper reviewer would miss something serious.",
                          "criteria": rung_choice(ORDER)}})["reviewer"]
-        tier, t_by = a["choice"], f"{JEV} confidence={a['confidence']:.2f}"
+        tier = pick(a["probabilities"], ORDER)
+        t_by = f"{JEV} top choice {a['choice']}, " + ", ".join(f"{k}={v:.2f}" for k, v in a["probabilities"].items())
     except Exception as e:
         print(f"::warning::Jev model call failed ({e}); using the fixed ladder", file=sys.stderr)
         tier, t_by = suggested, "fallback: fixed ladder"
@@ -169,12 +182,17 @@ def adjudicate():
                                "criteria": {"true": "The review is thorough for this change and its findings are evidenced.",
                                             "false": "The review is missing, failed, partial, skipped risky files, stopped early, or only restates the diff."}},
                   "rerun_on": {"type": "choice",
-                               "instructions": "If the review must be redone, which stronger reviewer should redo it?",
+                               "instructions": "If the review must be redone, which stronger reviewer should redo it? Cost matters: pick the cheapest one that would fix what the review missed.",
                                "criteria": rung_choice(higher)}}
             a = jev(state, qs)
             p = a["complete"]["noul"]
-            nxt = "none" if p >= COMPLETE_THRESHOLD else a["rerun_on"]["choice"]
-            by = f"{JEV} complete={p:.2f} rerun_on={a['rerun_on']['choice']}"
+            rerun = pick(a["rerun_on"]["probabilities"], higher)
+            # A rerun on a costlier rung also needs that rung's bar of confidence that the review is incomplete.
+            while rerun != "none" and 1 - p < BARS[rerun]:
+                i = higher.index(rerun)
+                rerun = higher[i - 1] if i else "none"
+            nxt = "none" if p >= COMPLETE_THRESHOLD else rerun
+            by = f"{JEV} complete={p:.2f}, rerun " + ", ".join(f"{k}={v:.2f}" for k, v in a["rerun_on"]["probabilities"].items())
         except Exception as e:
             print(f"::warning::Jev completeness call failed ({e}); using the review verdict", file=sys.stderr)
             if verdict in ("", "partial", "error") and tier != "high":  # fallback never escalates to the top rung
