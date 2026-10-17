@@ -1,6 +1,8 @@
 import prisma from "@/lib/prisma";
 import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
+import { systemActor } from "@/lib/auditActor";
+import type { DbClient } from "@/lib/db-client";
 
 export type PaymentExceptionKind =
     | "PAID_WHILE_BLOCKED"
@@ -77,4 +79,44 @@ export async function raisePaymentException(kind: PaymentExceptionKind, ref: Exc
         if (isPrismaError(e, "P2002")) return;
         throw e;
     }
+}
+
+/** Problems that mean the order's money went back to the payer. */
+const REVERSAL_KINDS: PaymentExceptionKind[] = ["REFUND", "CANCELLED", "CHARGEBACK", "REVERSED_BEFORE_ACTIVATION"];
+
+/** Audit-log ledger of reversals that arrived before their order matched anything. */
+const UNMATCHED_REVERSAL_TABLE = "ShopifyOrderReversal";
+
+/**
+ * Remember a refund, cancel or dispute whose order matches no application or
+ * enrollment yet, so a late orders/paid for that order is raised, not applied.
+ */
+export async function recordUnmatchedReversal(shopifyOrderId: string, kind: PaymentExceptionKind): Promise<void> {
+    await prisma.auditLog.create({
+        data: {
+            ...systemActor("webhook:shopify-reversal"),
+            action: "CREATE",
+            tableName: UNMATCHED_REVERSAL_TABLE,
+            affectedEntityId: 0,
+            newData: { shopifyOrderId, kind },
+        },
+    });
+}
+
+/**
+ * True when the order's money went back: an open reversal problem on it, or a
+ * reversal recorded before the order matched anything. A refunded order never
+ * activates a membership; the Board decides instead.
+ */
+export async function isOrderReversed(db: DbClient, shopifyOrderId: string): Promise<boolean> {
+    const open = await db.paymentException.findFirst({
+        where: { shopifyOrderId, kind: { in: REVERSAL_KINDS }, status: { not: "RESOLVED" } },
+        select: { id: true },
+    });
+    if (open) return true;
+    const early = await db.auditLog.findFirst({
+        where: { tableName: UNMATCHED_REVERSAL_TABLE, newData: { path: ["shopifyOrderId"], equals: shopifyOrderId } },
+        select: { id: true },
+    });
+    return !!early;
 }

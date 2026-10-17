@@ -25,8 +25,9 @@ export async function raiseMembershipPaymentOutcome(
         : outcome === "no_item" ? "NO_ITEM"
         // Duplicate order, both leads paying, payment after close or certify.
         : outcome === "nothing_due" ? "UNMATCHED_ORDER"
+        : outcome === "refunded" ? "REVERSED_BEFORE_ACTIVATION"
         : null;
-    if (kind) await raisePaymentException(kind, ref);
+    if (kind) await raisePaymentException(kind, { ...ref, ...(outcome === "refunded" ? { severity: "CRITICAL" as const } : {}) });
 }
 
 /**

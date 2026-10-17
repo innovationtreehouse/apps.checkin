@@ -14,6 +14,7 @@ import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { type DbClient, type TxClient } from "@/lib/db-client";
 import { awaitingBgReview, fromWhere } from "@/lib/membership/lifecycle";
 import { raiseDeniedHouseholdActivity, setHouseholdStatus } from "@/lib/membership/householdStatus";
+import { isOrderReversed, raisePaymentException } from "@/lib/finance/reconcile/exceptions";
 import { LIVE_PERSON, SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
 import { approvalsForSubject, establishedSubject } from "@/lib/membership/approvals";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
@@ -416,6 +417,8 @@ export async function undoOwnApproval(reviewerId: number, processId: number, rea
  * override). Stamp the named subjects' lastBackgroundCheck + sticky volunteer
  * status + bgClearedAt, then converge on the two-track gate:
  *   - already paid -> ACTIVE (payment finished first)
+ *   - paid on a refunded order -> held at PENDING_BG_CLEARANCE; the outcome
+ *     carries `refunded` so the caller raises it to the board
  *   - not yet paid -> PENDING_PAYMENT (applicant still needs to pay)
  * A DENIED household converges nowhere: nothing is written, and the outcome
  * carries `denied` so the caller raises it to the board after commit.
@@ -472,7 +475,8 @@ export async function clearBackgroundCheck(
         return { status: process.status, activated: false, householdId: null, isInitial: false, denied: { householdId, processId } };
     }
     const paid = !!process.paidAt;
-    const status = paid ? "ACTIVE" : "PENDING_PAYMENT";
+    const refunded = paid && !!process.shopifyOrderId && (await isOrderReversed(tx, process.shopifyOrderId));
+    const status = refunded ? "PENDING_BG_CLEARANCE" : paid ? "ACTIVE" : "PENDING_PAYMENT";
 
     // Stamp only the adults this review actually covered — the subjects the reviewers
     // read off the Averity reports. A legacy process names nobody and so stamps nobody:
@@ -488,13 +492,16 @@ export async function clearBackgroundCheck(
 
     const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...expected.where }, data: { bgClearedAt: now, status, stageEnteredAt: now } });
     if (!count) throw movedOn();
-    if (paid) {
+    if (status === "ACTIVE") {
         await setHouseholdStatus(tx, orgMembershipId, { from: ["NONE", "REVOKED", "ACTIVE"], to: "ACTIVE", actor: personActor(actorId), reason: "background check cleared on a paid application" });
     }
 
     // provenance is set when something other than a two-reviewer attestation
     // produced this clearance; without it the row is indistinguishable from one.
-    await audit(tx, personActor(actorId), processId, { status: process.status }, { status, bgCleared: true, clearedPersonIds: cleared, ...(opts.provenance ?? {}) });
+    await audit(tx, personActor(actorId), processId, { status: process.status }, { status, bgCleared: true, clearedPersonIds: cleared, ...(refunded ? { refundedOrder: true } : {}), ...(opts.provenance ?? {}) });
+    if (refunded) {
+        return { status, activated: false, householdId: null, isInitial: false, refunded: { processId, shopifyOrderId: process.shopifyOrderId! } };
+    }
     return { status, activated: paid, householdId, isInitial: process.kind === "INITIAL" };
 }
 
@@ -517,6 +524,8 @@ export type ClearanceOutcome = {
     isInitial: boolean;
     /** Set when the household is DENIED: nothing converged, and the board is owed an item. */
     denied?: { householdId: number; processId: number };
+    /** Set when the paid order was refunded: held unactivated, and the board is owed an item. */
+    refunded?: { processId: number; shopifyOrderId: string };
 };
 
 /** Why a clearance happened, when it was not two reviewers attesting. */
@@ -530,6 +539,10 @@ export type ClearanceProvenance = { via: string; sourcePersonId: number; reason:
 export async function notifyClearanceOutcome(outcome: ClearanceOutcome, opts?: { paymentOpenNotice?: (householdId: number) => Promise<void> }) {
     if (outcome.denied) {
         await raiseDeniedHouseholdActivity({ ...outcome.denied, what: "background check cleared" });
+        return;
+    }
+    if (outcome.refunded) {
+        await raisePaymentException("REVERSED_BEFORE_ACTIVATION", { ...outcome.refunded, severity: "CRITICAL" });
         return;
     }
     if (outcome.activated) {

@@ -8,6 +8,7 @@ import { config } from "@/lib/config";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { setHouseholdStatus, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
+import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import type { Prisma } from "@/generated/prisma/client";
 
 /**
@@ -108,7 +109,8 @@ export type ActivateOutcome =
     | "paid_while_blocked"
     | "no_item"
     | "nothing_due"
-    | "denied";
+    | "denied"
+    | "refunded";
 
 /**
  * The single payment path. Records the payment (paidAt + how), then gates on the
@@ -122,6 +124,7 @@ export type ActivateOutcome =
  *
  * - A board certify (via "manual") must find the process awaiting payment under
  *   the lock; otherwise it throws.
+ * - A refunded, cancelled or disputed order records nothing (`refunded`); the board is told.
  * - A DENIED household changes nothing; the board is told.
  * - BLOCKED records a real membership payment (stays BLOCKED, refund needed).
  * - A Shopify order without the membership product records nothing (`no_item`),
@@ -153,6 +156,7 @@ async function settle(
         }
 
         if (opts.shopifyOrderId && process.shopifyOrderId === opts.shopifyOrderId) return { outcome: "noop" as const };
+        if (opts.shopifyOrderId && (await isOrderReversed(tx, opts.shopifyOrderId))) return { outcome: "refunded" as const };
         // DENIED before "already paid": any money reaching a denied household goes to the Board as DENIED activity.
         if (membership.status === "DENIED") return { outcome: "denied" as const, householdId: membership.householdId };
         if (process.paidAt || process.status === "ACTIVE") return { outcome: "nothing_due" as const };

@@ -347,6 +347,9 @@ Procedure below is built on them.
   without the membership item. A store test order never settles a
   membership.  [Decision — *Principle: people decide about people*]
 
+- A refunded order never activates a membership; the app stops and raises it to
+  the Board.  [Decision — *Principle: people decide about people*]
+
 - A board member declines a membership scholarship or payment-plan request in the
   app, and the decline sends nothing: the request clears and the household returns
   to owing its membership fee by the normal route. The decision is recorded; carrying it to
