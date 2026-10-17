@@ -41,11 +41,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # "Run Tests (unit)", "Run Tests (integration)", "Coverage gate (merged)", and
-  # "Deploy build (no deploy)" are REQUIRED status checks on main (the first three
-  # replace the single old "Run Tests" job — see the CAVEAT comment above
-  # `unit-tests` below: branch protection / merge-queue settings still say
-  # "Run Tests" and need a manual update, which this PR cannot make).
+  # Required status checks on main: "Deploy build (no deploy)", "Coverage gate
+  # (merged)", "Run Tests (unit)", "Run Tests (integration)", "Package & function
+  # tests (Vitest)", "Kiosk client tests (Python)", and "isolation"
+  # (security-boundary-isolation.yml).
   # The Python kiosk client (client/**) has no NODE tests — it has its own tier
   # (`client-tests` below) — so a client-only change has no Node work to do. But
   # skipping the workflow via `paths-ignore` left those required
@@ -165,24 +164,10 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # CAVEAT (flagging, cannot fix from this PR): branch protection / merge-queue
-  # required-status-checks still list the single old job name "Run Tests".
-  # That setting must be updated by a repo admin to require the three job names
-  # below — "Run Tests (unit)", "Run Tests (integration)", "Coverage gate
-  # (merged)" — instead, or none of them will actually gate merges.
-  # "Kiosk client tests (Python)" needs the same admin action: until it is added
-  # to required-status-checks, a PR that breaks the client↔server signing
-  # contract can still merge with that job red.
-  #
-  # Split from the old single `test` job (lint + typecheck + DB preflight +
-  # the FULL unit+integration suite with coverage, ~6m48s, of which
-  # `test:coverage` alone was ~297s) into unit-tests / integration-tests run in
-  # parallel, wall-clock ~= max(unit, integration), with coverage-gate merging
-  # both coverage-final.json outputs and enforcing the ONE real threshold once
-  # `test:coverage:unit` / `test:coverage:integration` are the sibling Jest-side
-  # contract (new npm scripts); each partial run sets SKIP_COVERAGE_THRESHOLD=1
-  # because neither tier alone comes close to the merged floor (unit-only lines
-  # coverage measured ~63%) — only coverage-gate's merged check enforces it.
+  # unit-tests and integration-tests run in parallel (`test:coverage:unit` /
+  # `test:coverage:integration`); coverage-gate merges both coverage-final.json
+  # outputs and enforces the one real threshold. Each partial run sets
+  # SKIP_COVERAGE_THRESHOLD=1 because neither tier alone reaches the merged floor.
   # ---------------------------------------------------------------------------
 
   unit-tests:
@@ -270,6 +255,8 @@ jobs:
         run: |
           scripts/each-library.sh run db:generate
           npm -w @inventory/s-ingest-core run db:generate:security
+          # Intent-to-add makes a never-committed map show up in the diff.
+          git add -N checkin-app/src/security/generated/
           git diff --exit-code checkin-app/src/security/generated/ || (echo '::error::checkin-app/src/security/generated/ is stale or missing a map; run prisma generate in checkin-app, scripts/each-library.sh run db:generate, and npm -w @inventory/s-ingest-core run db:generate:security, then commit' && exit 1)
 
       # Fast type feedback. NOTE: tsc does NOT resolve bundler imports, so it
@@ -409,10 +396,10 @@ jobs:
           DATABASE_URL: "postgresql://testuser:testpassword@localhost:5432/checkmein_test"
         run: npm -w checkin-app exec -- prisma generate
 
-      # Tests run on `db push` (full schema), deploys run on `migrate deploy`
-      # (only committed migrations) — so a schema change without a migration
-      # passes CI and then breaks the deployed app (P2022 at runtime). Replay
-      # the migrations onto a clean DB and require zero diff vs schema.prisma.
+      # Deploys run on `migrate deploy` (only committed migrations), so a schema
+      # change without a migration breaks the deployed app (P2022 at runtime).
+      # Replay the migrations onto a clean DB and require zero diff vs
+      # schema.prisma.
       # Genuinely needs a live DB (migrate deploy applies to a real database) —
       # stays here.
       - name: Check migrations match schema (no drift)
@@ -424,16 +411,6 @@ jobs:
           psql -h localhost -U testuser -d checkmein_test -c 'CREATE DATABASE drift_check'
           npm -w checkin-app exec -- prisma migrate deploy
           npm -w checkin-app exec -- prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
-
-      # Genuinely needs a live DB: `db push` diffs schema.prisma against the
-      # actual connected database and applies DDL — stays here (unlike
-      # "Verify security classifications", which moved to unit-tests; see the
-      # judgment-call comment there).
-      - name: Push Prisma Schema
-        if: needs.changes.outputs.app == 'true'
-        env:
-          DATABASE_URL: "postgresql://testuser:testpassword@localhost:5432/checkmein_test"
-        run: npm -w checkin-app exec -- prisma db push --accept-data-loss
 
       # Runs every *.integration.test.ts (scanAuth, scanCheckin,
       # policy.contract, …) against the test Postgres, with coverage
@@ -638,12 +615,13 @@ jobs:
   #
   # ubuntu-latest ships a running Docker daemon, so @inventory/pg-test-harness'
   # testcontainers integration suites (monitoring-db, s-ingest-core) boot a
-  # throwaway Postgres and actually run here — off Docker they self-skip. This is
+  # throwaway Postgres and actually run here — without Docker they fail under CI
+  # (and skip locally). This is
   # the Docker-enabled integration lane #228 calls for; no extra service block is
   # needed because the harness manages the container itself.
   #
-  # Same always-report skip-notice pattern as the jest jobs so it can be added as
-  # a required check.
+  # Same always-report skip-notice pattern as the jest jobs, because it is a
+  # required check.
   package-tests:
     name: Package & function tests (Vitest)
     needs: changes
@@ -746,8 +724,8 @@ jobs:
   # pinning the Ed25519 request-signing contract against the server's
   # verifyKioskSignature — both of which had no CI to run them. Gated on
   # `client` (not `app`) so a client-only PR, which skips every Node job above,
-  # still gets tested; same always-report skip-notice pattern as those jobs so
-  # this can be added as a required check.
+  # still gets tested; same always-report skip-notice pattern as those jobs,
+  # because it is a required check.
   client-tests:
     name: Kiosk client tests (Python)
     needs: changes

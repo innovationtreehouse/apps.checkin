@@ -4,8 +4,8 @@ import { prisma, initDb } from "../../db";
 export const describeDb = gate("CATALOG_DATABASE_URL");
 
 export async function resetDb(): Promise<void> {
-  // No-op without a database URL so a `beforeAll(resetDb)` in a skipped suite (Docker absent)
-  // doesn't connect; the suite bodies are describeDb.skip anyway.
+  // No-op without a database URL, so a `beforeAll(resetDb)` doesn't connect when the
+  // describeDb gate skips the suite.
   if (!process.env.CATALOG_DATABASE_URL) return;
   await prisma.orgEvent.deleteMany();
   await prisma.workflowTransitionLog.deleteMany();
