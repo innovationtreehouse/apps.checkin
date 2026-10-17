@@ -131,7 +131,7 @@ describeDb("finance mail queue", () => {
   });
 
   it("releases a deferred item as its sender, outside their daily upload limit, and audits who released it", async () => {
-    configureQueue({ uploadsPerPersonPerDay: 0 });
+    configureQueue({ mailUploadsPerPersonPerDay: 0 });
     const id = await holdItem("deferred", "alice@example.org");
     await expect(mailQueueService.assign(id, { email: "alice@example.org" })).rejects.toMatchObject({ statusCode: 429 });
 

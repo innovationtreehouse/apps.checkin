@@ -43,6 +43,8 @@ export interface NewReceipt {
   auditAction: string;
   /** Enforce the daily upload limits for this insert (every upload; the FINANCE import has its own caps). */
   limits?: ReceiptLimits;
+  /** A mailed receipt: the per-person count is of mailed receipts only, against this limit. */
+  mailLimit?: number;
   /** Runs inside the insert's transaction, so a failure rolls the receipt back with it. */
   afterInsert?: (tx: Prisma.TransactionClient, id: string) => Promise<unknown>;
 }
@@ -57,7 +59,7 @@ export async function insertReceipt(r: NewReceipt): Promise<string> {
   const id = randomUUID();
   const fileHash = createHash("sha256").update(r.file).digest("hex");
   await db.$transaction(async (tx) => {
-    if (r.limits) await enforceUploadLimits(tx, r.orgId, r.actor.id, r.file.length, r.limits);
+    if (r.limits) await enforceUploadLimits(tx, r.orgId, r.actor.id, r.file.length, r.limits, r.mailLimit);
     await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`${r.orgId}:${fileHash}`}, 0))`;
     const suspect = await tx.receipt.findFirst({
       where: { orgId: r.orgId, fileHash },
@@ -93,15 +95,17 @@ async function enforceUploadLimits(
   personId: number,
   bytes: number,
   limits: ReceiptLimits,
+  mailLimit?: number,
 ): Promise<void> {
+  const mailed = mailLimit !== undefined;
   await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`${orgId}:upload-limits`}, 0))`;
   const [used] = await tx.$queryRaw<{ mineCount: number; mineBytes: number; allBytes: number }[]>`
-    SELECT count(*) FILTER (WHERE uploaded_by_user_id = ${personId})::int AS "mineCount",
+    SELECT count(*) FILTER (WHERE uploaded_by_user_id = ${personId} AND (NOT ${mailed} OR intake_source = 'email'))::int AS "mineCount",
            coalesce(sum(octet_length(file_blob)) FILTER (WHERE uploaded_by_user_id = ${personId}), 0)::float8 AS "mineBytes",
            coalesce(sum(octet_length(file_blob)), 0)::float8 AS "allBytes"
     FROM receipts
     WHERE org_id = ${orgId} AND uploaded_at > now() - interval '24 hours'`;
-  if (used.mineCount + 1 > limits.uploadsPerPersonPerDay) {
+  if (used.mineCount + 1 > (mailLimit ?? limits.uploadsPerPersonPerDay)) {
     throw new ServiceError(429, "You have reached today's receipt upload limit. Try again tomorrow.");
   }
   if (used.mineBytes + bytes > limits.uploadBytesPerPersonPerDay) {

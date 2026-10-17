@@ -225,8 +225,8 @@ async function failOcr(id: string, actor: ReceiptPrincipal, error: string): Prom
 }
 
 /**
- * A mailed file enters as an auto upload by its sender: the upload limits, duplicate check and
- * audit of a manual upload, then OCR on the sender's daily allowance. `ledger` runs inside the
+ * A mailed file enters as an auto upload by its sender: the upload limits (counting mailed receipts
+ * per person against the sender's mail limit), duplicate check and audit of a manual upload, then OCR on the sender's daily allowance. `ledger` runs inside the
  * insert, so the receipt and its mail-ledger row exist together or not at all. A file over the
  * OCR allowance lands in `ocr_failed`, where its uploader types the details. `uploadLimits: false`
  * skips the daily upload limits for this one file, for a deferred file finance releases.
@@ -248,6 +248,7 @@ export async function intakeMailedReceipt(
     lines: [],
     auditAction: "mail_intake",
     limits: uploadLimits ? limits() : undefined,
+    mailLimit: actor.raisedMailLimit ? limits().mailUploadsPerRaisedPersonPerDay : limits().mailUploadsPerPersonPerDay,
     afterInsert: ledger,
   });
   try {

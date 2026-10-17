@@ -12,7 +12,8 @@ import {
 } from "../../services/mailIntake";
 import { describeDb } from "../helpers/db";
 import type { ReceiptLimits } from "../../lib/limits";
-import { ALICE, BOB, clearAll, configure, okOcr, stateOf, TEST_ORG_ID } from "../helpers/setup";
+import { receiptService } from "../../services/receiptService";
+import { ALICE, BOB, clearAll, configure, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
 
 const GOOGLE_PASS = "mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass (p=NONE sp=NONE) header.from=example.org";
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
@@ -137,6 +138,7 @@ describeDb("mail intake", () => {
   });
 
   it("stops at the per-run cap, oldest mail first, and takes the rest next run", async () => {
+    configure({ ocr: okOcr(), mailbox: mail.reader, people: { submitterByEmail: async () => ({ ...ALICE, raisedMailLimit: true }) } });
     for (let i = 0; i <= MAIL_CAP; i++) send(`m${i}`);
     expect(await readMailbox()).toMatchObject({ receipts: MAIL_CAP });
     const read = (await db.receiptMailItem.findMany()).map((m) => m.gmailMessageId);
@@ -324,7 +326,7 @@ describeDb("mail intake over a sender's daily upload limit", () => {
   }
 
   it("defers the file with its bytes, then makes it a receipt on a later run once the sender has allowance", async () => {
-    withLimits({ uploadsPerPersonPerDay: 1 });
+    withLimits({ mailUploadsPerPersonPerDay: 1 });
     send("m1");
     send("m2");
     expect(await readMailbox()).toMatchObject({ receipts: 1, held: 0, overLimit: 1 });
@@ -334,7 +336,7 @@ describeDb("mail intake over a sender's daily upload limit", () => {
 
     expect(await readMailbox()).toMatchObject({ receipts: 0, overLimit: 0, skipped: 2 });
 
-    withLimits({ uploadsPerPersonPerDay: 30 });
+    withLimits({ mailUploadsPerPersonPerDay: 30 });
     mail.messages.clear();
     expect(await readMailbox()).toMatchObject({ receipts: 1 });
     const item = await db.receiptMailItem.findUniqueOrThrow({ where: { id: deferred.id } });
@@ -344,13 +346,13 @@ describeDb("mail intake over a sender's daily upload limit", () => {
   });
 
   it("spends no cap and no reading on a refused retry, and skips that sender's other deferred files for the run", async () => {
-    withLimits({ uploadsPerPersonPerDay: 1 });
+    withLimits({ mailUploadsPerPersonPerDay: 1 });
     send("a0");
     expect(await readMailbox()).toMatchObject({ receipts: 1 });
     mail.messages.clear();
     for (let i = 0; i <= MAIL_CAP; i++) await deferredFor("alice@example.org");
     send("bob1", { from: ["bob@example.org"] });
-    withLimits({ uploadsPerPersonPerDay: 1 });
+    withLimits({ mailUploadsPerPersonPerDay: 1 });
 
     expect(await readMailbox()).toMatchObject({ receipts: 1, failed: 0 });
     expect(lookups.filter((a) => a === "alice@example.org")).toHaveLength(1);
@@ -375,7 +377,7 @@ describeDb("mail intake over a sender's daily upload limit", () => {
   });
 
   it("counts deferred files toward the held ceiling", async () => {
-    withLimits({ uploadsPerPersonPerDay: 0 });
+    withLimits({ mailUploadsPerPersonPerDay: 0 });
     await db.receiptMailItem.createMany({
       data: Array.from({ length: MAIL_HELD_CEILING }, (_, i) => ({
         orgId: TEST_ORG_ID,
@@ -389,5 +391,21 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     send("m1");
     expect(await readMailbox()).toMatchObject({ overLimit: 0, overCeiling: 1 });
     expect(alerts).toHaveLength(1);
+  });
+
+  it("gives a program lead or Board member the raised mail limit", async () => {
+    withLimits({ mailUploadsPerPersonPerDay: 1, mailUploadsPerRaisedPersonPerDay: 2 }, { "alice@example.org": { ...ALICE, raisedMailLimit: true } });
+    send("m1");
+    send("m2");
+    send("m3");
+    expect(await readMailbox()).toMatchObject({ receipts: 2, overLimit: 1 });
+  });
+
+  it("counts only mailed receipts toward the mail limit", async () => {
+    withLimits({ uploadsPerPersonPerDay: 2, mailUploadsPerPersonPerDay: 1 });
+    await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    send("m1");
+    send("m2");
+    expect(await readMailbox()).toMatchObject({ receipts: 1, overLimit: 1 });
   });
 });

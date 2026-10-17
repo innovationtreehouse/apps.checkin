@@ -72,7 +72,7 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
     where: { ...LIVE_PERSON, ...SIGN_IN_VERIFIED_PERSON, email: { equals: address, mode: "insensitive" } },
     include: {
       toolStatuses: { select: { toolId: true, level: true } },
-      programsLed: { select: { id: true } },
+      programsLed: { select: { id: true, phase: true } },
       programVolunteers: { where: { program: { phase: { not: "FINISHED" } } }, select: { programId: true }, take: 1 },
       household: { include: { orgMembership: true } },
       roles: { select: { role: true } },
@@ -84,7 +84,8 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
   const claims: JWT = { id: person.id, email: person.email, hd: address.split("@")[1], emailVerified: true };
   assignParticipantClaims(claims, person);
   if (claims.denied || !canSubmitReceipts(claims)) return null;
-  return toPrincipal(person.id, person.name, isKnownAdult(person));
+  const leadsActiveProgram = person.programsLed.some((p) => p.phase !== "FINISHED");
+  return { ...toPrincipal(person.id, person.name, isKnownAdult(person)), raisedMailLimit: claims.isBoardMember === true || leadsActiveProgram };
 }
 
 /** Re-ask the refresher this long before the token it handed out expires. */
