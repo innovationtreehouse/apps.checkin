@@ -10,6 +10,8 @@ import { PaymentError } from "@/lib/membership/payment";
 import { grantCurrentYear, refuseGrantIfDenied } from "@/lib/membership/grant";
 import { ensureHouseholdMembership, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { personActor } from "@/lib/auditActor";
+import { closeForRestore } from "@/lib/membership/archive";
+import { ReviewError } from "@/lib/membership/review";
 import { lockBoardRoles } from "@/lib/roles";
 import { ENROLLED_PARTICIPANT, LIVE_PERSON } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
@@ -277,7 +279,7 @@ export const POST = withAuth(
 
             // Deny / restore — a separate legal act from grant/revoke. Denying blocks login for
             // every member of the household (enforced in the auth layer). Restore is "undeny":
-            // DENIED → NONE only.
+            // DENIED → NONE only, closing the household's open applications.
             if (typeof deny === "boolean") {
                 const outcome = await prisma.$transaction(async (tx) => {
                     if (deny) {
@@ -297,8 +299,14 @@ export const POST = withAuth(
                     const applied = await setHouseholdStatus(tx, membership.id, deny
                         ? { from: ["NONE", "ACTIVE", "REVOKED"], to: "DENIED", actor, reason: trimmedReason || "board deny" }
                         : { from: ["DENIED"], to: "NONE", actor, reason: trimmedReason || "board restore" });
-                    return applied ? membership.id : "notApplied" as const;
+                    if (!applied) return "notApplied" as const;
+                    if (!deny) await closeForRestore(tx, membership.id, actor);
+                    return membership.id;
+                }).catch((e: unknown) => {
+                    if (e instanceof ReviewError) return e;
+                    throw e;
                 });
+                if (outcome instanceof ReviewError) return apiError(outcome.message, 409);
                 if (outcome === "boardMember") {
                     return apiError("This household includes a board member. Remove the board role before denying membership.", 409);
                 }

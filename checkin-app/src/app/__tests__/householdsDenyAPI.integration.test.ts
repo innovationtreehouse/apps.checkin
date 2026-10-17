@@ -157,6 +157,36 @@ describe('POST /api/membership-ops/households — Deny Membership', () => {
         expect(membership?.status).toBe('NONE');
     });
 
+    it('restore closes the household\'s open applications so the family starts over, and refuses while one is paid', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const lead = await prisma.person.create({
+            data: { email: `restore-${TAG}@example.com`, name: 'Restore Lead', household: { create: { name: "Test HH" } } },
+        });
+        const membership = await prisma.orgMembership.create({ data: { householdId: lead.householdId, status: 'DENIED' } });
+        // Decided before the denial: the check cleared and the payment link is open.
+        await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() },
+        });
+        const paid = await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'PENDING_BG_CLEARANCE', paidAt: new Date() },
+        });
+        try {
+            const refused = await post({ householdId: lead.householdId, deny: false });
+            expect(refused.status).toBe(409);
+            expect((await refused.json()).error).toContain('record the refund');
+            expect((await prisma.orgMembership.findUnique({ where: { id: membership.id } }))?.status).toBe('DENIED');
+
+            await prisma.orgMembershipProcess.update({ where: { id: paid.id }, data: { status: 'PENDING_PAYMENT', paidAt: null } });
+            const res = await post({ householdId: lead.householdId, deny: false });
+            expect(res.status).toBe(200);
+            expect((await prisma.orgMembership.findUnique({ where: { id: membership.id } }))?.status).toBe('NONE');
+            const after = await prisma.orgMembershipProcess.findMany({ where: { orgMembershipId: membership.id }, orderBy: { id: 'asc' } });
+            expect(after.map((p) => [p.status, p.archivedFromStatus])).toEqual([['ARCHIVED', 'PENDING_PAYMENT'], ['ARCHIVED', 'PENDING_PAYMENT']]);
+        } finally {
+            await prisma.orgMembershipProcess.deleteMany({ where: { orgMembershipId: membership.id } });
+        }
+    });
+
     it('restore is undeny only: it never moves an ACTIVE household to NONE', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         await prisma.orgMembership.update({ where: { householdId: plainHouseholdId }, data: { status: 'ACTIVE' } });

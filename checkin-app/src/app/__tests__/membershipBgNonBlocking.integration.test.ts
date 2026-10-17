@@ -397,6 +397,32 @@ describe('background check is non-blocking', () => {
         expect(await prisma.paymentException.count({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', processId } })).toBe(1);
     });
 
+    it('an approver moved into the applicant household before the second approval does not count', async () => {
+        const { processId, leadId, householdId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
+        await markContractSigned(processId);
+        await markBgConsent(processId, revA);
+        const moved = await makeReviewer('RevMoved');
+        await attest(moved, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+        await prisma.person.update({ where: { id: moved }, data: { householdId } });
+
+        await expect(attest(revB, processId, { result: 'APPROVE', subjectPersonIds: [leadId] })).rejects.toMatchObject({ code: 'same_household_reviewer' });
+        const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+        expect(proc?.bgClearedAt).toBeNull();
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId } })).toBe(1);
+    });
+
+    it('board reset is refused on a DENIED household', async () => {
+        const { processId, orgMembershipId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
+        await markContractSigned(processId);
+        await markBgConsent(processId, revA);
+        await attest(revA, processId, { result: 'REJECT' });
+        await prisma.orgMembership.update({ where: { id: orgMembershipId }, data: { status: 'DENIED' } });
+
+        await expect(overrideBlocked(processId, revB, 'reset')).rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('denied') });
+        expect(await statusOf(processId)).toBe('BLOCKED');
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId } })).toBe(1);
+    });
+
     it('override approve re-checks BLOCKED under the lock: a second approve is refused', async () => {
         const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);

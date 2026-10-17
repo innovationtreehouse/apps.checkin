@@ -2,10 +2,11 @@ import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { ReviewError, applicantHousehold } from "@/lib/membership/review";
-import { ARCHIVABLE_STATUSES, RESTORABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
+import { ARCHIVABLE_STATUSES, RESTORABLE_STATUSES, RESTORE_CLOSABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
-import { personActor } from "@/lib/auditActor";
+import { personActor, type AuditActor } from "@/lib/auditActor";
+import { type TxClient } from "@/lib/db-client";
 
 // Code says "archive"; the board sees "Close application" / "Reopen". "Archive" is
 // reserved for archiving a household.
@@ -67,6 +68,39 @@ export async function archiveApplication(processId: number, actorId: number) {
 }
 
 const HOUSEHOLD_KINDS = ["INITIAL", "RENEWAL"] as const;
+
+/**
+ * Closes every open application of a household the board is restoring from DENIED,
+ * so the family starts over and nothing decided before or during the denial carries
+ * across. Refuses, rolling back the restore, while one still has a payment recorded.
+ * Runs inside the restore transaction.
+ */
+export async function closeForRestore(tx: TxClient, orgMembershipId: number, actor: AuditActor) {
+    const open = await tx.orgMembershipProcess.findMany({
+        where: { orgMembershipId, kind: { in: [...HOUSEHOLD_KINDS] }, ...openProcess.where },
+        select: { id: true, status: true, paidAt: true },
+    });
+    if (open.some((p) => p.paidAt || !(RESTORE_CLOSABLE_STATUSES as readonly string[]).includes(p.status))) {
+        throw new ReviewError("wrong_phase", "This household has an application with a payment recorded. Refund it in Shopify and record the refund first, then restore the household.");
+    }
+    for (const p of open) {
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id: p.id, ...fromWhere(p.status), paidAt: null },
+            data: { status: "ARCHIVED", archivedFromStatus: p.status, stageEnteredAt: new Date() },
+        });
+        if (count !== 1) throw new ReviewError("wrong_phase", "An application in this household changed while it was being restored. Reload and try again.");
+        await tx.auditLog.create({
+            data: {
+                ...actor,
+                action: "EDIT",
+                tableName: "OrgMembershipProcess",
+                affectedEntityId: p.id,
+                oldData: { status: p.status },
+                newData: { status: "ARCHIVED", reason: "household restored" },
+            },
+        });
+    }
+}
 
 /**
  * Why reopening would break a household rule, or null. A DENIED household starts
