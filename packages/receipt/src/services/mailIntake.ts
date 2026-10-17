@@ -13,11 +13,11 @@ import { ServiceError } from "./serviceError";
 export const MAIL_WINDOW_DAYS = 3;
 /** New receipts (OCR calls) per run, oldest mail first; the rest wait for the next run, inside the window. Held items do not count. */
 export const MAIL_CAP = 10;
-/** Files held for finance per run; the rest wait for the next run. */
+/** Downloads charged to held mail per run (see chargeHold); the rest wait for the next run. */
 export const MAIL_HELD_CAP = 50;
-/** Bytes held for finance per run, checked before each download. */
+/** Bytes charged to held mail per run (see chargeHold), checked before each download. */
 export const MAIL_HELD_BYTES = 50 * 1024 * 1024;
-/** Held items awaiting finance past which nothing more is held, and finance is alerted. */
+/** Held items awaiting finance past which nothing more is held; finance is alerted once per run while over it. */
 export const MAIL_HELD_CEILING = 500;
 // ponytail: every listed message is fetched each run before the ledger is checked, so a flood larger than this
 // budget's worth of fetches can still push a later receipt past the window; record unheld message ids then.
@@ -220,9 +220,19 @@ export async function readMailbox(): Promise<MailIntakeResult> {
   const orgId = (await getOrg()).id;
   const unresolved = await db.receiptMailItem.count({ where: { orgId, status: "held" } });
   const counts = { messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overCeiling: 0, unread: 0 };
+  let heldFiles = 0;
   let heldBytes = 0;
   const capped = () => counts.receipts >= MAIL_CAP;
-  const holdsSpent = () => counts.held >= MAIL_HELD_CAP || unresolved + counts.held >= MAIL_HELD_CEILING;
+  const holdsSpent = () => heldFiles >= MAIL_HELD_CAP || unresolved + counts.held >= MAIL_HELD_CEILING;
+
+  /**
+   * The one charging rule for the held budget: each file downloaded from an unknown sender, and each
+   * file held for a known one, costs one file and its larger stated or actual size, whatever comes of it.
+   */
+  function chargeHold(file: MailFile, bytes: Buffer): void {
+    heldFiles++;
+    heldBytes += Math.max(file.size, bytes.length);
+  }
 
   /** Whether a file of this size may be held now; counts it as deferred or over the ceiling when not. */
   function roomToHold(size: number): boolean {
@@ -230,7 +240,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       counts.overCeiling++;
       return false;
     }
-    if (counts.held >= MAIL_HELD_CAP || heldBytes + size > MAIL_HELD_BYTES) {
+    if (heldFiles >= MAIL_HELD_CAP || heldBytes + size > MAIL_HELD_BYTES) {
       counts.deferred++;
       return false;
     }
@@ -260,6 +270,7 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       }
       if (!sender && !roomToHold(file.size)) continue;
       const bytes = await file.read();
+      if (!sender) chargeHold(file, bytes);
       const check = checkReceiptFile(bytes, file.declaredType);
       if (!check.ok) {
         counts.rejected++;
@@ -284,10 +295,10 @@ export async function readMailbox(): Promise<MailIntakeResult> {
             if (!(err instanceof ServiceError && err.statusCode === 429)) throw err;
           }
           if (!roomToHold(bytes.length)) continue;
+          chargeHold(file, bytes);
         }
         await db.receiptMailItem.create({ data: { ...item, status: "held", fileBlob: new Uint8Array(bytes), mimeType: check.mimeType } });
         counts.held++;
-        heldBytes += Math.max(file.size, bytes.length);
       } catch (err) {
         // A concurrent run took this file first.
         if (!isUniqueViolation(err)) throw err;

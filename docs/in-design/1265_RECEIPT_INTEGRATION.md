@@ -179,9 +179,15 @@ Each run reads oldest first and its receipt cap (§4) counts only receipts, the 
 spend. Held items have caps of their own, so untrusted mail can never push a
 member's receipt out of the window:
 - A message whose files are all in the ledger is skipped before any download.
-- Each run holds at most 50 files and 50 MB; the rest wait for the next run.
-- At 500 held items awaiting finance, nothing more is held: finance is alerted,
-  and the run counts the files it did not hold. Receipts from members are still read.
+- Each run spends at most 50 files and 50 MB on held mail; the rest wait for the
+  next run. The charging rule is one function (`chargeHold`): each file downloaded
+  from an unknown sender costs one file and its size, whether it is held, refused
+  by the type check, or already in the ledger, and so does each file held for a
+  known sender. Mail from an unknown sender cannot raise the run's download cost
+  past that budget.
+- At 500 held items awaiting finance, nothing more is held: finance gets one alert
+  per run while over it, and the run counts the files it did not hold. Receipts
+  from members are still read.
 - Each run starts no new message after 2 minutes; the rest wait for the next run.
 - A file over 10 MB, the manual upload limit, is refused before download.
 

@@ -183,6 +183,22 @@ describeDb("mail intake flood limits", () => {
     expect(await readMailbox()).toMatchObject({ held: fit, deferred: 1 });
   });
 
+  it("charges an unknown sender's rejected files to the held budget, so junk cannot crowd out a receipt", async () => {
+    for (let i = 0; i < MAIL_HELD_CAP + 5; i++) send(`junk${i}`, { from: [`junk${i}@example.org`], parts: [attachment(`att-junk${i}`, "not a pdf")] });
+    send("member");
+    expect(await readMailbox()).toMatchObject({ receipts: 1, held: 0, rejected: MAIL_HELD_CAP, deferred: 5 });
+    expect(mail.downloads).toHaveLength(MAIL_HELD_CAP + 1);
+  });
+
+  it("charges a rejected file's stated size to the byte budget", async () => {
+    const fit = Math.floor(MAIL_HELD_BYTES / MAX_FILE_BYTES);
+    for (let i = 0; i <= fit; i++) {
+      send(`junk${i}`, { from: [`junk${i}@example.org`], parts: [attachment(`att-junk${i}`, "not a pdf", { body: { attachmentId: `att-junk${i}`, size: MAX_FILE_BYTES } })] });
+    }
+    expect(await readMailbox()).toMatchObject({ rejected: fit, deferred: 1 });
+    expect(mail.downloads).toHaveLength(fit);
+  });
+
   it("past the held ceiling, holds nothing new, alerts finance, and still reads receipts", async () => {
     await db.receiptMailItem.createMany({
       data: Array.from({ length: MAIL_HELD_CEILING }, (_, i) => ({
