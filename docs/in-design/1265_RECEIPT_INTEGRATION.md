@@ -261,9 +261,23 @@ mailbox-flooding hardening, not here.
 
 The 3-day
 window plus the dedupe ledger makes a missed run harmless with no stored cursor.
-Each run reads oldest first and its cap (§4) counts only receipts, the OCR spend;
-held items are not capped, so untrusted mail can never push a member's receipt
-out of the window. Mail the mailbox sent itself is not read.
+Each run reads oldest first and its receipt cap (§4) counts only receipts, the OCR
+spend. Held items have caps of their own, so untrusted mail can never push a
+member's receipt out of the window:
+- A message whose files are all in the ledger is skipped before any download.
+- Each run spends at most 50 files and 50 MB on held mail; the rest wait for the
+  next run. The charging rule is one function (`chargeHold`): each file downloaded
+  from an unknown sender costs one file and its size, whether it is held, refused
+  by the type check, or already in the ledger, and so does each file held for a
+  known sender. Mail from an unknown sender cannot raise the run's download cost
+  past that budget.
+- At 500 held items awaiting finance, nothing more is held: finance gets one alert
+  per run while over it, and the run counts the files it did not hold. Receipts
+  from members are still read.
+- Each run starts no new message after 2 minutes; the rest wait for the next run.
+- A file over 10 MB, the manual upload limit, is refused before download.
+
+Mail the mailbox sent itself is not read.
 `ponytail:` ceiling is a cron outage longer than 3 days, or more than 30 mailed
 receipts in one window; widen the window or the cap if either happens.
 
@@ -429,7 +443,7 @@ budget of `reconcile-shopify`:
 | 1. OCR-interrupted sweep | none needed | one `UPDATE`; milliseconds |
 | 2. S1 re-push | 50 receipts | in-process calls; seconds |
 | 3. X13 re-send | 50 receipts | in-process calls; seconds |
-| 4. Gmail intake | 10 receipt files | one OCR call each, seconds to tens of seconds; worst case about 5 minutes |
+| 4. Gmail intake | 10 receipt files; 50 held files or 50 MB | one OCR call each, seconds to tens of seconds; starts no new message after 2 minutes |
 
 Gmail runs last because it is the only slow step; anything over its cap waits for
 the next day, which the 3-day window (§2a) allows. At hundreds of receipts a year
