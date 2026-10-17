@@ -11,7 +11,7 @@ if not, which stronger model on LADDER should rerun it.
 """
 import json, os, re, subprocess, sys, urllib.request, uuid
 
-# The workflow points this at the base branch's copy, so a PR cannot edit its own reviewer.
+# The workflow points this at the default branch's copy, so a PR cannot edit its own reviewer.
 CFG = os.environ.get("AI_REVIEW_CFG", ".github/ai-review")
 JEV = "typesafe/jev-1.14"
 # Ordered cheapest to strongest; a rerun only moves up.
