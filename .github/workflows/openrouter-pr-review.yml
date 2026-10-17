@@ -24,7 +24,8 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # One review plus at most one rerun, each under the action's 22-minute budget.
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v5
         with:
@@ -51,15 +52,25 @@ jobs:
           fail_on: never
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      # A failed or partial free-tier review reruns once on GLM-5.3.
-      - if: >-
-          steps.route.outputs.tier == 'free' &&
-          (steps.review.outcome == 'failure' || contains(fromJSON('["partial","error"]'), steps.review.outputs.verdict))
+      # Jev judges whether the posted review is complete; if not, it picks a higher tier to rerun once.
+      - id: judge
+        if: always() && steps.route.outcome == 'success'
+        run: python3 .github/scripts/ai-review-route.py adjudicate
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TIER: ${{ steps.route.outputs.tier }}
+          PROFILES: ${{ steps.route.outputs.profiles }}
+          VERDICT: ${{ steps.review.outputs.verdict }}
+          REVIEW_URL: ${{ steps.review.outputs.review_url }}
+      - if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
         uses: FlyOverCoderKY/openrouter-pr-review-action@f0803a825cbd65f8c27ed4d551bdfdca3c03a193 # v1.3.0
         with:
           pr_number: ${{ github.event.pull_request.number }}
-          models: z-ai/glm-5.3
-          max_tool_turns: 30
+          models: ${{ steps.judge.outputs.model }}
+          max_tool_turns: ${{ steps.judge.outputs.max_tool_turns }}
+          max_diff_kb: ${{ steps.judge.outputs.max_diff_kb }}
           custom_instructions: ${{ steps.route.outputs.instructions }}
           path_profiles: ${{ steps.route.outputs.path_profiles }}
           fail_on: never
