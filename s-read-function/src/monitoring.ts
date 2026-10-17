@@ -9,7 +9,7 @@
  * DATA-run transition (never for ADMIN runs).
  */
 import { prisma as monitoringPrisma, recordHeartbeat } from "@inventory/monitoring-db";
-import type { HeartbeatSink } from "@inventory/s-ingest-core";
+import { logger, type HeartbeatSink } from "@inventory/s-ingest-core";
 
 /** Build the heartbeat sink, or `undefined` when monitoring isn't configured for this env. */
 export function buildHeartbeatSink(env: NodeJS.ProcessEnv = process.env): HeartbeatSink | undefined {
@@ -17,7 +17,12 @@ export function buildHeartbeatSink(env: NodeJS.ProcessEnv = process.env): Heartb
   // `service`/`env` must match the watchdog registry entry and its MONITORING_ENV so the
   // (service, env) heartbeat key lines up on both sides of the contract.
   const service = env.SERVICE_NAME ?? "shopify-read";
-  const deployEnv = env.MONITORING_ENV ?? "dev";
+  const deployEnv = env.MONITORING_ENV;
+  // A missing env must never stop the sync, and must never fall back to another env's rows.
+  if (!deployEnv) {
+    logger.error("MONITORING_ENV is required when MONITORING_DATABASE_URL is set; heartbeat push disabled", {});
+    return undefined;
+  }
   return (beat) =>
     recordHeartbeat(monitoringPrisma, {
       service,

@@ -28,7 +28,7 @@ export type ServiceEntry = z.infer<typeof entrySchema>;
 
 const configSchema = z.object({
   MONITORING_SERVICES: z.string().min(1, "MONITORING_SERVICES (JSON array) is required"),
-  MONITORING_ENV: z.string().min(1).default("dev"),
+  MONITORING_ENV: z.string().min(1, "MONITORING_ENV is required"),
   MONITOR_NAME: z.string().min(1).default("monitoring-watchdog"),
   /** Re-alert window: a persistent incident only re-pages after this many seconds (default 1h). */
   RENOTIFY_AFTER_SECONDS: z.coerce.number().int().positive().default(3600),

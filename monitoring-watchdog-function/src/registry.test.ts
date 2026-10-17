@@ -3,7 +3,11 @@ import { loadWatchdogConfig } from "./registry.js";
 
 /** Build a minimal env object — loadWatchdogConfig reads only the keys the schema names. */
 function env(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
-  return { MONITORING_SERVICES: '[{"service":"shopify-read","staleAfterSeconds":7200}]', ...overrides };
+  return {
+    MONITORING_SERVICES: '[{"service":"shopify-read","staleAfterSeconds":7200}]',
+    MONITORING_ENV: "dev",
+    ...overrides,
+  };
 }
 
 describe("loadWatchdogConfig", () => {
@@ -26,9 +30,14 @@ describe("loadWatchdogConfig", () => {
     ]);
   });
 
-  it("applies defaults for env, monitor name, and renotify window", () => {
+  it("throws when MONITORING_ENV is absent (no silent fallback to dev)", () => {
+    expect(() =>
+      loadWatchdogConfig({ MONITORING_SERVICES: '[{"service":"shopify-read","staleAfterSeconds":7200}]' }),
+    ).toThrow(/MONITORING_ENV/);
+  });
+
+  it("applies defaults for monitor name and renotify window", () => {
     const cfg = loadWatchdogConfig(env());
-    expect(cfg.env).toBe("dev");
     expect(cfg.monitorName).toBe("monitoring-watchdog");
     expect(cfg.renotifyAfterSeconds).toBe(3600);
   });

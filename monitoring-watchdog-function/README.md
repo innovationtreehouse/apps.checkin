@@ -60,7 +60,7 @@ never in a metric.
 | --- | --- |
 | `MONITORING_SERVICES` | JSON array registry `[{service, staleAfterSeconds}]` — see `.env.example` |
 | `MONITORING_DATABASE_URL` | dedicated monitoring Postgres (health_event + outbox + service_heartbeat) — the **only** DB this function connects to |
-| `MONITORING_ENV` | `env` dimension, e.g. `prod` — must match the env services push under |
+| `MONITORING_ENV` | **required**, no default: `env` dimension, e.g. `prod` — must match the env services push under |
 | `MONITOR_NAME` | `service` dimension on the heartbeat (default `monitoring-watchdog`) |
 | `RENOTIFY_AFTER_SECONDS` | re-alert window for a persistent incident (default `3600`) |
 
