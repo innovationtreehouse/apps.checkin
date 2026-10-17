@@ -326,7 +326,14 @@ receipts in one window; widen the window or the cap if either happens.
   files in the mail queue and can release one early: it becomes a receipt by its
   sender now, outside the daily upload limit for that one file, with an audit row
   naming who released it. The same conflict rule as assigning applies. Finance
-  can also assign or discard a deferred file as it would a held one.
+  can also assign or discard a deferred file as it would a held one. The mail
+  queue also releases in bulk (owner request): "Release all from" a sender, or
+  "Release all deferred", each after a confirm showing the count. The page
+  releases one item at a time through the same release, so each still writes its
+  own audit row and faces the conflict rule. An item already handled or
+  conflicted is skipped; any other failure stops the run, and the page reports
+  what was released, skipped and not tried. Held items have no sender to run as,
+  so they are still assigned or discarded one by one.
 - **Anything else goes to a `FINANCE` queue, never dropped:** unknown sender,
   sender outside the audience, failed or missing DMARC alignment. The item keeps its file until
   finance assigns an uploader (then it enters the pipeline as above) or discards it.
