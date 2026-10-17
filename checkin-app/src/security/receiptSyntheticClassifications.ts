@@ -1,6 +1,6 @@
 /**
  * Non-Prisma response models the receipt library ships through handler()
- * (#1265 §6; the catalogSyntheticClassifications.ts pattern).
+ * (the catalogSyntheticClassifications.ts pattern).
  *
  * ReceiptView — the receipt as the library returns it: `Receipt` and its
  * `ReceiptDetail` flattened into one row (repositories/receipt.ts `ReceiptRow`),

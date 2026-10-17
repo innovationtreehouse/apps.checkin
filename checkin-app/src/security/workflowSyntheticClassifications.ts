@@ -1,6 +1,6 @@
 /**
  * Non-Prisma response models the workflow-mapping library ships through
- * handler() (#1289 §5; the catalogSyntheticClassifications.ts pattern).
+ * handler() (the catalogSyntheticClassifications.ts pattern).
  *
  * The receipt list, detail and counts return parsed projections of the stored
  * `receiptJson` (`personal`, never granted), and handler()'s stripper drops any

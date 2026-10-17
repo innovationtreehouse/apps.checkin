@@ -1,9 +1,9 @@
-// Receipt library (#1265 §6) route policy. Aggregated by ../registry.ts.
+// Receipt library route policy. Aggregated by ../registry.ts.
 import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 
 // Submitters are adult members or Treehouse Volunteers (`receipt-submitter`,
 // docs/rules/expenses.md) and read only their own receipts: `their_own` resolves on the row's uploadedByUserId against
-// the session id (plan rule 6), and grants no pii, so donor and reimbursee names
+// the session id, and grants no pii, so donor and reimbursee names
 // never come back to the uploader. FINANCE acts org-wide; BOARD reads alongside
 // FINANCE (finance's superuser) but takes no finance action. Sysadmins get
 // nothing extra (revenue.md). A route shared by both audiences lists
@@ -55,12 +55,12 @@ defineRoute({ endpoint: 'POST /api/receipts/[id]/push-to-inventory', authorize: 
 defineRoute({ endpoint: 'POST /api/receipts/import', authorize: 'finance', envelope: null, returns: ['ReceiptImportResult'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/receipts/settings', authorize: 'finance', envelope: null, returns: ['ReceiptOrgSettings'], orderedView: FINANCE_VIEW });
 
-// Gmail mail queue (phase G): FINANCE only (§2a: the sender address is read by FINANCE alone).
+// Gmail mail queue: FINANCE only (the sender address is read by FINANCE alone).
 defineRoute({ endpoint: 'GET /api/receipts/mail-items', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/assign', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/discard', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
 
-// Files (plan rule 7): the only way receipt bytes leave. Naming each field here
+// Files: the only way receipt bytes leave. Naming each field here
 // makes it file-only, so the JSON stripper drops it on every route. Headers are
 // fixed by fileHandler per content type: images inline under a CSP sandbox, PDF
 // inline without one, text only as an attachment, nosniff on all.

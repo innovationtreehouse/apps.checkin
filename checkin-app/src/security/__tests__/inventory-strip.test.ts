@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Boundary coverage for the local-inventory routes (#1287 §5). Companion to the
+ * Boundary coverage for the local-inventory routes. Companion to the
  * registry/generator wiring; asserts the boundary layer directly, independent of
  * the route files:
  *
@@ -16,7 +16,7 @@
  *      them. Tokens come from the live registry, so a policy regression fails.
  *   3. The inventory `InventoryProvisionalItem` model and the catalog
  *      `ProvisionalItem` model coexist in the merged map with their own field
- *      sets — the collision the rename (#1287 §5) exists to prevent.
+ *      sets — the collision the distinct name exists to prevent.
  */
 import { stripValue } from '@/security/stripper';
 import type { CallerContext } from '@/security/access-resolvers';
@@ -77,8 +77,8 @@ const MANAGER_ENDPOINTS = [
     'PUT /api/inventory/inventory-merge-conflicts/[id]/resolve',
 ];
 
-// Never registered: the machine surface (§8c), the dead settings routes (§7),
-// and a count for the org-events ledger the in-process S5 crossing retires.
+// Never registered: the machine surface, the dead settings routes, and a
+// count for the org-events ledger the in-process crossing replaces.
 const UNREGISTERED_ENDPOINTS = [
     'GET /api/inventory/system-data',
     'GET /api/inventory/received-org-events/count',
@@ -205,8 +205,8 @@ describe('inventory field-stripping (InventoryProvisionalItem free text)', () =>
 
 describe('classification merge keeps inventory and catalog provisional models disjoint', () => {
     it('both models exist with their own field sets', () => {
-        // Inventory's provisional model is renamed to avoid colliding with the
-        // catalog schema's ProvisionalItem in the flat merge (#1287 §5).
+        // Inventory's provisional model has its own name so it does not collide
+        // with the catalog schema's ProvisionalItem in the flat merge.
         const inventory = classifications.InventoryProvisionalItem as Record<string, string>;
         const catalog = classifications.ProvisionalItem as Record<string, string>;
         // inventory-only field:

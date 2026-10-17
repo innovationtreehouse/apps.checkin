@@ -1,14 +1,14 @@
-// income library (#1283 §6/§7) route policy. Aggregated by ../registry.ts.
+// income library route policy (docs/rules/revenue.md, Income). Aggregated by ../registry.ts.
 import { defineRoute, type OrderedViewEntry } from '../core';
 
 // Reads and the settings PATCH admit FINANCE or BOARD; resolve, run, category
 // mapping and exclusion writes are FINANCE-only. The library, not the gate, lets
 // FINANCE only lower a settings cap; raising one takes BOARD. Every income field
-// except a row's `id` is `internal` (§7), so both roles get the full internal view. No sysadmin view: Finance Ops
+// except a row's `id` is `internal`, so both roles get the full internal view. No sysadmin view: Finance Ops
 // excludes sysadmins (docs/rules/revenue.md).
 //
 // QB exclusions are GET + POST only — an exclusion is permanent, so there is no
-// DELETE. No audit-log route: nothing reads the audit log yet (§6).
+// DELETE. No audit-log route: nothing reads the audit log yet.
 const FINANCE_OR_BOARD_VIEW: readonly OrderedViewEntry[] = [
     ['isFinance', ['everyones:internal', 'public']],
     ['isBoardMember', ['everyones:internal', 'public']],

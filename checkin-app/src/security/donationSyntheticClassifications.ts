@@ -1,6 +1,6 @@
 /**
  * Non-Prisma response models the bulk-donation library ships through handler()
- * (#1280 §4/§5; the catalogSyntheticClassifications.ts pattern).
+ * (the catalogSyntheticClassifications.ts pattern).
  *
  * DonationNavCounts — the Finance tab badges: two scalar queue sizes, `public`
  * like every count model (no actor, no donor, no amount).

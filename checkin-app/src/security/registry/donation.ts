@@ -1,4 +1,4 @@
-// Bulk donation (#1280 §4/§5) route policy. Aggregated by ../registry.ts.
+// Bulk donation route policy (docs/rules/revenue.md, Donations). Aggregated by ../registry.ts.
 import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 
 // Reads admit FINANCE or BOARD (the board acts as finance's superuser); writes

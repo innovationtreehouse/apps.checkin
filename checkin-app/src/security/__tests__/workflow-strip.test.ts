@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Boundary coverage for the workflow-mapping classifications (#1289 §5):
+ * Boundary coverage for the workflow-mapping classifications:
  *
  *   1. The stored receipt blob is `personal` and the schema carries no `pii`.
  *   2. No workflow model, generated or synthetic, names a submitter or
@@ -11,7 +11,7 @@
  *   3. The stripper, under the read view's tokens (public + everyones:internal),
  *      drops the blob and any submitter/reimbursement key a projection grows,
  *      and keeps the nested line items.
- *   4. Admission (#1289 §6): INVENTORY_MANAGER, FINANCE and BOARD read; only
+ *   4. Admission: INVENTORY_MANAGER, FINANCE and BOARD read; only
  *      INVENTORY_MANAGER writes; an id-less session is 401 on every route through
  *      the real authenticateRequest (only next-auth is mocked) and is denied the
  *      reads at the resolveAccess layer too; no route view-selects a sysadmin.

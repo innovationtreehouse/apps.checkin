@@ -1,11 +1,11 @@
-// Expense (#1272 §5/§6) route policy. Aggregated by ../registry.ts.
+// Expense route policy (docs/rules/expenses.md). Aggregated by ../registry.ts.
 import { defineRoute, type OrderedViewEntry, type Token } from '../core';
 
 // FINANCE and BOARD read the whole surface: money (`internal`), every person id
 // and the reimbursee (`pii`), free text and stored payloads (`personal`).
 // A bucket approver (a program's leader or treasurer) passes the
 // `expense-approver` gate, and the handler filters rows to the buckets the
-// caller approves (§5: the narrow read is a route+query concern). On those rows
+// caller approves (the narrow read is a route+query concern). On those rows
 // the approver sees `internal` only: amounts and state, not who submitted,
 // signed or is reimbursed. The sign-off POST admits `expense-signer`: any known
 // adult or Treehouse Volunteer (`receipt-submitter`, for the submitter seat) or a
@@ -16,9 +16,9 @@ import { defineRoute, type OrderedViewEntry, type Token } from '../core';
 //
 // NOT registered here, deliberately:
 //   • the org-bearer intake POST /api/expenses — checkin cannot gate a
-//     machine-bearer route; the orchestrator's S2 call is in-process (§8a).
-//   • the source's /api/system-data — SettingsData is not ported (§2).
-//   • any QuickBooks OAuth route — consent is an operator CLI step (§9).
+//     machine-bearer route; the orchestrator's call is in-process.
+//   • the source's /api/system-data — SettingsData is not served.
+//   • any QuickBooks OAuth route — consent is an operator CLI step.
 const FULL: readonly Token[] = ['everyones:pii', 'everyones:personal', 'everyones:internal', 'public'];
 
 const FINANCE_VIEW: readonly OrderedViewEntry[] = [['isFinance', FULL]];
@@ -98,5 +98,5 @@ defineRoute({ endpoint: 'POST /api/expense/capital-assets/seed', authorize: 'fin
 // QuickBooks matching per expense: the expense's candidates, and pick one.
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/qb-candidates', authorize: 'finance', envelope: null, returns: ['ExpenseQbCandidateView'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/qb-match', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
-// QuickBooks matching (§9 QB-2): exclude a QuickBooks transaction from matching.
+// QuickBooks matching: exclude a QuickBooks transaction from matching.
 defineRoute({ endpoint: 'POST /api/expense/qb-exclusions', authorize: 'finance', envelope: null, returns: ['ExpenseQbMatchExclusion'], orderedView: FINANCE_VIEW });

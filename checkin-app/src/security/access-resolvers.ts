@@ -169,16 +169,12 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
 }
 
 /**
- * Per-row scope resolver. The imperative `switch (modelName)` that used to live
- * here is now a declarative `SCOPE_BINDINGS` table interpreted by one engine
- * (scopes.ts), so the bindings can be checked in CI (field typos, forgotten
- * models, route-grant seam). Behavior is identical — proved by the S1
- * equivalence test (tests/security/scopeBindingsEquivalence.test.ts) which
- * asserted set-equality with the old switch across every persona × model × row
- * before this swap. Re-exported here so existing call sites
- * (`import { scopesHeld } from './access-resolvers'`) are unchanged.
+ * Per-row scope resolver: the declarative `SCOPE_BINDINGS` table interpreted by
+ * one engine (scopes.ts), so the bindings can be checked in CI (field typos,
+ * forgotten models, route-grant seam). Re-exported here so call sites can
+ * `import { scopesHeld } from './access-resolvers'`.
  *
- * The old `ROW_SCOPE_KEY` fail-closed map moved to scopeBindings.ts (it gates
+ * The `ROW_SCOPE_KEY` fail-closed map lives in scopeBindings.ts (it gates
  * EmergencyContact: a key-less row yields NO scopes, not even `everyones`).
  */
 export { scopesHeld } from './scopeBindings';
@@ -332,7 +328,7 @@ export async function resolveAccess(
             case 'kiosk':
                 return { allowed: auth.type === 'kiosk' };
             case 'catalog-viewer':
-                // #1286 §6: the catalog audience (lib/volunteer.ts), read from session claims.
+                // The catalog audience (lib/volunteer.ts), read from session claims.
                 return { allowed: auth.type === 'session' && canSeeCatalog(auth.user) };
             case 'receipt-submitter':
                 // An adult in an ACTIVE-membership household, or a Treehouse Volunteer
@@ -343,21 +339,21 @@ export async function resolveAccess(
                             isTreehouseVolunteer(auth.user)),
                 };
             case 'inventory-manager':
-                // #1286 §6: catalog WRITE admission — INVENTORY_MANAGER only (a
+                // Catalog WRITE admission — INVENTORY_MANAGER only (a
                 // sysadmin grants themselves the role; no admin auto-admit here).
                 return { allowed: auth.type === 'session' && auth.user.isInventoryManager === true };
             case 'finance':
-                // #1272 §6: FINANCE only; sysadmins are not auto-admitted
+                // FINANCE only; sysadmins are not auto-admitted
                 // (revenue.md: Finance Ops excludes sysadmins).
                 return { allowed: auth.type === 'session' && auth.user.isFinance === true };
             case 'finance-or-board':
-                // #1272 §6 / #1280 §4: FINANCE or BOARD; still no sysadmin.
+                // FINANCE or BOARD; still no sysadmin.
                 return {
                     allowed: auth.type === 'session' &&
                         (auth.user.isFinance === true || auth.user.isBoardMember === true),
                 };
             case 'expense-approver': {
-                // #1272 §5/§6: FINANCE, BOARD, or a derived bucket approver — a
+                // FINANCE, BOARD, or a derived bucket approver — a
                 // program leader (on the session) or a program treasurer (one DB
                 // read; the session carries no treasurer flag). Still no sysadmin.
                 if (auth.type !== 'session') return { allowed: false };
