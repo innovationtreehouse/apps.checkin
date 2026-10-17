@@ -30,7 +30,11 @@ jobs:
       - uses: FlyOverCoderKY/openrouter-pr-review-action@f0803a825cbd65f8c27ed4d551bdfdca3c03a193 # v1.3.0
         with:
           pr_number: ${{ github.event.pull_request.number }}
-          models: anthropic/claude-sonnet-4.6
+          # Review tier: reads the checkout with tools and writes the findings.
+          models: nvidia/nemotron-3.5-super-vl:free
+          # Posting tier: merges and formats the findings, then posts the review.
+          judge_model: nvidia/nemotron-3.5-lightning:free
+          judge_needed: true
           fail_on: never
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
