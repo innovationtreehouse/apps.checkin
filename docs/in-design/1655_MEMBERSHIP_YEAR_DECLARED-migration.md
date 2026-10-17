@@ -275,7 +275,7 @@ files, and a shared file is never edited by both at once:
 |---|---|---|---|
 | `schema.prisma`, a new migration, `classifications.ts` | PR 1 | PR 1 | land one, rebase and regenerate the other |
 | `programYear.ts` helpers | PR 7 | PR 3 | the first of the two to start writes `membershipYearOf` and `membershipYearLabel`; the other reuses them. The program plan's end-date rule (an end on the boundary counts in the closing year) is its own wrapper, not the shared helper |
-| `orgMembership.ts` and the program-pricing integration suites | PR 4 | PR 2 | serialize; both change what the pricing tests set up |
+| `orgMembership.ts` and the program-pricing integration suites | PR 4 | PRs 2, 6 | serialize; both change what the pricing tests set up |
 | `todoCounts.ts` | PRs 7, 8 | PR 5 | serialize |
 
 Member pricing needs no extra step from this plan: the program plan's horizon

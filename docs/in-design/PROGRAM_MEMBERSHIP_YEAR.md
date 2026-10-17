@@ -51,10 +51,11 @@ the member price and the announcement.
 **For the board**, three things. A program cannot be created until the
 membership-year boundary is set, because there is no year to state without it.
 Existing programs that cross the boundary cannot be filled in by the app; they
-show a red badge and count toward the board's nav until somebody states their
+show a red badge and count toward the board's nav until the Board states their
 year, and until then they read exactly as they do today. And stating or changing
-a program's year is a pricing act, so who may do it is the board's call (see
-`PMY-Q1` in the migration file).
+a crossing program's year is part of approving its budget, so only the Board does
+it. The Board may change it after families have paid; the form warns first, and
+the Board settles any price difference with those families by hand.
 
 **The cost** is one nullable integer column, a derivation and a check on the two
 program write routes, a select on the two program forms, one changed horizon
@@ -113,8 +114,8 @@ the year their own dues cover, and the two can be compared as plain integers.
 Two small pure helpers carry the arithmetic: which membership year a date falls
 in, and the label for a year. They live in the prisma-free
 `checkin-app/src/lib/programYear.ts`, beside `nextBoundary`, because the program
-forms need them in the browser and `renewal.ts` imports prisma. Whichever of this
-work and the settlement-year work lands first writes them; the other reuses them.
+forms need them in the browser and `renewal.ts` imports prisma. The settlement
+year needs the same two, so both designs share them.
 
 ## What a program declares
 
@@ -154,16 +155,24 @@ wins. If they still cross the boundary and the stated year is one of the years
 they touch, it stands; nudging a date inside the same pair of years is no reason
 to ask again. Otherwise the edit is rejected until a year is supplied.
 
-**Who may state it** is open as `PMY-Q1`. A program leader can edit dates today,
-but the stated year decides who gets the member price, and only the board and
-sysadmins set price. The recommendation is that only the board and sysadmins
-supply or change a stated year, and that a leader's date edit needing a new
-statement is refused with a message to ask the board. A leader's edit inside one
-year still re-derives silently; derivation is not a choice.
+**Only the Board states or changes it**, because the answer comes from the
+Board's own budget approval. Sysadmins do not, although they set prices. Anyone
+else's write that would need a stated year, a program leader's date edit or a
+sysadmin creating a crossing program, is refused with a message to ask the Board.
+An edit whose dates fall inside one year still re-derives silently for anyone who
+may edit dates; derivation is not a choice.
 
-**Changing it after money has moved** is open as `PMY-Q2`, because the member
-discount check runs again when an order arrives and when the board reconciles,
-and judges against the year as it stands then.
+**The Board may change it after families have paid.** Nothing is refused. The
+member-price check is asked once, when an order's money moves, and is never
+re-run on an order already settled, so a change does not reprice anyone who has
+paid. Two things can still follow, and both are left to people. A family that paid
+the outside price may now have been owed the member price, or the reverse; and an
+order judged after the change (a member code minted beforehand and redeemed after,
+or a missed webhook the reconciler recovers) is judged against the new year, and
+one that fails is raised to the Board as an unauthorised discount, the way any
+such order is today. So the program form warns before saving a changed year on a
+program with paid places, naming how many, and the Board settles any difference
+with those families by hand.
 
 ### The boundary is what a year is named against
 
@@ -281,9 +290,11 @@ When the dates decide the year, the field is absent; not disabled, not shown
 filled in, absent.
 
 Its label points at the budget approval, so the person filling it knows they are
-looking something up. Where `PMY-Q1` keeps the field to the board and sysadmins,
-a leader sees the stated year read-only and, if their date edit would need a new
-one, the message to ask the board.
+looking something up. Only a Board member can set it; anyone else sees the stated
+year read-only and, if their date edit would need a new one, the message to ask
+the Board. When a Board member changes a stated year on a program that already has
+paid places, the form asks them to confirm, naming the number of paid places, and
+saves on confirmation.
 
 ### Programs that need a person
 
@@ -299,10 +310,9 @@ is what sends them there.
 The predicate is a single null check, so it needs no shared predicate-and-filter
 pair; the count and the badge both read `appliesToYear` being empty.
 
-Which programs count is open as `PMY-Q3`: every program with no stated year, or
-only those that have not yet ended. The recommendation is the second. An ended
-program's year is read again only if one of its old orders is reconciled, and the
-end-date reading it falls back to is the stricter one.
+Only a program that crosses the boundary needs a person; every other program's
+year comes from its dates. Every crossing program without a stated year counts,
+ended or not, so the count reaching zero means every program has a year.
 
 ## Where the column lives after the program restructure
 
@@ -341,7 +351,10 @@ Above that, the ones a pure function cannot cover:
 
 - each write route derives the year, rejects a crossing program with no year or
   with a year its dates do not touch, keeps a still-valid stated year across a
-  date nudge, and refuses when no boundary is configured;
+  date nudge, refuses when no boundary is configured, and refuses anyone but a
+  Board member who supplies or changes a stated year;
+- the program form asks for confirmation before saving a changed year on a
+  program with paid places, and not otherwise;
 - the discount-code route and the entitlement check, for a crossing program
   stated as the earlier year, because the function being right does not prove the
   column reached the select;

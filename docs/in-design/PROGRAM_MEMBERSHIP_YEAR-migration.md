@@ -5,14 +5,14 @@ Everything here expires when the change has run. The design is in
 
 ## Where it stands
 
-Five pull requests finish this; none has started. The date half of the original
+Six pull requests finish this; none has started. The date half of the original
 design has shipped: every program has a start and an end date, the create and
 edit routes refuse one without both, and `programCoverageDate` returns the end
 date. What remains is the stated year and everything that reads it.
 
-Two of the five wait on owner decisions (`PMY-Q1`, `PMY-Q2`); one more takes its
-scope from `PMY-Q3`. None waits on the settlement-year work (#1655) or on the
-program restructure.
+The owner has answered all three questions. None of the six waits on the
+settlement-year work (#1655) or on the program restructure, though some share
+files with it (see [Ordering](#ordering-against-other-work)).
 
 ## Decisions settled
 
@@ -25,29 +25,26 @@ program restructure.
 - **No program is created or re-dated before the boundary is set.**
 - **The field is `appliesToYear`**, the opening-year integer, shared with the
   settlement-year work.
+- **This design and `1655_MEMBERSHIP_YEAR_DECLARED.md` describe one
+  membership-year rule** and are planned together (`MY-0` there).
 
-## Open questions
+## Owner answers
 
 Stable IDs; a resolved question is marked in place, never renumbered.
 
-- **`PMY-Q1`: Who may state or change a program's year?** A program leader can
-  edit dates today; the stated year decides who gets the member price; only the
-  board and sysadmins set price. *Recommendation:* the board and sysadmins only. A
-  leader's date edit that stays inside one year still re-derives silently; one
-  that would need a new statement is refused with "ask the board to set the
-  membership year". Blocks PR 3.
-- **`PMY-Q2`: Can the stated year change once someone has paid for a place?** The
-  member-code check runs again when an order arrives and when the board
-  reconciles, against the year as it stands then, so a change after payment can
-  turn an order that was correct when placed into a payment problem.
-  *Recommendation:* refuse the change once any place is paid; a board that really
-  needs it handles the paid families by hand first. Blocks PR 3.
-- **`PMY-Q3`: Which programs must have a stated year?** *Recommendation:* only
-  programs that have not yet ended. An ended program's year is read again only
-  when one of its old orders is reconciled, and the end date it falls back to is
-  the stricter reading. Under this answer the column stays nullable and the
-  end-date fallback stays, so there is no contract step. If the answer is every
-  program, PR 6 below is added. Sets the scope of PR 5.
+- **`PMY-Q1` (resolved): Who may state or change a program's year?** Only the
+  Board, as part of approving the program's budget; not sysadmins. A write by
+  anyone else that would need a stated year is refused with "ask the Board".
+- **`PMY-Q2` (resolved): Can the stated year change once someone has paid?** Yes.
+  The Board settles any resulting price difference with the families by hand. The
+  form warns before saving a changed year on a program with paid places, naming
+  how many. Nothing new is built to list them: an order judged after the change
+  that fails the member-price check already reaches the Board as an unauthorised
+  discount.
+- **`PMY-Q3` (resolved): Which programs must have a stated year?** Only programs
+  that cross a membership-year boundary; every other program's year comes from its
+  dates. A crossing program needs one whether or not it has ended, so once PR 5's
+  count reads zero every program has a year, and PR 6 makes that permanent.
 
 Only production can say how many existing programs cross the boundary. PR 4
 leaves them empty and PR 5 counts them.
@@ -59,7 +56,7 @@ registry or security-boundary PR is needed; the regenerated classifications in
 PR 1 are a pure addition, which the boundary-isolation check accepts alongside
 schema changes.
 
-Order: **1 → 2 → 3 → 4 → 5.** PR 2 goes before PR 3 because it is unblocked and
+Order: **1 → 2 → 3 → 4 → 5 → 6.** PR 2 goes before PR 3 because it is unblocked and
 behaves exactly as today until rows carry a year. PRs 2 and 3 both edit
 `checkin-app/src/app/api/programs/[id]/route.ts` (PR 2 the `GET`, PR 3 the
 `PATCH`), so they are not built at the same time.
@@ -106,19 +103,27 @@ behaves exactly as today until rows carry a year. PRs 2 and 3 both edit
 ### PR 3: write path and the form field [app]
 
 - **Files:**
-  - `checkin-app/src/lib/programYear.ts`: the two pure helpers, the year a date
-    falls in (with the end-date rule from the design) and the `2026-2027` label,
-    plus the years a pair of dates touches. Skip any the settlement-year work has
-    already written.
-  - `checkin-app/src/app/api/programs/route.ts` `POST` and
-    `checkin-app/src/app/api/programs/[id]/route.ts` `PATCH`: refuse with a message
-    naming the setting when no boundary is configured; derive the year when the
-    dates decide it; otherwise require one of the years the dates touch, keeping a
-    still-valid stated year across a date edit. Apply `PMY-Q1` and `PMY-Q2`.
+  - `checkin-app/src/lib/programYear.ts`: the shared helpers `membershipYearOf`
+    (the year a date falls in) and `membershipYearLabel` (`2026-2027`), unless
+    #1655's PR 7 has already written them; then this plan's own wrappers, the
+    end-date rule from the design and the years a pair of dates touches.
+  - `checkin-app/src/app/api/programs/route.ts` `POST` and `updateProgram` in
+    `checkin-app/src/lib/programs/update.ts`, which the `PATCH` delegates to:
+    refuse with a message naming the setting when no boundary is configured;
+    derive the year when the dates decide it; otherwise require one of the years
+    the dates touch, keeping a still-valid stated year across a date edit.
+    Supplying or changing a stated year needs `actor.isBoardMember`, the check the
+    off-sale date already uses there (`PMY-Q1`). `POST` admits sysadmins too, so a
+    sysadmin creating a crossing program is refused with "ask the Board". A change
+    after payment is not refused (`PMY-Q2`).
   - `checkin-app/src/app/program-ops/new/page.tsx` and
     `checkin-app/src/app/program-ops/programs/[id]/page.tsx`: the conditional
-    select, labelled to point at the budget approval. The settings form's
-    `startAt`/`endAt` types are still `string | null`; tighten them while there.
+    select, labelled to point at the budget approval, editable by a Board member
+    and read-only for everyone else. On the settings form, changing a stated year
+    on a program with paid places (participants with status `ACTIVE`, which the
+    page already loads) asks for confirmation naming their number. The settings
+    form's `startAt`/`endAt` types are still `string | null`; tighten them while
+    there.
   - Seed: `checkin-app/prisma/seed.ts` writes the `BoardSettings` boundary at the
     policy value (1 September), and `createProgram` in
     `checkin-app/src/lib/dev/seed-helpers.ts` derives the year. Without the
@@ -137,7 +142,7 @@ behaves exactly as today until rows carry a year. PRs 2 and 3 both edit
   whole flow suite, not the one file.
 - **Migration safety:** none. During the drain window the old release still
   creates programs with no year; PR 4 fills those.
-- **Blocked on:** PR 1, `PMY-Q1`, `PMY-Q2`.
+- **Blocked on:** PR 1.
 
 ### PR 4: fill existing rows [mig]
 
@@ -163,30 +168,45 @@ behaves exactly as today until rows carry a year. PRs 2 and 3 both edit
   `checkin-app/src/app/program-ops/programs/[id]/page.tsx`, beside the
   broken-checkout one; the count in `checkin-app/src/lib/nav/todoCounts.ts` beside
   `programsMisconfig`, and its pill via `checkin-app/src/components/navBadges.ts`.
-  Under `PMY-Q3`'s recommendation, both count only programs with no year whose
-  end is today or later.
+  Per `PMY-Q3`, both count every program with no year, ended or not; after PR 4
+  only a crossing program can be in that state.
   Also delete the dead copy in `checkin-app/src/app/programs/page.tsx`: the
   `(Ongoing)` and `Start Date TBD` fallbacks can no longer render.
-- **Rules:** applies the needs-a-person line; then the Last step below.
+- **Rules:** applies the needs-a-person line.
 - **Tests:** unit for the count, the badge and the nav pill.
 - **Migration safety:** none.
-- **Blocked on:** PR 4 deployed, or the board sees every program flagged; scope
-  from `PMY-Q3`.
+- **Blocked on:** PR 4 deployed, or the board sees every program flagged.
 
-### PR 6, only if `PMY-Q3` says every program [mig + app]
+### PR 6: the year becomes required [mig + app, contract]
 
-Once the PR 5 count reads zero in production, which is an operations event, not a
-deploy: `SET NOT NULL` on the column, and remove the end-date fallback from
-`programCoverageDate`. Every writer must already write the column, so check the
-seed helpers and any test factory that inserts programs directly.
+- **Files:** a migration setting `appliesToYear` `NOT NULL`; `schema.prisma`;
+  `programCoverageDate` loses the end-date fallback and its no-year test case.
+  Every writer writes the column after PR 3; check the seed helpers and any test
+  factory that inserts programs directly.
+- **Tests:** full `npm run test:ci`, then integration (heavy).
+- **Migration safety:** the migration fails on any empty row, and a failed
+  migration wedges every later deploy, so merge only once the PR 5 count reads
+  zero in production, an operations event rather than a deploy, and check it again
+  just before merging. The old release writes the year on every create after
+  PR 3, so it is safe against the constraint during the drain.
+- **Rules:** none; then the Last step below.
+- **Blocked on:** PR 5 count at zero in production.
 
 ## Ordering against other work
 
 **Settlement year (#1655, `1655_MEMBERSHIP_YEAR_DECLARED.md`).** Neither blocks the
-other. Both use `appliesToYear` and the same helpers in
-`checkin-app/src/lib/programYear.ts`; whichever lands first writes them. Its owed
-decision (which year a new joiner's checkout sells inside the renewal window)
-does not touch this plan.
+other, but they share files, and a shared file is never edited by both at once:
+
+| Shared | This plan | #1655 plan | Rule |
+|---|---|---|---|
+| `schema.prisma`, a new migration, `classifications.ts` | PR 1 | PR 1 | land one, rebase and regenerate the other |
+| `programYear.ts` helpers | PR 3 | PR 7 | the first of the two to start writes `membershipYearOf` and `membershipYearLabel`; the other reuses them |
+| `orgMembership.ts` and the program-pricing integration suites | PRs 2, 6 | PR 4 | serialize |
+| `todoCounts.ts` | PR 5 | PRs 7, 8 | serialize |
+
+Member pricing needs nothing from #1655 beyond its PR 4: the horizon this plan
+compares against comes from `membershipValidThrough`, which that PR moves to the
+recorded year.
 
 **Program restructure (`docs/designs/PROGRAM_INSTANCE_RESTRUCTURE.md`).** Not
 blocking. The year moves to the run with the dates. If its run-columns migration
@@ -196,8 +216,11 @@ adds it. Its re-sync and dual-write carry it, and its read phase moves the four
 `appliesToYear`, home: instance, whichever lands second.
 
 **Unified signup (#1370).** Its pricing has no coverage term yet. It should land
-after PR 2 and read the program's `appliesToYear`; once #1655 is in too, the
-member test is "a settlement whose `appliesToYear` equals the program's".
+after PR 2 and use the same horizon comparison, the household's
+`membershipValidThrough` against `programCoverageDate`. It must not test that a
+settlement's year equals the program's: a family that joined inside the renewal
+window bought the coming year and is covered through the year in progress too, so
+an equality test would refuse it the member price on a summer program.
 
 ## Destination: `docs/rules/programs.md`
 
@@ -214,13 +237,17 @@ below, which is not settled." in the member-discount-code line. (PR 2.)
   judged against its end date.  [Decision]
 ```
 
-**Insert** under Pricing (PR 3, wording of the last clause per `PMY-Q1`):
+**Insert** under Pricing (PR 3):
 
 ```markdown
 - A program runs in one membership year and states which. The statement is
   derived when the program's dates fall inside one membership year, and recorded
-  from the budget approval when they do not. Only the board and sysadmins record
-  or change it.  [Decision]
+  from the Board's budget approval when they do not. Only the Board records or
+  changes it.  [Decision]
+
+- The Board may change a program's stated year after places are paid. Nothing
+  already paid is repriced; the Board settles any difference with those families.
+  [Decision — *Principle: people decide about people*]
 
 - A program cannot be created or re-dated before the membership-year boundary is
   set. There is no membership year to state until there is a boundary to state
@@ -243,12 +270,12 @@ below, which is not settled." in the member-discount-code line. (PR 2.)
   deliberate organisation-wide act.
 ```
 
-**Insert** under Pricing (PR 5, scope per `PMY-Q3`):
+**Insert** under Pricing (PR 5):
 
 ```markdown
-- A program that has not ended and needs a stated year it does not have says so
-  where programs are managed, and counts toward the board's to-do list, until
-  somebody records it.  [Decision]
+- A program that crosses the membership-year boundary and has no stated year says
+  so where programs are managed, and counts toward the Board's to-do list, until
+  the Board records it.  [Decision]
 ```
 
 Nothing about the column, the derivation, the fill or the write-path checks goes
@@ -256,5 +283,5 @@ into the rules file. The date and age rules are already in it.
 
 ## Last step
 
-In PR 5: confirm every block above is in `docs/rules/programs.md`, then delete
+In PR 6: confirm every block above is in `docs/rules/programs.md`, then delete
 both files in this directory.
