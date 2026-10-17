@@ -27,6 +27,9 @@ import { logger } from "@/lib/logger";
  * isConfigured() is false and the reconciler no-ops, so an env without the mirror
  * runs no reconciliation rather than crashing.
  *
+ * The reconciler and match-audit reads are API-only (see apiSource below); the income
+ * reads at the end of this file keep hand-loaded history and select `source` themselves.
+ *
  * Timestamps: s-read's columns are `timestamp WITHOUT time zone` holding UTC, which
  * is how Prisma reads and writes every DateTime, so the reads need no zone handling.
  *
@@ -146,6 +149,18 @@ function toMirrorOrder({ shopifyGid, noteAttributes, ...rest }: OrderRow): Mirro
     return { orderGid: shopifyGid, ...rest, noteAttributes: noteAttributesOf(noteAttributes) };
 }
 
+/**
+ * Rows Shopify's API wrote (BACKFILL / INCREMENTAL), excluding operator injects
+ * (HAND_LOADED / TEST_LOADED): membership/program reconcile and the match audit act
+ * only on what Shopify itself reports. A null source counts as API — s-read stamps
+ * every write and backfilled existing rows, so a null is a row the previous sync
+ * revision wrote while the column deployed. The two raw-SQL reads inline the same
+ * predicate on the `shop_order o` alias.
+ */
+function apiSource() {
+    return { OR: [{ source: null }, { source: { in: ["BACKFILL", "INCREMENTAL"] as ("BACKFILL" | "INCREMENTAL")[] } }] };
+}
+
 /** Read one cart attribute off a mirrored order. Null when absent (or pre-#1029). */
 export function orderAttr(o: MirrorOrder, key: string): string | null {
     return o.noteAttributes?.find((a) => a.key === key)?.value ?? null;
@@ -153,14 +168,20 @@ export function orderAttr(o: MirrorOrder, key: string): string | null {
 
 /**
  * Orders whose mirror row changed after `since` (the reconciler's high-water mark),
- * excluding Shopify test orders. Oldest-first so the caller can advance the cursor
- * to the last row it processed. `since` null → from the beginning.
+ * excluding Shopify test orders and operator injects. Oldest-first so the caller can
+ * advance the cursor to the last row it processed. `since` null → from the beginning.
+ *
+ * ponytail: the cursor is Shopify's `updated_at`, not the source stamp, so a hand-loaded
+ * row the API later restamps with the SAME updated_at stays behind the cursor and is
+ * never reconciled. Inject refuses API-owned GIDs, so this needs a pre-cutover order the
+ * CSV loaded and Shopify then re-serves unchanged; the board's manual paths cover it.
+ * Key the cursor on last_synced_at if that ever matters.
  */
 export async function ordersChangedSince(since: Date | null, limit = 1000): Promise<MirrorOrder[]> {
     const db = await getClient();
     if (!db) return [];
     const rows = await db.shopOrder.findMany({
-        where: { test: false, ...(since ? { updatedAt: { gt: since } } : {}) },
+        where: { test: false, ...apiSource(), ...(since ? { updatedAt: { gt: since } } : {}) },
         orderBy: { updatedAt: { sort: "asc", nulls: "first" } },
         take: limit,
         select: ORDER_SELECT,
@@ -177,7 +198,7 @@ export async function ordersByLegacyIds(legacyIds: string[]): Promise<MirrorOrde
     const db = await getClient();
     if (!db) return [];
     const rows = await db.shopOrder.findMany({
-        where: { test: false, legacyId: { in: legacyIds } },
+        where: { test: false, ...apiSource(), legacyId: { in: legacyIds } },
         select: ORDER_SELECT,
     });
     return rows.map(toMirrorOrder);
@@ -282,7 +303,7 @@ export async function lineVariantStats(): Promise<{ lines: number; withVariant: 
         SELECT count(*)::int AS "lines", count(l.variant_legacy_id)::int AS "withVariant"
         FROM shop_order_line l
         JOIN shop_order o ON o.shopify_gid = l.order_gid
-        WHERE l.removed = false AND o.test = false`;
+        WHERE l.removed = false AND o.test = false AND (o.source IS NULL OR o.source IN ('BACKFILL', 'INCREMENTAL'))`;
     return rows[0];
 }
 
@@ -324,7 +345,7 @@ export async function ordersForVariants(variantIds: string[]): Promise<MirrorAud
     }
     if (matched.size === 0) return [];
     const orders = await db.shopOrder.findMany({
-        where: { test: false, shopifyGid: { in: [...matched.keys()] } },
+        where: { test: false, ...apiSource(), shopifyGid: { in: [...matched.keys()] } },
         orderBy: { legacyId: { sort: "asc", nulls: "last" } },
         select: {
             shopifyGid: true,
@@ -351,7 +372,7 @@ export async function orderLegacyIdsPresent(legacyIds: string[]): Promise<Set<st
     const db = await getClient();
     if (!db) return new Set();
     const rows = await db.shopOrder.findMany({
-        where: { test: false, legacyId: { in: legacyIds } },
+        where: { test: false, ...apiSource(), legacyId: { in: legacyIds } },
         select: { legacyId: true },
     });
     return new Set(rows.flatMap((r) => (r.legacyId === null ? [] : [r.legacyId])));
@@ -362,7 +383,7 @@ export async function orderLegacyIdsPresent(legacyIds: string[]): Promise<Set<st
  * GIDs. Shopify Payments surfaces a dispute as a signed balance transaction whose
  * `type` names the dispute — this distinguishes a chargeback (CRITICAL) from an
  * ordinary refund. Case-insensitive match so 'dispute'/'chargeback'/'adjustment'
- * variants all match. Only disputes on real (`test = false`) orders count.
+ * variants all match. Only API-synced disputes on real, API-synced orders count.
  */
 export async function disputedOrderGids(orderGids: string[]): Promise<Set<string>> {
     if (orderGids.length === 0) return new Set();
@@ -371,6 +392,7 @@ export async function disputedOrderGids(orderGids: string[]): Promise<Set<string
     const txns = await db.shopBalanceTransaction.findMany({
         where: {
             orderGid: { in: orderGids },
+            AND: [apiSource()],
             OR: [
                 { type: { contains: "dispute", mode: "insensitive" } },
                 { type: { contains: "chargeback", mode: "insensitive" } },
@@ -382,7 +404,7 @@ export async function disputedOrderGids(orderGids: string[]): Promise<Set<string
     const disputed = txns.flatMap((t) => (t.orderGid === null ? [] : [t.orderGid]));
     if (disputed.length === 0) return new Set();
     const real = await db.shopOrder.findMany({
-        where: { test: false, shopifyGid: { in: disputed } },
+        where: { test: false, ...apiSource(), shopifyGid: { in: disputed } },
         select: { shopifyGid: true },
     });
     return new Set(real.map((o) => o.shopifyGid));
@@ -405,7 +427,7 @@ export async function minRealOrderLegacyId(): Promise<bigint | null> {
     // 500 the audit. Shopify ids are always numeric, so this skips only junk.
     const rows = await db.$queryRaw<{ minLegacyId: string | null }[]>`
         SELECT min(legacy_id::bigint)::text AS "minLegacyId"
-        FROM shop_order WHERE test = false AND legacy_id ~ '^[0-9]+$'`;
+        FROM shop_order o WHERE o.test = false AND (o.source IS NULL OR o.source IN ('BACKFILL', 'INCREMENTAL')) AND o.legacy_id ~ '^[0-9]+$'`;
     const v = rows[0]?.minLegacyId;
     return v == null ? null : BigInt(v);
 }

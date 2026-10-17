@@ -88,6 +88,11 @@ afterAll(() => {
 
 const whereOf = (mock: jest.Mock, call = 0) => mock.mock.calls[call][0].where;
 
+// Operator injects (HAND_LOADED / TEST_LOADED) must never drive activation, reversal,
+// chargeback alerts or the audit's payment basis.
+const API_SOURCE = { OR: [{ source: null }, { source: { in: ['BACKFILL', 'INCREMENTAL'] } }] };
+const API_SOURCE_SQL = `(o.source IS NULL OR o.source IN ('BACKFILL', 'INCREMENTAL'))`;
+
 describe('wiring', () => {
     it('opens nothing when the mirror is unwired', async () => {
         delete process.env.SHOPIFY_READ_DATABASE_URL;
@@ -193,28 +198,28 @@ describe('order reads', () => {
         expect((await freshClient().ordersByLegacyIds(['1']))[0].noteAttributes).toBeNull();
     });
 
-    it('ordersChangedSince skips test orders and reads oldest-first past the cursor', async () => {
+    it('ordersChangedSince skips test and injected orders and reads oldest-first past the cursor', async () => {
         const since = new Date('2026-07-01T00:00:00Z');
         await freshClient().ordersChangedSince(since, 50);
         const args = db.shopOrder.findMany.mock.calls[0][0];
 
-        expect(args.where).toEqual({ test: false, updatedAt: { gt: since } });
+        expect(args.where).toEqual({ test: false, ...API_SOURCE, updatedAt: { gt: since } });
         expect(args.orderBy).toEqual({ updatedAt: { sort: 'asc', nulls: 'first' } });
         expect(args.take).toBe(50);
     });
 
     it('ordersChangedSince(null) reads from the beginning', async () => {
         await freshClient().ordersChangedSince(null);
-        expect(whereOf(db.shopOrder.findMany)).toEqual({ test: false });
+        expect(whereOf(db.shopOrder.findMany)).toEqual({ test: false, ...API_SOURCE });
     });
 
-    it('ordersByLegacyIds ignores test orders and short-circuits an empty list', async () => {
+    it('ordersByLegacyIds ignores test and injected orders and short-circuits an empty list', async () => {
         const client = freshClient();
         expect(await client.ordersByLegacyIds([])).toEqual([]);
         expect(db.shopOrder.findMany).not.toHaveBeenCalled();
 
         await client.ordersByLegacyIds(['123']);
-        expect(whereOf(db.shopOrder.findMany)).toEqual({ test: false, legacyId: { in: ['123'] } });
+        expect(whereOf(db.shopOrder.findMany)).toEqual({ test: false, ...API_SOURCE, legacyId: { in: ['123'] } });
     });
 
     it('orderLines drops removed and variant-less lines', async () => {
@@ -229,16 +234,17 @@ describe('order reads', () => {
         expect(db.shopOrderLine.findMany.mock.calls[0][0].distinct).toEqual(['variantLegacyId']);
     });
 
-    it('disputedOrderGids counts disputes on real orders only', async () => {
+    it('disputedOrderGids counts API-synced disputes on real, API-synced orders only', async () => {
         db.shopBalanceTransaction.findMany.mockResolvedValue([{ orderGid: 'g1' }, { orderGid: 'g2' }]);
         db.shopOrder.findMany.mockResolvedValue([{ shopifyGid: 'g1' }]);
 
         expect(await freshClient().disputedOrderGids(['g1', 'g2', 'g3'])).toEqual(new Set(['g1']));
+        expect(whereOf(db.shopBalanceTransaction.findMany).AND).toEqual([API_SOURCE]);
         expect(whereOf(db.shopBalanceTransaction.findMany).OR).toEqual([
             { type: { contains: 'dispute', mode: 'insensitive' } },
             { type: { contains: 'chargeback', mode: 'insensitive' } },
         ]);
-        expect(whereOf(db.shopOrder.findMany)).toEqual({ test: false, shopifyGid: { in: ['g1', 'g2'] } });
+        expect(whereOf(db.shopOrder.findMany)).toEqual({ test: false, ...API_SOURCE, shopifyGid: { in: ['g1', 'g2'] } });
     });
 });
 
@@ -256,7 +262,7 @@ describe('match-audit reads', () => {
         ]);
         expect(whereOf(db.shopOrderLine.findMany)).toEqual({ removed: false, variantLegacyId: { in: ['111', '222'] } });
         const orderArgs = db.shopOrder.findMany.mock.calls[0][0];
-        expect(orderArgs.where).toEqual({ test: false, shopifyGid: { in: ['g1', 'g2'] } });
+        expect(orderArgs.where).toEqual({ test: false, ...API_SOURCE, shopifyGid: { in: ['g1', 'g2'] } });
         expect(orderArgs.orderBy).toEqual({ legacyId: { sort: 'asc', nulls: 'last' } });
         expect(orderArgs.select.discountCodes).toBe(true);
     });
@@ -274,12 +280,13 @@ describe('match-audit reads', () => {
         // variant coverage, or they'd mask an unbackfilled real mirror.
         expect(sql).toContain('JOIN shop_order');
         expect(sql).toContain('l.removed = false AND o.test = false');
+        expect(sql).toContain(API_SOURCE_SQL);
     });
 
     it('orderLegacyIdsPresent returns the found ids as a set, ignoring test orders', async () => {
         db.shopOrder.findMany.mockResolvedValue([{ legacyId: '900' }]);
         expect(await freshClient().orderLegacyIdsPresent(['900', '901'])).toEqual(new Set(['900']));
-        expect(whereOf(db.shopOrder.findMany)).toEqual({ test: false, legacyId: { in: ['900', '901'] } });
+        expect(whereOf(db.shopOrder.findMany)).toEqual({ test: false, ...API_SOURCE, legacyId: { in: ['900', '901'] } });
     });
 
     it('minRealOrderLegacyId returns the mirror low-water mark', async () => {
@@ -288,6 +295,7 @@ describe('match-audit reads', () => {
         const sql = (db.$queryRaw.mock.calls[0][0] as string[]).join('?');
         expect(sql).toContain('min(legacy_id::bigint)');
         expect(sql).toContain('test = false');
+        expect(sql).toContain(API_SOURCE_SQL);
         // Guards the ::bigint cast against a non-numeric legacy_id, which would
         // otherwise throw for the whole aggregate and 500 the audit.
         expect(sql).toContain(`legacy_id ~ '^[0-9]+$'`);
