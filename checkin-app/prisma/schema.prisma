@@ -970,6 +970,9 @@ model Program {
   startAt                        DateTime @db.Date
   /// @sensitivity:public
   endAt                          DateTime @db.Date
+  /// Opening year of the membership year the program runs in (2026 = 2026-2027).
+  /// @sensitivity:public
+  appliesToYear                  Int?
   /// @sensitivity:public
   phase                          ProgramPhase     @default(PLANNING)
   /// @sensitivity:public

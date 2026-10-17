@@ -212,6 +212,7 @@ export const classifications = {
         leadMentorId: 'public',
         startAt: 'public',
         endAt: 'public',
+        appliesToYear: 'public',
         phase: 'public',
         enrollmentStatus: 'public',
         offSaleAt: 'public',
