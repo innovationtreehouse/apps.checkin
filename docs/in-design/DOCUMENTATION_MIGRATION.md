@@ -44,6 +44,12 @@ Every file still in a `designs/` folder, plus the non-folder work, with the PR
 in §4 that finishes it. "In flight" means another session or open PR owns it and
 this plan does not.
 
+Working docs already in `docs/in-design/` that other sessions own are out of
+this plan's scope: `1265_`, `1272_`, `1280_`, `1283_`, `2180_`, `2182_`,
+`TOMBSTONE_REMOVAL.md` and `PROGRAM_MEMBERSHIP_YEAR`. No PR here edits them;
+where a move breaks one of their pointers, that doc's session gets the new path
+(§5).
+
 ### 3.1 `docs/designs/`
 
 | File | Action | Status |
@@ -51,9 +57,9 @@ this plan does not.
 | `ARCHITECT_IDEAS_o46.md` | Still-open items (#15 no error boundary, #17 no Zod, and any others still true) become backlog rows; delete | todo, PR 2 |
 | `COMPONENT_ARCHITECTURE.md` | Standing architecture reference; moves to the home Q4 decides | todo, PR 4, blocked on Q4 |
 | `DESIGN.md` | Check each use case against the register; add any missing rule; delete | todo, PR 2 |
-| `INDEX_PAGE_SCOPING.md` | "Reuse the section gates" goes to `docs/conventions.md`; deferred extras become backlog rows; delete | todo, PR 2 |
+| `INDEX_PAGE_SCOPING.md` | Extract and delete | in flight, its own planning session |
 | `PRODUCTION_PLAN.md` | Move to `docs/ops/production-runbook.md` with a freshness pass; never delete | todo, PR 3, see Q7 |
-| `PROGRAM_INSTANCE_RESTRUCTURE.md` | Active working doc (P1 of 5 landed); move to `docs/in-design/` | todo, PR 1 |
+| `PROGRAM_INSTANCE_RESTRUCTURE.md` | Active working doc; leaves `docs/designs/` for `docs/in-design/` | in flight, its own session |
 
 ### 3.2 `checkin-app/docs/designs/`
 
@@ -105,8 +111,7 @@ allows it; otherwise both stay and the PR says so.
 
 Each PR below is one session. None touches a security boundary file: no
 `docs/designs/` reference remains in `checkin-app/src/security/` or
-`middleware.ts`, and #2263 owns the comment sweep there. `schema.prisma` is
-CODEOWNERS-gated, so PR 1 needs a code owner's review.
+`middleware.ts`, and #2263 owns the comment sweep there.
 
 PRs 1, 2, 6 and 8 can start now and run in parallel. Where two PRs edit the same
 file the table names it; the second one rebases, and since every edit is a
@@ -114,15 +119,15 @@ different line that rebase is mechanical.
 
 | PR | What | Files | Reference sweep | Waits on |
 |---|---|---|---|---|
-| 1 | **Pure moves.** No content edits beyond paths | `git mv` of `PROGRAM_INSTANCE_RESTRUCTURE.md`, `SHOPIFY_MEMBER_SEGMENT_PRICING.md`, `1333-EMAIL_TEMPLATES.md`, `resilient-load-swr.md` to `docs/in-design/`; `SHOPIFY_DEV_STORE_WEBHOOK.md` to `docs/ops/shopify-dev-store.md` | `src/lib/shopify.ts`; `PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` (two lines); `schema.prisma` (the restructure comment); `api/dev/shopify/orders-paid/route.ts` and its integration test; `app/dev/shopify/page.tsx`; `components/pageRegistry.ts` (the `/dev/shopify` row); `PRODUCTION_PLAN.md`; `UNFINISHED.md`; `1655_MEMBERSHIP_YEAR_DECLARED.md` and its `-migration.md`; links between the moved files | #2264 and the 975 session, which both edit `1655_MEMBERSHIP_YEAR_DECLARED.md` |
-| 2 | **Retire shipped docs in `docs/designs/`.** Extraction | delete `ARCHITECT_IDEAS_o46.md`, `DESIGN.md`, `INDEX_PAGE_SCOPING.md`; edit `docs/conventions.md`, `docs/backlog/INDEX.md`, any `docs/rules/` file a use case adds to (not `expenses.md`) | `README.md` (the design-spec link); `AGENTS.md` (the `DESIGN.md` and `ARCHITECT_IDEAS` lines); `pageRegistry.ts` (the scoping comment); the dead `PROGRAM_PAYMENT_VISIBILITY.md` pointer in `INDEX.md` | owner review of any rule added (§5); rebase on PR 1 for `pageRegistry.ts` |
+| 1 | **Pure moves.** No content edits beyond paths | `git mv` of `SHOPIFY_MEMBER_SEGMENT_PRICING.md`, `1333-EMAIL_TEMPLATES.md`, `resilient-load-swr.md` to `docs/in-design/`; `SHOPIFY_DEV_STORE_WEBHOOK.md` to `docs/ops/shopify-dev-store.md` | `src/lib/shopify.ts`; `PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` (two lines); `api/dev/shopify/orders-paid/route.ts` and its integration test; `app/dev/shopify/page.tsx`; `components/pageRegistry.ts` (the `/dev/shopify` row); `PRODUCTION_PLAN.md`; `1655_MEMBERSHIP_YEAR_DECLARED.md` and its `-migration.md`; links between the moved files | #2264 and the 975 session, which both edit `1655_MEMBERSHIP_YEAR_DECLARED.md`; the restructure doc's session, whose doc cites the segment-pricing path |
+| 2 | **Retire shipped docs in `docs/designs/`.** Extraction | delete `ARCHITECT_IDEAS_o46.md` and `DESIGN.md`; edit `docs/conventions.md`, `docs/backlog/INDEX.md`, any `docs/rules/` file a use case adds to (not `expenses.md`) | `README.md` (the design-spec link); `AGENTS.md` (the `DESIGN.md` and `ARCHITECT_IDEAS` lines); the dead `PROGRAM_PAYMENT_VISIBILITY.md` pointer in `INDEX.md` | owner review of any rule added (§5) |
 | 3 | **Production runbook to ops** | `git mv` to `docs/ops/production-runbook.md`; freshness pass per Q7 | `README.md` (the runbook link); `docs/ops/shopify-dev-store.md`; `AGENTS.md`, where this PR also replaces the "Design & product" heading with an Operations block listing `dev-instance.md`, the runbook and the dev store | PR 1, PR 2, Q7 |
-| 4 | **Architecture reference** | move `COMPONENT_ARCHITECTURE.md` per Q4; add the new class to the standard's §2 table | `docs/rules/inventory.md`; `docs/backlog/INDEX.md`; `1280_`, `1283_`, `1272_` in `docs/in-design/`; and the two docs that plan new files under `docs/designs/` (`1265_` plans `RECEIPT.md`, `1272_` plans `EXPENSE_QB.md`), repointed to the new home | Q4; #2262 (edits `1272_`, `1283_`); #2250, #2258, #2260 (edit `1265_`) |
-| 5 | **Retire `UNFINISHED.md`** per Q5 | delete it; file or fold its open items as Q5 decides | `docs/backlog/INDEX.md` (two rows); `docs/security/auth-consistency-analysis.md` | Q5; PR 1 (edits the same file); PR 6 (removes the vocabulary's links) |
+| 4 | **Architecture reference** | move `COMPONENT_ARCHITECTURE.md` per Q4; add the new class to the standard's §2 table | `docs/rules/inventory.md`; `docs/backlog/INDEX.md`. Pointers in `1265_`, `1272_`, `1280_` and `1283_` (including the `RECEIPT.md` and `EXPENSE_QB.md` files `1265_` and `1272_` plan under `docs/designs/`) belong to those docs' sessions | Q4; those sessions repointing or retiring their docs first |
+| 5 | **Retire `UNFINISHED.md`** per Q5 | delete it; file or fold its open items as Q5 decides | `docs/backlog/INDEX.md` (two rows); `docs/security/auth-consistency-analysis.md` | Q5; PR 6 (removes the vocabulary's links); the restructure doc's session (`UNFINISHED.md` links to its doc) |
 | 6 | **Vocabulary split** (§3.4). Extraction | `VOCABULARY.md`; `docs/conventions.md`; `docs/rules/membership.md`, and any other register file a moved rule lands in | none beyond the file's own links | owner review of any rule added; rebase on PR 2 for `conventions.md` |
 | 7 | **Policy sections for `expenses.md` and `inventory.md`** | those two files | none | #2224; needs the policy corpus on Drive, so the owner or a session the owner gives access runs it |
 | 8 | **Dead pointers in source** | `components/ui/CountBadge.tsx`; `api/household/intake/route.ts`; `lib/intake/profiles.ts`: drop the citation of a doc that no longer exists, or point at the rules file that now states it | n/a | nothing |
-| 9 | **Close-out** | settle step 5 per Q6; add `inventory.md` to the standard's §3 table; remove the standard's pointer to this doc; delete this doc | run the §5 checks; confirm the 975, 1256 and #2262 sweeps left nothing | every PR above, and the two sibling sessions |
+| 9 | **Close-out** | settle step 5 per Q6; add `inventory.md` to the standard's §3 table; remove the standard's pointer to this doc; delete this doc | run the §5 checks; confirm the sweeps by the sessions in §3 left nothing | every PR above, and every in-flight owner in §3 |
 
 If Q2 is answered yes, a one-line CODEOWNERS PR for `docs/rules/` can land any
 time; it edits `.github/CODEOWNERS` only.
@@ -138,6 +143,9 @@ time; it edits `.github/CODEOWNERS` only.
   `checkin-app/prisma/migrations/` cite `docs/designs/`. Prisma checksums
   applied migrations, so those comments stay as they are and the checks below
   exclude that folder.
+- **A pointer inside a doc another session owns is that session's to change.**
+  The PR that moves the target tells the coordinator the new path and waits
+  until the owning doc is repointed or retired.
 - **Nothing new lands in a `designs/` folder.** A working doc that plans a
   reference file names its home under the standard (`docs/ops/`, or Q4's answer).
 - **Extraction follows the register's rules.** Verify each candidate rule
