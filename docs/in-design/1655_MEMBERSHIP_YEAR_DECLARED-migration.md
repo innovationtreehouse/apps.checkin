@@ -12,8 +12,8 @@ production files. The prerequisites have landed: coverage follows the live
 membership year (#1812), and both board grants pay a real application through
 `certifyPaymentPlan` (#2003), so no grant is a bare status change any more.
 
-Ten pull requests finish this. One waits on an owner decision (`MY-3`); one waits on
-an operations step in production (the board entering variants).
+Ten pull requests finish this. The owner has answered every question; one PR waits
+on an operations step in production (the board entering variants).
 
 ## Decisions settled
 
@@ -33,25 +33,14 @@ Stable IDs; a resolved question is marked in place, never renumbered.
   settlement or re-opens a skipped renewal.
 - An order whose variant is in no year's row settles nothing and goes to the board,
   as an order without the membership product does today.
-
-## Open questions
-
-- **`MY-3`: Inside the renewal window, does a board grant ask which year, or buy
-  what the family's own checkout would?** Today the households page has two grant
-  buttons: "Grant Membership", for a household that is not yet an active member,
-  and "Grant for coming year", shown only in renewal season for a renewing
-  household. Both already pay the household's application the same way, so PR 5
-  merges them into one "Grant membership" button. The question is what year that
-  one button records inside the renewal window. Earlier drafts had the board choose
-  between the year in progress and the coming year there, with a concurrent grant
-  settling to the shorter one. Since then every grant pays a real application under
-  a row lock, and `MY-1` made the joining checkout sell the coming year.
-  *Recommendation:* no prompt; a grant records the live year, as a payment would at
-  that moment. The race rule then has nothing to decide: two actors on one
-  application stamp the same year, the row lock lets the first settle, and the
-  second is told it is already paid. Blocks PR 5's year handling; PR 2 builds the
-  recommended behaviour, and if the owner keeps the prompt, PR 5 adds a year select
-  shown only for a joining application inside the window.
+- **`MY-3` (resolved): which year does a board grant record?** The year on the
+  button pressed. The two grant buttons stay, and each names its year ("Grant
+  2026-2027"), computed from the year in progress and the coming year, never
+  written into the page. Inside the renewal window both show to any household with
+  an application awaiting payment, joining or renewing; outside it only the year in
+  progress shows. There is no separate prompt and no year chosen for the Board. Two
+  grants on one application at once: the row lock lets the first settle, and the
+  second is told it is already paid.
 
 Only production can say how many paid rows the fill cannot place (no
 `stageEnteredAt`); PR 3 leaves them empty and its run reports the count.
@@ -93,9 +82,10 @@ Shopify products.
     number | null` and writes it in the same update as `paidAt` on the move out of
     `PENDING_PAYMENT`; the `BLOCKED` branch writes none. `activateByProcessId`
     takes the year instead of `hasMembershipItem` (no year means no membership
-    item). `certifyPaymentPlan` stamps the live year
+    item). `certifyPaymentPlan` takes an optional year and records it; without
+    one it records the live year
     (`membershipYearCycle(boundary, now).cycleStart.getUTCFullYear()`, null when no
-    boundary is set).
+    boundary is set). Until PR 5 every caller passes none.
   - `checkin-app/src/lib/finance/reconcile/membership.ts`:
     `membershipVariantIdSet` becomes a variant-to-year map read from
     `MembershipYearVariant`, plus two transitional entries: the
@@ -168,31 +158,42 @@ Shopify products.
   deploy.
 - **Blocked on:** PR 3 run in production and the count above.
 
-### PR 5: one grant button [app]
+### PR 5: grant buttons name their year [app]
 
 - **Files:**
+  - `checkin-app/src/lib/programYear.ts`: `membershipYearOf(boundary, date)` and
+    `membershipYearLabel(year)`, unless `PROGRAM_MEMBERSHIP_YEAR` PR 3 has already
+    written them (see [Ordering](#ordering-against-other-work)).
   - `checkin-app/src/lib/membership/grant.ts`: `grantCurrentYear` becomes
-    `grantMembership`; its behaviour already covers an in-flight renewal.
-  - `checkin-app/src/lib/membership/renewal.ts`: delete `grantRenewalPayment`.
+    `grantMembership(householdId, actor, year)` and passes the year to
+    `certifyPaymentPlan`. It already pays an in-flight renewal as well as a joining
+    application, so one function serves both buttons.
+  - `checkin-app/src/lib/membership/renewal.ts`: delete `grantRenewalPayment`,
+    which the shared function covers.
   - `checkin-app/src/lib/membership/lifecycle.ts`: the `grantRenewalPayment`
     transition row becomes the grant's; `grantableRenewalWhere` widens to "an
-    application awaiting payment" or goes, with its list-route probe.
-  - `checkin-app/src/app/api/membership-ops/households/route.ts`: drop the
-    `comingYear` branch; one grant branch.
-  - `checkin-app/src/app/membership-ops/households/page.tsx`: one "Grant
-    membership" button, shown when the household has an application awaiting
-    payment or is not an active member; the grant mode state goes.
-  - The generated lifecycle diagram, `checkin-app/docs/generated/lifecycle/membership.md`,
-    regenerated.
-  - Under `MY-3`'s other answer only: a year select inside the window for a joining
-    application, its value passed to `certifyPaymentPlan`.
+    application awaiting payment, joining or renewing", which the list route's
+    probe uses to show the coming-year button. Regenerate
+    `checkin-app/docs/generated/lifecycle/membership.md`.
+  - `checkin-app/src/app/api/membership-ops/households/route.ts`: the list response
+    carries the years a grant may record now, each with its label (the year in
+    progress; inside the window, the coming year too). `POST` takes `year` and
+    refuses any year not in that set. The two flag branches become one.
+  - `checkin-app/src/app/membership-ops/households/page.tsx`: the two buttons,
+    labelled "Grant" plus the year's label from the response, shown as in the
+    design; each posts its year.
 - **Rules:** applies the grant line in the Destination.
-- **Tests:** unit (`lifecycle.test.ts`, the page test) and integration (heavy):
-  `householdsListGrantableAPI`, `householdsMembershipAuditAPI` and the grant suites.
-- **Migration safety:** none. The old release's coming-year button posts
-  `comingYear: true` during the drain; keep accepting that field as a synonym for
-  one release, or accept that a board click in those minutes returns an error.
-- **Blocked on:** PR 2; `MY-3` for the select.
+- **Tests:** unit for the helpers at the boundary day, `lifecycle.test.ts` and the
+  page test (labels and which buttons show, in and out of the window); integration
+  (heavy): `householdsListGrantableAPI`, `householdsMembershipAuditAPI` and the
+  grant suites, including a renewal granted for the year in progress, a joining
+  application granted for the coming year, a refused year, and two concurrent
+  grants on one application.
+- **Migration safety:** none in the schema. The old release's page posts
+  `active: true` or `comingYear: true` during the drain; keep accepting them for
+  one release as the year in progress and the coming year, or accept that a board
+  click in those minutes returns an error.
+- **Blocked on:** PR 2.
 
 ### PR 6: registry entry for the variant rows [security boundary]
 
@@ -206,9 +207,6 @@ Shopify products.
 ### PR 7: settings slots and the nav count [app]
 
 - **Files:**
-  - `checkin-app/src/lib/programYear.ts`: `membershipYearOf(boundary, date)` and
-    `membershipYearLabel(year)`, unless `PROGRAM_MEMBERSHIP_YEAR` PR 3 has already
-    written them (see [Ordering](#ordering-against-other-work)).
   - `checkin-app/src/app/api/settings/membership/route.ts`: `GET` returns the rows
     for the year in progress and the coming year; `PUT` upserts a row by year, with
     the same numeric check the single variant has, and refuses a variant another
@@ -218,7 +216,7 @@ Shopify products.
     variant from URL" control works per slot.
   - `checkin-app/src/lib/nav/todoCounts.ts`: the misconfiguration count adds one
     when the coming year has no row.
-- **Tests:** unit for the helpers at the boundary day, the route, the page
+- **Tests:** unit for the route, the page
   (`src/app/settings/membership/__tests__/page.test.tsx`) and the count.
 - **Migration safety:** none.
 - **Blocked on:** PR 6.
@@ -279,7 +277,7 @@ files, and a shared file is never edited by both at once:
 | Shared | This plan | Program plan | Rule |
 |---|---|---|---|
 | `schema.prisma`, a new migration, `classifications.ts` | PR 1 | PR 1 | land one, rebase and regenerate the other |
-| `programYear.ts` helpers | PR 7 | PR 3 | the first of the two to start writes `membershipYearOf` and `membershipYearLabel`; the other reuses them. The program plan's end-date rule (an end on the boundary counts in the closing year) is its own wrapper, not the shared helper |
+| `programYear.ts` helpers | PR 5 | PR 3 | the first of the two to start writes `membershipYearOf` and `membershipYearLabel`; the other reuses them. The program plan's end-date rule (an end on the boundary counts in the closing year) is its own wrapper, not the shared helper |
 | `orgMembership.ts` and the program-pricing integration suites | PR 4 | PRs 2, 4 | serialize; both change what the pricing tests set up |
 
 Member pricing needs no extra step from this plan: the program plan's horizon
@@ -302,12 +300,12 @@ coming membership year" with (PR 4):
   never changes the year bought.  [Decision]
 ```
 
-**Insert** under Dues, after the line on certifying a payment plan (PR 5, wording
-per `MY-3`):
+**Insert** under Dues, after the line on certifying a payment plan (PR 5):
 
 ```markdown
-- A board grant buys the membership year the family's own checkout would sell that
-  day.  [Decision]
+- A board grant records the membership year the Board chooses: the year in
+  progress, or, inside the renewal window, the coming year. Each grant control
+  names the year it records.  [Decision]
 ```
 
 **Insert** under Renewal, after the line on when renewals open (PR 9):

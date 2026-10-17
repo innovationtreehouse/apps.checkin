@@ -37,8 +37,8 @@ coming year is not. From the day the renewal window opens, the checkout sells th
 coming year to a joining family exactly as it does to a renewing one. Nothing
 changes for a renewal.
 
-**For the board**, a grant records the year it settles, and the two grant buttons
-on the households page become one. Families already settled keep exactly the
+**For the board**, each grant button on the households page names the year it
+records, such as "Grant 2026-2027", and the button pressed is the year granted. Families already settled keep exactly the
 coverage they have today; the board corrects any family that needs it by hand.
 
 **For operations**, the one membership product in Shopify becomes one product
@@ -165,41 +165,41 @@ variant is stamped `2026`, whenever their background check clears.
 
 ### A board payment or grant
 
-Four board actions pay a process without an order: the grant, the payment-plan
-approval, certifying a payment, and the coming-year grant. All four call
-`certifyPaymentPlan`, which calls `settle`. They stamp the live year at the moment
-of certifying: the year the family's own checkout would have sold at that moment.
-Off season that is the year in progress; inside the renewal window it is the coming
-year.
+Four board actions pay a process without an order: the two grant buttons, the
+payment-plan approval, and certifying a payment. All four call
+`certifyPaymentPlan`, which calls `settle`, and `certifyPaymentPlan` takes the year
+to record. The payment-plan approval and certifying a payment record the live year
+at that moment, the year the family's own checkout would have sold.
 
-Whether the board should instead be asked to choose, inside the window, between the
-year in progress and the coming year is open as `MY-3`. The recommendation is not to
-ask. The checkout a joining family uses sells the coming year from the day the
-window opens; a grant that sold a different year would treat a granted family
-differently from a paying one for no stated reason. And a renewal awaiting payment
-can only ever buy the coming year, so the choice would exist only for a joining
-family inside the window.
-
-### The two grant buttons become one
+### The grant buttons name their year
 
 The households page has two grant buttons, both posting to
-`POST /api/membership-ops/households`:
+`POST /api/membership-ops/households`. Each is labelled with the year it records,
+formatted by the shared label helper, never written into the page:
 
-- **Grant Membership** (`active: true`) calls `grantCurrentYear` in
-  `checkin-app/src/lib/membership/grant.ts`. It pays the household's in-flight
-  application, joining or renewal, through `certifyPaymentPlan`, or opens a joining
-  application when there is none. It is shown only to a household that is not an
-  active member.
-- **Grant for coming year** (`comingYear: true`) calls `grantRenewalPayment` in
-  `renewal.ts`. It pays a renewal awaiting payment, and is shown only in renewal
-  season to an active household.
+| Button | Year recorded | Shown |
+|---|---|---|
+| "Grant" + the year in progress | the year in progress; off season this is the live year | always, to a household with an application awaiting payment or with no active membership |
+| "Grant" + the coming year | the coming year; in season this is the live year | inside the renewal window only, to a household with an application awaiting payment, joining or renewing |
 
-Both now pay a real application through the same function, so the only difference
-left is which households see which button. `grantCurrentYear` already pays an
-in-flight renewal; it refuses an active household only when there is nothing to pay.
-One "Grant membership" button, shown whenever the household has an application
-awaiting payment or is not an active member, covers both. The year it stamps is the
-one above.
+So on 15 March 2027 the page shows "Grant 2026-2027" alone, and on 15 July 2027 it
+shows "Grant 2026-2027" and "Grant 2027-2028". The Board's choice of button is the
+choice of year: there is no separate prompt and no year chosen for them. The route
+accepts only a year one of the buttons offers at that moment, and refuses any
+other.
+
+The button pressed is the year recorded, even where it differs from what a checkout
+would sell. A renewal granted for the year in progress records that year, so the
+household is still unsettled for the coming one and the sweep asks it to renew.
+
+Both buttons call one function, `grantMembership(householdId, actor, year)` in
+`checkin-app/src/lib/membership/grant.ts`: it pays the household's application
+awaiting payment, joining or renewal, through `certifyPaymentPlan` with that year,
+or opens a joining application when there is none.
+
+Two grants on one application at once are settled by the row lock `settle` already
+takes: the first records its year, and the second is told the application is
+already paid.
 
 ### The checkout link
 

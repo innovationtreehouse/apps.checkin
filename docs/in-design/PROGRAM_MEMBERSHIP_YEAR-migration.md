@@ -103,7 +103,7 @@ behaves exactly as today until rows carry a year. PRs 2 and 3 both edit
 - **Files:**
   - `checkin-app/src/lib/programYear.ts`: the shared helpers `membershipYearOf`
     (the year a date falls in) and `membershipYearLabel` (`2026-2027`), unless
-    #1655's PR 7 has already written them; then this plan's own wrappers, the
+    #1655's PR 5 has already written them; then this plan's own wrappers, the
     end-date rule from the design and the years a pair of dates touches.
   - `checkin-app/src/app/api/programs/route.ts` `POST` and `updateProgram` in
     `checkin-app/src/lib/programs/update.ts`, which the `PATCH` delegates to:
@@ -189,7 +189,7 @@ other, but they share files, and a shared file is never edited by both at once:
 | Shared | This plan | #1655 plan | Rule |
 |---|---|---|---|
 | `schema.prisma`, a new migration, `classifications.ts` | PR 1 | PR 1 | land one, rebase and regenerate the other |
-| `programYear.ts` helpers | PR 3 | PR 7 | the first of the two to start writes `membershipYearOf` and `membershipYearLabel`; the other reuses them |
+| `programYear.ts` helpers | PR 3 | PR 5 | the first of the two to start writes `membershipYearOf` and `membershipYearLabel`; the other reuses them |
 | `orgMembership.ts` and the program-pricing integration suites | PRs 2, 4 | PR 4 | serialize |
 
 Member pricing needs nothing from #1655 beyond its PR 4: the horizon this plan
