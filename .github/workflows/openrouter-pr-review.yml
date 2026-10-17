@@ -73,6 +73,8 @@ jobs:
           custom_instructions: ${{ steps.route.outputs.instructions }}
           path_profiles: ${{ steps.route.outputs.path_profiles }}
           fail_on: never
+          # Continue the review loop only on new commits; label and reopen start fresh.
+          review_mode: ${{ github.event.action == 'synchronize' && 'auto' || 'initial' }}
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       # Jev judges whether the posted review is complete; if not, it picks a higher tier to rerun once.
@@ -103,6 +105,8 @@ jobs:
           custom_instructions: ${{ steps.route.outputs.instructions }}
           path_profiles: ${{ steps.route.outputs.path_profiles }}
           fail_on: never
+          # The escalated rerun is a fresh review, not a verify round of the one the judge rejected.
+          review_mode: initial
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       # Advisory only: a recommendation line on the final review plus the ai-recommends-approve label.

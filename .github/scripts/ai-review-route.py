@@ -336,13 +336,29 @@ def cost_word(dollars):
         mag *= 10
 
 
-COST_LINE = re.compile(r"^(\*\*Cost:\*\* )\$(\d+(?:\.\d+)?)\s*$", re.M)
-LANE_COST = re.compile(r"^(- `[^`]+`: .*), \$(\d+(?:\.\d+)?)\)\s*$", re.M)
+# Every dollar figure on the Cost line or a lane line becomes a word, whatever
+# the surrounding format ("at least $X (incomplete)", "lanes $X + judge $Y", "$X spent").
+DOLLARS = re.compile(r"\$(\d+(?:\.\d+)?)")
+COST_LINES = re.compile(r"^(?:\*\*Cost:\*\* |- `[^`]+`: [a-z-]+ \().*$", re.M)
 
 
 def scrub_text(body):
-    body = COST_LINE.sub(lambda m: m.group(1) + cost_word(float(m.group(2))), body)
-    return LANE_COST.sub(lambda m: f"{m.group(1)}, {cost_word(float(m.group(2)))})", body)
+    return COST_LINES.sub(lambda m: DOLLARS.sub(lambda d: cost_word(float(d.group(1))), m.group(0)), body)
+
+
+def scrub_selftest():
+    cases = {
+        "**Cost:** $0.42": "**Cost:** quarters",
+        "**Cost:** $0.12 + at least $0.31 (incomplete)": "**Cost:** dimes + at least quarters (incomplete)",
+        "**Cost:** $1.30 (lanes $1.25 + judge $0.05)": "**Cost:** a dollar (lanes a dollar + judge pennies)",
+        "- `google/gemini-4-argon`: failed-open (at least $0.3100 spent, incomplete) — HTTP 400": "- `google/gemini-4-argon`: failed-open (at least quarters spent, incomplete) — HTTP 400",
+        "- `x/y`: ok (3 finding(s), 9.1s, via Z, $0.0040)": "- `x/y`: ok (3 finding(s), 9.1s, via Z, less than a penny)",
+        "Fix the $5 fee in `- a.ts`.": "Fix the $5 fee in `- a.ts`.",
+    }
+    for raw, want in cases.items():
+        got = scrub_text(raw)
+        assert got == want, (raw, got)
+    print("scrub selftest ok")
 
 
 def scrub():
@@ -402,6 +418,9 @@ def recommend():
 if __name__ == "__main__":
     if sys.argv[1:] == ["scrub"]:
         scrub()
+        sys.exit(0)
+    if sys.argv[1:] == ["scrub-selftest"]:
+        scrub_selftest()
         sys.exit(0)
     if sys.argv[1:] == ["recommend"]:
         recommend()
