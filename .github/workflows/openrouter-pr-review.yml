@@ -32,10 +32,11 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
-      # Routing, prompt and checklists come from the base commit, so a PR cannot edit its own reviewer.
+      # Routing, prompt and checklists come from the base branch tip, so a PR cannot edit its own reviewer.
+      # The tip, not base.sha: an old PR's base commit can predate the review config entirely.
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.base.ref }}
           path: .ai-review-base
           sparse-checkout: |
             .github/scripts
@@ -45,13 +46,16 @@ jobs:
         run: |
           if [ -f .ai-review-base/.github/scripts/ai-review-route.py ]; then
             echo "dir=.ai-review-base" >> "$GITHUB_OUTPUT"
-          else
+          elif [ -f .github/scripts/ai-review-route.py ]; then
             echo "::warning::The base branch has no AI review config yet; using this PR's copy."
             echo "dir=." >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No AI review config on the base branch or in this PR; no review ran."
           fi
       # Jev Router picks the review profiles and the tier; see .github/scripts/ai-review-route.py.
       # Routing and judging never fail the check; a failure skips or ends the review instead.
       - id: route
+        if: steps.cfg.outputs.dir != ''
         continue-on-error: true
         run: python3 ${{ steps.cfg.outputs.dir }}/.github/scripts/ai-review-route.py
         env:
