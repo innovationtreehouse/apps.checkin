@@ -1,7 +1,10 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
-import { processCheckin, processCheckout, processCloseRequest, executePendingCloses, type CloseKind, type LegacyKiosk, closeActor, lastKeyholderGuard, finishCloseGuard, recordWebClose, type CloseGuardResult, notifyScanOutcome, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS, LIVE_ARRIVAL_WINDOW_MS } from "@/lib/scan-service";
+import { processCheckin, processCheckout, type LegacyKiosk, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/attendance/scan";
+import { processCloseRequest, executePendingCloses, type CloseKind, LIVE_ARRIVAL_WINDOW_MS } from "@/lib/attendance/close";
+import { closeActor, lastKeyholderGuard, finishCloseGuard, recordWebClose, type CloseGuardResult } from "@/lib/attendance/keyholderGuard";
+import { notifyScanOutcome } from "@/lib/attendance/scanNotify";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
 import { applyPresenceIntent, flagForReview } from "@/lib/presence/project";
 import { config } from "@/lib/config";

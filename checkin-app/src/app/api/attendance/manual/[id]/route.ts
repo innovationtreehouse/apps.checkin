@@ -7,8 +7,9 @@ import { parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTi
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { lockFacility } from "@/lib/facilityLock";
-import { closeActor, correctCloseTime, finishCloseGuard, lastKeyholderGuard, recordWebClose } from "@/lib/scan-service";
-import type { CloseGuardResult } from "@/lib/scan-service";
+import { correctCloseTime } from "@/lib/attendance/close";
+import { closeActor, finishCloseGuard, lastKeyholderGuard, recordWebClose } from "@/lib/attendance/keyholderGuard";
+import type { CloseGuardResult } from "@/lib/attendance/keyholderGuard";
 import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
 import { visitSubject } from "@/lib/visit/scope";
 import { emailBoardMembers } from "@/lib/emailRecipients";

@@ -1,7 +1,7 @@
 import type { Person, PresenceDirection } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 import { LIVE_VISIT } from "@/lib/visit/filters";
-import { type LegacyKiosk, type ScanOutcome, processCheckin, processCheckout } from "@/lib/scan-service";
+import { type LegacyKiosk, type ScanOutcome, processCheckin, processCheckout } from "@/lib/attendance/scan";
 import {
     PresenceClass,
     appendPresenceEvent,

@@ -1429,7 +1429,7 @@ model FacilityClose {
   /// @sensitivity:internal
   clientEventId String?       @unique
   /// When the sweep ran. Null while the close is recorded but not yet carried
-  /// out; any such row is executed by the next re-drive (lib/scan-service.ts).
+  /// out; any such row is executed by the next re-drive (lib/attendance/close.ts).
   /// The default marks a row written by code that sweeps as it records.
   /// @sensitivity:internal
   executedAt DateTime?        @default(now())
