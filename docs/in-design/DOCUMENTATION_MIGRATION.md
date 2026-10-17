@@ -57,7 +57,6 @@ where a move breaks one of their pointers, that doc's session gets the new path
 | `ARCHITECT_IDEAS_o46.md` | Still-open items (#15 no error boundary, #17 no Zod, and any others still true) become backlog rows; delete | todo, PR 2 |
 | `COMPONENT_ARCHITECTURE.md` | Standing architecture reference; moves to `docs/architecture/` (Q4) | todo, PR 4 |
 | `DESIGN.md` | Check each use case against the register; add any missing rule; delete | todo, PR 2 |
-| `INDEX_PAGE_SCOPING.md` | Moves to `docs/in-design/` with its own retirement plan | in flight, #2274 |
 | `PRODUCTION_PLAN.md` | The app is live, so only its deploy and rollback runbook moves, to `docs/ops/production-runbook.md`; unfinished follow-ups become issues; the launch checklist is dropped (Q7) | todo, PR 3 |
 | `PROGRAM_INSTANCE_RESTRUCTURE.md` | Active working doc; leaves `docs/designs/` for `docs/in-design/` | in flight, its own session |
 
@@ -166,7 +165,7 @@ touches that file, or in a small one.
 
 - `git grep -n "designs/" -- . ':!checkin-app/prisma/migrations'` returns only
   this doc's own lines, and nothing once this doc is deleted.
-- `git grep -nE "ARCHITECT_IDEAS|INDEX_PAGE_SCOPING|PRODUCTION_PLAN|UNFINISHED\.md|COMPONENT_ARCHITECTURE"`
+- `git grep -nE "ARCHITECT_IDEAS|PRODUCTION_PLAN|UNFINISHED\.md|COMPONENT_ARCHITECTURE"`
   returns only the new homes' own pointers.
 - `docs/designs/` and `checkin-app/docs/designs/` do not exist.
 - The production runbook is in `docs/ops/`.
