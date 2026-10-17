@@ -50,15 +50,15 @@ the member price and the announcement.
 
 **For the board**, three things. A program cannot be created until the
 membership-year boundary is set, because there is no year to state without it.
-Existing programs that cross the boundary cannot be filled in by the app; they
-show a red badge and count toward the board's nav until somebody states their
-year, and until then they read exactly as they do today. And stating or changing
-a program's year is a pricing act, so who may do it is the board's call (see
-`PMY-Q1` in the migration file).
+Stating or changing a crossing program's year is part of approving its budget, so
+only the Board does it. The Board may change it after families have paid; the
+form warns first, and the Board settles any price difference with those families
+by hand. Existing programs need nothing from the Board: each gets its year from
+one fixed rule the owner set (see [Existing programs](#existing-programs)).
 
-**The cost** is one nullable integer column, a derivation and a check on the two
-program write routes, a select on the two program forms, one changed horizon
-function, a one-time fill of existing rows, and a badge with its nav count.
+**The cost** is one integer column, required once existing programs are filled, a
+derivation and a check on the two program write routes, a select on the two
+program forms, one changed horizon function, and a one-time fill of existing rows.
 
 **Deliberately not in scope:** who counts as a member, what dues settle, when a
 membership covers what, how long a program runs, and the age rules. This design
@@ -81,12 +81,10 @@ judges member pricing against the program's end date. This design replaces that
 inference, so the block is superseded rather than ratified.
 
 Relied on, from `docs/rules/principles.md`: *where finishing an operation would
-take inventing a fact, refuse to finish it.* It decides three things the same
-way: the fill of existing rows guesses no year, a crossing program is not saved
-without one, and no program is created before the boundary that names its year
-exists. And *missing or ambiguous data resolves to the more restrictive reading*,
-which is why a program with no stated year keeps today's reading: for a crossing
-program, judging against the end date is the stricter of the two answers.
+take inventing a fact, refuse to finish it.* It decides two things the same way:
+a crossing program is not saved without a year, and no program is created before
+the boundary that names its year exists. The fill of existing programs invents
+nothing either; it applies a rule the owner stated.
 
 ## Naming a membership year
 
@@ -113,13 +111,15 @@ the year their own dues cover, and the two can be compared as plain integers.
 Two small pure helpers carry the arithmetic: which membership year a date falls
 in, and the label for a year. They live in the prisma-free
 `checkin-app/src/lib/programYear.ts`, beside `nextBoundary`, because the program
-forms need them in the browser and `renewal.ts` imports prisma. Whichever of this
-work and the settlement-year work lands first writes them; the other reuses them.
+forms need them in the browser and `renewal.ts` imports prisma. The settlement
+year needs the same two, so both designs share them.
 
 ## What a program declares
 
-One nullable column on `Program`: `appliesToYear`, the opening-year integer,
-tier `@sensitivity:public` like the dates it summarises.
+One required column on `Program`: `appliesToYear`, the opening-year integer,
+tier `@sensitivity:public` like the dates it summarises. Every program has one;
+the rules below set it on every write, and the fill sets it on every program that
+already exists.
 
 **Which years a program's dates touch.** The start date falls in the year whose
 opening boundary is on or before it. The end date is read the same way, except
@@ -154,16 +154,24 @@ wins. If they still cross the boundary and the stated year is one of the years
 they touch, it stands; nudging a date inside the same pair of years is no reason
 to ask again. Otherwise the edit is rejected until a year is supplied.
 
-**Who may state it** is open as `PMY-Q1`. A program leader can edit dates today,
-but the stated year decides who gets the member price, and only the board and
-sysadmins set price. The recommendation is that only the board and sysadmins
-supply or change a stated year, and that a leader's date edit needing a new
-statement is refused with a message to ask the board. A leader's edit inside one
-year still re-derives silently; derivation is not a choice.
+**Only the Board states or changes it**, because the answer comes from the
+Board's own budget approval. Sysadmins do not, although they set prices. Anyone
+else's write that would need a stated year, a program leader's date edit or a
+sysadmin creating a crossing program, is refused with a message to ask the Board.
+An edit whose dates fall inside one year still re-derives silently for anyone who
+may edit dates; derivation is not a choice.
 
-**Changing it after money has moved** is open as `PMY-Q2`, because the member
-discount check runs again when an order arrives and when the board reconciles,
-and judges against the year as it stands then.
+**The Board may change it after families have paid.** Nothing is refused. The
+member-price check is asked once, when an order's money moves, and is never
+re-run on an order already settled, so a change does not reprice anyone who has
+paid. Two things can still follow, and both are left to people. A family that paid
+the outside price may now have been owed the member price, or the reverse; and an
+order judged after the change (a member code minted beforehand and redeemed after,
+or a missed webhook the reconciler recovers) is judged against the new year, and
+one that fails is raised to the Board as an unauthorised discount, the way any
+such order is today. So the program form warns before saving a changed year on a
+program with paid places, naming how many, and the Board settles any difference
+with those families by hand.
 
 ### The boundary is what a year is named against
 
@@ -194,9 +202,7 @@ this design.
 ## What coverage becomes
 
 The date a program's member pricing is judged against stops being *the program's
-end date* and becomes *the boundary that closes the program's stated year*. Where
-no year is stated, the end date is still used, which is what lets this land
-before every existing program has a year.
+end date* and becomes *the boundary that closes the program's stated year*.
 
 The claim that nothing moves for a program inside one year needs the argument,
 because it keeps the blast radius to the one case in
@@ -235,8 +241,9 @@ answer the board had already given.
 **A program cannot be created, or re-dated, before the boundary is set**, where
 today it can.
 
-**A crossing program with no stated year** shows a red badge and counts toward the
-board's nav, where today it looks like any other.
+**An existing program whose fixed-rule year differs from its dates** is priced
+against the fixed-rule year. [Existing programs](#existing-programs) says which
+programs those can be.
 
 Nothing else changes. The catalogue, age eligibility, the recent-attachment sweep
 in `checkin-app/src/lib/person/filters.ts` and the payment-plan "lands next year"
@@ -266,9 +273,9 @@ earlier year should reach the households covered for that year.
 Two of these read the column through an explicit select, and both fail silently
 if it is left out. The detail route rebuilds its argument from the JSON body its
 registry handler just produced, so the column must be in that handler's select;
-the entitlement check selects only the dates. Leave the column out of either and
-the code compiles, the tests pass, and that reader takes the no-year path for
-ever. The discount-code route loads the whole row, and the announcement receives
+the entitlement check selects only the dates. Leave the column out of either and,
+while the column can still be empty, the code compiles, the tests pass, and that
+reader judges against the end date. The discount-code route loads the whole row, and the announcement receives
 the whole row from the edit route.
 
 ## Interface
@@ -281,28 +288,41 @@ When the dates decide the year, the field is absent; not disabled, not shown
 filled in, absent.
 
 Its label points at the budget approval, so the person filling it knows they are
-looking something up. Where `PMY-Q1` keeps the field to the board and sysadmins,
-a leader sees the stated year read-only and, if their date edit would need a new
-one, the message to ask the board.
+looking something up. Only a Board member can set it; anyone else sees the stated
+year read-only and, if their date edit would need a new one, the message to ask
+the Board. When a Board member changes a stated year on a program that already has
+paid places, the form asks them to confirm, naming the number of paid places, and
+saves on confirmation.
 
-### Programs that need a person
+## Existing programs
 
-A crossing program with no stated year cannot be filled in by the app. Nobody but
-a person knows the answer, so these carry a **red badge in the program-ops list
-and on the program's own page**, the same treatment and place as a program priced
-with no checkout variant, with a tooltip saying what is missing and that opening
-the program fixes it. They also **count toward the board's nav**, next to the
-broken-checkout count in `checkin-app/src/lib/nav/todoCounts.ts`. The count is
-what matters: a badge is seen by somebody already on the programs list; the count
-is what sends them there.
+Every program that exists when this lands gets its year from one rule the owner
+set, applied to all of them, crossing or not:
 
-The predicate is a single null check, so it needs no shared predicate-and-filter
-pair; the count and the badge both read `appliesToYear` being empty.
+| Program | `appliesToYear` |
+|---|---|
+| ended on or before 31 July 2026 | `2025` (membership year `2025-2026`) |
+| every other program | `2026` (membership year `2026-2027`) |
 
-Which programs count is open as `PMY-Q3`: every program with no stated year, or
-only those that have not yet ended. The recommendation is the second. An ended
-program's year is read again only if one of its old orders is reconciled, and the
-end-date reading it falls back to is the stricter one.
+The rule reads only the end date and needs no boundary. With every program
+filled, no program is ever without a year, so there is no badge, no to-do count
+and no fallback for a missing one: a new program gets its year on the write that
+creates it.
+
+For a program inside one membership year the rule usually agrees with its dates,
+and where it does, nothing moves. It disagrees in one place: a program that ended
+in August 2026 has its dates in `2025-2026` but is filled as `2026`. It has ended,
+so only a reconciled old order would read it.
+
+The rule assumes no existing program starts in `2027-2028` or later; none does
+today. A program that did would be filled as `2026`, an earlier year than its
+dates, and households covered only to the end of `2026-2027` would get the member
+price for it. So the fill refuses rather than guess: if any program still without
+a year starts on or after 1 September 2027, the fill stops and fills nothing.
+
+A fill does not re-derive later. An edit to a filled program's dates follows the
+write rules above like any other edit: if the new dates fall inside one year, the
+derived year replaces the filled one.
 
 ## Where the column lives after the program restructure
 
@@ -330,7 +350,6 @@ the rule, so it is tested against real coverage horizons:
   to; this is the equivalence argument above as an assertion;
 - a crossing program stated as the earlier year admits a household covered only
   to that year's closing boundary; stated as the later year, refuses it;
-- a program with no stated year is judged against its end date;
 - no boundary gives no horizon, and coverage passes.
 
 The year helper is tested at the edges: a start on the boundary day is in the new
@@ -341,13 +360,17 @@ Above that, the ones a pure function cannot cover:
 
 - each write route derives the year, rejects a crossing program with no year or
   with a year its dates do not touch, keeps a still-valid stated year across a
-  date nudge, and refuses when no boundary is configured;
+  date nudge, refuses when no boundary is configured, and refuses anyone but a
+  Board member who supplies or changes a stated year;
+- the program form asks for confirmation before saving a changed year on a
+  program with paid places, and not otherwise;
 - the discount-code route and the entitlement check, for a crossing program
   stated as the earlier year, because the function being right does not prove the
   column reached the select;
-- the fill of existing rows, run twice against a real database: it fills what the
-  dates decide, leaves crossing programs empty, and changes nothing the second
-  time.
+- the fill of existing rows, against a real database: a program ending 31 July
+  2026 gets `2025`, one ending 1 August 2026 gets `2026`, a crossing program gets
+  `2026`, a program without a year starting 1 September 2027 stops the fill with
+  nothing changed, and the column then accepts no empty value.
 
 ## Alternatives considered
 
