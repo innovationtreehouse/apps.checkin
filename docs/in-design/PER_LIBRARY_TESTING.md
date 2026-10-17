@@ -125,12 +125,9 @@ With no flags, the command runs only tiers that need no database or Docker:
    CI's lint scope, which covers only checkin.
 4. The library-boundary check, if a library or the harness changed.
 5. `vitest run` for each affected workspace that has vitest, with
-   `PG_TEST_HARNESS=off` and every `*DATABASE_URL` variable removed. **That
-   switch does not exist on `main` yet; it is rollout step 1.** Today the
-   harness skips only when it cannot reach Docker. Until step 1 lands, this
-   step boots a Postgres container whenever Docker is up, so it is not light.
-   Once the switch exists, the harness starts no container and each
-   database-gated suite skips itself.
+   `PG_TEST_HARNESS=off` and every `*DATABASE_URL` variable removed. With that
+   switch the harness starts no container and each database-gated suite skips
+   itself.
 6. Jest unit tests as an explicit file list (`npm test -- --ci --forceExit
    --runTestsByPath …`). The list is built with `--listTests`, so jest's own
    ignore list still applies. That list excludes integration, flow and worktree
@@ -193,11 +190,10 @@ All of this section is **UNPROVEN**: none of it has been run.
   that server (`npm run test:flow -- --runTestsByPath <file>`). Otherwise it runs
   on the standalone stack, through `test:flow:standalone` with the file passed
   in.
-- **Known gap: file selection.** `test:flow:standalone` always runs every flow
-  file and takes no arguments. Its command has to accept a file list, for
-  example `npm run test:flow -- $FLOW_ARGS` inside the container, where an empty
-  value keeps today's behaviour. CI does not use that script; its workflow runs
-  the same commands itself.
+- **File selection.** `test:flow:standalone` passes `$FLOW_ARGS` to
+  `npm run test:flow` inside the container; an empty value runs every flow
+  file. CI does not use that script; its workflow runs the same commands
+  itself.
 - **Known gap: stack cost.** Startup is the expensive part, whichever file runs.
   The app container runs `npm ci`, migrates and seeds each library database,
   pushes and seeds the checkin schema, then starts `next dev`. The health check
@@ -235,13 +231,9 @@ migration file):
 
 ## Known findings
 
-- `packages/s-ingest-core` fails `tsc --noEmit` on `main`. Its
-  `test/globalSetup.ts` default-exports a value whose type uses
-  `GlobalSetupContext`, which `pg-test-harness` does not export (TS4082). CI
-  type-checks only checkin and the `*-function` workspaces, so nothing reports
-  it. The light tier skips package type-checks to match CI and will not report
-  it either. The fix is to export the interface from `pg-test-harness` (rollout
-  step 1).
+- CI type-checks only checkin and the `*-function` workspaces, so a
+  `packages/*` type error goes unreported. The light tier skips package
+  type-checks to match CI and will not report one either.
 
 ## Open before adoption
 
@@ -251,7 +243,5 @@ migration file):
   go).
 - The 80-unit and 15-integration caps are unmeasured. Set them from the timings
   of the first real `--db` runs and from a few core-change dry runs.
-- The light vitest step depends on the harness switch (rollout step 1). Do not
-  adopt the command before that lands.
 - The AGENTS.md rule does not wait for the ownership map to read from
   `libraries.json`; it lands when the command is adopted.

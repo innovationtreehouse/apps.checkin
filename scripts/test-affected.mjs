@@ -1,9 +1,4 @@
 #!/usr/bin/env node
-// DRAFT, NOT ADOPTED: not wired into any package.json script, and --db / --flow
-// have never been run. It depends on two changes that are not made yet: the
-// PG_TEST_HARNESS=off opt-out in pg-test-harness and the FLOW_ARGS passthrough
-// on test:flow:standalone. See the rollout in docs/in-design/PER_LIBRARY_TESTING-migration.md.
-//
 // Local per-area test runner (docs/in-design/PER_LIBRARY_TESTING.md).
 // Maps the files changed against a base ref to areas and runs only the light
 // tiers for those areas, serially: tsc, eslint, vitest unit (no DB container),
