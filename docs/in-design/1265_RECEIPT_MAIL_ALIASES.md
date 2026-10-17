@@ -255,30 +255,23 @@ receipt route returns aliases; only the four alias routes do.
 
 ---
 
-## 8. Boundary split and phasing
+## 8. PR split and phasing
 
-Boundary isolation (`AGENTS.md`) puts the registry entries in their own PR,
-first, based on `main`:
+Three PRs, in this order, each based on `main` after the one before it merges.
+None stacks on another's branch.
 
 | PR | Contents |
 |---|---|
-| **A1** boundary | A `PersonMailAlias` entry in `scopeBindings.ts` (`their_own` and `led_households` on `personId`) and four registry entries: `GET /api/people/[id]/mail-aliases`, `POST /api/people/[id]/mail-aliases`, `DELETE /api/people/[id]/mail-aliases/[aliasId]`, `POST /api/mail-aliases/confirm`. Security tests may accompany. No app code. Maintainers, alone. |
-| **A2** feature | The routes, the resolver change, the merge disposition, the account-page section, the confirmation email and page, and tests. Based on `main` after A1 merges, never stacked on A1's branch. |
+| **A1** schema | The `PersonMailAlias` model with its `@sensitivity` annotations, its migration, and the regenerated classifications. Annotating a new model's fields is not a re-tier, so this is not a boundary PR. The schema drift check needs the model and migration together, and this PR carries both. |
+| **A2** boundary | A `PersonMailAlias` entry in `scopeBindings.ts` (`their_own` and `led_households` on `personId`), which compiles against A1's model, and four registry entries: `GET /api/people/[id]/mail-aliases`, `POST /api/people/[id]/mail-aliases`, `DELETE /api/people/[id]/mail-aliases/[aliasId]`, `POST /api/mail-aliases/confirm`. Security tests may accompany. Nothing else. Maintainers, alone. |
+| **A3** feature | The routes, the service, the resolver change, the merge disposition, the account-page section, the confirmation email and page, and tests. |
 
-**Where the model goes is not settled** (ALIAS-6). The schema drift check fails
-any PR whose `schema.prisma` has no matching migration, so the model and its
-migration travel together. The scope binding and the registry's `returns` name
-the model through the generated classifications, so A1 may not compile without
-it. Then A1 carries the model, its annotations, the regenerated classifications
-and the migration as well; schema annotations may accompany a boundary PR, and
-the migration is the schema's.
-
-**Migration** (A1 or A2, per ALIAS-6): additive only, one `CREATE TABLE` for `PersonMailAlias`, its
+**Migration** (A1): additive only, one `CREATE TABLE` for `PersonMailAlias`, its
 unique index on `canonicalKey`, an index on `personId`, and the FK to `Person`,
 inside `BEGIN; … COMMIT;`. No existing column is touched and no backfill is
 needed, so old code serving through the deploy drain never sees a difference.
 
-**Tests** (A2, not run here): a typo'd alias never confirms; a link clicked by
+**Tests** (A3, not run here): a typo'd alias never confirms; a link clicked by
 someone not signed in as the requester does nothing; an alias equal to another
 person's sign-in address or alias is never emailed, and the add's response is
 identical to a free address's; ambiguity resolves to null; mail from a confirmed
@@ -287,32 +280,37 @@ held; two addresses share one daily allowance; a removed alias's deferred items
 are held on the next run; a lead adds and confirms for a youth and cannot for an
 adult; finance removes but cannot add; a merge moves confirmed aliases.
 
+**After the package rename freeze lifts**, two small library edits, neither
+needed for A1 to A3 to work:
+
+- the `ReceiptPeople.submitterByEmail` doc comment in
+  `packages/receipt/src/contract.ts` names confirmed aliases (§4);
+- the deferred retry keys its "hit the daily limit this run" set on the person
+  id instead of the address (§5).
+
 ---
 
 ## 9. Open questions for the owner
 
-- **ALIAS-1. Should the board, or a sysadmin, also be able to view and remove
-  aliases?** I propose finance only, since aliases exist only for receipt mail.
-  Which superuser repairs what is the wider question #1551 holds.
-- **ALIAS-2. Should a youth in the submitter audience manage their own
-  aliases?** I propose no, matching "a youth cannot edit their own profile", with
-  the lead confirming. The alternative lets the youth confirm their own,
-  signed in as themself.
-- **ALIAS-3. Should the board's sign-in-address edit refuse an address that is
-  someone's confirmed alias?** I propose not changing that path: the resolver's
-  ambiguity rule already fails closed, and finance removes the alias. Refusing
-  there would need a new check in a people-side path this design otherwise leaves
-  alone.
-- **ALIAS-4. Should the person be told when an alias is added or removed by
-  someone else** (a lead, or finance), by email to their sign-in address? I
-  propose yes for a finance removal, since it changes where their mail goes, and
-  no for a lead acting for a youth.
-- **ALIAS-5. Are 72 hours, 3 pending and 10 confirmed the right limits?** They
-  are safety constants, not organisation settings; any of them can move.
-- **ALIAS-6. Does the new model and its migration ride in the boundary PR?**
-  Only if A1 cannot compile without them (§8). I have not checked whether the
-  registry's `returns` and the scope-binding table type-check against a model
-  that does not exist yet; the builder of A1 confirms before splitting.
+Each has a recommended default; a yes takes it.
+
+- **ALIAS-1. Who besides finance may view and remove a person's aliases?**
+  Default: finance only, since aliases exist only for receipt mail. Which
+  superuser repairs what in general is the wider question #1551 holds.
+- **ALIAS-2. Does a youth in the submitter audience manage their own aliases?**
+  Default: no. A lead of their household adds and confirms them, matching "a
+  youth cannot edit their own profile". The alternative lets the youth add and
+  confirm their own, signed in as themself.
+- **ALIAS-3. Does the board's sign-in-address edit refuse an address that is
+  someone's confirmed alias?** Default: no change to that path. The resolver's
+  ambiguity rule already fails closed and finance removes the alias; refusing
+  there adds a check to a people-side path this design otherwise leaves alone.
+- **ALIAS-4. Is the person emailed when someone else adds or removes one of
+  their aliases?** Default: yes when finance removes one, since it changes where
+  their mail goes; no when a lead acts for a youth.
+- **ALIAS-5. Are 72 hours to confirm, 3 pending and 10 confirmed aliases per
+  person the right limits?** Default: yes. They are safety constants, not
+  organisation settings, and any of them can move later.
 
 ---
 
