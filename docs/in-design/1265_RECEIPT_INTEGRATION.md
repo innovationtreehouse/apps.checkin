@@ -167,11 +167,69 @@ whose file is the body**:
   own origin, so stored HTML would be one header mistake away from live script
   there (§3 shows text only as escaped text).
 - The ledger hash for a body is the hash of that stored text.
-- When a message has attachments, its body is ignored; it is usually covering
-  text. An attachment is a part with a filename that is not marked `inline`, so
-  logos embedded in an HTML order confirmation are not receipts.
+- **Inline images are read too** (owner ruling 2026-10-16). A photo pasted into
+  the body of an email is a receipt as often as an attached one; members do it.
+  A message's files are therefore every attachment (a part with a filename not
+  marked `inline`) **and** every inline part of an accepted non-text type (§2:
+  JPEG, PNG, GIF, WebP, PDF), with or without a filename. Parts inside a
+  forwarded message are still never read.
+- **The body is kept unless the message has a real attachment.** With an
+  attachment, the body is covering text and is ignored, as before. With only
+  inline images, the body is kept as well, as one more receipt beside the
+  images. The reason is the HTML order confirmation: its inline images are logos
+  and its body is the receipt, so dropping the body there would lose the one file
+  that matters. The cost falls on the other case: a member who pastes a photo and
+  types "for the lathe" also gets a near-empty text receipt, which they discard
+  at submitter review. A spare receipt is noise somebody clears; a lost one is
+  never noticed.
+- Inline images make logos candidates, which is what the next block exists to
+  contain.
 - A file whose content fails the §2 type check is skipped and counted, as a
   manual upload would be refused.
+
+**Files that are never receipts.** Two filters run on every candidate file,
+before the ledger lookup, and each match is counted under a new `ignored` count
+in the run result. Neither writes a ledger row: the next run repeats the cheap
+check instead.
+
+- **A size floor for inline images.** An inline image under 5 KB is skipped
+  without downloading it; the part's declared size is enough. That drops tracking
+  pixels, social icons and most small logos. A legible receipt photo or
+  screenshot is far above that size. The floor never applies to an attachment,
+  which somebody chose to send, nor to a text body. `ponytail:` ceiling is a
+  legible receipt image under 5 KB, which would be skipped silently; lower the
+  floor if one is ever found.
+- **An ignore list, kept by finance.** A new table, `ReceiptIgnoredFile`, holds
+  one row per file the organization has said is never a receipt: `orgId`, the
+  SHA-256 of the file's bytes, a reason, the person who added it, and when.
+  Unique on `(orgId, fileHash)`. Intake loads the org's list once per run and
+  skips any candidate whose hash is on it. The hash is the one the ledger and
+  `Receipt.fileHash` already use, so no file needs re-reading to add it.
+  - **Adding an entry.** Finance gets an "Ignore this file from now on" action
+    in two places. On a held mail item it discards the item and adds its hash in
+    one transaction, using the discard reason; the same transaction discards
+    every other held item with that hash, so one click clears a newsletter's
+    logo from the whole queue. On a discarded receipt it adds the receipt's
+    hash. Receipts already made from that file are left alone; each is
+    discarded the ordinary way.
+  - **What it cannot do.** Matching is on exact bytes. A sender who re-encodes
+    or resizes the same logo produces a new hash, and that copy arrives as a
+    candidate until someone ignores it too. This is the ceiling, stated plainly:
+    the list stops repeats of one file, not every image that looks like it.
+    Matching by look (a perceptual hash) is the upgrade if repeats prove common;
+    nothing here needs it yet.
+  - **Scope.** The list filters the mailbox only. A file a person uploads by
+    hand is theirs to send, and upload never consults it.
+  - **Sensitivity.** Hash, reason, actor and time are `internal`. A hash is a
+    fingerprint of a file, not its content. Adding an entry writes an audit row
+    (actor, the mail item or receipt it came from, the reason); the row carries
+    no file bytes.
+
+Inline images change how much mail the step turns into work. A trusted sender's
+logos spend that sender's upload limits and the run's OCR cap, and an untrusted
+sender's land in the mail queue, which has no cap. The size floor and the ignore
+list are the containment; the rate limits for flooding are designed with the
+mailbox-flooding hardening, not here.
 
 The 3-day
 window plus the dedupe ledger makes a missed run harmless with no stored cursor.
@@ -646,6 +704,22 @@ All PRs are based on `main`; none stacks.
   prod until Q5 is confirmed and recorded on #1266. Until then prod OCR fails
   closed into `ocr_failed` ("not configured", §3), and manual entry and the
   Gmail and import paths keep working without automatic reading.
+- **Q6. Who may add to the ignore list** (§2a). Proposed: `FINANCE` only, the
+  same audience that discards from the mail queue. A submitter discarding their
+  own logo receipt cannot add it.
+- **Q7. Can an entry be removed** (§2a). Proposed: yes. A mistaken entry drops
+  that exact file from every future email with no trace but a count, so finance
+  needs a list of entries on the mail-queue page and a remove action, audited
+  like adding. If the answer is no, the list view and remove route drop out.
+- **Q8. Body beside inline images** (§2a). Proposed: kept, as one more receipt.
+  The alternative, keeping the body only when no inline image survives the
+  filters, loses an order confirmation whenever its logo is new.
+
+Routes this needs, each a registry entry PR before its route PR (boundary
+isolation, `AGENTS.md`): the mail-item discard takes an optional
+`ignoreFile: true` (no new route); `POST /api/receipts/[id]/ignore-file`
+(finance, discarded receipts only); and, if Q7 is yes,
+`GET /api/receipts/ignored-files` and `DELETE /api/receipts/ignored-files/[id]`.
 
 ### Assumptions
 
