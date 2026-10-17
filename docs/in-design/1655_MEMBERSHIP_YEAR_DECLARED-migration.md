@@ -37,12 +37,17 @@ Stable IDs; a resolved question is marked in place, never renumbered.
 ## Open questions
 
 - **`MY-3`: Inside the renewal window, does a board grant ask which year, or buy
-  what the family's own checkout would?** Earlier drafts had the board choose
-  between the year in progress and the coming year inside the window, with a
-  concurrent grant settling to the shorter one. Since then every grant pays a real
-  application under a row lock, and `MY-1` made the joining checkout sell the coming
-  year. *Recommendation:* no prompt; a grant stamps the live year, as a payment
-  would at that moment. The race rule then has nothing to decide: two actors on one
+  what the family's own checkout would?** Today the households page has two grant
+  buttons: "Grant Membership", for a household that is not yet an active member,
+  and "Grant for coming year", shown only in renewal season for a renewing
+  household. Both already pay the household's application the same way, so PR 5
+  merges them into one "Grant membership" button. The question is what year that
+  one button records inside the renewal window. Earlier drafts had the board choose
+  between the year in progress and the coming year there, with a concurrent grant
+  settling to the shorter one. Since then every grant pays a real application under
+  a row lock, and `MY-1` made the joining checkout sell the coming year.
+  *Recommendation:* no prompt; a grant records the live year, as a payment would at
+  that moment. The race rule then has nothing to decide: two actors on one
   application stamp the same year, the row lock lets the first settle, and the
   second is told it is already paid. Blocks PR 5's year handling; PR 2 builds the
   recommended behaviour, and if the owner keeps the prompt, PR 5 adds a year select
@@ -275,8 +280,7 @@ files, and a shared file is never edited by both at once:
 |---|---|---|---|
 | `schema.prisma`, a new migration, `classifications.ts` | PR 1 | PR 1 | land one, rebase and regenerate the other |
 | `programYear.ts` helpers | PR 7 | PR 3 | the first of the two to start writes `membershipYearOf` and `membershipYearLabel`; the other reuses them. The program plan's end-date rule (an end on the boundary counts in the closing year) is its own wrapper, not the shared helper |
-| `orgMembership.ts` and the program-pricing integration suites | PR 4 | PRs 2, 6 | serialize; both change what the pricing tests set up |
-| `todoCounts.ts` | PRs 7, 8 | PR 5 | serialize |
+| `orgMembership.ts` and the program-pricing integration suites | PR 4 | PRs 2, 4 | serialize; both change what the pricing tests set up |
 
 Member pricing needs no extra step from this plan: the program plan's horizon
 comparison reads `membershipValidThrough`, which PR 4 moves to the recorded year.

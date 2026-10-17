@@ -5,12 +5,12 @@ Everything here expires when the change has run. The design is in
 
 ## Where it stands
 
-Six pull requests finish this; none has started. The date half of the original
+Four pull requests finish this; none has started. The date half of the original
 design has shipped: every program has a start and an end date, the create and
 edit routes refuse one without both, and `programCoverageDate` returns the end
 date. What remains is the stated year and everything that reads it.
 
-The owner has answered all three questions. None of the six waits on the
+The owner has answered every question. None of the four waits on the
 settlement-year work (#1655) or on the program restructure, though some share
 files with it (see [Ordering](#ordering-against-other-work)).
 
@@ -19,8 +19,6 @@ files with it (see [Ordering](#ordering-against-other-work)).
 - **The revenue effect of stating a crossing program as the earlier year** is
   carried by the board's budget approval, which is where the year is decided. It
   is not a new discretionary power.
-- **Legacy programs that cannot be filled in** surface as a red badge and a nav
-  count in the broken-checkout style, not as a report.
 - **A boundary that moves** is out of scope, as an assumption.
 - **No program is created or re-dated before the boundary is set.**
 - **The field is `appliesToYear`**, the opening-year integer, shared with the
@@ -43,11 +41,12 @@ Stable IDs; a resolved question is marked in place, never renumbered.
   discount.
 - **`PMY-Q3` (resolved): Which programs must have a stated year?** Only programs
   that cross a membership-year boundary; every other program's year comes from its
-  dates. A crossing program needs one whether or not it has ended, so once PR 5's
-  count reads zero every program has a year, and PR 6 makes that permanent.
-
-Only production can say how many existing programs cross the boundary. PR 4
-leaves them empty and PR 5 counts them.
+  dates. Existing programs are settled by `PMY-Q4`.
+- **`PMY-Q4` (resolved): What year does an existing program get?** One fixed rule,
+  applied to every program, crossing or not: one that ended on or before 31 July
+  2026 gets `2025` (`2025-2026`); every other program gets `2026` (`2026-2027`).
+  Every row is then filled, so the column becomes required in the same PR and no
+  badge or to-do count is built: nothing can be left without a year.
 
 ## Build plan
 
@@ -56,7 +55,7 @@ registry or security-boundary PR is needed; the regenerated classifications in
 PR 1 are a pure addition, which the boundary-isolation check accepts alongside
 schema changes.
 
-Order: **1 → 2 → 3 → 4 → 5 → 6.** PR 2 goes before PR 3 because it is unblocked and
+Order: **1 → 2 → 3 → 4.** PR 2 goes before PR 3 because it is unblocked and
 behaves exactly as today until rows carry a year. PRs 2 and 3 both edit
 `checkin-app/src/app/api/programs/[id]/route.ts` (PR 2 the `GET`, PR 3 the
 `PATCH`), so they are not built at the same time.
@@ -69,8 +68,7 @@ behaves exactly as today until rows carry a year. PRs 2 and 3 both edit
   `checkin-app/src/security/generated/classifications.ts`.
 - **Tests:** unit (`npm run test:ci`); the classification drift tests are the net.
 - **Migration safety:** additive and nullable; the old release ignores it for the
-  whole drain window. No index: nothing filters on it except the PR 5 count over
-  a small table.
+  whole drain window. No index: nothing filters on it.
 - **Blocked on:** nothing. If the restructure's run-columns migration has landed
   first, add the column to `ProgramInstance` in the same migration and to its
   re-sync.
@@ -79,8 +77,8 @@ behaves exactly as today until rows carry a year. PRs 2 and 3 both edit
 
 - **Files:** `checkin-app/src/lib/orgMembership.ts`: `programCoverageDate` takes
   `{ endAt, appliesToYear }`, reads the boundary, and returns the boundary that
-  closes the stated year, or `endAt` when no year is stated or no boundary is set.
-  It becomes async. Its four callers:
+  closes the stated year, or `endAt` when no year is stated (until PR 4) or no
+  boundary is set. It becomes async. Its four callers:
   `checkin-app/src/app/api/programs/[id]/discount-code/route.ts`;
   `checkin-app/src/lib/programs/memberDiscountCode.ts` (add `appliesToYear` to its
   `select`); `checkin-app/src/app/api/programs/[id]/route.ts` `GET` (add
@@ -124,9 +122,12 @@ behaves exactly as today until rows carry a year. PRs 2 and 3 both edit
     page already loads) asks for confirmation naming their number. The settings
     form's `startAt`/`endAt` types are still `string | null`; tighten them while
     there.
+  - Delete the dead copy in `checkin-app/src/app/programs/page.tsx`: the
+    `(Ongoing)` and `Start Date TBD` fallbacks can no longer render.
   - Seed: `checkin-app/prisma/seed.ts` writes the `BoardSettings` boundary at the
-    policy value (1 September), and `createProgram` in
-    `checkin-app/src/lib/dev/seed-helpers.ts` derives the year. Without the
+    policy value (1 September), and both `prisma.program.create` calls in
+    `checkin-app/src/lib/dev/seed-helpers.ts` derive the year; PR 4's constraint
+    fails any program created without one. Without the
     boundary, program creation fails on every dev instance and in the flow tests.
   - Flow tests: `checkin-app/flow-tests/program-member-pricing.flow.test.ts`
     creates a program from 1 January to 31 December, which crosses a September
@@ -144,53 +145,41 @@ behaves exactly as today until rows carry a year. PRs 2 and 3 both edit
   creates programs with no year; PR 4 fills those.
 - **Blocked on:** PR 1.
 
-### PR 4: fill existing rows [mig]
+### PR 4: fill existing programs and require the year [mig + app]
 
-- **Files:** one migration whose SQL sets `appliesToYear` on every program that has
-  none and whose dates fall in one membership year, reading the boundary's month
-  and day from the `BoardSettings` row; it does nothing when no boundary is set.
-  Wrap it in `BEGIN;`/`COMMIT;` and mark the block for extraction, as the
-  restructure's first migration does.
-- **Tests:** an integration test (`npm run test:integration` narrowed to one path,
-  a heavy run) that extracts the block and runs it twice: it fills what the dates
-  decide, leaves crossing programs empty, honours the boundary-day end rule, and
-  changes nothing the second time.
-- **Migration safety:** it updates only empty rows and is idempotent. It must
-  deploy in a release after PR 3, so rows the old release wrote during PR 3's
-  drain are covered.
+- **Files:**
+  - One migration, wrapped in `BEGIN;`/`COMMIT;` with the fill marked for
+    extraction, as the restructure's first migration does:
+
+    ```sql
+    UPDATE "Program" SET "appliesToYear" =
+      CASE WHEN "endAt" <= DATE '2026-07-31' THEN 2025 ELSE 2026 END
+      WHERE "appliesToYear" IS NULL;
+    ALTER TABLE "Program" ALTER COLUMN "appliesToYear" SET NOT NULL;
+    ```
+
+    The rule is the owner's (`PMY-Q4`) and applies to every program, crossing or
+    not; it reads no boundary.
+  - `checkin-app/prisma/schema.prisma`: `appliesToYear Int`.
+  - `programCoverageDate` in `checkin-app/src/lib/orgMembership.ts` loses the
+    no-year fallback, and its parameter type makes the year required, so a reader
+    whose select leaves it out stops compiling. Drop the no-year test case.
+  - Any test factory that inserts programs directly writes a year; grep all three
+    test roots for `program.create`.
+- **Tests:** an integration test (heavy) that extracts the fill and checks a
+  program ending 31 July 2026 gets `2025`, one ending 1 August 2026 gets `2026`, a
+  crossing program and a later program get `2026`, and a stated year is left alone;
+  then full `npm run test:ci` and the integration suites for the four
+  `programCoverageDate` callers.
+- **Migration safety:** the fill runs before `SET NOT NULL` in one transaction, so
+  the constraint cannot meet an empty row. During the drain the old release is
+  PR 3's, which writes a year on every create, so it is safe against the
+  constraint. This must therefore deploy in a release after PR 3 is deployed, never
+  in the same release. Before merging, count programs created since PR 3 deployed
+  with no year in production; it must be zero (anything else means a writer the
+  plan missed).
+- **Rules:** the Last step below.
 - **Blocked on:** PR 3 deployed.
-
-### PR 5: programs that need a person [app]
-
-- **Files:** `appliesToYear` added to `PUBLIC_PROGRAM_SELECT` in
-  `checkin-app/src/app/api/programs/route.ts`; the badge in
-  `checkin-app/src/app/program-ops/programs/page.tsx` and
-  `checkin-app/src/app/program-ops/programs/[id]/page.tsx`, beside the
-  broken-checkout one; the count in `checkin-app/src/lib/nav/todoCounts.ts` beside
-  `programsMisconfig`, and its pill via `checkin-app/src/components/navBadges.ts`.
-  Per `PMY-Q3`, both count every program with no year, ended or not; after PR 4
-  only a crossing program can be in that state.
-  Also delete the dead copy in `checkin-app/src/app/programs/page.tsx`: the
-  `(Ongoing)` and `Start Date TBD` fallbacks can no longer render.
-- **Rules:** applies the needs-a-person line.
-- **Tests:** unit for the count, the badge and the nav pill.
-- **Migration safety:** none.
-- **Blocked on:** PR 4 deployed, or the board sees every program flagged.
-
-### PR 6: the year becomes required [mig + app, contract]
-
-- **Files:** a migration setting `appliesToYear` `NOT NULL`; `schema.prisma`;
-  `programCoverageDate` loses the end-date fallback and its no-year test case.
-  Every writer writes the column after PR 3; check the seed helpers and any test
-  factory that inserts programs directly.
-- **Tests:** full `npm run test:ci`, then integration (heavy).
-- **Migration safety:** the migration fails on any empty row, and a failed
-  migration wedges every later deploy, so merge only once the PR 5 count reads
-  zero in production, an operations event rather than a deploy, and check it again
-  just before merging. The old release writes the year on every create after
-  PR 3, so it is safe against the constraint during the drain.
-- **Rules:** none; then the Last step below.
-- **Blocked on:** PR 5 count at zero in production.
 
 ## Ordering against other work
 
@@ -201,8 +190,7 @@ other, but they share files, and a shared file is never edited by both at once:
 |---|---|---|---|
 | `schema.prisma`, a new migration, `classifications.ts` | PR 1 | PR 1 | land one, rebase and regenerate the other |
 | `programYear.ts` helpers | PR 3 | PR 7 | the first of the two to start writes `membershipYearOf` and `membershipYearLabel`; the other reuses them |
-| `orgMembership.ts` and the program-pricing integration suites | PRs 2, 6 | PR 4 | serialize |
-| `todoCounts.ts` | PR 5 | PRs 7, 8 | serialize |
+| `orgMembership.ts` and the program-pricing integration suites | PRs 2, 4 | PR 4 | serialize |
 
 Member pricing needs nothing from #1655 beyond its PR 4: the horizon this plan
 compares against comes from `membershipValidThrough`, which that PR moves to the
@@ -233,8 +221,7 @@ below, which is not settled." in the member-discount-code line. (PR 2.)
 
 ```markdown
 - Member pricing requires the household's dues to cover the membership year the
-  program runs in, not the program's own dates. A program with no stated year is
-  judged against its end date.  [Decision]
+  program runs in, not the program's own dates.  [Decision]
 ```
 
 **Insert** under Pricing (PR 3):
@@ -270,18 +257,10 @@ below, which is not settled." in the member-discount-code line. (PR 2.)
   deliberate organisation-wide act.
 ```
 
-**Insert** under Pricing (PR 5):
-
-```markdown
-- A program that crosses the membership-year boundary and has no stated year says
-  so where programs are managed, and counts toward the Board's to-do list, until
-  the Board records it.  [Decision]
-```
-
 Nothing about the column, the derivation, the fill or the write-path checks goes
 into the rules file. The date and age rules are already in it.
 
 ## Last step
 
-In PR 6: confirm every block above is in `docs/rules/programs.md`, then delete
+In PR 4: confirm every block above is in `docs/rules/programs.md`, then delete
 both files in this directory.
