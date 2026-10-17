@@ -727,10 +727,6 @@ model BoardSettings {
   /// @sensitivity:internal
   shopifyOrgMembershipProductId String?
   /// @sensitivity:internal
-  shopifyNormalVariantId     String?  @ignore
-  /// @sensitivity:internal
-  shopifyVolunteerVariantId  String?  @ignore
-  /// @sensitivity:internal
   shopifyPriceSyncedAt       DateTime?
   /// High-water mark for the daily Shopify reconciler (lib/finance/reconcile.ts):
   /// the mirror `updatedAt` of the newest order it has already processed. Only
@@ -1026,10 +1022,6 @@ model Program {
   nonOrgMemberPriceCents    Int?
   /// @sensitivity:public
   shopifyProductId          String?
-  /// @sensitivity:public
-  shopifyOrgMemberVariantId    String?  @ignore
-  /// @sensitivity:public
-  shopifyNonOrgMemberVariantId String?  @ignore
   /// @sensitivity:public
   shopifyVariantId          String?
   /// @sensitivity:public

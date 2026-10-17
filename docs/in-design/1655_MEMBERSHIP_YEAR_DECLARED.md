@@ -573,7 +573,6 @@ records the timestamp inference as a `KNOWN LIMIT`. Shares its representation wi
 [#1484](https://github.com/innovationtreehouse/checkin/issues/1484) (programs
 declare their fiscal year), designed in
 `docs/in-design/PROGRAM_MEMBERSHIP_YEAR.md`. The per-year variant shape relates to
-the membership-segment pricing and legacy-variant work
-(`checkin-app/docs/designs/SHOPIFY_MEMBER_SEGMENT_PRICING.md`,
-`checkin-app/docs/designs/975-LEGACY_VARIANT_CONTRACT.md`) and to the variant
+the membership-segment pricing work
+(`checkin-app/docs/designs/SHOPIFY_MEMBER_SEGMENT_PRICING.md`) and to the variant
 drift issues #625, #1293, and #1349.
