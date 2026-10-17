@@ -32,13 +32,31 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
+      # Routing, prompt and checklists come from the base commit, so a PR cannot edit its own reviewer.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .ai-review-base
+          sparse-checkout: |
+            .github/scripts
+            .github/ai-review
+          persist-credentials: false
+      - id: cfg
+        run: |
+          if [ -f .ai-review-base/.github/scripts/ai-review-route.py ]; then
+            echo "dir=.ai-review-base" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::The base branch has no AI review config yet; using this PR's copy."
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          fi
       # Jev Router picks the review profiles and the tier; see .github/scripts/ai-review-route.py.
       # Routing and judging never fail the check; a failure skips or ends the review instead.
       - id: route
         continue-on-error: true
-        run: python3 .github/scripts/ai-review-route.py
+        run: python3 ${{ steps.cfg.outputs.dir }}/.github/scripts/ai-review-route.py
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          AI_REVIEW_CFG: ${{ steps.cfg.outputs.dir }}/.github/ai-review
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -61,9 +79,10 @@ jobs:
       - id: judge
         if: always() && steps.route.outputs.model != ''
         continue-on-error: true
-        run: python3 .github/scripts/ai-review-route.py adjudicate
+        run: python3 ${{ steps.cfg.outputs.dir }}/.github/scripts/ai-review-route.py adjudicate
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          AI_REVIEW_CFG: ${{ steps.cfg.outputs.dir }}/.github/ai-review
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -89,21 +108,28 @@ jobs:
       # Advisory only: a recommendation line on the final review plus the ai-recommends-approve label.
       - if: always() && steps.route.outputs.model != ''
         continue-on-error: true
-        run: python3 .github/scripts/ai-review-route.py recommend
+        run: python3 ${{ steps.cfg.outputs.dir }}/.github/scripts/ai-review-route.py recommend
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          AI_REVIEW_CFG: ${{ steps.cfg.outputs.dir }}/.github/ai-review
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          VERDICT: ${{ steps.rerun.outputs.verdict || steps.review.outputs.verdict }}
-          ISSUES: ${{ steps.rerun.outputs.issue_count || steps.review.outputs.issue_count }}
-          BUGS: ${{ steps.rerun.outputs.bug_count || steps.review.outputs.bug_count }}
-          REVIEW_URL: ${{ steps.rerun.outputs.review_url || steps.review.outputs.review_url }}
+          RERUN_TIER: ${{ steps.judge.outputs.rerun_tier }}
+          REVIEW_VERDICT: ${{ steps.review.outputs.verdict }}
+          REVIEW_ISSUES: ${{ steps.review.outputs.issue_count }}
+          REVIEW_BUGS: ${{ steps.review.outputs.bug_count }}
+          REVIEW_URL: ${{ steps.review.outputs.review_url }}
+          RERUN_VERDICT: ${{ steps.rerun.outputs.verdict }}
+          RERUN_ISSUES: ${{ steps.rerun.outputs.issue_count }}
+          RERUN_BUGS: ${{ steps.rerun.outputs.bug_count }}
+          RERUN_URL: ${{ steps.rerun.outputs.review_url }}
       # Posted reviews show a cost word instead of the dollar amount; exact figures stay in this log.
       - if: always() && steps.route.outputs.model != ''
         continue-on-error: true
-        run: python3 .github/scripts/ai-review-route.py scrub
+        run: python3 ${{ steps.cfg.outputs.dir }}/.github/scripts/ai-review-route.py scrub
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          AI_REVIEW_CFG: ${{ steps.cfg.outputs.dir }}/.github/ai-review
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}

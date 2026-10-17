@@ -9,9 +9,10 @@ own: path matches for profiles, a fixed ladder for the model.
 `adjudicate` (after the review) asks Jev whether the posted review is complete and,
 if not, which stronger model on LADDER should rerun it.
 """
-import json, os, re, subprocess, sys, urllib.request
+import json, os, re, subprocess, sys, urllib.request, uuid
 
-CFG = ".github/ai-review"
+# The workflow points this at the base commit's copy, so a PR cannot edit its own reviewer.
+CFG = os.environ.get("AI_REVIEW_CFG", ".github/ai-review")
 JEV = "typesafe/jev-1.14"
 # Ordered cheapest to strongest; a rerun only moves up.
 LADDER = [
@@ -81,6 +82,12 @@ def jev(state, questions):
         resp = json.load(r)
     print(f"jev {resp.get('model')}")
     return resp["answers"]
+
+
+def output_block(o, name, value):
+    """Write a multi-line step output with a random delimiter that the value cannot contain."""
+    d = f"EOF_{uuid.uuid4().hex}"
+    o.write(f"{name}<<{d}\n{value}\n{d}\n")
 
 
 def log_decision(step, **fields):
@@ -244,8 +251,8 @@ def route():
     with open(os.environ["GITHUB_OUTPUT"], "a") as o:
         o.write(f"tier={tier}\nmodel={model}\nmax_tool_turns={turns}\nmax_diff_kb={diff_kb}\neffort={effort}\n")
         o.write(f"profiles={json.dumps(chosen)}\n")
-        o.write(f"path_profiles<<EOF_PP\n{json.dumps(applied)}\nEOF_PP\n")
-        o.write(f"instructions<<EOF_CI\n{instructions}\nEOF_CI\n")
+        output_block(o, "path_profiles", json.dumps(applied))
+        output_block(o, "instructions", instructions)
     with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as s:
         s.write(f"### AI review routing\n{summary}\n")
 
@@ -368,10 +375,12 @@ def recommend():
     """Add a recommendation line to the final posted review and keep the approve label in step.
     It only recommends; approving stays with a human."""
     pr, repo = os.environ["PR_NUMBER"], os.environ["GITHUB_REPOSITORY"]
-    verdict = os.environ.get("VERDICT", "")
-    issues, bugs = int(os.environ.get("ISSUES") or 0), int(os.environ.get("BUGS") or 0)
+    # When the judge ordered a rerun, only the rerun counts; an empty rerun means no recommendation.
+    src = "RERUN" if os.environ.get("RERUN_TIER", "none") not in ("", "none") else "REVIEW"
+    verdict = os.environ.get(f"{src}_VERDICT", "")
+    issues, bugs = int(os.environ.get(f"{src}_ISSUES") or 0), int(os.environ.get(f"{src}_BUGS") or 0)
     rec = recommendation(verdict, issues, bugs)
-    m = re.search(r"pullrequestreview-(\d+)", os.environ.get("REVIEW_URL", ""))
+    m = re.search(r"pullrequestreview-(\d+)", os.environ.get(f"{src}_URL", ""))
     if rec and m:
         path = f"repos/{repo}/pulls/{pr}/reviews/{m.group(1)}"
         body = REC_LINE.sub("", gh("api", path, "--jq", ".body"))
@@ -387,7 +396,7 @@ def recommend():
     except subprocess.CalledProcessError as e:
         print(f"::warning::could not update the {APPROVE_LABEL} label ({e.stderr.strip()})", file=sys.stderr)
     print(f"recommendation: {rec or 'none'}")
-    log_decision("recommend", verdict=verdict or None, issues=issues, bugs=bugs, recommendation=rec)
+    log_decision("recommend", source=src.lower(), verdict=verdict or None, issues=issues, bugs=bugs, recommendation=rec)
 
 
 if __name__ == "__main__":

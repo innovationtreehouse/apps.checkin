@@ -42,7 +42,6 @@
   "paths": [
    "checkin-app/src/lib/attendance/**",
    "checkin-app/src/lib/attendance*.ts",
-   "checkin-app/src/lib/scan-service.ts",
    "checkin-app/src/lib/visit/**",
    "checkin-app/src/lib/presence/**",
    "checkin-app/src/app/api/scan/**",
