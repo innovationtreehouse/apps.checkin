@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Rewrites the workspace package scope across every tracked file:
+// Rewrites the workspace package scope across every tracked or untracked (non-ignored) file:
 //   node scripts/rename-package-scope.mjs <from> <to>   e.g. @inventory @checkin
 // Only names of packages that live in packages/* are rewritten (plus the
 // `<from>/*` glob), so a mention of a package that only exists elsewhere keeps
@@ -17,8 +17,7 @@ if (!from?.startsWith('@') || !to?.startsWith('@')) {
 const names = readdirSync('packages')
   .filter((d) => existsSync(`packages/${d}/package.json`))
   .map((d) => JSON.parse(readFileSync(`packages/${d}/package.json`, 'utf8')).name)
-  .filter((n) => n.startsWith(`${from}/`))
-  .map((n) => n.slice(from.length + 1));
+  .map((n) => n.replace(/^@[^/]+\//, ''));
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Longest first so `receipt-types` wins over `receipt`; the lookahead stops
@@ -28,7 +27,7 @@ const pattern = new RegExp(`${esc(from)}/(?=(?:${alt})(?![\\w-])|\\*)`, 'g');
 const prose = new RegExp(`${esc(from)} packages\\b`, 'g');
 
 const skip = (f) => f === 'package-lock.json' || f.startsWith('docs/in-design/') || f === 'scripts/rename-package-scope.mjs';
-const files = execFileSync('git', ['grep', '-lI', '-F', from], { encoding: 'utf8' }).split('\n').filter(Boolean);
+const files = execFileSync('git', ['grep', '--untracked', '-lI', '-F', from], { encoding: 'utf8' }).split('\n').filter(Boolean);
 
 let changed = 0;
 for (const f of files) {
