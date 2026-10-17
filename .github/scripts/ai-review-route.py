@@ -352,9 +352,50 @@ def scrub():
             print(f"scrubbed cost from review {r['id']}")
 
 
+APPROVE_LABEL = "ai-recommends-approve"
+REC_LINE = re.compile(r"^\*\*Recommendation:\*\* .*\n?", re.M)
+
+
+def recommendation(verdict, issues, bugs):
+    if verdict not in ("clean", "issues"):
+        return None  # partial or failed: no recommendation from an unreliable review
+    if bugs > 0:
+        return "request changes"
+    return "approve" if verdict == "clean" and issues == 0 else "comment"
+
+
+def recommend():
+    """Add a recommendation line to the final posted review and keep the approve label in step.
+    It only recommends; approving stays with a human."""
+    pr, repo = os.environ["PR_NUMBER"], os.environ["GITHUB_REPOSITORY"]
+    verdict = os.environ.get("VERDICT", "")
+    issues, bugs = int(os.environ.get("ISSUES") or 0), int(os.environ.get("BUGS") or 0)
+    rec = recommendation(verdict, issues, bugs)
+    m = re.search(r"pullrequestreview-(\d+)", os.environ.get("REVIEW_URL", ""))
+    if rec and m:
+        path = f"repos/{repo}/pulls/{pr}/reviews/{m.group(1)}"
+        body = REC_LINE.sub("", gh("api", path, "--jq", ".body"))
+        line = f"**Recommendation:** {rec} (advisory; a maintainer approves)\n"
+        body = re.sub(r"^(\*\*Verdict:\*\* .*\n)", lambda x: x.group(1) + line, body, count=1, flags=re.M) \
+            if re.search(r"^\*\*Verdict:\*\*", body, re.M) else line + body
+        gh("api", "-X", "PUT", path, "-f", f"body={body}")
+    try:
+        if rec == "approve":
+            gh("pr", "edit", pr, "-R", repo, "--add-label", APPROVE_LABEL)
+        else:
+            gh("pr", "edit", pr, "-R", repo, "--remove-label", APPROVE_LABEL)
+    except subprocess.CalledProcessError as e:
+        print(f"::warning::could not update the {APPROVE_LABEL} label ({e.stderr.strip()})", file=sys.stderr)
+    print(f"recommendation: {rec or 'none'}")
+    log_decision("recommend", verdict=verdict or None, issues=issues, bugs=bugs, recommendation=rec)
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["scrub"]:
         scrub()
+        sys.exit(0)
+    if sys.argv[1:] == ["recommend"]:
+        recommend()
         sys.exit(0)
     if not os.environ.get("OPENROUTER_API_KEY"):
         print("::error::OPENROUTER_API_KEY is empty: add the org or repository Actions secret. No AI review ran.")

@@ -86,6 +86,19 @@ jobs:
           fail_on: never
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      # Advisory only: a recommendation line on the final review plus the ai-recommends-approve label.
+      - if: always() && steps.route.outputs.model != ''
+        continue-on-error: true
+        run: python3 .github/scripts/ai-review-route.py recommend
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          VERDICT: ${{ steps.rerun.outputs.verdict || steps.review.outputs.verdict }}
+          ISSUES: ${{ steps.rerun.outputs.issue_count || steps.review.outputs.issue_count }}
+          BUGS: ${{ steps.rerun.outputs.bug_count || steps.review.outputs.bug_count }}
+          REVIEW_URL: ${{ steps.rerun.outputs.review_url || steps.review.outputs.review_url }}
       # Posted reviews show a cost word instead of the dollar amount; exact figures stay in this log.
       - if: always() && steps.route.outputs.model != ''
         continue-on-error: true
