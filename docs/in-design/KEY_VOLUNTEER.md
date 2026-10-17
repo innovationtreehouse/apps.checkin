@@ -20,28 +20,29 @@ list.
 
 ## Objective
 
-When someone is designated a Key Volunteer — whether automatically by their role
-or explicitly by the board — the app surfaces the obligation and tracks its
-settlement. The designation is visible; the agreement's signing status is
-visible; and a list of outstanding obligations exists for the board to work.
+Everyone who owes a KVA is on one list, the **"Needs a Key Volunteer agreement"**
+list, whether a role put them there or the Board did. The list shows who has
+signed and who has not, and the Board works it.
 
 ## Executive summary
 
-- **For board members and BG reviewers:** their role grant opens a KVA
-  obligation automatically. They sign it through the same Zoho Sign /
-  mock-signing flow the membership agreement uses.
-- **For other Key Volunteers** (cardholders, procurement participants, etc.):
-  the board designates them explicitly, which opens the same obligation.
-- **For the board:** a queue of unsigned KVAs, alongside the existing BG-review
-  and intake-note queues.
+- **For board members, BG reviewers, keyholders and finance:** the role grant
+  puts them on the list and opens a KVA obligation. They sign through the same
+  Zoho Sign / mock-signing flow the membership agreement uses.
+- **For anyone else who owes one** (card holders, procurement participants,
+  donor-PII access): the Board adds them to the list by hand, with a reason. The
+  app does not track why they owe it; card holding and procurement stay outside
+  the app.
+- **Signed once.** A person signs again only when the Board marks the agreement
+  as materially changed, which is expected less often than yearly.
+- **For the Board:** the list, alongside the existing BG-review and intake-note
+  queues, and an action to close an open obligation that is no longer owed.
 - **What deliberately does not change:** the KVA does not gate role exercise.
   A board member who has not yet signed can still act as board. The obligation
-  is chased, not enforced — same posture as the individual membership agreement
-  (`PERSON_AGREEMENT`).
-- **What this does not build:** the KVA document itself, procurement-tier
-  enforcement, or credit-card-holder tracking. Those are separate concerns
-  (GC-FIN-CONTROL, external systems). This builds the designation and the
-  signing obligation it triggers.
+  is chased person to person, the same posture as the individual membership
+  agreement (`PERSON_AGREEMENT`).
+- **What this does not build:** procurement-tier enforcement or card-holder
+  tracking. The Board supplies the KVA document itself for e-signature.
 
 ---
 
@@ -61,8 +62,10 @@ The current assumption in `docs/rules/membership.md`:
 > background-check reviewer. Board membership alone therefore qualifies someone
 > wherever a reviewer is required.
 
-**Replacement:** the first sentence moves from assumption to procedure — the app
-tracks it. The second sentence (board = qualified reviewer) is unaffected.
+**Replacement:** the first sentence moves from assumption to procedure: the app
+tracks the signature, chases it without blocking the role, and asks for it again
+only when the agreement changes materially. The second sentence (board =
+qualified reviewer) is unaffected.
 
 ---
 
@@ -71,103 +74,101 @@ tracks it. The second sentence (board = qualified reviewer) is unaffected.
 ### What is a Key Volunteer
 
 A Key Volunteer is a person who carries risk beyond the base membership
-agreement and is therefore required to sign the KVA. The designation is a
-**union** of two sources:
+agreement and is therefore required to sign the KVA. The **"Needs a Key
+Volunteer agreement"** list holds everyone who owes one, from two sources:
 
-1. **Automatic** — holding any of these PersonRole kinds: BOARD, BG_REVIEWER,
+1. **A role.** Holding any of these PersonRole kinds: BOARD, BG_REVIEWER,
    KEYHOLDER, or FINANCE. BOARD and BG_REVIEWER are named by policy;
    KEYHOLDER carries facility-access risk, and FINANCE handles card data and
-   donor PII — both carry risk beyond the base membership agreement by the
-   same reasoning. Granting any of these roles makes the person a Key
-   Volunteer; revoking it does not retroactively remove the designation (a
-   signed KVA is a fact about the past, not about the current role).
+   donor PII, both carrying risk beyond the base membership agreement by the
+   same reasoning. Granting any of these roles opens the obligation.
 
-2. **Explicit** — a board member or sysadmin designates someone as a Key
-   Volunteer for reasons not captured by a role (cardholder, procurement
-   participant, donor-PII access). The reason is free text — there is no
-   picklist of Key Volunteer subtypes.
+2. **The Board.** A board member adds a person to the list for a
+   reason no role captures (card holder, procurement participant, donor-PII
+   access). The reason is free text, with no picklist of subtypes. The app
+   does not know who holds a card or takes part in procurement; the Board does,
+   and the list is where it records the result.
 
-A person can be both automatic and explicit. The KVA obligation is one
-regardless of how many sources feed it.
+A person can come from both sources. They owe one agreement regardless.
 
 ### The obligation
 
-When someone becomes a Key Volunteer and does not hold a current KVA signature:
+When someone joins the list and has not signed the current version of the KVA:
 
 - A `KEY_VOLUNTEER_AGREEMENT` process opens on `OrgMembershipProcess`, using the
   existing per-person process shape (`orgMembershipId` null, `subjectPersonId`
-  set — same as `PERSON_BG` and `PERSON_AGREEMENT`).
-- The process starts at `PENDING_EXTERNAL_ACTION` and settles on signature, same
-  flow as `PERSON_AGREEMENT`.
+  set, the same as `PERSON_BG` and `PERSON_AGREEMENT`).
+- The process starts at `PENDING_EXTERNAL_ACTION` and settles on signature, the
+  same flow as `PERSON_AGREEMENT`.
 - Signing routes through Zoho Sign (or the mock-signing interstitial in dev),
-  using the KVA document template instead of the membership agreement template.
+  using the Board-supplied KVA document instead of the membership agreement.
 
-### Annual cycle
+### Re-signing on a material change
 
-The KVA is signed once per membership year, like the household membership
-agreement. The annual renewal sweep opens a new `KEY_VOLUNTEER_AGREEMENT`
-process for every active Key Volunteer whose current-year KVA is not yet signed.
+The KVA is signed once. It is not renewed each membership year. A person signs
+again only when the agreement itself changes materially, which is expected less
+often than yearly.
 
-The dedup floor is the membership-year boundary, same as `PERSON_AGREEMENT`: a
-KVA signed at or after the current boundary covers the current year.
+The marker is a version number the Board bumps: `BoardSettings` holds the
+current KVA version, and each signed process records the version it signed.
+Bumping the version (alongside uploading the new document) opens a fresh
+obligation for everyone currently on the list whose latest signature is for an
+older version. A wording fix that is not material leaves the version alone, and
+nobody is asked to sign again.
 
 ### Triggers
 
 | Event | Action |
 |-------|--------|
-| BOARD, BG_REVIEWER, KEYHOLDER, or FINANCE role granted | If no current KVA, open one |
-| Board explicitly designates someone | If no current KVA, open one |
-| Annual renewal sweep | Open for every active Key Volunteer without a current KVA |
-| All automatic roles revoked, no explicit designation | No new obligation opens; existing signed KVAs stay |
+| BOARD, BG_REVIEWER, KEYHOLDER, or FINANCE role granted | If no signature on the current version and none open, open one |
+| Board adds someone to the list | Same |
+| Board bumps the KVA version | Open one for everyone on the list whose latest signature is for an older version |
+| All qualifying roles revoked, not Board-added | Leaves the list; no new obligation opens. An open, unsigned one stays open (below); a signed one stays signed |
+| Board closes an open obligation | The process closes unsigned, with the closer and a note in the audit log |
+
+**Losing the roles does not close an open obligation.** The person still owes
+the signature for the time they held the role, so it stays on the list until
+they sign or the Board closes it. Closing is a deliberate Board action on the
+list, for an obligation that is no longer owed: the person left, or was added in
+error. Closing a Board-added person's obligation also takes them off the list.
 
 ### What it does not gate
 
 - Role exercise: a board member without a signed KVA can still act as board.
 - BG review: a reviewer without a signed KVA can still review.
-- Check-in, program participation, membership — none affected.
+- Check-in, program participation, membership: none affected.
 
-The unsigned KVA is a compliance gap, surfaced on the board's queue. The board
-chases it. The same posture as the individual membership agreement, and for the
-same reason: blocking a board member from acting until they sign defeats the
-purpose of having them on the board.
+An unsigned KVA is chased person to person, from the Board's list. This is the
+same posture as the individual membership agreement, and for the same reason:
+blocking a board member from acting until they sign defeats the purpose of
+having them on the board. It is a deliberate limit, and the rule extracted at
+merge says so.
 
 ### Data model
 
-**New enum value:** `KEY_VOLUNTEER_AGREEMENT` on `OrgMembershipProcessKind`.
+- **New enum value:** `KEY_VOLUNTEER_AGREEMENT` on `OrgMembershipProcessKind`.
+- **Current version:** an integer on `BoardSettings`, starting at 1.
+- **On the process:** the version signed, set at signing; and the Board's
+  reason, set when the Board added the person and null when a role did. A
+  non-null reason is what marks a Board-added person as still on the list after
+  they sign, so a version bump reaches them too.
 
-**Explicit designation storage — two options:**
-
-**Option A: KeyVolunteerDesignation table.** A separate table with `personId`,
-`designatedById`, `designatedAt`, `reason`, `revokedAt`. Explicit designation
-is a first-class record with audit trail. Not shaped like `VolunteerDesignation`,
-which is email-keyed (canonical email → fee discount, no person FK, no reason,
-no revocation). This one keys by `personId` because: (a) the person must already
-exist to hold a role or receive a designation — there is no pre-auth-by-email
-use case; (b) it needs `designatedById`, `reason` and `revokedAt` for the audit
-trail that a fee-discount lookup does not carry.
-
-**Option B: PersonRole with a new kind** — add `KEY_VOLUNTEER` to
-`PersonRoleKind`. Simpler (reuses existing role machinery), but Key Volunteer is
-not an RBAC capability — it carries no session flag, no JWT claim, no
-`withAuth` gate. Adding it to `PersonRoleKind` conflates a designation with a
-capability role.
-
-**Recommendation: Option A.** The Key Volunteer designation is not a capability
-grant. It is a record that someone carries elevated risk and owes a contract.
-Mixing it into the role table muddies the role table's meaning (every other kind
-gates something). A small table with clear semantics is cheaper than explaining
-why one PersonRoleKind doesn't work like the others.
+There is no separate designation table and no new `PersonRoleKind`. The list is
+the role holders plus the Board-added processes that the Board has not closed,
+which the process rows already record.
 
 ### Board UI
 
-- **Queue:** "Key Volunteer Agreements" alongside "Background Checks" and
-  "Intake Notes" in the board's membership-ops navigation. Shows people with an
-  open (unsigned) KVA process. Count in the nav badge.
-- **Designation:** on the person detail page, a "Key Volunteer" section showing
-  whether they are designated (automatic, explicit, or both), and the current
-  KVA status. Board/sysadmin can add or revoke an explicit designation here.
-- **Compliance view:** a row per Key Volunteer showing KVA status, last signed
-  date, and source (role / explicit / both).
+- **The list:** "Key Volunteer Agreements" alongside "Background Checks" and
+  "Intake Notes" in the board's membership-ops navigation. One row per person
+  on the list: source (role, Board, or both), the Board's reason, the version
+  last signed and when, and whether an obligation is open. The nav badge counts
+  open obligations. An **Add person** action (person picker plus reason) and a
+  **Close** action per open obligation (with a note).
+- **Person detail:** a "Key Volunteer agreement" line showing whether they are
+  on the list and their signing status, linking to the list.
+- **Settings:** the current KVA version, with a bump action next to the
+  document upload.
 
 ### Signing flow
 
@@ -207,36 +208,19 @@ and the queue shows "agreement not configured."
 
 ## Open questions
 
-Questions marked **blocking** change the build shape and need owner input before
-implementation starts.
+None remain. IDs are kept so earlier references still resolve.
 
-1. **Does the KVA gate role exercise?** ← **blocking.** This design says no —
-   chased, not enforced. If policy tightens to require a signed KVA before
-   someone can act as a reviewer, the gate is a one-line check on the review
-   submission path but changes every trigger and the board queue's urgency.
-   Confirm with owner.
-
-2. **Is the KVA really annual?** ← **blocking.** The membership agreement is
-   annual because policy says "separately for each membership year." The KVA's
-   renewal cadence is not stated in the 13 policies. If once-ever rather than
-   annual: drop the renewal-sweep trigger, drop the dedup-floor logic, simplify
-   the process lifecycle.
-
-3. **Should revoking all roles + explicit designation close an open KVA?** This
-   design keeps it open (the person still owes the signature for the period they
-   held the role). Alternative: archive the process, same as an abandoned
-   membership application.
-
-4. **Is the Zoho Sign template a KVA-specific one, or does the org have a
-   single "volunteer agreement" template?** Affects which PDF is uploaded but
-   not the data model.
-
-5. **Scope of "explicit" designation — is cardholder/procurement tracked here or
-   in an external system?** ← **blocking.** TOPDOWN notes "Key Volunteer
-   Agreement gating (likely QB/Benevity's lane)." If the designation lives
-   entirely outside the app, the explicit-designation half of this design
-   (the `KeyVolunteerDesignation` table, the board designation UI) is premature.
-   The automatic half (role → KVA) stands alone and can ship independently.
+1. **Does the KVA gate role exercise?** Decided: no. See
+   [What it does not gate](#what-it-does-not-gate).
+2. **Is the KVA annual?** Decided: signed once, re-signed on a material change.
+   See [Re-signing on a material change](#re-signing-on-a-material-change).
+3. **Does losing the roles close an open KVA?** Decided: no; the Board closes it.
+   See [Triggers](#triggers).
+4. **Which document is signed?** Decided: a KVA-specific document, which the
+   Board provides for e-signature. See [Signing flow](#signing-flow).
+5. **Are card holders and procurement tracked here?** Decided: no. The Board adds
+   whoever owes an agreement to the list. See
+   [What is a Key Volunteer](#what-is-a-key-volunteer).
 
 ---
 
