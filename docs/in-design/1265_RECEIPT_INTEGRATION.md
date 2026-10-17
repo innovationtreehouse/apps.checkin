@@ -209,7 +209,10 @@ check instead.
     in two places. On a held mail item it discards the item and adds its hash in
     one transaction, using the discard reason; the same transaction discards
     every other held item with that hash, so one click clears a newsletter's
-    logo from the whole queue. On a discarded receipt it adds the receipt's
+    logo from the whole queue. That bulk discard returns the ids it
+    discarded, so each item's stored file can be deleted after commit once held
+    files leave the database (`1265_RECEIPT_FILES_S3.md`); the hashes the list
+    keys on do not change there. On a discarded receipt it adds the receipt's
     hash. Receipts already made from that file are left alone; each is
     discarded the ordinary way.
   - **What it cannot do.** Matching is on exact bytes. A sender who re-encodes
