@@ -363,6 +363,6 @@ The bulk-donation library also stores its uploaded CSVs as `bytea`
     waits until finance acts on it specifically.
   - Daily limits differ by role: program leaders and the Board can reach 25 in a
     day when catching up (one person has sent 20); for others, 5 is high.
-  - An alias list lets a person own a second email address that attaches quietly
-    to their account: mail from it is attributed to them, but it is not their
-    sign-in address. The owner already does this for some vendors.
+  - Extra sending addresses (aliases) for a person are designed in
+    `1265_RECEIPT_MAIL_ALIASES.md`: finance or the Board record them, and one
+    counts only after finance or the Board approves it from its first mail.
