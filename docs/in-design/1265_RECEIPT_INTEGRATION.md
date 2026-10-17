@@ -167,11 +167,97 @@ whose file is the body**:
   own origin, so stored HTML would be one header mistake away from live script
   there (§3 shows text only as escaped text).
 - The ledger hash for a body is the hash of that stored text.
-- When a message has attachments, its body is ignored; it is usually covering
-  text. An attachment is a part with a filename that is not marked `inline`, so
-  logos embedded in an HTML order confirmation are not receipts.
+- **Inline images are read too** (owner ruling 2026-10-16). A photo pasted into
+  the body of an email is a receipt as often as an attached one; members do it.
+  A message's files are therefore every attachment (a part with a filename not
+  marked `inline`) **and** every inline part of an accepted non-text type (§2:
+  JPEG, PNG, GIF, WebP, PDF), with or without a filename. Parts inside a
+  forwarded message are still never read.
+- **The body is a receipt unless it is trivial or proven to repeat an
+  attachment** (owner ruling 2026-10-16). Dropping a body unread is how a
+  receipt gets lost without anyone noticing, so the step reads every body and
+  drops one only on evidence:
+  - **Trivial:** the body's text holds no money amount (a number with two
+    decimal places). "For the lathe, see photo" is trivial; any order
+    confirmation or emailed receipt is not. A trivial body is skipped and
+    counted under `ignored`. `ponytail:` ceiling is a receipt whose body prints
+    its total without cents; widen the pattern if one is found.
+  - **Same as an attachment:** when the message also has attachments or inline
+    images, those are read first, then the body. Once the body's reading is in,
+    it is compared with every receipt the same message produced. If one has the
+    same total and the same date, the body is discarded automatically, with the
+    reason "same as attachment" and the matching receipt named in its audit row.
+    It stays visible as discarded, so finance can restart it if the match was
+    wrong. Any mismatch, or a reading missing either field, keeps the body as
+    its own receipt.
+  - **Held mail:** a held item has no reading until finance assigns it, so the
+    comparison cannot run at intake. A non-trivial body from an untrusted sender
+    is held beside its attachments, and finance discards whichever is the copy.
+  - **Cost:** a non-trivial body beside an attachment spends one more reading,
+    against the sender's daily allowance and the run's cap. Bodies are read
+    after the message's other files, so a capped run defers the body to the next
+    run, inside the window, and never an attachment.
+- Inline images make logos candidates, which is what the next block exists to
+  contain.
 - A file whose content fails the §2 type check is skipped and counted, as a
   manual upload would be refused.
+
+**Files that are never receipts.** Two filters run on every candidate file,
+before the ledger lookup, and each match is counted under a new `ignored` count
+in the run result. Neither writes a ledger row: the next run repeats the cheap
+check instead.
+
+- **A size floor for inline images.** An inline image under 5 KB is skipped
+  without downloading it; the part's declared size is enough. That drops tracking
+  pixels, social icons and most small logos. A legible receipt photo or
+  screenshot is far above that size. The floor never applies to an attachment,
+  which somebody chose to send, nor to a text body. `ponytail:` ceiling is a
+  legible receipt image under 5 KB, which would be skipped silently; lower the
+  floor if one is ever found.
+- **An ignore list, kept by finance.** A new table, `ReceiptIgnoredFile`, holds
+  one row per file the organization has said is never a receipt: `orgId`, the
+  SHA-256 of the file's bytes, a reason, the person who added it, and when.
+  Unique on `(orgId, fileHash)`. Intake loads the org's list once per run and
+  skips any candidate whose hash is on it. The hash is the one the ledger and
+  `Receipt.fileHash` already use, so no file needs re-reading to add it.
+  - **Adding an entry.** Finance gets an "Ignore this file from now on" action
+    in two places. On a held mail item it discards the item and adds its hash in
+    one transaction, using the discard reason; the same transaction discards
+    every other held item with that hash, so one click clears a newsletter's
+    logo from the whole queue. That bulk discard returns the ids it
+    discarded, so each item's stored file can be deleted after commit once held
+    files leave the database (`1265_RECEIPT_FILES_S3.md`); the hashes the list
+    keys on do not change there. On a discarded receipt it adds the receipt's
+    hash. Receipts already made from that file are left alone; each is
+    discarded the ordinary way.
+  - **Who.** `FINANCE` only (owner ruling 2026-10-16), the audience that
+    already discards from the mail queue. A submitter discarding their own logo
+    receipt cannot add it.
+  - **Removing an entry.** Finance can remove one (owner ruling 2026-10-16): a
+    mistaken entry drops that exact file from every future email, leaving only a
+    count, so it must be undoable. The mail-queue page lists the entries with a
+    remove action, audited like adding. Removal applies from the next run; mail
+    it already skipped inside the window is read again then, since a skip writes
+    no ledger row.
+  - **What it cannot do.** Matching is on exact bytes. A sender who re-encodes
+    or resizes the same logo produces a new hash, and that copy arrives as a
+    candidate until someone ignores it too. This is the ceiling, stated plainly:
+    the list stops repeats of one file, not every image that looks like it.
+    Matching by look (a perceptual hash) is the upgrade if repeats prove common;
+    nothing here needs it yet.
+  - **Scope.** The list filters the mailbox only. A file a person uploads by
+    hand is theirs to send, and upload never consults it.
+  - **Sensitivity** (owner ruling 2026-10-16). Hash, reason, actor and time
+    are `internal`. A hash is a
+    fingerprint of a file, not its content. Adding or removing an entry writes an audit
+    row (actor, the mail item or receipt it came from, the reason); the row
+    carries no file bytes.
+
+Inline images change how much mail the step turns into work. A trusted sender's
+logos spend that sender's upload limits and the run's OCR cap, and an untrusted
+sender's land in the mail queue, which has no cap. The size floor and the ignore
+list are the containment; the rate limits for flooding are designed with the
+mailbox-flooding hardening, not here.
 
 The 3-day
 window plus the dedupe ledger makes a missed run harmless with no stored cursor.
@@ -646,6 +732,11 @@ All PRs are based on `main`; none stacks.
   prod until Q5 is confirmed and recorded on #1266. Until then prod OCR fails
   closed into `ocr_failed` ("not configured", §3), and manual entry and the
   Gmail and import paths keep working without automatic reading.
+Routes the ignore list needs, each a registry entry PR before its route PR
+(boundary isolation, `AGENTS.md`): the mail-item discard takes an optional
+`ignoreFile: true` (no new route); `POST /api/receipts/[id]/ignore-file`
+(finance, discarded receipts only); `GET /api/receipts/ignored-files`; and
+`DELETE /api/receipts/ignored-files/[id]`.
 
 ### Assumptions
 
