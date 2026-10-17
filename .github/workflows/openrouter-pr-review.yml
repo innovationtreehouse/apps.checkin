@@ -70,7 +70,8 @@ jobs:
           PROFILES: ${{ steps.route.outputs.profiles }}
           VERDICT: ${{ steps.review.outputs.verdict }}
           REVIEW_URL: ${{ steps.review.outputs.review_url }}
-      - if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
+      - id: rerun
+        if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
         continue-on-error: true
         uses: FlyOverCoderKY/openrouter-pr-review-action@f0803a825cbd65f8c27ed4d551bdfdca3c03a193 # v1.3.0
         with:
@@ -83,4 +84,12 @@ jobs:
           path_profiles: ${{ steps.route.outputs.path_profiles }}
           fail_on: never
         env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      # Posted reviews show a cost word instead of the dollar amount; exact figures stay in this log.
+      - if: always() && steps.route.outputs.model != ''
+        continue-on-error: true
+        run: python3 .github/scripts/ai-review-route.py scrub
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}

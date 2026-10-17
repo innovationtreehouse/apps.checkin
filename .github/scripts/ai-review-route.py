@@ -20,12 +20,12 @@ LADDER = [
     ("free", "nvidia/nemotron-3.5-super-vl:free", "50", "300",
      "Costs nothing. Routine changes: docs, tests, small refactors, config, renames.", "medium"),
     ("mid", "z-ai/glm-5.3", "30", "300",
-     "About $0.30 a review. Real logic changes, one risky area, or a large diff. The default for anything beyond routine.", ""),
-    # ponytail: per-review spend caps via tool rounds and diff size; roughly $1 here and $2 below.
+     "Quarters a review. Real logic changes, one risky area, or a large diff. The default for anything beyond routine.", ""),
+    # ponytail: per-review spend caps via tool rounds and diff size on the two costliest rungs.
     ("high", "google/gemini-4-argon", "12", "150",
-     "About $1 a review, three times the mid tier. Only when the mid reviewer is likely to miss something serious: security-boundary or migration changes, two or more risky areas, concurrency or authorization logic.", ""),
+     "Around a dollar a review, several times the mid tier. Only when the mid reviewer is likely to miss something serious: security-boundary or migration changes, two or more risky areas, concurrency or authorization logic.", ""),
     ("top", "anthropic/claude-opus-5.5", "8", "120",
-     "About $2 a review and reserved for the rare case. Only when a missed bug would mean lost money, leaked personal data or a broken production deploy, AND the logic is subtle enough that the high tier would likely miss it. Choose this almost never.", ""),
+     "Dollars a review, roughly double the high tier, and reserved for the rare case. Only when a missed bug would mean lost money, leaked personal data or a broken production deploy, AND the logic is subtle enough that the high tier would likely miss it. Choose this almost never.", ""),
 ]
 # Escalation bars: move to a rung only when P(this rung or higher) clears its bar.
 # Odds 1:1, 4:1, 39:1, so reaching Opus takes about ten times the concern of Argon.
@@ -298,7 +298,42 @@ def adjudicate():
         s.write(f"{summary}\n")
 
 
+def cost_word(dollars):
+    if dollars <= 0:
+        return "free"
+    for limit, word in ((0.01, "less than a penny"), (0.10, "pennies"), (0.25, "dimes"), (1.00, "quarters")):
+        if dollars < limit:
+            return word
+    return "dollars"
+
+
+COST_LINE = re.compile(r"^(\*\*Cost:\*\* )\$(\d+(?:\.\d+)?)\s*$", re.M)
+LANE_COST = re.compile(r"^(- `[^`]+`: .*), \$(\d+(?:\.\d+)?)\)\s*$", re.M)
+
+
+def scrub_text(body):
+    body = COST_LINE.sub(lambda m: m.group(1) + cost_word(float(m.group(2))), body)
+    return LANE_COST.sub(lambda m: f"{m.group(1)}, {cost_word(float(m.group(2)))})", body)
+
+
+def scrub():
+    """Replace exact dollar costs in the review bot's posted reviews with a rough word.
+    Exact figures stay in the workflow log."""
+    pr, repo = os.environ["PR_NUMBER"], os.environ["GITHUB_REPOSITORY"]
+    pages = json.loads(gh("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{pr}/reviews?per_page=100"))
+    for r in (x for page in pages for x in page):
+        if r["user"]["login"] != BOT or not r.get("body"):
+            continue
+        new = scrub_text(r["body"])
+        if new != r["body"]:
+            gh("api", "-X", "PUT", f"repos/{repo}/pulls/{pr}/reviews/{r['id']}", "-f", f"body={new}")
+            print(f"scrubbed cost from review {r['id']}")
+
+
 if __name__ == "__main__":
+    if sys.argv[1:] == ["scrub"]:
+        scrub()
+        sys.exit(0)
     if not os.environ.get("OPENROUTER_API_KEY"):
         print("::error::OPENROUTER_API_KEY is empty: add the org or repository Actions secret. No AI review ran.")
         sys.exit(1)
