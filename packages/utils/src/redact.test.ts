@@ -31,11 +31,12 @@ describe("redactSecrets", () => {
     );
   });
 
-  it("stays linear on long separator-free input", () => {
-    for (const unit of ["a", "a1", "a.", "a+", "x@", '"a']) {
-      const input = unit.repeat(100_000 / unit.length);
+  it("stays linear on long separator-free input, uncapped", () => {
+    const inputs = ["a", "a1", "a.", "a+", "x@", '"a'].map((unit) => unit.repeat(100_000 / unit.length));
+    inputs.push('"' + "secret".repeat(100_000 / 6));
+    for (const input of inputs) {
       const start = performance.now();
-      redactSecrets(input);
+      redactSecrets(input, Infinity);
       expect(performance.now() - start).toBeLessThan(100);
     }
   });
