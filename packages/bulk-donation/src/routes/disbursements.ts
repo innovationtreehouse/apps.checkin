@@ -8,6 +8,8 @@ import { disbursementService } from "../services/disbursementService";
 import { getNavCounts } from "../services/navCountsService";
 import { donationError, getOrgId, mapServiceErrors } from "../runtime";
 import { recordEvent } from "../repositories/audit";
+import { QB_MATCH_STATE } from "../lib/qb-match";
+import { qbCandidates as liveQbCandidates, resolveQbHold } from "../lib/qb-queue";
 import type { DonationRouteHandler } from "../contract";
 import { auditContext, pageArgs, parseBody } from "./_shared";
 
@@ -16,15 +18,28 @@ const exclusionSchema = z.object({
   reason: z.string().trim().min(1, "reason is required"),
 });
 
+const resolveSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("match"), qbTxnId: z.string().trim().min(1, "qbTxnId is required"), reason: z.string().optional() }),
+  z.object({ action: z.literal("dismiss"), reason: z.string().trim().min(1, "reason is required") }),
+  z.object({ action: z.literal("retry") }),
+]);
+
+const QB_STATES = new Set<string>(Object.values(QB_MATCH_STATE));
+
+/** `?qbState=A,B`: the QuickBooks match states to list; absent lists every event. */
+function qbStateFilter(req: Request): string[] | undefined {
+  const raw = new URL(req.url).searchParams.get("qbState");
+  if (raw === null) return undefined;
+  const states = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const unknown = states.find((s) => !QB_STATES.has(s));
+  if (unknown !== undefined || states.length === 0) throw donationError(400, `Unknown qbState: ${unknown ?? raw}`);
+  return states;
+}
+
 function disbursementId(params: Record<string, string>): string {
   const id = params.disbursementId?.trim();
   if (!id) throw donationError(400, "Invalid disbursementId");
   return id;
-}
-
-async function requireEvent(orgId: string, id: string) {
-  const event = await db.disbursementEvent.findFirst({ where: { orgId, disbursementId: id }, select: { id: true } });
-  if (!event) throw donationError(404, "Disbursement event not found");
 }
 
 export const listHolds: DonationRouteHandler = async ({ req }) => ({
@@ -40,23 +55,25 @@ export const resubmitHold: DonationRouteHandler = async ({ req, params }) => {
 };
 
 export const listEvents: DonationRouteHandler = async ({ req }) => ({
-  DisbursementEvent: await disbursementService.listEvents(await getOrgId(), pageArgs(req)),
+  DisbursementEvent: await disbursementService.listEvents(await getOrgId(), pageArgs(req), qbStateFilter(req)),
 });
 
 export const navCounts: DonationRouteHandler = async () => ({
   DonationNavCounts: await getNavCounts(await getOrgId()),
 });
 
-// ponytail: QuickBooks candidates need the QB reader the drain (#1280 §9 D) binds; empty until then.
 export const qbCandidates: DonationRouteHandler = async ({ params }) => {
-  await requireEvent(await getOrgId(), disbursementId(params));
-  return { DonationQbCandidateView: [] };
+  const id = disbursementId(params);
+  const orgId = await getOrgId();
+  return { DonationQbCandidateView: await mapServiceErrors(() => liveQbCandidates(orgId, id)) };
 };
 
-// The drain (#1280 §9 D) implements pick / create / retry; until QuickBooks is bound nothing can resolve.
-export const qbResolve: DonationRouteHandler = async ({ params }) => {
-  await requireEvent(await getOrgId(), disbursementId(params));
-  throw donationError(503, "QuickBooks is not connected yet");
+export const qbResolve: DonationRouteHandler = async ({ req, params }) => {
+  const id = disbursementId(params);
+  const action = await parseBody(req, resolveSchema);
+  const orgId = await getOrgId();
+  const audit = await auditContext(req);
+  return { DisbursementEvent: await mapServiceErrors(() => resolveQbHold(orgId, id, action, audit)) };
 };
 
 export const listExclusions: DonationRouteHandler = async ({ req }) => ({
@@ -74,6 +91,8 @@ export const createExclusion: DonationRouteHandler = async ({ req }) => {
   try {
     return {
       DonationQbMatchExclusion: await db.$transaction(async (tx) => {
+        const holder = await tx.disbursementEvent.findFirst({ where: { orgId, qbTxnId }, select: { disbursementId: true } });
+        if (holder) throw donationError(409, `That QuickBooks entry backs disbursement ${holder.disbursementId}`);
         const row = await tx.donationQbMatchExclusion.create({
           data: { orgId, qbTxnId, reason, excludedByUserId: audit.actorUserId },
         });
