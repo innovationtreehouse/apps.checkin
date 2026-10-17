@@ -14,7 +14,7 @@ import {
 import { sendDonorSync } from "../lib/donor-sync";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
-import { financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow } from "../lib/receipt-flow";
+import { financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
 import {
   AddLineItemSchema,
   EditLineItemSchema,
@@ -323,15 +323,7 @@ export const receiptService = {
     if (!EDITABLE.has(row.state)) {
       throw new ServiceError(400, "Receipt can only be edited in validation_failed or submitter_review state");
     }
-    // Tax and date drive financial review, so only an independent finance user may change them.
-    if ((await writeAccess(row, access, actor, "edit")) === "submitter") {
-      if (updates.tax !== undefined && toCents(updates.tax) !== row.taxCents) {
-        await refuse(row, actor, "edit tax", "Only an independent finance user can change the tax");
-      }
-      if (updates.receiptDate !== undefined && updates.receiptDate !== row.receiptDate) {
-        await refuse(row, actor, "edit receiptDate", "Only an independent finance user can change the date");
-      }
-    }
+    const asSubmitter = (await writeAccess(row, access, actor, "edit")) === "submitter";
 
     const next = {
       retailer: updates.retailer,
@@ -346,9 +338,11 @@ export const receiptService = {
       ([k, v]) => v !== undefined && String(row[k as keyof typeof next]) !== String(v),
     );
     if (changed.length === 0) return load(id, access, actor);
+    // A submitter's tax or date correction needs a fresh finance review.
+    const reopensReview = asSubmitter && changed.some(([field]) => SUBMITTER_CORRECTION_FIELDS.includes(field));
 
     await db.$transaction(async (tx) => {
-      await tx.receiptDetail.update({ where: { id }, data: next });
+      await tx.receiptDetail.update({ where: { id }, data: reopensReview ? { ...next, approvedAt: null } : next });
       for (const [field, after] of changed) {
         await audit(tx, id, actor, {
           action: "field_edit",
@@ -473,7 +467,7 @@ export const receiptService = {
     const actor = await requireActor();
     const row = await loadForChange(id, "finance", actor);
     await refuseSelfDecision(row, actor, "approve");
-    const reasons = row.state === "financial_review" ? financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
+    const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
     const trimmed = note?.trim() || null;
     if (reasons.includes("tax") && !trimmed) throw new ServiceError(400, "A note explaining the tax is required");
     await step(row, { type: "FINANCIAL_APPROVED" }, "uploaded", { detail: { approvedAt: new Date() } }, actor, "financial_approved", trimmed);
@@ -606,7 +600,7 @@ export const receiptService = {
     const actor = await requireActor();
     const row = await load(id, access, actor);
     const lineItems = await receiptRepo.listLineItems(id);
-    const reasons = row.state === "financial_review" ? financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
+    const reasons = row.state === "financial_review" ? await financialReviewReasons(row, await getOrgSettings(row.orgId)) : [];
     const receipt = access === "finance" ? row : toSubmitterView(row);
     return { ...receipt, lineItems, financialReviewReasons: reasons };
   },

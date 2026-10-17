@@ -33,9 +33,25 @@ export function computeFinancialReviewFlags(
   return { taxReview, ageReview, futureReview, ageLimitDays, diffDays };
 }
 
-export type FinancialReviewReason = "tax" | "old_date" | "future_date";
+export type FinancialReviewReason = "tax" | "old_date" | "future_date" | "submitter_correction";
 
-export function financialReviewReasons(row: ReceiptRow, settings: ReceiptOrgSettings): FinancialReviewReason[] {
+/** Receipt fields that drive financial review; a submitter's change to one sends the receipt to finance. */
+export const SUBMITTER_CORRECTION_FIELDS: readonly string[] = ["taxCents", "receiptDate"];
+
+/** Whether the submitter changed the tax or date, read from the receipt's audited field edits. */
+export async function submitterCorrected(row: ReceiptRow): Promise<boolean> {
+  const edits = await db.receiptAuditLog.count({
+    where: {
+      receiptId: row.id,
+      action: "field_edit",
+      userId: row.uploadedByUserId,
+      fieldChanged: { in: [...SUBMITTER_CORRECTION_FIELDS] },
+    },
+  });
+  return edits > 0;
+}
+
+export async function financialReviewReasons(row: ReceiptRow, settings: ReceiptOrgSettings): Promise<FinancialReviewReason[]> {
   const { taxReview, ageReview, futureReview } = computeFinancialReviewFlags(
     settings,
     row.taxCents,
@@ -46,6 +62,7 @@ export function financialReviewReasons(row: ReceiptRow, settings: ReceiptOrgSett
   if (taxReview) reasons.push("tax");
   if (ageReview && !row.qbTxnId) reasons.push("old_date");
   if (futureReview) reasons.push("future_date");
+  if (await submitterCorrected(row)) reasons.push("submitter_correction");
   return reasons;
 }
 
@@ -176,6 +193,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
   // QB-linked backfill is already reconciled in QuickBooks: the submitter step is implied and the
   // age gate is waived (historical by definition). Tax, future-dated, math and dedup still apply.
   const isQbLinked = !!row.qbTxnId;
+  const corrected = await submitterCorrected(row);
 
   const context: ReceiptMachineContext = {
     isDuplicate: !!dupId,
@@ -185,7 +203,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
     readByOcr: row.ocrStartedAt !== null,
     submitterReviewed: !!row.reviewedAt || isQbLinked,
     financialApproved: !!row.approvedAt,
-    needsFinancialReview: taxReview || futureReview || (ageReview && !isQbLinked),
+    needsFinancialReview: taxReview || futureReview || (ageReview && !isQbLinked) || corrected,
   };
 
   const nextState = resolveNextState(row.state, { type: "RUN_PIPELINE" }, context);
@@ -222,6 +240,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
           taxReview && "tax review required (tax-exempt org with tax > 0)",
           ageReview && `age limit exceeded (${diffDays}d > ${ageLimitDays}d)`,
           futureReview && "future-dated receipt",
+          corrected && "submitter corrected the tax or date",
         ]
           .filter(Boolean)
           .join("; ");
