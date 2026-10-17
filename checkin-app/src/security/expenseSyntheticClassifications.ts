@@ -1,6 +1,6 @@
 /**
  * Non-Prisma response models the expense library ships through handler()
- * (#1272 §5/§7; the catalogSyntheticClassifications.ts pattern).
+ * (the catalogSyntheticClassifications.ts pattern).
  *
  * Counts, the injected bucket list, per-line sign-off status, the capital-seed
  * result and QuickBooks match candidates are not Prisma models, and handler()'s

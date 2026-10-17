@@ -11,7 +11,7 @@
 import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
-import { LATE_CLOSE_SKEW_MS } from '@/lib/scan-service';
+import { LATE_CLOSE_SKEW_MS } from '@/lib/visitTimes';
 import { SCAN_PROTOCOL_VERSION, TRUSTED_REPLAY_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 import type { Person } from '@/generated/prisma/client';
 

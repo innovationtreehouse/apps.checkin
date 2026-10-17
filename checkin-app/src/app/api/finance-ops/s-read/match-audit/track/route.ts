@@ -3,7 +3,8 @@ import { ApiResponseError, handler } from "@/security/handler";
 import prisma from "@/lib/prisma";
 import { personActor } from "@/lib/auditActor";
 import * as mirror from "@/lib/shopifyRead/client";
-import { isPaid, raisePaymentException } from "@/lib/finance/reconcile";
+import { raisePaymentException } from "@/lib/finance/reconcile/exceptions";
+import { isPaid } from "@/lib/finance/reconcile/orderStatus";
 
 /**
  * POST /api/finance-ops/s-read/match-audit/track — promote ONE match-audit gap

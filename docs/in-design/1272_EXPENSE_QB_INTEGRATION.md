@@ -77,7 +77,8 @@ global-catalog design
 now distilled to `docs/designs/COMPONENT_ARCHITECTURE.md`) and the local-inventory
 design
 ([#1287](https://github.com/innovationtreehouse/checkin/issues/1287),
-`docs/in-design/1287_LOCAL_INVENTORY_INTEGRATION.md`) — **read those two first.**
+now distilled to `docs/rules/inventory.md` and the same architecture doc) —
+**read those two first.**
 Everything about in-process packaging, the own-database topology, the security
 regime over a separate schema, the retire-source-auth decision, the injected
 `Org` registry, and the per-crossing coupling rule is carried over verbatim from

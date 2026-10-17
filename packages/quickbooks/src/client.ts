@@ -361,6 +361,16 @@ export class QuickBooksClient {
     return v ?? null;
   }
 
+  /** Finance's Vendor picker: up to 20 active Vendors whose DisplayName contains `text`. */
+  vendorsMatching(text: string): Promise<QboVendor[]> {
+    return this.query<QboVendor>(`SELECT * FROM Vendor WHERE DisplayName LIKE ${qboString(`%${text.replace(/%/g, "")}%`)} MAXRESULTS 20`);
+  }
+
+  async vendorById(id: string): Promise<QboVendor | null> {
+    const [v] = await this.byIds<QboVendor>("Vendor", [id]);
+    return v ?? null;
+  }
+
   /** DisplayName is unique across Customers, Vendors and Employees; a new Vendor must not reuse a Customer's. */
   async customerNamed(name: string): Promise<QboCustomer | null> {
     const [c] = await this.query<QboCustomer>(`SELECT * FROM Customer WHERE DisplayName = ${qboString(name)}`);

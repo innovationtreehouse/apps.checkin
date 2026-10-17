@@ -1,5 +1,6 @@
 import { configureReceipt, type ReceiptConfig } from '@inventory/receipt';
 import prisma from '@/lib/prisma';
+import { notifyFinanceAlert } from '@/lib/emailRecipients';
 import { configureRuntime } from '../configure';
 
 jest.mock('@aws-sdk/client-lambda', () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
@@ -13,6 +14,7 @@ jest.mock('@inventory/expense', () => ({ reimbursementStatus: {} }));
 jest.mock('@inventory/workflow-mapping', () => ({ ingestReceipt: jest.fn() }));
 jest.mock('@inventory/bulk-donation', () => ({ recordInKindDonor: jest.fn(), withdrawInKind: jest.fn() }));
 jest.mock('@/lib/catalog/configure', () => ({ getOrg: jest.fn() }));
+jest.mock('@/lib/emailRecipients', () => ({ notifyFinanceAlert: jest.fn() }));
 
 const ADULT_DOB = new Date('1980-01-01');
 
@@ -80,5 +82,14 @@ describe('receipt runtime: mail intake bindings', () => {
 
         process.env.CHECKIN_ENV = 'local';
         expect(boundConfig().mailbox).toBeUndefined();
+    });
+
+    it('alerts finance when mail intake stops holding mail', async () => {
+        await boundConfig().alerts?.mailHoldCeilingReached({ orgId: 'org', unresolved: 500, refused: 3 });
+        const [subject, html] = jest.mocked(notifyFinanceAlert).mock.calls[0];
+        expect(subject).toMatch(/stopped holding mail/);
+        expect(html).toContain('500');
+        expect(html).toContain('3 more');
+        expect(html).toContain('/receipts/mail');
     });
 });

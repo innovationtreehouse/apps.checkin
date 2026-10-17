@@ -498,7 +498,7 @@ this was a per-writer edit, not a rename:
 | writer | was | now |
 |---|---|---|
 | events-attendance roster mark (`POST /api/events/[id]/attendance`, since deleted) | `SYSTEM` (both fields) | `LEAD_MARKED` |
-| keyholder building-close `closeAllOpenVisits` ([scan-service.ts](../../src/lib/scan-service.ts)) | `departedVia: "SYSTEM"` | `FACILITY_CLOSE` |
+| keyholder building-close `closeAllOpenVisits` ([attendance/close.ts](../../src/lib/attendance/close.ts)) | `departedVia: "SYSTEM"` | `FACILITY_CLOSE` |
 | nightly-cron sweep `processVisitCheckout` ([cron/nightly](../../src/app/api/cron/nightly/route.ts)) | `departedVia: "SYSTEM"` | `AUTO_CLOSE` |
 
 `processVisitCheckout`'s `source` union carries the new value from the cron call

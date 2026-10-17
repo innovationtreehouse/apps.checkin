@@ -31,7 +31,7 @@ import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } fro
  *
  * Recovers missed orders/paid webhooks (advancing families past the paid
  * checkpoint) and raises refund/chargeback/cancel problems for the board. See
- * lib/finance/reconcile.ts. No-op when the mirror isn't wired
+ * lib/finance/reconcile/. No-op when the mirror isn't wired
  * (config.shopifyReadDatabaseUrl() null — no SHOPIFY_READ_DB / override set).
  *
  * Also runs the program-sale sweep (lib/programs/saleSweep.ts): ends sales whose

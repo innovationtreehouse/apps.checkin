@@ -16,7 +16,7 @@ import { saleStockDelta } from "@/lib/programs/saleState";
  * public variant's stock with the seats just filled (see {@link publicStockDelta}).
  *
  * Callers must first establish the order pays for these people
- * (orderEntitlesEnrollment in lib/finance/reconcile.ts); this function does not.
+ * (orderEntitlesEnrollment in lib/finance/reconcile/program.ts); this function does not.
  */
 export interface ActivateEnrollmentInput {
     programId: number;

@@ -1,5 +1,5 @@
 /**
- * Workflow-mapping dev/test seed (#1289 §10). The receipt library is not wired
+ * Workflow-mapping dev/test seed. The receipt library is not wired
  * yet (S1 is X6), so this writes received receipts directly for the screens and
  * flow tests: one waiting on a line decision, and one whose lines are all
  * resolved but not yet proceeded (as after a catalog remap). Idempotent, so a

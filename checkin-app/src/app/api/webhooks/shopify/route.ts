@@ -7,7 +7,10 @@ import { withWebhook } from "@/lib/webhookAuth";
 import { config } from "@/lib/config";
 import { activateProgramEnrollment } from "@/lib/programs/activateEnrollment";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
-import { isPaid, membershipVariantIdSet, orderEntitlesEnrollment, raiseMembershipPaymentOutcome, raisePaymentException, type EntitlementOrder } from "@/lib/finance/reconcile";
+import { raisePaymentException } from "@/lib/finance/reconcile/exceptions";
+import { membershipVariantIdSet, raiseMembershipPaymentOutcome } from "@/lib/finance/reconcile/membership";
+import { isPaid } from "@/lib/finance/reconcile/orderStatus";
+import { orderEntitlesEnrollment, type EntitlementOrder } from "@/lib/finance/reconcile/program";
 import { isShopifyTestNotification, logRejectedShopifyWebhook, recordShopifyWebhookReceipt } from "@/lib/shopifyWebhookReceipt";
 
 interface ShopifyOrder {

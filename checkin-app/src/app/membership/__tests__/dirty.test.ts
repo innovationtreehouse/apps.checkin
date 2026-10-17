@@ -1,12 +1,12 @@
-import { serializeMembershipForm } from "@/app/membership/page";
+import { serializeMembershipForm } from "@/app/membership/membershipForm";
 
 const base = {
   address: { line1: "1 A St", line2: "", city: "Austin", state: "TX", postalCode: "78701" },
   emName: "Jo", emPhone: "555", emEmail: "",
-  primaryName: "Pat", primaryDob: "1990-01-01", primaryOver25: false, primaryAllergies: "",
-  hasSecondary: false, secondaryId: undefined,
-  secondaryName: "", secondaryEmail: "", secondaryDob: "", secondaryOver25: false, secondaryAllergies: "",
-  children: [{ id: 1, name: "Kid", email: "", dob: "2015-02-02", allergies: "peanuts" }],
+  primary: { name: "Pat", email: "", dob: "1990-01-01", over25: false, allergies: "" },
+  hasSecondary: false,
+  secondary: { id: undefined, name: "", email: "", dob: "", over25: false, allergies: "" },
+  children: [{ id: 1, name: "Kid", email: "", dob: "2015-02-02", over25: false, allergies: "peanuts" }],
   notes: "",
 };
 

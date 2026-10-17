@@ -21,7 +21,7 @@ import { DELETE as dashboardDELETE } from '@/app/api/attendance/route';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
 import { getServerSession } from 'next-auth/next';
-import { executePendingCloses } from '@/lib/scan-service';
+import { executePendingCloses } from '@/lib/attendance/close';
 import { lockFacility } from '@/lib/facilityLock';
 
 jest.mock('@/lib/auth', () => ({

@@ -1,5 +1,5 @@
 /**
- * Mount a workflow-mapping route factory under checkin's handler() (#1289 §7).
+ * Mount a workflow-mapping route factory under checkin's handler().
  *
  * handler() renders an error's status only when it is `instanceof` its own
  * ApiResponseError, so the library's HTTP error is translated here.

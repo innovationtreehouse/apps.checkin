@@ -1,5 +1,5 @@
 /**
- * X4 (#1289 §8c): workflow-mapping's InventorySink bound in-process to
+ * X4: workflow-mapping's InventorySink bound in-process to
  * local-inventory's apply. Apply is idempotent per source (`receipt:<receiptId>`),
  * and a key replayed with a different delta throws its 409; that error is left
  * to propagate so the receipt's inventory leg lands in apply_failed.

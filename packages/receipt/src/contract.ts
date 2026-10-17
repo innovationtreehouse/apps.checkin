@@ -153,6 +153,20 @@ export interface MailboxReader {
   getAttachment(messageId: string, attachmentId: string): Promise<Buffer>;
 }
 
+/** Mail intake stopped holding mail because too many held items await finance. */
+export interface MailHoldCeilingEvent {
+  orgId: string;
+  /** Held items awaiting finance when the run stopped holding. */
+  unresolved: number;
+  /** Files this run did not hold. */
+  refused: number;
+}
+
+/** Finance alerts the host binds. */
+export interface ReceiptAlerts {
+  mailHoldCeilingReached(event: MailHoldCeilingEvent): Promise<void>;
+}
+
 export interface ReceiptConfig {
   auth: ReceiptAuth;
   /** Async accessor, resolved per call: the host may read the org from its own store. */
@@ -163,6 +177,7 @@ export interface ReceiptConfig {
   households?: ReceiptHouseholds;
   ocr?: OcrProvider;
   people?: ReceiptPeople;
+  alerts?: ReceiptAlerts;
   /** Unset means mail intake is unbound and the step does nothing. */
   mailbox?: MailboxReader;
   /** Overrides for the daily intake limits; unset ones keep DEFAULT_LIMITS. */

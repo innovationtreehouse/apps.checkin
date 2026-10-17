@@ -329,7 +329,8 @@ class TestExampleConfigMatchesDefaults(unittest.TestCase):
 
 class TestKioskClose(unittest.TestCase):
     """The kiosk decides a close from what it shows, online and offline alike
-    (docs/in-design/CLOSE_AS_EVENT.md §2.2); the server records it as given."""
+    (docs/rules/attendance-checkin.md, Opening and closing); the server records
+    it as given."""
 
     def setUp(self):
         # These drive the second badge immediately; the dead-front has its own test.

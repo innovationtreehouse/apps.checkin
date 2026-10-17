@@ -48,24 +48,31 @@ export function lineKind(expense: { needsReimbursement: boolean }): LineKind {
   return expense.needsReimbursement ? "reimbursement" : "card_charge";
 }
 
-export interface EverydayFacts {
+export interface EverydayAmounts {
   receiptTotalCents: number;
   unitPricesCents: number[];
+}
+
+export interface EverydayLimits {
+  everydayTotalLimitCents: number;
+  everydayItemLimitCents: number;
+}
+
+/** The receipt total is under the total limit and no unit price is over the item limit. */
+export function withinEverydayLimits(a: EverydayAmounts, limits: EverydayLimits): boolean {
+  return a.receiptTotalCents < limits.everydayTotalLimitCents && a.unitPricesCents.every((p) => p <= limits.everydayItemLimitCents);
+}
+
+export interface EverydayFacts {
+  /** The amount check, frozen on the expense with the limits in force when it was first made. */
+  withinLimits: boolean;
   singleSource: boolean;
   financeNotEveryday: boolean;
 }
 
-/**
- * An Everyday purchase: the receipt total is under the total limit, no unit price is over the
- * item limit, it is not single-source, and FINANCE has not marked it not Everyday.
- */
-export function isEveryday(e: EverydayFacts, limits: { everydayTotalLimitCents: number; everydayItemLimitCents: number }): boolean {
-  return (
-    e.receiptTotalCents < limits.everydayTotalLimitCents &&
-    e.unitPricesCents.every((p) => p <= limits.everydayItemLimitCents) &&
-    !e.singleSource &&
-    !e.financeNotEveryday
-  );
+/** An Everyday purchase: within the frozen limits, not single-source, and not marked by FINANCE. */
+export function isEveryday(e: EverydayFacts): boolean {
+  return e.withinLimits && !e.singleSource && !e.financeNotEveryday;
 }
 
 /** A non-Everyday card charge needs a recorded Board authorization; a blank one counts as none. */

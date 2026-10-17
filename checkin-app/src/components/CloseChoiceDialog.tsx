@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { Alert, Button, Group, List, Modal, Select, Text } from "@mantine/core";
-import type { CloseChoice, CloseChoiceWarning } from "@/lib/scan-service";
+import type { CloseChoice, CloseChoiceWarning } from "@/lib/attendance/keyholderGuard";
 
 /** What the caller re-sends with its request once the person has chosen. */
 export type CloseChoiceAnswer = { forceCloseToken: string; closeChoice: CloseChoice; handoverToId?: number };

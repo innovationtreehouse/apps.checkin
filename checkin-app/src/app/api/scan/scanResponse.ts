@@ -3,7 +3,8 @@ import type { Person } from "@/generated/prisma/client";
 import { apiJson } from "@/lib/api-response";
 import { resolveDisplayTimezone } from "@/lib/appSettings";
 import { getKioskDisplayName, getKioskDisplayNames } from "@/lib/kiosk-names";
-import { FORCE_CLOSE_CONFIRM_SECONDS, SUPERVISION_CONFIRM_MS, presentLabels, type CloseGuardResult, type CloseOffer, type ScanOutcome } from "@/lib/scan-service";
+import { SUPERVISION_CONFIRM_MS, type CloseOffer, type ScanOutcome } from "@/lib/attendance/scan";
+import { FORCE_CLOSE_CONFIRM_SECONDS, presentLabels, type CloseGuardResult } from "@/lib/attendance/keyholderGuard";
 import { MIN_SUPERVISING_ADULTS } from "@/lib/supervision";
 import { formatTime } from "@/lib/time";
 
