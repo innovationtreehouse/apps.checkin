@@ -9,7 +9,7 @@ import {
     DeniedHouseholdBoardError,
     OwnHouseholdRoleError,
 } from "@/lib/roles";
-import { AlreadyMergedError, executeMerge, prepareMerge } from "@/lib/person/merge/execute";
+import { AlreadyMergedError, MergeRefusedError, executeMerge, prepareMerge } from "@/lib/person/merge/execute";
 
 export const dynamic = 'force-dynamic';
 
@@ -38,6 +38,9 @@ export const POST = withAuth(
         } catch (error: unknown) {
             if (error instanceof AlreadyMergedError) {
                 return apiError("Cannot merge: this participant has already been merged.", 409);
+            }
+            if (error instanceof MergeRefusedError) {
+                return apiError(error.refusal.error, error.refusal.status);
             }
             if (error instanceof OwnHouseholdRoleError) {
                 return apiError("You cannot merge a record in your own household — someone outside your household must.", 403);

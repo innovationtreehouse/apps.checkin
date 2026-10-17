@@ -142,6 +142,25 @@ describe('Admin Participant Household API Integration Tests', () => {
             }
         });
 
+        it('refuses a move whose source changed and was denied after the pre-check -> 409, unchanged', async () => {
+            const denied = await prisma.household.create({ data: { name: 'Household API Test Later Denied' } });
+            const realTransaction = prisma.$transaction.bind(prisma) as (fn: unknown) => Promise<unknown>;
+            const spy = jest.spyOn(prisma, '$transaction').mockImplementation((async (fn: unknown) => {
+                // A concurrent move into `denied` commits, then the household is denied.
+                await prisma.person.update({ where: { id: testParticipantId }, data: { householdId: denied.id } });
+                await prisma.orgMembership.upsert({ where: { householdId: denied.id }, create: { householdId: denied.id, status: 'DENIED' }, update: {} });
+                return realTransaction(fn);
+            }) as unknown as typeof prisma.$transaction);
+            try {
+                const res = await POST(moveReq(testParticipantId, { householdId: testHouseholdId }), { params: Promise.resolve({ id: String(testParticipantId) }) });
+                expect(res.status).toBe(409);
+            } finally {
+                spy.mockRestore();
+            }
+            const after = await prisma.person.findUnique({ where: { id: testParticipantId }, select: { householdId: true } });
+            expect(after?.householdId).toBe(denied.id);
+        });
+
         it('refuses moving yourself -> 403', async () => {
             const res = await POST(moveReq(testAdminId, { householdId: testHouseholdId }), { params: Promise.resolve({ id: String(testAdminId) }) });
             expect(res.status).toBe(403);
