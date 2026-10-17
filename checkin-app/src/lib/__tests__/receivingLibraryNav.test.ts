@@ -2,7 +2,7 @@ import { INVENTORY_LIBRARY_TABS, visibleLibraryTabs } from "../libraryNav";
 import { LIBRARY_COUNT_PROVIDERS } from "../navLibraryCounts";
 import { inventoryAreaLinks } from "../catalogNav";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
-import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 import type { SessionUser } from "@/types/auth";
 
 const counts = (releasedLibraries: string[], libraries?: TodoCounts["libraries"]) =>

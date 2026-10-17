@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Badge, Button, Card, Group, Stack, Text, TextInput, Title } from '@mantine/core';
 import { IconCalendarCheck, IconSearch } from '@tabler/icons-react';
 import { useTodoCounts } from '@/hooks/useTodoCounts';
-import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
+import type { TodoCounts } from '@/lib/nav/todoCounts';
 
 type LedProgram = NonNullable<TodoCounts['lead']>['programs'][number];
 
@@ -29,7 +29,7 @@ export default function MyProgramsHome() {
   if (programs.length === 1) return <ProgramSection program={programs[0]} />;
 
   // ponytail: filter over the names already in the payload (program + session).
-  // Participant/volunteer names aren't fetched here — add to todo-counts route to match those.
+  // Participant/volunteer names aren't fetched here — add to lib/nav/todoCounts.ts to match those.
   const q = filter.trim().toLowerCase();
   const shown = q
     ? programs.filter((p) =>

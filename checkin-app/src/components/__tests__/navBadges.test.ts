@@ -1,5 +1,5 @@
 import { navBadgeFor, tabBadgeFor, reviewBadges, settingsMisconfigBadge, programsMisconfigBadge, leadsAnyProgram, leadPendingCount, leadConflictCount } from '@/components/navBadges';
-import type { TodoCounts } from '@/app/api/nav/todo-counts/route';
+import type { TodoCounts } from '@/lib/nav/todoCounts';
 
 const base: TodoCounts = {
   member: { household: [], programs: [], programsAwaitingFinance: 0 },

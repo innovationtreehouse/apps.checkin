@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 import MyProgramsLayout from "../layout";
 
 const push = jest.fn();

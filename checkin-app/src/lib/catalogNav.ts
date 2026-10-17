@@ -5,7 +5,7 @@
  * section tabs the `/catalog` and `/inventory` layouts render. checkin owns
  * ordering (AppFrame) and the top-level icon; the libraries dictate neither.
  */
-import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 import type { SessionUser } from "@/types/auth";
 import { INVENTORY_LIBRARY_TABS, visibleLibraryTabs, type NavTab } from "@/lib/libraryNav";
 import { CATALOG_NAV_LINKS, CATALOG_TOP_NAV } from "@inventory/global-catalog/nav";

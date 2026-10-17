@@ -6,7 +6,7 @@ import { screen } from "@testing-library/react";
 import { renderWithProviders, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { LIBRARY_KEYS } from "@/lib/libraryRelease";
-import type { TodoCounts } from "@/app/api/nav/todo-counts/route";
+import type { TodoCounts } from "@/lib/nav/todoCounts";
 import CatalogLayout from "../layout";
 
 const counts: TodoCounts = {
