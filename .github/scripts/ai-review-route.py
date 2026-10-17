@@ -304,7 +304,15 @@ def cost_word(dollars):
     for limit, word in ((0.01, "less than a penny"), (0.10, "pennies"), (0.25, "dimes"), (1.00, "quarters")):
         if dollars < limit:
             return word
-    return "dollars"
+    # From a dollar up, round down on a 1-2-5 log scale: a dollar, 2 dollars, 5, 10, 20, 50, ...
+    step, mag = 1, 1
+    while True:
+        for m in (1, 2, 5):
+            nxt = m * mag
+            if nxt > dollars:
+                return "a dollar" if step == 1 else f"{step} dollars"
+            step = nxt
+        mag *= 10
 
 
 COST_LINE = re.compile(r"^(\*\*Cost:\*\* )\$(\d+(?:\.\d+)?)\s*$", re.M)
