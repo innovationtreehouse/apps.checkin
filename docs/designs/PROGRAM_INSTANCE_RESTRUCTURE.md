@@ -219,7 +219,7 @@ Every instance today is aliased (nothing else creates one), so step 2 is complet
 
 All of this is tsc-blind on Prisma where-clauses; integration tests are the net.
 
-### Repo rules that shape the cut
+### Rules and conventions that shape the cut
 
 - **Boundary isolation** (`.github/workflows/security-boundary-isolation.yml`, AGENTS.md): any change to `src/security/**` (except `generated/` and `__tests__/`), `src/middleware.ts` or the generator ships in its own PR with only tests, docs and schema annotations. A new registered route lands its registry entry first (inert), then the route.
 - **This plan's convention (not a repo rule):** migrations go in their own PR, and migration and security PRs merge one at a time. It is the coordinators' working practice; CI does not enforce it.
