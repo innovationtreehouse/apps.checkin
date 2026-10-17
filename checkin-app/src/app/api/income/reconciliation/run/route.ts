@@ -2,6 +2,6 @@
 // string MUST match its src/security/registry/income.ts entry.
 import { handler } from "@/security/handler";
 import { incomeRoute } from "@/lib/income/route";
-import { routes } from "@inventory/income";
+import { routes } from "@checkin/income";
 
 export const POST = handler("POST /api/income/reconciliation/run", incomeRoute(routes.run));

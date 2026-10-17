@@ -1,4 +1,4 @@
-import type { ReceiptState } from "@inventory/receipt-types";
+import type { ReceiptState } from "@checkin/receipt-types";
 import type { Prisma, Receipt, ReceiptDetail } from "../generated/prisma/client";
 import { db, type Db } from "../db";
 import { ReceiptStateConflictError } from "../services/serviceError";

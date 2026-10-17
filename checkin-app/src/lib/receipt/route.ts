@@ -3,9 +3,9 @@
  * gate; the library narrows rows by `Access`, filters a submitter by the principal's id, and
  * throws ServiceError for every expected failure.
  */
-import { recordReceiptDonorReads } from "@inventory/bulk-donation";
-import type { Access } from "@inventory/receipt";
-import { readCapped } from "@inventory/utils";
+import { recordReceiptDonorReads } from "@checkin/bulk-donation";
+import type { Access } from "@checkin/receipt";
+import { readCapped } from "@checkin/utils";
 import { MAX_UPLOAD_BODY_BYTES } from "@/lib/requestBodyLimit";
 import type { Role } from "@/security/core";
 import { ApiResponseError, badRequest, unauthorized, type HandlerContext, type HandlerFn } from "@/security/handler";

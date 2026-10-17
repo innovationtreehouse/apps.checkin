@@ -1,6 +1,6 @@
 // Mounts a receipt library call through checkin's handler(). The endpoint string MUST match
 // its src/security/registry/receipt.ts entry.
-import { receiptService } from "@inventory/receipt";
+import { receiptService } from "@checkin/receipt";
 import { badRequest, handler } from "@/security/handler";
 import { readUploadForm, receiptRoute } from "@/lib/receipt/route";
 

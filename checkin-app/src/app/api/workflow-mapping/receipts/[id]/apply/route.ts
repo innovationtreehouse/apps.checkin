@@ -3,6 +3,6 @@
 // match its src/security/registry/workflow.ts entry.
 import { handler } from "@/security/handler";
 import { workflowRoute } from "@/lib/workflowMapping/route";
-import { routes } from "@inventory/workflow-mapping";
+import { routes } from "@checkin/workflow-mapping";
 
 export const POST = handler("POST /api/workflow-mapping/receipts/[id]/apply", workflowRoute(routes.apply));

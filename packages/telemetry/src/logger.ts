@@ -10,7 +10,7 @@
  * not redacted.
  */
 import crypto from "node:crypto";
-import { redactSecrets } from "@inventory/utils";
+import { redactSecrets } from "@checkin/utils";
 
 export function newCorrelationId(): string {
   return crypto.randomUUID();

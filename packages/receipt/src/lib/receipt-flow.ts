@@ -1,4 +1,4 @@
-import { CompletedReceiptSchema } from "@inventory/receipt-types";
+import { CompletedReceiptSchema } from "@checkin/receipt-types";
 import { db, type Db } from "../db";
 import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";

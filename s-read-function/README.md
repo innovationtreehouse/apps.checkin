@@ -5,7 +5,7 @@ API into a dedicated Postgres database. Designed to run as a scheduled ECS task,
 every step runs locally first so the pipeline is proven before deployment.
 
 Database, projection, and normalization logic live in the shared
-[`@inventory/s-ingest-core`](../packages/s-ingest-core) package (which owns the Prisma
+[`@checkin/s-ingest-core`](../packages/s-ingest-core) package (which owns the Prisma
 schema + migrations); this package holds the Shopify-API-facing read path. The
 companion [`s-replay-function`](../s-replay-function) handles admin replay / watermark
 operations over the same core.
@@ -113,11 +113,11 @@ scheduled ECS Fargate task with `SHOPIFY_CLIENT_ID` / `SHOPIFY_CLIENT_SECRET` (n
 
 ```bash
 npm install                                  # from the repo root (workspaces)
-npm run db:generate -w @inventory/s-ingest-core   # generate the Prisma client
-npm run db:deploy   -w @inventory/s-ingest-core   # apply migrations to the DB (uses core/.env)
+npm run db:generate -w @checkin/s-ingest-core   # generate the Prisma client
+npm run db:deploy   -w @checkin/s-ingest-core   # apply migrations to the DB (uses core/.env)
 ```
 
-The schema, migrations, and Prisma client are owned by `@inventory/s-ingest-core` — this
+The schema, migrations, and Prisma client are owned by `@checkin/s-ingest-core` — this
 package consumes the generated client. See [DEPLOY.md](DEPLOY.md) for how migrations are
 applied in deployment (the `s-read-<env>-migrate` task).
 

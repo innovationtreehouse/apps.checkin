@@ -13,7 +13,7 @@ const m = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("@inventory/s-ingest-core", () => ({
+vi.mock("@checkin/s-ingest-core", () => ({
   prisma: { $disconnect: m.disconnect },
   logger: m.logger,
 }));

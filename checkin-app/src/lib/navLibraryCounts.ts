@@ -33,7 +33,7 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
     visible: (u) => !!u.isFinance || !!u.isBoardMember,
     count: async (): Promise<Record<string, number>> => {
       if (!process.env.BULK_DONATION_DATABASE_URL) return {};
-      const { getNavCounts, getOrgId } = await import("@inventory/bulk-donation");
+      const { getNavCounts, getOrgId } = await import("@checkin/bulk-donation");
       const { unassignedQueue, disbursementHolds } = await getNavCounts(await getOrgId());
       return { unassignedQueue, disbursementHolds };
     },
@@ -42,7 +42,7 @@ export const LIBRARY_COUNT_PROVIDERS: LibraryCountProvider[] = [
     library: "workflow-mapping",
     visible: canSeeReceiving,
     count: async () =>
-      process.env.WORKFLOW_MAPPING_DATABASE_URL ? (await import("@inventory/workflow-mapping")).receiptService.counts() : {},
+      process.env.WORKFLOW_MAPPING_DATABASE_URL ? (await import("@checkin/workflow-mapping")).receiptService.counts() : {},
   },
   {
     library: "income",

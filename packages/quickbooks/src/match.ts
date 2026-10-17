@@ -1,4 +1,4 @@
-import { dollarsToCents } from "@inventory/money";
+import { dollarsToCents } from "@checkin/money";
 import { qboDate } from "./client";
 import type { QboBill, QboDeposit, QboPurchase } from "./types";
 

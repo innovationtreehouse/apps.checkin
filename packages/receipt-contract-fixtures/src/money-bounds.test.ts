@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { CompletedReceiptSchema, MAX_LINE_QUANTITY } from "@inventory/receipt-types";
+import { CompletedReceiptSchema, MAX_LINE_QUANTITY } from "@checkin/receipt-types";
 import { FIXTURE_MANIFEST, loadRaw } from "./index";
 
 const entry = FIXTURE_MANIFEST.find((e) => e.id === "S1-completed-receipt/single-item-recognized")!;

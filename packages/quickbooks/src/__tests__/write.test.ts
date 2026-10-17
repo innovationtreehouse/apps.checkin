@@ -189,7 +189,7 @@ describe("closed-enum writer", () => {
   });
 
   it("keys the writer with a registered symbol, so a second loaded copy of the module matches", () => {
-    expect(CREATE).toBe(Symbol.for("@inventory/quickbooks.create"));
+    expect(CREATE).toBe(Symbol.for("@checkin/quickbooks.create"));
   });
 });
 

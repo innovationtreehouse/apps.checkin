@@ -12,7 +12,7 @@ import {
   type AccessTokenSource,
   type QboRealm,
   type RefresherToken,
-} from "@inventory/quickbooks";
+} from "@checkin/quickbooks";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 

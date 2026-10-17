@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npm run db:generate -w @inventory/monitoring-db && tsc --noEmit && node ../scripts/bundle-function.mjs",
+    "build": "npm run db:generate -w @checkin/monitoring-db && tsc --noEmit && node ../scripts/bundle-function.mjs",
     "typecheck": "tsc --noEmit",
     "run:once": "node --env-file=.env --import tsx src/cli.ts",
     "requeue-dead": "node --env-file=.env --import tsx src/cli.ts requeue-dead",
@@ -13,12 +13,12 @@
   },
   "dependencies": {
     "@aws-sdk/client-sns": "^3.700.0",
-    "@inventory/monitoring-db": "*",
-    "@inventory/telemetry": "*",
+    "@checkin/monitoring-db": "*",
+    "@checkin/telemetry": "*",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@inventory/pg-test-harness": "*",
+    "@checkin/pg-test-harness": "*",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^4.1.8",
     "tsx": "^4.19.0",

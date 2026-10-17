@@ -3,7 +3,7 @@
 // The endpoint string MUST match its src/security/registry.ts entry.
 import { handler } from "@/security/handler";
 import { catalogRoute } from "@/lib/catalog/route";
-import { routes } from "@inventory/global-catalog";
+import { routes } from "@checkin/global-catalog";
 
 export const GET = handler("GET /api/catalog/subcategories", catalogRoute(routes.subcategories.list));
 export const POST = handler("POST /api/catalog/subcategories", catalogRoute(routes.subcategories.create));

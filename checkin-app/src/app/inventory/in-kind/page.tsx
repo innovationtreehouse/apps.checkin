@@ -1,2 +1,2 @@
 // Re-export stub: the screen lives in the bulk-donation library.
-export { default } from "@inventory/bulk-donation/pages/manualInKind";
+export { default } from "@checkin/bulk-donation/pages/manualInKind";

@@ -1,4 +1,4 @@
-import { makeWorkflowInvariants, WorkflowTransitionError } from '@inventory/workflows';
+import { makeWorkflowInvariants, WorkflowTransitionError } from '@checkin/workflows';
 import { disbursementMachine, STATES } from './disbursement.machine';
 import type { DisbursementEvent } from './disbursement.events';
 import type { DisbursementMachineContext } from './disbursement.guards';

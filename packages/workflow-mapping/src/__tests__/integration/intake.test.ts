@@ -1,7 +1,7 @@
 /** S1 callee: ingestReceipt — every fixture accepted, replay, org check, recognition, push. */
 import { beforeEach, expect, it } from "vitest";
-import { fixturesForSeam } from "@inventory/receipt-contract-fixtures";
-import type { CompletedReceipt } from "@inventory/receipt-types";
+import { fixturesForSeam } from "@checkin/receipt-contract-fixtures";
+import type { CompletedReceipt } from "@checkin/receipt-types";
 import { db } from "../../db";
 import { ingestReceipt } from "../../services/receiptIntakeService";
 import { describeDb } from "../helpers/db";

@@ -6,15 +6,15 @@
  * QuickBooks steps (each isolated), records the run, and answers `{}`.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
-import { runExpenseQbPosting } from '@inventory/expense';
-import { runDonationQbPosting } from '@inventory/bulk-donation';
+import { runExpenseQbPosting } from '@checkin/expense';
+import { runDonationQbPosting } from '@checkin/bulk-donation';
 import { authenticateRequest } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { GET } from '../route';
 
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
-jest.mock('@inventory/expense', () => ({ runExpenseQbPosting: jest.fn() }));
-jest.mock('@inventory/bulk-donation', () => ({ runDonationQbPosting: jest.fn() }));
+jest.mock('@checkin/expense', () => ({ runExpenseQbPosting: jest.fn() }));
+jest.mock('@checkin/bulk-donation', () => ({ runDonationQbPosting: jest.fn() }));
 jest.mock('@/lib/catalog/configure', () => ({ getOrg: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Org' }) }));
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 

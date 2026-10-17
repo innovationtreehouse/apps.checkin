@@ -8,7 +8,7 @@
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { configureBulkDonation, manualInKindService } from '@inventory/bulk-donation';
+import { configureBulkDonation, manualInKindService } from '@checkin/bulk-donation';
 import { GET, POST } from '../manual/route';
 import { POST as LOAD } from '../manual/[id]/load-inventory/route';
 import { OWN_HOUSEHOLD_DONOR_MESSAGE, surname } from '@/lib/bulkDonation/donorSelfGuard';

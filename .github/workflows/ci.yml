@@ -138,7 +138,7 @@ jobs:
           fi
           # The Vitest workspaces (packages/*, *-function) have their own tier
           # (package-tests below). Run it when any of them — or this workflow —
-          # changes. A checkin-app change that consumes @inventory/money already
+          # changes. A checkin-app change that consumes @checkin/money already
           # sets app=true and runs the jest suite; that is a separate concern
           # from re-running the package's own vitest suite. Root package.json /
           # package-lock.json is included: a shared dep bump (vitest, prisma,
@@ -254,10 +254,10 @@ jobs:
         if: needs.changes.outputs.app == 'true'
         run: |
           scripts/each-library.sh run db:generate
-          npm -w @inventory/s-ingest-core run db:generate:security
+          npm -w @checkin/s-ingest-core run db:generate:security
           # Intent-to-add makes a never-committed map show up in the diff.
           git add -N checkin-app/src/security/generated/
-          git diff --exit-code checkin-app/src/security/generated/ || (echo '::error::checkin-app/src/security/generated/ is stale or missing a map; run prisma generate in checkin-app, scripts/each-library.sh run db:generate, and npm -w @inventory/s-ingest-core run db:generate:security, then commit' && exit 1)
+          git diff --exit-code checkin-app/src/security/generated/ || (echo '::error::checkin-app/src/security/generated/ is stale or missing a map; run prisma generate in checkin-app, scripts/each-library.sh run db:generate, and npm -w @checkin/s-ingest-core run db:generate:security, then commit' && exit 1)
 
       # Fast type feedback. NOTE: tsc does NOT resolve bundler imports, so it
       # misses failures that only `next build` catches (e.g. importing a deleted
@@ -609,11 +609,11 @@ jobs:
   # issue #228. These were invisible to CI: the jest jobs run only checkin-app,
   # so a failing package/function test could merge green (and nearly did: PR
   # #992's first push carried a failing s-ingest-core normalize test behind
-  # all-green checks). @inventory/money is imported by live app routes yet had no
+  # all-green checks). @checkin/money is imported by live app routes yet had no
   # CI running its suite at all. This job runs the whole tier via the root
   # test:packages / test:functions scripts.
   #
-  # ubuntu-latest ships a running Docker daemon, so @inventory/pg-test-harness'
+  # ubuntu-latest ships a running Docker daemon, so @checkin/pg-test-harness'
   # testcontainers integration suites (monitoring-db, s-ingest-core) boot a
   # throwaway Postgres and actually run here — without Docker they fail under CI
   # (and skip locally). This is
@@ -666,8 +666,8 @@ jobs:
       - name: Generate Prisma clients
         if: needs.changes.outputs.packages == 'true'
         run: |
-          npm run db:generate -w @inventory/s-ingest-core
-          npm run db:generate -w @inventory/monitoring-db
+          npm run db:generate -w @checkin/s-ingest-core
+          npm run db:generate -w @checkin/monitoring-db
 
       # The functions bundle at deploy time (tsc --noEmit inside `build`), but
       # that build isn't in the PR gate; typecheck them here so a type error

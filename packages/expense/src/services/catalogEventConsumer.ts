@@ -1,7 +1,7 @@
 // S5 consumer: catalog provisional-resolution events. Each event is recorded in
 // ExpenseReceivedOrgEvent and applied in one transaction, so a reaction that throws rolls the
 // record back; the failure is then recorded on its own and replayed by the catch-up sweep.
-import { parseOrgEvent } from "@inventory/receipt-types";
+import { parseOrgEvent } from "@checkin/receipt-types";
 import { db, type Db } from "../db";
 import { CatalogOrgEventSchema, type CatalogOrgEvent } from "../contract";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";

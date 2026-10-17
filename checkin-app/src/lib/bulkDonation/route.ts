@@ -6,8 +6,8 @@
  * ApiResponseError, so the library's HTTP error is translated here, in the
  * route's module graph.
  */
-import { DonationHttpError } from "@inventory/bulk-donation";
-import type { DonationBag, DonationFileRouteHandler, DonationRouteCtx } from "@inventory/bulk-donation";
+import { DonationHttpError } from "@checkin/bulk-donation";
+import type { DonationBag, DonationFileRouteHandler, DonationRouteCtx } from "@checkin/bulk-donation";
 import { ApiResponseError } from "@/security/handler";
 
 function translate(err: unknown): unknown {

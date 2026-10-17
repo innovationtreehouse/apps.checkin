@@ -7,7 +7,7 @@
  *   { "mode": "backfill" }                — Bulk Operation backfill / poll step
  */
 import { z } from "zod";
-import { prisma, loadDbConfig, loadShopifyConfig, reapStaleRuns, logger, ConcurrentRunError } from "@inventory/s-ingest-core";
+import { prisma, loadDbConfig, loadShopifyConfig, reapStaleRuns, logger, ConcurrentRunError } from "@checkin/s-ingest-core";
 import { createShopifyClient } from "./shopify/client.js";
 import { ensureStore } from "./sync/store.js";
 import { runIncremental } from "./sync/incremental.js";

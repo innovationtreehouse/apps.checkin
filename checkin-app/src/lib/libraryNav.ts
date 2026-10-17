@@ -10,7 +10,7 @@ import type { TodoCounts } from "@/lib/nav/todoCounts";
 import type { NavBadge } from "@/components/navBadges";
 import type { NavRole, SessionUser } from "@/types/auth";
 import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
-import { EXPENSE_TABS } from "@inventory/expense/nav";
+import { EXPENSE_TABS } from "@checkin/expense/nav";
 import { libraryCount } from "@/components/navBadges";
 import { canSubmitReceipts } from "@/lib/volunteer";
 import { isDonationViewerClient } from "@/lib/donationNav";

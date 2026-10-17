@@ -1,10 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import ExpenseDetailPage from "@inventory/expense/pages/expenseDetail";
+import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
 
 let mockLoads: Record<string, unknown> = {};
 
-jest.mock("@inventory/expense/components/api", () => ({
+jest.mock("@checkin/expense/components/api", () => ({
   useLoad: (path: string | null) => ({ data: path ? mockLoads[path] ?? null : null, error: null, reload: () => {} }),
   useRoles: () => ({ isFinance: false, isBoard: false }),
   useBuckets: () => [],

@@ -1,4 +1,4 @@
-import type { InKindDonor } from "@inventory/bulk-donation";
+import type { InKindDonor } from "@checkin/bulk-donation";
 import type { DbClient } from "@/lib/db-client";
 import type { AuthResult } from "@/types/auth";
 import { resolveActorHouseholdId } from "@/lib/conflictOfInterest";

@@ -3,7 +3,7 @@
  * readers, over an in-memory QBO company, and flags finance on edits. It only ever reads.
  */
 import { it, expect, beforeEach, afterEach, vi } from "vitest";
-import { QuickBooksClient, qbKey, type QboBill, type QboPurchase } from "@inventory/quickbooks";
+import { QuickBooksClient, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, seedExpense, seedLineItem, ORG } from "../helpers/seed";

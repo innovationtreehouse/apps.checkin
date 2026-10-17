@@ -1,9 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import ExpenseDetailPage from "@inventory/expense/pages/expenseDetail";
+import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
 import Page from "../expenses/[id]/page";
 
-jest.mock("@inventory/expense/components/api", () => ({
+jest.mock("@checkin/expense/components/api", () => ({
   useLoad: (path: string | null) => ({
     data: path === "/expenses/e1"
       ? {

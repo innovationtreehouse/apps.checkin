@@ -1,7 +1,7 @@
 // The only way a receipt's bytes leave (plan rule 7). fileHandler fixes the delivery headers
 // per type; the library audits every read. The endpoint string MUST match its
 // src/security/registry/receipt.ts entry.
-import { receiptService } from "@inventory/receipt";
+import { receiptService } from "@checkin/receipt";
 import { FILE_CONTENT_TYPES, type FileContentType } from "@/security/core";
 import { fileHandler } from "@/security/fileHandler";
 import { accessOf, mapServiceErrors } from "@/lib/receipt/route";

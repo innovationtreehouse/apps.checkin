@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Anchor, Badge, Button, Group, Paper, Select, Stack, Table, Text, Title } from "@mantine/core";
-import { formatCents } from "@inventory/money";
+import { formatCents } from "@checkin/money";
 import { paged, send, useLoad, useRoles } from "../components/api";
 import LoadError from "../components/LoadError";
 import Pager from "../components/Pager";

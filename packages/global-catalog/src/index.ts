@@ -14,7 +14,7 @@ export * from "./db/schema";
 
 // Route + runtime surface the host (checkin) wires in (#1286 track 4). Exposed
 // off the main entry, NOT via subpath exports: Turbopack's Docker build resolves
-// the package's `.` export (as @inventory/money proves) but not `./routes` etc.
+// the package's `.` export (as @checkin/money proves) but not `./routes` etc.
 export * as routes from "./routes";
 export {
   configureCatalog,

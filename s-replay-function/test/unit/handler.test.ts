@@ -25,8 +25,8 @@ vi.mock("../../src/replay.js", () => ({
   reingestBulk: mocks.reingestBulk,
 }));
 
-vi.mock("@inventory/s-ingest-core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@inventory/s-ingest-core")>();
+vi.mock("@checkin/s-ingest-core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@checkin/s-ingest-core")>();
   return {
     ...actual, // keep real ObjectType, ConcurrentRunError, SyncKind, …
     prisma: mocks.prismaSentinel,
@@ -36,7 +36,7 @@ vi.mock("@inventory/s-ingest-core", async (importOriginal) => {
 });
 
 import { handler } from "../../src/handler.js";
-import { ObjectType, ConcurrentRunError } from "@inventory/s-ingest-core";
+import { ObjectType, ConcurrentRunError } from "@checkin/s-ingest-core";
 
 const CONFIG_STORE = "config-default.myshopify.com";
 

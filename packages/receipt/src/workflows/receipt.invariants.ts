@@ -1,4 +1,4 @@
-import { makeWorkflowInvariants, WorkflowTransitionError } from '@inventory/workflows';
+import { makeWorkflowInvariants, WorkflowTransitionError } from '@checkin/workflows';
 import { receiptMachine } from './receipt.machine';
 import type { ReceiptEvent } from './receipt.events';
 import type { ReceiptMachineContext } from './receipt.guards';

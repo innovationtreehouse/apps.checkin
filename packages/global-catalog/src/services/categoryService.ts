@@ -1,4 +1,4 @@
-import { WorkflowTransitionError } from "@inventory/workflows";
+import { WorkflowTransitionError } from "@checkin/workflows";
 import { db } from "../db";
 import { createCatalogRepository } from "../repositories/catalog";
 

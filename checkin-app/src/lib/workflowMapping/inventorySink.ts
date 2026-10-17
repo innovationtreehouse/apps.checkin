@@ -4,8 +4,8 @@
  * and a key replayed with a different delta throws its 409; that error is left
  * to propagate so the receipt's inventory leg lands in apply_failed.
  */
-import { ResolvedInventoryDeltaSchema } from "@inventory/receipt-types";
-import type { InventorySink, OrgIdentity } from "@inventory/workflow-mapping";
+import { ResolvedInventoryDeltaSchema } from "@checkin/receipt-types";
+import type { InventorySink, OrgIdentity } from "@checkin/workflow-mapping";
 import {
   createInventoryRepository,
   createProvisionalItemRepository,
@@ -15,7 +15,7 @@ import {
   createReceiveQueueRepository,
   db as inventoryDb,
   type ReceiptService,
-} from "@inventory/local-inventory";
+} from "@checkin/local-inventory";
 
 let receiptService: ReceiptService | undefined;
 

@@ -1,5 +1,5 @@
 {
-  "name": "@inventory/receipt-contract-fixtures",
+  "name": "@checkin/receipt-contract-fixtures",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -16,7 +16,7 @@
     "test:run": "vitest run"
   },
   "dependencies": {
-    "@inventory/receipt-types": "*",
+    "@checkin/receipt-types": "*",
     "zod": "*"
   },
   "devDependencies": {

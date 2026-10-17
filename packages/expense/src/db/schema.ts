@@ -1,4 +1,4 @@
-export type { LineItemApprovalStatus } from "@inventory/receipt-types";
+export type { LineItemApprovalStatus } from "@checkin/receipt-types";
 
 export type ExpenseState =
   | "pending"

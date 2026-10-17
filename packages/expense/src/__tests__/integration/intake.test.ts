@@ -1,10 +1,10 @@
 /**
  * S2 callee — receiveCompletedReceipt driven with the shared contract fixtures
- * (@inventory/receipt-contract-fixtures, seam "S2-expense-receipt"). The "already
+ * (@checkin/receipt-contract-fixtures, seam "S2-expense-receipt"). The "already
  * applied" check lives in the service, so a repeat in-process call changes nothing.
  */
 import { describe, it, expect } from "vitest";
-import { fixture } from "@inventory/receipt-contract-fixtures";
+import { fixture } from "@checkin/receipt-contract-fixtures";
 import { describeDb } from "../helpers/db";
 import { bindPorts, directory, principal, seedExpense, ORG } from "../helpers/seed";
 import { db } from "../../db";

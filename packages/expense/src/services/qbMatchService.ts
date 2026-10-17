@@ -1,5 +1,5 @@
 // Expense's side of match-before-create (QB-2). The shared find-or-create in
-// @inventory/quickbooks is stateless; expense hands it the takeover line and the ids it must skip.
+// @checkin/quickbooks is stateless; expense hands it the takeover line and the ids it must skip.
 import { db, isUniqueConstraintError, type Db } from "../db";
 import type { ExpensePrincipal, QbTxn } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";

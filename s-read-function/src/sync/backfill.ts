@@ -22,7 +22,7 @@ import {
   setBulkState,
   ingestBulkOrders,
   logger,
-} from "@inventory/s-ingest-core";
+} from "@checkin/s-ingest-core";
 import type { ShopifyClient } from "../shopify/client.js";
 import { syncPayouts, syncBalanceTransactions } from "./streams.js";
 import { startOrdersBackfill, getCurrentBulkOperation, downloadBulkJsonl } from "../shopify/bulk.js";

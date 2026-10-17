@@ -1,4 +1,4 @@
-import { findOrCreate, takeoverLine, type FindOrCreateResult, type TxnWrite, type WriteLine } from "@inventory/quickbooks";
+import { findOrCreate, takeoverLine, type FindOrCreateResult, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorPayout, PayoutMirror } from "../contract";

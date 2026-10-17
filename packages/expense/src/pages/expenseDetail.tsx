@@ -3,7 +3,7 @@ import { useState } from "react";
 import {
   Anchor, Badge, Button, Checkbox, Group, Modal, NumberInput, Paper, Select, Stack, Switch, Table, Text, TextInput, Textarea, Title,
 } from "@mantine/core";
-import { formatCents } from "@inventory/money";
+import { formatCents } from "@checkin/money";
 import { QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
 import { CLOSED_STATES, reimburseeUnknown } from "../lib/signoff";
 import { send, useBuckets, useLoad, useRoles } from "../components/api";

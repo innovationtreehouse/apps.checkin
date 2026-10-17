@@ -3,14 +3,14 @@
  */
 import type { NextRequest as NextRequestType } from "next/server";
 import { getServerSession } from "next-auth/next";
-import { mailQueueService } from "@inventory/receipt";
+import { mailQueueService } from "@checkin/receipt";
 import { GET as list } from "../route";
 import { POST as assign } from "../[id]/assign/route";
 import { POST as discard } from "../[id]/discard/route";
 import { GET as file } from "../[id]/file/route";
 
-jest.mock("@inventory/bulk-donation", () => ({ recordReceiptDonorReads: jest.fn() }));
-jest.mock("@inventory/receipt", () => ({
+jest.mock("@checkin/bulk-donation", () => ({ recordReceiptDonorReads: jest.fn() }));
+jest.mock("@checkin/receipt", () => ({
   mailQueueService: { listHeld: jest.fn(), assign: jest.fn(), discard: jest.fn(), getFile: jest.fn() },
 }));
 

@@ -7,9 +7,9 @@
  * the catalog is unreachable. `checkReferences` gates a reference proposal, so it
  * fails closed: the error propagates and the line holds.
  */
-import { readService, referenceMatchingService } from "@inventory/global-catalog";
-import { catalogCheckReferencesSchema, catalogLookupEntrySchema } from "@inventory/receipt-types";
-import type { CatalogItemsLookup, CatalogCheckReferences } from "@inventory/receipt-types";
+import { readService, referenceMatchingService } from "@checkin/global-catalog";
+import { catalogCheckReferencesSchema, catalogLookupEntrySchema } from "@checkin/receipt-types";
+import type { CatalogItemsLookup, CatalogCheckReferences } from "@checkin/receipt-types";
 
 async function orInert<T>(method: string, read: () => Promise<T>, inert: T): Promise<T> {
   try {

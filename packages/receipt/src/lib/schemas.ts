@@ -1,6 +1,6 @@
 // Inputs the services accept. Money in the upload and edit shapes is in dollars, as typed.
 import { z } from "zod";
-import { MAX_LINE_QUANTITY } from "@inventory/receipt-types";
+import { MAX_LINE_QUANTITY } from "@checkin/receipt-types";
 
 export const MAX_LINE_ITEMS = 200;
 export const MAX_IMPORT_BATCH = 50;

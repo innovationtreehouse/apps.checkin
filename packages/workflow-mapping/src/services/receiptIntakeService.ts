@@ -1,4 +1,4 @@
-import { CompletedReceiptSchema, type CompletedReceiptLineItem } from "@inventory/receipt-types";
+import { CompletedReceiptSchema, type CompletedReceiptLineItem } from "@checkin/receipt-types";
 import type { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
 import type { ReceivedReceipt, ReceivedReceiptState } from "../db/schema";

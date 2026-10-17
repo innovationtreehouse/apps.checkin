@@ -8,8 +8,8 @@
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import type { SessionUser } from "@/types/auth";
 import { INVENTORY_LIBRARY_TABS, visibleLibraryTabs, type NavTab } from "@/lib/libraryNav";
-import { CATALOG_NAV_LINKS, CATALOG_TOP_NAV } from "@inventory/global-catalog/nav";
-import { INVENTORY_NAV_LINKS } from "@inventory/local-inventory/nav";
+import { CATALOG_NAV_LINKS, CATALOG_TOP_NAV } from "@checkin/global-catalog/nav";
+import { INVENTORY_NAV_LINKS } from "@checkin/local-inventory/nav";
 import { isLibraryVisible, type LibraryKey } from "@/lib/libraryRelease";
 import { canSeeCatalog } from "@/lib/volunteer";
 

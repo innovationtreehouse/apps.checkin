@@ -1,5 +1,5 @@
 {
-  "name": "@inventory/receipt-types",
+  "name": "@checkin/receipt-types",
   "version": "0.0.0",
   "private": true,
   "type": "module",

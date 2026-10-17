@@ -14,8 +14,8 @@ import {
     getPrisma as getDonationPrisma,
     loadInKindInventory,
     recordInKindWithoutReceipt,
-} from '@inventory/bulk-donation';
-import { getPrisma as getInventoryPrisma } from '@inventory/local-inventory';
+} from '@checkin/bulk-donation';
+import { getPrisma as getInventoryPrisma } from '@checkin/local-inventory';
 import { createLocalInventoryApply } from '../inventoryApply';
 
 // The integration global setup's database helpers (CommonJS, untyped).

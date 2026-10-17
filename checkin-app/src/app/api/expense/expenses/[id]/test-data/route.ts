@@ -2,7 +2,7 @@
 import { handler, notFound } from "@/security/handler";
 import { config } from "@/lib/config";
 import { expenseRoute } from "@/lib/expense/route";
-import { routes } from "@inventory/expense";
+import { routes } from "@checkin/expense";
 
 const setTestData = expenseRoute(routes.expenses.testData);
 

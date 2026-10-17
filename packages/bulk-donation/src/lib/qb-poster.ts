@@ -1,8 +1,8 @@
 // The QuickBooks drain (design §7): one bank Deposit per completed Benevity disbursement,
 // match before create, through checkin's guarded client.
-import { DisbursementPayloadV1 } from "@inventory/donations";
-import { dollarsToCents, sumCents } from "@inventory/money";
-import { findOrCreate, qbKey, type FindOrCreateResult, type QboDeposit, type QuickBooksClient, type TxnWrite, type WriteLine } from "@inventory/quickbooks";
+import { DisbursementPayloadV1 } from "@checkin/donations";
+import { dollarsToCents, sumCents } from "@checkin/money";
+import { findOrCreate, qbKey, type FindOrCreateResult, type QboDeposit, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, type PrismaTransactionClient } from "../db";
 import type { DisbursementEvent } from "../generated/prisma/client";
 import { recordEvent } from "../repositories/audit";

@@ -4,8 +4,8 @@
  * (`donation:<id>`); a key replayed with a different delta throws its 409. Only a
  * `donation:` key is accepted, so a donation can never load under a receipt's key.
  */
-import { ResolvedInventoryDeltaSchema } from "@inventory/receipt-types";
-import type { InventoryApply, OrgIdentity } from "@inventory/bulk-donation";
+import { ResolvedInventoryDeltaSchema } from "@checkin/receipt-types";
+import type { InventoryApply, OrgIdentity } from "@checkin/bulk-donation";
 import { inventoryReceipts } from "@/lib/workflowMapping/inventorySink";
 
 const DONATION_KEY = /^donation:(\d+)$/;

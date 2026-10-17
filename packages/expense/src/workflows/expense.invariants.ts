@@ -1,4 +1,4 @@
-import { makeWorkflowInvariants } from '@inventory/workflows';
+import { makeWorkflowInvariants } from '@checkin/workflows';
 import { expenseMachine } from './expense.machine';
 import type { ExpenseEvent } from './expense.events';
 import type { ExpenseMachineContext } from './expense.guards';

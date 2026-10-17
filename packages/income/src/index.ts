@@ -1,4 +1,4 @@
-// Public surface of the @inventory/income library: the domain, the route factories and the
+// Public surface of the @checkin/income library: the domain, the route factories and the
 // runtime seams. Pages and nav are subpath exports.
 export * from "./contract";
 export * from "./runtime";

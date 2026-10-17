@@ -5,8 +5,8 @@
 import type { PrismaClient } from "../db/client.js";
 import { SyncKind, SyncStatus } from "../generated/prisma/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
-import { logger } from "@inventory/telemetry";
-import { redactSecrets } from "@inventory/utils";
+import { logger } from "@checkin/telemetry";
+import { redactSecrets } from "@checkin/utils";
 import { withAdvisoryLock } from "./locks.js";
 
 /** Default staleness cutoff (~Lambda max timeout): older RUNNING runs must be dead. */
@@ -48,7 +48,7 @@ export interface RunHeartbeat {
 /**
  * A best-effort push of a run's terminal outcome to the dedicated monitoring DB (the F7
  * push model — the watchdog reads these instead of holding this DB's credentials). Injected
- * so s-ingest-core stays decoupled from @inventory/monitoring-db; the service wiring binds
+ * so s-ingest-core stays decoupled from @checkin/monitoring-db; the service wiring binds
  * it to a concrete sink. It MUST NOT throw in a way that fails the run — withSyncRun calls
  * it inside a swallow-and-log guard.
  */

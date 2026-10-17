@@ -3,6 +3,6 @@
 // its src/security/registry/inventory.ts entry.
 import { handler } from "@/security/handler";
 import { inventoryRoute } from "@/lib/localInventory/route";
-import { routes } from "@inventory/local-inventory";
+import { routes } from "@checkin/local-inventory";
 
 export const POST = handler("POST /api/inventory/locations/[id]/reassign", inventoryRoute(routes.locations.reassign));

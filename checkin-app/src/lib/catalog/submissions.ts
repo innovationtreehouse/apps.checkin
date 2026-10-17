@@ -4,13 +4,13 @@
  * receipt-types schema, then stamped with the injected org. Catalog errors propagate, so
  * associate and propose fail rather than skip catalog curation.
  */
-import { conflictResolutionService, proposalService, provisionalGtinService } from "@inventory/global-catalog";
+import { conflictResolutionService, proposalService, provisionalGtinService } from "@checkin/global-catalog";
 import {
   catalogItemReferenceProposalSchema,
   catalogProvisionalItemProposalSchema,
   catalogReferenceConflictSchema,
-} from "@inventory/receipt-types";
-import type { CatalogSubmissions, OrgIdentity } from "@inventory/workflow-mapping";
+} from "@checkin/receipt-types";
+import type { CatalogSubmissions, OrgIdentity } from "@checkin/workflow-mapping";
 
 export function createCatalogSubmissions(org: () => Promise<OrgIdentity>): CatalogSubmissions {
   return {

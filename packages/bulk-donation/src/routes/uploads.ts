@@ -1,5 +1,5 @@
 /** Benevity uploads: list, import, the stored-CSV download, and dropping an all-duplicate blob. */
-import { readCapped } from "@inventory/utils";
+import { readCapped } from "@checkin/utils";
 import { db } from "../db";
 import { CsvValidationError, parseBenevityCsv } from "../lib/csv-parser";
 import { recordDonorDataRead } from "../repositories/audit";

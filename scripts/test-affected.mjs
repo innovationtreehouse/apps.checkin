@@ -94,7 +94,7 @@ if (opts.all) {
 const mergeBase = git('merge-base', baseRef, 'HEAD')[0];
 const changed = [...new Set([...git('diff', '--name-only', mergeBase), ...git('ls-files', '--others', '--exclude-standard')])].sort();
 
-// ---- workspaces and their reverse @inventory/* dependencies
+// ---- workspaces and their reverse @checkin/* dependencies
 const rootPkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const workspaces = rootPkg.workspaces.flatMap((glob) => {
   const [parent, pat] = glob.includes('/') ? glob.split('/') : ['.', glob];

@@ -1,8 +1,8 @@
 // Ports the host (checkin-app) binds via configureBulkDonation(). The library never imports the
 // host or another library; every crossing is one of these, bound once at boot.
 import { z } from "zod";
-import type { QuickBooksClient } from "@inventory/quickbooks";
-import type { ResolvedInventoryDelta } from "@inventory/receipt-types";
+import type { QuickBooksClient } from "@checkin/quickbooks";
+import type { ResolvedInventoryDelta } from "@checkin/receipt-types";
 
 /** The acting host user, projected to what rows stamp (actor ids and usernames). */
 export interface BulkDonationPrincipal {

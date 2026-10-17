@@ -2,8 +2,8 @@ import { logger } from "@/lib/logger";
 import { cronJobName, recordCronRun } from "@/lib/cronRuns";
 import { getOrg } from "@/lib/catalog/configure";
 import { handler } from "@/security/handler";
-import { runExpenseQbPosting } from "@inventory/expense";
-import { runDonationQbPosting } from "@inventory/bulk-donation";
+import { runExpenseQbPosting } from "@checkin/expense";
+import { runDonationQbPosting } from "@checkin/bulk-donation";
 
 /**
  * Daily QuickBooks posting: expense's step (stranded recovery, the outbox drain, the drift check),

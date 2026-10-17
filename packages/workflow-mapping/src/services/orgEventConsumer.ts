@@ -1,4 +1,4 @@
-import { parseOrgEvent, type OrgEventPayload } from "@inventory/receipt-types";
+import { parseOrgEvent, type OrgEventPayload } from "@checkin/receipt-types";
 import { db, retryOnUniqueRace } from "../db";
 import { EDITABLE_RECEIPT_WHERE } from "../db/schema";
 import type { OrgEventConsumer, OrgEventRecord } from "../contract";

@@ -1,5 +1,5 @@
 // One-time OAuth consent. Starts a local server to catch Intuit's redirect, exchanges the
-// code for tokens, and saves them. Run: npm run consent -w @inventory/quickbooks
+// code for tokens, and saves them. Run: npm run consent -w @checkin/quickbooks
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import { oauthConfigFromEnv, authUrl, exchangeCode } from "../src/oauth";

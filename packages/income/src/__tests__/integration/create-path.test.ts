@@ -1,5 +1,5 @@
 import { it, expect, beforeEach, afterEach, vi } from "vitest";
-import { QuickBooksClient, appKeyOf, qbKey, type QboDeposit } from "@inventory/quickbooks";
+import { QuickBooksClient, appKeyOf, qbKey, type QboDeposit } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { configureIncome, type IncomeConfig, type PostCapEvent } from "../../runtime";

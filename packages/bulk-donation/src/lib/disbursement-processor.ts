@@ -1,8 +1,8 @@
 import type { DbOrTx } from "../db";
 import { determineAccountsFromMap } from "./account-map-lookup";
 import { ownerRequiredWhere } from "./domain-rules";
-import { sumCents } from "@inventory/money";
-import { DisbursementPayloadV1 } from "@inventory/donations";
+import { sumCents } from "@checkin/money";
+import { DisbursementPayloadV1 } from "@checkin/donations";
 
 type ConflictRecord = {
   txId: number;

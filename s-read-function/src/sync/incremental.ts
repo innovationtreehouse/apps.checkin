@@ -11,7 +11,7 @@ import {
   EventSource,
   SyncKind,
   withSyncRun,
-} from "@inventory/s-ingest-core";
+} from "@checkin/s-ingest-core";
 import type { ShopifyClient } from "../shopify/client.js";
 import { syncOrders, syncPayouts, syncBalanceTransactions } from "./streams.js";
 

@@ -8,14 +8,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { warn } = vi.hoisted(() => ({ warn: vi.fn() }));
 
-vi.mock("@inventory/s-ingest-core", () => ({
+vi.mock("@checkin/s-ingest-core", () => ({
   // faithful-enough stand-in: last numeric path segment of the gid
   legacyIdFromGid: vi.fn((gid: string) => /\/(\d+)(?:\?.*)?$/.exec(gid)?.[1]),
   logger: { info: vi.fn(), warn, error: vi.fn() },
 }));
 
 import { resolveStoreIdentity, ensureStore } from "../../src/sync/store.js";
-import { legacyIdFromGid } from "@inventory/s-ingest-core";
+import { legacyIdFromGid } from "@checkin/s-ingest-core";
 import { fakeClient } from "../helpers/fakeClient.js";
 import { fakePrisma } from "../helpers/fakePrisma.js";
 
