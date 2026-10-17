@@ -24,6 +24,9 @@ export type QbResolveAction =
   | { action: "dismiss"; reason: string }
   | { action: "retry" };
 
+/** Leaving DRIFT, by any resolution, closes it out. */
+const NO_DRIFT = { qbDriftedTxnId: null, qbDriftCause: null };
+
 const isState = (list: readonly QbMatchState[], state: string) => list.some((s) => s === state);
 
 function shiftDate(isoDate: string, days: number): string {
@@ -105,7 +108,10 @@ async function pick(orgId: string, disbursementId: string, qbTxnId: string, reas
     return await db.$transaction(async (tx) => {
       const current = await lockedEvent(tx, e.id);
       if (!isState(QB_HELD_STATES, current.qbMatchState)) throw new ServiceError(409, "Already resolved");
-      const saved = await tx.disbursementEvent.update({ where: { id: e.id }, data: { qbMatchState: to, qbTxnId } });
+      const saved = await tx.disbursementEvent.update({
+        where: { id: e.id },
+        data: { qbMatchState: to, qbTxnId, qbDepositTotalCents: deposit.amountCents, qbDepositTxnDate: deposit.date, ...NO_DRIFT },
+      });
       if (!own) await recordQbMatched(tx, orgId, { disbursementId, disbursementDate: disbursementDate(e), qbTxnId }, actor);
       await recordEvent(tx, {
         orgId,
@@ -157,7 +163,7 @@ async function dismiss(orgId: string, disbursementId: string, reason: string, ac
   return db.$transaction(async (tx) => {
     const current = await lockedEvent(tx, e.id);
     if (!isState(QB_HELD_STATES, current.qbMatchState)) throw new ServiceError(409, "Only a held disbursement can be dismissed");
-    const saved = await tx.disbursementEvent.update({ where: { id: e.id }, data: { qbMatchState: QB_MATCH_STATE.DISMISSED } });
+    const saved = await tx.disbursementEvent.update({ where: { id: e.id }, data: { qbMatchState: QB_MATCH_STATE.DISMISSED, ...NO_DRIFT } });
     await recordEvent(tx, {
       orgId,
       disbursementId,

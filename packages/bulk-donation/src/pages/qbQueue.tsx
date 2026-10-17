@@ -6,7 +6,16 @@ import LoadError from "../components/LoadError";
 import Pager from "../components/Pager";
 import { QB_HELD_STATES, QB_RETRYABLE_STATES } from "../lib/qb-queue-states";
 
-interface HeldRow { id: number; disbursementId: string; payload: string; qbMatchState: string }
+interface HeldRow {
+  id: number;
+  disbursementId: string;
+  payload: string;
+  qbMatchState: string;
+  qbDriftedTxnId: string | null;
+  qbDriftCause: string | null;
+  qbDepositTotalCents: number | null;
+  qbDepositTxnDate: string | null;
+}
 interface Candidate { id: string; type: string; date: string; amountCents: number; memo: string | null }
 
 const STATE_HELP: Record<string, string> = {
@@ -14,7 +23,24 @@ const STATE_HELP: Record<string, string> = {
   BEFORE_LINE: "Dated before the takeover line, so it is never created automatically; match the hand-booked deposit",
   POST_FAILED: "Creating the deposit failed; the drain retries it",
   NEEDS_FINANCE: "Out of automatic retries, or over the per-run cap",
+  DRIFT: "Its booked QuickBooks deposit changed or disappeared; match it again, or dismiss it",
 };
+
+const DRIFT_CAUSE: Record<string, string> = {
+  deposit_missing: "no longer in QuickBooks",
+  deposit_changed: "changed in QuickBooks (see it marked below)",
+};
+
+/** What a drifted row had booked, and what became of it. */
+function DriftNote({ row }: { row: HeldRow }) {
+  if (row.qbMatchState !== "DRIFT") return null;
+  const booked = row.qbDepositTotalCents === null ? "" : ` · booked ${cents(row.qbDepositTotalCents)}${row.qbDepositTxnDate ? ` on ${row.qbDepositTxnDate}` : ""}`;
+  return (
+    <Text size="xs" mt={4}>
+      Deposit <Code>{row.qbDriftedTxnId ?? "—"}</Code>{booked} · {DRIFT_CAUSE[row.qbDriftCause ?? ""] ?? row.qbDriftCause ?? ""}
+    </Text>
+  );
+}
 
 /** The disbursement date and the net its deposit should total, from the stored payload. */
 function facts(payload: string): { date: string; netCents: number | null } {
@@ -54,7 +80,10 @@ function RowActions({ row, onDone }: { row: HeldRow; onDone: () => void }) {
                 <Table.Tr key={c.id}>
                   <Table.Td>{c.date}</Table.Td>
                   <Table.Td>{cents(c.amountCents)}</Table.Td>
-                  <Table.Td><Code>{c.id}</Code></Table.Td>
+                  <Table.Td>
+                    <Code>{c.id}</Code>
+                    {c.id === row.qbDriftedTxnId && <Badge size="xs" ml="xs" color="orange">booked deposit, as it is now</Badge>}
+                  </Table.Td>
                   <Table.Td><Text size="xs" c="dimmed">{c.memo ?? ""}</Text></Table.Td>
                   <Table.Td>
                     <Group gap="xs">
@@ -126,6 +155,7 @@ export default function QbQueuePage() {
                       <Table.Td>
                         <Badge size="sm" color="orange">{row.qbMatchState}</Badge>{" "}
                         <Text span size="sm" c="dimmed">{STATE_HELP[row.qbMatchState] ?? ""}</Text>
+                        <DriftNote row={row} />
                       </Table.Td>
                       <Table.Td><Code>{row.disbursementId}</Code></Table.Td>
                       <Table.Td>

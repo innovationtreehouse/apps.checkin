@@ -624,6 +624,38 @@ describeDb("donation QuickBooks finance queue", () => {
     await expect(resolve("TEST-A", { action: "dismiss", reason: "again" })).rejects.toMatchObject({ status: 409 });
   });
 
+  it("lists DRIFT, re-matches its changed deposit with the deposit as it is now, and closes the drift out", async () => {
+    const e = await held("TEST-A", "DRIFT");
+    await db.disbursementEvent.update({
+      where: { id: e.id },
+      data: { qbDriftedTxnId: "501", qbDriftCause: QB_DRIFT_CAUSE.CHANGED, qbDepositTotalCents: 1450, qbDepositTxnDate: "2026-09-10" },
+    });
+    qbo.deposits.push(handDeposit("501", "2026-09-11", 1500));
+
+    const queue = await disbursements.listEvents({ req: route(`/disbursement-events?qbState=DRIFT`), params: {} });
+    expect((queue.DisbursementEvent as { disbursementId: string }[]).map((r) => r.disbursementId)).toEqual(["TEST-A"]);
+    expect(((await candidatesOf("TEST-A")) as { id: string }[]).map((c) => c.id)).toEqual(["501"]);
+    await expect(resolve("TEST-A", { action: "retry" })).rejects.toMatchObject({ status: 409 });
+
+    await resolve("TEST-A", { action: "match", qbTxnId: "501", reason: "Benevity corrected the batch" });
+
+    expect(await db.disbursementEvent.findUniqueOrThrow({ where: { id: e.id } })).toMatchObject({
+      qbMatchState: "MATCHED", qbTxnId: "501", qbDepositTotalCents: 1500, qbDepositTxnDate: "2026-09-11",
+      qbDriftedTxnId: null, qbDriftCause: null,
+    });
+  });
+
+  it("dismissing a DRIFT record closes the drift out", async () => {
+    const e = await held("TEST-A", "DRIFT");
+    await db.disbursementEvent.update({ where: { id: e.id }, data: { qbDriftedTxnId: "501", qbDriftCause: QB_DRIFT_CAUSE.MISSING } });
+
+    await resolve("TEST-A", { action: "dismiss", reason: "Deposit deleted; booked by journal entry" });
+
+    expect(await db.disbursementEvent.findUniqueOrThrow({ where: { id: e.id } })).toMatchObject({
+      qbMatchState: "DISMISSED", qbTxnId: null, qbDriftedTxnId: null, qbDriftCause: null,
+    });
+  });
+
   it("refuses to exclude a deposit a disbursement already holds", async () => {
     const e = await held("TEST-A", "MATCHED");
     await db.disbursementEvent.update({ where: { id: e.id }, data: { qbTxnId: "501" } });
