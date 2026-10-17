@@ -5,8 +5,8 @@ generator client {
   moduleFormat = "cjs"
 }
 
-// Brings the workflow-mapping schema under checkin's security regime (design
-// #1289 §5): the same generator emits a classifications map, merged in
+// Brings the workflow-mapping schema under checkin's security regime: the same
+// generator emits a classifications map, merged in
 // checkin-app/src/security/core.ts. Paths are relative to this schema file.
 generator security {
   provider = "node ../../checkin-app/scripts/security-generator.js"

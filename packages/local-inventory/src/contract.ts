@@ -1,5 +1,5 @@
 /**
- * The injection seam (#1287 §3). The host (checkin) implements these and calls
+ * The injection seam. The host (checkin) implements these and calls
  * configureLocalInventory() once at boot; the library reads the configured
  * runtime and never imports the host.
  */
@@ -12,7 +12,7 @@ export interface InventoryPrincipal {
   name: string | null;
 }
 
-/** Org identity stamped on every inventory row (#1287 §6). */
+/** Org identity stamped on every inventory row. */
 export interface OrgIdentity {
   id: string;
   name: string;
