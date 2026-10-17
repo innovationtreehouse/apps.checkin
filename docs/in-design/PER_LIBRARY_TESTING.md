@@ -71,9 +71,10 @@ The other workspaces are **shared packages** (`money`, `gtin`, `receipt-types`,
 Lambda `*-function` workspaces. Everything else in `checkin-app/` is **checkin
 core**.
 
-The map is one constant in the script. When the shared `libraries.json` list
-(H2b) lands on `main`, the key and package columns should come from it, so a new
-library is added in one place.
+The map is one constant in the script, kept in step with
+`checkin-app/libraries.json` by hand. No more libraries are planned for a while,
+so that costs little, and nothing waits on reading the columns from the shared
+list. Reading them from it is a follow-up for when a new library is next added.
 
 ## Change → local tests
 
@@ -207,8 +208,9 @@ All of this section is **UNPROVEN**: none of it has been run.
   personas and assumes a freshly seeded database. One file on a fresh stack is
   the cleanest case of that assumption, so it should pass on its own. Nothing
   has confirmed this.
-- **Coupling to H2b.** H2b's `libraries.json` work changes how the stack
-  creates and seeds library databases. Re-check this section after it merges.
+- **Coupling to `libraries.json`.** The stack creates and seeds one database
+  per entry in `checkin-app/libraries.json`. Re-check this section if that list
+  changes.
 
 ### `--all`
 
@@ -244,10 +246,12 @@ migration file):
 ## Open before adoption
 
 - `--db` and `--flow` have never been run. Rollout steps 4 and 5 prove them.
+  The owner approves those proving runs once the tests make sense, run within
+  the coordinator's load limits (one heavy job at a time, on the coordinator's
+  go).
 - The 80-unit and 15-integration caps are unmeasured. Set them from the timings
   of the first real `--db` runs and from a few core-change dry runs.
 - The light vitest step depends on the harness switch (rollout step 1). Do not
   adopt the command before that lands.
-- Should the AGENTS.md rule wait for `libraries.json` (H2b)? Until then, the
-  ownership map lives as a constant in the script and has to be kept in step by
-  hand.
+- The AGENTS.md rule does not wait for the ownership map to read from
+  `libraries.json`; it lands when the command is adopted.

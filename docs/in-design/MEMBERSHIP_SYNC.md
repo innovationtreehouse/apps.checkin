@@ -54,7 +54,7 @@ Everything awkward falls out of a plain diff against observed reality: program-b
 | `google_group` | program team-list email | `program:<id>` | on boundary, at next reconcile or immediate trigger |
 | `google_group` | members list email | `org` | on boundary, at next reconcile or immediate trigger |
 | `newsletter` | newsletter email | `org` | **only on DENIED** — never for lapse or any other reason |
-| `slack_channel` | channel id | `program:<id>` | on boundary — grace period is an open question (§10.2) |
+| `slack_channel` | channel id | `program:<id>` | on boundary, immediately, with an audit entry (no grace period) |
 
 v1 said "immediate on boundary"; corrected — nothing runs between triggers. Removal happens at the next nightly reconcile, or sooner when an immediate trigger fires (§8).
 
@@ -71,7 +71,7 @@ One row per `(personId, targetKind, targetRef, scope)`. It records what was *app
 - **Program team list** (`program:<id>`): every household lead of **any enrolled minor** (regardless of the minor's age), plus enrolled persons **13+** themselves, plus the program's lead and core volunteers. A household with only an 8-year-old enrolled is on the list via its leads — the younger the child, the more the parent needs the list.
 - **Members list** (`org`): baseline desired set = the household leads of every ACTIVE household — minimum one per household (see §3.5 for what happens when opt-outs drop a household below that). Others — including 13+ youth — may join at their own discretion; there are no secrets on the members list. Discretionary joins arrive by hand (Google-side) or in-app opt-in and are respected per §3.2/§5.
 - **Newsletter** (`org`): default = one household lead per family, opted in on activation (per CM10); anyone else opts in freely.
-- **Under-13:** nobody under 13 is ever directly synced to any list. This is the deliberately conservative interim rule; whether an under-13 can *ever* be on a checkin-managed list is a **board decision**, tracked in the backlog DECISIONS file (SYNC-1). The board deciding otherwise changes §2.3 only.
+- **Under-13:** no one under 13 is on any app-managed list or channel, by any path: the sync never adds them, and an in-app opt-in is refused. Their household leads are on the program list in their place (above).
 
 ### 2.4 Scope: the team list only, for now
 
@@ -81,7 +81,11 @@ List addresses live as **fields on `Program`** (team-list email now; parents/men
 
 ### 2.5 `ProgramSlackAuth`
 
-Per-program Slack bot tokens live in their own table, never as a column on `Program` — otherwise every `program.findMany()` without an explicit `select` risks pulling a secret into memory. A separate table forces an explicit join. How tokens get provisioned is an open question (§10.3).
+Per-program Slack bot tokens live in their own table, never as a column on `Program` — otherwise every `program.findMany()` without an explicit `select` risks pulling a secret into memory. A separate table forces an explicit join.
+
+**Provisioning.** People set up each program's Slack workspace and bot by hand, outside the app. An administrator then pastes the bot key into a settings screen in the app, which writes the `ProgramSlackAuth` row. The screen shows whether a key is set and when, never the key itself, and every save writes an audit entry.
+
+**IT Stewards.** A new role, IT Stewards, may edit integration settings, this bot key among them, and nothing else: holding it grants no access to people, households, money or any other settings. Sysadmins keep the access they have. The role is a change to the security boundary, so it ships in its own boundary PR, ahead of the settings screen (§11).
 
 ## 3. Intent, consent, and audit
 
@@ -138,7 +142,9 @@ This is a customer-service problem until proven otherwise: we need to learn how 
 
 ### 3.6 Slack, by symmetry
 
-The same intent model applies to Slack: `conversations.members` gives the same observation capability `listMembers` does, detection and guards are symmetric, and an OUT suppresses re-invites identically. Hard (non-expiring) suppression is acceptable here **because** the re-add paths exist — rejoin the channel, or in-app opt-in — and the follow-up screens make the event visible. What is *not* settled is the boundary-removal grace period (§10.2).
+The same intent model applies to Slack: `conversations.members` gives the same observation capability `listMembers` does, detection and guards are symmetric, and an OUT suppresses re-invites identically. Hard (non-expiring) suppression is acceptable here **because** the re-add paths exist — rejoin the channel, or in-app opt-in — and the follow-up screens make the event visible.
+
+Boundary removal from a Slack channel is immediate: when a person stops being desired, the next reconcile or immediate trigger removes them and writes an audit entry. There is no warning and no grace period, because re-adding is easy and the audit entry records what happened.
 
 ## 4. Email change and the swap case
 
@@ -237,11 +243,21 @@ What it does take: PR 4's ops sync status surface is a `validate()`-style **inva
 
 ## 10. Open questions
 
-1. **Cross-year opt-out identity (the big one).** OUT intent is keyed by `scope = program:<id>`, but teams persist year over year with reused group addresses (backlog P25), and the P1 program→instance restructure may give each year its own id. Bind intent to the *team* and a parent who opted out once is suppressed years later for a different child; bind it to the *year-instance* and "permanent" silently resets annually. **No answer yet.** The P1 design must weigh in; this must be settled before PR 2's suppression semantics are final.
-2. **Slack boundary-removal grace.** v1 carried "warn, then remove after 7 days" from #1156 without specifying who warns, on what channel (bot DM? email?), or the `warnedAt` state to track it. Keep the grace (and spec the mechanics) or simplify to immediate-with-audit, given re-add is easy (§3.6)? Undecided.
-3. **Slack token provisioning.** Who installs the per-program bot and enters the token — an ops-facing surface, seed, hand-SQL? Must be specified before PR 3/4; no intent is currently known.
+IDs are stable; a resolved question keeps its number.
+
+1. **Cross-year opt-out identity. Owner's direction given; needs analysis before PR 2.** A person's own leave stays respected across years: the sync never re-adds them on its own. At the start of a new membership year, the first time the sync would have re-added them (they are desired again, and their OUT suppresses the add), it sends them one email saying they are off that list and how to rejoin. It sends it once per list per membership year, and does not re-add them. The analysis left is how much of this is code and how much is a Board override:
+
+   | Option | What it is | Rough size |
+   |---|---|---|
+   | **A. Yearly notice in code** | OUT stays bound to the team, across years. The ledger row gains the membership year of the last notice; in the suppression branch, if that year is older than the current one, send the notice and stamp the year. One column, one check, one email template. | Small: about a day, inside PR 2 |
+   | B. Board override only | No year logic. The Board gets an action to clear an OUT, or to send the notice by hand, at the start of each year. Clearing an OUT is a system override of the person's intent, so it needs its own audit path and an exception to the §3.2 invariant. | Medium: a screen, an audit path and an invariant exception, plus Board work every year |
+   | C. A plus a Board override | A, and a Board action to clear an OUT when the person asks in person rather than in the app. | A plus a small screen |
+
+   **Recommended: A.** It is the smallest, it needs no Board work each year, and it keeps the §3.2 invariant whole, because only the person's own new intent ever clears an OUT. C can follow if the Board finds people asking it to re-add them. Two things the analysis must still settle: what the team identity is if the P1 program→instance restructure gives each year its own program id (backlog P25 records that teams reuse group addresses year over year), and whether the notice applies to the newsletter, where an unsubscribe is a compliance matter and the proposal is that it does not.
+2. **Slack boundary-removal grace.** Decided: no grace. Removal is immediate, with an audit entry (§3.6).
+3. **Slack token provisioning.** Decided: people set up each program's Slack by hand, and an administrator pastes the bot key into a settings screen. A new IT Stewards role may edit integration settings only (§2.5).
 4. **Reports API: attribution + timing.** Can the Google Workspace Reports API (`activities.list`, groups application) reliably supply **who** performed a membership change (§3.3-3) and **when** (§3.2 ordering)? One investigation, two payoffs: attribution decides whether "external removal" can ever be narrowed to "self-removal"; timing makes intent ordering exact instead of window-based. Must characterize retrieval lag (no SLA) — the window tie-break stays as fallback regardless, and is permanent for Slack (audit API is Enterprise Grid-only). Investigate before PR 2.
-5. **Under-13 on lists.** Board decision (backlog DECISIONS SYNC-1); interim rule in §2.3.
+5. **Under-13 on lists.** Decided: no one under 13 on any app-managed list (§2.3).
 
 ## 11. Rollout
 
@@ -249,8 +265,9 @@ What it does take: PR 4's ops sync status surface is a `validate()`-style **inva
 |---|---|---|
 | 1 | Schema + `lib/sync/**`: desired-state engine, email-level diff, clients incl. `listMembers`/`conversations.members`, ledger incl. intent fields | yes — nothing calls it |
 | 2 | Intent model + classification guards + follow-up creation + ghost detection, with tests | yes |
-| 3 | Boundary PR: registry entries + scope bindings for the sync-status and follow-up routes (isolation rule) | yes |
-| 4 | Wire-up: nightly reconcile, immediate triggers, screens (ops sync status; follow-up queues per audience; ghost review; coverage dashboard), adoption + staged bulk enrollment | **no** — first live behaviour |
+| 3 | Boundary PR: registry entries + scope bindings for the sync-status, follow-up and integration-settings routes (isolation rule) | yes |
+| IT Stewards | Boundary PR: the IT Stewards role and its grant, integration settings only (§2.5). Independent of PRs 1–2; lands before PR 4 | yes |
+| 4 | Wire-up: nightly reconcile, immediate triggers, screens (ops sync status; follow-up queues per audience; ghost review; coverage dashboard; Slack bot-key settings), adoption + staged bulk enrollment | **no** — first live behaviour |
 
 Ordering constraint carried from #1157: any `src/security/**` change ships in its own PR (`security-boundary-isolation.yml`).
 
@@ -265,4 +282,6 @@ Ordering constraint carried from #1157: any `src/security/**` change ships in it
 - **Integration — follow-up idempotency:** repeated nightly detection of the same event yields one non-RESOLVED `SyncFollowUp`; post-resolution recurrence opens a new one.
 - **Negative:** newsletter OUT records intent but writes **no** audit row and raises **no** follow-up; a program-list OUT routes to `PROGRAM_LEAD`, not `BOARD`.
 - **Unit — sync oracle:** each §8.1 invariant flags a synthetic bad row and passes on a clean ledger; the panel and any future reconciler consume the same oracle (the `lifecycleDrift` never-re-derive rule).
+- **Integration — Slack boundary:** a person who stops being desired is removed from the channel at the next reconcile, with one audit row and no warning step.
+- **Negative — under-13:** an in-app opt-in by a person under 13 is refused, and no reconcile adds them to any target.
 - **Integration-off:** every path is a no-op when `googleDirectoryConfigured()` is false.

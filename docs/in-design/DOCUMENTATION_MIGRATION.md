@@ -55,10 +55,10 @@ where a move breaks one of their pointers, that doc's session gets the new path
 | File | Action | Status |
 |---|---|---|
 | `ARCHITECT_IDEAS_o46.md` | Still-open items (#15 no error boundary, #17 no Zod, and any others still true) become backlog rows; delete | todo, PR 2 |
-| `COMPONENT_ARCHITECTURE.md` | Standing architecture reference; moves to the home Q4 decides | todo, PR 4, blocked on Q4 |
+| `COMPONENT_ARCHITECTURE.md` | Standing architecture reference; moves to `docs/architecture/` (Q4) | todo, PR 4 |
 | `DESIGN.md` | Check each use case against the register; add any missing rule; delete | todo, PR 2 |
 | `INDEX_PAGE_SCOPING.md` | Moves to `docs/in-design/` with its own retirement plan | in flight, #2274 |
-| `PRODUCTION_PLAN.md` | Move to `docs/ops/production-runbook.md` with a freshness pass; never delete | todo, PR 3, see Q7 |
+| `PRODUCTION_PLAN.md` | The app is live, so only its deploy and rollback runbook moves, to `docs/ops/production-runbook.md`; unfinished follow-ups become issues; the launch checklist is dropped (Q7) | todo, PR 3 |
 | `PROGRAM_INSTANCE_RESTRUCTURE.md` | Active working doc; leaves `docs/designs/` for `docs/in-design/` | in flight, its own session |
 
 ### 3.2 `checkin-app/docs/designs/`
@@ -71,7 +71,7 @@ where a move breaks one of their pointers, that doc's session gets the new path
 | `1333-EMAIL_TEMPLATES.md` | Not built; move to `docs/in-design/` | todo, PR 1 |
 | `SHOPIFY_DEV_STORE_WEBHOOK.md` | Ops reference; move to `docs/ops/shopify-dev-store.md`, keeping the §2, §4 and §6 numbering that code cites | todo, PR 1 |
 | `SHOPIFY_MEMBER_SEGMENT_PRICING.md` | Not built; move to `docs/in-design/` | todo, PR 1 |
-| `UNFINISHED.md` | Follow-up ledger behind issue #1322; fate per Q5 | todo, PR 5, blocked on Q5 |
+| `UNFINISHED.md` | Follow-up ledger behind issue #1322; each non-sensitive open item becomes an issue, then the file is deleted (Q5) | todo, PR 5 |
 | `resilient-load-swr.md` | Not built; move to `docs/in-design/` | todo, PR 1 |
 | `UNIFIED_SIGNUP.md` (not on `main`) | Open PR #1370 adds it here; if it goes ahead it belongs in `docs/in-design/` | open PR, its author's call |
 
@@ -82,7 +82,7 @@ where a move breaks one of their pointers, that doc's session gets the new path
 | `checkin-app/docs/VOCABULARY.md` | Build conventions to `docs/conventions.md`; drop the migration log; domain facts to the register or cut where already there (§3.4) | todo, PR 6 |
 | `docs/rules/expenses.md`, `inventory.md` | No Policy section yet; check the policy corpus and add one, even if empty | todo, PR 7, after #2224 |
 | Pointers to docs already gone | Comments citing `BADGE_AUDIT.md`, `auth-first-registration.md` and `PROGRAM_PAYMENT_VISIBILITY.md` | todo, PR 2 and PR 8 |
-| Root-vs-app split | Per Q6 | todo, PR 9 |
+| Root-vs-app split | Per Q6, still open | todo, PR 9 |
 | `AGENTS.md` "Design & product" block | Rewritten as an Operations block once its last entry moves | todo, PR 3 |
 
 ### 3.4 What the vocabulary split moves
@@ -102,8 +102,8 @@ where a move breaks one of their pointers, that doc's session gets the new path
 Rules inside its tables leave the same way: the per-tool certifier grant (already
 in `tools-certification.md`), age gates enforced outside the software, and core
 volunteers' authority being organisational. Where the register already states a
-rule, the dictionary keeps the definition and drops the constraint only if Q3
-allows it; otherwise both stay and the PR says so.
+rule, both keep a complete statement (Q3): the dictionary keeps the definition
+with its constraint, and the register keeps the rule.
 
 ---
 
@@ -121,16 +121,20 @@ different line that rebase is mechanical.
 |---|---|---|---|---|
 | 1 | **Pure moves.** No content edits beyond paths | `git mv` of `SHOPIFY_MEMBER_SEGMENT_PRICING.md`, `1333-EMAIL_TEMPLATES.md`, `resilient-load-swr.md` to `docs/in-design/`; `SHOPIFY_DEV_STORE_WEBHOOK.md` to `docs/ops/shopify-dev-store.md` | `src/lib/shopify.ts`; `PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` (two lines); `api/dev/shopify/orders-paid/route.ts` and its integration test; `app/dev/shopify/page.tsx`; `components/pageRegistry.ts` (the `/dev/shopify` row); `PRODUCTION_PLAN.md`; `1655_MEMBERSHIP_YEAR_DECLARED.md` and its `-migration.md`; links between the moved files | #2264 and the 975 session, which both edit `1655_MEMBERSHIP_YEAR_DECLARED.md`; the restructure doc's session, whose doc cites the segment-pricing path |
 | 2 | **Retire shipped docs in `docs/designs/`.** Extraction | delete `ARCHITECT_IDEAS_o46.md` and `DESIGN.md`; edit `docs/conventions.md`, `docs/backlog/INDEX.md`, any `docs/rules/` file a use case adds to (not `expenses.md`) | `README.md` (the design-spec link); `AGENTS.md` (the `DESIGN.md` and `ARCHITECT_IDEAS` lines); the dead `PROGRAM_PAYMENT_VISIBILITY.md` pointer in `INDEX.md` | owner review of any rule added (§5) |
-| 3 | **Production runbook to ops** | `git mv` to `docs/ops/production-runbook.md`; freshness pass per Q7 | `README.md` (the runbook link); `docs/ops/shopify-dev-store.md`; `AGENTS.md`, where this PR also replaces the "Design & product" heading with an Operations block listing `dev-instance.md`, the runbook and the dev store | PR 1, PR 2, Q7 |
-| 4 | **Architecture reference** | move `COMPONENT_ARCHITECTURE.md` per Q4; add the new class to the standard's §2 table | `docs/rules/inventory.md`; `docs/backlog/INDEX.md`. Pointers in `1265_`, `1272_`, `1280_` and `1283_` (including the `RECEIPT.md` and `EXPENSE_QB.md` files `1265_` and `1272_` plan under `docs/designs/`) belong to those docs' sessions | Q4; those sessions repointing or retiring their docs first |
-| 5 | **Retire `UNFINISHED.md`** per Q5 | delete it; file or fold its open items as Q5 decides | `docs/backlog/INDEX.md` (two rows); `docs/security/auth-consistency-analysis.md` | Q5; PR 6 (removes the vocabulary's links); the restructure doc's session (`UNFINISHED.md` links to its doc) |
-| 6 | **Vocabulary split** (§3.4). Extraction | `VOCABULARY.md`; `docs/conventions.md`; `docs/rules/membership.md`, and any other register file a moved rule lands in | none beyond the file's own links | owner review of any rule added; rebase on PR 2 for `conventions.md` |
+| 3 | **Production runbook to ops** | `git mv` to `docs/ops/production-runbook.md`, keeping only the deploy and rollback runbook; file each unfinished follow-up as an issue; drop the launch checklist (Q7) | `README.md` (the runbook link); `docs/ops/shopify-dev-store.md`; `AGENTS.md`, where this PR also replaces the "Design & product" heading with an Operations block listing `dev-instance.md`, the runbook and the dev store | PR 1, PR 2 |
+| 4 | **Architecture reference** | create `docs/architecture/` and move `COMPONENT_ARCHITECTURE.md` into it (Q4); add the class to the standard's §2 table, long-lived and edited when the shape changes | `docs/rules/inventory.md`; `docs/backlog/INDEX.md`. Pointers in `1265_`, `1272_`, `1280_` and `1283_` (including the `RECEIPT.md` and `EXPENSE_QB.md` files `1265_` and `1272_` plan under `docs/designs/`, which now belong in `docs/architecture/`) belong to those docs' sessions | those sessions repointing or retiring their docs first |
+| 5 | **Retire `UNFINISHED.md`** (Q5) | file each non-sensitive open item as a GitHub issue (the admin-role item maps to #1551); take any sensitive item to the owner instead; drop the dismissed list, which git keeps; delete the file | `docs/backlog/INDEX.md` (two rows); `docs/security/auth-consistency-analysis.md` | PR 6 (removes the vocabulary's links); the restructure doc's session (`UNFINISHED.md` links to its doc) |
+| 6 | **Vocabulary split** (§3.4). Extraction | `VOCABULARY.md`; `docs/conventions.md`; `docs/rules/membership.md`, and any other register file a moved rule lands in; the standard, which gains the Q3 rule that a change to a term in either the dictionary or the register edits both in the same PR | none beyond the file's own links | owner review of any rule added; rebase on PR 2 for `conventions.md` |
 | 7 | **Policy sections for `expenses.md` and `inventory.md`** | those two files | none | #2224; needs the policy corpus on Drive, so the owner or a session the owner gives access runs it |
 | 8 | **Dead pointers in source** | `components/ui/CountBadge.tsx`; `api/household/intake/route.ts`; `lib/intake/profiles.ts`: drop the citation of a doc that no longer exists, or point at the rules file that now states it | n/a | nothing |
 | 9 | **Close-out** | settle step 5 per Q6; add `inventory.md` to the standard's §3 table; remove the standard's pointer to this doc; delete this doc | run the §5 checks; confirm the sweeps by the sessions in §3 left nothing | every PR above, and every in-flight owner in §3 |
 
-If Q2 is answered yes, a one-line CODEOWNERS PR for `docs/rules/` can land any
-time; it edits `.github/CODEOWNERS` only.
+Q2 is with the Board. Once it answers, a one-line CODEOWNERS PR for
+`docs/rules/` can land any time; it edits `.github/CODEOWNERS` only.
+
+Every rules file also gets a fresh owner review before the close-out (Q8). That
+is review, not a PR of its own; a change it asks for lands in whichever PR above
+touches that file, or in a small one.
 
 ---
 
@@ -177,43 +181,36 @@ time; it edits `.github/CODEOWNERS` only.
 
 IDs are stable; a resolved question keeps its number.
 
-1. **Domain list.** The register has nine domain files, two more than the
-   standard's table. Keep the nine as they are? *Recommendation: yes, and PR 9
-   adds `inventory.md` to the standard's table.*
-2. **Who owns a rules file.** Should CODEOWNERS route changes under
-   `docs/rules/` to the owner automatically? *Recommendation: yes, the owner
-   only. Owner confirmation of each new rule is already required, and this makes
-   the review request automatic instead of remembered.*
-3. **A definition that is also a constraint.** Terms such as two deep, member
-   family, youth and the tool levels appear in both the dictionary and the
-   register. Moving the constraint out leaves the dictionary entry incomplete,
-   so the overlap may be correct. Is it? *Recommendation: keep both complete,
-   and have the standard require a change to either one to edit both in the same
-   PR. Needs the vocabulary owner present.*
-4. **Where a standing architecture doc goes.** `COMPONENT_ARCHITECTURE.md`
-   describes how the component libraries are built and is current. It is not a
-   rule, not an ops runbook and not a working doc, so no class in the standard
-   fits it, and two working docs already plan more files like it (receipt and
-   QuickBooks references). Where should it go? *Recommendation: add a
-   `docs/architecture/` class to the standard, long-lived and edited when the
-   shape changes, and put all three there.*
-5. **What happens to `UNFINISHED.md`.** It is the body of issue #1322: open
-   rename decisions, mechanical fixes, and a list of things checked and
-   dismissed. The standard has no class for a ledger. *Recommendation: move each
-   still-open item into the tracker (one issue per decision, or the body of
-   #1322; the admin-role item maps to #1551), drop the dismissed list, which git
-   keeps, and delete the file.*
-6. **Is step 5 still needed?** The plan was to split root docs from app docs.
-   The standard's class table now places every class, and what remains under
-   `checkin-app/docs/` is app reference: the deploy and migration docs, the
-   dictionary, the generated artifacts, and the capacity and scholarship
-   mechanics, whose rules are already in `programs.md`. *Recommendation: close
-   step 5 with no moves.*
-7. **Is the production launch finished?** `PRODUCTION_PLAN.md` is a launch
-   checklist last verified on 2026-07-13, with open items. If the launch is
-   done, its sequence is history. *Recommendation: if done, keep only the
-   release, rollback and still-open follow-ups in `docs/ops/production-runbook.md`;
-   if not, move it whole and mark each step's state.*
-8. **Has every domain file had its owner review?** The done list needs it.
-   *Recommendation: confirm per file; `expenses.md` and `inventory.md` get theirs
-   with PR 7.*
+1. **Domain list.** Decided: keep the nine domain files as they are. PR 9 adds
+   `inventory.md` to the standard's table.
+2. **Who must approve a register change.** With the Board. The question as sent:
+   who must approve a change to a `docs/rules/` file. The CODEOWNERS PR (§4)
+   follows its answer.
+3. **A definition that is also a constraint.** Decided: yes, the overlap is
+   correct. Terms such as two deep, member family, youth and the tool levels
+   stay complete in both the dictionary and the register, and the standard
+   requires a change to either one to edit both in the same PR (PR 6).
+4. **Where a standing architecture doc goes.** Decided: a new `docs/architecture/`
+   folder, a long-lived class edited when the shape changes. It takes
+   `COMPONENT_ARCHITECTURE.md` and the receipt and QuickBooks references two
+   working docs plan (PR 4).
+5. **What happens to `UNFINISHED.md`.** Decided: every non-sensitive open item
+   becomes a GitHub issue, then the file is deleted (PR 5).
+6. **Does `checkin-app/` keep a docs folder? Open; the owner has not confirmed.**
+   The eventual plan makes `checkin-app` a thin shell, with check-in and
+   membership as libraries the way inventory is. The libraries keep no docs of
+   their own, so the proposal is that `checkin-app` keeps none either:
+   `DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` and `MIGRATION_COALESCE_FLOW.md` go
+   to `docs/ops/`, `VOCABULARY.md` to the `docs/` top level after its split
+   (PR 6), and `PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` to `docs/architecture/`.
+   The proposal does not yet say where `checkin-app/docs/generated/` goes; the
+   standard's §2 table places it there today. If confirmed, PR 9 carries the
+   moves and their reference sweep.
+7. **Is the production launch finished?** Decided: yes; the app is live, with
+   membership in production. Only the deploy and rollback runbook moves to
+   `docs/ops/`, unfinished follow-ups are filed as issues, and the launch
+   checklist is dropped (PR 3).
+8. **Has every domain file had its owner review?** Decided: no file can count an
+   earlier review. All ten files in `docs/rules/` have changed since 2026-10-14,
+   and `expenses.md` and `revenue.md` are new, so each gets a fresh owner review
+   before the close-out.
