@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Matrix test for the Shopify reconciler (lib/finance/reconcile.ts). Real app DB,
+ * Matrix test for the Shopify reconciler (lib/finance/reconcile/). Real app DB,
  * mocked `shopify_read` mirror (fixtures) — so every taxonomy row is exercised
  * against real membership/program state without needing a second Postgres. Each
  * assertion also re-runs to prove idempotency (no double activation, no duplicate
@@ -10,7 +10,8 @@
  */
 import prisma from "@/lib/prisma";
 import { snapshotBoardSettings } from "@/test-helpers/boardSettings";
-import { runReconcile, raiseReversalByOrderId } from "@/lib/finance/reconcile";
+import { runReconcile } from "@/lib/finance/reconcile";
+import { raiseReversalByOrderId } from "@/lib/finance/reconcile/reversals";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
 
 jest.mock("@/lib/email", () => ({

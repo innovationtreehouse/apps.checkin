@@ -136,10 +136,10 @@ const ALLOWLIST: Record<string, string> = {
         'Board application list: live view is a set — status notIn {ACTIVE,ARCHIVED}.',
     'lib/nav/todoCounts.ts':
         'Dashboard counts: status+flag probes — {PENDING,isPaymentPlanRequested,inventoryHeldAt,paymentPlanDeniedAt} and {PENDING_PAYMENT,isPaymentPlanRequested}.',
-    'lib/finance/reconcile.ts':
+    'lib/finance/reconcile/reversals.ts':
         'Reconciler paid-order set: where status in {ACTIVE,PENDING_BG_CLEARANCE} on OrgMembershipProcess.',
     'lib/finance/matchAudit.ts':
-        'Audit read queries: activation sweep (ACTIVE/PENDING_BG_CLEARANCE + ACTIVE participants) and the claim lookup excluding ARCHIVED/BLOCKED — report-only, mirrors the reconcile.ts entry.',
+        'Audit read queries: activation sweep (ACTIVE/PENDING_BG_CLEARANCE + ACTIVE participants) and the claim lookup excluding ARCHIVED/BLOCKED — report-only, mirrors the reconcile/reversals.ts entry.',
 };
 
 // ── scanner ──────────────────────────────────────────────────────────────────

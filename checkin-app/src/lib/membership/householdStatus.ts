@@ -142,7 +142,7 @@ export async function raiseDeniedHouseholdActivity(ref: {
 }): Promise<void> {
     // Lazy so the table above stays importable without the DB client (generator CLI, pages).
     const [{ raisePaymentException }, { logger }, { default: prisma }] = await Promise.all([
-        import("@/lib/finance/reconcile"),
+        import("@/lib/finance/reconcile/exceptions"),
         import("@/lib/logger"),
         import("@/lib/prisma"),
     ]);
