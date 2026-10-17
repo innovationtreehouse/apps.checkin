@@ -64,8 +64,9 @@ An alias has no such proof unless this design adds one. Without it, two things
 go wrong:
 
 - **A typo routes nothing, then routes the wrong person.** A member types
-  `pat@example.net` for `pat@example.org`. Nothing arrives from it, until someone who owns that address
-  emails the receipts mailbox, and their receipt becomes the member's.
+  `pat@example.net` for `pat@example.org`. Nothing arrives from it, until
+  whoever owns that address emails the receipts mailbox, and their receipt
+  becomes the member's.
 - **A hostile alias steals attribution.** A member adds a colleague's address.
   Every receipt the colleague mails in becomes the member's, including any owed
   reimbursement the member then confirms in `submitter_review`.
