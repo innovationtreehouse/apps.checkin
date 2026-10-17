@@ -7,7 +7,7 @@ import { logger } from "@/lib/logger";
 /**
  * Read-only bridge to the s-read `shopify_read` Postgres — the mirror the
  * s-read-function keeps of Shopify orders/refunds/payouts/balance-transactions.
- * The reconciler (lib/finance/reconcile.ts) reads it to align Shopify order truth
+ * The reconciler (lib/finance/reconcile/) reads it to align Shopify order truth
  * with membership/program truth.
  *
  * Reads go through @inventory/s-ingest-core's Prisma client, so rows come back in

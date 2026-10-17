@@ -201,7 +201,7 @@ async function reportViolation(v: LifecycleViolation): Promise<void> {
 /**
  * The reconciler sweep: heal the one safe,
  * unambiguous case (enrollment I1), report every remaining violation, return a
- * summary. Complementary to the order-driven `lib/finance/reconcile.ts` — this
+ * summary. Complementary to the order-driven `lib/finance/reconcile/` — this
  * one is invariant-driven.
  */
 export async function runLifecycleReconcile(): Promise<ReconcileSummary> {

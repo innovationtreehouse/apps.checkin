@@ -50,8 +50,8 @@ jest.mock('@/lib/shopifyRead/client', () => ({
 // raisePaymentException — the write path this route must never hit on a deny
 // or stale-row rejection.
 const raisePaymentExceptionMock = jest.fn();
-jest.mock('@/lib/finance/reconcile', () => ({
-    ...jest.requireActual('@/lib/finance/reconcile'),
+jest.mock('@/lib/finance/reconcile/exceptions', () => ({
+    ...jest.requireActual('@/lib/finance/reconcile/exceptions'),
     raisePaymentException: (...a: unknown[]) => raisePaymentExceptionMock(...a),
 }));
 

@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
-import { isPaid, isReversed, membershipVariantIdSet } from "@/lib/finance/reconcile";
+import { membershipVariantIdSet } from "@/lib/finance/reconcile/membership";
+import { isPaid, isReversed } from "@/lib/finance/reconcile/orderStatus";
 import * as mirror from "@/lib/shopifyRead/client";
 import { normalizeAuditData } from "@/lib/auditPayload";
 import { LIVE_PERSON } from "@/lib/person/filters";
