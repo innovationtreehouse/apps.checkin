@@ -90,7 +90,7 @@ describe("membership-ops/review page", () => {
         "/api/membership/reviews",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ processId: 100, result: "APPROVE", isMarkedVolunteer: false, subjectPersonIds: [1] }),
+          body: JSON.stringify({ processId: 100, result: "APPROVE", isMarkedVolunteerFamily: false, subjectPersonIds: [1] }),
         }),
       ),
     );
@@ -125,7 +125,7 @@ describe("membership-ops/review page", () => {
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/membership/reviews",
-        expect.objectContaining({ body: JSON.stringify({ processId: 101, result: "APPROVE", isMarkedVolunteer: false, subjectPersonIds: [1] }) }),
+        expect.objectContaining({ body: JSON.stringify({ processId: 101, result: "APPROVE", isMarkedVolunteerFamily: false, subjectPersonIds: [1] }) }),
       ),
     );
   });
@@ -146,7 +146,7 @@ describe("membership-ops/review page", () => {
         "/api/membership/reviews",
         expect.objectContaining({
           // A rejection is whole-process: it blocks the household without naming anyone.
-          body: JSON.stringify({ processId: 101, result: "REJECT", isMarkedVolunteer: false, note: "Record is concerning.", subjectPersonIds: [] }),
+          body: JSON.stringify({ processId: 101, result: "REJECT", isMarkedVolunteerFamily: false, note: "Record is concerning.", subjectPersonIds: [] }),
         }),
       ),
     );

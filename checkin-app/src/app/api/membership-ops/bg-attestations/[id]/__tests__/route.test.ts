@@ -32,7 +32,7 @@ jest.mock("@/lib/prisma", () => ({
 const mockSession = getServerSession as jest.Mock;
 const attestation = {
     id: 42, processId: 7, reviewerId: 1, subjectPersonId: null,
-    result: "APPROVE", note: null, isMarkedVolunteer: false, createdAt: new Date("2026-08-01T00:00:00Z"),
+    result: "APPROVE", note: null, isMarkedVolunteerFamily: false, createdAt: new Date("2026-08-01T00:00:00Z"),
 };
 
 function req(body?: unknown) {

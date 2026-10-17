@@ -124,13 +124,13 @@ describe('Membership BG review API', () => {
 
         // rev2 approves with volunteer checkbox -> advances
         as(rev2, { isBackgroundCheckReviewer: true });
-        const r2 = await ATTEST(req({ processId: proc.processId, result: 'APPROVE', isMarkedVolunteer: true, subjectPersonIds: [proc.leadId] }) as never);
+        const r2 = await ATTEST(req({ processId: proc.processId, result: 'APPROVE', isMarkedVolunteerFamily: true, subjectPersonIds: [proc.leadId] }) as never);
         expect((await r2.json()).outcome.status).toBe('PENDING_PAYMENT');
 
         const updated = await prisma.orgMembershipProcess.findUnique({ where: { id: proc.processId } });
         expect(updated?.status).toBe('PENDING_PAYMENT');
         const membership = await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId } });
-        expect(membership?.isVolunteer).toBe(true);
+        expect(membership?.isVolunteerFamily).toBe(true);
         const parent = await prisma.person.findFirst({ where: { householdId: proc.householdId, isHouseholdLead: true } });
         expect(parent?.lastBackgroundCheck).not.toBeNull();
 
@@ -151,7 +151,7 @@ describe('Membership BG review API', () => {
         as(rev2, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
         const membership = await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId } });
-        expect(membership?.isVolunteer).toBe(true);
+        expect(membership?.isVolunteerFamily).toBe(true);
     });
 
     it('does not apply a pre-designation to a lead whose address was never verified at sign-in', async () => {
@@ -162,7 +162,7 @@ describe('Membership BG review API', () => {
         as(rev2, { isBackgroundCheckReviewer: true });
         await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
         const membership = await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId } });
-        expect(membership?.isVolunteer).toBe(false);
+        expect(membership?.isVolunteerFamily).toBe(false);
     });
 
     it('a single REJECT blocks the application', async () => {

@@ -192,7 +192,7 @@ export const GET = withAuth(
             // date of birth, and every non-contact field on a household's OTHER
             // members (see the explicit householdMembers select above). Household
             // orgMembership (and isMember, derived from it) IS shown to ops: every
-            // field on that row — memberSince/status/isVolunteer — is
+            // field on that row — memberSince/status/isVolunteerFamily — is
             // @sensitivity:public, so it is standing, not finance detail. The
             // household itself is an explicit projection, not a row spread, so the
             // Household's own home address (line1/line2/city/state/postalCode) and

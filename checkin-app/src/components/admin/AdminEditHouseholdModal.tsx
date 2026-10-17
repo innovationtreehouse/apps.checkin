@@ -22,7 +22,7 @@ export type AdminHousehold = {
   emergencyContactPhone: string | null;
   householdMembers?: Array<{ id: number; name: string | null; email: string | null; dateOfBirth?: string | null }>;
   householdLeads?: Array<{ personId: number }>;
-  orgMembership?: { memberSince: string | null; isVolunteer?: boolean } | null;
+  orgMembership?: { memberSince: string | null; isVolunteerFamily?: boolean } | null;
 } & Partial<StructuredAddress>;
 
 type FormState = {
@@ -35,10 +35,10 @@ type FormState = {
   emergencyContactName: string;
   emergencyContactPhone: string;
   memberSince: string;
-  isVolunteer: boolean;
+  isVolunteerFamily: boolean;
 };
 
-const EMPTY: FormState = { name: "", line1: "", line2: "", city: "", state: "", postalCode: "", emergencyContactName: "", emergencyContactPhone: "", memberSince: "", isVolunteer: false };
+const EMPTY: FormState = { name: "", line1: "", line2: "", city: "", state: "", postalCode: "", emergencyContactName: "", emergencyContactPhone: "", memberSince: "", isVolunteerFamily: false };
 
 /** Deep-compares flat string form state. Exported for unit test. */
 export function isFormDirty(a: FormState, b: FormState): boolean {
@@ -94,7 +94,7 @@ export function AdminEditHouseholdModal({
           emergencyContactPhone: h.emergencyContactPhone || "",
           // date-only slice of the membership's join date (ISO → YYYY-MM-DD)
           memberSince: h.orgMembership?.memberSince ? h.orgMembership.memberSince.slice(0, 10) : "",
-          isVolunteer: !!h.orgMembership?.isVolunteer,
+          isVolunteerFamily: !!h.orgMembership?.isVolunteerFamily,
         };
         setForm(loaded);
         setInitial(loaded);
@@ -222,7 +222,7 @@ export function AdminEditHouseholdModal({
         headers: { "Content-Type": "application/json" },
         // Membership fields are hidden without a membership; don't submit them
         // either, or the server rejects the whole edit as membership-less.
-        body: JSON.stringify(hasMembership ? form : { ...form, memberSince: undefined, isVolunteer: undefined }),
+        body: JSON.stringify(hasMembership ? form : { ...form, memberSince: undefined, isVolunteerFamily: undefined }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -315,8 +315,8 @@ export function AdminEditHouseholdModal({
                 <Switch
                   label="Volunteer-only household"
                   description="Reduced-fee volunteer family (no youth enrolled). Editing this is recorded in the audit log."
-                  checked={form.isVolunteer}
-                  onChange={(e) => update({ isVolunteer: e.currentTarget.checked })}
+                  checked={form.isVolunteerFamily}
+                  onChange={(e) => update({ isVolunteerFamily: e.currentTarget.checked })}
                 />
               </>
             ) : (

@@ -64,11 +64,11 @@ export async function ensurePaymentLink(processId: number): Promise<{ amountCent
 
     // orgMembershipId is non-null for any process in PENDING_PAYMENT (a PERSON_BG
     // never enters payment); the guard above ensures we only reach here for those.
-    const membership = await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId! }, select: { isVolunteer: true } });
+    const membership = await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId! }, select: { isVolunteerFamily: true } });
     if (!membership) throw new PaymentError("not_found", "Membership not found.");
 
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    const amountCents = membership.isVolunteer ? settings?.volunteerMembershipFeeCents ?? 0 : settings?.standardMembershipFeeCents ?? 0;
+    const amountCents = membership.isVolunteerFamily ? settings?.volunteerMembershipFeeCents ?? 0 : settings?.standardMembershipFeeCents ?? 0;
 
     const variantId = settings?.orgMembershipVariantId;
     const storeDomain = config.shopifyStoreDomain();
@@ -80,7 +80,7 @@ export async function ensurePaymentLink(processId: number): Promise<{ amountCent
     // api/webhooks/shopify/route.ts). Long-term: gate the coupon to an
     // auto-managed Shopify customer segment of volunteer households so Shopify
     // enforces who can redeem it.
-    const discountCode = membership.isVolunteer ? settings?.volunteerDiscountCode ?? null : null;
+    const discountCode = membership.isVolunteerFamily ? settings?.volunteerFamilyDiscountCode ?? null : null;
     return { amountCents, checkoutUrl: buildMembershipCheckoutUrl(storeDomain, variantId, processId, discountCode) };
 }
 

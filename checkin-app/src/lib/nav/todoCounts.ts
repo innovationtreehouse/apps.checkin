@@ -479,7 +479,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         // a null orgMembershipYearBoundary means the renewal cycle has no anchor date.
         prisma.boardSettings.findUnique({
             where: { id: 1 },
-            select: { orgMembershipVariantId: true, volunteerDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true },
+            select: { orgMembershipVariantId: true, volunteerFamilyDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true },
         }),
         // Cron sweeps that stopped running, plus ones running but failing rows. The
         // schedule lives in a separate infra repo, so this is the app's only way to
@@ -488,7 +488,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
     ]);
     const settingsMisconfig =
         (boardSettings?.orgMembershipVariantId ? 0 : 1) +
-        (boardSettings?.volunteerDiscountCode ? 0 : 1) +
+        (boardSettings?.volunteerFamilyDiscountCode ? 0 : 1) +
         ((boardSettings?.bgRecheckMonths ?? 0) > 0 ? 0 : 1) +
         (boardSettings?.orgMembershipYearBoundary ? 0 : 1);
     return {

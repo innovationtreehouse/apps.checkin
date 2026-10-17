@@ -52,7 +52,7 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
         // unchanged field re-sent by the form never writes a spurious audit row.
         // Both "member since" and the volunteer-only flag live on the household's
         // Membership (1:1); fetch it once if either is being edited.
-        const editsMembership = (typeof body.memberSince === "string" && body.memberSince !== "") || typeof body.isVolunteer === "boolean";
+        const editsMembership = (typeof body.memberSince === "string" && body.memberSince !== "") || typeof body.isVolunteerFamily === "boolean";
         const membership = editsMembership ? await prisma.orgMembership.findUnique({ where: { householdId: id } }) : null;
 
         let memberSinceChange: { orgMembershipId: number; oldValue: Date; newValue: Date } | null = null;
@@ -74,25 +74,25 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
         }
 
         // Volunteer-only household: reduced-fee volunteer family, flagged on the membership.
-        let isVolunteerChange: { orgMembershipId: number; oldValue: boolean; newValue: boolean } | null = null;
-        if (typeof body.isVolunteer === "boolean") {
+        let isVolunteerFamilyChange: { orgMembershipId: number; oldValue: boolean; newValue: boolean } | null = null;
+        if (typeof body.isVolunteerFamily === "boolean") {
             if (!membership) {
                 return apiError("Household has no membership record", 400);
             }
-            if (membership.isVolunteer !== body.isVolunteer) {
-                isVolunteerChange = { orgMembershipId: membership.id, oldValue: membership.isVolunteer, newValue: body.isVolunteer };
+            if (membership.isVolunteerFamily !== body.isVolunteerFamily) {
+                isVolunteerFamilyChange = { orgMembershipId: membership.id, oldValue: membership.isVolunteerFamily, newValue: body.isVolunteerFamily };
             }
         }
 
         // The volunteer flag discounts the membership fee, so no actor may set it on their own household.
-        if (isVolunteerChange && await refuseSelfGrant(prisma, auth.user.id, { householdId: id }, {
+        if (isVolunteerFamilyChange && await refuseSelfGrant(prisma, auth.user.id, { householdId: id }, {
             table: "OrgMembership",
-            attempted: { isVolunteer: isVolunteerChange.newValue },
+            attempted: { isVolunteerFamily: isVolunteerFamilyChange.newValue },
         })) {
             return apiError(SELF_GRANT_REFUSAL_MESSAGE, 403);
         }
 
-        if (!editsHousehold && !memberSinceChange && !isVolunteerChange) {
+        if (!editsHousehold && !memberSinceChange && !isVolunteerFamilyChange) {
             return apiError("No fields to update provided", 400);
         }
 
@@ -147,21 +147,21 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
             });
         }
 
-        if (isVolunteerChange) {
+        if (isVolunteerFamilyChange) {
             await prisma.$transaction([
                 prisma.orgMembership.update({
-                    where: { id: isVolunteerChange.orgMembershipId },
-                    data: { isVolunteer: isVolunteerChange.newValue },
+                    where: { id: isVolunteerFamilyChange.orgMembershipId },
+                    data: { isVolunteerFamily: isVolunteerFamilyChange.newValue },
                 }),
                 prisma.auditLog.create({
                     data: {
                         actorId: auth.user.id,
                         action: "EDIT",
                         tableName: "OrgMembership",
-                        affectedEntityId: isVolunteerChange.orgMembershipId,
+                        affectedEntityId: isVolunteerFamilyChange.orgMembershipId,
                         secondaryAffectedEntity: id,
-                        oldData: { isVolunteer: isVolunteerChange.oldValue },
-                        newData: { isVolunteer: isVolunteerChange.newValue },
+                        oldData: { isVolunteerFamily: isVolunteerFamilyChange.oldValue },
+                        newData: { isVolunteerFamily: isVolunteerFamilyChange.newValue },
                     }
                 }),
             ]);

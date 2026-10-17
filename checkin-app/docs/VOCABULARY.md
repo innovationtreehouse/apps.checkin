@@ -57,7 +57,7 @@ Rules (the no-bare-member rule above applies throughout):
 | Concept | Meaning | Code | UI |
 |---|---|---|---|
 | **Treehouse Volunteer** | umbrella: a BG-checked, board-approved adult who volunteers — **program-optional** (a bookkeeper is one, with no program) | — | "volunteer" |
-| **Volunteer Family** | a Member Family with **no youth/student enrolled**, whose adults volunteer → **reduced membership fee** | `OrgMembership.isVolunteer` (rate) + `VolunteerDesignation` (email pre-auth) — **one concept** | "Volunteer-only family" |
+| **Volunteer Family** | a Member Family with **no youth/student enrolled**, whose adults volunteer → **reduced membership fee** | `OrgMembership.isVolunteerFamily` (rate) + `VolunteerDesignation` (email pre-auth) — **one concept** | "Volunteer-only family" |
 | **Program Volunteer** | a Treehouse Volunteer assigned to a **specific program** | `ProgramVolunteer` (`isCore` → **Core Volunteer**) | "Volunteer" / "Core Volunteer" |
 | **(attendance) volunteer bucket** | courtesy label for present adults — **not a role**; deliberately loose, UI-safe | derived in attendance | "Volunteers/Adults" |
 
