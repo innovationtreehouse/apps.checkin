@@ -7,20 +7,21 @@ import { notifications } from "@mantine/notifications";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
-import { formatDateOnly, toDatetimeLocal } from "@/lib/time";
+import { formatDateOnly, orgCalendarDay, toDatetimeLocal } from "@/lib/time";
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { AttendanceTabs } from "../AttendanceTabs";
+import { isCloseChoiceWarning, useCloseChoice } from "@/components/CloseChoiceDialog";
 
 import { PageLoader } from "@/components/ui/PageLoader";
 type Visit = { id: number; person?: { name: string }; event?: { name: string }; arrivedAt: string; departedAt?: string };
 
 // A household lead corrects their household members' visits on the same
-// trust-first terms as their own (design 1256_ATTENDANCE_CORRECTION_SURFACE.md
-// §3) — the server flags significant changes to the board.
+// trust-first terms as their own (docs/rules/attendance-checkin.md) — the server flags significant changes to the board.
 export default function HouseholdCheckins() {
   const { formatVisitRange, formatDateTime } = useOrgTime();
   const { ready, loading: authLoading, user } = useRequireRole([]);
   const [visits, setVisits] = useState<Visit[]>([]);
+  const { ask: askCloseChoice, dialog: closeChoiceDialog } = useCloseChoice();
   const [filterDate, setFilterDate] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
   const [arrivedAt, setArrived] = useState("");
@@ -58,11 +59,11 @@ export default function HouseholdCheckins() {
       const res = await fetch(`/api/attendance/manual/${id}`, init);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if (data.type === "warning" && data.forceCloseToken) {
-          if (window.confirm(data.error + "\n\nConfirm facility close?")) {
+        if (isCloseChoiceWarning(data)) {
+          const answer = await askCloseChoice(data, { removal: init.method === "DELETE" });
+          if (answer) {
             const body = JSON.parse(typeof init.body === "string" ? init.body : "{}");
-            body.forceCloseToken = data.forceCloseToken;
-            await submit(id, { ...init, body: JSON.stringify(body) }, okMessage);
+            await submit(id, { ...init, body: JSON.stringify({ ...body, ...answer }) }, okMessage);
           }
         } else {
           setError(data.error || "Correction failed.");
@@ -101,6 +102,7 @@ export default function HouseholdCheckins() {
 
   return (
     <PageContainer>
+      {closeChoiceDialog}
       <AttendanceTabs />
       <Group justify="space-between" align="center" wrap="wrap" mb="xs">
         <Title order={1}>Household Check-ins</Title>
@@ -108,7 +110,7 @@ export default function HouseholdCheckins() {
           type="date"
           label="Lookup Date"
           size="xs"
-          value={filterDate || new Date().toISOString().split('T')[0]}
+          value={filterDate || orgCalendarDay().toISOString().slice(0, 10)}
           onChange={(e) => setFilterDate(e.currentTarget.value)}
         />
       </Group>

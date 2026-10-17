@@ -168,6 +168,44 @@ describe("Merge Participants API", () => {
         expect(merged?.mergedIntoId).toBe(pKeepId);
     });
 
+    it("refuses with 409 when the keeper is merged away between the pre-check and the transaction", async () => {
+        const other = await prisma.person.create({ data: { name: "Other Keeper", email: "other-keeper@example.com", householdId } });
+        extraPersonIds.push(other.id);
+        const realTransaction = prisma.$transaction.bind(prisma) as (fn: unknown) => Promise<unknown>;
+        const spy = jest.spyOn(prisma, "$transaction").mockImplementation((async (fn: unknown) => {
+            await prisma.person.update({ where: { id: pKeepId }, data: { mergedIntoId: other.id } });
+            return realTransaction(fn);
+        }) as unknown as typeof prisma.$transaction);
+        try {
+            expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(409);
+        } finally {
+            spy.mockRestore();
+            await prisma.person.update({ where: { id: pKeepId }, data: { mergedIntoId: null } });
+        }
+        const merged = await prisma.person.findUnique({ where: { id: pMergeId }, select: { mergedIntoId: true } });
+        expect(merged?.mergedIntoId).toBeNull();
+    });
+
+    it("refuses with 400 when the merged-away record's household is denied between the pre-check and the transaction", async () => {
+        const otherHh = await makeHousehold("Merge Test Later Denied Household");
+        await prisma.person.update({ where: { id: pMergeId }, data: { householdId: otherHh } });
+        const realTransaction = prisma.$transaction.bind(prisma) as (fn: unknown) => Promise<unknown>;
+        const spy = jest.spyOn(prisma, "$transaction").mockImplementation((async (fn: unknown) => {
+            await prisma.orgMembership.upsert({ where: { householdId: otherHh }, create: { householdId: otherHh, status: "DENIED" }, update: {} });
+            return realTransaction(fn);
+        }) as unknown as typeof prisma.$transaction);
+        try {
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(400);
+            expect((await res.json()).error).toContain("DENIED");
+        } finally {
+            spy.mockRestore();
+        }
+        const merged = await prisma.person.findUnique({ where: { id: pMergeId }, select: { mergedIntoId: true, email: true } });
+        expect(merged?.mergedIntoId).toBeNull();
+        expect(merged?.email).toBe("merge@example.com");
+    });
+
     // #1456 phase 2b — the PersonMerge archive. The tombstone Person row is still
     // written here; 2b-3 deletes it and this table becomes the only record.
     describe("PersonMerge archive", () => {
@@ -673,6 +711,7 @@ describe("Merge Participants API", () => {
             // Refused before the transaction — nothing moved.
             expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
             expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.email).toBe("merge@example.com");
+            expect(await prisma.auditLog.count({ where: { actorId, tableName: "SelfGrantRefusal" } })).toBe(1);
         });
 
         it("403s when the actor shares a household with the merged-away record only", async () => {
@@ -689,6 +728,16 @@ describe("Merge Participants API", () => {
             await prisma.person.update({ where: { id: actorId }, data: { householdId } });
             mockGetServerSession.mockResolvedValue({
                 user: { id: actorId, email: "actor@example.com", isSysadmin: true, isBoardMember: true }
+            });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(403);
+            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+        });
+
+        it("403s an actor who resolves to nobody before anything moves (fail closed)", async () => {
+            mockGetServerSession.mockResolvedValue({
+                user: { id: actorId + 1_000_000, email: "ghost@example.com", isBoardMember: true }
             });
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
@@ -1124,6 +1173,20 @@ describe("Merge Participants API", () => {
             expect(await movedTallies()).toMatchObject({ noteAcks: 1 });
         });
 
+        // SET NULL: left behind, the agreement would name nobody as its signer.
+        it("moves the agreement signer (OrgMembershipProcess.zohoSignerPersonId)", async () => {
+            const process = await prisma.orgMembershipProcess.create({
+                data: { kind: "PERSON_AGREEMENT", status: "ACTIVE", zohoSignerPersonId: pMergeId, contractSignedAt: new Date() },
+            });
+            createdProcessIds.push(process.id);
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            expect((await prisma.orgMembershipProcess.findUnique({ where: { id: process.id } }))?.zohoSignerPersonId).toBe(pKeepId);
+            expect(await movedTallies()).toMatchObject({ zohoSigners: 1 });
+        });
+
         it("moves the attendance confirmation (Event.attendanceConfirmedById)", async () => {
             const event = await prisma.event.create({
                 data: {
@@ -1138,6 +1201,17 @@ describe("Merge Participants API", () => {
 
             expect((await prisma.event.findUnique({ where: { id: event.id } }))?.attendanceConfirmedById).toBe(pKeepId);
             expect(await movedTallies()).toMatchObject({ attendanceConfirmations: 1 });
+        });
+
+        it("moves the facility close's closer (FacilityClose.closedById)", async () => {
+            const close = await prisma.facilityClose.create({ data: { closedAt: new Date(), closedById: pMergeId, via: "KIOSK" } });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            expect((await prisma.facilityClose.findUnique({ where: { id: close.id } }))?.closedById).toBe(pKeepId);
+            expect(await movedTallies()).toMatchObject({ facilityCloses: 1 });
+            await prisma.facilityClose.delete({ where: { id: close.id } });
         });
 
         it("moves the trusted-adult board decision (TrustedAdultReview.decidedById)", async () => {
@@ -1281,6 +1355,62 @@ describe("Merge Participants API", () => {
             const granted = await prisma.personRole.findUnique({ where: { personId_role: { personId: actorId, role: "KEYHOLDER" } } });
             expect(granted?.grantedById).toBe(pKeepId);
             expect(await movedTallies()).toMatchObject({ roleGrants: 1 });
+        });
+
+        it("writes a PersonRole audit row for each role it moves", async () => {
+            await prisma.personRole.create({ data: { personId: pMergeId, role: "KEYHOLDER" } });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            const rows = await prisma.auditLog.findMany({
+                where: { tableName: "PersonRole", actorId, affectedEntityId: { in: [pKeepId, pMergeId] } },
+                select: { affectedEntityId: true, oldData: true, newData: true },
+            });
+            expect(rows).toHaveLength(2);
+            expect(rows).toEqual(expect.arrayContaining([
+                { affectedEntityId: pKeepId, oldData: { isKeyholder: false }, newData: { isKeyholder: true } },
+                { affectedEntityId: pMergeId, oldData: { isKeyholder: true }, newData: { isKeyholder: false } },
+            ]));
+        });
+
+        it("keeps the original grant metadata on a moved role", async () => {
+            const grantedAt = new Date("2024-02-03T04:05:06Z");
+            await prisma.personRole.create({ data: { personId: pMergeId, role: "KEYHOLDER", grantedById: actorId, grantedAt } });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            const row = await prisma.personRole.findUnique({ where: { personId_role: { personId: pKeepId, role: "KEYHOLDER" } } });
+            expect(row?.grantedById).toBe(actorId);
+            expect(row?.grantedAt.toISOString()).toBe(grantedAt.toISOString());
+        });
+
+        // Moving BOARD revokes it from the merged-away record, which only a board
+        // member may do: refused before anything is written.
+        it("refuses a sysadmin who is not on the board when the merged-away record holds BOARD", async () => {
+            await prisma.personRole.create({ data: { personId: pMergeId, role: "BOARD" } });
+            mockGetServerSession.mockResolvedValue({
+                user: { id: actorId, email: "actor@example.com", isSysadmin: true, isBoardMember: false },
+            });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(403);
+
+            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            expect(await prisma.personRole.count({ where: { personId: pMergeId, role: "BOARD" } })).toBe(1);
+            expect(await prisma.personRole.count({ where: { personId: pKeepId } })).toBe(0);
+        });
+
+        it("refuses to move BOARD onto a keeper whose household is DENIED", async () => {
+            await prisma.orgMembership.create({ data: { householdId, status: "DENIED" } });
+            await prisma.personRole.create({ data: { personId: pMergeId, role: "BOARD" } });
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(409);
+
+            expect((await prisma.person.findUnique({ where: { id: pMergeId } }))?.mergedIntoId).toBeNull();
+            expect(await prisma.personRole.count({ where: { personId: pKeepId, role: "BOARD" } })).toBe(0);
         });
 
         // The repoint AND the proof it isn't over-refused: two DIFFERENT reviewers each
@@ -1580,6 +1710,18 @@ describe("Merge Participants API", () => {
             expect({ status: after.status, cleared: after.bgClearedAt }).toEqual({ status: "PENDING_BG_REVIEW", cleared: null });
         });
 
+        it.each(["PENDING_PAYMENT", "PENDING_BG_CLEARANCE"] as const)("leaves a %s row a board reset sent back for two new approvals", async (status) => {
+            const process = await makeApplication(status, { contractSignedAt: new Date(), bgConsentAt: new Date(), ...(status === "PENDING_BG_CLEARANCE" ? { paidAt: new Date() } : {}) });
+            await prisma.auditLog.create({
+                data: { actorId, action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: process.id, oldData: { status: "BLOCKED" }, newData: { status, action: "board reset" } },
+            });
+
+            expect((await POST(mergeReq(pKeepId, pMergeId))).status).toBe(200);
+
+            const after = await reload(process.id);
+            expect({ status: after.status, cleared: after.bgClearedAt }).toEqual({ status, cleared: null });
+        });
+
         it("carries the check over a household that has a live intake note (#1499)", async () => {
             // A note is shown to the reviewers and gates nothing, so it does not gate this
             // either — the same rule submitIntake's fresh-check shortcut follows.
@@ -1635,7 +1777,7 @@ describe("Merge Participants API", () => {
         });
 
         it("activates a paid PENDING_BG_CLEARANCE household, without dating anyone's own check", async () => {
-            // The one state where the carried check is the SOLE block: dues are settled and
+            // The one state where the carried check is the SOLE block: the membership fee is settled and
             // the membership sits INACTIVE. A stamp that doesn't converge leaves it there.
             const process = await makeApplication("PENDING_BG_CLEARANCE", { contractSignedAt: new Date(), bgConsentAt: new Date(), paidAt: new Date() });
             const child = await prisma.person.create({ data: { name: "Adult Child", householdId, isHouseholdLead: false } });

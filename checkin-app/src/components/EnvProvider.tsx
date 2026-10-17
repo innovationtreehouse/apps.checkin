@@ -18,9 +18,11 @@ type EnvContextValue = {
     shopifyStoreDomain: string | null;
     /** True on ops-stg. Separate from checkinEnv, which staging deliberately collapses to 'prod' (see config.isStaging). */
     isStaging: boolean;
+    /** True when the optional CSV participant import module is switched on (config.csvImportEnabled). */
+    csvImportEnabled: boolean;
 };
 
-const CheckinEnvContext = createContext<EnvContextValue>({ checkinEnv: 'prod', shopifyStoreDomain: null, isStaging: false });
+const CheckinEnvContext = createContext<EnvContextValue>({ checkinEnv: 'prod', shopifyStoreDomain: null, isStaging: false, csvImportEnabled: false });
 
 export function EnvProvider({
     value,
@@ -49,6 +51,10 @@ export function useIsLocalInstance(): boolean {
 /** True on ops-stg — gates the staging banner. NOT a mock gate; staging keeps checkinEnv 'prod'. */
 export function useIsStagingInstance(): boolean {
     return useContext(CheckinEnvContext).isStaging;
+}
+
+export function useCsvImportEnabled(): boolean {
+    return useContext(CheckinEnvContext).csvImportEnabled;
 }
 
 /**

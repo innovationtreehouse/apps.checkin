@@ -88,10 +88,8 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
   const [manualArrived, setManualArrived] = useState("");
   const [manualDeparted, setManualDeparted] = useState("");
 
-  const fetchEvent = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/events/${id}`);
+  const loadEvent = useCallback(() => fetch(`/api/events/${id}`)
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setEventData(data);
@@ -103,16 +101,23 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
       } else {
         setMessage("Failed to load event.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, [id]);
+    }),
+  [id]);
+
+  const fetchEvent = useCallback(() => {
+    setLoading(true);
+    return loadEvent();
+  }, [loadEvent]);
 
   useEffect(() => {
-    if (ready) fetchEvent();
-  }, [ready, fetchEvent]);
+    if (ready) loadEvent();
+  }, [ready, loadEvent]);
 
   const handleConfirmAttendance = async () => {
     setActionLoading(true);

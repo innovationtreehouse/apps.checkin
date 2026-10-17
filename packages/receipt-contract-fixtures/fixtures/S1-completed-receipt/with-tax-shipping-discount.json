@@ -1,0 +1,31 @@
+{
+  "receiptId": "R-1001",
+  "orgId": "org-1",
+  "submitterId": 7,
+  "vendorName": "Home Depot",
+  "receiptNumber": "INV-555",
+  "orderNumber": null,
+  "currency": "USD",
+  "taxCents": 80,
+  "shippingCents": 500,
+  "discountCents": 100,
+  "receiptTotalCents": 1480,
+  "receiptDate": "2026-06-01",
+  "needsReimbursement": false,
+  "reimbursementFor": null,
+  "submittedAt": "2026-06-01T12:00:00.000Z",
+  "lineItems": [
+    {
+      "receiptLineItemId": 1,
+      "lineNumber": 1,
+      "description": "Item",
+      "partNumber": "PN-1",
+      "manufacturer": "Acme",
+      "quantity": 1,
+      "unitPriceCents": 1000,
+      "totalPriceCents": 1000,
+      "isDelayed": false,
+      "gtin13": "0001234500017"
+    }
+  ]
+}

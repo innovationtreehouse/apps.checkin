@@ -34,17 +34,13 @@ export type UsageBehavior =
 export { ResolvedInventoryDeltaSchema, ResolvedInventoryDeltaLineItemSchema } from "./resolved-inventory-delta";
 export type { ResolvedInventoryDelta, ResolvedInventoryDeltaLineItem } from "./resolved-inventory-delta";
 
-export { CompletedReceiptSchema, CompletedReceiptLineItemSchema } from "./completed-receipt";
+export { CompletedReceiptSchema, CompletedReceiptLineItemSchema, MAX_LINE_QUANTITY } from "./completed-receipt";
 export type { CompletedReceipt, CompletedReceiptLineItem } from "./completed-receipt";
 
 export {
   RECEIPT_CONTRACT_VERSION,
-  SCHEMA_VERSION_HEADER,
-  IDEMPOTENCY_KEY_HEADER,
   majorVersion,
   isContractVersionCompatible,
-  expenseApplyIdempotencyKey,
-  inventoryApplyIdempotencyKey,
 } from "./contract";
 
 // S5 — global-catalog → consumers org-event contract

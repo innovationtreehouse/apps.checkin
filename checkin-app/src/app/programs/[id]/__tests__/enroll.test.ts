@@ -1,4 +1,4 @@
-import { aggregateEnrollOutcomes, buildShopifyCheckoutUrl, type EnrollOutcome } from '../enroll';
+import { aggregateEnrollOutcomes, buildShopifyCheckoutUrl, findRepeatPayments, type EnrollOutcome } from '../enroll';
 
 describe('aggregateEnrollOutcomes', () => {
     it('collects every ok participant as enrolled with no errors', () => {
@@ -79,5 +79,29 @@ describe('buildShopifyCheckoutUrl', () => {
         expect(url).toBe(
             'https://shop.example.com/cart/gid123:1?attributes[CheckMeIn_Account_ID]=11&attributes[Program_ID]=7'
         );
+    });
+});
+
+describe('findRepeatPayments', () => {
+    const names: Record<number, string> = { 11: 'Ada', 12: 'Ben' };
+    const nameOf = (id: number) => names[id];
+
+    it('does not flag a new child whose sibling is already paid', () => {
+        expect(findRepeatPayments([12], [{ personId: 11, status: 'ACTIVE' }], nameOf)).toEqual([]);
+    });
+
+    it('flags the same child already paid', () => {
+        expect(findRepeatPayments([11, 12], [{ personId: 11, status: 'ACTIVE' }], nameOf))
+            .toEqual([{ personId: 11, name: 'Ada' }]);
+    });
+
+    // Resuming an abandoned checkout is the normal path, not a repeat payment.
+    it('does not flag a child whose enrollment is still pending', () => {
+        expect(findRepeatPayments([12], [{ personId: 12, status: 'PENDING' }], nameOf)).toEqual([]);
+    });
+
+    it('falls back to the roster name, then a generic label', () => {
+        expect(findRepeatPayments([13], [{ personId: 13, status: 'ACTIVE', person: { name: 'Cy' } }], nameOf)[0].name).toBe('Cy');
+        expect(findRepeatPayments([14], [{ personId: 14, status: 'ACTIVE' }], nameOf)[0].name).toBe('This participant');
     });
 });

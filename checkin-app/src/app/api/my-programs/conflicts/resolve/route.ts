@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { intervalsOverlap } from "@/lib/attendanceConflicts";
 import { apiError } from "@/lib/api-response";
 import { deleteSignificance } from "@/lib/visit/significance";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 /**
  * Resolve an attendance conflict by deleting one of the duplicate Visit rows.
@@ -71,7 +72,7 @@ export const POST = withAuth({}, async (req, auth) => {
     }
 
     // Tombstone, never a row removal — the same reversible delete every other
-    // visit-write path takes (design §3). Resolving a conflict is a judgement
+    // visit-write path takes. Resolving a conflict is a judgement
     // about which of two overlapping records is real; it must be possible to
     // back that judgement out.
     await tx.visit.update({
@@ -105,6 +106,7 @@ export const POST = withAuth({}, async (req, auth) => {
   }, { maxWait: 5000, timeout: 15000 });
 
   if (failure) return apiError(failure.error, failure.status);
+  invalidateAttendanceCache();
 
   return NextResponse.json({ success: true, deletedVisitId: visit.id });
 });

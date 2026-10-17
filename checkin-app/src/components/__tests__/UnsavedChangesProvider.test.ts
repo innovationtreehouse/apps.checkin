@@ -1,14 +1,14 @@
 import { shallowEqual } from "@/components/UnsavedChangesProvider";
 
 describe("shallowEqual (unsaved-changes dirty compare)", () => {
-  const base = { dues: "10.00", months: "12", code: "", boundary: "" };
+  const base = { fee: "10.00", months: "12", code: "", boundary: "" };
 
   it("is equal to an identical snapshot (clean form → not dirty)", () => {
     expect(shallowEqual(base, { ...base })).toBe(true);
   });
 
   it("detects a changed value (edited field → dirty)", () => {
-    expect(shallowEqual(base, { ...base, dues: "20.00" })).toBe(false);
+    expect(shallowEqual(base, { ...base, fee: "20.00" })).toBe(false);
   });
 
   it("does not coerce types ('12' !== 12)", () => {

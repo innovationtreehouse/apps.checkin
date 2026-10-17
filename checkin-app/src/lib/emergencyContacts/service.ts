@@ -4,6 +4,7 @@ import { identityKeys, sameIdentity, identityMatchReason, cleanEmail, normalizeP
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import type { DbClient } from "@/lib/db-client";
 import { LIVE_PERSON } from "@/lib/person/filters";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 /**
  * Emergency-contact write/read model. Enforces the not-a-household-member rule
@@ -126,7 +127,7 @@ export async function createContact(db: Db, householdId: number, input: ContactI
     requireComplete(input);
     await assertExternal(db, householdId, input);
     const c = cleaned(input);
-    return db.emergencyContact.create({
+    const created = await db.emergencyContact.create({
         data: {
             householdId,
             name: c.name,
@@ -138,6 +139,9 @@ export async function createContact(db: Db, householdId: number, input: ContactI
             emailNorm: c.emailNorm,
         },
     });
+    // The privileged attendance roster carries present households' contacts.
+    invalidateAttendanceCache();
+    return created;
 }
 
 export async function updateContact(db: Db, householdId: number, contactId: number, input: ContactInput): Promise<EmergencyContact> {
@@ -147,7 +151,7 @@ export async function updateContact(db: Db, householdId: number, contactId: numb
     await assertExternal(db, householdId, input);
     const c = cleaned(input);
     // Editing re-confirms the contact: clear any stale conflict flag.
-    return db.emergencyContact.update({
+    const updated = await db.emergencyContact.update({
         where: { id: contactId },
         data: {
             name: c.name,
@@ -161,12 +165,15 @@ export async function updateContact(db: Db, householdId: number, contactId: numb
             conflictedAt: null,
         },
     });
+    invalidateAttendanceCache();
+    return updated;
 }
 
 export async function deleteContact(db: Db, householdId: number, contactId: number): Promise<void> {
     const existing = await db.emergencyContact.findFirst({ where: { id: contactId, householdId } });
     if (!existing) throw new EmergencyContactError("not_found", "Emergency contact not found.");
     await db.emergencyContact.delete({ where: { id: contactId } });
+    invalidateAttendanceCache();
 }
 
 /**
@@ -227,8 +234,11 @@ export async function upsertPrimaryContact(
         ...(complete && { conflictParticipantId: null, conflictedAt: null }),
     };
 
-    if (primary) return db.emergencyContact.update({ where: { id: primary.id }, data });
-    return db.emergencyContact.create({ data: { householdId, priority: 0, ...data } });
+    const saved = primary
+        ? await db.emergencyContact.update({ where: { id: primary.id }, data })
+        : await db.emergencyContact.create({ data: { householdId, priority: 0, ...data } });
+    invalidateAttendanceCache();
+    return saved;
 }
 
 export function listContacts(db: Db, householdId: number): Promise<EmergencyContact[]> {
@@ -282,6 +292,9 @@ export async function reconcileHouseholdConflicts(db: Db, householdId: number): 
             await db.emergencyContact.update({ where: { id: ec.id }, data: { conflictParticipantId: match.id, conflictedAt: new Date() } });
         }
     }
+    // Inside a caller's transaction this runs pre-commit; those callers
+    // invalidate again after commit.
+    invalidateAttendanceCache();
     return freshlyFlagged;
 }
 

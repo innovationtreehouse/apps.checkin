@@ -36,9 +36,9 @@ export default function PublicProgramsDirectory() {
   // tone as the global DbWakeNotice banner.
   const [slowLoad, setSlowLoad] = useState(false);
   useEffect(() => {
-    if (!loading) { setSlowLoad(false); return; }
+    if (!loading) return;
     const t = setTimeout(() => setSlowLoad(true), 4000);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); setSlowLoad(false); };
   }, [loading]);
   const [message, setMessage] = useState("");
   const [activeOnly, setActiveOnly] = useState(true);

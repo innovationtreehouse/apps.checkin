@@ -17,10 +17,10 @@
 import {
     membershipValidThrough,
     isActiveOrgMemberThrough,
-    isDuesSettled,
-    isDuesSettledThrough,
+    isMembershipFeeSettled,
+    isMembershipFeeSettledThrough,
     ACTIVE_ORG_MEMBER_PERSON_WHERE,
-    DUES_SETTLED_PERSON_WHERE,
+    MEMBERSHIP_FEE_SETTLED_PERSON_WHERE,
     programCoverageDate,
 } from '@/lib/orgMembership';
 import { nextBoundary, membershipYearCycle, coveredThrough } from '@/lib/membership/renewal';
@@ -88,7 +88,7 @@ describe('membershipValidThrough', () => {
         expect(where.stageEnteredAt).toEqual({ gte: new Date(Date.UTC(2026, 9, 25)) });
     });
 
-    it('a membership with no dues-paid process is not settled, however recently it began (bare manual grant)', async () => {
+    it('a membership with no fee-paid process is not settled, however recently it began (bare manual grant)', async () => {
         prisma.household.findUnique.mockResolvedValue({ orgMembership: { id: 7, status: 'ACTIVE', memberSince: new Date(Date.UTC(2026, 11, 1)) } });
         prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: BOUNDARY });
         prisma.orgMembershipProcess.findFirst.mockResolvedValue(null);
@@ -172,19 +172,19 @@ describe('isActiveOrgMemberThrough', () => {
     });
 });
 
-// #1397: a household that has paid its dues but is still waiting on background
+// #1397: a household that has paid its membership fee but is still waiting on background
 // clearance gets the MEMBER rate and members-only programs. The widening is
 // program-scoped — every other "is this a member?" question stays ACTIVE-only.
 describe('program access for a paid, not-yet-cleared household', () => {
     const PAID_PENDING = { orgMembership: { id: 7, status: 'NONE', memberSince: OLD_MEMBER_SINCE, processes: [{ id: 3 }] } };
 
-    it('DUES_SETTLED_PERSON_WHERE admits ACTIVE and paid-pending-clearance; ACTIVE_ORG_MEMBER_PERSON_WHERE admits only ACTIVE', () => {
-        expect(DUES_SETTLED_PERSON_WHERE).toEqual({
+    it('MEMBERSHIP_FEE_SETTLED_PERSON_WHERE admits ACTIVE and paid-pending-clearance; ACTIVE_ORG_MEMBER_PERSON_WHERE admits only ACTIVE', () => {
+        expect(MEMBERSHIP_FEE_SETTLED_PERSON_WHERE).toEqual({
             household: {
                 orgMembership: {
                     OR: [
                         { status: 'ACTIVE' },
-                        { processes: { some: { status: { in: ['PENDING_BG_CLEARANCE'] }, paidAt: { not: null } } } },
+                        { status: { in: ['NONE', 'REVOKED'] }, processes: { some: { status: { in: ['PENDING_BG_CLEARANCE'] }, paidAt: { not: null } } } },
                     ],
                 },
             },
@@ -192,11 +192,11 @@ describe('program access for a paid, not-yet-cleared household', () => {
         expect(ACTIVE_ORG_MEMBER_PERSON_WHERE).toEqual({ household: { orgMembership: { status: 'ACTIVE' } } });
     });
 
-    it('isDuesSettled queries with the pricing predicate, not the ACTIVE one', async () => {
+    it('isMembershipFeeSettled queries with the pricing predicate, not the ACTIVE one', async () => {
         prisma.person.findFirst.mockResolvedValue({ id: 1 });
-        expect(await isDuesSettled(1)).toBe(true);
+        expect(await isMembershipFeeSettled(1)).toBe(true);
         expect(prisma.person.findFirst).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { AND: [{ id: 1 }, DUES_SETTLED_PERSON_WHERE] } }),
+            expect.objectContaining({ where: { AND: [{ id: 1 }, MEMBERSHIP_FEE_SETTLED_PERSON_WHERE] } }),
         );
     });
 
@@ -209,7 +209,7 @@ describe('program access for a paid, not-yet-cleared household', () => {
         expect(await membershipValidThrough(1, now)).toEqual(coveredThrough(membershipYearCycle(BOUNDARY, now), false));
     });
 
-    it('isDuesSettledThrough honours the same coverage window as an ACTIVE member', async () => {
+    it('isMembershipFeeSettledThrough honours the same coverage window as an ACTIVE member', async () => {
         prisma.person.findFirst.mockResolvedValue({ id: 1 });
         prisma.person.findUnique.mockResolvedValue({ householdId: 5 });
         prisma.household.findUnique.mockResolvedValue(PAID_PENDING);
@@ -218,8 +218,15 @@ describe('program access for a paid, not-yet-cleared household', () => {
 
         const validThrough = coveredThrough(membershipYearCycle(BOUNDARY, new Date()), false);
         const dayAfter = new Date(Date.UTC(validThrough.getUTCFullYear(), validThrough.getUTCMonth(), validThrough.getUTCDate() + 1));
-        expect(await isDuesSettledThrough(1, validThrough)).toBe(true);
-        expect(await isDuesSettledThrough(1, dayAfter)).toBe(false);
+        expect(await isMembershipFeeSettledThrough(1, validThrough)).toBe(true);
+        expect(await isMembershipFeeSettledThrough(1, dayAfter)).toBe(false);
+    });
+
+    it.each([['NONE', true], ['REVOKED', true], ['DENIED', false]])('a %s household with a paid-pending process gets a horizon: %s', async (status, expected) => {
+        prisma.household.findUnique.mockResolvedValue({ orgMembership: { ...PAID_PENDING.orgMembership, status } });
+        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: BOUNDARY });
+        prisma.orgMembershipProcess.findFirst.mockResolvedValue(null);
+        expect((await membershipValidThrough(1, new Date())) !== null).toBe(expected);
     });
 
     it('a household with neither ACTIVE nor a paid-pending process still gets no horizon', async () => {
@@ -229,24 +236,24 @@ describe('program access for a paid, not-yet-cleared household', () => {
     });
 });
 
-// coversThrough (private, exercised here via isDuesSettledThrough) deliberately
-// fails OPEN when a coverage horizon can't be computed: a dues-settled
+// coversThrough (private, exercised here via isMembershipFeeSettledThrough) deliberately
+// fails OPEN when a coverage horizon can't be computed: a fee-settled
 // household still gets member pricing even though the board hasn't configured
 // orgMembershipYearBoundary, rather than losing member pricing for a settings gap.
-describe('isDuesSettledThrough fail-open when no coverage horizon is configured', () => {
-    it('dues-settled household + no board-configured boundary → covers any through-date', async () => {
-        prisma.person.findFirst.mockResolvedValue({ id: 1 }); // dues settled
+describe('isMembershipFeeSettledThrough fail-open when no coverage horizon is configured', () => {
+    it('fee-settled household + no board-configured boundary → covers any through-date', async () => {
+        prisma.person.findFirst.mockResolvedValue({ id: 1 }); // membership fee settled
         prisma.person.findUnique.mockResolvedValue({ householdId: 5 });
         prisma.household.findUnique.mockResolvedValue(ACTIVE_HH);
         prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
 
         const farFuture = new Date(Date.UTC(2099, 0, 1));
-        expect(await isDuesSettledThrough(1, farFuture)).toBe(true);
+        expect(await isMembershipFeeSettledThrough(1, farFuture)).toBe(true);
     });
 
     it('a program with no coverage date (through === null) → status alone decides', async () => {
-        prisma.person.findFirst.mockResolvedValue({ id: 1 }); // dues settled
-        expect(await isDuesSettledThrough(1, null)).toBe(true);
+        prisma.person.findFirst.mockResolvedValue({ id: 1 }); // membership fee settled
+        expect(await isMembershipFeeSettledThrough(1, null)).toBe(true);
     });
 });
 

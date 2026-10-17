@@ -24,13 +24,14 @@ export const GET = withAuth({}, async (_req, auth) => {
 
     const open = await prisma.orgMembershipProcess.findFirst({
         where: { kind: "RENEWAL", status: "PENDING_RENEWAL", orgMembership: { householdId: user.householdId } },
-        select: { id: true },
+        select: { createdAt: true },
     });
     if (!open) return NextResponse.json({ renewalDue: false });
 
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    // Due at the boundary the renewal was opened for, which stays put once it passes.
     const dueDate = settings?.orgMembershipYearBoundary
-        ? nextBoundary(settings.orgMembershipYearBoundary, new Date()).toISOString().slice(0, 10)
+        ? nextBoundary(settings.orgMembershipYearBoundary, open.createdAt).toISOString().slice(0, 10)
         : null;
 
     return NextResponse.json({ renewalDue: true, dueDate });

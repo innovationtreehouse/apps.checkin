@@ -51,7 +51,7 @@ import { join, relative, sep } from 'node:path';
  *      join table carries no `person:` key at all —
  *        prisma.programParticipant.count({ where: { programId } })
  *      matches neither pattern above, yet a tombstone's left-behind enrollment row
- *      (merge/route.ts leaves colliding rows on the tombstone) inflates that number
+ *      (lib/person/merge/execute.ts leaves colliding rows on the tombstone) inflates that number
  *      and can trip a capacity gate, without any Person data ever being read. So a
  *      join-table list/count is a site in its own right: it must filter through the
  *      `person` relation (`where: { person: LIVE_PERSON }`) or be allowlisted.
@@ -68,9 +68,9 @@ import { join, relative, sep } from 'node:path';
  *   resolved, so they carry the same reasoning (only `updateMany`/`deleteMany`,
  *   whose where is an unrestricted filter, can sweep tombstones in unnoticed).
  *   This is also exactly the shape merge/analyze/
- *   scan (app/api/membership-ops/participants/merge{,/analyze}/route.ts,
+ *   scan (lib/person/merge/execute.ts, app/api/membership-ops/participants/merge/analyze/route.ts,
  *   app/api/scan/route.ts) use to load the specific record they operate ON —
- *   which is why none of those three routes needs an ALLOWLIST entry: they
+ *   which is why none of those three files needs an ALLOWLIST entry: they
  *   never appear as a scanner hit in the first place. `findFirst` is NOT
  *   excluded by function name — even when it happens to carry an `id:` equality
  *   clause (functionally the same one-row shape) it still needs a human
@@ -130,14 +130,17 @@ const PERSON_RELATION_NAMES = [
  *     would falsify history, not protect anyone.
  */
 const ALLOWLIST: Record<string, string> = {
-    'lib/presence/project.ts': "flushParkedClosed's include pulls each parked event's person to project it. A tombstone can only appear in the merge-vs-flush race window (merge/route.ts repoints PresenceEvent.personId), and the loop resolves it one hop to the keeper before projecting — filtering the include would instead strand the parked event unflushed forever. The keyholder-presence check in this file DOES carry LIVE_PERSON inline.",
     // ── sweeps / reconcilers (rule: "must still see tombstone rows") ──────────
-    'lib/lifecycleDrift.ts': 'I1 auto-heal (releases stranded inventoryHeldAt). It never reads Person data — scanLifecycleViolations/runLifecycleReconcile read and update programParticipant fields (personId, status, inventoryHeldAt) directly — but its programParticipant.findMany calls are class-3 sites. Filtering them would be a REGRESSION, not a fix: a merge deliberately leaves colliding enrollment rows on the tombstone (merge/route.ts step 4), and those are exactly the rows whose holds need releasing. Hidden from this sweep they become immortal and leak held Shopify inventory forever. Same sweep rationale as the two cron entries below.',
+    'lib/lifecycleDrift.ts': 'I1 auto-heal (releases stranded inventoryHeldAt). It never reads Person data — scanLifecycleViolations/runLifecycleReconcile read and update programParticipant fields (personId, status, inventoryHeldAt) directly — but its programParticipant.findMany calls are class-3 sites. Filtering them would be a REGRESSION, not a fix: a merge deliberately leaves colliding enrollment rows on the tombstone (lib/person/merge/execute.ts moveJoinTables), and those are exactly the rows whose holds need releasing. Hidden from this sweep they become immortal and leak held Shopify inventory forever. Same sweep rationale as the two cron entries below.',
     'app/api/cron/pending-participants/route.ts': '7-day clock → withdrawAndReleaseHold — must see a tombstoned participant to release its hold.',
     'app/api/cron/scholarship-grace-expiry/route.ts': 'Grace cutoff sweep — must see a tombstoned participant to release its held seat.',
-    'lib/finance/reconcile.ts': 'Payment reconciler: a Shopify order must still settle a PENDING programParticipant "left" on a tombstone by a merge collision (merge/route.ts step 4) — that row has no other owner to settle it.',
+    'lib/finance/reconcile/program.ts': 'Payment reconciler: a Shopify order must still settle a PENDING programParticipant "left" on a tombstone by a merge collision (lib/person/merge/execute.ts moveJoinTables) — that row has no other owner to settle it.',
+    'lib/finance/reconcile/reversals.ts': 'Payment reconciler: a Shopify order must still settle a PENDING programParticipant "left" on a tombstone by a merge collision (lib/person/merge/execute.ts moveJoinTables) — that row has no other owner to settle it.',
+    'lib/finance/reconcile/membership.ts': 'Payment reconciler, membership pass: the order-email → household-lead fallback for orders that carry no Membership_Process_ID, under the same rationale as reconcile/program.ts.',
     'app/api/finance-ops/s-read/match-audit/track/route.ts': 'Order-claim reconciliation check: `programParticipant.findFirst({ where: { shopifyOrderId } })` asks "has any enrollment already claimed this order". A merge-collision row left on a tombstone still holds the order — filtering it would falsely report the order unmatched and raise a spurious payment exception.',
-    'lib/scan-service.ts': 'Facility force-checkout sweep (last keyholder leaving): must see every open visit, including a merge-orphaned tombstone\'s (merge/route.ts leaves a concurrently-open visit in place), or it never gets force-closed.',
+    'lib/attendance/scan.ts': 'Facility force-checkout sweep (last keyholder leaving): must see every open visit, including a merge-orphaned tombstone\'s (lib/person/merge/execute.ts leaves a concurrently-open visit in place), or it never gets force-closed.',
+    'lib/attendance/close.ts': 'Facility force-checkout sweep (last keyholder leaving): must see every open visit, including a merge-orphaned tombstone\'s (lib/person/merge/execute.ts leaves a concurrently-open visit in place), or it never gets force-closed.',
+    'lib/attendance/keyholderGuard.ts': 'Facility force-checkout sweep (last keyholder leaving): must see every open visit, including a merge-orphaned tombstone\'s (lib/person/merge/execute.ts leaves a concurrently-open visit in place), or it never gets force-closed.',
     'app/api/cron/nightly/route.ts': 'Nightly force-checkout sweep: must see every open visit, including a merge-orphaned tombstone\'s, or a stranded open visit is never released (same rationale as lifecycleDrift.ts\'s I1 heal).',
 
     // ── structural mass writes (the write rule\'s second exception) ────────────
@@ -145,7 +148,6 @@ const ALLOWLIST: Record<string, string> = {
 
     // ── id-scoped findFirst (one-row shape, same boundary as findUnique-by-id) ─
     'lib/orgMembership.ts': 'isActiveOrgMember ANDs an explicit `id: personId` into the where — at most one row, same shape as findUnique-by-id.',
-    'app/api/nav/todo-counts/route.ts': 'isLead check ANDs `id: user.id` (the caller\'s own session id) into the where — at most one row, same shape as findUnique-by-id.',
     'app/api/programs/[id]/participants/route.ts': 'leadRecord check ANDs `id: currentUserId` (the caller\'s own session id) into the where — at most one row, same shape as findUnique-by-id.',
     'app/api/programs/[id]/request-payment-plan/route.ts': 'leadRecord check ANDs `id: currentUserId` (the caller\'s own session id) into the where — at most one row, same shape as findUnique-by-id. (This file also nests `person: true` off a programParticipant `findUnique` by compound key — same excluded shape as a bare findUnique-by-id.)',
     'lib/trusted-adult/service.ts': 'assertHouseholdLead ANDs an explicit `id: actorId` into the where — at most one row, same shape as findUnique-by-id.',
@@ -159,6 +161,7 @@ const ALLOWLIST: Record<string, string> = {
     // to-one include, so the only available decision is whether the PARENT row
     // should exist at all, which belongs to the parent query.
     'app/api/membership/reviews/route.ts': 'The household-lead pull now filters LIVE_PERSON. `subjectPerson` is a to-one pinned by OrgMembershipProcess.subjectPersonId. NEEDS REVIEW: whether a PERSON_BG process whose subject has since been merged away should still sit in the reviewer queue is a lifecycle question about the PROCESS (cancel/retarget it), not a filter on this read — left as-is rather than guessed at.',
+    'app/api/events/[id]/route.ts': 'GET roster: `attendanceConfirmedBy` is a to-one Person pinned by Event.attendanceConfirmedById — it names who confirmed attendance, a historical record that must still resolve after a merge. The roster lists themselves filter LIVE_PERSON.',
     'lib/membership/review.ts': 'The BG stamp writes by explicit id (`where: { id: { in: cleared } }`), and every id reaches it through `liveHouseholdLeadIds`, which filters LIVE_PERSON — a tombstone can never be named as a check subject. The remaining hits are to-one relations selected for eligibility math, not display: `subjectPerson` (the process\'s own subject, for the conflict-of-interest household compare) and `reviewer` on an existing attestation (the actor who already voted — a historical record that must still resolve, or the same-household guard silently stops applying to it).',
 
     // ── person-scoped join reads (class 3, one already-identified person) ─────
@@ -169,14 +172,14 @@ const ALLOWLIST: Record<string, string> = {
     'lib/attendanceTransitions.ts': 'getRelevantProgramIds pins `personId: participantId` — the enrollment/volunteer rows of one already-identified person, used to pick their associated event on scan. Not a roster, not a count.',
 
     // ── authz target checks (class 3, never rendered or counted) ──────────────
-    'app/api/events/[id]/route.ts': 'IDOR guard on an attendance correction\'s target: two findFirsts pinned to `personId: targetId` asking "is this one target enrolled or volunteering in this event\'s program". One-row shape, no list, no count, never rendered.',
+    'lib/programs/events.ts': 'IDOR guard on an attendance correction\'s target: two findFirsts pinned to `personId: targetId` asking "is this one target enrolled or volunteering in this event\'s program". One-row shape, no list, no count, never rendered.',
 
     // ── historical / audit trail (showing a since-merged identity is correct) ──
     'app/api/membership-audit/bg-attestations/route.ts': 'BG attestation history: three FK-pinned to-one Person relations (reviewer, attestation.subjectPerson, process.subjectPerson) resolve names for historical attestation records. A reviewer or subject who has since been merged must still appear in the audit trail.',
     'app/api/system-status/audit-log/route.ts': 'Resolves actor names for audit-log rows by their recorded actorId — a historical record must still name an actor who has since been merged away.',
     'lib/finance/matchAudit.ts': 'Mixed file: the reconciliation match itself filters LIVE_PERSON (line ~280). Separately, resolving certifier/comper NAMES for the audit report needs any historical actor, including one since merged — a report-only id→name lookup, not a live roster.',
     'app/api/finance-ops/payments/route.ts': 'Resolves names/emails for a fixed set of person ids already attached to processed payment records — historical financial records must still name a payer who has since been merged. (The queue\'s household-lead contact pull is the opposite case — a live address to chase — and does filter LIVE_PERSON.)',
-    'app/api/facility/trends/route.ts': 'Visit-history report: shows who was physically present at the time, including the rare merge-orphaned open visit (see lib/scan-service.ts) — historical accuracy, not a live roster.',
+    'app/api/facility/trends/route.ts': 'Visit-history report: shows who was physically present at the time, including the rare merge-orphaned open visit (see lib/attendance/close.ts) — historical accuracy, not a live roster.',
     'app/api/facility/visits/route.ts': 'Recent-visits log: same historical-accuracy rationale as facility/trends.',
     'app/api/facility/badges/route.ts': 'Raw badge-scan log: same historical-accuracy rationale as facility/trends.',
     'app/api/system-status/unsynced-scans/route.ts': 'Parked-scan review queue over the same RawBadgeLog rows as facility/badges, so the historical-accuracy rationale carries — but filtering here would be worse than a ghost: a parked row is WORK, and hiding it because its person was later merged would strand the scan unreviewed forever, which is the invariant-3 hole this surface exists to close. The name shown resolves through the live relation, so a merged person appears under the surviving identity — which is the one the reviewer will find in the manual-visit tool anyway.',
@@ -189,7 +192,7 @@ const ALLOWLIST: Record<string, string> = {
     'app/api/shop/certifications/route.ts': 'Scanner is textually blind to a VARIABLE-held where. The "All Assignments" grid — the only many-person list here — spells out `where: { person: LIVE_PERSON }` inline; the second findMany passes `whereClause`, whose two branches are `{ toolId, person: LIVE_PERSON }` (list) and `{ personId: targetUserId }` (one already-identified person). Both covered, neither visible in the captured argument object.',
 
     // ── dev-only tooling (no production / user-facing effect) ─────────────────
-    'app/api/auth/dev-personas/route.ts': 'Dev-only persona picker (config.isDevInstance() gated), scoped to `email: { endsWith: "@example.com" }` — a merge tombstone\'s email is always rewritten to merged-*@deleted.invalid (merge/route.ts step 1 CAS), so it can never match this domain filter.',
+    'app/api/auth/dev-personas/route.ts': 'Dev-only persona picker (config.isDevInstance() gated), scoped to `email: { endsWith: "@example.com" }` — a merge tombstone\'s email is always rewritten to merged-*@deleted.invalid (lib/person/merge/execute.ts clearTombstoneIdentity), so it can never match this domain filter.',
     'app/api/dev/shopify/orders-paid/route.ts': 'Dev-only mock-webhook firer (config.isDevInstance() gated). Both join reads pin `personId: { in: participantIds }` from the request body and are echoed back to the dev UI — no production or user-facing effect.',
     'lib/dev/seed-helpers.ts': 'Dev seed helper: picks an arbitrary sample of existing persons for local macro/demo flows. No production or user-facing effect.',
 };
@@ -295,7 +298,8 @@ const PERSON_RELATION_RE = new RegExp(String.raw`\b(?:${PERSON_RELATION_NAMES.jo
 const JOIN_CALL_RE =
     /\b(?:prisma|tx|db)\.(programParticipant|programVolunteer|rSVP|toolStatus)\.(findMany|findFirst|count|aggregate|groupBy)\s*\(/g;
 
-const FILTERED_RE = /LIVE_PERSON|mergedIntoId/;
+// LIVE_KEYHOLDER and KEYHOLDER_IN_BUILDING (lib/visit/filters.ts) spread LIVE_PERSON.
+const FILTERED_RE = /LIVE_PERSON|mergedIntoId|LIVE_KEYHOLDER|KEYHOLDER_IN_BUILDING/;
 
 /**
  * A sibling `where: { person: LIVE_PERSON }` for a class-2 hit lives in the

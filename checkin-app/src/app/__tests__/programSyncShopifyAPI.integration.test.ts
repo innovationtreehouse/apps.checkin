@@ -44,7 +44,7 @@ describe('POST /api/programs/[id]/sync-shopify', () => {
     beforeAll(async () => {
         // Route reaches the Shopify MOCK only when CHECKIN_ENV=local (jest.setup
         // sets 'dev'). config reads process.env live per call, so flip it here and
-        // restore in afterAll — --runInBand shares the process with sibling suites.
+        // restore in afterAll — the jest worker runs sibling suites in this process.
         prevCheckinEnv = process.env.CHECKIN_ENV;
         process.env.CHECKIN_ENV = 'local';
 
@@ -109,11 +109,14 @@ describe('POST /api/programs/[id]/sync-shopify', () => {
         // Success contract: a product id + ONE variant id (single pool), echoed back...
         expect(data.program.shopifyProductId).toMatch(/^dev-mock-product-/);
         expect(data.program.shopifyVariantId).toMatch(/^dev-mock-variant-/);
+        // The hidden claimant product is minted alongside it.
+        expect(data.program.claimantShopifyVariantId).toMatch(/^dev-mock-claimant-variant-/);
 
         // ...and PERSISTED — this is what fails if the route stops upserting.
         const persisted = await prisma.program.findUnique({ where: { id: program.id } });
         expect(persisted?.shopifyProductId).toBe(data.program.shopifyProductId);
         expect(persisted?.shopifyVariantId).toBe(data.program.shopifyVariantId);
+        expect(persisted?.claimantShopifyVariantId).toBe(data.program.claimantShopifyVariantId);
 
         // Audit trail written.
         const audit = await prisma.auditLog.findFirst({
@@ -127,9 +130,84 @@ describe('POST /api/programs/[id]/sync-shopify', () => {
         expect(errLogsAfter).toBe(errLogsBefore);
     });
 
+    it('starts the new variant at capacity less the seats already taken, dropping bookkeeping owed to the old one', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const program = await makeBrokenProgram();
+        await prisma.program.update({ where: { id: program.id }, data: { maxParticipants: 5, shopifyStockCarry: -3, offSaleAt: new Date("2999-01-01") } });
+        await prisma.programParticipant.create({ data: { programId: program.id, personId: commonId, status: 'ACTIVE' } });
+        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+        try {
+            const res = await POST(req(), params(program.id));
+            expect(res.status).toBe(200);
+            expect((await res.json()).warning).toBeUndefined();
+
+            expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/\(mock\) Adjusted available for .*: 0 -> 4 /));
+            const after = await prisma.program.findUniqueOrThrow({ where: { id: program.id } });
+            expect(after.shopifyStockCarry).toBe(0);
+        } finally {
+            logSpy.mockRestore();
+            await prisma.programParticipant.deleteMany({ where: { programId: program.id } });
+        }
+    });
+
+    it('refuses (409) while another sync holds a fresh claim, creating nothing', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const program = await makeBrokenProgram();
+        await prisma.program.update({
+            where: { id: program.id },
+            data: { shopifySyncStartedAt: new Date(), shopifySyncToken: 'other-run' },
+        });
+
+        expect((await POST(req(), params(program.id))).status).toBe(409);
+        const after = await prisma.program.findUnique({ where: { id: program.id } });
+        expect(after?.shopifyVariantId).toBeNull();
+        expect(after?.shopifySyncToken).toBe('other-run');
+    });
+
+    it('takes over a stale claim left by a run that died, and releases it on success', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const program = await makeBrokenProgram();
+        await prisma.program.update({
+            where: { id: program.id },
+            data: { shopifySyncStartedAt: new Date(Date.now() - 11 * 60_000), shopifySyncToken: 'dead-run' },
+        });
+
+        expect((await POST(req(), params(program.id))).status).toBe(200);
+        const after = await prisma.program.findUnique({ where: { id: program.id } });
+        expect(after?.shopifyVariantId).toMatch(/^dev-mock-variant-/);
+        expect(after?.shopifySyncStartedAt).toBeNull();
+        expect(after?.shopifySyncToken).toBeNull();
+    });
+
+    it('backfills only the claimant product on a program that has its public variant', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+        const program = await prisma.program.create({
+            data: {
+                startAt: new Date('2026-01-01'),
+                endAt: new Date('2026-12-31'),
+                name: `Pre-claimant Prog ${TAG}`,
+                phase: 'RUNNING',
+                orgMemberPriceCents: 5000,
+                nonOrgMemberPriceCents: 7500,
+                shopifyProductId: 'dev-mock-product-existing',
+                shopifyVariantId: 'dev-mock-variant-existing',
+            },
+        });
+
+        const res = await POST(req(), params(program.id));
+        expect(res.status).toBe(200);
+        const persisted = await prisma.program.findUnique({ where: { id: program.id } });
+        expect(persisted?.shopifyVariantId).toBe('dev-mock-variant-existing');
+        expect(persisted?.claimantShopifyVariantId).toMatch(/^dev-mock-claimant-variant-/);
+
+        // Idempotent: a second call has nothing left to mint.
+        const again = await POST(req(), params(program.id));
+        expect(again.status).toBe(400);
+    });
+
     it('refuses a program whose checkout is already configured (400)', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
-        // Priced AND has its variant -> not broken.
+        // Priced AND has both variants -> nothing to mint.
         const program = await prisma.program.create({
             data: {
                 startAt: new Date('2026-01-01'),
@@ -140,6 +218,8 @@ describe('POST /api/programs/[id]/sync-shopify', () => {
                 nonOrgMemberPriceCents: 7500,
                 shopifyProductId: 'dev-mock-product-existing',
                 shopifyVariantId: 'dev-mock-variant-existing',
+                claimantShopifyProductId: 'dev-mock-claimant-product-existing',
+                claimantShopifyVariantId: 'dev-mock-claimant-variant-existing',
             },
         });
 

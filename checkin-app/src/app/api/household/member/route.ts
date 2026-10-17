@@ -10,6 +10,11 @@ import { householdLeadship } from "@/lib/household/leads";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { getEmailSenderIdentity } from "@/lib/emailIdentity";
+import { signInEmailHelp, grantedAuthorityEmailHelp } from "@/lib/person/signInEmail";
+import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
+import { canonicalizeEmail } from "@/lib/emailNormalize";
 
 export const PATCH = withAuth(
     {},
@@ -51,9 +56,47 @@ export const PATCH = withAuth(
                 return apiError("Only household leads can edit household members", 403);
             }
 
-            const targetHouseholdMember = await prisma.person.findUnique({ where: { id: participantId } });
+            const targetHouseholdMember = await prisma.person.findUnique({
+                where: { id: participantId },
+                include: {
+                    _count: {
+                        select: {
+                            accounts: true,
+                            roles: true,
+                            programsLed: true,
+                            programVolunteers: true,
+                            bgAttestationsAsSubject: true,
+                            personBgProcesses: true,
+                        },
+                    },
+                },
+            });
             if (!targetHouseholdMember || targetHouseholdMember.householdId !== householdId) {
                 return apiError("That household member was not found", 404);
+            }
+
+            // A linked sign-in's email is its sign-in address; only the board changes it.
+            if (email !== undefined && targetHouseholdMember._count.accounts > 0) {
+                const { replyTo } = await getEmailSenderIdentity();
+                return apiError(signInEmailHelp(replyTo?.[0]), 400);
+            }
+
+            // The email is the sign-in key, so a member holding board-granted authority keeps
+            // the address the board granted it to. The form resends it on every save, so an
+            // equivalent address passes the check but is never written over the stored one.
+            const { _count: held } = targetHouseholdMember;
+            const holdsGrant = held.roles + held.programsLed + held.programVolunteers
+                + held.bgAttestationsAsSubject + held.personBgProcesses > 0
+                || Boolean(targetHouseholdMember.lastBackgroundCheck);
+            if (holdsGrant && email !== undefined && canonicalizeEmail(email ?? "") !== canonicalizeEmail(targetHouseholdMember.email ?? "")) {
+                const { replyTo } = await getEmailSenderIdentity();
+                return apiError(grantedAuthorityEmailHelp(replyTo?.[0]), 400);
+            }
+
+            // The form resends an unchanged email on every save; only a change is refused.
+            const emailChanged = email && canonicalizeEmail(email) !== canonicalizeEmail(targetHouseholdMember.email ?? "");
+            if (emailChanged && await isDesignatedEmail(prisma, email)) {
+                return apiError(await designatedEmailRefusalForBoard(), 400);
             }
 
             const { updatedHouseholdMember, leadRejection, warning } = await prisma.$transaction(async (tx) => {
@@ -62,7 +105,7 @@ export const PATCH = withAuth(
                     data: {
                         name: nameWrite(name),
                         nickname: nicknameWrite(nickname),
-                        email: email !== undefined ? (email === "" ? null : email.toLowerCase()) : undefined,
+                        email: email !== undefined && !holdsGrant ? (email === "" ? null : email.toLowerCase()) : undefined,
                         phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
                         // #1165: a real sub-26 DoB is kept and supersedes the 25+ flag; a
                         // 26+ DoB is stripped and forces the flag on; an empty DoB honors
@@ -141,6 +184,7 @@ export const PATCH = withAuth(
 
                 return { updatedHouseholdMember, leadRejection, warning };
             });
+            invalidateAttendanceCache();
 
             return NextResponse.json({
                 householdMember: updatedHouseholdMember,

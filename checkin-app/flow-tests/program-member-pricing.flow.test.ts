@@ -3,13 +3,14 @@
  */
 /**
  * Flow test for the single-pool member-pricing journey: board creates a priced
- * program, a member and a non-member each probe the discount-code route, the
- * member self-enrolls, and paying (via the dev Shopify orders/paid stand-in)
- * activates their enrollment. Exercises program creation → discount-code →
- * enroll → pay as a whole HTTP journey, wired through real auth, routes, and DB.
+ * program, the non-member probes the discount-code route, the member self-enrolls
+ * and gets a household-bound code (and is refused for a mixed-household cart), and
+ * paying (via the dev Shopify orders/paid stand-in) activates their enrollment.
+ * Exercises program creation → enroll → discount-code → pay as a whole HTTP
+ * journey, wired through real auth, routes, and DB.
  *
  * Personas: boardmember@example.com (board, creates the program),
- * member.pricing@example.com (dues-settled household lead — ACTIVE OrgMembership
+ * member.pricing@example.com (fee-settled household lead — ACTIVE OrgMembership
  * from the seed), and certified.adult@example.com (solo household, no
  * OrgMembership row — a genuine non-member, used read-only here).
  */
@@ -25,8 +26,8 @@ describe("flow: program purchase with member pricing", () => {
         const board = await loginAs("boardmember@example.com");
         const member = await loginAs("member.pricing@example.com");
         const nonMember = await loginAs("certified.adult@example.com");
+        const lead = await loginAs("inventory.manager@example.com");
 
-        const boardId = board.personaId;
         const memberId = member.personaId;
 
         const tag = Date.now().toString(36);
@@ -34,7 +35,7 @@ describe("flow: program purchase with member pricing", () => {
             method: "POST",
             body: JSON.stringify({
                 name: `Member Pricing Program ${tag}`,
-                leadMentorId: boardId,
+                leadMentorId: lead.personaId,
                 startAt: "2026-01-01",
                 endAt: "2026-12-31",
                 memberPrice: "40",
@@ -53,16 +54,14 @@ describe("flow: program purchase with member pricing", () => {
         // enrollment before anyone can join.
         const opened = await api(board, `/api/programs/${programId}`, {
             method: "PATCH",
-            body: JSON.stringify({ enrollmentStatus: "OPEN" }),
+            body: JSON.stringify({ enrollmentStatus: "OPEN", offSaleAt: "2999-01-01" }),
         });
         expect(opened.status).toBe(200);
 
-        const memberDiscount = await api<DiscountCode>(member, `/api/programs/${programId}/discount-code`, { method: "POST" });
-        expect(memberDiscount.status).toBe(200);
-        expect(memberDiscount.json.code).toEqual(expect.stringContaining(`PRG${programId}-`));
-        expect(memberDiscount.json.reason).toBeUndefined();
-
-        const nonMemberDiscount = await api<DiscountCode>(nonMember, `/api/programs/${programId}/discount-code`, { method: "POST" });
+        const nonMemberDiscount = await api<DiscountCode>(nonMember, `/api/programs/${programId}/discount-code`, {
+            method: "POST",
+            body: JSON.stringify({ participantIds: [nonMember.personaId] }),
+        });
         expect(nonMemberDiscount.status).toBe(200);
         expect(nonMemberDiscount.json.code).toBeNull();
 
@@ -72,6 +71,21 @@ describe("flow: program purchase with member pricing", () => {
         });
         expect(enroll.status).toBe(200);
         expect(enroll.json.enrollment.status).toBe("PENDING");
+
+        // One order pays for one household.
+        const mixed = await api<DiscountCode>(member, `/api/programs/${programId}/discount-code`, {
+            method: "POST",
+            body: JSON.stringify({ participantIds: [memberId, nonMember.personaId] }),
+        });
+        expect(mixed.status).toBe(400);
+
+        const memberDiscount = await api<DiscountCode>(member, `/api/programs/${programId}/discount-code`, {
+            method: "POST",
+            body: JSON.stringify({ participantIds: [memberId] }),
+        });
+        expect(memberDiscount.status).toBe(200);
+        expect(memberDiscount.json.code).toEqual(expect.stringMatching(new RegExp(`^PRG${programId}-H\\d+-`)));
+        expect(memberDiscount.json.reason).toBeUndefined();
 
         const paid = await api<OrdersPaid>(member, "/api/dev/shopify/orders-paid", {
             method: "POST",

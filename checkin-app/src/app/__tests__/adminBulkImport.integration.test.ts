@@ -16,6 +16,9 @@ jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
 }));
 
+// The CSV import module is optional and off by default.
+process.env.CSV_IMPORT_ENABLED = 'true';
+
 describe('Admin Bulk Import API Integration Tests', () => {
     let testAdminId: number;
     let testUserId: number;
@@ -73,6 +76,7 @@ describe('Admin Bulk Import API Integration Tests', () => {
         try {
             // Clean up participants created during tests
             await prisma.auditLog.deleteMany({ where: { actorId: testAdminId } });
+            await prisma.paymentException.deleteMany({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY' } });
             await prisma.orgMembership.deleteMany({});
             await prisma.person.deleteMany({
                 where: { email: { contains: 'batch-import-test' } }
@@ -206,6 +210,33 @@ describe('Admin Bulk Import API Integration Tests', () => {
             expect(audit?.newData).toMatchObject({ mergedIntoHouseholdId: alice!.householdId, movedByImportOfPersonId: charlie!.id });
         });
 
+        it("refuses a Same Household As merge into the actor's own household, leaving the row's household as it was", async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+            const admin = await prisma.person.findUniqueOrThrow({ where: { id: testAdminId }, select: { householdId: true } });
+
+            const formData = createMockCsvFormData([
+                ['First Name', 'Last Name', 'Email', 'Parent Email', 'Same Household As'],
+                ['Dana', 'Batch Import Test', 'dana-batch-import-test@example.com', '', 'admin-import-test@example.com'],
+            ]);
+            const req = new Request('http://localhost:4000/api/membership-ops/participants/import', {
+                method: 'POST',
+                body: formData
+            }) as unknown as Parameters<typeof POST>[0];
+            (req as unknown as { formData: () => Promise<FormData> }).formData = jest.fn().mockResolvedValue(formData);
+
+            const res = await POST(req);
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.errors).toEqual([expect.stringContaining('your own household')]);
+
+            const dana = await prisma.person.findUnique({ where: { email: 'dana-batch-import-test@example.com' } });
+            expect(dana).not.toBeNull();
+            expect(dana!.householdId).not.toBe(admin.householdId);
+            expect(await prisma.auditLog.findFirst({ where: { tableName: 'SelfGrantRefusal', actorId: testAdminId, affectedEntityId: dana!.id } })).not.toBeNull();
+        });
+
         it('should automatically create households for participants with no household links, and correctly assign lead status based on age', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
                 user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
@@ -247,6 +278,131 @@ describe('Admin Bulk Import API Integration Tests', () => {
             expect(defaultAdult?.householdId).not.toBeNull();
             const defaultLead = await prisma.person.findFirst({ where: { id: defaultAdult?.id, isHouseholdLead: true }, select: { id: true } });
             expect(defaultLead).not.toBeNull();
+        });
+
+        const importAs = async (rows: string[][]) => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+            const formData = createMockCsvFormData(rows);
+            const req = new Request('http://localhost:4000/api/membership-ops/participants/import', {
+                method: 'POST',
+                body: formData
+            }) as unknown as Parameters<typeof POST>[0];
+            (req as unknown as { formData: () => Promise<FormData> }).formData = jest.fn().mockResolvedValue(formData);
+            return POST(req);
+        };
+
+        it('404s when the CSV import module is off', async () => {
+            process.env.CSV_IMPORT_ENABLED = 'false';
+            try {
+                const res = await importAs([['First Name', 'Last Name'], ['Off', 'Batch Import Test']]);
+                expect(res.status).toBe(404);
+            } finally {
+                process.env.CSV_IMPORT_ENABLED = 'true';
+            }
+            expect(await prisma.person.findFirst({ where: { name: 'Off Batch Import Test' } })).toBeNull();
+        });
+
+        it('never sets a status: a new household gets a NONE row, an existing one keeps its status, and DENIED is raised to the board', async () => {
+            const noneParent = await prisma.person.create({
+                data: { email: 'none-parent-batch-import-test@example.com', name: 'None Parent Batch Import Test', household: { create: { name: 'None Batch Household' } } }
+            });
+            const deniedParent = await prisma.person.create({
+                data: { email: 'denied-parent-batch-import-test@example.com', name: 'Denied Parent Batch Import Test', household: { create: { name: 'Denied Batch Household' } } }
+            });
+            await prisma.orgMembership.create({ data: { householdId: deniedParent.householdId, status: 'DENIED' } });
+            const revokedParent = await prisma.person.create({
+                data: { email: 'revoked-parent-batch-import-test@example.com', name: 'Revoked Parent Batch Import Test', household: { create: { name: 'Revoked Batch Household' } } }
+            });
+            await prisma.orgMembership.create({ data: { householdId: revokedParent.householdId, status: 'REVOKED' } });
+
+            const res = await importAs([
+                ['First Name', 'Last Name', 'Email', 'Parent Email'],
+                ['Kid', 'None Batch Import Test', '', 'none-parent-batch-import-test@example.com'],
+                ['Kid', 'Denied Batch Import Test', '', 'denied-parent-batch-import-test@example.com'],
+                ['Kid', 'Revoked Batch Import Test', '', 'revoked-parent-batch-import-test@example.com'],
+            ]);
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.errors).toEqual([
+                expect.stringMatching(/Denied Batch Import Test.*is DENIED/),
+                expect.stringMatching(/Revoked Batch Import Test.*is REVOKED/),
+            ]);
+
+            expect((await prisma.orgMembership.findUnique({ where: { householdId: noneParent.householdId } }))?.status).toBe('NONE');
+            expect((await prisma.orgMembership.findUnique({ where: { householdId: deniedParent.householdId } }))?.status).toBe('DENIED');
+            expect((await prisma.orgMembership.findUnique({ where: { householdId: revokedParent.householdId } }))?.status).toBe('REVOKED');
+            expect(await prisma.paymentException.findFirst({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: deniedParent.id } })).not.toBeNull();
+            expect(await prisma.auditLog.count({ where: { tableName: 'OrgMembership', actorId: testAdminId } })).toBe(0);
+        });
+
+        // DENIED is refused before the move and raised to the board; any other non-NONE status is refused at the delete.
+        it.each([
+            ['REVOKED', 'merge refused'],
+            ['DENIED', 'has been denied membership'],
+        ] as const)('refuses to merge a %s household, keeping that status', async (status, message) => {
+            const target = await prisma.person.create({
+                data: { email: 'target-batch-import-test@example.com', name: 'Target Batch Import Test', household: { create: { name: 'Target Batch Household' } } }
+            });
+            const source = await prisma.person.create({
+                data: { email: 'source-batch-import-test@example.com', name: 'Source Batch Import Test', household: { create: { name: 'Source Batch Household' } } }
+            });
+            await prisma.orgMembership.create({ data: { householdId: source.householdId, status } });
+
+            const res = await importAs([
+                ['First Name', 'Last Name', 'Email', 'Same Household As'],
+                ['Source', 'Batch Import Test', 'source-batch-import-test@example.com', 'target-batch-import-test@example.com'],
+            ]);
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.errors).toEqual([expect.stringContaining(message)]);
+
+            expect((await prisma.person.findUniqueOrThrow({ where: { id: source.id } })).householdId).toBe(source.householdId);
+            expect((await prisma.orgMembership.findUnique({ where: { householdId: source.householdId } }))?.status).toBe(status);
+            expect((await prisma.person.findUniqueOrThrow({ where: { id: target.id } })).householdId).toBe(target.householdId);
+        });
+
+        it("refuses to rewrite a record in the actor's own household", async () => {
+            const admin = await prisma.person.findUniqueOrThrow({ where: { id: testAdminId }, select: { householdId: true } });
+            const kin = await prisma.person.create({
+                data: { email: 'kin-batch-import-test@example.com', name: 'Kin Batch Import Test', dateOfBirth: new Date('2015-03-04'), householdId: admin.householdId }
+            });
+
+            const res = await importAs([
+                ['First Name', 'Last Name', 'Email', 'DOB'],
+                ['Renamed', 'Batch Import Test', 'kin-batch-import-test@example.com', '2016-01-01'],
+                ['Admin', 'Batch Import Test', 'admin-import-test@example.com', ''],
+            ]);
+            expect(res.status).toBe(200);
+            const data = await res.json();
+            expect(data.errors).toEqual([
+                expect.stringContaining('your own household'),
+                expect.stringContaining('your own household'),
+            ]);
+
+            const after = await prisma.person.findUniqueOrThrow({ where: { id: kin.id } });
+            expect(after.name).toBe('Kin Batch Import Test');
+            expect(after.dateOfBirth?.toISOString().slice(0, 10)).toBe('2015-03-04');
+            expect((await prisma.person.findUniqueOrThrow({ where: { id: testAdminId } })).name).toBe('Admin Import Test');
+            const refused = await prisma.auditLog.findMany({ where: { tableName: 'SelfGrantRefusal', actorId: testAdminId }, select: { affectedEntityId: true } });
+            expect(refused.map(r => r.affectedEntityId).sort()).toEqual([kin.id, testAdminId].sort());
+        });
+
+        it('stores no date of birth for an adult on the update path, only the adult flag', async () => {
+            const existing = await prisma.person.create({
+                data: { email: 'adult-batch-import-test@example.com', name: 'Adult Batch Import Test', household: { create: { name: 'Adult Batch Household' } } }
+            });
+
+            const res = await importAs([
+                ['First Name', 'Last Name', 'Email', 'DOB'],
+                ['Adult', 'Batch Import Test', 'adult-batch-import-test@example.com', '1980-05-06'],
+            ]);
+            expect(res.status).toBe(200);
+
+            const after = await prisma.person.findUniqueOrThrow({ where: { id: existing.id } });
+            expect(after.dateOfBirth).toBeNull();
+            expect(after.isDeclaredAdult).toBe(true);
         });
     });
 });

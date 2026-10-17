@@ -5,8 +5,7 @@
  * Unit tests for the delivery-receipt recording wired into
  * POST /api/webhooks/shopify (settings → Shopify Webhook tab):
  *   - a valid delivery is recorded (hmacValid true, outcome from the branch taken),
- *   - a failed-HMAC delivery is ALSO recorded (that is the secret-mismatch
- *     diagnostic) and still rejected with 401 exactly as before,
+ *   - a failed-HMAC or unsigned delivery writes nothing and is rejected with 401,
  *   - a failed receipt insert never breaks settlement,
  *   - Shopify's "Send test notification" sample is flagged test: true.
  * Settlement/DB behavior itself is covered by webhookShopify.integration.test.ts.
@@ -53,6 +52,7 @@ function webhookReq(body: string, signature: string | null) {
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 const MEMBERSHIP_BODY = JSON.stringify({
+    financial_status: 'paid',
     id: 999001,
     note_attributes: [{ name: 'Membership_Process_ID', value: '12' }],
     line_items: [],
@@ -70,12 +70,20 @@ beforeEach(() => {
     jest.clearAllMocks();
     auditCreate.mockResolvedValue({});
     boardSettingsFindUnique.mockResolvedValue(null);
-    activate.mockResolvedValue({ status: 'ACTIVE' });
+    activate.mockResolvedValue({ outcome: 'active', process: { status: 'ACTIVE' } });
     prisma.auditLog.create = auditCreate as unknown as typeof prisma.auditLog.create;
     prisma.boardSettings.findUnique = boardSettingsFindUnique as unknown as typeof prisma.boardSettings.findUnique;
 });
 
 describe('POST /api/webhooks/shopify — delivery receipts', () => {
+    it('never settles a membership from a Shopify test order', async () => {
+        const body = JSON.stringify({ ...JSON.parse(MEMBERSHIP_BODY), test: true });
+        const res = await POST(webhookReq(body, sign(body)));
+        expect(res.status).toBe(200);
+        expect(activate).not.toHaveBeenCalled();
+        expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({ test: true, outcome: 'test order for process 12 — ignored' });
+    });
+
     it('records a valid membership delivery with hmacValid true and a settled outcome', async () => {
         const res = await POST(webhookReq(MEMBERSHIP_BODY, sign(MEMBERSHIP_BODY)));
         expect(res.status).toBe(200);
@@ -90,31 +98,23 @@ describe('POST /api/webhooks/shopify — delivery receipts', () => {
             hmacValid: true,
             test: false,
             orderId: '999001',
-            outcome: 'settled process 12',
+            outcome: 'process 12: active',
         });
     });
 
-    it('records a failed-HMAC delivery (hmacValid false) and still rejects with 401', async () => {
+    it('writes nothing for a failed-HMAC delivery and rejects with 401', async () => {
         const res = await POST(webhookReq(MEMBERSHIP_BODY, 'bogus-signature'));
         expect(res.status).toBe(401);
         await flush();
-        expect(auditCreate).toHaveBeenCalledTimes(1);
-        expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({
-            hmacValid: false,
-            orderId: '999001',
-            outcome: 'rejected: bad hmac',
-        });
+        expect(auditCreate).not.toHaveBeenCalled();
         expect(activate).not.toHaveBeenCalled();
     });
 
-    it('records a missing-signature delivery and still rejects with 401', async () => {
+    it('writes nothing for a missing-signature delivery and rejects with 401', async () => {
         const res = await POST(webhookReq(MEMBERSHIP_BODY, null));
         expect(res.status).toBe(401);
         await flush();
-        expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({
-            hmacValid: false,
-            outcome: 'rejected: missing signature',
-        });
+        expect(auditCreate).not.toHaveBeenCalled();
         expect(activate).not.toHaveBeenCalled();
     });
 
@@ -130,7 +130,7 @@ describe('POST /api/webhooks/shopify — delivery receipts', () => {
         // Raw string, not JSON.stringify: the sample order id exceeds 2^53, and the
         // detection must survive JSON.parse rounding it. No cart attributes, like
         // the real sample payload.
-        const body = '{"id":820982911946154508,"test":true,"line_items":[]}';
+        const body = '{"id":820982911946154508,"test":true,"financial_status":"paid","line_items":[]}';
         const res = await POST(webhookReq(body, sign(body)));
         expect(res.status).toBe(200);
         expect(auditCreate).toHaveBeenCalledTimes(1);

@@ -8,56 +8,89 @@
  * test boots the image (placeholder env, no Google creds). So every checkin-side
  * dependency is loaded lazily, off the boot path; the app must boot without them.
  */
-import { configureCatalog } from "@inventory/global-catalog";
-import type { CatalogPrincipal, OrgIdentity } from "@inventory/global-catalog";
+import { configureCatalog, orgEventService } from "@checkin/global-catalog";
+import type { CatalogPrincipal, OrgEventConsumer, OrgEventRecord, OrgIdentity } from "@checkin/global-catalog";
+import type { Session } from "next-auth";
 
 /**
- * checkin is single-org (#1286 §6); the accessor returns a constant until the
- * Org registry table lands (track 6 seeds the Treehouse row with this id).
+ * checkin is inherently single-org (#1286 §6). The org identity is a row in
+ * checkin's own `Org` registry table, seeded with this stable well-known id.
+ * The library never reaches cross-DB into this table — checkin reads it and
+ * injects the identity.
  */
-const TREEHOUSE_ORG: OrgIdentity = { id: "treehouse", name: "Treehouse" };
+const TREEHOUSE_ORG_ID = "treehouse";
+let cachedOrg: OrgIdentity | undefined;
 
-type ApiErrorCtor = new (status: number, message: string) => Error;
-let apiErrorCtor: ApiErrorCtor | undefined;
-
-async function getPrincipal(): Promise<CatalogPrincipal | null> {
+/**
+ * The signed-in user, or null for any session `authenticateRequest` would refuse: no positive
+ * integer id, a denied household, or a caller the staging gate turns away. Every library adapter
+ * builds its principal from this, so no library sees a session checkin itself rejects.
+ */
+export async function sessionUser(): Promise<Session["user"] | null> {
   // Lazy: importing auth-options at boot would crash a Google-credless boot.
-  const [{ getServerSession }, { authOptions }] = await Promise.all([
+  const [{ getServerSession }, { authOptions }, { config, isStagingAccessAllowed }] = await Promise.all([
     import("next-auth"),
     import("@/lib/auth-options"),
+    import("@/lib/config"),
   ]);
-  const session = await getServerSession(authOptions);
-  const user = session?.user;
-  if (!user || typeof user.id !== "number") return null;
-  return { id: user.id, name: user.name ?? null };
+  const user = (await getServerSession(authOptions))?.user;
+  if (!user || !Number.isInteger(user.id) || user.id <= 0 || user.denied) return null;
+  if (config.isStaging() && !isStagingAccessAllowed(user)) return null;
+  return user;
+}
+
+/** The signed-in person as a library principal; null for any session checkin refuses. */
+export async function getPrincipal(): Promise<CatalogPrincipal | null> {
+  const user = await sessionUser();
+  return user ? { id: user.id, name: user.name ?? null } : null;
 }
 
 /**
- * The library throws its route errors through this; handler() maps an
- * `instanceof ApiResponseError` to its status. ApiResponseError lives in
- * @/security/handler (which transitively imports auth), so it is warmed lazily
- * off the boot path. Before it warms, fall back to a status-carrying Error — this
- * only happens if a route throws before the warm resolves, which does not occur
- * once the process has served any request.
+ * Resolved on first use inside a request, never at boot (boot stays DB-free).
+ * Only a found row is cached; a DB error or missing row throws, so the request
+ * fails rather than running as a guessed org. Every checkin-hosted library
+ * receives this same accessor, so all stamp the same org id.
  */
-function httpError(status: number, message: string): Error {
-  if (apiErrorCtor) return new apiErrorCtor(status, message);
-  const err = new Error(message) as Error & { status: number };
-  err.status = status;
-  return err;
+export async function getOrg(): Promise<OrgIdentity> {
+  if (cachedOrg) return cachedOrg;
+  const { default: prisma } = await import("@/lib/prisma");
+  const row = await prisma.org.findUnique({
+    where: { id: TREEHOUSE_ORG_ID },
+    select: { id: true, name: true },
+  });
+  if (!row) throw new Error(`Org row "${TREEHOUSE_ORG_ID}" not found — seed the Org registry`);
+  cachedOrg = row;
+  return row;
 }
 
-export async function configureCatalogRuntime(): Promise<void> {
-  // AWAIT the warm here (register() awaits this before Next serves any request),
-  // so apiErrorCtor is set before the first request — no cold-start window where
-  // a catalog 4xx degrades to 500. The try/catch keeps a credential-less boot
-  // (the deploy smoke test, no GOOGLE_CLIENT_ID) from crashing on the
-  // auth-options throw in @/security/handler's import chain.
-  try {
-    const m = await import("@/security/handler");
-    apiErrorCtor = m.ApiResponseError as unknown as ApiErrorCtor;
-  } catch {
-    /* credential-less boot (smoke test) — handler()/auth load per-request there */
-  }
-  configureCatalog({ auth: { getPrincipal }, org: () => TREEHOUSE_ORG, httpError });
+/** S5 replay read, bound into each consumer library's event-source port. */
+export function catalogEventsSince(orgId: string, afterId: number): Promise<OrgEventRecord[]> {
+  return orgEventService.eventsSince(orgId, afterId);
+}
+
+/**
+ * The S5 consumers the catalog calls after each commit that wrote events. Each library parses
+ * the events, applies them and keeps its own cursor; loaded on first event, never at boot.
+ */
+const orgEventConsumers: Record<string, OrgEventConsumer> = {
+  localInventory: {
+    async onOrgEvents(events) {
+      await (await import("@checkin/local-inventory")).orgEventConsumer.onOrgEvents(events);
+    },
+  },
+  expense: {
+    async onOrgEvents(events) {
+      const { consumeCatalogEvent } = await import("@checkin/expense");
+      for (const event of events) await consumeCatalogEvent(event);
+    },
+  },
+  workflowMapping: {
+    async onOrgEvents(events) {
+      await (await import("@checkin/workflow-mapping")).orgEventConsumer.onOrgEvents(events);
+    },
+  },
+};
+
+export function configureCatalogRuntime(): void {
+  configureCatalog({ auth: { getPrincipal }, org: getOrg, orgEventConsumers });
 }

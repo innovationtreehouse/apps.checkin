@@ -33,6 +33,23 @@ runs:
       shell: bash
       run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+    # The deploy role has no ECR Public access; the pull-only role authenticates
+    # the base-image pull, then the deploy role is assumed below.
+    - name: Configure AWS credentials for image pulls (OIDC)
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: arn:aws:iam::639595353568:role/checkin-ci-pull-dev
+        aws-region: ${{ inputs.aws-region }}
+
+    - name: Log in to Amazon ECR Public
+      uses: aws-actions/amazon-ecr-login@v2
+      with:
+        registry-type: public
+
+    - name: Pull base image
+      shell: bash
+      run: bash scripts/ci-pull-image.sh public.ecr.aws/docker/library/node:22-slim
+
     - name: Configure AWS credentials (OIDC)
       uses: aws-actions/configure-aws-credentials@v6
       with:
@@ -120,7 +137,7 @@ runs:
         # (Prisma fails fast with P1001).
         jq -n --arg NAME "$CONTAINER_NAME" '
           {containerOverrides: [{name: $NAME, command: ["sh", "-c",
-            "for i in 1 2 3 4 5; do npm run db:deploy -w @inventory/s-ingest-core && exit 0; echo \"attempt $i failed — DB may be resuming from auto-pause; retrying in 20s\"; sleep 20; done; exit 1"
+            "for i in 1 2 3 4 5; do npm run db:deploy -w @checkin/s-ingest-core && exit 0; echo \"attempt $i failed — DB may be resuming from auto-pause; retrying in 20s\"; sleep 20; done; exit 1"
           ]}]}' > "$RUNNER_TEMP/migrate-overrides.json"
 
         # FARGATE_SPOT strategy (associated on the cluster — infra#131), not

@@ -232,6 +232,18 @@ describe('Eligible Participants API Integration Tests', () => {
              expect(res.status).toBe(401);
         });
 
+        // The shape NextAuth builds when the jwt re-sync misses (person merged away or
+        // deleted) and returns an empty token: a user object with no id. An undefined id
+        // in a Prisma `where` drops the filter, so this must never reach the resolvers.
+        it('should return 401 for a session whose user has no id', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({
+                 user: { name: undefined, email: undefined, image: undefined },
+             });
+
+             const res = await GET(createReq(publicProgramId, 'Candidate'), createParams(publicProgramId));
+             expect(res.status).toBe(401);
+        });
+
         it('should return 404 Not Found for non-existent program', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
 
@@ -276,15 +288,14 @@ describe('Eligible Participants API Integration Tests', () => {
              expect(data.members[0].name).toBe('Active Member Candidate');
         });
 
-        it('should filter candidates by query string via email', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+        it('returns names only, and an email does not match', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
 
-             const res = await GET(createReq(publicProgramId, 'non-member-elig'), createParams(publicProgramId));
-             expect(res.status).toBe(200);
-             
-             const data = await res.json();
-             expect(data.members.length).toBe(1);
-             expect(data.members[0].name).toBe('Non Member Candidate');
+             const byName = await (await GET(createReq(publicProgramId, 'Candidate'), createParams(publicProgramId))).json();
+             for (const m of byName.members) expect(Object.keys(m).sort()).toEqual(['ageWarning', 'id', 'name']);
+
+             const byEmail = await (await GET(createReq(publicProgramId, 'non-member-elig'), createParams(publicProgramId))).json();
+             expect(byEmail.members).toEqual([]);
         });
 
         it('should strictly limit candidates for orgMemberOnly programs to members and household members', async () => {

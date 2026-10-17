@@ -1,8 +1,99 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
+    countDirectJsonEntries,
+    extractExportedVerbs,
     findBareIncludeLegs,
+    findDirectJsonCalls,
+    findStaleDirectJsonEntries,
     findOrphanRegistryEntries,
+    findPackageEgressLines,
+    findUnregisteredPackageSurfaces,
     findUnregisteredBareIncludeLegs,
+    listEgressScanFiles,
+    REGISTRY_ENTRY_RE,
 } from "../check-route-coverage";
+
+describe("extractExportedVerbs", () => {
+    it("reads declaration exports", () => {
+        expect(extractExportedVerbs(`export const GET = h;\nexport async function POST() {}`).sort())
+            .toEqual(["GET", "POST"]);
+    });
+
+    it("reads an export list with several aliased specifiers", () => {
+        expect(extractExportedVerbs(`export { _guardedPATCH as PATCH, _guardedDELETE as DELETE };`).sort())
+            .toEqual(["DELETE", "PATCH"]);
+    });
+
+    it("reads one local exported under two verbs, and a bare verb specifier", () => {
+        expect(extractExportedVerbs(`export { handler as GET, handler as POST };\nexport { PUT };`).sort())
+            .toEqual(["GET", "POST", "PUT"]);
+    });
+
+    it("ignores non-verb exports and a verb that is only the local name", () => {
+        expect(extractExportedVerbs(`export { authOptions };\nexport { GET as helper };`)).toEqual([]);
+    });
+
+    it("reads a destructured export, renamed or with a default", () => {
+        expect(extractExportedVerbs(`export const { GET, handler: POST, PUT = h } = handlers;`).sort())
+            .toEqual(["GET", "POST", "PUT"]);
+    });
+
+    it("reads a specifier with a comment beside it", () => {
+        expect(extractExportedVerbs(`export { h as GET /* c */, k as POST };`).sort()).toEqual(["GET", "POST"]);
+    });
+
+    it("ignores commented-out exports", () => {
+        expect(extractExportedVerbs(`// export { GET };\n/* export const POST = h; */`)).toEqual([]);
+    });
+
+    it("reads a multi-line export list", () => {
+        expect(extractExportedVerbs(`export {\n    a as GET,\n    b as POST,\n};`).sort())
+            .toEqual(["GET", "POST"]);
+    });
+});
+
+describe("direct-json baseline", () => {
+    const FILE = "src/app/api/x/route.ts";
+    const baseline = () => countDirectJsonEntries(
+        `# comment\n\n${FILE} return NextResponse.json({\n`);
+
+    it("excuses the one listed line and leaves no stale entry", () => {
+        const allowance = baseline();
+        expect(findDirectJsonCalls(FILE, `    return NextResponse.json({\n    ok: 1 });`, allowance)).toEqual([]);
+        expect(findStaleDirectJsonEntries(allowance)).toEqual([]);
+    });
+
+    it("errors on a second occurrence of the same line", () => {
+        const src = `return NextResponse.json({\n});\nreturn NextResponse.json({\n});`;
+        expect(findDirectJsonCalls(FILE, src, baseline())).toEqual([{ line: 3, caller: "NextResponse" }]);
+    });
+
+    it("does not excuse the line in another file", () => {
+        expect(findDirectJsonCalls("src/app/api/y/route.ts", `return NextResponse.json({`, baseline()))
+            .toEqual([{ line: 1, caller: "NextResponse" }]);
+    });
+
+    it("warns on an entry that matches nothing", () => {
+        const allowance = baseline();
+        findDirectJsonCalls(FILE, `return Response.json({ a: 1 });`, allowance);
+        expect(findStaleDirectJsonEntries(allowance)).toEqual([
+            expect.objectContaining({ severity: "warn", rule: "stale-direct-json-baseline" }),
+        ]);
+    });
+});
+
+describe("REGISTRY_ENTRY_RE", () => {
+    it.each(["defineRoute", "defineFileRoute"])("reads the endpoint of a %s entry", fn => {
+        expect(REGISTRY_ENTRY_RE.exec(`${fn}({\n    endpoint: 'GET /api/x/[id]/file',`)?.[1])
+            .toBe("GET /api/x/[id]/file");
+    });
+
+    it("does not read an outbound surface as a route", () => {
+        expect(REGISTRY_ENTRY_RE.exec(`defineOutbound({ surface: 'shopify.order' })`)).toBeNull();
+    });
+});
 
 const names = (src: string) => findBareIncludeLegs(src).map(l => l.name);
 
@@ -106,5 +197,97 @@ describe("findOrphanRegistryEntries", () => {
         expect(found[0].severity).toBe("error");
         expect(found[0].message).toContain("stale");
         expect(found[0].message).toContain("exports no PATCH");
+    });
+});
+
+describe("findPackageEgressLines", () => {
+    it("flags a QuickBooks host held in a constant, away from any fetch", () => {
+        expect(findPackageEgressLines(`const BASE = "https://sandbox-quickbooks.api.intuit.com";\nawait fetch(BASE);`))
+            .toEqual([1]);
+    });
+
+    it("flags the Anthropic host and an Anthropic SDK import", () => {
+        expect(findPackageEgressLines(`import Anthropic from "@anthropic-ai/sdk";\nconst u = "https://api.anthropic.com/v1";`))
+            .toEqual([1, 2]);
+    });
+
+    it("flags the existing Shopify and Resend hosts", () => {
+        expect(findPackageEgressLines(`a("x.myshopify.com");\nb("https://api.resend.com");`)).toEqual([1, 2]);
+    });
+
+    it("flags any non-loopback URL, including an unlisted host and a templated one", () => {
+        expect(findPackageEgressLines('a("https://www.zohoapis.com/crm");\nb(`https://${shop}/admin`);\nc("http://api.stripe.com");'))
+            .toEqual([1, 2, 3]);
+    });
+
+    it("ignores a bare scheme prefix and a placeholder", () => {
+        expect(findPackageEgressLines(`probe("https://" + host);\n<TextInput placeholder="https://…" />`)).toEqual([]);
+    });
+
+    it("allows loopback URLs", () => {
+        expect(findPackageEgressLines(`a("http://localhost:8087/cb");\nb("http://127.0.0.1:4000");\nc("http://[::1]:5432");`))
+            .toEqual([]);
+        expect(findPackageEgressLines(`a("https://localhost.evil.com");`)).toEqual([1]);
+    });
+
+    it("flags the Gmail host and a Google API SDK import", () => {
+        expect(findPackageEgressLines(`const B = "https://gmail.googleapis.com/gmail/v1";\nimport { google } from "googleapis";\nimport { gmail } from "@googleapis/gmail";`))
+            .toEqual([1, 2, 3]);
+        expect(findPackageEgressLines(`const host = "gmail.googleapis.com";`)).toEqual([1]);
+        expect(findPackageEgressLines(`const HOSTS = ["storage.googleapis.com"];`)).toEqual([]);
+    });
+
+    it("flags an import of the resend SDK", () => {
+        expect(findPackageEgressLines(`import { Resend } from "resend";`)).toEqual([1]);
+    });
+
+    it("ignores comments and look-alike identifiers", () => {
+        expect(findPackageEgressLines(`// see quickbooks.api.intuit.com\n/* @anthropic-ai/sdk */\nres.headers.get("intuit_tid");`))
+            .toEqual([]);
+    });
+});
+
+describe("listEgressScanFiles", () => {
+    let root: string;
+    const put = (rel: string, body = "") => {
+        fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+        fs.writeFileSync(path.join(root, rel), body);
+    };
+    beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "egress-scan-")); });
+    afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    it("covers .js/.mjs/.cjs source and every root-level *-function dir", () => {
+        put("packages/a/src/client.mjs", `fetch("https://api.example.com");`);
+        put("packages/a/src/b.cjs");
+        put("packages/a/src/c.js");
+        put("packages/a/src/d.tsx");
+        put("x-function/src/token.ts", `fetch("https://shop.example.com/admin");`);
+        put("checkin-app/src/e.ts");
+        const files = listEgressScanFiles(root).sort();
+        expect(files).toEqual([
+            "packages/a/src/b.cjs", "packages/a/src/c.js", "packages/a/src/client.mjs",
+            "packages/a/src/d.tsx", "x-function/src/token.ts",
+        ]);
+        const hits = files.filter(f => findPackageEgressLines(fs.readFileSync(path.join(root, f), "utf-8")).length);
+        expect(hits).toEqual(["packages/a/src/client.mjs", "x-function/src/token.ts"]);
+    });
+
+    it("skips tests, fixtures and generated code in any extension", () => {
+        put("packages/a/src/x.test.mjs");
+        put("packages/a/src/y.spec.js");
+        put("y-function/test/setup.ts");
+        put("y-function/src/__fixtures__/f.js");
+        put("packages/a/src/generated/g.cjs");
+        put("packages/a/node_modules/m/index.js");
+        expect(listEgressScanFiles(root)).toEqual([]);
+    });
+});
+
+describe("findUnregisteredPackageSurfaces", () => {
+    it("errors on a mapped surface with no defineOutbound entry", () => {
+        const files = new Map([["q/src/client.ts", ["quickbooks.query", "quickbooks.ghost"]]]);
+        const found = findUnregisteredPackageSurfaces(files, new Set(["quickbooks.query"]));
+        expect(found.map(f => [f.severity, f.file, f.message.includes("quickbooks.ghost")]))
+            .toEqual([["error", "q/src/client.ts", true]]);
     });
 });

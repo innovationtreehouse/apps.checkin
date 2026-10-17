@@ -175,7 +175,7 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
     it('settles via the synthetic mock variant when none is configured on BoardSettings', async () => {
         // A local seed never sets a membership variant; the mock falls back to
         // DEV_MOCK_MEMBERSHIP_VARIANT_ID (config), which the inbound handler echoes,
-        // so dues still settle end-to-end instead of dead-ending on a 409.
+        // so the membership fee still settles end-to-end instead of dead-ending on a 409.
         asSession();
         await setVariant(null);
         const { processId } = await makeProc();

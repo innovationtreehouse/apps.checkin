@@ -17,11 +17,12 @@
 import crypto from 'crypto';
 import { POST } from '@/app/api/webhooks/shopify/route';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { activateByProcessId } from '@/lib/membership/payment';
 import { DEV_MOCK_SHOPIFY_WEBHOOK_SECRET } from '@/lib/config';
 
 jest.mock('@/lib/membership/payment', () => ({
-    activateByProcessId: jest.fn().mockResolvedValue(undefined),
+    activateByProcessId: jest.fn().mockResolvedValue({ outcome: 'active', process: null }),
 }));
 
 // Keep the REAL logIntegrationError (it writes to the DB — the 500-catch test
@@ -42,7 +43,7 @@ function sign(body: string, secret = SECRET): string {
 }
 
 function webhookReq(body: string, signature: string | null, ip?: string) {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'x-shopify-topic': 'orders/paid' };
     if (signature !== null) headers['x-shopify-hmac-sha256'] = signature;
     if (ip) headers['x-forwarded-for'] = ip;
     return new Request('http://localhost/api/webhooks/shopify', {
@@ -57,8 +58,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
     let p1: number;
     let p2: number;
     let h1: number;
-    let h2: number;
-    let prevMembershipVariantId: string | null = null;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     beforeAll(async () => {
         // shopifyVariantId is the variant the enroll flow's checkout link is
@@ -67,9 +67,9 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         // endAt "now": membership coverage always reaches it, whatever
         // orgMembershipYearBoundary a concurrently-running suite has installed
         // on the shared BoardSettings row (a boundary's next occurrence is
-        // never in the past, so the dues-settled test can't lose that race).
+        // never in the past, so the fee-settled test can't lose that race).
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date(), name: `Webhook Test Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: PROGRAM_VARIANT_ID },
+            data: { startAt: new Date('2026-01-01'), endAt: new Date(), name: `Webhook Test Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: PROGRAM_VARIANT_ID },
         });
         programId = program.id;
 
@@ -79,20 +79,19 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         p1 = a.id;
         h1 = a.householdId;
         const b = await prisma.person.create({
-            data: { name: 'Hook P2', email: `p2-${TAG}@example.com`, household: { create: { name: "Test HH" } } },
+            data: { name: 'Hook P2', email: `p2-${TAG}@example.com`, household: { connect: { id: h1 } } },
         });
         p2 = b.id;
-        h2 = b.householdId;
 
         // Route now checks the order's line items against BoardSettings'
         // configured membership variant id(s) — seed one so the routing test
         // below can prove a matching order activates.
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevMembershipVariantId = existing?.orgMembershipVariantId ?? null;
+        // No year boundary, so an ACTIVE membership covers every program end date.
+        restoreBoardSettings = await snapshotBoardSettings();
         await prisma.boardSettings.upsert({
             where: { id: 1 },
-            create: { id: 1, orgMembershipVariantId: MEMBERSHIP_VARIANT_ID },
-            update: { orgMembershipVariantId: MEMBERSHIP_VARIANT_ID },
+            create: { id: 1, orgMembershipVariantId: MEMBERSHIP_VARIANT_ID, orgMembershipYearBoundary: null },
+            update: { orgMembershipVariantId: MEMBERSHIP_VARIANT_ID, orgMembershipYearBoundary: null },
         });
     });
 
@@ -102,12 +101,13 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
     });
 
     afterAll(async () => {
-        await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipVariantId: prevMembershipVariantId } });
+        await restoreBoardSettings();
         await prisma.integrationErrorLog.deleteMany({ where: { source: 'shopify-webhook' } });
+        await prisma.paymentException.deleteMany({ where: { programId } });
         await prisma.programParticipant.deleteMany({ where: { programId } });
         await prisma.program.delete({ where: { id: programId } });
         await prisma.person.deleteMany({ where: { id: { in: [p1, p2] } } });
-        await prisma.household.deleteMany({ where: { id: { in: [h1, h2] } } });
+        await prisma.household.deleteMany({ where: { id: h1 } });
     });
 
     async function setPending(participantId: number) {
@@ -123,8 +123,9 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
     // no line items, or an explicit mismatched id, to exercise it.
     function programPayload(accountIds: string, variantId: string | null = PROGRAM_VARIANT_ID, discountCodes?: string[]) {
         return JSON.stringify({
+            financial_status: 'paid',
             id: 555,
-            ...(variantId ? { line_items: [{ variant_id: variantId }] } : {}),
+            ...(variantId ? { line_items: [{ variant_id: variantId, quantity: accountIds.split(',').length }] } : {}),
             ...(discountCodes ? { discount_codes: discountCodes.map((code) => ({ code })) } : {}),
             note_attributes: [
                 { name: 'CheckMeIn_Account_ID', value: accountIds },
@@ -194,8 +195,8 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         expect(res.status).toBe(400);
     });
 
-    it('acknowledges (200) but makes no change when the participant is not enrolled', async () => {
-        // p1 has no programParticipant row for this program yet.
+    it('acknowledges (200) and enrolls nobody when the participant is not enrolled, raising UNCLAIMED_SEATS', async () => {
+        // p1 has no programParticipant row (withdrawn or expired before paying).
         await prisma.programParticipant.deleteMany({ where: { programId, personId: p1 } });
         const body = programPayload(String(p1));
         const res = await POST(webhookReq(body, sign(body)));
@@ -205,6 +206,9 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
             where: { programId_personId: { programId, personId: p1 } },
         });
         expect(row).toBeNull();
+        const raised = await prisma.paymentException.findMany({ where: { shopifyOrderId: '555' } });
+        expect(raised.map((e) => [e.kind, e.programId, e.personId])).toEqual([['UNCLAIMED_SEATS', programId, p1]]);
+        await prisma.paymentException.deleteMany({ where: { shopifyOrderId: '555' } });
     });
 
     it('activates a PENDING participant and is idempotent across a replayed delivery', async () => {
@@ -265,10 +269,183 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         expect(row?.pendingSince).not.toBeNull();
     });
 
+    describe('order entitlement (shared with the reconciler)', () => {
+        const statusOf = async (personId: number) =>
+            (await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId } } }))?.status;
+        const exceptionKinds = async () =>
+            (await prisma.paymentException.findMany({ where: { shopifyOrderId: '555' } })).map((e) => e.kind);
+        const clearExceptions = () => prisma.paymentException.deleteMany({ where: { programId } });
+        beforeEach(clearExceptions);
+        afterEach(clearExceptions);
+
+        const orderBody = (id: number, accountIds: string, quantity: number) => JSON.stringify({
+            id,
+            financial_status: 'paid',
+            line_items: [{ variant_id: PROGRAM_VARIANT_ID, quantity }],
+            note_attributes: [
+                { name: 'CheckMeIn_Account_ID', value: accountIds },
+                { name: 'Program_ID', value: String(programId) },
+            ],
+        });
+        const setActive = (personId: number, shopifyOrderId: string | null) => prisma.programParticipant.upsert({
+            where: { programId_personId: { programId, personId } },
+            update: { status: 'ACTIVE', pendingSince: null, shopifyOrderId },
+            create: { programId, personId, status: 'ACTIVE', shopifyOrderId },
+        });
+        const exceptionsOn = async (orderId: string) =>
+            (await prisma.paymentException.findMany({ where: { shopifyOrderId: orderId } })).map((e) => [e.kind, e.personId]);
+
+        it.each([
+            ['already paid on another order', '444'],
+            ['comped or approved (no order)', null],
+        ])('raises DUPLICATE_PAYMENT, changing nothing, when the child is %s', async (_label, priorOrder) => {
+            await setActive(p1, priorOrder);
+            const body = orderBody(555, String(p1), 1);
+            await POST(webhookReq(body, sign(body)));
+            const row = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId: p1 } } });
+            expect(row?.status).toBe('ACTIVE');
+            expect(row?.shopifyOrderId).toBe(priorOrder);
+            expect(await exceptionsOn('555')).toEqual([['DUPLICATE_PAYMENT', p1]]);
+        });
+
+        it('raises DUPLICATE_PAYMENT when the second payment comes through the hidden claimant product', async () => {
+            const CLAIMANT_VARIANT_ID = '445567';
+            await prisma.program.update({ where: { id: programId }, data: { claimantShopifyVariantId: CLAIMANT_VARIANT_ID } });
+            try {
+                await setActive(p1, '444');
+                const body = JSON.stringify({
+                    id: 555,
+                    financial_status: 'paid',
+                    line_items: [{ variant_id: CLAIMANT_VARIANT_ID, quantity: 1 }],
+                    note_attributes: [
+                        { name: 'CheckMeIn_Account_ID', value: String(p1) },
+                        { name: 'Program_ID', value: String(programId) },
+                    ],
+                });
+                await POST(webhookReq(body, sign(body)));
+                expect(await exceptionsOn('555')).toEqual([['DUPLICATE_PAYMENT', p1]]);
+            } finally {
+                await prisma.program.update({ where: { id: programId }, data: { claimantShopifyVariantId: null } });
+            }
+        });
+
+        it('activates the pending child and raises DUPLICATE_PAYMENT for the already-paid one named on the same order', async () => {
+            await setActive(p1, '444');
+            await setPending(p2);
+            const body = orderBody(555, `${p1},${p2}`, 2);
+            await POST(webhookReq(body, sign(body)));
+            expect(await statusOf(p2)).toBe('ACTIVE');
+            expect(await exceptionsOn('555')).toEqual([['DUPLICATE_PAYMENT', p1]]);
+        });
+
+        it('activates and raises UNCLAIMED_SEATS when the order buys more seats than people awaiting', async () => {
+            await setPending(p1);
+            const body = orderBody(555, String(p1), 2);
+            await POST(webhookReq(body, sign(body)));
+            expect(await statusOf(p1)).toBe('ACTIVE');
+            expect(await exceptionsOn('555')).toEqual([['UNCLAIMED_SEATS', p1]]);
+        });
+
+        it('raises nothing for siblings paying on separate orders, nor on a replay', async () => {
+            await setPending(p1);
+            await setPending(p2);
+            const first = orderBody(555, String(p1), 1);
+            const second = orderBody(556, String(p2), 1);
+            await POST(webhookReq(first, sign(first)));
+            await POST(webhookReq(second, sign(second)));
+            await POST(webhookReq(first, sign(first)));
+            expect(await statusOf(p1)).toBe('ACTIVE');
+            expect(await statusOf(p2)).toBe('ACTIVE');
+            expect(await prisma.paymentException.count({ where: { programId } })).toBe(0);
+        });
+
+        it('raises NO_ITEM when the order lacks the program variant', async () => {
+            await setPending(p1);
+            const body = programPayload(String(p1), OTHER_VARIANT_ID);
+            await POST(webhookReq(body, sign(body)));
+            expect(await statusOf(p1)).toBe('PENDING');
+            expect(await exceptionKinds()).toEqual(['NO_ITEM']);
+        });
+
+        it('activates nobody and raises AMOUNT_MISMATCH when the order buys fewer seats than people named', async () => {
+            await setPending(p1);
+            await setPending(p2);
+            const body = JSON.stringify({
+                id: 555,
+                financial_status: 'paid',
+                line_items: [{ variant_id: PROGRAM_VARIANT_ID, quantity: 1 }],
+                note_attributes: [
+                    { name: 'CheckMeIn_Account_ID', value: `${p1},${p2}` },
+                    { name: 'Program_ID', value: String(programId) },
+                ],
+            });
+            await POST(webhookReq(body, sign(body)));
+            expect(await statusOf(p1)).toBe('PENDING');
+            expect(await statusOf(p2)).toBe('PENDING');
+            expect(await exceptionKinds()).toEqual(['AMOUNT_MISMATCH']);
+        });
+
+        it('activates nobody and raises MIXED_HOUSEHOLDS when the order names children of two households', async () => {
+            const other = await prisma.person.create({
+                data: { name: 'Other HH Child', email: `other-hh-${TAG}@example.com`, household: { create: { name: 'Other HH' } } },
+            });
+            try {
+                await setPending(p1);
+                await setPending(other.id);
+                const body = orderBody(555, `${p1},${other.id}`, 2);
+                await POST(webhookReq(body, sign(body)));
+                expect(await statusOf(p1)).toBe('PENDING');
+                expect(await statusOf(other.id)).toBe('PENDING');
+                expect(await exceptionKinds()).toEqual(['MIXED_HOUSEHOLDS']);
+
+                // Shopify redelivers: still nobody activated, still one exception.
+                await POST(webhookReq(body, sign(body)));
+                expect(await statusOf(p1)).toBe('PENDING');
+                expect(await statusOf(other.id)).toBe('PENDING');
+                expect(await exceptionKinds()).toEqual(['MIXED_HOUSEHOLDS']);
+            } finally {
+                await prisma.programParticipant.deleteMany({ where: { personId: other.id } });
+                await prisma.person.delete({ where: { id: other.id } });
+                await prisma.household.delete({ where: { id: other.householdId } });
+            }
+        });
+
+        it.each([
+            ['lacks the program variant', OTHER_VARIANT_ID, {}],
+            ['was refunded', PROGRAM_VARIANT_ID, { financial_status: 'refunded' }],
+        ])('raises nothing for an order that %s when nobody named is awaiting payment', async (_label, variantId, extra) => {
+            await prisma.programParticipant.upsert({
+                where: { programId_personId: { programId, personId: p1 } },
+                update: { status: 'ACTIVE', pendingSince: null },
+                create: { programId, personId: p1, status: 'ACTIVE' },
+            });
+            const body = JSON.stringify({ ...JSON.parse(programPayload(String(p1), variantId)), ...extra });
+            await POST(webhookReq(body, sign(body)));
+            expect(await statusOf(p1)).toBe('ACTIVE');
+            expect(await exceptionKinds()).toEqual([]);
+        });
+
+        it.each([
+            ['an unpaid financial_status', 'orders/paid', { financial_status: 'pending' }],
+            ['a refunded financial_status', 'orders/paid', { financial_status: 'partially_refunded' }],
+            ['a cancelled order', 'orders/paid', { financial_status: 'paid', cancelled_at: '2026-10-01T00:00:00Z' }],
+            ['a topic other than orders/paid', 'orders/create', { financial_status: 'paid' }],
+        ])('ignores %s without activating or raising', async (_label, topic, extra) => {
+            await setPending(p1);
+            const body = JSON.stringify({ ...JSON.parse(programPayload(String(p1))), ...extra });
+            const req = webhookReq(body, sign(body));
+            req.headers.set('x-shopify-topic', topic);
+            const res = await POST(req);
+            expect(res.status).toBe(200);
+            expect(await statusOf(p1)).toBe('PENDING');
+            expect(await exceptionKinds()).toEqual([]);
+        });
+    });
+
     it('flags DISCOUNT_UNAUTHORIZED and does NOT activate when the order redeems the program member code from an unentitled household', async () => {
         // Member-code entitlement is judged HERE, at the money event — seconds after
         // checkout, against the household's state at the sale. h1 holds no
-        // OrgMembership, so it is not dues-settled through the program's dates.
+        // OrgMembership, so it is not fee-settled through the program's dates.
         await setPending(p1);
         const body = programPayload(String(p1), PROGRAM_VARIANT_ID, [`PRG${programId}-ABCD1234`]);
         try {
@@ -293,12 +470,11 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         }
     });
 
-    it('still flags when a dues-settled person id is STUFFED into CheckMeIn_Account_ID by an unentitled enrollee', async () => {
+    it('activates nobody and raises MIXED_HOUSEHOLDS when a person from another household is STUFFED into CheckMeIn_Account_ID', async () => {
         // The permalink attack: CheckMeIn_Account_ID is customer-controlled, so the
         // attacker appends any settled person's id (autoincrement — easy to guess) to
-        // their own. That person is not enrolled in this program, so they cannot lend
-        // their entitlement; activateProgramEnrollment would ignore them and activate
-        // the attacker. Entitlement is judged over the DB's enrollees, not the payload.
+        // their own. One order pays for one household, so an order naming two goes
+        // to the board before any discount is judged.
         await setPending(p1);
         const outsider = await prisma.person.create({
             data: { name: 'Settled Outsider', email: `outsider-${TAG}@example.com`, household: { create: { name: 'Settled HH' } } },
@@ -313,16 +489,16 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                 where: { programId_personId: { programId, personId: p1 } },
             });
             expect(row?.status).toBe('PENDING');
-            expect(await prisma.paymentException.count({ where: { kind: 'DISCOUNT_UNAUTHORIZED', shopifyOrderId: '555' } })).toBe(1);
+            expect((await prisma.paymentException.findMany({ where: { shopifyOrderId: '555' } })).map((e) => e.kind)).toEqual(['MIXED_HOUSEHOLDS']);
         } finally {
-            await prisma.paymentException.deleteMany({ where: { kind: 'DISCOUNT_UNAUTHORIZED', shopifyOrderId: '555' } });
+            await prisma.paymentException.deleteMany({ where: { shopifyOrderId: '555' } });
             await prisma.orgMembership.deleteMany({ where: { householdId: outsider.householdId } });
             await prisma.person.delete({ where: { id: outsider.id } });
             await prisma.household.delete({ where: { id: outsider.householdId } });
         }
     });
 
-    it('activates as usual when the same member code comes from a dues-settled household', async () => {
+    it('activates as usual when the same member code comes from a fee-settled household', async () => {
         // The entitled half of the same judgement: the code is only evidence when the
         // paying family has no membership behind it.
         await setPending(p1);
@@ -342,6 +518,35 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         }
     });
 
+    it('activates with a member code minted for this household when it is fee-settled', async () => {
+        await setPending(p1);
+        const membership = await prisma.orgMembership.create({ data: { householdId: h1, status: 'ACTIVE' } });
+        const body = programPayload(String(p1), PROGRAM_VARIANT_ID, [`PRG${programId}-H${h1}-ABCD1234`]);
+        try {
+            await POST(webhookReq(body, sign(body)));
+            const row = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId: p1 } } });
+            expect(row?.status).toBe('ACTIVE');
+            expect(await prisma.paymentException.count({ where: { shopifyOrderId: '555' } })).toBe(0);
+        } finally {
+            await prisma.orgMembership.delete({ where: { id: membership.id } });
+        }
+    });
+
+    it('flags DISCOUNT_UNAUTHORIZED when a settled household pays with a member code minted for another household', async () => {
+        await setPending(p1);
+        const membership = await prisma.orgMembership.create({ data: { householdId: h1, status: 'ACTIVE' } });
+        const body = programPayload(String(p1), PROGRAM_VARIANT_ID, [`PRG${programId}-H${h1 + 100000}-ABCD1234`]);
+        try {
+            await POST(webhookReq(body, sign(body)));
+            const row = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId: p1 } } });
+            expect(row?.status).toBe('PENDING');
+            expect((await prisma.paymentException.findMany({ where: { shopifyOrderId: '555' } })).map((e) => e.kind)).toEqual(['DISCOUNT_UNAUTHORIZED']);
+        } finally {
+            await prisma.paymentException.deleteMany({ where: { shopifyOrderId: '555' } });
+            await prisma.orgMembership.delete({ where: { id: membership.id } });
+        }
+    });
+
     it('fails closed when the Program has no Shopify variant configured at all', async () => {
         // "Cannot verify" must mean "don't activate", not "trust the payload".
         const noVariantProgram = await prisma.program.create({
@@ -352,6 +557,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                 data: { programId: noVariantProgram.id, personId: p1, status: 'PENDING', pendingSince: new Date() },
             });
             const body = JSON.stringify({
+            financial_status: 'paid',
                 id: 654,
                 line_items: [{ variant_id: PROGRAM_VARIANT_ID }], // even a "valid-looking" variant can't match — nothing configured
                 note_attributes: [
@@ -395,6 +601,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
 
     it('routes a Membership_Process_ID payload to activateByProcessId and returns 200', async () => {
         const body = JSON.stringify({
+            financial_status: 'paid',
             id: 98765,
             line_items: [{ variant_id: MEMBERSHIP_VARIANT_ID }],
             note_attributes: [{ name: 'Membership_Process_ID', value: '42' }],
@@ -406,12 +613,34 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         expect(activateByProcessId).toHaveBeenCalledWith(42, '98765', true);
     });
 
+    it('activates the program seat AND the membership when one order carries both', async () => {
+        await setPending(p1);
+        const body = JSON.stringify({
+            financial_status: 'paid',
+            id: 98766,
+            line_items: [{ variant_id: MEMBERSHIP_VARIANT_ID, quantity: 1 }, { variant_id: PROGRAM_VARIANT_ID, quantity: 1 }],
+            note_attributes: [
+                { name: 'Membership_Process_ID', value: '43' },
+                { name: 'CheckMeIn_Account_ID', value: String(p1) },
+                { name: 'Program_ID', value: String(programId) },
+            ],
+        });
+        const res = await POST(webhookReq(body, sign(body)));
+        expect(res.status).toBe(200);
+        expect(activateByProcessId).toHaveBeenCalledWith(43, '98766', true);
+        const row = await prisma.programParticipant.findUnique({
+            where: { programId_personId: { programId, personId: p1 } },
+        });
+        expect(row?.status).toBe('ACTIVE');
+    });
+
     it('returns 500 and writes one IntegrationErrorLog row when a handler throws', async () => {
         // Clean slate so the survivor count is exact.
         await prisma.integrationErrorLog.deleteMany({ where: { source: 'shopify-webhook' } });
         (activateByProcessId as jest.Mock).mockRejectedValueOnce(new Error('handler boom'));
 
         const body = JSON.stringify({
+            financial_status: 'paid',
             id: 13579,
             note_attributes: [{ name: 'Membership_Process_ID', value: '99' }],
         });
@@ -435,7 +664,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
 
         beforeAll(async () => {
             const program = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Webhook Single-Pool Test Program ${TAG}`, enrollmentStatus: 'OPEN', shopifyVariantId: SINGLE_VARIANT_ID },
+                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Webhook Single-Pool Test Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: SINGLE_VARIANT_ID },
             });
             singlePoolProgramId = program.id;
 
@@ -466,6 +695,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                     create: { programId: singlePoolProgramId, personId: sgp1, status: 'PENDING', pendingSince: new Date() },
                 });
                 const body = JSON.stringify({
+            financial_status: 'paid',
                     id: 888,
                     line_items: [{ variant_id: SINGLE_VARIANT_ID }],
                     note_attributes: [
@@ -507,6 +737,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
                     create: { programId: singlePoolProgramId, personId: sgp1, status: 'PENDING', pendingSince: new Date(), isPaymentPlanRequested: false, inventoryHeldAt: new Date(), paymentPlanDeniedAt: new Date() },
                 });
                 const body = JSON.stringify({
+            financial_status: 'paid',
                     id: 889,
                     line_items: [{ variant_id: SINGLE_VARIANT_ID }],
                     note_attributes: [

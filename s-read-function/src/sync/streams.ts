@@ -12,7 +12,7 @@ import {
   readSinceIso,
   advanceWatermark,
   logger,
-} from "@inventory/s-ingest-core";
+} from "@checkin/s-ingest-core";
 import type { ShopifyClient } from "../shopify/client.js";
 import { fetchOrders, fetchPayouts, fetchBalanceTransactions } from "../shopify/fetchers.js";
 

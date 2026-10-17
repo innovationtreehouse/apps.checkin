@@ -7,6 +7,10 @@ import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { renewalSeasonWindow, membershipYearCycle, coveredThrough, bgValidUntilBoundary, grantRenewalPayment, MAX_DATE } from "@/lib/membership/renewal";
 import { grantableRenewalWhere, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { PaymentError } from "@/lib/membership/payment";
+import { grantCurrentYear, refuseGrantIfDenied } from "@/lib/membership/grant";
+import { ensureHouseholdMembership, setHouseholdStatus } from "@/lib/membership/householdStatus";
+import { personActor } from "@/lib/auditActor";
+import { lockBoardRoles } from "@/lib/roles";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 
@@ -25,7 +29,6 @@ const PRIMARY_CONTACT_WHERE = { conflictParticipantId: null, name: { not: "" }, 
 function withFlatContact<T extends { emergencyContacts: { name: string; phone: string }[] }>(h: T) {
     const primary = h.emergencyContacts[0] ?? null;
     const { emergencyContacts: _drop, ...rest } = h;
-    void _drop;
     return { ...rest, emergencyContactName: primary?.name ?? null, emergencyContactPhone: primary?.phone ?? null };
 }
 
@@ -75,7 +78,7 @@ export const GET = withAuth(
                 const detailCycle = settings?.orgMembershipYearBoundary
                     ? membershipYearCycle(settings.orgMembershipYearBoundary, new Date())
                     : null;
-                // "Settled for the live year" = ANY dues-paid process (settledThisCycleWhere)
+                // "Settled for the live year" = ANY fee-paid process (settledThisCycleWhere)
                 // stamped since the year's window opened — a family that JOINS in-window
                 // buys the coming year exactly as a renewer does, so INITIAL counts too.
                 // ARCHIVED never completed payment and does not extend the horizon (the
@@ -107,7 +110,26 @@ export const GET = withAuth(
                     .reduce<Date | null>((acc, m) => (!acc || m.lastBackgroundCheck! > acc ? m.lastBackgroundCheck! : acc), null);
                 const householdBgValidUntil = bgValidUntilBoundary(latestLeadBg, bgSettings);
 
+                // The latest application's agreement signing, for the board's signer card.
+                const signingProcess = household.orgMembership
+                    ? await prisma.orgMembershipProcess.findFirst({
+                          where: { orgMembershipId: household.orgMembership.id },
+                          orderBy: { id: "desc" },
+                          select: { id: true, zohoEnvelopeId: true, contractSignedAt: true, zohoSignerPersonId: true },
+                      })
+                    : null;
+                const signer = signingProcess?.zohoSignerPersonId
+                    ? await prisma.person.findUnique({ where: { id: signingProcess.zohoSignerPersonId }, select: { name: true, email: true } })
+                    : null;
+                const signing = signingProcess && {
+                    processId: signingProcess.id,
+                    contractStarted: !!signingProcess.zohoEnvelopeId,
+                    contractSignedAt: signingProcess.contractSignedAt,
+                    signerName: signer?.name?.trim() || signer?.email || null,
+                };
+
                 return NextResponse.json({
+                    signing,
                     household: { ...withFlatContact(household), householdMembers: membersWithBg, householdLeads, bgValidUntil: householdBgValidUntil },
                     validUntil: household.orgMembership?.status === "ACTIVE" && detailCycle ? coveredThrough(detailCycle, detailSettled) : null,
                 });
@@ -148,7 +170,7 @@ export const GET = withAuth(
                     },
                     // ONE probe serves both flags computed below, from the shared lifecycle
                     // definitions: grantableRenewalWhere (payable renewal → grantability)
-                    // and settledThisCycleWhere (ANY dues-paid process — INITIAL or
+                    // and settledThisCycleWhere (ANY fee-paid process — INITIAL or
                     // RENEWAL — stamped since the live year's window opened → settled for
                     // it, the same test membershipValidThrough uses; ARCHIVED never paid,
                     // so it is the sweep's business only). No boundary ⇒ "never" (matches
@@ -160,10 +182,13 @@ export const GET = withAuth(
                                 where: {
                                     OR: [
                                         grantableRenewalWhere,
+                                        // An application awaiting payment: a current-year grant
+                                        // certifies it, which only the Board may do.
+                                        { kind: "INITIAL", status: "PENDING_PAYMENT" },
                                         settledThisCycleWhere(cycle?.settledSince ?? MAX_DATE),
                                     ],
                                 },
-                                select: { id: true, status: true },
+                                select: { id: true, status: true, kind: true },
                             },
                         },
                     },
@@ -186,12 +211,13 @@ export const GET = withAuth(
             const withGrantable = households.map((h) => {
                 // Split the single OR probe by status: PENDING_PAYMENT = grantable renewal
                 // (grantableRenewalWhere — kind RENEWAL, so an in-flight INITIAL at
-                // payment never reads as grantable); any other row is a dues-paid process
+                // payment never reads as grantable); any other row is a fee-paid process
                 // of EITHER kind = the live year is settled (settledThisCycleWhere:
                 // finished renewal, admin override, or a family that joined inside
                 // the window).
                 const { processes = [], ...orgMembership } = h.orgMembership ?? {};
-                const renewalGrantable = processes.some((p) => p.status === "PENDING_PAYMENT");
+                const awaitingPayment = processes.some((p) => p.status === "PENDING_PAYMENT");
+                const renewalGrantable = processes.some((p) => p.status === "PENDING_PAYMENT" && p.kind === "RENEWAL");
                 const settledForComingYear = processes.some((p) => p.status !== "PENDING_PAYMENT");
                 // Household-level BG "valid until" — later lastBackgroundCheck among leads
                 // who passed; no per-member values in the list response.
@@ -203,6 +229,7 @@ export const GET = withAuth(
                     ...withFlatContact(h),
                     orgMembership: h.orgMembership ? orgMembership : null,
                     renewalGrantable,
+                    awaitingPayment,
                     settledForComingYear,
                     bgValidUntil,
                     validUntil: h.orgMembership?.status === "ACTIVE" && cycle ? coveredThrough(cycle, settledForComingYear) : null,
@@ -224,6 +251,7 @@ export const POST = withAuth(
     { roles: ['isSysadmin', 'isBoardMember'] },
     async (req, auth) => {
         try {
+            if (auth.type !== "session") return apiError("Unauthorized", 401);
             const body = await req.json();
             const { householdId, active, deny, comingYear, reason } = body;
 
@@ -231,65 +259,64 @@ export const POST = withAuth(
                 return apiError("Household ID is required", 400);
             }
 
-            const existingMembership = await prisma.orgMembership.findUnique({
-                where: { householdId }
-            });
+            // Every household-status action here — deny, restore, grant, revoke — is refused
+            // for the actor's own household. No role bypasses it.
+            if (await hasHouseholdConflict(prisma, auth.user.id, householdId)) {
+                return apiError("You cannot change your own household's membership — someone outside your household must.", 403);
+            }
+            const actor = personActor(auth.user.id);
+            const trimmedReason = typeof reason === "string" ? reason.trim() : "";
 
             // Deny / restore — a separate legal act from grant/revoke. Denying blocks login for
-            // every member of the household (enforced in the auth layer).
+            // every member of the household (enforced in the auth layer). Restore is "undeny":
+            // DENIED → NONE only.
             if (typeof deny === "boolean") {
-                if (deny) {
-                    // Two separate legal actions → two separate software actions: a household
-                    // containing a board member cannot be denied. Remove the board role first.
-                    // Enforced server-side; the UI's disabled button is only a courtesy.
-                    const boardMemberInHousehold = await prisma.person.findFirst({
-                        where: { householdId, isBoardMember: true, ...LIVE_PERSON },
-                        select: { id: true }
-                    });
-                    if (boardMemberInHousehold) {
-                        return apiError("This household includes a board member. Remove the board role before denying membership.", 409);
+                const outcome = await prisma.$transaction(async (tx) => {
+                    if (deny) {
+                        // Two separate legal actions → two separate software actions: a household
+                        // containing a board member cannot be denied. Remove the board role first.
+                        // Enforced server-side; the UI's disabled button is only a courtesy. Probed
+                        // under the board-role lock so a BOARD grant landing at the same moment is
+                        // either seen here or refused by setRoleFlag's DENIED check.
+                        await lockBoardRoles(tx);
+                        const boardMemberInHousehold = await tx.person.findFirst({
+                            where: { householdId, isBoardMember: true, ...LIVE_PERSON },
+                            select: { id: true }
+                        });
+                        if (boardMemberInHousehold) return "boardMember" as const;
                     }
-                }
-
-                const newStatus = deny ? "DENIED" : "NONE";
-                const membership = await prisma.orgMembership.upsert({
-                    where: { householdId },
-                    create: { householdId, status: newStatus },
-                    update: { status: newStatus }
+                    const membership = await ensureHouseholdMembership(tx, householdId);
+                    const applied = await setHouseholdStatus(tx, membership.id, deny
+                        ? { from: ["NONE", "ACTIVE", "REVOKED"], to: "DENIED", actor, reason: trimmedReason || "board deny" }
+                        : { from: ["DENIED"], to: "NONE", actor, reason: trimmedReason || "board restore" });
+                    return applied ? membership.id : "notApplied" as const;
                 });
-
-                if (auth.type === 'session') {
-                    await prisma.auditLog.create({
-                        data: {
-                            actorId: auth.user.id,
-                            action: "EDIT",
-                            tableName: "OrgMembership",
-                            affectedEntityId: membership.id,
-                            secondaryAffectedEntity: householdId,
-                            oldData: { status: existingMembership?.status ?? "NONE" },
-                            newData: { status: newStatus }
-                        }
-                    });
+                if (outcome === "boardMember") {
+                    return apiError("This household includes a board member. Remove the board role before denying membership.", 409);
                 }
-
-                return NextResponse.json({ success: true, membership });
+                if (outcome === "notApplied") {
+                    return apiError(deny ? "This household is already denied." : "Only a denied household can be restored.", 409);
+                }
+                return NextResponse.json({ success: true, membership: await prisma.orgMembership.findUnique({ where: { id: outcome } }) });
             }
 
-            // Renewal-season admin override: complete the payment gate on a household's
-            // in-flight RENEWAL that's already at PENDING_PAYMENT (contract signed) with
-            // a valid, cleared background check — by delegating to the same settlement
-            // path a real payment takes. No archive, no second process, no stamped gates.
-            if (comingYear) {
-                // Certify requires a real actor; mirror the settings PUT convention.
-                if (auth.type !== "session") return apiError("Unauthorized", 401);
-                const trimmedReason = typeof reason === "string" ? reason.trim() : "";
+            // Grants pay an application (money only); neither sets the household's status.
+            if (comingYear || active) {
                 if (!trimmedReason) return apiError("A reason is required to certify a payment", 400);
                 try {
-                    const process = await grantRenewalPayment(householdId, {
-                        actorId: auth.user.id,
-                        reason: trimmedReason,
+                    const grantActor = { actorId: auth.user.id, reason: trimmedReason };
+                    await refuseGrantIfDenied(householdId, auth.user.id);
+                    if (comingYear) {
+                        return NextResponse.json({ success: true, process: await grantRenewalPayment(householdId, grantActor) });
+                    }
+                    const result = await grantCurrentYear(householdId, grantActor);
+                    return NextResponse.json({
+                        success: true,
+                        ...result,
+                        message: result.paid
+                            ? (result.process.status === "ACTIVE" ? "Granted: the membership is active." : "Granted: the membership activates once the background check clears.")
+                            : "Application opened: the family completes it, then grant again once it reaches payment.",
                     });
-                    return NextResponse.json({ success: true, process });
                 } catch (e) {
                     if (e instanceof PaymentError) {
                         const status = e.code === "forbidden" ? 403 : e.code === "not_found" ? 404 : 409;
@@ -299,51 +326,9 @@ export const POST = withAuth(
                 }
             }
 
-            if (active) {
-                // Conflict of interest: no actor may grant their OWN household ACTIVE
-                // membership — that bypasses payment AND the background check for their
-                // own family. No role bypasses this. (Mirrors the deny branch's
-                // board-member protection, and certifyPaymentPlan's guard.)
-                if (auth.type === 'session' && await hasHouseholdConflict(prisma, auth.user.id, householdId)) {
-                    return apiError("You cannot activate your own household's membership — someone outside your household must.", 403);
-                }
-                const membership = await prisma.orgMembership.upsert({
-                    where: { householdId },
-                    create: { householdId, status: "ACTIVE" },
-                    update: { status: "ACTIVE" }
-                });
-                if (auth.type === 'session') {
-                    await prisma.auditLog.create({
-                        data: {
-                            actorId: auth.user.id,
-                            action: "EDIT",
-                            tableName: "OrgMembership",
-                            affectedEntityId: membership.id,
-                            secondaryAffectedEntity: householdId,
-                            oldData: { status: existingMembership?.status ?? "NONE" },
-                            newData: { status: "ACTIVE" }
-                        }
-                    });
-                }
-                return NextResponse.json({ success: true, membership });
-            } else if (existingMembership && existingMembership.status === "ACTIVE") {
-                const membership = await prisma.orgMembership.update({
-                    where: { householdId },
-                    data: { status: "REVOKED" }
-                });
-                if (auth.type === 'session') {
-                    await prisma.auditLog.create({
-                        data: {
-                            actorId: auth.user.id,
-                            action: "EDIT",
-                            tableName: "OrgMembership",
-                            affectedEntityId: membership.id,
-                            secondaryAffectedEntity: householdId,
-                            oldData: { status: "ACTIVE" },
-                            newData: { status: "REVOKED" }
-                        }
-                    });
-                }
+            // Revoke: only a household that is still ACTIVE at write time.
+            const existingMembership = await prisma.orgMembership.findUnique({ where: { householdId } });
+            if (existingMembership && await setHouseholdStatus(prisma, existingMembership.id, { from: ["ACTIVE"], to: "REVOKED", actor, reason: trimmedReason || "board revoke" })) {
                 return NextResponse.json({ success: true, message: "Membership deactivated" });
             }
 

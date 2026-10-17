@@ -1,23 +1,13 @@
 /**
  * SCOPE_BINDINGS — the declarative per-row scope table.
  *
- * Ported 1:1 from the imperative `switch (modelName)` that lived in
- * access-resolvers.ts (`scopesHeld`). Each entry says: "the caller holds
- * <scope> on a <Model> row when <Match> holds." The engine (scopes.ts) seeds
- * `everyones` and applies these; the equivalence test
- * (scopeBindingsEquivalence.test.ts) proves set-equality with the old switch
- * across every persona × model × row, which is the contract that this port is
- * behavior-neutral.
+ * Each entry says: "the caller holds <scope> on a <Model> row when <Match>
+ * holds." The engine (scopes.ts) seeds `everyones` and applies these.
  *
- * Field names verified against the LIVE generated map
- * (./generated/classifications.ts), not the §7.4 doc table. Discrepancies found
- * vs that table (see docs/security/auth-consistency-analysis.md §7.4/§7.5):
- *   - Visit:  field is `departedAt` (doc wrote `departed`).            [doc fixed]
- *   - ToolStatus: field is `personId` (renamed userId→participantId #564, then participantId→personId).
- *   - RawBadgeLog: model is `RawBadgeLog` (doc table wrote `RawBadgeEvent`).
- *   - RSVP: has no `programId` column of its own, so the program-lead grant
- *     resolves via eventId → Event.programId (ctx.eventIdsInScopePrograms), not
- *     a direct `row.programId` read. See the RSVP binding below + §7.5/§9 Step 3.
+ * Field names follow the LIVE generated map (./generated/classifications.ts).
+ * RSVP has no `programId` column of its own, so its program-lead grant resolves
+ * via eventId → Event.programId (see the RSVP binding below).
+ * Background: docs/security/auth-consistency-analysis.md §7.4.
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
@@ -140,6 +130,11 @@ export const SCOPE_BINDINGS = {
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },
         keyholders: { flag: 'isKeyholder' },
     },
+    // Receipt library: a submitter's own receipts and
+    // their file. The uploader is the session's Person.id, never a payload field.
+    Receipt: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
+    ReceiptView: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
+    ReceiptLineView: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
     TrustedAdultReview: {
         their_households: { field: 'householdId', eqCtx: 'householdId' },
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },
@@ -151,9 +146,8 @@ export const SCOPE_BINDINGS = {
  * Models whose sensitive fields MUST be gated by a scope key the row carries:
  * if the key is absent (e.g. a query selected the row but not its `householdId`)
  * the resolver returns NO scopes — not even `everyones` — so the stripper drops
- * every sensitive field. Fails CLOSED. This is the old ROW_SCOPE_KEY map; it
- * moved here with the bindings. The §7.3 engine sketch dropped it, but the live
- * switch has it and the EmergencyContact fail-closed unit tests require it.
+ * every sensitive field. Fails CLOSED. The EmergencyContact fail-closed unit
+ * tests require it.
  */
 export const ROW_SCOPE_KEY: Record<string, string> = {
     EmergencyContact: 'householdId',
@@ -162,7 +156,7 @@ export const ROW_SCOPE_KEY: Record<string, string> = {
 /**
  * Work queue: models that are sensitive AND scopable (could carry a `their_*`
  * relationship) but whose scoped route is not built yet, so they are bound
- * nowhere. A future §9 migration moves each entry OUT of this set and INTO a
+ * nowhere. A route migration moves each entry OUT of this set and INTO a
  * real SCOPE_BINDINGS binding, in the same PR that ships its handler() route.
  * Done when this set is empty.
  *
@@ -170,16 +164,10 @@ export const ROW_SCOPE_KEY: Record<string, string> = {
  * actor FK) are auto-exempt by isScopable() in validateBindings; "never leaves,
  * even to admins" content is tiered `secret`.
  *
- * NOTE — this DIVERGES from the doc §7.5.1 list, which also names
- * `EmergencyContact`. The live switch already BINDS EmergencyContact (the
- * ROW_SCOPE_KEY pilot case), so it belongs in SCOPE_BINDINGS, not here — the
- * doc's listing is stale (it predates that case landing; §9 Step 4 still treats
- * it as pending). Removed.
+ * EmergencyContact is bound (the ROW_SCOPE_KEY case), so it is not listed here.
+ * See docs/security/auth-consistency-analysis.md §7.5.1.
  */
 export const OPT_OUT_PENDING_ROUTE = new Set<string>([
-    // Lands ahead of the model itself (#1752, the Stage-2 presence substrate), so
-    // the boundary change ships alone and reviewable — inert until that PR adds
-    // the model (an entry here is only ever read as `pendingRoute.has(model)`).
     // Append-only projection source; no route returns it — the review panel reads
     // RawBadgeLog and the heartbeat bag is synthesized. A "my presence history"
     // route is plausible later; that is when this earns a real binding.
@@ -188,17 +176,10 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     'BackgroundCheckAttestation', // bind their_own at migration, keep notes `internal`
     'Corporation', // has leads→personId; a corp-lead view is plausible
     'VolunteerDesignation', // has createdById; confirm whether a self view is warranted
-    // Lands ahead of the model itself (#1031, the Shopify payment reconciler), so the
-    // boundary change ships alone and reviewable — inert until that PR adds the model
-    // (an entry here is only ever read as `pendingRoute.has(model)`). Board/admin only,
+    // Board/admin only,
     // served via withAuth on finance-ops/payments; a household-facing "your payment
     // problem" route is plausible later, and that is when this earns a real binding.
     'PaymentException',
-    // Surfaced by the personId fix to SCOPABLE_FIELDS (the Participant→Person rename
-    // left `participantId` in that list, so every personId-only model silently took
-    // the "un-scopable, admin-only by construction" exemption instead of being made
-    // to declare itself here). Both below are that backlog, not new models.
-    //
     // Read today only by GET/PATCH /api/roles (withAuth isSysadmin|isBoardMember) and,
     // as a derived boolean set via rolesToFlags, by GET /api/people/search (board/
     // sysadmin/ops) — the rows themselves are never serialized into a member-facing
@@ -213,12 +194,55 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // bag"). If a self-serve "emails we sent you" / suppression-audit view ever ships,
     // it earns `their_own: { field: 'personId', eqCtx: 'selfId' }`.
     'BulkSendItem',
+    // Budget-owner buckets. Not pending: its routes exist
+    // (registry/budgetOwner.ts). `programId` makes it scopable, but every view is
+    // finance-or-board with everyones grants and no owner-scoped view; per-line
+    // approval by a bucket's approvers is a handler query filter, not a scope.
+    'BudgetOwner',
+    // Local inventory audit logs. Their `userId` is in SCOPABLE_FIELDS,
+    // but it is a local-inventory actor id — not checkin's `selfId` — so it never
+    // earns a `their_own` binding; the internal attribution fields stay with the
+    // INVENTORY_MANAGER view.
+    'InventoryLog',
+    'LocationLog',
+    // Expense audit log. Its `userId` is the acting checkin Person.id, read
+    // only by FINANCE/BOARD (everyones:pii). A "my expense history" view is the
+    // plausible future reader; that is when it earns `their_own` on `userId`.
+    'ExpenseAuditLog',
+    // Receipt audit log. Its `userId` is the acting Person.id, but only
+    // FINANCE and BOARD read the log (everyones grants, GET /api/receipts/[id]/
+    // audit-logs); a submitter never reads audit rows, so no `their_own` binding
+    // is planned.
+    'ReceiptAuditLog',
+    // Bulk-donation CSV uploads. Not pending: its routes exist
+    // (registry/donation.ts). `uploadedByUserId` makes it scopable, but every route
+    // is finance-or-board (GET list and blob file route; FINANCE writes) with
+    // everyones grants and no owner-scoped view, so it never earns `their_own`.
+    'UploadedFile',
+    // The in-kind finance queue row (registry/donation.ts). `uploadedByUserId`
+    // makes it scopable, but its only route is finance-or-board with everyones
+    // grants: the uploader and recorder ids feed the accept screen's conflict
+    // warnings, and no uploader-facing view reads the queue.
+    'InKindQueueItemView',
+    // Shopify-mirror response rows (registry/shopifyRead.ts). Their `personId` makes
+    // them scopable, but every route is board-only with everyones grants: the payment
+    // queue and the match audit are board bookkeeping, with no person-facing view.
+    'PaymentQueueRow',
+    'MatchAuditEnrollmentRow',
+    // The unconfirmed Shopify stock screen's rows (registry.ts). Their `programId`
+    // makes them scopable, but every route is board-only with everyones grants:
+    // settling stock is board bookkeeping, with no program-facing view.
+    'UnconfirmedStockRow',
+    'UnconfirmedStockSettlement',
+    // The reimbursee named on the QuickBooks Vendor link screen (registry/expense.ts).
+    // Its `personId` makes it scopable, but the only route is FINANCE with everyones
+    // grants, and the reimbursee never reads their own Vendor link.
+    'ExpenseReimburseeView',
 ]);
 
 /**
- * The per-row scope resolver. Same signature as the old switch
- * (`(modelName, row, ctx) => Set<Scope>`). access-resolvers.ts re-exports this
- * so every existing `import { scopesHeld } from './access-resolvers'` keeps
- * working unchanged.
+ * The per-row scope resolver, `(modelName, row, ctx) => Set<Scope>`.
+ * access-resolvers.ts re-exports it, so callers may
+ * `import { scopesHeld } from './access-resolvers'`.
  */
 export const scopesHeld = makeScopesHeld(SCOPE_BINDINGS, ROW_SCOPE_KEY);

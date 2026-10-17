@@ -5,10 +5,9 @@ import { Alert, Badge, Box, Button, Card, Checkbox, Group, Modal, SimpleGrid, St
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { EntityPicker } from '@/components/admin/EntityPicker';
-import { calculateAge } from '@/lib/time';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { formatPhone } from '@/lib/phone';
-import type { ProgramDetail, ParticipantOption } from './page';
+import type { ProgramDetail, EligibleOption } from './page';
 
 type Participant = ProgramDetail['participants'][number];
 
@@ -74,7 +73,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
   };
 
   // Volunteer + participant pickers both search this program's eligible members.
-  const searchEligible = useCallback(async (query: string): Promise<ParticipantOption[]> => {
+  const searchEligible = useCallback(async (query: string): Promise<EligibleOption[]> => {
     const res = await fetch(`/api/programs/${programId}/eligible-participants?q=${encodeURIComponent(query)}`);
     if (!res.ok) return [];
     const data = await res.json();
@@ -187,15 +186,14 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
         <form onSubmit={handleAddVolunteer}>
           <Group align="flex-end" gap="md" mb="lg" wrap="wrap">
             <Box style={{ flex: 1, minWidth: 200 }}>
-              <EntityPicker<ParticipantOption>
-                label="Assign Volunteer (Name/Email)"
+              <EntityPicker<EligibleOption>
+                label="Assign Volunteer"
                 placeholder="Start typing to search..."
                 selectedId={newVolId || null}
                 selectedLabel={volLabel}
                 search={searchEligible}
                 getOptionLabel={(p) => p.name || 'Unnamed'}
-                getOptionDescription={(p) => p.email}
-                onSelect={(p) => { setNewVolId(p.id.toString()); setVolLabel(`${p.name || 'Unnamed'} (${p.email})`); }}
+                onSelect={(p) => { setNewVolId(p.id.toString()); setVolLabel(p.name || 'Unnamed'); }}
                 onClear={() => { setNewVolId(""); setVolLabel(""); }}
               />
             </Box>
@@ -225,28 +223,15 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
         <form onSubmit={handleAddParticipant}>
           <Group align="flex-end" gap="md" mb="lg" wrap="wrap">
             <Box style={{ flex: 1, minWidth: 200 }}>
-              <EntityPicker<ParticipantOption>
-                label="Assign Participant (Name/Email)"
+              <EntityPicker<EligibleOption>
+                label="Assign Participant"
                 placeholder="Start typing to search..."
                 selectedId={newPartId || null}
                 selectedLabel={partLabel}
                 search={searchEligible}
                 getOptionLabel={(p) => p.name || 'Unnamed'}
-                getOptionDescription={(p) => {
-                  let warning: string | null = null;
-                  if (p.dateOfBirth) {
-                    const age = calculateAge(p.dateOfBirth, program.startAt ?? undefined);
-                    if (program.minAge !== null && age < program.minAge) warning = `⚠️ Too Young (${age})`;
-                    if (program.maxAge !== null && age > program.maxAge) warning = `⚠️ Too Old (${age})`;
-                  }
-                  return (
-                    <Group gap="xs" justify="space-between" wrap="nowrap">
-                      <span>{p.email}</span>
-                      {warning && <Badge color="yellow" variant="light">{warning}</Badge>}
-                    </Group>
-                  );
-                }}
-                onSelect={(p) => { setNewPartId(p.id.toString()); setPartLabel(`${p.name || 'Unnamed'} (${p.email})`); }}
+                getOptionDescription={(p) => p.ageWarning && <Badge color="yellow" variant="light">⚠️ {p.ageWarning}</Badge>}
+                onSelect={(p) => { setNewPartId(p.id.toString()); setPartLabel(p.name || 'Unnamed'); }}
                 onClear={() => { setNewPartId(""); setPartLabel(""); }}
               />
             </Box>
@@ -274,7 +259,6 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
                   <Text size="sm" c="dimmed"><strong>Email:</strong> {p.person.email}</Text>
-                  <Text size="sm" c="dimmed"><strong>Phone:</strong> {p.person.phone ? formatPhone(p.person.phone) : 'N/A'}</Text>
                   {p.person.household && (
                     <>
                       <Text size="sm" c="dimmed" style={{ gridColumn: '1 / -1' }}>
@@ -310,7 +294,6 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, fetchP
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
                   <Text size="sm" c="dimmed"><strong>Email:</strong> {p.person.email}</Text>
-                  <Text size="sm" c="dimmed"><strong>Phone:</strong> {p.person.phone ? formatPhone(p.person.phone) : 'N/A'}</Text>
                   <Text size="sm" c="dimmed"><strong>Pending Since:</strong> {p.pendingSince ? formatDateTime(p.pendingSince) : 'Unknown'}</Text>
                 </SimpleGrid>
               </Card>

@@ -19,6 +19,7 @@ export type ProgramDetail = {
   name: string;
   startAt: string | null;
   endAt: string | null;
+  offSaleAt: string | null;
   leadMentorId: number | null;
   phase: string;
   enrollmentStatus: string;
@@ -35,7 +36,6 @@ export type ProgramDetail = {
     person: {
       name: string | null;
       email: string;
-      phone?: string | null;
       // householdMembers is the household's leads (the parents) only. Contact
       // fields are optional because the response stripper drops them for a
       // viewer without the grant.
@@ -52,9 +52,12 @@ export type ProgramDetail = {
   nonOrgMemberPriceCents: number | null;
   shopifyProductId: string | null;
   shopifyVariantId: string | null;
+  claimantShopifyVariantId?: string | null;
 };
 
-export type ParticipantOption = { id: number; name: string | null; email: string; dateOfBirth?: string | null };
+export type ParticipantOption = { id: number; name: string | null; email: string };
+// The eligible-participants search returns names only, plus the program's age-fit label.
+export type EligibleOption = { id: number; name: string | null; ageWarning: string | null };
 
 const PHASE_BADGE: Record<string, { label: string; color: string }> = {
   PLANNING: { label: 'Planning', color: 'gray' },
@@ -78,6 +81,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   // Form States
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
+  const [offSaleAt, setOffSaleAt] = useState("");
   const [minAge, setMinAge] = useState("");
   const [maxAge, setMaxAge] = useState("");
   const [maxParticipants, setMaxParticipants] = useState("");
@@ -106,14 +110,14 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   const [message, setMessage] = useState("");
   const [activeTab, setActiveTab] = useState<'general' | 'roster' | 'events'>('general');
 
-  const fetchProgram = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/programs/${id}`);
+  const fetchProgram = useCallback(() => fetch(`/api/programs/${id}`)
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setProgram(data);
         setStartAt(data.startAt ? data.startAt.split('T')[0] : "");
         setEndAt(data.endAt ? data.endAt.split('T')[0] : "");
+        setOffSaleAt(data.offSaleAt ? data.offSaleAt.split('T')[0] : "");
         setMinAge(data.minAge !== null ? String(data.minAge) : "");
         setMaxAge(data.maxAge !== null ? String(data.maxAge) : "");
         setMaxParticipants(data.maxParticipants !== null ? String(data.maxParticipants) : "");
@@ -134,12 +138,14 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
       } else {
         setMessage("Failed to load program.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, [id]);
+    }),
+  [id]);
 
   useEffect(() => {
     if (ready) fetchProgram();
@@ -164,6 +170,8 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
         body: JSON.stringify({
           startAt: startAt || null,
           endAt: endAt || null,
+          // Sent only when edited, so an untouched date keeps following the start date.
+          ...(offSaleAt !== (program?.offSaleAt?.split('T')[0] ?? "") && { offSaleAt: offSaleAt || null }),
           minAge: minAge ? parseInt(minAge) : null,
           maxAge: maxAge ? parseInt(maxAge) : null,
           maxParticipants: maxParticipants ? parseInt(maxParticipants) : null,
@@ -220,7 +228,9 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
       const res = await fetch(`/api/programs/${id}/sync-shopify`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Shopify checkout configured." });
+        notifications.show(data.warning
+          ? { color: "yellow", message: data.warning, autoClose: false }
+          : { message: "Shopify checkout configured." });
         notifyNavRefresh();
         fetchProgram();
       } else {
@@ -356,6 +366,20 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                         Save Shopify IDs
                       </Button>
                     </Group>
+                    <Text size="sm" mt="md">
+                      Reserved-seat variant: {program.claimantShopifyVariantId ?? "none — checkout uses the public variant"}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      A hidden (unlisted, untracked) product the app&apos;s checkout links to, so a family holding a seat can pay even when the store shows the program sold out.
+                    </Text>
+                    {!program.claimantShopifyVariantId && !isProgramCheckoutBroken(program)
+                      && ((program.nonOrgMemberPriceCents ?? program.orgMemberPriceCents ?? 0) > 0) && (
+                      <Group mt="xs">
+                        <Button type="button" variant="light" size="xs" loading={syncing} onClick={handleSyncShopify}>
+                          Create reserved-seat product
+                        </Button>
+                      </Group>
+                    )}
                   </Card>
                 )}
               </Stack>
@@ -399,6 +423,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                 <SimpleGrid cols={{ base: 1, sm: 2 }}>
                   <TextInput type="date" label="Start Date" value={startAt} onChange={e => setStartAt(e.currentTarget.value)} />
                   <TextInput type="date" label="End Date" value={endAt} onChange={e => setEndAt(e.currentTarget.value)} />
+                  <TextInput type="date" label="Off-Sale Date" value={offSaleAt} onChange={e => setOffSaleAt(e.currentTarget.value)} disabled={!user?.isBoardMember} description="Enrollment closes and the store product comes off sale on this date. Blank = start date." />
                   <NumberInput label="Minimum Age (Optional)" value={minAge} onChange={v => setMinAge(String(v))} min={0} max={25} placeholder="e.g. 14" />
                   <NumberInput label="Maximum Age (Optional)" value={maxAge} onChange={v => setMaxAge(String(v))} min={0} max={25} placeholder="e.g. 18" />
                 </SimpleGrid>

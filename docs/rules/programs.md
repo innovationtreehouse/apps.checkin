@@ -103,13 +103,30 @@ Things the app takes as true because they are handled outside it.
 - A program leader is 23 or older, the floor belonging to the role rather than to
   adulthood. A program volunteer has no age floor at all — youth volunteer too.  [Decision — *Policy: Sponsored Program Policy, Art. IV*]
 
+- A core volunteer is a known adult: 18 or older by date of birth, or declared
+  adult. Being core opens families' contact details, so a youth or someone of
+  unknown age is refused. No board approval is needed beyond that.  [Decision — *Principle: least privilege*]
+
 - Nothing checks that a program leader is a member who has passed a background
   check.  [Short of policy — *Policy: Sponsored Program Policy, Art. IV*]
 
+- Nobody sets themself or anyone in their own household as a program's leader,
+  because the leader approves the program's expenses.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
+- Nobody adds themselves or their own household as a program volunteer, or makes
+  them core; someone outside the household must. Only a program that has not
+  finished makes its volunteers Program Volunteers.  [Decision]
+
 - Nobody under 18 enrolls themselves, and nobody whose age is unknown does
   either; only a known adult may. The bar is the guardian-consent line and is
-  separate from the ages a program targets. A youth is enrolled, and withdrawn,
-  by their household lead.  [Decision — *Principle: fail closed*]
+  separate from the ages a program targets. A youth is enrolled by their
+  household lead, who may also withdraw them while the place is unpaid. Neither a
+  youth nor someone whose age is unknown withdraws themselves.  [Decision — *Principle: fail closed*]
+
+- A paid place is not the household's to withdraw: neither the household lead
+  nor the enrolled adult can remove it. The board, a sysadmin and the program's
+  leader can.  [Unsettled — who withdraws a paid
+  place is open with the board]
 
 - Being refused for an unknown age is not a dead end. Someone with no age on file
   is asked to record one and may then enroll themselves; a brand-new adult is
@@ -121,8 +138,8 @@ Things the app takes as true because they are handled outside it.
   the last seat. A confirmed admin override on another household is the one
   exception.  [Decision]
 
-- Enrollment is done by the person, their household lead, the board, or a
-  sysadmin — not by the program's lead.  [Decision — *Principle: least privilege*;
+- Enrollment is done only by the person, their household lead, the board, or a
+  sysadmin.  [Decision — *Principle: least privilege*;
   superuser scope unsettled]
 
 - The fee waiver applies only to an administrator acting on another household.
@@ -143,15 +160,35 @@ Things the app takes as true because they are handled outside it.
 - Removing a paid enrollment returns nothing to sale. A person decides whether
   the freed seat goes back, and does it at the store.  [Decision — deliberate limit; *Principle: people decide about people*]
 
+- Removing a comped or approved enrollment puts its seat back on sale, the same
+  as returning any seat taken off sale without a payment. Every removal does it:
+  a family's withdrawal, the board's removal, and the expiry sweeps. A seat goes
+  back only when the app recorded taking it; a place that never took one (its
+  hold failed, or it joined while the program was free) returns nothing, so a
+  return can never sell a seat beyond capacity.  [Decision — *Principle: fail closed*]
+
+- One order pays for one household. A checkout naming someone from another
+  household is refused before it reaches the store, and a paid order that names
+  more than one household activates nobody and goes to the board.  [Decision]
+
 - A request for a payment plan is never swept away for sitting too long.  [Decision]
+
+- Moving a program's start date or changing its age limits never removes or
+  changes an enrollment. Anyone enrolled who fitted the program's ages before the
+  edit and no longer does is named to the board, which decides what happens.  [Decision — *Principle: people decide about people*]
 
 ### What a youth sees of money
 
 - A youth is never shown a payment obligation, a payment action, or a payment
   status, whether their own or their household's. It is not disabled and not
-  explained; it is absent. Their own enrollment awaiting payment reads as
-  awaiting confirmation, which names no money, stays true if the household never
-  pays, and puts the next action with somebody else.  [Decision]
+  explained; it is absent, and the server never sends it: their own enrollment
+  reads as enrolled, paid or not.  [Decision]
+
+- Payment status — whether an enrollment is paid or not paid yet — goes to the
+  people running the program and to a household lead for their own household,
+  with a way to pay what is not paid yet. Nobody else receives it: not a youth,
+  not a household member who is not a lead, and no family for another family's
+  children.  [Decision — *Principle: least privilege*]
 
 - A youth may not settle a payment their household lead started, on their own
   enrollment or any other. There is no finish-the-checkout allowance for an
@@ -167,7 +204,17 @@ Things the app takes as true because they are handled outside it.
 
 ### Pricing
 
+- A program sells at its full price only. The member price comes from a discount
+  code the server mints, never from the buyer picking a cheaper store item, so
+  nobody can choose the member price for themselves.  [Decision]
+
 - A failed discount degrades to undiscounted checkout, never an error.  [Decision — deliberate limit]
+
+- A member discount code is minted for one household's unpaid claims, names that
+  household, and is good for one order. On anyone else's order, or once that
+  household's membership no longer covers the program, it activates nobody and
+  goes to the board. What "covers the program" means rests on the candidate
+  below, which is not settled.  [Decision]
 
 - A program priced on a tier with nothing wired to sell it is broken and is
   reported as such. A free tier has nothing to wire and is never reported, and a
@@ -199,12 +246,73 @@ Things the app takes as true because they are handled outside it.
 - The self-approval bar covers deciding a request, not repairing one. Confirming
   a hold somebody's failed store call never made benefits nobody.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- A family that holds a place can always pay for it. Each paid program has a
+  second, hidden "reserved seat" item in the store besides its public one, and
+  every checkout the app sends a family to uses it — in the app a checkout only
+  ever follows a claim. It does not count stock, so it never sells out: the
+  family's place is already counted by the app, and the app's own count is the
+  only gate. A program without one falls back to the public item.  [Decision]
+
+- The reserved-seat item is unlisted: kept out of the store's search,
+  collections and recommendations, but payable by a direct link. Hidden is not
+  locked — anyone holding the link can buy it. Such a purchase, like any store
+  order no enrollment claims, activates nobody and is left for a person to
+  resolve from the finance board.  [Decision — deliberate limit]
+
+- Every filled place ends up exactly one unit out of the public item's stock, so
+  the store never offers a place a family already holds. A sale on the public item
+  takes its own unit; a reserved-seat sale takes none, so activation takes it,
+  unless the family's scholarship hold already did.  [Decision]
+
+- A refund on the reserved-seat item is raised for the board and puts nothing
+  back on sale; only a public-item refund restocks.  [Decision — deliberate limit]
+
+- The public item keeps its counted stock for people buying straight from the
+  store. A change to a program's full price goes to both store items. A member
+  price does not, because members pay through their discount code. A full price
+  of zero or none is never sent, since a free store item would give places away;
+  that case, or a price the store refuses, is reported to the admins and the
+  saved price stands.  [Decision]
+
+- The store is never asked to show fewer than no places. Where the app holds more
+  places than the store has stock, the difference stays owed; places that come
+  back pay it down before any goes back on sale, and the board is told when it
+  grows.  [Decision]
+
+- A stock change the store can no longer confirm is never resent, because it
+  could apply twice. A board member settles it against the store.  [Decision — *Principle: fail closed*]
+
+- Each program has an off-sale date, set by the board, defaulting to its start
+  date; it may fall before or after the start. On that date new claims stop, and
+  the next daily run closes enrollment and hides the public item, retrying each
+  day until the store confirms. Families who claimed in time still pay through
+  the reserved-seat item. Moving only the start date never reopens an ended
+  sale.  [Decision]
+
+- A program with no reserved-seat item keeps its public item on sale past the
+  off-sale date, because hiding it would stop claimed families paying; the
+  admins are emailed to create one.  [Decision — deliberate limit]
+
+- After the off-sale date no seat goes back on sale: a withdrawal, a released
+  hold, a raised capacity or a refund that restocks changes no store stock,
+  though a cut still lowers it. The off-sale date wins over a refund going back
+  on sale.  [Decision — owner]
+
+- Automatic changes only reduce visibility. Nothing opens enrollment, re-lists a
+  product or reopens a sale on its own; the board reopens a sale by moving its
+  off-sale date later, which resets the store stock, and re-lists the public item
+  by hand.  [Decision]
+
+- One week after the off-sale date the board is emailed the claims still unpaid,
+  once per program.  [Decision]
+
 - A scholarship or payment-plan request takes its seat when requested, not when
   approved.  [Decision]
 
 - A held seat is returned exactly once — by withdrawal, payment, or grace expiry
-  — or consumed permanently by approval, and an approved seat is never credited
-  back. This holds against a failed store call, not a crash mid-transition.  [Decision]
+  — or consumed by approval, which makes it a comped place; that seat comes back
+  when the place is removed. This holds against a failed store call, not a crash
+  mid-transition.  [Decision]
 
 - A place granted while its seat is still held is the one drift repaired without
   a person: a sweep releases the seat and leaves the place. Every other
@@ -256,7 +364,22 @@ Things the app takes as true because they are handled outside it.
 - A program leader sees whether a participant has paid, never how. Method,
   scholarship, and payment plan are not theirs.  [Decision — *Principle: least privilege*]
 
-- Only the board and sysadmins set a program's store variant.  [Decision — *Principle: least privilege*]
+- Only the board and sysadmins set a program's price or its store variant. A
+  program leader cannot: a price change can make their own family's place
+  free.  [Decision — *Principle: least privilege*]
+
+- The people running a program reach a family through its household leads and
+  emergency contacts. A participant's own phone number is not given to them.  [Decision — *Principle: least privilege*]
+
+- A program leader cannot remove the program's treasurer from its volunteers.
+  The treasurer comes from the budget agreed between the board and the program
+  leader, so only the board or a sysadmin removes them.  [Decision]
+
+- The search a program leader uses to add volunteers and participants returns
+  names only, and matches a name or an id, never an email. Contact details and
+  dates of birth of people outside the program, youth above all, are not theirs.
+  The server checks each name against the program's age limits and sends only
+  the verdict ("Too young", "Too old", "DOB missing"), so the picker still warns.  [Decision — *Principle: least privilege*]
 
 - A program's detail page shows which of the household is already enrolled and
   what the program limits, and hides the non-member price where the program is

@@ -30,10 +30,10 @@ function yearsAgo(years: number): Date {
 }
 
 // System bypass: dev seed fixtures are the trusted source of their own grants — there is
-// no requesting user's authority to check, so this always passes actor "system" (the
+// no requesting user's authority to check, so this always passes a system actor (the
 // last-board-member guard still applies inside setRoleFlag; only the matrix is skipped).
 async function seedRole(prisma: Db, personId: number, flag: RoleFlag): Promise<void> {
-    await setRoleFlag(prisma, personId, flag, true, "system");
+    await setRoleFlag(prisma, personId, flag, true, { system: "system:dev-seed" });
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -43,6 +43,15 @@ async function seedRole(prisma: Db, personId: number, flag: RoleFlag): Promise<v
 // ──────────────────────────────────────────────────────────────────────────
 export async function seedBaseline(prisma: Db): Promise<void> {
     console.log("🌱 Seeding database with debug personas...\n");
+
+    // 0. The org registry row (#1286 §6). The stable well-known id "treehouse" is
+    // stamped as org_id on catalog rows and is the row configure.ts resolves,
+    // so dev/test/prod all resolve the same org identity.
+    await prisma.org.upsert({
+        where: { id: "treehouse" },
+        update: { name: "Treehouse" },
+        create: { id: "treehouse", name: "Treehouse" },
+    });
 
     // 1. Households (participants require one, so these come first)
     let household1 = await prisma.household.findFirst({ where: { name: "Family" } });
@@ -179,6 +188,8 @@ export async function seedBaseline(prisma: Db): Promise<void> {
             household: { create: { name: "Certified Adult Household" } },
         },
     });
+    // A solo adult is their own household's lead, as sign-up makes every new adult.
+    await addHouseholdLead(prisma, certifiedAdult.householdId, certifiedAdult.id);
 
     // No carte-blanche "may certify others" role exists. This persona is a plain
     // member who holds the MAY_CERTIFY_OTHERS certification on a single tool (granted
@@ -207,6 +218,36 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         },
     });
     await seedRole(prisma, bgReviewer.id, "isBackgroundCheckReviewer");
+
+    // Global catalog manager (#1286). INVENTORY_MANAGER is PersonRole-table-only
+    // (no mirror column, like isOperations), so the grant is seedRole, not a
+    // create field. Curates the catalog in flow tests; also a catalog viewer.
+    const inventoryManager = await prisma.person.upsert({
+        where: { email: "inventory.manager@example.com" },
+        update: { name: "Inventory Manager", phone: "555-555-0012", isDeclaredAdult: true },
+        create: {
+            email: "inventory.manager@example.com",
+            name: "Inventory Manager",
+            phone: "555-555-0012",
+            isDeclaredAdult: true,
+            household: { create: { name: "Inventory Manager Household" } },
+        },
+    });
+    await seedRole(prisma, inventoryManager.id, "isInventoryManager");
+
+    // Finance staff (FINANCE role): the finance libraries' screens and writes.
+    const financeStaff = await prisma.person.upsert({
+        where: { email: "finance@example.com" },
+        update: { name: "Finance Staff", phone: "555-555-0013", isDeclaredAdult: true },
+        create: {
+            email: "finance@example.com",
+            name: "Finance Staff",
+            phone: "555-555-0013",
+            isDeclaredAdult: true,
+            household: { create: { name: "Finance Staff Household" } },
+        },
+    });
+    await seedRole(prisma, financeStaff.id, "isFinance");
 
     // A member household lead used by program-pricing flow tests: an ACTIVE
     // OrgMembership so member pricing/discount-code paths have a claimable persona.
@@ -278,6 +319,8 @@ export async function seedBaseline(prisma: Db): Promise<void> {
                 leadMentorId: isBoardMember.id,
                 startAt: new Date(),
                 endAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+                // Stays on sale through its run so the seeded program accepts claims.
+                offSaleAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
                 phase: "UPCOMING",
                 enrollmentStatus: "OPEN",
                 orgMemberOnly: false,
@@ -285,6 +328,18 @@ export async function seedBaseline(prisma: Db): Promise<void> {
                 maxParticipants: 20,
             },
         });
+    }
+
+    // 6. Budget-owner buckets: one org-level, one for the first program.
+    const firstProgram = await prisma.program.findFirst({ orderBy: { id: "asc" } });
+    const buckets = [
+        { name: "Facility", programId: null },
+        ...(firstProgram ? [{ name: firstProgram.name, programId: firstProgram.id }] : []),
+    ];
+    for (const bucket of buckets) {
+        if (!(await prisma.budgetOwner.findFirst({ where: { name: bucket.name } }))) {
+            await prisma.budgetOwner.create({ data: bucket });
+        }
     }
 
     console.log("🎉 Seed complete — 9 debug personas, tools, and a sample program are ready.");
@@ -348,6 +403,7 @@ export async function createProgram(prisma: Db): Promise<string> {
             name: `Test Program ${tag}`,
             startAt,
             endAt,
+            offSaleAt: endAt,
             phase: "UPCOMING",
             enrollmentStatus: "OPEN",
             minAge: 8,

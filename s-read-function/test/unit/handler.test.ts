@@ -16,7 +16,7 @@ const { ConcurrentRunError } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@inventory/s-ingest-core", () => ({
+vi.mock("@checkin/s-ingest-core", () => ({
   prisma: { __fake: true },
   loadDbConfig: vi.fn(() => ({ storeId: "configured-store" })),
   loadShopifyConfig: vi.fn(() => ({ endpoint: "https://x/graphql.json", adminToken: "t", cutoverDate: "2026-01-01" })),
@@ -32,7 +32,7 @@ vi.mock("../../src/sync/backfill.js", () => ({ runBackfill: vi.fn() }));
 vi.mock("../../src/monitoring.js", () => ({ buildHeartbeatSink: vi.fn(() => undefined) }));
 
 import { handler } from "../../src/handler.js";
-import { reapStaleRuns, loadDbConfig } from "@inventory/s-ingest-core";
+import { reapStaleRuns, loadDbConfig } from "@checkin/s-ingest-core";
 import { ensureStore } from "../../src/sync/store.js";
 import { runIncremental } from "../../src/sync/incremental.js";
 import { runBackfill } from "../../src/sync/backfill.js";

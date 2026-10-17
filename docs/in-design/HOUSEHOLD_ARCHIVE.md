@@ -83,9 +83,9 @@ legitimately need archived rows opt in explicitly, per transaction.
 | **The fix** | A Postgres RLS policy on `Household` filters `archivedAt IS NULL` by default. It applies to every access path the database sees: direct reads, relation joins from other models, and raw SQL. Queries that need archived rows opt in with a transaction-scoped `SET LOCAL`. |
 | **Why not a client extension** | A Prisma extension reaches only the 14 direct `household.*` reads. The other ~99 sites are relation traversals and raw SQL the extension is architecturally blind to — the exact shape `LIVE_PERSON` failed on. See [Why the earlier draft's answer was insufficient](#why-the-earlier-drafts-answer-was-insufficient). |
 | **Why not per-query filters** | `LIVE_PERSON` proved the convention does not hold: 13 defects from one sweep, and the drift guard that existed missed all three bugs that shipped. |
-| **What board members see** | A new "Archive" action on a household. Archived households disappear from every active surface. Historical reports and audit trails still show them. |
+| **What board members see** | A new "Archive" action on a household, available to the Board only and refused while the household has an active member. Archived households and their members disappear from every active surface, search and pickers included. Historical reports and audit trails still show them. |
 | **What developers stop doing** | Nothing — they never start. No filter to remember on any of the 116 sites, no drift guard to maintain. New code that joins to Household inherits the exclusion for free. |
-| **The cost** | RLS must be *forced* on the app's DB role (it otherwise bypasses RLS as table owner), opt-in reads must run inside a transaction, and the integration-test DB must force RLS too or it passes vacuously. See [Costs and how they are handled](#costs-and-how-they-are-handled). |
+| **The cost** | RLS must bind every role that reads the table. The app's DML role owns no tables, so RLS binds it already; `FORCE` binds a non-superuser owner. The roles that migrate and run integration tests are superusers, which RLS never binds, so the archive's RLS tests connect as a dedicated non-superuser test role. Opt-in reads must run inside a transaction, and the test DB must carry the policy or the tests pass vacuously. See [Costs and how they are handled](#costs-and-how-they-are-handled). |
 | **Done when** | Archived households are invisible on every active surface including relation traversals (#1232), enforced structurally by the database, not by convention. |
 
 ## What "archived" means
@@ -104,9 +104,15 @@ It is not:
 - **DENIED membership.** Denial locks sign-in; archival does not. A denied
   household may later be archived, but the two are independent.
 
-**When it happens:** a board member or sysadmin archives a household after the
-family has left. This is a deliberate human act, not an automatic consequence of
-any other state transition.
+**When it happens:** a board member archives a household after the family has
+left. Only the Board may archive or unarchive; a sysadmin who is not on the Board
+may not, and neither may a household lead. This is a deliberate human act, not
+an automatic consequence of any other state transition.
+
+**When it is refused:** a household with any active member cannot be archived.
+The archive action checks this and refuses with a reason, the same shape as the
+existing refusal to deny a household that contains a board member. A departing
+family has its membership ended first, and is archived after that.
 
 **Reversibility:** yes. Unarchiving restores the household to whatever state it
 held before. The `archivedAt` timestamp is nulled. This follows the principle
@@ -248,9 +254,9 @@ Added by migration (Prisma migrations run arbitrary SQL). The column is
 
 ```sql
 ALTER TABLE "Household" ENABLE ROW LEVEL SECURITY;
--- The app connects as the table owner, which BYPASSES RLS unless forced.
--- Without this line the policy is inert in production. This is the load-bearing
--- statement; everything else fails open without it.
+-- The table owner bypasses RLS unless forced. The app connects as a non-owner
+-- DML role, which RLS binds regardless; FORCE also binds a non-superuser owner.
+-- No setting binds a superuser.
 ALTER TABLE "Household" FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY household_hide_archived ON "Household"
@@ -309,28 +315,39 @@ drifted. Forgetting the wrapper means you see *fewer* rows, never more.
 RLS is not free, and the cost is concentrated in three places that this repo has
 been bitten by before. Each is a required step, not an afterthought.
 
-1. **The app role must be `FORCE`d.** Prisma migrations and the app typically
-   connect as the table owner, and a table owner **bypasses** its own RLS. The
-   `FORCE ROW LEVEL SECURITY` line is what makes the policy apply to the app at
-   all. If it is omitted, every check passes in review, every test passes, and
-   the filter does nothing in production — a silent fail-open. Decision #6 pins
-   down the exact role.
+1. **Every reading role must be bound.** The app connects as a DML-only role
+   that owns no tables, in both stacks: `checkin_dml` in the self-hosted compose
+   stack, created by `deploy/prod-initdb/05-checkin-roles.sh` as a plain login
+   role, and `checkin_<env>_dml` in AWS, created by the infra repo's cluster
+   bootstrap (`DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` §9). RLS binds a
+   non-owner role as soon as it is enabled. `FORCE` binds a non-superuser table
+   owner as well, so it stays as defence in depth. It does not bind a superuser,
+   and the roles that migrate and test are superusers: the compose migrate role
+   `prisma` is the image's bootstrap user (`deploy/docker-compose.prod.yml`), and
+   CI's integration Postgres runs as `testuser`, also the bootstrap user
+   (`.github/workflows/ci.yml`). Neither reads Household in production, so
+   neither is a production leak, but a test that connects as either sees every
+   row whatever the policy says. The one production way to fail open is an app
+   role with `BYPASSRLS` or superuser; Decision #6 names that check.
 2. **Opt-in reads must be transactional.** The ~5 opt-in surfaces (admin detail,
    unarchive, historical/audit reports) must run through
    `withArchivedHouseholds`. Non-transactional opt-in via session `SET` is
    forbidden because the pool reuses connections. This is a small, bounded set
    and each site is deliberate.
-3. **The test DB must force RLS too, or coverage is vacuous.** Integration tests
-   connect as the owner. If the test DB is not `FORCE`d, an archived household
-   stays visible in tests and every "archived rows are hidden" assertion passes
-   for the wrong reason — the same trap as a `db push` test DB missing a
-   partial-unique index it cannot express: the constraint is absent, so its
-   tests pass vacuously. The migration that adds the policy is the
-   single source, so `migrate deploy` against the test DB carries the `FORCE`;
-   `db push` does not run migration SQL and must not be used to build the DB
-   that exercises this. A dedicated test asserts the fail-open case is closed:
-   query as the app role with no opt-in and confirm an archived seed row is
-   *absent*, so a missing `FORCE` fails the suite loudly.
+3. **The RLS tests must connect as a role RLS binds, or coverage is vacuous.**
+   Integration tests connect as `testuser`, a superuser, which bypasses RLS
+   even on a `FORCE`d table. Run as that role, an archived household stays
+   visible and every "archived rows are hidden" assertion passes for the wrong
+   reason, the same trap as a `db push` test DB missing a partial-unique index
+   it cannot express. So the archive's RLS suites connect as a non-superuser,
+   non-owner role shaped like the app's DML role (see
+   [Test role](#test-role-a-dml-like-connection-for-the-rls-suites)). The
+   policy still comes from the migration, so the test DB is built with
+   `migrate deploy`; `db push` does not run migration SQL and must not be used
+   to build the DB that exercises this. A dedicated test asserts the fail-open
+   case is closed: as the test DML role, with no opt-in, an archived seed row is
+   *absent*, and a guard asserts that role is neither superuser nor
+   `BYPASSRLS`, so a test that quietly fell back to `testuser` fails loudly.
 
 Two smaller notes:
 
@@ -388,9 +405,10 @@ stated as a testing property: the verification surface collapses from
 **The four-test contract** (these, not per-site coverage, are what make the
 design safe — see [Test plan](#test-plan) for the full list):
 
-1. **Fail-open probe.** As the app role, seed one archived + one active
-   household; `household.findMany()` with no opt-in returns only the active one.
-   Fails loudly if `FORCE` is missing or the role bypasses RLS. Load-bearing.
+1. **Fail-open probe.** Seed one archived + one active household; reading as
+   a non-superuser, non-owner role (the test DML role), `household.findMany()`
+   with no opt-in returns only the active one. Fails loudly if the policy is
+   missing or the role bypasses RLS. Load-bearing.
 2. **Opt-in works.** The same query in `withArchivedHouseholds` returns both.
 3. **No leak.** An opt-in transaction, then a plain query on the same pool,
    confirms archived rows are not visible afterward — catches any session-`SET`
@@ -409,10 +427,10 @@ design safe — see [Test plan](#test-plan) for the full list):
   absent and all four tests pass vacuously (the same class as a partial-unique
   index `db push` cannot express).
 - **Role hygiene is the one real cliff.** RLS is binary: enforced → robust; role
-  bypasses it → useless and silently fail-open with no in-app remedy. Verify
-  once that the app connects as a non-owner, non-`BYPASSRLS` role subject to
-  `FORCE`. If it cannot, RLS is the wrong mechanism — this is the go/no-go of
-  Decision #6, settled before implementation, not discovered during it.
+  bypasses it → useless and silently fail-open with no in-app remedy. The app
+  connects as a non-owner DML role in both stacks, and the compose stack creates
+  its role without `BYPASSRLS`. Confirming the same for the AWS role is the one
+  check left before implementation (Decision #6).
 
 **Two residual fragilities RLS itself introduces — both non-silent:**
 
@@ -470,7 +488,7 @@ policy regardless of how the query reaches `Household`:
 | Household dropdowns (e.g. "move to household") | yes | Cannot move someone into a departed household |
 | Program enrollment | yes | Cannot enroll from a departed household |
 | Membership processes | yes | No new intake, renewal, or payment for a departed family |
-| Check-in / kiosk scan | yes (redirect) | Badge scan resolves to "household archived" message |
+| Check-in / kiosk scan | yes | A badge scan fails exactly as for a badge that matches nobody (Decision #3) |
 | Emergency-contact roster | yes | Not in the building |
 | Compliance / audit worklists | yes | No obligations to track |
 | Nav todo counts | yes | Should not inflate board counts |
@@ -545,8 +563,9 @@ the deploy that carries this migration, never before.
 ### Route for archival
 
 A new mutation on the existing household admin route
-(`/api/membership-ops/households/[id]`) — a PATCH setting `archivedAt`. Board or
-sysadmin only. Unarchive is the same route nulling `archivedAt`, and because it
+(`/api/membership-ops/households/[id]`) — a PATCH setting `archivedAt`. Board
+only, and refused while the household has an active member (Decision #4).
+Unarchive is the same route nulling `archivedAt`, and because it
 writes an *already-archived* (hence invisible) row, its own lookup-before-write
 runs through `withArchivedHouseholds`.
 
@@ -568,45 +587,53 @@ household work validates RLS-based exclusion in the codebase, a future option fo
 Person is an RLS policy on `mergedIntoId IS NULL` instead of row deletion — out
 of scope here, noted so the precedent is deliberate.
 
-## Decisions needed
+## Decisions
 
-1. **Who can archive?** Proposed: board and sysadmin only. Not household leads —
-   a family cannot archive itself. Confirm or adjust.
+IDs are kept so earlier references still resolve. Only #6 leaves a check before
+implementation.
 
-2. **What about the household's members?** When a household is archived, its
-   Person rows remain — they still hold audit history. Proposed: members of an
-   archived household are excluded from people search and person dropdowns,
-   which RLS delivers automatically for every `where: { household: { … } }`
-   traversal (the joined Household row is invisible, so the relation filter
-   excludes the person). They remain visible in historical and audit contexts
-   via `withArchivedHouseholds`. Confirm, or decide that Person rows stay fully
-   searchable — which, under RLS, would require the person-search sites to opt
-   in, the opposite of the default.
+1. **Who can archive?** Decided: the Board only, for archive and unarchive alike.
+   Not a sysadmin who is not on the Board, and not household leads.
 
-3. **Check-in behavior.** A badge scan for a person in an archived household:
-   (a) fail with a message ("household archived, contact the front desk"),
-   (b) succeed silently, or (c) something else? Proposed: (a). Note the scan
-   route resolves the person and their household inside a transaction; whether
-   that transaction opts in (to detect the archived state and show the message)
-   or stays default (household simply resolves null) is an implementation
-   choice that follows from this decision.
+2. **What about the household's members?** Decided: their Person rows remain.
+   They are hidden from people search and person pickers, which RLS delivers for
+   every `where: { household: { … } }` traversal (the joined Household row is
+   invisible, so the relation filter excludes the person). They stay visible in
+   history and audit, through `withArchivedHouseholds`.
 
-4. **Membership status interaction.** Archival is proposed as independent of
-   `OrgMembership.status`. A household can be archived regardless of ACTIVE,
-   REVOKED, NONE, etc. Confirm.
+3. **Check-in behaviour.** Decided: a badge scan for a person in an archived
+   household fails exactly as if the person did not exist. There is no
+   archived-specific message, so the scan's transaction stays at the default
+   and never opts in: the household resolves to nothing and the scan takes the
+   unknown-badge path.
+
+4. **Membership status interaction.** Decided: a household with any active
+   member cannot be archived; the archive action refuses it. Residual, for the
+   implementing session to confirm with the owner: whether "active" means only
+   the household's org membership being ACTIVE, or also covers a member with an
+   ACTIVE program enrollment. Proposed: either one refuses.
 
 5. **Opt-in ergonomics.** Proposed: a single `withArchivedHouseholds(tx => …)`
    transaction helper that issues `SET LOCAL app.include_archived = 'on'`.
    Greppable, transaction-scoped, pool-safe. Confirm, or suggest an alternative.
 
-6. **The DB role RLS is forced against.** RLS is inert unless the app's
-   connection role is subject to it (a table owner bypasses RLS without `FORCE`,
-   and even `FORCE` does not bind a `BYPASSRLS`/superuser role). This needs
-   confirming against the actual Aurora role the app and the migrations connect
-   as. If the app connects as a superuser or `BYPASSRLS` role, the design needs
-   a dedicated non-bypassing app role — a larger infra change, and the one thing
-   that could push the recommendation back toward Option E. **This is the
-   gating decision; resolve it before implementation starts.**
+6. **The DB role RLS is enforced against.** Decided: the app connects as a
+   rows-only DML role in both stacks, never as the table owner, so row security
+   applies to it (`deploy/docker-compose.prod.yml`;
+   `DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` §9). The compose stack creates its
+   role as a plain login role, without `BYPASSRLS`. **Remaining check before
+   implementation:** confirm the infra repo's cluster bootstrap does not grant
+   `checkin_<env>_dml` `BYPASSRLS` or superuser. If it does, removing that
+   grant is the fix; the design does not change.
+
+   **The roles that migrate and test are superusers, and RLS does not bind
+   them.** The compose migrate role `prisma` and CI's integration role
+   `testuser` are each their container's bootstrap superuser, and a superuser
+   bypasses RLS even on a `FORCE`d table. That is harmless in production, where
+   neither role serves reads, but it means a test connecting as `testuser` can
+   never see the policy work. The archive's RLS tests therefore connect as a
+   non-superuser, non-owner test role (see
+   [Test role](#test-role-a-dml-like-connection-for-the-rls-suites)).
 
 ## Test plan
 
@@ -618,9 +645,10 @@ non-negotiable; the functional tests below assume them.
 
 **Enforcement contract (the four load-bearing tests):**
 
-1. **Fail-open probe.** As the app role, seed one archived + one active
-   household; `household.findMany()` with no opt-in returns only the active one.
-   Fails loudly if `FORCE` is missing or the role bypasses RLS.
+1. **Fail-open probe.** Seed one archived + one active household (as
+   `testuser` is fine; seeding is a write). Then, connected as the test DML
+   role, `household.findMany()` with no opt-in returns only the active one.
+   Fails loudly if the policy is missing or the role bypasses RLS.
 2. **Opt-in works.** The same query wrapped in `withArchivedHouseholds` returns
    both rows.
 3. **No leak across the pool.** Run an opt-in transaction, then a plain query on
@@ -632,7 +660,41 @@ non-negotiable; the functional tests below assume them.
 
 **Test-DB integrity (the precondition for the four above):** the DB under test is
 built with `migrate deploy`, not `db push`, so the raw policy SQL and `FORCE` are
-actually present; without this the four tests pass vacuously.
+actually present, and tests 1–3 read as the test DML role, never as `testuser`.
+Without both, the four tests pass vacuously. A fifth assertion guards the
+second: the role the RLS suites read as has `rolsuper` and `rolbypassrls` both
+false in `pg_roles`.
+
+### Test role: a DML-like connection for the RLS suites
+
+The smallest change keeps every other suite as it is and adds one role, created
+by the integration harness:
+
+1. **Create the role once per run.** In `checkin-app/test/integrationGlobalSetup.js`,
+   after `migrate deploy` on the template, run as the admin connection:
+   `CREATE ROLE checkin_test_dml LOGIN PASSWORD '…' NOSUPERUSER NOBYPASSRLS`,
+   wrapped in a `DO` block that ignores `duplicate_object`. Roles are
+   cluster-wide, and concurrent jest runs from other worktrees share the
+   cluster, so creation must tolerate the role already existing.
+2. **Grant on the template, so the clones inherit it.** On the template DB:
+   `GRANT USAGE ON SCHEMA public`, `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL
+   TABLES IN SCHEMA public` and `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA
+   public` to `checkin_test_dml`. This mirrors what
+   `deploy/prod-initdb/05-checkin-roles.sh` grants `checkin_dml`. Per-worker
+   DBs are cloned from the template after this step, so they carry the grants
+   with no per-worker work. The role owns nothing, so it is subject to RLS
+   exactly as the app's role is.
+3. **Publish its URL.** Set `TEST_DML_BASE_URL` to the base URL with the user
+   and password swapped, next to the existing `TEST_BASE_URL`. `jest.setup.js`
+   already rewrites the database name per worker; it does the same for this URL
+   and exposes it as `DML_DATABASE_URL`.
+4. **Read through it only in the RLS suites.** The archive's RLS integration
+   files build their own Prisma client (or a plain `pg` client for the raw-SQL
+   and pool-leak tests) from `DML_DATABASE_URL`. Every other integration suite
+   keeps connecting as `testuser`; nothing else changes.
+
+The teardown leaves the role in place. It holds no data, and dropping it would
+race the other runs that share the cluster.
 
 **Functional tests:**
 
@@ -640,13 +702,16 @@ actually present; without this the four tests pass vacuously.
   { household: { … } } })` excludes members of the archived household with no
   per-site filter; `include: { household: true }` returns `null` for the
   archived household's relation and the caller tolerates it.
-- **Raw SQL:** a raw `SELECT` against `Household` from the app role honours the
+- **Raw SQL:** a raw `SELECT` against `Household` as the test DML role honours the
   policy (proves coverage the client extension could never give).
 - **Archive action:** PATCH sets `archivedAt`, household disappears from the
   standard list; PATCH nulling it (through the opt-in lookup) restores it.
-- **Permission:** only board/sysadmin can archive; a household lead gets 403.
-- **Check-in:** badge scan for an archived household's member behaves per
-  Decision #3.
+- **Permission:** only the Board can archive or unarchive; a sysadmin who is not
+  on the Board and a household lead both get 403.
+- **Refusal:** archiving a household with an active member is refused, and the
+  household stays visible.
+- **Check-in:** a badge scan for an archived household's member returns the
+  same response as a badge that matches nobody (Decision #3).
 - **Opt-in-path guard:** a source-level test asserts `app.include_archived`
   appears only inside the `withArchivedHouseholds` helper (no other `SET`).
 

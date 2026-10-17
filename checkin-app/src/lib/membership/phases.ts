@@ -21,7 +21,7 @@ export interface IntakePhase {
 export const INITIAL_PHASES: IntakePhase[] = [
     { status: "INTAKE", label: "Your Family", description: "Tell us about your household." },
     { status: "PENDING_EXTERNAL_ACTION", label: "Contract & Background Check", description: "Sign the contract and start your background check." },
-    { status: "PENDING_PAYMENT", label: "Payment", description: "Pay your annual membership dues." },
+    { status: "PENDING_PAYMENT", label: "Payment", description: "Pay your annual membership fee." },
     { status: "ACTIVE", label: "Member", description: "Welcome to the Treehouse!" },
 ];
 

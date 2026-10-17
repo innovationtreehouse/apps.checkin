@@ -55,7 +55,8 @@ One file per domain, named for the domain and not for any feature:
 | `membership.md` | org membership: application, review, dues, renewal, lapse |
 | `programs.md` | programs and enrollment: eligibility, capacity, pricing, scholarships |
 | `people-households.md` | households, leads, guardianship, youth/adult status |
-| `finance-payments.md` | payment, refunds, exceptions, reconciliation obligations |
+| `revenue.md` | payment, refunds, exceptions, reconciliation obligations |
+| `expenses.md` | receipts, expenses, budget buckets, spending sign-off |
 | `attendance-checkin.md` | check-in, kiosk, visits, hours |
 | `tools-certification.md` | tool levels, certification, shop access |
 

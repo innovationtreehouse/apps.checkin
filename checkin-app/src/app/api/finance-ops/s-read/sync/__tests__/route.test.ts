@@ -3,13 +3,14 @@
  */
 /**
  * Unit tests for /api/finance-ops/s-read/sync — the deny paths (401 anon / 403 plain
- * member, through the REAL withAuth with a mocked session), the unwired-env 503s, the
+ * member, through the REAL handler() with a mocked session), the unwired-env 503s, the
  * POST's invocation contract, and the GET's status read.
  *
  * The load-bearing test here is "ignores a caller-supplied mode": the trigger
  * Lambda also accepts {"mode":"backfill"}, which submits a Shopify Bulk Operation.
  * The route must never let the body reach the payload.
  */
+import type { NextRequest } from 'next/server';
 import { GET, POST } from '../route';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -30,6 +31,12 @@ jest.mock('@/lib/shopifyRead/client', () => ({
     latestSyncRun: () => latestSyncRunMock(),
 }));
 
+const auditCreateMock = jest.fn();
+jest.mock('@/lib/prisma', () => ({
+    __esModule: true,
+    default: { auditLog: { create: (...a: unknown[]) => auditCreateMock(...a) } },
+}));
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const mockSession = require('next-auth/next').getServerSession;
 
@@ -37,7 +44,7 @@ function req(body?: unknown) {
     return new Request('http://localhost/api/finance-ops/s-read/sync', {
         method: 'POST',
         ...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
-    });
+    }) as unknown as NextRequest;
 }
 
 /** The single InvokeCommand input the route built. */
@@ -90,6 +97,18 @@ describe('POST /api/finance-ops/s-read/sync', () => {
         expect(sendMock).toHaveBeenCalledTimes(1);
         expect(invokedWith().FunctionName).toBe('s-read-dev-trigger');
         expect(JSON.parse(invokedWith().Payload)).toEqual({ mode: 'incremental' });
+        expect(auditCreateMock).toHaveBeenCalledWith({
+            data: expect.objectContaining({ actorId: 5, actorSystem: null, tableName: 'SREAD_SYNC' }),
+        });
+    });
+
+    it('500 without invoking when the audit row cannot be written', async () => {
+        mockSession.mockResolvedValue({ user: { id: 5, isBoardMember: true } });
+        auditCreateMock.mockRejectedValueOnce(new Error('db down'));
+
+        const res = await POST(req());
+        expect(res.status).toBe(500);
+        expect(sendMock).not.toHaveBeenCalled();
     });
 
     it('ignores a caller-supplied mode — the body can never reach the payload', async () => {
@@ -119,7 +138,7 @@ describe('POST /api/finance-ops/s-read/sync', () => {
 });
 
 describe('GET /api/finance-ops/s-read/sync', () => {
-    const getReq = () => new Request('http://localhost/api/finance-ops/s-read/sync');
+    const getReq = () => new Request('http://localhost/api/finance-ops/s-read/sync') as unknown as NextRequest;
 
     it('401 when unauthenticated, without reading the mirror', async () => {
         mockSession.mockResolvedValue(null);

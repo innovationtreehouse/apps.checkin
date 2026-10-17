@@ -6,7 +6,7 @@
  *     node ../scripts/bundle-function.mjs
  *
  * It bundles `src/handler.ts` -> `dist/handler.js` with esbuild, inlining all
- * reachable workspace source (@inventory/*, the generated Prisma client, zod, ...)
+ * reachable workspace source (@checkin/*, the generated Prisma client, zod, ...)
  * and leaving ONLY the shared Prisma runtime + the AWS SDK as external imports.
  *
  * Why those are external:

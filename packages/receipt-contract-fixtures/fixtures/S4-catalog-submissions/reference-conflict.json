@@ -1,0 +1,11 @@
+{
+  "itemReferenceId": 55,
+  "existingGtin13": "0001234500017",
+  "proposedGtin13": "0007654300011",
+  "receiptId": "R-2001",
+  "lineItemId": 2,
+  "manufacturer": "Acme",
+  "retailer": "Home Depot",
+  "partNumber": "PN-2",
+  "description": "Nut"
+}

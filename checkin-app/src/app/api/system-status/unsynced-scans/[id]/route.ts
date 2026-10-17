@@ -1,12 +1,12 @@
 import prisma from "@/lib/prisma";
 import { handler, badRequest, notFound, unauthorized, ApiResponseError } from "@/security/handler";
 import { appendPresenceEvent, classifyPresenceEvent, PresenceClass } from "@/lib/presence/events";
-import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTransitions";
+import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
 import { withinMaxDuration } from "@/lib/visitTimes";
 import { lockFacility } from "@/lib/facilityLock";
-import { flushParkedClosed } from "@/lib/presence/project";
-import { LIVE_PERSON } from "@/lib/person/filters";
-import { LIVE_VISIT } from "@/lib/visit/filters";
+import { resolveMergedPerson } from "@/lib/person/mergeChain";
+import { KEYHOLDER_IN_BUILDING, LIVE_VISIT } from "@/lib/visit/filters";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 // Registry-governed (POST /api/system-status/unsynced-scans/[id]): admission
 // anyRole sysadmin/board/keyholder (Q15; operations stay out — #1633);
@@ -28,9 +28,7 @@ import { LIVE_VISIT } from "@/lib/visit/filters";
 // refuses: minting an arrival from it would invert the person's day.
 //
 // Concurrency: the same per-participant advisory lock as /api/scan and the
-// manual route, plus the facility lock — flushParkedClosed self-locks the
-// facility, so a keyholder badging in mid-review cannot double-project the
-// same parked event. The updateMany where clause stamps exactly once, so a
+// manual route, plus the facility lock. The updateMany where clause stamps exactly once, so a
 // double-click (either action) 404s and its transaction rolls back.
 export const POST = handler<{ id: string }>(
     'POST /api/system-status/unsynced-scans/[id]',
@@ -74,6 +72,9 @@ export const POST = handler<{ id: string }>(
             where: { id, reviewReason: { not: null }, reviewedAt: null },
         });
         if (!row) throw notFound("No scan awaiting review with that id.");
+        if (row.personId === null) {
+            throw new ApiResponseError(409, "This scan matches no one on record — dismiss it once you have looked.");
+        }
         if (parsedDeparted && parsedDeparted <= row.timestamp) {
             throw badRequest("departedAt must be after the scan time.");
         }
@@ -83,13 +84,14 @@ export const POST = handler<{ id: string }>(
             throw badRequest("A visit cannot be longer than 24 hours.");
         }
 
-        // A merge racing the review leaves a tombstone; one hop reaches the
-        // keeper (the archive design guarantees chains never exceed it).
-        const scanned = await prisma.person.findUnique({ where: { id: row.personId } });
-        if (!scanned) throw notFound("No scan awaiting review with that id.");
-        const person = scanned.mergedIntoId
-            ? ((await prisma.person.findFirst({ where: { id: scanned.mergedIntoId, ...LIVE_PERSON } })) ?? scanned)
-            : scanned;
+        // A merge racing the review leaves the scan naming a merged-away id;
+        // the visit is recorded on the survivor, never on the tombstone.
+        const resolved = await resolveMergedPerson(row.personId);
+        if (resolved.kind === "unknown") throw notFound("No scan awaiting review with that id.");
+        if (resolved.kind === "broken") {
+            throw new ApiResponseError(409, "This scan's person was merged into a record that can't be found — dismiss it once you have looked.");
+        }
+        const person = resolved.person;
 
         const associatedEventId = await findAssociatedEventAt(person.id, row.timestamp);
 
@@ -98,9 +100,8 @@ export const POST = handler<{ id: string }>(
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(${person.id})`;
             await lockFacility(tx);
 
-            // The linked presence event is read under the locks: a flush runs
-            // inside the facility lock too, so its classification cannot move
-            // between this read and our commit.
+            // The linked presence event is read under the locks, so its
+            // classification cannot move between this read and our commit.
             const ev = row.clientEventId
                 ? await tx.presenceEvent.findUnique({ where: { clientEventId: row.clientEventId } })
                 : null;
@@ -133,7 +134,7 @@ export const POST = handler<{ id: string }>(
             // in the building (#254 keyholder-first).
             if (!parsedDeparted && !person.isKeyholder) {
                 const activeKeyholders = await tx.visit.count({
-                    where: { departedAt: null, person: { isKeyholder: true, ...LIVE_PERSON }, ...LIVE_VISIT },
+                    where: KEYHOLDER_IN_BUILDING,
                 });
                 if (activeKeyholders === 0) {
                     throw new ApiResponseError(403, "Facility is closed — supply a departure time to record this visit as closed.");
@@ -146,6 +147,7 @@ export const POST = handler<{ id: string }>(
                     arrivedAt: row.timestamp,
                     departedAt: parsedDeparted,
                     arrivedVia: "SCANNER",
+                    arrivedLive: false,
                     departedVia: parsedDeparted ? "TYPED" : null,
                     associatedEventId,
                 },
@@ -189,20 +191,7 @@ export const POST = handler<{ id: string }>(
             timeout: 15000,
         });
 
-        // A keyholder minted OPEN just made the facility provably open — release
-        // the PARKED_CLOSED backlog, exactly as the manual route does.
-        if (!parsedDeparted && person.isKeyholder) {
-            await prisma.$transaction(async (tx) => {
-                await tx.$executeRaw`SELECT pg_advisory_xact_lock(${person.id})`;
-                // flushParkedClosed takes the facility lock itself (reentrant).
-                await flushParkedClosed(tx);
-            });
-        }
-
-        // Same back-to-back transition handling a manual closed backfill gets.
-        if (parsedDeparted) {
-            await processVisitCheckout(visitId, parsedDeparted, undefined, "TYPED");
-        }
+        invalidateAttendanceCache();
 
         await prisma.auditLog.create({
             data: {

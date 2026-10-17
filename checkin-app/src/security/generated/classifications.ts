@@ -88,6 +88,7 @@ export const classifications = {
         createdAt: 'public',
         zohoEnvelopeId: 'internal',
         zohoActionId: 'internal',
+        zohoSignerPersonId: 'internal',
         contractSignedAt: 'internal',
         bgConsentAt: 'internal',
         bgClearedAt: 'internal',
@@ -99,6 +100,7 @@ export const classifications = {
         certificationNote: 'internal',
         renewalReminderSentAt: 'internal',
         isPaymentPlanRequested: 'internal',
+        scholarshipRequestKind: 'internal',
         intakeNoteSnapshot: 'pii',
         noteAckById: 'internal',
         noteAckAt: 'internal',
@@ -143,6 +145,15 @@ export const classifications = {
         shopifyPriceSyncedAt: 'internal',
         shopifyReconcileCursorAt: 'internal',
         scholarshipDenialGraceDays: 'public',
+        releasedLibraries: 'public',
+        updatedAt: 'internal',
+        qboProductionRealmId: 'internal',
+    },
+    EmailTemplate: {
+        key: 'public',
+        subject: 'internal',
+        body: 'internal',
+        updatedBy: 'internal',
         updatedAt: 'internal',
     },
     AppSettings: {
@@ -208,8 +219,13 @@ export const classifications = {
         leadMentorId: 'public',
         startAt: 'public',
         endAt: 'public',
+        appliesToYear: 'public',
         phase: 'public',
         enrollmentStatus: 'public',
+        offSaleAt: 'public',
+        saleEndedAt: 'internal',
+        unpaidClaimsNotifiedAt: 'internal',
+        productHiddenAt: 'internal',
         orgMemberOnly: 'public',
         publiclyVisible: 'public',
         announceOnOpen: 'public',
@@ -222,6 +238,16 @@ export const classifications = {
         nonOrgMemberPriceCents: 'public',
         shopifyProductId: 'public',
         shopifyVariantId: 'public',
+        claimantShopifyProductId: 'public',
+        claimantShopifyVariantId: 'public',
+        shopifyStockPushNeededAt: 'internal',
+        shopifyStockPendingWrite: 'internal',
+        shopifyStockCarry: 'internal',
+        shopifyStockLeaseUntil: 'internal',
+        shopifyStockLeaseToken: 'internal',
+        shopifyStockUnconfirmed: 'internal',
+        shopifySyncStartedAt: 'internal',
+        shopifySyncToken: 'internal',
     },
     ProgramInstance: {
         id: 'public',
@@ -243,17 +269,21 @@ export const classifications = {
         programId: 'public',
         personId: 'public',
         isCore: 'internal',
+        isTreasurer: 'internal',
     },
     ProgramParticipant: {
         programId: 'public',
         personId: 'public',
         status: 'public',
         isPaymentPlanRequested: 'personal',
+        scholarshipRequestKind: 'internal',
         pendingSince: 'personal',
         wasOrgMemberAtApproval: 'internal',
         inventoryHeldAt: 'internal',
         paymentPlanDeniedAt: 'personal',
         shopifyOrderId: 'internal',
+        seatTakenWithoutSaleAt: 'internal',
+        endedAt: 'personal',
     },
     Event: {
         id: 'public',
@@ -277,6 +307,7 @@ export const classifications = {
     RawBadgeLog: {
         id: 'internal',
         personId: 'internal',
+        scannedValue: 'internal',
         timestamp: 'personal',
         location: 'personal',
         clientEventId: 'internal',
@@ -303,12 +334,25 @@ export const classifications = {
         departedAt: 'personal',
         arrivedVia: 'public',
         departedVia: 'public',
+        arrivedLive: 'public',
         associatedEventId: 'public',
         deletedAt: 'internal',
         deletedById: 'internal',
         forceCloseWarnedAt: 'internal',
         forceCloseToken: 'internal',
+        forceCloseActorId: 'internal',
         supervisionWarnedAt: 'internal',
+        facilityCloseId: 'internal',
+    },
+    FacilityClose: {
+        id: 'internal',
+        closedAt: 'internal',
+        closedById: 'internal',
+        via: 'internal',
+        closerVisitId: 'internal',
+        createdAt: 'internal',
+        clientEventId: 'internal',
+        executedAt: 'internal',
     },
     AuditLog: {
         id: 'internal',
@@ -435,6 +479,17 @@ export const classifications = {
         sentAt: 'internal',
         error: 'internal',
     },
+    Org: {
+        id: 'public',
+        name: 'public',
+    },
+    BudgetOwner: {
+        id: 'internal',
+        name: 'internal',
+        programId: 'internal',
+        archivedAt: 'internal',
+        quickBooksClassId: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -450,6 +505,7 @@ export const relations = {
         bgAttestationsAsSubject: { model: 'BackgroundCheckAttestation', isList: true },
         personBgProcesses: { model: 'OrgMembershipProcess', isList: true },
         intakeNoteAcks: { model: 'OrgMembershipProcess', isList: true },
+        zohoSigningRequests: { model: 'OrgMembershipProcess', isList: true },
         corporationLeads: { model: 'CorporationLead', isList: true },
         corporationMembers: { model: 'CorporationMember', isList: true },
         programVolunteers: { model: 'ProgramVolunteer', isList: true },
@@ -461,6 +517,7 @@ export const relations = {
         presenceEvents: { model: 'PresenceEvent', isList: true },
         visits: { model: 'Visit', isList: true },
         eventsConfirmedBy: { model: 'Event', isList: true },
+        facilityCloses: { model: 'FacilityClose', isList: true },
         trustedAdultRecordsAsAdult: { model: 'TrustedAdult', isList: true },
         trustedAdultsDisclosed: { model: 'TrustedAdult', isList: true },
         trustedAdultReviewsDecided: { model: 'TrustedAdultReview', isList: true },
@@ -494,6 +551,7 @@ export const relations = {
     OrgMembershipProcess: {
         orgMembership: { model: 'OrgMembership', isList: false },
         subjectPerson: { model: 'Person', isList: false },
+        zohoSigner: { model: 'Person', isList: false },
         noteAckBy: { model: 'Person', isList: false },
         attestations: { model: 'BackgroundCheckAttestation', isList: true },
     },
@@ -505,6 +563,8 @@ export const relations = {
     VolunteerDesignation: {
     },
     BoardSettings: {
+    },
+    EmailTemplate: {
     },
     AppSettings: {
     },
@@ -536,6 +596,7 @@ export const relations = {
         participants: { model: 'ProgramParticipant', isList: true },
         events: { model: 'Event', isList: true },
         instances: { model: 'ProgramInstance', isList: true },
+        budgetOwners: { model: 'BudgetOwner', isList: true },
     },
     ProgramInstance: {
         program: { model: 'Program', isList: false },
@@ -570,6 +631,11 @@ export const relations = {
     Visit: {
         person: { model: 'Person', isList: false },
         event: { model: 'Event', isList: false },
+        facilityClose: { model: 'FacilityClose', isList: false },
+    },
+    FacilityClose: {
+        closedBy: { model: 'Person', isList: false },
+        visits: { model: 'Visit', isList: true },
     },
     AuditLog: {
     },
@@ -605,6 +671,11 @@ export const relations = {
     },
     BulkSendItem: {
         bulkSend: { model: 'BulkSend', isList: false },
+    },
+    Org: {
+    },
+    BudgetOwner: {
+        program: { model: 'Program', isList: false },
     },
 } as const;
 

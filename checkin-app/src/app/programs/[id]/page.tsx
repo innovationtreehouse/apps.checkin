@@ -3,13 +3,16 @@
 import { use, useState, useEffect, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Alert, Button, Card, Center, Checkbox, Container, Divider, Group, Loader, Stack, Text, Title } from '@mantine/core';
+import { Alert, Anchor, Button, Card, Center, Checkbox, Container, Divider, Group, Loader, Modal, Radio, Stack, Text, Title } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
+import { useDisclosure } from '@mantine/hooks';
+import { SCHOLARSHIP_REQUEST_KIND_OPTIONS } from '@/lib/scholarshipRequestKind';
 import { formatDateOnly } from '@/lib/time';
 import { checkProgramAge } from '@/lib/programAge';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
-import { formatCents } from '@inventory/money';
-import { aggregateEnrollOutcomes, buildShopifyCheckoutUrl, type EnrollOutcome } from './enroll';
+import { formatCents } from '@checkin/money';
+import { aggregateEnrollOutcomes, buildShopifyCheckoutUrl, findRepeatPayments, type EnrollOutcome, type RepeatPayment } from './enroll';
+import { checkoutVariantId } from '@/lib/programs/variants';
 import FirstTimeIntakePanel from './FirstTimeIntakePanel';
 import { useIsLocalInstance, useShopifyStoreDomain } from '@/components/EnvProvider';
 
@@ -35,6 +38,7 @@ type ProgramDetail = {
   // Single-pool model: the ONE variant for both tiers — member pricing comes
   // from a checkout-time discount code (see handleEnroll), not a separate variant.
   shopifyVariantId: string | null;
+  claimantShopifyVariantId?: string | null;
   minAge: number | null;
   maxAge: number | null;
   orgMemberOnly: boolean;
@@ -59,6 +63,9 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
   const [enrolling, setEnrolling] = useState(false);
   const [message, setMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [planKind, setPlanKind] = useState<string | null>(null);
+  const [confirmPlanOpened, { open: openConfirmPlan, close: closeConfirmPlan }] = useDisclosure(false);
+  const [repeatPayments, setRepeatPayments] = useState<RepeatPayment[]>([]);
 
   const [showEnrollmentSelection, setShowEnrollmentSelection] = useState(false);
   const [householdMembers, setHouseholdMembers] = useState<{ id: number; name: string | null; dateOfBirth: string | null; isDeclaredAdult?: boolean }[]>([]);
@@ -70,9 +77,8 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
   const [needsSetup, setNeedsSetup] = useState(false);
   const [showIntake, setShowIntake] = useState(false);
 
-  const fetchProgram = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/programs/${id}`);
+  const fetchProgram = useCallback(() => fetch(`/api/programs/${id}`)
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setProgram(data);
@@ -81,12 +87,14 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
       } else {
         setMessage("Failed to load program details.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, [id]);
+    }),
+  [id]);
 
   useEffect(() => {
     fetchProgram();
@@ -95,27 +103,21 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
   // Why a member can't be enrolled. Shared by the default selection and the row
   // render so an ineligible member is never auto-selected and then POSTed (which
   // returned a confusing "Date of Birth is missing" for over-25 adults).
-  const enrollBlock = (member: { id: number; dateOfBirth: string | null; isDeclaredAdult?: boolean }): { reason: 'enrolled' | 'pending' | 'awaiting' | 'age' | 'dob' | 'lead' | null; label: string } => {
+  const enrollBlock = (member: { id: number; dateOfBirth: string | null; isDeclaredAdult?: boolean }): { reason: 'enrolled' | 'pending' | 'age' | 'dob' | 'lead' | null; label: string } => {
     // Only a known adult may commit THEMSELVES to a program and its charge — the
     // enroll route refuses the rest, so the viewer's own row must never offer it.
     const viewer = session?.user;
     const selfBlocked = member.id === viewer?.id && viewer?.ageBand !== 'adult';
     const enrolledRow = (program?.participants ?? []).find(p => p.personId === member.id);
-    // ACTIVE = paid/free/override (truly done) — locked. PENDING = payment still
-    // owed: SELECTABLE, so the household can re-run checkout to finish paying
-    // (the participants POST 409s and aggregateEnrollOutcomes folds a 409 back
-    // into the checkout set — the same idempotent path as a double-click).
+    // PENDING = payment still owed: SELECTABLE, so the household can re-run
+    // checkout to finish paying (the participants POST 409s and
+    // aggregateEnrollOutcomes folds a 409 back into the checkout set — the same
+    // idempotent path as a double-click). Anything else is locked: ACTIVE, or no
+    // status at all because this viewer may not see payment status.
     if (enrolledRow) {
-        if (enrolledRow.status === 'ACTIVE') return { reason: 'enrolled', label: 'Enrolled' };
-        // A youth is never shown the payment behind a pending row — the resume
-        // affordance is a checkout they may not reach. "Awaiting confirmation"
-        // stays true whether or not the household ever pays.
-        if (selfBlocked) {
-            return viewer?.ageBand === 'youth'
-                ? { reason: 'awaiting', label: 'Awaiting confirmation' }
-                : { reason: 'dob', label: 'DOB missing' };
-        }
-        return { reason: 'pending', label: 'Payment pending — select to finish payment' };
+        if (enrolledRow.status !== 'PENDING') return { reason: 'enrolled', label: 'Enrolled' };
+        if (selfBlocked) return { reason: 'dob', label: 'DOB missing' };
+        return { reason: 'pending', label: 'Not paid yet — select to pay now' };
     }
     if (!program) return { reason: null, label: '' };
     // Same eligibility rule as the enroll route: a declared over-25 adult clears
@@ -207,6 +209,8 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
   const handleRequestPaymentPlan = async () => {
     if (!session) return router.push('/');
     if (selectedParticipantIds.length === 0) return;
+    if (!planKind) return;
+    closeConfirmPlan();
 
     setEnrolling(true);
     setMessage("");
@@ -231,7 +235,9 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
         res = await fetch(`/api/programs/${id}/request-payment-plan`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ participantId })
+          // One choice covers the whole selected batch: the ask is the household's
+          // situation, not the individual participant's.
+          body: JSON.stringify({ participantId, kind: planKind })
         });
 
         if (res.ok) {
@@ -254,7 +260,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
     }
   };
 
-  const handleEnroll = async () => {
+  const handleEnroll = async (confirmedRepeat = false) => {
     if (!session) {
       router.push('/');
       return;
@@ -292,9 +298,9 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
           isMember = householdData.household?.orgMembership?.status === "ACTIVE" || false;
         }
         pricingEligible = program.viewerMemberPricingEligible ?? isMember;
-        // Every program sells the SAME variant to everyone — the discount code
-        // (below, at redirect time) does the member pricing, not a variant pick.
-        variantId = program.shopifyVariantId;
+        // Every app checkout follows a claim, so it sells the claimant variant when
+        // the program has one; the discount code (below) does the member pricing.
+        variantId = checkoutVariantId(program);
         storeDomain = shopifyStoreDomain ?? undefined;
         mockPay = isLocalInstance;
         if (!variantId || (!mockPay && !storeDomain)) {
@@ -302,6 +308,28 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
             ? "Cannot enroll: Shopify store domain not configured. Contact an admin."
             : "Cannot enroll: no pricing variant set for this program — set one in program-ops." });
           return; // no enrollment created — payment path is broken
+        }
+      }
+
+      // Re-read the roster first: a child may have been paid since this page
+      // loaded, and the participants POST answers that with a 409 like any re-run.
+      if (isPayingOnShopify && !confirmedRepeat) {
+        // The warning is advisory: a failed re-read checks the page's roster instead.
+        const fresh: ProgramDetail | null = await fetch(`/api/programs/${id}`)
+          .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+          .catch((err: unknown) => {
+            console.warn("[programs] roster re-read failed; checking repeat payments against the loaded roster", err);
+            return null;
+          });
+        if (fresh) setProgram(fresh);
+        const repeats = findRepeatPayments(
+          selectedParticipantIds,
+          (fresh ?? program)?.participants ?? [],
+          (personId) => householdMembers.find((m) => m.id === personId)?.name,
+        );
+        if (repeats.length > 0) {
+          setRepeatPayments(repeats);
+          return; // the warning modal re-enters with confirmedRepeat
         }
       }
 
@@ -323,6 +351,29 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
 
       if (enrolledIds.length > 0) {
         notifyNavRefresh();
+        // Every checkout starts at the server: it refuses a checkout naming
+        // someone outside the household (400) or from a non-lead (403), and mints the member discount code for
+        // single-pool programs when the household's membership fee covers the program. A
+        // mint or network failure is non-fatal: an undiscounted link is always a
+        // safe fallback, per lib/shopify.ts's mintMemberDiscountCode contract.
+        let discountCode: string | null = null;
+        if (isPayingOnShopify) {
+          let refusal: string | null = null;
+          try {
+            const discRes = await fetch(`/api/programs/${id}/discount-code`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ participantIds: enrolledIds }),
+            });
+            if (discRes.ok) discountCode = pricingEligible ? (await discRes.json()).code ?? null : null;
+            else if (discRes.status === 400 || discRes.status === 403) refusal = (await discRes.json()).error ?? "This checkout can't go ahead.";
+          } catch { /* undiscounted link is an acceptable fallback */ }
+          if (refusal) {
+            setMessage(refusal);
+            fetchProgram();
+            return;
+          }
+        }
         if (isPayingOnShopify && program && variantId && mockPay) {
           // Local mock: fire the Debug section's orders/paid webhook to activate the
           // PENDING enrollments, exactly as the dev Shopify tool's button does — no redirect.
@@ -340,20 +391,6 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
         } else if (isPayingOnShopify && program && variantId && storeDomain) {
           setSuccessMessage("Redirecting to Shopify for secure payment...");
           navigating = true;
-          // Single-pool model only: a member checking out gets a per-enrollee,
-          // single-use discount code minted server-side (the browser never has
-          // Shopify credentials to do this itself). Legacy two-variant programs
-          // already charged the right tier via the variant pick above — no code
-          // needed. Failure here is non-fatal: an undiscounted link is always a
-          // safe fallback (never blocks checkout), per lib/shopify.ts's
-          // mintMemberDiscountCode contract.
-          let discountCode: string | null = null;
-          if (program.shopifyVariantId && pricingEligible) {
-            try {
-              const discRes = await fetch(`/api/programs/${id}/discount-code`, { method: 'POST' });
-              if (discRes.ok) discountCode = (await discRes.json()).code ?? null;
-            } catch { /* undiscounted link is an acceptable fallback */ }
-          }
           // qty=N single variant + comma-joined account ids — see buildShopifyCheckoutUrl.
           window.location.href = buildShopifyCheckoutUrl(storeDomain, variantId, enrolledIds, id, discountCode);
           return; // spinner stays; page unloads on redirect
@@ -396,7 +433,8 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
     .filter(p => p.person && (p.personId === user?.id || (user?.householdId != null && p.person.householdId === user.householdId)))
     .map(p => ({
       name: p.personId === user?.id ? (p.person?.name || 'You') : (p.person?.name || 'Household member'),
-      active: p.status === 'ACTIVE',
+      // Only a household lead receives status (lib/programs/paymentVisibility).
+      unpaid: p.status === 'PENDING',
     }));
   const isClosed = program.enrollmentStatus === 'CLOSED';
   const hasPrice = !!(program.orgMemberPriceCents || program.nonOrgMemberPriceCents);
@@ -469,8 +507,11 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
                 <Divider />
                 <Text><strong>Already enrolled from your household:</strong></Text>
                 {myEnrolled.map((m, i) => (
-                  <Text key={i} size="sm" c={m.active ? 'green' : 'yellow'} ml="sm">
-                    {m.name} — {m.active ? 'Enrolled' : 'Enrolled, payment pending'}
+                  <Text key={i} size="sm" c={m.unpaid ? 'yellow' : 'green'} ml="sm">
+                    {m.name} — {m.unpaid ? 'Enrolled, not paid yet' : 'Enrolled'}
+                    {m.unpaid && !isClosed && (
+                      <>{' '}<Anchor component="button" size="sm" onClick={startEnrollmentProcess}>Pay now</Anchor></>
+                    )}
                   </Text>
                 ))}
               </>
@@ -509,7 +550,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
                       instead, which holds whether or not the program is priced. */}
                   {isClosed ? <>Enrollment Closed{closedSuffix}</>
                     : viewerIsYouth ? "A household lead must enroll you"
-                    : myEnrolled.some((m) => !m.active) ? "Continue enrollment" : "Enroll"}
+                    : myEnrolled.some((m) => m.unpaid) ? "Continue enrollment" : "Enroll"}
                 </Button>
               ) : (
                 // Auth-first: route through /signin (which picks Google vs. the
@@ -555,8 +596,8 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
                               label={member.name || 'Unnamed Participant'}
                             />
                             {reason === 'enrolled' && <Text size="sm" c="green">({label})</Text>}
-                            {(reason === 'pending' || reason === 'awaiting') && <Text size="sm" c="yellow">({label})</Text>}
-                            {disabled && reason !== 'enrolled' && reason !== 'awaiting' && <Text size="sm" c="red">({label})</Text>}
+                            {reason === 'pending' && <Text size="sm" c="yellow">({label})</Text>}
+                            {disabled && reason !== 'enrolled' && <Text size="sm" c="red">({label})</Text>}
                           </Group>
                         </Card>
                       );
@@ -600,13 +641,55 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
                     size="md"
                     variant="light"
                     type="button"
-                    onClick={handleRequestPaymentPlan}
+                    onClick={openConfirmPlan}
                     disabled={enrolling || selectedParticipantIds.length === 0 || loadingHousehold}
                     styles={{ root: { height: 'auto', paddingBlock: 'var(--mantine-spacing-xs)' }, label: { whiteSpace: 'normal' } }}
                   >
                     Request a scholarship or payment plan from the Scholarship Review Team
                   </Button>
                 )}
+
+                <Modal opened={repeatPayments.length > 0} onClose={() => setRepeatPayments([])} title="Pay again?" centered>
+                  <Stack gap="xs">
+                    {repeatPayments.map((r) => (
+                      <Text key={r.personId} size="sm">{r.name} is already paid.</Text>
+                    ))}
+                    <Text size="sm">Pay again anyway?</Text>
+                  </Stack>
+                  <Group justify="flex-end" mt="md">
+                    <Button variant="default" onClick={() => setRepeatPayments([])}>Cancel</Button>
+                    <Button color="yellow" onClick={() => { setRepeatPayments([]); handleEnroll(true); }}>
+                      Pay again anyway
+                    </Button>
+                  </Group>
+                </Modal>
+
+                <Modal opened={confirmPlanOpened} onClose={closeConfirmPlan} title="Request a scholarship or payment plan?" centered>
+                  <Text size="sm">
+                    This enrolls the people you selected as pending and sends your request to the
+                    board&apos;s Scholarship Review Team, who will follow up with you. You won&apos;t be
+                    charged anything now, and the spot is held while they review.
+                  </Text>
+                  <Radio.Group
+                    mt="md"
+                    value={planKind}
+                    onChange={setPlanKind}
+                    label="What would help?"
+                    description="So the team opens the right conversation. Nothing here commits you to anything."
+                  >
+                    <Stack gap="xs" mt="xs">
+                      {SCHOLARSHIP_REQUEST_KIND_OPTIONS.map((o) => (
+                        <Radio key={o.value} value={o.value} label={o.label} description={o.description} />
+                      ))}
+                    </Stack>
+                  </Radio.Group>
+                  <Group justify="flex-end" mt="md">
+                    <Button variant="default" onClick={closeConfirmPlan}>Cancel</Button>
+                    <Button onClick={handleRequestPaymentPlan} disabled={!planKind || enrolling} loading={enrolling}>
+                      Send request
+                    </Button>
+                  </Group>
+                </Modal>
               </Stack>
               )}
 

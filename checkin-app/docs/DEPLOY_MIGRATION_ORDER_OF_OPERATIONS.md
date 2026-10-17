@@ -44,6 +44,11 @@ This is exactly what happened 2026-07-02: three generated "rename" migrations pa
 ### 5. Wrap multi-statement migrations in `BEGIN;` / `COMMIT;`
 Prisma does not wrap a migration file in a transaction on Postgres ([prisma/prisma#15295](https://github.com/prisma/prisma/issues/15295)) — a multi-statement migration can **partially apply**. The 2026-07-02 incident hit this directly: one table's `ALTER` committed, the sibling table's rolled back in the same migration file, requiring manual surgical repair before the automated fix (#791) could even be deployed. If a migration touches more than one statement that needs to succeed or fail together, wrap it in explicit `BEGIN;` / `COMMIT;` — a failure becomes a clean atomic retry instead of a wedge.
 
+Every new migration wraps, single-statement ones included. CI enforces this for every `migration.sql` a PR **adds**, in checkin's chain and in every `packages/*/prisma/migrations` chain: `migration-safety.yml` → "New migrations wrap in a transaction" fails a file whose first SQL line is not `BEGIN;` or whose last is not `COMMIT;` (blank and comment lines ignored). Migrations already on the base branch are never checked; editing one to satisfy the lint would break rule 6's checksum. Two explicit escapes:
+
+- **SQL Postgres refuses inside a transaction** — `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, and the like. Add a comment line `-- no-transaction: <reason>` and make every statement retry-safe (`IF NOT EXISTS` / `IF EXISTS`), since a failure can leave some statements applied. `20260818140000_raw_badge_log_client_event_id` is the model for retry-safe statements.
+- **A coalesce baseline** (its directory holds `reconcile.sql`) is exempt: it only ever runs on an empty database, which recovers by being recreated.
+
 ### 6. A failed migration wedges every future deploy until a human intervenes
 A failed migration leaves a row in `_prisma_migrations` with no success recorded. Every subsequent `migrate deploy` — meaning every subsequent deploy of any kind, unrelated PRs included — fails fast with `P3009` ("migrate found failed migrations in the target database") until someone runs:
 
@@ -122,6 +127,29 @@ tsc and the build green. Any PR touching it ships alone, decommission or not.
 - **Same-timestamp migrations from two open PRs interleave lexicographically at deploy time.** Prisma applies migrations in filename order; if two schema PRs are both open, check what order their timestamps put them in once both land — a same-timestamp collision (verified harmless for #917/#918's specific case, checked via `git merge-tree`) isn't guaranteed harmless in general.
 - **Schema field changes need `/// @sensitivity:<tier>` annotations** (see `docs/security/SECURITY-POLICY.md`) with regenerated `classifications.ts` committed — this is a CI-enforced, CODEOWNERS-gated check, and it's a schema-adjacent step easy to forget in the middle of a migration-focused PR.
 - **Aurora Serverless v2 auto-pauses.** Any new one-off DB task (not just the two deploy workflows) needs the retry-loop pattern from rule/step 2 above, or its first connection will race the resume and fail with `P1001`.
+
+### 9. Database roles: create and grant before any URL points at them
+The app connects as a DML-only role (rows, no DDL); migrations connect as the role that owns the tables. In AWS the roles come from the infra repo's cluster bootstrap (`checkin_<env>_dml`). In the self-hosted compose stack (`deploy/docker-compose.prod.yml`) they come from `deploy/prod-initdb/`:
+- `05-checkin-roles.sh` creates `checkin_dml` on checkin's database, grants it DML on every existing table and sequence, and sets `DEFAULT PRIVILEGES FOR ROLE` the bootstrap user, so tables a later migration creates are granted automatically. It revokes CONNECT from PUBLIC on checkin's database, `postgres` and `template1`.
+- `10-library-dbs.sh` does the same per library, with a real `<name>_owner` role.
+- **Checkin's migrate uses the bootstrap user** (`POSTGRES_USER`), which owns checkin's existing tables. There is no separate checkin owner role yet. Moving ownership to one is a possible later step: it needs `ALTER ... OWNER TO` on every table, sequence and type of the live database (`REASSIGN OWNED` refuses the bootstrap superuser), done in a quiet window.
+- Database passwords live in `deploy/.env` (compose interpolation). The web container's `env_file` (`../.env`) holds app secrets only; web gets just the DML URLs, and only `db` and `migrate` see owner or bootstrap passwords.
+
+Postgres runs `prod-initdb` only on a fresh data volume. **On an existing volume, in this order:**
+1. Add `CHECKIN_DML_DB_PASSWORD` (and each library's `<NAME>_OWNER_DB_PASSWORD` / `<NAME>_DML_DB_PASSWORD`, if not yet set) to `deploy/.env`; remove every `*_DB_PASSWORD` from `../.env`.
+2. Recreate only the database container so it sees the new passwords: `docker compose -f deploy/docker-compose.prod.yml up -d --no-deps db` (a short restart; web reconnects).
+3. Run the bootstrap once (both scripts are idempotent, so re-running is safe): `docker compose -f deploy/docker-compose.prod.yml exec db sh -c 'for f in /docker-entrypoint-initdb.d/*.sh; do sh "$f" || exit 1; done'`.
+4. Verify before switching: `docker compose -f deploy/docker-compose.prod.yml exec db psql -h 127.0.0.1 -U checkin_dml -d checkmein -c 'SELECT count(*) FROM "Person"'` succeeds, and the same login against `-d postgres` is refused.
+5. Only now recreate web, which picks up the `checkin_dml` URL: `docker compose -f deploy/docker-compose.prod.yml up -d web`.
+
+Rollback: point web's `DATABASE_URL` back at the bootstrap user and `up -d web`. The roles and grants are additive and can stay. Never switch the URL first: until step 3 the role does not exist, and every request fails to connect.
+
+**Baseline before the first `migrate` run on a volume built by `prisma db push`.** Such a database has checkin's tables but no `_prisma_migrations` ledger, so `prisma migrate deploy` refuses it with `P3005` ("the database schema is not empty"). Once, before the first `docker compose -f deploy/docker-compose.prod.yml --profile migrate run --rm migrate`, using the image of the release the volume was last pushed from:
+1. Confirm the database matches that release's schema; this must print no diff: `docker compose -f deploy/docker-compose.prod.yml --profile migrate run --rm migrate sh -c 'cd checkin-app && npx --no-install prisma migrate diff --from-config-datasource --to-schema=prisma/schema.prisma --exit-code'`. Any diff means the volume is not at that release; stop and reconcile by hand.
+2. `db push` cannot create the partial unique indexes that migrations add in raw SQL. Copy each `CREATE UNIQUE INDEX ... WHERE` statement from `checkin-app/prisma/migrations/*/migration.sql` that is missing from `pg_indexes`, and run it as the bootstrap user.
+3. Record every migration as applied: `docker compose -f deploy/docker-compose.prod.yml --profile migrate run --rm migrate sh -c 'cd checkin-app && for m in prisma/migrations/*/; do npx --no-install prisma migrate resolve --applied "$(basename "$m")" || exit 1; done'`.
+
+After that, `migrate` runs normally on every deploy. A fresh volume needs none of this.
 
 ## How to verify
 

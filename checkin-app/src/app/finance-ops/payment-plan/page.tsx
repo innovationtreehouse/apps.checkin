@@ -7,11 +7,13 @@ import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
+import { FINANCE_SECTION_ROLES } from '@/lib/financeNav';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
-import { formatCents } from '@inventory/money';
+import { formatCents } from '@checkin/money';
 import { landsNextYear } from '@/lib/programYear';
+import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 type HouseholdLead = { id: number; name: string | null; email: string | null };
@@ -20,6 +22,7 @@ type PaymentPlanRequest = {
   programId: number;
   personId: number;
   pendingSince: string;
+  scholarshipRequestKind: string | null;
   person: {
     id: number;
     name: string | null;
@@ -41,7 +44,7 @@ type PaymentPlanRequest = {
 
 export default function PendingParticipantsPage() {
   const { formatDateTime } = useOrgTime();
-  const { user: me, ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
+  const { user: me, ready, loading: authLoading } = useRequireRole(FINANCE_SECTION_ROLES);
   // Conflict of interest: no actor may approve their OWN household member's plan
   // (mirrors the server guard). UX only — server enforces.
   const ownHousehold = (req: PaymentPlanRequest) =>
@@ -56,9 +59,8 @@ export default function PendingParticipantsPage() {
   const [confirmRefuseOpened, { open: openConfirmRefuse, close: closeConfirmRefuse }] = useDisclosure(false);
   const [pendingRefusal, setPendingRefusal] = useState<{ programId: number; participantId: number } | null>(null);
 
-  const fetchRequests = useCallback(async () => {
-    try {
-      const res = await fetch('/api/finance-ops/payment-plans');
+  const fetchRequests = useCallback(() => fetch('/api/finance-ops/payment-plans')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setRequests(data.ProgramParticipant ?? []);
@@ -66,12 +68,14 @@ export default function PendingParticipantsPage() {
       } else {
         setMessage("Failed to load requests. You may not have access.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading requests.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchRequests();
@@ -185,6 +189,15 @@ export default function PendingParticipantsPage() {
           ? emails.map(e => <Text key={e} size="sm">{e}</Text>)
           : <Text size="sm" c="dimmed">—</Text>;
       },
+    },
+    {
+      header: 'Asked For',
+      sortBy: (req) => scholarshipRequestKindLabel(req.scholarshipRequestKind).toLowerCase(),
+      render: (req) => (
+        <Text size="sm" c={req.scholarshipRequestKind ? undefined : 'dimmed'}>
+          {scholarshipRequestKindLabel(req.scholarshipRequestKind)}
+        </Text>
+      ),
     },
     {
       header: 'Program',

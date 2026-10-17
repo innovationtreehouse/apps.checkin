@@ -13,7 +13,7 @@
  */
 import { it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@inventory/s-ingest-core", () => ({
+vi.mock("@checkin/s-ingest-core", () => ({
   EventSource: { BACKFILL: "BACKFILL" },
   ObjectType: { ORDER: "ORDER" },
   SyncKind: { BACKFILL: "BACKFILL" },
@@ -38,7 +38,7 @@ vi.mock("../../src/sync/streams.js", () => ({
 }));
 
 import { runBackfill } from "../../src/sync/backfill.js";
-import { getBulkState, setBulkState, ingestBulkOrders, advanceWatermark, ObjectType } from "@inventory/s-ingest-core";
+import { getBulkState, setBulkState, ingestBulkOrders, advanceWatermark, ObjectType } from "@checkin/s-ingest-core";
 import { startOrdersBackfill, getCurrentBulkOperation, downloadBulkJsonl } from "../../src/shopify/bulk.js";
 import { fakeClient } from "../helpers/fakeClient.js";
 import { prismaSentinel } from "../helpers/fakePrisma.js";

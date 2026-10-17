@@ -8,13 +8,26 @@
  *     "actor": "ops:jane", "reason": "force re-pull of payouts after schema change" }
  *   { "mode": "reingest-bulk", "since": "2026-01-01T00:00:00Z",
  *     "actor": "ops:jane", "reason": "repair backfill after reassembly fix" }
+ *   { "mode": "replay", "scope": "all",
+ *     "actor": "ops:jane", "reason": "full rebuild of every object type's projection" }
+ *
+ * A call with none of its mode's narrowing filters (replay: objectType/gid/since;
+ * reset-watermark: objectType; reingest-bulk: since/bulkOperationId) acts on the whole
+ * store, so it is refused unless it says `"scope": "all"`.
  *
  * The store defaults to STORE_ID from the environment but should normally be named
  * explicitly in the event.
  */
 import { z } from "zod";
-import { prisma, loadDbConfig, ObjectType, logger, ConcurrentRunError } from "@inventory/s-ingest-core";
+import { prisma, loadDbConfig, ObjectType, logger, ConcurrentRunError } from "@checkin/s-ingest-core";
 import { replay, resetWatermark, reingestBulk } from "./replay.js";
+
+// The filters that keep each mode from acting on the whole store.
+const NARROWING_FILTERS = {
+  replay: ["objectType", "gid", "since"],
+  "reset-watermark": ["objectType"],
+  "reingest-bulk": ["since", "bulkOperationId"],
+} as const;
 
 /**
  * The admin invocation contract. Validated with Zod at the boundary because the Lambda
@@ -34,8 +47,18 @@ export const AdminEventSchema = z
     bulkOperationId: z.string().min(1).optional(), // reingest-bulk only
     actor: z.string().min(1, "actor is required (who is running this admin op)"),
     reason: z.string().min(1, "reason is required (why this admin op is being run)"),
+    scope: z.literal("all").optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((e, ctx) => {
+    const filters = NARROWING_FILTERS[e.mode];
+    if (e.scope === "all" || filters.some((f) => e[f] !== undefined)) return;
+    ctx.addIssue({
+      code: "custom",
+      path: ["scope"],
+      message: `${e.mode} with none of ${filters.join(", ")} acts on the whole store; pass one of those filters or "scope": "all"`,
+    });
+  });
 
 export type AdminEvent = z.infer<typeof AdminEventSchema>;
 

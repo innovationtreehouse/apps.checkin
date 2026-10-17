@@ -1,5 +1,5 @@
 /**
- * @inventory/pg-test-harness — the fleet's template for Postgres integration testing.
+ * @checkin/pg-test-harness — the fleet's template for Postgres integration testing.
  *
  * Every package with a real-Postgres integration tier boots a throwaway, migration-fresh
  * container via this harness instead of assuming a hand-provisioned local/shared Postgres.
@@ -20,3 +20,4 @@ export { startPostgres, DEFAULT_PG_IMAGE, type StartedPg } from "./container.js"
 export { applyMigrations, type ApplyMigrationsOptions } from "./migrate.js";
 export { pgGlobalSetup, type PgHarnessOptions } from "./globalSetup.js";
 export { applyHarnessEnv, type SetupEnvOptions } from "./setupEnv.js";
+export { describeDb, dbGateMode, type DbGateMode } from "./describeDb.js";

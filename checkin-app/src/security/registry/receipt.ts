@@ -1,0 +1,78 @@
+// Receipt library route policy. Aggregated by ../registry.ts.
+import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
+
+// Submitters are adult members or Treehouse Volunteers (`receipt-submitter`,
+// docs/rules/expenses.md) and read only their own receipts: `their_own` resolves on the row's uploadedByUserId against
+// the session id, and grants no pii, so donor and reimbursee names
+// never come back to the uploader. FINANCE acts org-wide; BOARD reads alongside
+// FINANCE (finance's superuser) but takes no finance action. Sysadmins get
+// nothing extra (revenue.md). A route shared by both audiences lists
+// isFinance first; the route passes `access: "finance"` to the library exactly
+// when that view matched, else `"submitter"`.
+const FINANCE = ['everyones:pii', 'everyones:personal', 'everyones:internal'] as const;
+const OWN = ['their_own:personal', 'their_own:internal'] as const;
+
+const SUBMITTER_VIEW: readonly OrderedViewEntry[] = [['authenticated', OWN]];
+const SHARED_VIEW: readonly OrderedViewEntry[] = [['isFinance', FINANCE], ['authenticated', OWN]];
+const SHARED_READ_VIEW: readonly OrderedViewEntry[] = [
+    ['isFinance', FINANCE],
+    ['isBoardMember', FINANCE],
+    ['authenticated', OWN],
+];
+const FINANCE_VIEW: readonly OrderedViewEntry[] = [['isFinance', FINANCE]];
+const FINANCE_READ_VIEW: readonly OrderedViewEntry[] = [['isFinance', FINANCE], ['isBoardMember', FINANCE]];
+
+// Submitter only: the caller's own receipts.
+defineRoute({ endpoint: 'POST /api/receipts/upload', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView', 'ReceiptLineView'], orderedView: SUBMITTER_VIEW });
+defineRoute({ endpoint: 'GET /api/receipts/mine', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/submitter-confirm', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/submitter-discard', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
+defineRoute({ endpoint: 'PUT /api/receipts/[id]/reimbursement', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
+defineRoute({ endpoint: 'PUT /api/receipts/[id]/in-kind', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SUBMITTER_VIEW });
+
+// Shared: a submitter on their own receipt, or FINANCE on any.
+defineRoute({ endpoint: 'GET /api/receipts/needs-attention', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
+defineRoute({ endpoint: 'GET /api/receipts/[id]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView', 'ReceiptLineView'], orderedView: SHARED_READ_VIEW });
+defineRoute({ endpoint: 'PATCH /api/receipts/[id]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/line-items', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptLineView'], orderedView: SHARED_VIEW });
+defineRoute({ endpoint: 'PATCH /api/receipts/[id]/line-items/[lineItemId]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptLineView'], orderedView: SHARED_VIEW });
+defineRoute({ endpoint: 'DELETE /api/receipts/[id]/line-items/[lineItemId]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptLineView'], orderedView: SHARED_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/retry-ocr', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/discard', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/resubmit', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
+
+// FINANCE reads (BOARD too).
+defineRoute({ endpoint: 'GET /api/receipts', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_READ_VIEW });
+defineRoute({ endpoint: 'GET /api/receipts/[id]/audit-logs', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptAuditLog'], orderedView: FINANCE_READ_VIEW });
+defineRoute({ endpoint: 'GET /api/receipts/settings', authorize: 'finance-or-board', envelope: null, returns: ['ReceiptOrgSettings'], orderedView: FINANCE_READ_VIEW });
+
+// FINANCE actions.
+defineRoute({ endpoint: 'POST /api/receipts/[id]/approve', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/reject', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/clear-duplicate', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/restart-flow', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/[id]/push-to-inventory', authorize: 'finance', envelope: null, returns: ['ReceiptPushResult'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/import', authorize: 'finance', envelope: null, returns: ['ReceiptImportResult'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'PUT /api/receipts/settings', authorize: 'finance', envelope: null, returns: ['ReceiptOrgSettings'], orderedView: FINANCE_VIEW });
+
+// Gmail mail queue: FINANCE only (the sender address is read by FINANCE alone).
+defineRoute({ endpoint: 'GET /api/receipts/mail-items', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/assign', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
+defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/discard', authorize: 'finance', envelope: null, returns: ['ReceiptMailItem'], orderedView: FINANCE_VIEW });
+
+// Files: the only way receipt bytes leave. Naming each field here
+// makes it file-only, so the JSON stripper drops it on every route. Headers are
+// fixed by fileHandler per content type: images inline under a CSP sandbox, PDF
+// inline without one, text only as an attachment, nosniff on all.
+defineFileRoute({
+    endpoint: 'GET /api/receipts/[id]/file',
+    authorize: 'receipt-submitter',
+    orderedView: [['isFinance', ['everyones:pii']], ['isBoardMember', ['everyones:pii']], ['authenticated', ['their_own:pii']]],
+    file: { model: 'Receipt', field: 'fileBlob' },
+});
+defineFileRoute({
+    endpoint: 'GET /api/receipts/mail-items/[id]/file',
+    authorize: 'finance',
+    orderedView: [['isFinance', ['everyones:pii']]],
+    file: { model: 'ReceiptMailItem', field: 'fileBlob' },
+});

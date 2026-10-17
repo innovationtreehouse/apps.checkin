@@ -2,6 +2,7 @@ import { beforeAll, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
 import { initDb, prisma } from "../../db";
 import { resetDb } from "../helpers/db";
+import { create as createCategoryRoute, update as updateCategoryRoute } from "../../routes/categories";
 import { resolveOrCreateCategory, resolveOrCreateSubcategory } from "../../services/categoryService";
 
 beforeAll(async () => {
@@ -175,5 +176,22 @@ describeDb("resolveOrCreateSubcategory", () => {
       status: 400,
       message: expect.stringMatching(/a subcategory must be specified/i),
     });
+  });
+});
+
+describeDb("category routes keep an archived category's letter reserved", () => {
+  const body = (name: string, letter: string) =>
+    new Request("http://test/api/catalog/categories", { method: "POST", body: JSON.stringify({ name, letter }) });
+
+  it("refuses to create or rename onto an archived category's letter", async () => {
+    await resetDb();
+    await prisma.category.create({ data: { name: "Old", letter: "A", archivedAt: new Date() } });
+    const other = await seedCategory("Other", "B");
+
+    await expect(createCategoryRoute({ req: body("New", "a"), params: {} })).rejects.toMatchObject({ status: 409 });
+    await expect(
+      updateCategoryRoute({ req: body("Other", "A"), params: { id: String(other.id) } }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(await prisma.category.count({ where: { letter: "A" } })).toBe(1);
   });
 });

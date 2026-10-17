@@ -58,7 +58,7 @@ Two runners, split by workspace type — no file ever runs under both (issue #22
   below are all Jest; run their commands from `checkin-app/`.
 - **`packages/*` and `*-function` → Vitest.** Each such workspace owns its own
   `vitest.config.ts` + `vitest` devDep — no shared root config. Real-Postgres
-  integration tiers boot a throwaway container via `@inventory/pg-test-harness`
+  integration tiers boot a throwaway container via `@checkin/pg-test-harness`
   (testcontainers), so they need a running Docker daemon and self-skip without
   one.
 
@@ -84,6 +84,12 @@ defers to the real client for these). They import service functions directly and
 assert DB state. Excluded from the default run. Run: `npm run test:integration`
 against a live DB. Each suite self-cleans by a unique `TAG`.
 
+Each jest worker gets its own database, cloned from a freshly migrated template
+(`test/integrationGlobalSetup.js`), so workers never share rows. Files within one
+worker run in sequence and share its database, so a suite that leaves residue
+breaks whichever suite runs after it. The script runs `INTEGRATION_WORKERS`
+workers (default 1, CI 3) and recycles a worker once its heap passes 1GB.
+
 ### 3. Flow tests — `flow-tests/*.flow.test.ts`  ← read this before adding e2e
 **End-to-end user journeys driven over HTTP against a *running* dev server.** No
 app imports, no DB access, no mocks — a flow test only `fetch()`es the server and
@@ -108,7 +114,7 @@ routes, auth, and DB together.
   is a thin JSON `fetch` wrapper.
 - **In CI:** the `Flow tests` workflow (`.github/workflows/flow-tests.yml`) brings
   up `deploy/docker-compose.flow.yml` — Postgres + a **dev-mode** app container
-  (`next dev`) — installs, `prisma db push`, seeds, then runs the flow tests
+  (`next dev`) — installs, `prisma migrate deploy`, seeds, then runs the flow tests
   inside that container.
 
 **Gotchas (why it's built this way):**
@@ -209,6 +215,32 @@ on the thread. Do not leave it and start something else.
 - Same rule for a finding already **rejected**. Re-raising it needs new evidence
   named in the body, not a new PR number.
 
+## AI review and approval
+
+Every PR carries the **`ai-review`** label. Add it when you open the PR, or
+when you mark a draft ready for review. The label starts the OpenRouter AI
+review (`.github/workflows/openrouter-pr-review.yml`); without it no AI review
+runs. Applying a label needs triage access, so the public cannot trigger it.
+
+The approval sequence for each PR:
+
+1. **AI review round.** Routing picks the review checklists and the model, the
+   review posts, and a completeness check may rerun it once on a stronger
+   model. It usually finishes in under ten minutes. Every later push re-reviews
+   while the label stays on.
+2. **Agent and human reviews start after the AI review posts**, and build on its
+   findings instead of repeating them. Reply on its threads: fixed (name the
+   commit), or accepted or disputed with a reason. Settled threads stay settled
+   in later rounds, because each AI review reads the PR's review history.
+3. **Recommendation.** The final AI review carries a
+   `Recommendation:` line (approve, comment or request changes) and, for
+   approve, the `ai-recommends-approve` label. It is advisory only.
+4. **Approval is a maintainer's.** A maintainer approves after reading the AI
+   review and the other reviews. The AI review never submits an approval.
+
+Remove `ai-review` only to stop further reviews on a PR, for example while it
+is parked. Each run spends the OpenRouter key.
+
 ## Reviewing a PR
 
 A review comment earns its place only if a careful human reading the diff would
@@ -237,7 +269,7 @@ means say nothing, or approve.
 Read these before changing the relevant area — start here, then follow links.
 
 **Domain rules — read first** (`docs/rules/`)
-- The register of board and operations decisions, and the invariants a change must not violate: `membership.md`, `programs.md`, `people-households.md`, `finance-payments.md`, `attendance-checkin.md`, `tools-certification.md`, plus `principles.md` for the cross-cutting ones. **Before changing behaviour in a domain, read its file.** If a change contradicts a rule there, raise it — do not quietly proceed. A **Policy**-tier rule is not negotiable in a PR at all: stop and escalate.
+- The register of board and operations decisions, and the invariants a change must not violate: `membership.md`, `programs.md`, `people-households.md`, `revenue.md`, `expenses.md`, `attendance-checkin.md`, `tools-certification.md`, plus `principles.md` for the cross-cutting ones. **Before changing behaviour in a domain, read its file.** If a change contradicts a rule there, raise it — do not quietly proceed. A **Policy**-tier rule is not negotiable in a PR at all: stop and escalate.
 - `docs/DOCUMENTATION_STANDARD.md` — how documentation is organised, written, and retired: the document classes, what belongs in the register and what does not, the citation and format rules, and the working-doc lifecycle (write it in `docs/in-design/`, extract standing rules and delete it at merge). Read before writing or moving any doc.
 - `docs/conventions.md` — how we build, independent of any domain.
 

@@ -5,7 +5,7 @@
  */
 import { it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@inventory/s-ingest-core", () => ({
+vi.mock("@checkin/s-ingest-core", () => ({
   EventSource: { INCREMENTAL: "INCREMENTAL" },
   SyncKind: { INCREMENTAL: "INCREMENTAL" },
   withSyncRun: vi.fn(async (_p, _s, _k, _scope, fn) => fn(55n)),
@@ -20,7 +20,7 @@ vi.mock("../../src/sync/streams.js", () => ({
 
 import { runIncremental } from "../../src/sync/incremental.js";
 import { syncOrders, syncPayouts, syncBalanceTransactions } from "../../src/sync/streams.js";
-import { withSyncRun, EventSource } from "@inventory/s-ingest-core";
+import { withSyncRun, EventSource } from "@checkin/s-ingest-core";
 import { fakeClient } from "../helpers/fakeClient.js";
 import { prismaSentinel } from "../helpers/fakePrisma.js";
 

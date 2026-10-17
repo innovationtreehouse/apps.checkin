@@ -11,6 +11,7 @@ import { POST } from '@/app/api/membership-ops/households/route';
 import { authenticateRequest } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { setRoleFlag } from '@/lib/roles';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -98,6 +99,28 @@ describe('POST /api/membership-ops/households — Deny Membership', () => {
         expect(membership?.status).not.toBe('DENIED');
     });
 
+    it('waits for a board grant committing at the same moment, then refuses (409)', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        // The lock is on existing BOARD rows; production always has at least one.
+        await prisma.personRole.upsert({ where: { personId_role: { personId: boardId, role: 'BOARD' } }, create: { personId: boardId, role: 'BOARD' }, update: {} });
+        const grantee = await prisma.person.create({
+            data: { email: `grantee-${TAG}@example.com`, name: 'Grantee', household: { create: { name: "Test HH" } } },
+        });
+
+        let deny: ReturnType<typeof post> | undefined;
+        await prisma.$transaction(async (tx) => {
+            await setRoleFlag(tx, grantee.id, 'isBoardMember', true, { id: boardId, isBoardMember: true, isSysadmin: false });
+            deny = post({ householdId: grantee.householdId, deny: true });
+            await new Promise((resolve) => setTimeout(resolve, 300));
+        });
+
+        const res = await deny!;
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toContain('board member');
+        const membership = await prisma.orgMembership.findUnique({ where: { householdId: grantee.householdId } });
+        expect(membership?.status).not.toBe('DENIED');
+    });
+
     it('denies a plain household, sets DENIED, and writes an audit row', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
 
@@ -132,5 +155,23 @@ describe('POST /api/membership-ops/households — Deny Membership', () => {
 
         const membership = await prisma.orgMembership.findUnique({ where: { householdId: plainHouseholdId } });
         expect(membership?.status).toBe('NONE');
+    });
+
+    it('restore is undeny only: it never moves an ACTIVE household to NONE', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        await prisma.orgMembership.update({ where: { householdId: plainHouseholdId }, data: { status: 'ACTIVE' } });
+
+        const res = await post({ householdId: plainHouseholdId, deny: false });
+        expect(res.status).toBe(409);
+        const membership = await prisma.orgMembership.findUnique({ where: { householdId: plainHouseholdId } });
+        expect(membership?.status).toBe('ACTIVE');
+    });
+
+    it('denies an ACTIVE household', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const res = await post({ householdId: plainHouseholdId, deny: true });
+        expect(res.status).toBe(200);
+        const membership = await prisma.orgMembership.findUnique({ where: { householdId: plainHouseholdId } });
+        expect(membership?.status).toBe('DENIED');
     });
 });

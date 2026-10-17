@@ -167,5 +167,3 @@ The five §5 issues, all open, milestone v1.1, all unassigned:
 | #1224 | In review | #1477 | → #1224 |
 | #1230 | In review | #1495 | → #1230 |
 
-#975 release gating: `checkin-app/docs/designs/975-LEGACY_VARIANT_CONTRACT.md`,
-section "The deploy hazard (why the DROP is its own release)".

@@ -1,18 +1,16 @@
 /**
  * Integration tests against a real Postgres. Skipped unless SHOPIFY_READ_DATABASE_URL is set.
  *   SHOPIFY_READ_DATABASE_URL=postgresql://... npm test
- *
- * (The DB-availability guard in db-availability.test.ts fails CI loudly if this
- * coverage is silently skipped.)
  */
-import { describe, it, expect, beforeEach, afterAll } from "vitest";
-import { prisma, injectFixtures, setWatermark, ObjectType } from "@inventory/s-ingest-core";
+import { it, expect, beforeEach, afterAll } from "vitest";
+import { describeDb } from "@checkin/pg-test-harness";
+import { prisma, injectFixtures, setWatermark, ObjectType } from "@checkin/s-ingest-core";
 import { replay, resetWatermark } from "../../src/replay.js";
 import { handler } from "../../src/handler.js";
 import { wipeStore, orderNode, rawOrderEvent } from "./helpers.js";
 
 const STORE = "replay-test.myshopify.com";
-const run = process.env.SHOPIFY_READ_DATABASE_URL ? describe : describe.skip;
+const run = describeDb("SHOPIFY_READ_DATABASE_URL");
 
 const orderGid = (n: number | string) => `gid://shopify/Order/${n}`;
 const liveOrder = (gid: string) =>
@@ -49,6 +47,8 @@ run("s-replay-function admin operations", () => {
     expect(result.processed).toBe(1);
     expect(result.distinctGids).toBe(1);
     expect(await orderCount()).toBe(1); // restored from the log
+    // The restored row carries the raw event's provenance, not a default.
+    expect((await liveOrder(orderGid(9001)))?.source).toBe("TEST_LOADED");
 
     const adminRuns = await prisma.syncRun.count({ where: { storeId: STORE, kind: "ADMIN" } });
     expect(adminRuns).toBeGreaterThanOrEqual(1);
@@ -68,6 +68,20 @@ run("s-replay-function admin operations", () => {
     expect(result.processed).toBe(2);
     expect(result.distinctGids).toBe(1);
     expect((await liveOrder(gid))?.name).toBe("#second");
+  });
+
+  it("a stale bulk event with a HIGHER id does not revert newer state on replay", async () => {
+    const gid = orderGid(5002);
+    // Incremental event (newer state) logged first; the older bulk snapshot logged after it.
+    await prisma.shopifyRawEvent.create({
+      data: rawOrderEvent(STORE, gid, orderNode(gid, { updatedAt: "2026-03-01T00:00:00Z", displayFinancialStatus: "REFUNDED" }), { hash: "new" }),
+    });
+    await prisma.shopifyRawEvent.create({
+      data: rawOrderEvent(STORE, gid, orderNode(gid, { updatedAt: "2026-02-01T00:00:00Z", displayFinancialStatus: "PAID" }), { hash: "old" }),
+    });
+
+    await replay(prisma, { storeId: STORE, actor: "test", reason: "stale-bulk" });
+    expect((await liveOrder(gid))?.financialStatus).toBe("REFUNDED");
   });
 
   it("records partial progress on the FAILED run when projection dies mid-stream", async () => {

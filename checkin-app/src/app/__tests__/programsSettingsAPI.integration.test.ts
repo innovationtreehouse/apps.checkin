@@ -87,7 +87,7 @@ describe('Program Settings API Integration Tests', () => {
 
         // Create mock program
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Settings API Test Program', phase: 'PLANNING', leadMentorId: leadId }
+            data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Settings API Test Program', phase: 'PLANNING', leadMentorId: leadId }
         });
         targetProgramId = program.id;
     });
@@ -349,7 +349,7 @@ describe('Program Settings API Integration Tests', () => {
         it('fires once when the settings PATCH crosses INTO UPCOMING + OPEN (announceOnOpen: true)', async () => {
             const name = 'Settings API Test announce cross';
             const program = await prisma.program.create({
-                data: { name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true }
+                data: { offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true }
             });
             await prisma.event.create({ data: { programId: program.id, name: 'E', startAt: new Date('2099-01-01'), endAt: new Date('2099-01-01') } });
 
@@ -363,7 +363,7 @@ describe('Program Settings API Integration Tests', () => {
             // The realistic lead-mentor flow: tick the box and open enrollment in one save.
             const name = 'Settings API Test announce same-request';
             const program = await prisma.program.create({
-                data: { name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED' }
+                data: { offSaleAt: new Date('2999-01-01'), name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), phase: 'PLANNING', enrollmentStatus: 'CLOSED' }
             });
             await prisma.event.create({ data: { programId: program.id, name: 'E', startAt: new Date('2099-01-01'), endAt: new Date('2099-01-01') } });
 
@@ -375,7 +375,7 @@ describe('Program Settings API Integration Tests', () => {
 
         it('does NOT fire on the same crossing with announceOnOpen at its false default (logs the skip)', async () => {
             const program = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Settings API Test announce default-off', leadMentorId: leadId, phase: 'PLANNING', enrollmentStatus: 'CLOSED' }
+                data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Settings API Test announce default-off', leadMentorId: leadId, phase: 'PLANNING', enrollmentStatus: 'CLOSED' }
             });
             await prisma.event.create({ data: { programId: program.id, name: 'E', startAt: new Date('2099-01-01'), endAt: new Date('2099-01-01') } });
 
@@ -396,7 +396,7 @@ describe('Program Settings API Integration Tests', () => {
 
         it('does NOT re-fire on a later edit while already UPCOMING + OPEN', async () => {
             const program = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Settings API Test announce already', leadMentorId: leadId, phase: 'UPCOMING', enrollmentStatus: 'OPEN', announceOnOpen: true }
+                data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Settings API Test announce already', leadMentorId: leadId, phase: 'UPCOMING', enrollmentStatus: 'OPEN', announceOnOpen: true }
             });
 
             const res = await patchSettings(program.id, { name: 'Settings API Test announce already renamed' });
@@ -406,7 +406,7 @@ describe('Program Settings API Integration Tests', () => {
 
         it('does NOT fire when only phase flips to UPCOMING (enrollment still CLOSED)', async () => {
             const program = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Settings API Test announce phaseonly', leadMentorId: leadId, phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true }
+                data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Settings API Test announce phaseonly', leadMentorId: leadId, phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true }
             });
             await prisma.event.create({ data: { programId: program.id, name: 'E', startAt: new Date('2099-01-01'), endAt: new Date('2099-01-01') } });
 
@@ -417,7 +417,7 @@ describe('Program Settings API Integration Tests', () => {
 
         it('does NOT fire when only enrollment flips to OPEN (phase still PLANNING)', async () => {
             const program = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Settings API Test announce enrollonly', leadMentorId: leadId, phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true }
+                data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Settings API Test announce enrollonly', leadMentorId: leadId, phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true }
             });
 
             const res = await patchSettings(program.id, { enrollmentStatus: 'OPEN' });
@@ -430,7 +430,7 @@ describe('Program Settings API Integration Tests', () => {
         // settings surface can't regress independently.
         it('does NOT re-fire after closing and reopening enrollment, and audits the one blast (F2/F6)', async () => {
             const program = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Settings API Test announce reopen', leadMentorId: leadId, phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true }
+                data: { offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Settings API Test announce reopen', leadMentorId: leadId, phase: 'PLANNING', enrollmentStatus: 'CLOSED', announceOnOpen: true }
             });
             await prisma.event.create({ data: { programId: program.id, name: 'E', startAt: new Date('2099-01-01'), endAt: new Date('2099-01-01') } });
 

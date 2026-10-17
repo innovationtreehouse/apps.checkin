@@ -5,7 +5,8 @@
 import { it, expect, beforeEach, afterAll } from "vitest";
 import { prisma } from "../../src/db/client.js";
 import { ingestBulkOrders, reingestBulkExports } from "../../src/ingest/bulkOrders.js";
-import { EventSource } from "../../src/generated/prisma/client.js";
+import { ingestNode } from "../../src/ingest/ingestNode.js";
+import { EventSource, ObjectType } from "../../src/generated/prisma/client.js";
 import { describeDb } from "../helpers/db.js";
 
 const STORE = "bulk-test.myshopify.com";
@@ -62,6 +63,37 @@ describeDb("bulk-export capture + recovery", () => {
     expect(await prisma.shopOrder.count({ where: { storeId: STORE } })).toBe(1);
     expect(await prisma.shopRefund.count({ where: { storeId: STORE } })).toBe(1); // F3: inline refund kept
     expect(await prisma.shopOrderLine.count({ where: { storeId: STORE } })).toBe(1);
+  });
+
+  it("a backfill snapshot ingested AFTER a newer incremental sync does not revert the order", async () => {
+    // Incremental sync (between bulk STARTED and COMPLETED) projects the newer state…
+    const newer = {
+      id: "gid://shopify/Order/7001",
+      name: "#7001",
+      updatedAt: "2026-02-05T00:00:00Z",
+      cancelledAt: "2026-02-05T00:00:00Z",
+      displayFinancialStatus: "REFUNDED",
+      totalRefundedSet: { shopMoney: { amount: "100.00", currencyCode: "USD" } },
+      currentTotalPriceSet: { shopMoney: { amount: "100.00", currencyCode: "USD" } },
+      lineItems: { nodes: [] },
+      refunds: [],
+    };
+    await ingestNode(prisma, { storeId: STORE, objectType: ObjectType.ORDER, node: newer, source: EventSource.INCREMENTAL });
+    // …then the older bulk snapshot (updatedAt 2026-02-01) lands, and is later re-ingested.
+    await ingestBulkOrders(prisma, {
+      storeId: STORE,
+      jsonl: JSONL,
+      bulkOperationId: "gid://shopify/BulkOperation/1",
+      source: EventSource.BACKFILL,
+    });
+    await reingestBulkExports(prisma, { storeId: STORE });
+
+    const row = await prisma.shopOrder.findUnique({
+      where: { storeId_shopifyGid: { storeId: STORE, shopifyGid: "gid://shopify/Order/7001" } },
+    });
+    expect(row?.financialStatus).toBe("REFUNDED");
+    expect(row?.totalRefundedCents).toBe(10000);
+    expect(row?.cancelledAt).not.toBeNull();
   });
 
   it("recovers live tables from the stored export with NO Shopify calls", async () => {

@@ -11,13 +11,13 @@
 #   - the s-read-sync task-def / hourly schedule sets SYNC_MODE=incremental
 #   - the one-time backfill is a run-task with a SYNC_MODE=backfill env override
 #   - the s-read-migrate task-def overrides the command entirely:
-#       ["npm", "run", "db:deploy", "-w", "@inventory/s-ingest-core"]
+#       ["npm", "run", "db:deploy", "-w", "@checkin/s-ingest-core"]
 #     (works from this image's WORKDIR /app; the script is container-safe — prisma reads
 #     SHOPIFY_READ_DATABASE_URL from process.env, and a package-local .env is optional)
 # (CMD, not ENTRYPOINT, on purpose: ECS containerOverrides replace the command wholesale,
 # and the migrate task-def's command — plus the shell that expands SYNC_MODE — would be
 # mangled by an ENTRYPOINT prefix.)
-FROM node:22-slim
+FROM public.ecr.aws/docker/library/node:22-slim
 WORKDIR /app
 
 # Prisma's migrate engine links libssl, which node:22-slim doesn't ship — without it
@@ -38,16 +38,17 @@ COPY packages/monitoring-db/package.json packages/monitoring-db/
 COPY packages/pg-test-harness/package.json packages/pg-test-harness/
 COPY packages/s-ingest-core/package.json packages/s-ingest-core/
 COPY packages/telemetry/package.json packages/telemetry/
+COPY packages/utils/package.json packages/utils/
 
 # Scoped install: s-read-function + the two DB packages it imports (their devDeps
 # carry the prisma CLI needed for generate + the migrate task's `db:deploy`).
 # --ignore-scripts: the DB packages' postinstall runs `prisma generate`, which can't
 # work in this manifests-only layer (no schema yet) — it runs explicitly below.
-RUN npm ci -w s-read-function -w @inventory/s-ingest-core -w @inventory/monitoring-db --ignore-scripts
+RUN npm ci -w s-read-function -w @checkin/s-ingest-core -w @checkin/monitoring-db --ignore-scripts
 
 COPY packages/ packages/
 COPY s-read-function/ s-read-function/
-RUN npm run db:generate -w @inventory/s-ingest-core && npm run db:generate -w @inventory/monitoring-db
+RUN npm run db:generate -w @checkin/s-ingest-core && npm run db:generate -w @checkin/monitoring-db
 
 # RDS TLS (same as checkin-app/Dockerfile): the pg driver verifies the server cert and
 # Amazon's RDS CA is not in the OS trust store — without this every query dies with

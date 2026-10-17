@@ -13,6 +13,12 @@ import { getServerSession } from 'next-auth/next';
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
 }));
+// The route fires check-in notifications without awaiting; stub them so no
+// query outlives the suite's teardown.
+jest.mock('@/lib/notifications', () => ({
+    ...jest.requireActual('@/lib/notifications'),
+    sendCheckinNotifications: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('@/lib/verify-kiosk', () => ({
     getKioskPublicKeys: jest.fn().mockReturnValue([Buffer.from('mock-key')]),
     verifyKioskSignature: jest.fn()

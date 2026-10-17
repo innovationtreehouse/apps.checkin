@@ -32,6 +32,9 @@ const STATUS_RANK = Object.fromEntries(STATUS_CHIPS.map((c, i) => [c.value, i]))
 // createdAt is a true instant and takes the org's zone. See lib/time.ts.
 const memberSinceText = (iso: string | null) => (iso ? formatDateOnly(iso) : "—");
 
+/** A person on file with an address the Board is designating. */
+type AddressHolder = { personName: string; householdId: number; householdName: string; hasMembership: boolean; signInVerified: boolean };
+
 export default function VolunteerMembershipsPage() {
   const { ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
   // A designation's createdAt is an instant, so it renders in the org's display zone.
@@ -46,27 +49,34 @@ export default function VolunteerMembershipsPage() {
   const [search, setSearch] = useState("");
   const [statuses, setStatuses] = useState<string[]>([]);
   const [showInactive, setShowInactive] = useState(false);
+  // An existing person the typed email matched; the Board confirms before their household changes.
+  const [match, setMatch] = useState<{ email: string; personName: string; householdId: number; householdName: string; isVolunteer: boolean } | null>(null);
+  // Everyone on file with the last address the Board entered, signed in or not.
+  const [holders, setHolders] = useState<{ email: string; matches: AddressHolder[] } | null>(null);
 
   const flash = (text: string, tone: "warning" | "error" = "error") =>
     setMessage(text ? { text, tone } : undefined);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/membership-ops/volunteer-memberships");
-      if (!res.ok) throw new Error(String(res.status));
-      setRows((await res.json()).rows || []);
-      setLoadFailed(false);
-    } catch {
-      // Without this the failed load is indistinguishable from an empty roster.
-      setRows([]);
-      setLoadFailed(true);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const fetchRows = useCallback(() =>
+    fetch("/api/membership-ops/volunteer-memberships")
+      .then(async (res) => {
+        if (!res.ok) throw new Error(String(res.status));
+        setRows((await res.json()).rows || []);
+        setLoadFailed(false);
+      })
+      .catch(() => {
+        // Without this the failed load is indistinguishable from an empty roster.
+        setRows([]);
+        setLoadFailed(true);
+      })
+      .finally(() => setLoading(false)), []);
 
-  useEffect(() => { load(); }, [load]);
+  const load = () => {
+    setLoading(true);
+    return fetchRows();
+  };
+
+  useEffect(() => { fetchRows(); }, [fetchRows]);
 
   const visibleRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -89,7 +99,7 @@ export default function VolunteerMembershipsPage() {
     return null;
   }
 
-  const addDesignation = async () => {
+  const addDesignation = async (confirmHouseholdId?: number) => {
     setEmailError(undefined);
     if (!newEmail.trim()) return;
     if (!isValidEmail(newEmail)) { setEmailError("A valid email is required."); return; }
@@ -99,14 +109,19 @@ export default function VolunteerMembershipsPage() {
       const res = await fetch("/api/settings/membership/volunteer-designations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: newEmail }),
+        body: JSON.stringify(confirmHouseholdId === undefined ? { email: newEmail } : { email: newEmail, confirmHouseholdId }),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.ok) {
+      setHolders(data.matches?.length ? { email: newEmail, matches: data.matches } : null);
+      if (res.ok && data.requiresConfirmation) {
+        setMatch({ email: newEmail, ...data.match });
+      } else if (res.ok) {
         setNewEmail("");
-        if (data.warning) { flash(data.warning, "warning"); } else { notifications.show({ message: "Designation added." }); }
+        setMatch(null);
+        if (data.warning) { flash(data.warning, "warning"); }
+        else { notifications.show({ message: confirmHouseholdId === undefined ? "Designation added." : "Household set as a volunteer household." }); }
         await load();
-      } else flash(data.error || "Could not add.");
+      } else { setMatch(null); flash(data.error || "Could not add."); }
     } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
     finally { setSaving(false); }
   };
@@ -255,13 +270,38 @@ export default function VolunteerMembershipsPage() {
           <TextInput
             w={320}
             value={newEmail}
-            onChange={(e) => { setNewEmail(e.currentTarget.value); setEmailError(undefined); }}
+            onChange={(e) => { setNewEmail(e.currentTarget.value); setEmailError(undefined); setMatch(null); setHolders(null); }}
             error={emailError}
             placeholder="volunteer@example.com"
             aria-label="Volunteer email"
           />
-          <Button disabled={saving} onClick={addDesignation}>Add</Button>
+          <Button disabled={saving || !!match} onClick={() => addDesignation()}>Add</Button>
         </Group>
+        {match && (
+          <Stack gap="xs" mt="md">
+            <Text>
+              {match.email} belongs to <b>{match.personName}</b> in the <b>{match.householdName}</b> household.
+              {match.isVolunteer
+                ? " That household is already a volunteer household."
+                : " Confirm to set that household as a volunteer household."}
+            </Text>
+            <Group gap="sm">
+              <Button disabled={saving || match.isVolunteer} onClick={() => addDesignation(match.householdId)}>Confirm household</Button>
+              <Button variant="subtle" disabled={saving} onClick={() => setMatch(null)}>Cancel</Button>
+            </Group>
+          </Stack>
+        )}
+        {holders && (
+          <Stack gap={4} mt="md">
+            <Text size="sm">Everyone on file with {holders.email}:</Text>
+            {holders.matches.map((h) => (
+              <Text size="sm" key={`${h.householdId}-${h.personName}`}>
+                <b>{h.personName}</b>, {h.householdName} household — {h.signInVerified ? "signed in with this address" : "has never signed in with this address"}
+                {h.hasMembership ? "" : ", no membership"}
+              </Text>
+            ))}
+          </Stack>
+        )}
       </Card>
     </Stack>
   );

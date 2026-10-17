@@ -1,6 +1,6 @@
 # Membership
 
-Application, background-check review, activation, dues, and renewal.
+Application, background-check review, activation, membership fee, and renewal.
 
 ---
 
@@ -104,7 +104,7 @@ Application, background-check review, activation, dues, and renewal.
   three-person committee kept as independent as possible from the original
   reviewers. — *Membership Policy, Art. VI §§VI.3–VI.4*
 
-### Dues, refunds, and plans
+### Membership fee, refunds, and plans
 
 - The board sets the cost of all memberships. The fee is a fee, not a charitable
   donation. — *Membership Policy, Art. XI*
@@ -196,6 +196,15 @@ Procedure below is built on them.
 
 - A single rejection blocks the application; approvals do not outweigh it.  [Decision]
 
+- A household has one open application at a time, joining or renewing. An
+  active household only renews; a revoked one continues the renewal it already
+  has open, or else starts a new joining application.  [Decision]
+
+- A household with a blocked application cannot start another one. Only the
+  board moves the application on: "Reset for re-review" sends it back for two
+  new approvals, or a board override clears it. Denying the household is a
+  household action and leaves the application blocked.  [Decision — *Principle: people decide about people*]
+
 - The background-check result is never stored. The record is that reviewers saw
   it and what they judged — stricter than the policy, which permits the board to
   hold it.  [Decision — *Policy: Membership Policy, Art. VI §VI.2*]
@@ -214,16 +223,37 @@ Procedure below is built on them.
   from a real one. A review carrying one is reset by the board and re-reviewed by
   two.  [Decision — *Principle: fail closed*]
 
+- A reviewer may undo their own approval, with a written reason, while the review
+  still waits on its second reviewer. The review returns to waiting for two
+  approvals, and the adult that approval named is no longer settled. Once the
+  check has cleared, or the application is blocked or closed, the approval
+  stands. A rejection cannot be undone by its reviewer; moving a blocked
+  application on is the board's reset.  [Decision]
+
 - A board override names the adult it covers. It cannot infer one: a blocked
   application never holds the second approval that would identify a subject, so
   an override naming nobody would date a clearance against no one.  [Decision]
 
-- Every background-check decision and every payment certification records a
-  written reason — wider than the policy, which requires documentation only for a
-  disqualifying offence.  [Decision — *Policy: Membership Policy, Art. IX*]
+- The duplicate-attestation cleanup is the Board's alone. When a person merge
+  finds the same review recorded under two identities, only a board member may
+  remove the duplicate.  [Decision]
 
-- An abandoned application is archived, never destroyed, and restores to the
-  status it held before.  [Decision — *Principle: decisions are reversible*]
+- Every background-check decision that refuses, blocks or denies, and every
+  payment certification, records a written reason — wider than the policy, which
+  requires documentation only for a disqualifying offence. An approval needs
+  none.  [Decision — *Policy: Membership Policy, Art. IX*]
+
+- The board may close an unpaid application ("Close application"); there is no
+  minimum wait. It is never destroyed, and "Reopen" returns it to the step it
+  was closed from. A paid, blocked, clearance-waiting or active application
+  cannot be closed. Reopening refuses a denied household, or one with another
+  open application. The word "archive" is reserved for archiving a household.  [Decision —
+  *Principle: decisions are reversible*]
+
+- A refund made in Shopify is recorded by the board ("Record refund"), with a
+  reason, by someone outside the household. A paid application waiting on its
+  background check returns to awaiting payment, check untouched; a paid blocked
+  application stays blocked.  [Decision]
 
 - Pre-designating a household volunteer-only sets what it owes and nothing else
   — it does not skip review or open payment. The policy grants only the
@@ -251,6 +281,35 @@ Procedure below is built on them.
 - Granting the coming year completes the payment step on a renewal already under
   way. It stamps no other gate.  [Decision]
 
+- Only an application completing — paid and background check cleared — makes a
+  household a member. Granting the current year is money only: it pays the
+  household's application under way, or opens one for the family to complete,
+  and never sets membership directly or skips the check. A household already
+  active stays active.  [Decision]
+
+- An active household stops being one only by revocation or denial. A denied
+  household never becomes active again by any route; the board's restore
+  returns it to no membership, and the family starts over.  [Decision]
+
+- Anything that reaches a denied household after the denial — a family's
+  payment, an approval that would clear its check, a start or renewal, a board
+  grant, an import or a household move — changes nothing and goes to the board's
+  payment-problems queue with an email. Any other board action on a denied
+  household is refused and tells the person acting why.  [Decision — *Principle: people decide about people*]
+
+- A denied household is sent no outreach. Denial is checked again as each
+  message goes out.  [Decision]
+
+- One household lead signs the membership agreement, and the record names who
+  signed. While one lead's signing request is open, another lead cannot start a
+  second; the board resets signing, with a reason, which withdraws the open
+  request. A signed agreement cannot be reset.  [Decision — superuser scope
+  unsettled, issue #1551]
+
+- Deny, restore, grant and revoke are each refused for the acting person's own
+  household, and each applies only if the household is still in the status the
+  action was decided against.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
 - A denied household holds no authority anywhere in the app.  [Decision — *Principle: identity is not authorisation*]
 
 - Denial locks every member of the household out of sign-in. Revocation does not
@@ -266,25 +325,36 @@ Procedure below is built on them.
 - A household may have no membership. Facts only a membership carries are then
   absent, not zero.  [Decision — *Principle: fail closed*]
 
-### Dues
+### Membership fee
 
-- Dues have two rates, standard and volunteer household. The designation changes
+- The membership fee has two rates, standard and volunteer household. The designation changes
   what a household pays and nothing about its review.  [Decision]
 
 - A volunteer designation matches on canonical email, so address variants cannot
   change what a family owes.  [Decision]
 
+- A volunteer designation applies only to a person who has signed in with that
+  address. The Board sees everyone on file with the address when it designates
+  it.  [Decision — *Principle: fail closed*]
+
 - The board can activate a household with no payment by certifying a payment
-  plan.  [Decision — *Policy: Membership Policy, Art. XIII*]
+  plan. Only the board certifies a payment; a sysadmin cannot.
+  [Decision — *Policy: Membership Policy, Art. XIII*]
+
+- A membership order the app cannot apply settles nothing and is raised for the
+  board: a second order on an application already paid, one arriving after the
+  board certified or closed the application or before payment was due, and one
+  without the membership item. A store test order never settles a
+  membership.  [Decision — *Principle: people decide about people*]
 
 - A board member declines a membership scholarship or payment-plan request in the
   app, and the decline sends nothing: the request clears and the household returns
-  to owing its dues by the normal route. The decision is recorded; carrying it to
+  to owing its membership fee by the normal route. The decision is recorded; carrying it to
   the family is not the app's job.  [Decision — deliberate limit; *Principle: people decide about people*]
 
-- A household that has settled its dues but is still waiting on its background
-  check is a member for program pricing and for reaching members-only programs,
-  and for nothing else. Mailing audiences, outreach, the store's member list,
+- A household that has settled its membership fee but is still waiting on its background
+  check, and is not denied, is a member for program pricing and for reaching
+  members-only programs, and for nothing else. Mailing audiences, outreach, the store's member list,
   people search and payment-plan eligibility all continue to ask whether the
   membership is active. The narrowness is the rule: widening the shared question
   would hand every other benefit to a household that has not cleared.  [Decision]
@@ -301,11 +371,18 @@ Procedure below is built on them.
 
 - A membership stays active while its renewal is in progress.  [Decision]
 
+- Renewals open only inside the renewal window, and opening skips every
+  household already handled this cycle — renewed, granted the coming year,
+  joined in-window, or closed by the board — so no family is billed twice.  [Decision]
+
+- Who starts renewals each year.  [Unsettled — open: Board B6; today the board's
+  "open renewals" button, and a scheduled run exists but is not run]
+
 - Coverage is what was bought, not what the calendar says. A household settled
   for the membership year now in effect — by joining, renewing, or a granted
   year — is covered to the boundary that closes the year; one that did not
   settle is covered only to the boundary that opened it, and reads as lapsed
-  from that day. A membership with no dues recorded in the app has bought
+  from that day. A membership with no membership fee recorded in the app has bought
   nothing it can see. Lapsing changes what the membership covers and nothing
   else: status does not move, and only a person revokes.  [Decision — *Policy: Membership Policy, Art. III §III.1; Art. XI*; *Principle: people decide about people*]
 
@@ -401,9 +478,8 @@ Procedure below is built on them.
 
 - The one-year window is what stops the request repeating. An attachment is never
   cleared when a program ends, so without it someone who took a single class at 18
-  would be asked again every year until they aged out. The window only bounds
-  programs that carry an end date; one left undated reads as still running, and its
-  members stay in the population.  [Decision — deliberate limit]
+  would be asked again every year until they aged out. Every program carries an
+  end date, so the window bounds them all.  [Decision — deliberate limit]
 
 - Never opened for a household lead, who signs the household's agreement. An open
   individual agreement on a lead would take the place of the household one in the

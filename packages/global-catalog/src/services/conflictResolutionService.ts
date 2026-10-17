@@ -1,14 +1,13 @@
 import { db } from "../db";
 import { createItemReferenceRepository } from "../repositories/itemReference";
 import { createCatalogRepository } from "../repositories/catalog";
-import type { ConflictResolution, ReferenceConflict } from "../db/schema";
+import type { ConflictResolution } from "../db/schema";
 
 const itemRefRepo = createItemReferenceRepository(db);
 const catalogRepo = createCatalogRepository(db);
 import type { ConflictResolutionStatus } from "../workflows/conflict-resolution.machine";
-import { ServiceError } from "./categoryService";
+import { ServiceError, reviewTransitionError } from "./categoryService";
 import { assertConflictResolutionTransition } from "../workflows/conflict-resolution.machine";
-import { WorkflowTransitionError } from "@inventory/workflows";
 import { recordTransition } from "./orgEventService";
 
 export interface ReportConflictParams {
@@ -58,22 +57,22 @@ export async function resolveConflict(
   try {
     nextState = assertConflictResolutionTransition(currentState, { type: "RESOLVE", resolution });
   } catch (err) {
-    if (err instanceof WorkflowTransitionError) throw new ServiceError(400, err.message);
-    throw err;
+    throw reviewTransitionError(err, currentState !== "open", "Conflict was already resolved");
   }
 
   await db.$transaction(async (tx) => {
+    const { count } = await tx.referenceConflict.updateMany({
+      where: { id: conflictId, resolvedAt: null },
+      data: { resolvedAt: new Date(), resolution: nextState as ConflictResolution, resolvedByUserId: userId },
+    });
+    if (count === 0) throw new ServiceError(409, "Conflict was already resolved");
+
     if (nextState === "use_proposed") {
       await tx.itemReference.update({
         where: { id: conflict.itemReferenceId },
         data: { gtin13: conflict.proposedGtin13 },
       });
     }
-
-    await tx.referenceConflict.update({
-      where: { id: conflictId },
-      data: { resolvedAt: new Date(), resolution: nextState as ConflictResolution, resolvedByUserId: userId },
-    });
 
     await recordTransition(tx, "reference_conflict", conflictId, currentState, nextState, userId);
   });

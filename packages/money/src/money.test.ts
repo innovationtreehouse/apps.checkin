@@ -1,5 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { dollarsToCents, dollarsToCentsOrNull, sumCents, formatCents, formatUSD } from "./index";
+import { centsToDollars, dollarsToCents, dollarsToCentsOrNull, sumCents, formatCents, formatUSD } from "./index";
+
+describe("centsToDollars", () => {
+  it("round-trips through dollarsToCents", () => {
+    for (const c of [0, 1, 10, 1010, 12345, -5000, 99999999]) expect(dollarsToCents(centsToDollars(c))).toBe(c);
+  });
+  it("serializes without float noise", () => expect(JSON.stringify(centsToDollars(1010))).toBe("10.1"));
+  it("throws on non-integer cents", () => {
+    expect(() => centsToDollars(10.5)).toThrow("safe integer");
+    expect(() => centsToDollars(NaN)).toThrow("safe integer");
+  });
+});
 
 describe("dollarsToCents", () => {
   it("converts whole dollar string", () => expect(dollarsToCents("100")).toBe(10000));

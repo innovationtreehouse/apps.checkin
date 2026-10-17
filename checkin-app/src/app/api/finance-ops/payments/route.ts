@@ -1,7 +1,6 @@
-import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
-import { withAuth } from "@/lib/auth";
+import { handler } from "@/security/handler";
 import { ordersByLegacyIds, type MirrorOrder } from "@/lib/shopifyRead/client";
 import { LIVE_PERSON } from "@/lib/person/filters";
 
@@ -14,8 +13,8 @@ import { LIVE_PERSON } from "@/lib/person/filters";
  * the s-read mirror by shopifyOrderId. A mirror-less env (unconfigured) just
  * yields no live block — the row still lists. See lib/shopifyRead/client.ts.
  */
-export const GET = withAuth(
-    { roles: ['isBoardMember'] },
+export const GET = handler(
+    "GET /api/finance-ops/payments",
     async () => {
         const exceptions = await prisma.paymentException.findMany({
             where: { status: { in: ['OPEN', 'ACKNOWLEDGED'] } },
@@ -101,7 +100,7 @@ export const GET = withAuth(
             };
         });
 
-        return NextResponse.json(rows);
+        return { PaymentQueueRow: rows };
     }
 );
 

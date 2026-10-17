@@ -36,9 +36,8 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const checkStatus = useCallback(async () => {
-    try {
-      const res = await fetch('/api/profile/onboarding-status');
+  const checkStatus = useCallback(() => fetch('/api/profile/onboarding-status')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
 
@@ -47,19 +46,16 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
           setNeedsEmergencyContact(data.needsEmergencyContact);
         }
       }
-    } catch (err) {
+    })
+    .catch((err) => {
       console.error('Failed to check onboarding status', err);
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
-    if (status === 'unauthenticated') {
-      setLoading(false);
-      return;
-    }
-
     if (status === 'authenticated') {
       checkStatus();
     }

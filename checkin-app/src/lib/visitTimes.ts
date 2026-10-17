@@ -32,6 +32,9 @@ export function departureAfterArrival(arrived: Date, departed: Date): boolean {
  * checkout or a typo, not a real visit. Applies only to closed visits. */
 export const MAX_VISIT_MS = 24 * 60 * 60 * 1000;
 
+/** Kiosk-vs-server clock skew a close absorbs on the arrival side. */
+export const LATE_CLOSE_SKEW_MS = 2 * 60_000;
+
 export function withinMaxDuration(arrived: Date, departed: Date): boolean {
   return departed.getTime() - arrived.getTime() <= MAX_VISIT_MS;
 }

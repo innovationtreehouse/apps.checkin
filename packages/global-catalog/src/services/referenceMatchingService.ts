@@ -51,8 +51,6 @@ function toRefInfo(ref: RefRow | null): RefInfo {
     : { exists: false, gtin13: null, id: null, conversionFactor: 1.0, conversionVersion: 1 };
 }
 
-const refSelect = { gtin13: true, id: true, conversionFactor: true, conversionVersion: true } as const;
-
 export async function lookupMany(retailer: string, lookups: LookupEntry[]): Promise<LookupResult[]> {
   const results: LookupResult[] = [];
 

@@ -10,7 +10,7 @@
  * watchdog reads each service's freshness from the dedicated monitoring DB's
  * `service_heartbeat` table (which the services PUSH to), so it holds no credential to any
  * watched service's own financial database. The only DB it connects to is the monitoring DB
- * (`MONITORING_DATABASE_URL`, via @inventory/monitoring-db).
+ * (`MONITORING_DATABASE_URL`, via @checkin/monitoring-db).
  *
  * Provided via the MONITORING_SERVICES env var as a JSON array, e.g.:
  *   [{"service":"shopify-read","staleAfterSeconds":7200}]
@@ -28,7 +28,7 @@ export type ServiceEntry = z.infer<typeof entrySchema>;
 
 const configSchema = z.object({
   MONITORING_SERVICES: z.string().min(1, "MONITORING_SERVICES (JSON array) is required"),
-  MONITORING_ENV: z.string().min(1).default("dev"),
+  MONITORING_ENV: z.string().min(1, "MONITORING_ENV is required"),
   MONITOR_NAME: z.string().min(1).default("monitoring-watchdog"),
   /** Re-alert window: a persistent incident only re-pages after this many seconds (default 1h). */
   RENOTIFY_AFTER_SECONDS: z.coerce.number().int().positive().default(3600),

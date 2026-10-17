@@ -17,9 +17,14 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
     try {
         const body = await req.json();
-        // `alreadyMember` lets an admin confirm a newly-created household is already
-        // a paid member (defaults false — new participants are visitors, not members).
-        const { name, email, parentEmail, parentName, dob, householdId, alreadyMember = false } = body;
+        const { name, email, parentEmail, parentName, dob, householdId } = body;
+
+        // Creating a participant never creates an OrgMembership: membership comes
+        // only from an application or a board Grant, both of which require a
+        // background check.
+        if (body.alreadyMember) {
+            return apiError("alreadyMember is not supported; use Grant to give a household membership", 400);
+        }
 
         if (!email && !parentEmail && !householdId) {
             return apiError("Email, Parent Email, or Household assignment is required", 400);
@@ -85,14 +90,6 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                     });
                 });
                 await addHouseholdLead(prisma, parent.householdId, parent.id);
-                if (alreadyMember) {
-                    await prisma.orgMembership.create({
-                        data: {
-                            householdId: parent.householdId,
-                            status: 'ACTIVE',
-                        }
-                    });
-                }
             }
 
             householdIdToAssign = parent.householdId;
@@ -131,15 +128,6 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             });
 
             await addHouseholdLead(prisma, newParticipant.householdId, newParticipant.id);
-
-            if (alreadyMember) {
-                await prisma.orgMembership.create({
-                    data: {
-                        householdId: newParticipant.householdId,
-                        status: 'ACTIVE',
-                    }
-                });
-            }
         }
 
         return NextResponse.json({ success: true, participant: newParticipant });

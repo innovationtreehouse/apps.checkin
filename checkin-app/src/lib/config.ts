@@ -175,7 +175,7 @@ export const DEV_MOCK_SHOPIFY_WEBHOOK_SECRET = 'dev-shopify-mock-webhook-secret'
  * populates — so with no fallback the mock orders/paid webhook can't match a membership
  * order (webhooks/shopify/route.ts) and the dev fire tool 409s. Both the mock firer and
  * the inbound handler fall back to this id when shopifyMockActive(), so local membership
- * dues settle end-to-end with zero setup. Same shape as the program dev-mock ids.
+ * the membership fee settles end-to-end with zero setup. Same shape as the program dev-mock ids.
  */
 export const DEV_MOCK_MEMBERSHIP_VARIANT_ID = 'dev-mock-variant-membership';
 
@@ -267,7 +267,7 @@ export const config = {
 
     // s-read mirror — read-only connection string to the `shopify_read` Postgres
     // (the s-read-function's Shopify order/refund/payout mirror). Null when not
-    // wired → the reconciler (lib/finance/reconcile.ts) short-circuits as "not
+    // wired → the reconciler (lib/finance/reconcile/) short-circuits as "not
     // wired" instead of throwing, so an env without the mirror simply runs no
     // reconciliation.
     //
@@ -336,6 +336,9 @@ export const config = {
     // unset/unrecognized value; cloud-dev pages are additionally behind the
     // org-member login gate.
     devToolsActive: (): boolean => readCheckinEnv() !== 'prod',
+    // Optional CSV participant import module (page + API). Off unless CSV_IMPORT_ENABLED=true;
+    // when off the page and its routes 404.
+    csvImportEnabled: (): boolean => process.env.CSV_IMPORT_ENABLED === 'true',
     // True only on a developer laptop. Gates offline credential login + keyless kiosk.
     isLocal: (): boolean => readCheckinEnv() === 'local',
     // True on ops-stg (CHECKIN_ENV=stg; see isStagingEnv) — gates the access

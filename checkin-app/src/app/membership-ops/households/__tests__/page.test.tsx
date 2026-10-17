@@ -95,6 +95,29 @@ describe("membership-ops/households page", () => {
     );
   });
 
+  it("grants the current year with a required reason", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/membership-ops/households": households });
+    renderWithProviders(<AdminHouseholdsPage />);
+    await screen.findByText("The Joneses");
+
+    fireEvent.click(screen.getByRole("button", { name: "Grant Membership" }));
+    const reasonInput = await screen.findByLabelText(/^Reason/);
+    expect(screen.getByRole("button", { name: "Grant" })).toBeDisabled();
+    fireEvent.change(reasonInput, { target: { value: "Paid by check" } });
+    fireEvent.click(screen.getByRole("button", { name: "Grant" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/membership-ops/households",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ householdId: 2, active: true, reason: "Paid by check" }),
+        }),
+      ),
+    );
+  });
+
   it("disables Grant for a board member's OWN household (conflict of interest)", async () => {
     setSession({ id: 99, isBoardMember: true, householdId: 2 }); // same household as The Joneses (id 2)
     mockFetchJson({ "/api/membership-ops/households": households });
@@ -153,7 +176,7 @@ describe("membership-ops/households page", () => {
     const inSeason = { ...households, renewalSeason: true };
 
     it("is hidden outside renewal season", async () => {
-      setSession({ id: 1, isSysadmin: true });
+      setSession({ id: 1, isBoardMember: true });
       mockFetchJson({ "/api/membership-ops/households": households }); // no renewalSeason flag
       renderWithProviders(<AdminHouseholdsPage />);
       await screen.findByText("The Smiths");
@@ -162,7 +185,7 @@ describe("membership-ops/households page", () => {
     });
 
     it("shows for both an existing member and a non-member in renewal season", async () => {
-      setSession({ id: 1, isSysadmin: true });
+      setSession({ id: 1, isBoardMember: true });
       mockFetchJson({ "/api/membership-ops/households": inSeason });
       renderWithProviders(<AdminHouseholdsPage />);
       await screen.findByText("The Smiths");
@@ -171,8 +194,38 @@ describe("membership-ops/households page", () => {
       expect(screen.getAllByRole("button", { name: "Grant for coming year" })).toHaveLength(2);
     });
 
-    it("opens a modal requiring a reason, then posts comingYear + reason when confirmed", async () => {
+    it("offers no Grant to a sysadmin who is not on the Board (certifying is Board-only)", async () => {
       setSession({ id: 1, isSysadmin: true });
+      mockFetchJson({ "/api/membership-ops/households": inSeason });
+      renderWithProviders(<AdminHouseholdsPage />);
+      await screen.findByText("The Smiths");
+
+      expect(screen.queryByRole("button", { name: "Grant for coming year" })).not.toBeInTheDocument();
+    });
+
+    // The Joneses' application awaits payment: a current-year Grant would certify it.
+    const awaiting = { households: households.households.map((h) => h.id === 2 ? { ...h, awaitingPayment: true } : h) };
+
+    it("hides Grant Membership from a non-Board sysadmin when the application awaits payment", async () => {
+      setSession({ id: 1, isSysadmin: true });
+      mockFetchJson({ "/api/membership-ops/households": awaiting });
+      renderWithProviders(<AdminHouseholdsPage />);
+      await screen.findByText("The Joneses");
+
+      expect(screen.queryByRole("button", { name: "Grant Membership" })).not.toBeInTheDocument();
+    });
+
+    it("keeps Grant Membership for the Board when the application awaits payment", async () => {
+      setSession({ id: 1, isBoardMember: true });
+      mockFetchJson({ "/api/membership-ops/households": awaiting });
+      renderWithProviders(<AdminHouseholdsPage />);
+      await screen.findByText("The Joneses");
+
+      expect(screen.getByRole("button", { name: "Grant Membership" })).toBeInTheDocument();
+    });
+
+    it("opens a modal requiring a reason, then posts comingYear + reason when confirmed", async () => {
+      setSession({ id: 1, isBoardMember: true });
       const fetchMock = mockFetchJson({ "/api/membership-ops/households": inSeason });
       renderWithProviders(<AdminHouseholdsPage />);
       await screen.findByText("The Smiths");
@@ -200,7 +253,7 @@ describe("membership-ops/households page", () => {
     });
 
     it("disables it once the coming year is settled", async () => {
-      setSession({ id: 1, isSysadmin: true });
+      setSession({ id: 1, isBoardMember: true });
       mockFetchJson({
         "/api/membership-ops/households": {
           ...inSeason,
@@ -227,7 +280,7 @@ describe("membership-ops/households page", () => {
     });
 
     it("hides it when the household has no grantable renewal (renewalGrantable false)", async () => {
-      setSession({ id: 1, isSysadmin: true });
+      setSession({ id: 1, isBoardMember: true });
       mockFetchJson({
         "/api/membership-ops/households": {
           ...inSeason,

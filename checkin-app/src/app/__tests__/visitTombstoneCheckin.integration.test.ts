@@ -13,9 +13,16 @@
 import { POST } from '@/app/api/attendance/manual/route';
 import { DELETE } from '@/app/api/attendance/manual/[id]/route';
 import prisma from '@/lib/prisma';
+import { getFullAttendance } from '@/lib/getFullAttendance';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
+// The route fires check-in notifications without awaiting; stub them so no
+// query outlives the suite's teardown.
+jest.mock('@/lib/notifications', () => ({
+    ...jest.requireActual('@/lib/notifications'),
+    sendCheckinNotifications: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('@/lib/email', () => ({
     runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())),
     sendEmail: jest.fn().mockResolvedValue(true),
@@ -39,6 +46,8 @@ function deleteRequest() {
 describe('tombstoned open visit does not block the next check-in', () => {
     let subjectId: number;
     let householdId: number;
+    let anchorId: number;
+    let anchorHouseholdId: number;
 
     beforeAll(async () => {
         const leaked = await prisma.person.findMany({
@@ -51,7 +60,6 @@ describe('tombstoned open visit does not block the next check-in', () => {
         await prisma.person.deleteMany({ where: { id: { in: leakedIds } } });
         await prisma.household.deleteMany({ where: { id: { in: leaked.map(p => p.householdId) } } });
 
-        // Keyholder: an open backfill must clear the facility-open guard.
         const subject = await prisma.person.create({
             data: {
                 email: `subject-${EMAIL_TAG}@example.com`,
@@ -63,13 +71,26 @@ describe('tombstoned open visit does not block the next check-in', () => {
         subjectId = subject.id;
         householdId = subject.householdId;
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: subjectId, isKeyholder: true } });
+
+        // A keyholder inside, so an open backfill clears the facility-open guard.
+        const anchor = await prisma.person.create({
+            data: {
+                email: `anchor-${EMAIL_TAG}@example.com`,
+                name: 'Tombstone Checkin Anchor',
+                isKeyholder: true,
+                household: { create: { name: 'Test HH' } },
+            },
+        });
+        anchorId = anchor.id;
+        anchorHouseholdId = anchor.householdId;
+        await prisma.visit.create({ data: { personId: anchorId, arrivedAt: new Date(), arrivedVia: 'WEB' } });
     });
 
     afterAll(async () => {
-        await prisma.visit.deleteMany({ where: { personId: subjectId } });
+        await prisma.visit.deleteMany({ where: { personId: { in: [subjectId, anchorId] } } });
         await prisma.auditLog.deleteMany({ where: { actorId: subjectId } });
-        await prisma.person.deleteMany({ where: { id: subjectId } });
-        await prisma.household.deleteMany({ where: { id: householdId } });
+        await prisma.person.deleteMany({ where: { id: { in: [subjectId, anchorId] } } });
+        await prisma.household.deleteMany({ where: { id: { in: [householdId, anchorHouseholdId] } } });
     });
 
     it('self-deleting an open visit frees the one-open-visit slot', async () => {
@@ -98,5 +119,39 @@ describe('tombstoned open visit does not block the next check-in', () => {
         expect(await prisma.visit.count({
             where: { personId: subjectId, departedAt: null, deletedAt: null },
         })).toBe(1);
+    });
+
+    it('a tombstoned open visit leaves the cached kiosk roster', async () => {
+        await prisma.visit.deleteMany({ where: { personId: subjectId } });
+        // A second keyholder stays present, so the delete doesn't close the
+        // facility (whose close path refreshes the cache on its own).
+        const other = await prisma.person.create({
+            data: {
+                email: `other-${EMAIL_TAG}@example.com`,
+                name: 'Tombstone Other Keyholder',
+                isKeyholder: true,
+                householdId,
+                visits: { create: { arrivedAt: new Date(Date.now() - 120000) } },
+            },
+        });
+
+        try {
+            const created = await POST(openVisitRequest()) as Response;
+            expect(created.status).toBe(201);
+            const visitId = (await created.json()).visit.id as number;
+
+            // Warm the cache with the visit on the roster.
+            const before = await getFullAttendance({ kiosk: true });
+            expect(before.attendance.map(v => v.id)).toContain(visitId);
+
+            const deleted = await DELETE(deleteRequest(), { params: Promise.resolve({ id: String(visitId) }) } as never);
+            expect(deleted.status).toBe(200);
+
+            const after = await getFullAttendance({ kiosk: true });
+            expect(after.attendance.map(v => v.id)).not.toContain(visitId);
+        } finally {
+            await prisma.visit.deleteMany({ where: { personId: other.id } });
+            await prisma.person.delete({ where: { id: other.id } });
+        }
     });
 });

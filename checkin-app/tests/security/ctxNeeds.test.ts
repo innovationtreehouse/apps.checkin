@@ -44,13 +44,11 @@ import prisma from '@/lib/prisma';
 // yields the real policy surface.
 import '@/security/registry';
 
-// The 'catalog-viewer' admission (access-resolvers) makes one inline DB read —
-// a VolunteerDesignation lookup keyed by email — for callers who hold no role
-// flag and lead no program. It's independent of CallerContext, so masked ≡ full
-// still holds; this stub just keeps the "no real DB" invariant (jest.setup
-// rejects the real client). Its result never varies with ctx, so null is fine.
+// expense-approver's treasurer leg makes one inline DB read, independent of
+// CallerContext, so masked ≡ full still holds; this stub keeps the "no real DB"
+// invariant (jest.setup rejects the real client).
 beforeAll(() => {
-    prisma.volunteerDesignation.findFirst = jest.fn().mockResolvedValue(null);
+    prisma.programVolunteer.findFirst = jest.fn().mockResolvedValue(null);
 });
 
 // ─── Personas: fully-populated contexts + matching AuthResults ────────────────

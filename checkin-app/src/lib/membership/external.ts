@@ -9,7 +9,7 @@ import { signingMockActive } from "@/lib/membership/contract/signingTarget";
 import { loadAgreementPdf, stampWatermark, AGREEMENT_FILENAME, AgreementUnavailableError } from "@/lib/membership/contract/agreementDocument";
 import { latestPendingExternal } from "@/lib/membership/phases";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
-import { fromWhere } from "@/lib/membership/lifecycle";
+import { fromWhere, openProcess, zohoWebhookMatchable, type ProcessKind } from "@/lib/membership/lifecycle";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 
 /**
@@ -36,7 +36,8 @@ export type ExternalErrorCode =
     | "not_lead"
     | "no_household"
     | "not_configured"
-    | "agreement_unavailable";
+    | "agreement_unavailable"
+    | "signing_in_progress";
 
 export class ExternalError extends Error {
     constructor(public readonly code: ExternalErrorCode, message: string) {
@@ -53,6 +54,15 @@ export interface ExternalStatus {
     /** True when a still-valid prior check was detected — no new check is needed. */
     bgCleared: boolean;
     deepLinkUrl: string | null;
+    /** The lead the signing request is addressed to — after signing, who signed. */
+    signerName: string | null;
+    contractSignedAt: Date | null;
+}
+
+async function personName(personId: number | null): Promise<string | null> {
+    if (!personId) return null;
+    const person = await prisma.person.findUnique({ where: { id: personId }, select: { name: true, email: true } });
+    return person?.name?.trim() || person?.email || null;
 }
 
 /** Applicant-facing status of the two external actions (+ the consent deep link). */
@@ -61,6 +71,7 @@ export async function getExternalStatus(process: {
     bgConsentAt: Date | null;
     bgClearedAt: Date | null;
     zohoEnvelopeId: string | null;
+    zohoSignerPersonId: number | null;
 }): Promise<ExternalStatus> {
     return {
         contractSigned: !!process.contractSignedAt,
@@ -68,6 +79,8 @@ export async function getExternalStatus(process: {
         bgConsented: !!process.bgConsentAt,
         bgCleared: !!process.bgClearedAt,
         deepLinkUrl: await backgroundCheckProvider.getConsentDeepLink(),
+        signerName: await personName(process.zohoSignerPersonId),
+        contractSignedAt: process.contractSignedAt,
     };
 }
 
@@ -113,7 +126,7 @@ export async function advanceExternalIfComplete(processId: number) {
             data: { status: "PENDING_PAYMENT", stageEnteredAt: new Date() },
         });
         if (count !== 1) return null; // lost the race or no longer eligible — no audit, no notify
-        // Dues are read at PENDING_PAYMENT (ensurePaymentLink), normally BEFORE the
+        // The membership fee is read at PENDING_PAYMENT (ensurePaymentLink), normally BEFORE the
         // background check clears — so a pre-designated volunteer family must get
         // isVolunteer here, not only at clearance (#874). Sticky + idempotent;
         // clearBackgroundCheck's reviewer-marked pass remains the supplement.
@@ -145,21 +158,25 @@ export async function advanceExternalIfComplete(processId: number) {
  * no payment and no BG gate — so it flips straight to the terminal ACTIVE in the same
  * conditional write and skips advanceExternalIfComplete entirely (which would deref a
  * null orgMembershipId).
+ *
+ * A board-recorded signature clears the signer: the request's addressee may never
+ * have signed, and the record must not name someone who didn't.
  */
-export async function markContractSigned(processId: number, actorId?: number) {
+export async function markContractSigned(processId: number, actorId?: number, recordedByBoard = false) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ExternalError("not_found", "Application not found.");
     const isPersonAgreement = process.kind === "PERSON_AGREEMENT";
     // Conditional on contractSignedAt: null — two concurrent Zoho webhook retries
     // both see null, but only the winner's updateMany flips it (count === 1), so the
-    // audit row is written once.
+    // audit row is written once. A PERSON_AGREEMENT also requires its from-state, so
+    // an archived agreement can never flip to ACTIVE. Household processes may be
+    // pre-marked signed before EXTERNAL (intake), so theirs has no status clause.
     await prisma.$transaction(async (tx) => {
         const signedAt = new Date();
+        const signed = { contractSignedAt: signedAt, ...(recordedByBoard ? { zohoSignerPersonId: null } : {}) };
         const { count } = await tx.orgMembershipProcess.updateMany({
-            where: { id: processId, contractSignedAt: null },
-            data: isPersonAgreement
-                ? { contractSignedAt: signedAt, status: "ACTIVE", stageEnteredAt: signedAt }
-                : { contractSignedAt: signedAt },
+            where: { id: processId, contractSignedAt: null, ...(isPersonAgreement ? fromWhere("PENDING_EXTERNAL_ACTION") : {}) },
+            data: isPersonAgreement ? { ...signed, status: "ACTIVE", stageEnteredAt: signedAt } : signed,
         });
         if (count !== 1) return;
         await tx.auditLog.create({
@@ -168,7 +185,11 @@ export async function markContractSigned(processId: number, actorId?: number) {
                 action: "EDIT",
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: processId,
-                newData: isPersonAgreement ? { contractSignedAt: true, status: "ACTIVE" } : { contractSignedAt: true },
+                newData: {
+                    contractSignedAt: true,
+                    ...(isPersonAgreement ? { status: "ACTIVE" } : {}),
+                    ...(recordedByBoard ? { zohoSignerPersonId: null } : {}),
+                },
             },
         });
     });
@@ -176,14 +197,22 @@ export async function markContractSigned(processId: number, actorId?: number) {
     return advanceExternalIfComplete(processId);
 }
 
-/** Board human-marks that the applicant submitted background-check consent, then maybe advance. */
-export async function markBgConsent(processId: number, actorId: number) {
+/**
+ * Records that the applicant submitted background-check consent, then maybe advance.
+ * Only an open household application takes it, unless `kind` names the PERSON_BG
+ * submit path, where consent is implicit in the external check.
+ */
+export async function markBgConsent(processId: number, actorId: number, kind: "household" | "PERSON_BG" = "household") {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ExternalError("not_found", "Application not found.");
+    const kinds: ProcessKind[] = kind === "PERSON_BG" ? ["PERSON_BG"] : ["INITIAL", "RENEWAL"];
+    if (!kinds.includes(process.kind) || !openProcess.has(process)) {
+        throw new ExternalError("wrong_phase", "This application is not open for background-check consent.");
+    }
     // Conditional on bgConsentAt: null so concurrent marks write the audit row once.
     await prisma.$transaction(async (tx) => {
         const { count } = await tx.orgMembershipProcess.updateMany({
-            where: { id: processId, bgConsentAt: null },
+            where: { id: processId, bgConsentAt: null, kind: { in: kinds }, ...openProcess.where },
             data: { bgConsentAt: new Date() },
         });
         if (count !== 1) return;
@@ -236,16 +265,19 @@ export async function selfRecordBgConsent(userId: number): Promise<ExternalStatu
 export async function setZohoEnvelope(processId: number, requestId: string, actorId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ExternalError("not_found", "Application not found.");
-    const updated = await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { zohoEnvelopeId: requestId, zohoActionId: null } });
+    // A signed process keeps its envelope and signer: re-pointing it would erase who signed.
+    const { count } = await prisma.orgMembershipProcess.updateMany({ where: { id: processId, contractSignedAt: null, ...openProcess.where }, data: { zohoEnvelopeId: requestId, zohoActionId: null, zohoSignerPersonId: null } });
+    if (!count) throw new ExternalError("wrong_phase", "This application is closed or already signed; its signing request can't be changed.");
+    const updated = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId } });
     await prisma.auditLog.create({
-        data: { actorId, action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { zohoEnvelopeId: requestId, zohoActionId: null } },
+        data: { actorId, action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { zohoEnvelopeId: requestId, zohoActionId: null, zohoSignerPersonId: null } },
     });
     return updated;
 }
 
-/** Find the in-flight process tied to a Zoho request id (for webhook matching). */
+/** Find the process tied to a Zoho request id (for webhook matching); archived processes never match. */
 export async function findProcessByEnvelope(requestId: string) {
-    return prisma.orgMembershipProcess.findFirst({ where: { zohoEnvelopeId: requestId } });
+    return prisma.orgMembershipProcess.findFirst({ where: { zohoEnvelopeId: requestId, ...zohoWebhookMatchable.where } });
 }
 
 /**
@@ -259,7 +291,7 @@ async function clearDeadSigningRequest(processId: number, requestId: string, act
     const cleared = await prisma.$transaction(async (tx) => {
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: processId, zohoEnvelopeId: requestId, contractSignedAt: null },
-            data: { zohoEnvelopeId: null, zohoActionId: null },
+            data: { zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null },
         });
         if (count !== 1) return false;
         await tx.auditLog.create({
@@ -269,7 +301,7 @@ async function clearDeadSigningRequest(processId: number, requestId: string, act
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: processId,
                 oldData: { zohoEnvelopeId: requestId },
-                newData: { zohoEnvelopeId: null, zohoActionId: null },
+                newData: { zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null },
             },
         });
         return true;
@@ -345,6 +377,19 @@ export async function syncContractStatus(userId: number): Promise<ExternalStatus
     return fresh ? getExternalStatus(fresh) : null;
 }
 
+/**
+ * Zoho charges per request, so a lead never gets a request of their own while
+ * another lead's is open and unsigned: only the board's resetSigning frees it.
+ */
+async function assertSignerIs(signerId: number | null, userId: number) {
+    if (!signerId || signerId === userId) return;
+    const name = (await personName(signerId)) ?? "Another household lead";
+    throw new ExternalError(
+        "signing_in_progress",
+        `${name} started signing. Ask ${name} to finish, or ask the board to reset the signing so you can sign.`,
+    );
+}
+
 /** Days an applicant has to sign before the Zoho request expires (mirrors the script's default). */
 const CONTRACT_EXPIRATION_DAYS = 15;
 
@@ -416,116 +461,181 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
         }
     }
 
+    if (requestId && !process.contractSignedAt) await assertSignerIs(process.zohoSignerPersonId, userId);
+
     if (!requestId || !actionId) {
-        // Resolved ONCE for this request so the PDF-skip, watermark, and the
-        // provider calls below can't disagree if the dev signing-target radio
-        // flips mid-flow (signingMockActive also honors BoardSettings.devSigningTarget).
-        const signingMock = await signingMockActive();
-
-        // Mock mode never uploads the PDF (its createRequest ignores the bytes), so
-        // skip the S3 load that also 503s in dev — an empty placeholder keeps the
-        // create/submit calls type-identical. See docs/ops/contract-signing-mock.md.
-        let agreement;
-        if (signingMock) {
-            agreement = { pdf: Buffer.alloc(0), lastPageNo: 0, pageWidth: 0, pageHeight: 0 };
-        } else {
-            try {
-                agreement = await loadAgreementPdf();
-            } catch (e) {
-                if (e instanceof AgreementUnavailableError) {
-                    throw new ExternalError("agreement_unavailable", "The membership agreement isn't ready yet. Please check back soon.");
-                }
-                throw e;
-            }
-        }
-
-        // On non-prod instances, mark the request + document as a DEV test so a
-        // signature can never be mistaken for a binding one — baked in server-side
-        // (CHECKIN_ENV), not editable by the applicant. Prod stays clean. The
-        // create/submit/embed flow is otherwise identical across envs. (Mock mode
-        // skips the watermark — the empty placeholder PDF is never rendered.)
-        //
-        // ops-stg is a SEPARATE exclusion, not a CheckinEnv value: CHECKIN_ENV=stg
-        // falls back to 'prod' (readCheckinEnv), so config.isProd() alone would
-        // call ops-stg's signing flow "prod" and produce a watermark-free document
-        // indistinguishable from a real binding agreement the moment a Zoho
-        // credential is ever wired to staging to rehearse signing.
-        const isProd = config.isProd() && !config.isStaging();
-        const pdf = isProd || signingMock ? agreement.pdf : await stampWatermark(agreement.pdf, "DEV TEST — NOT A LEGAL AGREEMENT");
-        const requestName = `${isProd ? "" : "[DEV TEST — NOT BINDING] "}Membership Agreement — ${recipientName}`;
-
-        // Return the embedded signer to checkin when they finish (Zoho navigates
-        // the window to these). signed=1 lets the membership page confirm + refresh.
-        const membershipUrl = `${config.baseUrl()}/membership`;
-        const created = await zohoSign.createRequest({
-            token,
-            pdf,
-            filename: AGREEMENT_FILENAME,
-            recipientEmail,
-            recipientName,
-            requestName,
-            expirationDays: CONTRACT_EXPIRATION_DAYS,
-            redirectPages: {
-                sign_completed: `${membershipUrl}?signed=1`,
-                sign_success: `${membershipUrl}?signed=1`,
-                sign_declined: `${membershipUrl}?declined=1`,
-                sign_later: membershipUrl,
-            },
-        });
-        await zohoSign.submitRequest({
-            token,
-            requestId: created.requestId,
-            actionId: created.actionId,
-            documentId: created.documentId,
-            recipientEmail,
-            recipientName,
-            lastPageNo: agreement.lastPageNo,
-            pageWidth: agreement.pageWidth,
-            pageHeight: agreement.pageHeight,
-            prefill: { PrintedName: recipientName },
-        });
-
-        // Atomically claim the process for THIS request's ids. Two concurrent
-        // POSTs can both pass the null check above and both create a Zoho request;
-        // this conditional update lets only the first writer win. If we lost the
-        // race (count 0), discard our just-created request and reuse the winner's
-        // stored ids so the process keeps a single canonical signing request — our
-        // orphaned Zoho request simply expires.
-        //
-        // The claim matches an INCOMPLETE pair (either id null), not just a null
-        // envelope: setZohoEnvelope (the legacy admin/email flow) stores
-        // zohoEnvelopeId WITHOUT an action id, which can't be embedded. That state
-        // must be claimable here or the create-trigger above (needs both ids) would
-        // re-create on every click and a `zohoEnvelopeId: null`-only claim would
-        // always lose — a permanent 409. Overwriting it points the process (and its
-        // webhook match) at the embeddable in-app request.
+        // Claim before creating: Zoho charges per request, so only the claim's
+        // winner ever calls createRequest, and a concurrent click is told to wait
+        // instead of paying for an orphan. The claim matches an INCOMPLETE pair
+        // (either id null), not just a null envelope: setZohoEnvelope (the legacy
+        // admin/email flow) stores an envelope WITHOUT an action id, which can't be
+        // embedded, so that state must stay claimable.
         const claim = await prisma.orgMembershipProcess.updateMany({
-            where: { id: process.id, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
-            data: { zohoEnvelopeId: created.requestId, zohoActionId: created.actionId },
+            where: { id: process.id, zohoSignerPersonId: null, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
+            data: { zohoSignerPersonId: userId },
         });
         if (claim.count === 0) {
-            const winner = await prisma.orgMembershipProcess.findUnique({ where: { id: process.id } });
-            requestId = winner?.zohoEnvelopeId ?? null;
-            actionId = winner?.zohoActionId ?? null;
+            const current = await prisma.orgMembershipProcess.findUnique({ where: { id: process.id } });
+            await assertSignerIs(current?.zohoSignerPersonId ?? null, userId);
+            requestId = current?.zohoEnvelopeId ?? null;
+            actionId = current?.zohoActionId ?? null;
             if (!requestId || !actionId) {
                 throw new ExternalError("wrong_phase", "Your signing request is still being prepared. Please try again in a moment.");
             }
             logger.info(`Concurrent signing request for membership process ${process.id}; reusing stored ${requestId}.`);
-        } else {
-            requestId = created.requestId;
-            actionId = created.actionId;
-            await prisma.auditLog.create({
-                data: {
-                    actorId: userId,
-                    action: "EDIT",
-                    tableName: "OrgMembershipProcess",
-                    affectedEntityId: process.id,
-                    newData: { zohoEnvelopeId: requestId, zohoActionId: actionId },
+            return zohoSign.getEmbeddedSignUrl({ token, requestId, actionId, host: config.baseUrl() });
+        }
+
+        let created: Awaited<ReturnType<typeof zohoSign.createRequest>>;
+        try {
+            // Resolved ONCE for this request so the PDF-skip, watermark, and the
+            // provider calls below can't disagree if the dev signing-target radio
+            // flips mid-flow (signingMockActive also honors BoardSettings.devSigningTarget).
+            const signingMock = await signingMockActive();
+
+            // Mock mode never uploads the PDF (its createRequest ignores the bytes), so
+            // skip the S3 load that also 503s in dev — an empty placeholder keeps the
+            // create/submit calls type-identical. See docs/ops/contract-signing-mock.md.
+            let agreement;
+            if (signingMock) {
+                agreement = { pdf: Buffer.alloc(0), lastPageNo: 0, pageWidth: 0, pageHeight: 0 };
+            } else {
+                try {
+                    agreement = await loadAgreementPdf();
+                } catch (e) {
+                    if (e instanceof AgreementUnavailableError) {
+                        throw new ExternalError("agreement_unavailable", "The membership agreement isn't ready yet. Please check back soon.");
+                    }
+                    throw e;
+                }
+            }
+
+            // On non-prod instances, mark the request + document as a DEV test so a
+            // signature can never be mistaken for a binding one — baked in server-side
+            // (CHECKIN_ENV), not editable by the applicant. Prod stays clean. The
+            // create/submit/embed flow is otherwise identical across envs. (Mock mode
+            // skips the watermark — the empty placeholder PDF is never rendered.)
+            //
+            // ops-stg is a SEPARATE exclusion, not a CheckinEnv value: CHECKIN_ENV=stg
+            // falls back to 'prod' (readCheckinEnv), so config.isProd() alone would
+            // call ops-stg's signing flow "prod" and produce a watermark-free document
+            // indistinguishable from a real binding agreement the moment a Zoho
+            // credential is ever wired to staging to rehearse signing.
+            const isProd = config.isProd() && !config.isStaging();
+            const pdf = isProd || signingMock ? agreement.pdf : await stampWatermark(agreement.pdf, "DEV TEST — NOT A LEGAL AGREEMENT");
+            const requestName = `${isProd ? "" : "[DEV TEST — NOT BINDING] "}Membership Agreement — ${recipientName}`;
+
+            // Return the embedded signer to checkin when they finish (Zoho navigates
+            // the window to these). signed=1 lets the membership page confirm + refresh.
+            const membershipUrl = `${config.baseUrl()}/membership`;
+                created = await zohoSign.createRequest({
+                token,
+                pdf,
+                filename: AGREEMENT_FILENAME,
+                recipientEmail,
+                recipientName,
+                requestName,
+                expirationDays: CONTRACT_EXPIRATION_DAYS,
+                redirectPages: {
+                    sign_completed: `${membershipUrl}?signed=1`,
+                    sign_success: `${membershipUrl}?signed=1`,
+                    sign_declined: `${membershipUrl}?declined=1`,
+                    sign_later: membershipUrl,
                 },
             });
-            logger.info(`Created Zoho signing request ${requestId} for membership process ${process.id}.`);
+            await zohoSign.submitRequest({
+                token,
+                requestId: created.requestId,
+                actionId: created.actionId,
+                documentId: created.documentId,
+                recipientEmail,
+                recipientName,
+                lastPageNo: agreement.lastPageNo,
+                pageWidth: agreement.pageWidth,
+                pageHeight: agreement.pageHeight,
+                prefill: { PrintedName: recipientName },
+            });
+        } catch (e) {
+            // Release the claim so the next click can retry.
+            await prisma.orgMembershipProcess.updateMany({
+                where: { id: process.id, zohoSignerPersonId: userId, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
+                data: { zohoSignerPersonId: null },
+            });
+            throw e;
         }
+
+        const stored = await prisma.orgMembershipProcess.updateMany({
+            where: { id: process.id, zohoSignerPersonId: userId },
+            data: { zohoEnvelopeId: created.requestId, zohoActionId: created.actionId },
+        });
+        if (stored.count === 0) {
+            throw new ExternalError("wrong_phase", "Signing was reset while your request was being prepared. Please try again.");
+        }
+        requestId = created.requestId;
+        actionId = created.actionId;
+        await prisma.auditLog.create({
+            data: {
+                actorId: userId,
+                action: "EDIT",
+                tableName: "OrgMembershipProcess",
+                affectedEntityId: process.id,
+                newData: { zohoEnvelopeId: requestId, zohoActionId: actionId, zohoSignerPersonId: userId },
+            },
+        });
+        logger.info(`Created Zoho signing request ${requestId} for membership process ${process.id}.`);
     }
 
     return zohoSign.getEmbeddedSignUrl({ token, requestId, actionId, host: config.baseUrl() });
+}
+
+/**
+ * Board "reset signing": recall the open Zoho request and forget it, so the next
+ * lead to click gets a fresh request addressed to them. Each reset costs one more
+ * Zoho request, which is why it takes a board member and a stated reason. The
+ * conflict-of-interest check lives on the route, like the other board actions.
+ */
+export async function resetSigning(processId: number, actorId: number, reason: string) {
+    const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+    if (!process) throw new ExternalError("not_found", "Application not found.");
+    const requestId = process.zohoEnvelopeId;
+    // A signer with no request yet is a claim whose create never finished.
+    if (process.contractSignedAt || (!requestId && !process.zohoSignerPersonId)) {
+        throw new ExternalError("wrong_phase", "There is no open, unsigned signing request to reset.");
+    }
+
+    if (requestId && config.zohoAvailable()) {
+        const token = await zohoSign.getAccessToken();
+        try {
+            await zohoSign.recallRequest(token, requestId);
+        } catch (e) {
+            // Zoho refuses to recall a request that is already dead or signed.
+            const state = await zohoSign.getRequestStatus(token, requestId);
+            if (state === "completed") {
+                throw new ExternalError("wrong_phase", "This agreement has already been signed. Refresh to see it.");
+            }
+            if (state !== "terminal") throw e;
+        }
+    }
+
+    const cleared = await prisma.$transaction(async (tx) => {
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id: processId, zohoEnvelopeId: requestId, zohoSignerPersonId: process.zohoSignerPersonId, contractSignedAt: null },
+            data: { zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null },
+        });
+        if (count !== 1) return false;
+        await tx.auditLog.create({
+            data: {
+                actorId,
+                action: "EDIT",
+                tableName: "OrgMembershipProcess",
+                affectedEntityId: processId,
+                oldData: { zohoEnvelopeId: requestId, zohoActionId: process.zohoActionId, zohoSignerPersonId: process.zohoSignerPersonId },
+                newData: { zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null, resetSigningReason: reason },
+            },
+        });
+        return true;
+    });
+    if (!cleared) throw new ExternalError("wrong_phase", "The signing request changed while resetting. Refresh and try again.");
+    logger.info(`Board reset Zoho signing request ${requestId} for membership process ${processId}.`);
+    return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
 }

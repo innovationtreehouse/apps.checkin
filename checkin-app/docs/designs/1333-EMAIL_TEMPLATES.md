@@ -1,6 +1,6 @@
 # Email Templates — deploy-free email content
 
-**Status:** design, not built.
+**Status:** approved (merged in #1334), ready to build. Its sub-decisions are settled below.
 **Goal:** change any email's subject/body *without* a code change or deploy, and make it
 structurally impossible to ship an email that bypasses the shared template + branding.
 
@@ -58,8 +58,8 @@ interface TokenSpec { kind: TokenKind; label?: string } // label: anchor text fo
 interface TemplateSpec {
   allowedTokens: Record<string, TokenSpec>;
   sampleCtx: Record<string, string>;   // powers the admin preview
-  defaultSubject: string;              // seed + never-blank fallback
-  defaultBody: string;                 // seed + never-blank fallback
+  defaultSubject: string;              // today's copy; sent when no row exists
+  defaultBody: string;                 // today's copy; sent when no row exists
 }
 export const REGISTRY: Record<string, TemplateSpec> = { ... }
 ```
@@ -70,7 +70,7 @@ export const REGISTRY: Record<string, TemplateSpec> = { ... }
   `outreach/render.ts:76` — this design fixes it rather than generalizing it to all 27 flows.)
 - `link` tokens render as `<a href="{value}">{label}</a>` — the URL is a system value in the
   send `ctx`, the anchor label lives in the registry. The editor places `{{actionLink}}` in the
-  body; they never type a URL or an `<a>`. (Open sub-decision D-2 below: label in registry vs DB.)
+  body; they never type a URL or an `<a>`, and the label is not editable (D-2 below).
 - Save-time validation rejects any `{{token}}` not in the key's `allowedTokens`
   (generalizes the existing `findUnknownTokens`).
 
@@ -111,16 +111,21 @@ non-goal.
 - **One grep-to-zero test** asserts no `sendEmail(` call exists outside `email.ts` and the
   renderer. A new flow physically cannot ship inline copy — it won't pass CI.
 
-### 6. Never-blank guarantee — seeds are today's copy
+### 6. Never-blank guarantee — registry defaults are today's copy
 
-- The migration seeds every `key` with the **exact current** subject/body.
-- `sendTemplated` falls back to the registry default if a row is missing or blank.
+- Each registry entry's `defaultSubject`/`defaultBody` is the **exact current** subject/body.
+- The table starts **empty**. A row exists only once the Board saves an override, and
+  `sendTemplated` sends the registry default whenever a row is missing or blank.
 - Result: the sweep is **copy-neutral** — no email's wording changes. Editing is an override,
   not a requirement.
+- No migration seeds rows: the registry is the one copy of the default wording, and a
+  wording fix in code reaches every un-edited email without a data migration. (Rows seeded
+  from code would be a second copy that overrides the registry, so later fixes would not
+  ship.)
 
 ### 7. The sweep — one conversion, no partial state
 
-Migrate all ~27 flows to `sendTemplated` in a single pass. Because seeds == current copy, the
+Migrate all ~27 flows to `sendTemplated` in a single pass. Because the registry defaults == current copy, the
 diff is behavior-neutral on wording. The old inline builders and hardcoded subjects are
 **deleted**, not left beside the new path. Folds the two existing deploy-free systems in too
 (see D). After the sweep there is exactly one way to send mail.
@@ -158,7 +163,7 @@ Grouped by prefix. `link` tokens noted; everything else is `text`.
 
 > `program.assignment` migrates the **already-shipped** `programAssignmentTemplate` (#1220,
 > `email-templates/program-assignment.ts`), which renders a `manageUrl` link
-> (`/program-ops/programs/{programId}`). That link is **required** — the seed body must include
+> (`/program-ops/programs/{programId}`). That link is **required** — the default body must include
 > the `{{actionLink}}` token so the sweep doesn't regress #1220's lead welcome email down to a
 > link-less version. (An earlier draft of this doc called PROGRAM_ASSIGNMENT a live "System
 > Action" bug — that was stale: #1220 fixed it on `main` before this design; the row above
@@ -183,7 +188,7 @@ Grouped by prefix. `link` tokens noted; everything else is `text`.
 | `board.paymentException` | `notifyBoardPaymentException` | board | kind, **blurb**, exceptionId, `actionLink` |
 | `board.pendingDigest` | pending-participants digest | board | listItems, `actionLink` |
 
-> See flag B (blurb) below.
+> See sub-decision B (blurb) below.
 
 ### participant — 1
 | key | trigger | recipient | tokens |
@@ -244,44 +249,36 @@ Grouped by prefix. `link` tokens noted; everything else is `text`.
 > the follow-up contract release (step 8), not here. Its sandboxed-iframe preview is superseded by
 > the plain-text preview (no HTML authoring → no iframe needed).
 
-## Open sub-decisions
+## Sub-decisions
 
-**B — `board.paymentException` blurb (11 `kind`→sentence variants).**
+**B — `board.paymentException` blurb: B-1, a `{{blurb}}` token with the blurbs in code.**
 The reconciler maps 11 exception kinds to a one-line human description
-(`PAID_WHILE_BLOCKED → "a household paid but its application is blocked…"`, etc.). Two ways:
+(`PAID_WHILE_BLOCKED → "a household paid but its application is blocked…"`, etc.). Those 11
+descriptions stay in the registry, in code. There is one `board.paymentException` row, and the
+editable copy is the sentence around `{{blurb}}`. The descriptions are reconciliation
+diagnostics rather than board-tuned copy, so changing one is a code change and a deploy.
 
-- **B-1 (recommended): `{{blurb}}` token, blurbs stay in the registry (code).** One
-  `board.paymentException` row; the editable copy is the wrapper sentence around `{{blurb}}`.
-  The 11 blurbs are technical reconciliation-failure labels, not board-tuned marketing copy —
-  keeping them in code is honest about what they are, and the board rarely needs to touch them.
-  Cost: those 11 strings are *not* deploy-free.
-- **B-2: 11 keys** (`board.paymentException.PAID_WHILE_BLOCKED`, …). Every blurb becomes
-  board-editable, fully deploy-free, no `{{blurb}}` token. Cost: 11 near-identical rows for one
-  flow (11 extra seeds + 11 list entries in the admin UI).
+The alternative, B-2, was 11 keys (`board.paymentException.PAID_WHILE_BLOCKED`, …), each fully
+board-editable. It cost 11 near-identical rows for one flow, 11 extra seeds and 11 list entries
+in the admin UI, for copy the board does not need to tune.
 
-Recommendation **B-1** — the goal is deploy-free *content*, and these are enum diagnostics, not
-content. Flag if you want the board to own all 11 → then B-2.
-
-**D-2 — link anchor label: registry (code) or DB?**
+**D-2 — link anchor label: fixed in code with its link.**
 Link tokens render as `<a href="{url}">{label}</a>`. The URL is a runtime ctx value; the
 **label** ("Review application", "Open payment problems", "View your trusted adults") is fixed
-per key. Putting the label in the registry keeps it out of the editor's hands (they can't
-mislabel a link), but the label text is then *not* deploy-free. Alternative: add the label as a
-third editable field on the row. Recommendation: **label in registry** — it's tied to the
-destination, and a mislabeled link is a support problem; revisit if the board asks to edit link
-text.
+per key in the registry, next to the destination it names. The editor cannot change it, so a
+link cannot be mislabelled; changing a label is a code change. The alternative, a third
+editable field on the row, was not taken.
 
-**Layout wrap-all — visual (not copy) change for ~17 flows.**
+**Layout: every email gets the branded layout.**
 Today ~17 flows send bare `<p>` with **no** `baseEmailLayout`. Routing everything through
-`sendTemplated` wraps them all in the branded shell. Copy is unchanged, but the *visual shell*
-gains a header/footer for those flows. This is the point (uniform branding is a stated goal),
-but it is not a zero-visual-change sweep. Recommendation: **wrap all** — inconsistent branding
-is one of the risks this work exists to kill. Flag if any flow must stay bare.
+`sendTemplated` wraps them all in the branded shell, and no flow stays plain. Copy is
+unchanged, but the *visual shell* gains a header and footer for those flows, so the sweep is
+not a zero-visual-change one. Uniform branding is a stated goal of this work.
 
-## Build order (when approved)
+## Build order
 
-1. `EmailTemplate` model + migration (RENAME-safe; seed all 27 keys from current copy).
-2. `registry.ts` (27 specs) + generalize `substituteTokens`/`findUnknownTokens` to per-key.
+1. `EmailTemplate` model + migration (creates the empty table; no seed, see §6).
+2. `registry.ts` (27 specs, whose defaults are today's copy) + generalize `substituteTokens`/`findUnknownTokens` to per-key.
 3. `sendTemplated` + generalized `renderAckBody`-style body→`<p>` + `baseEmailLayout` wrap.
 4. Sweep all call sites to `sendTemplated`; delete inline builders + hardcoded subjects.
 5. Fold outreach + scholarship — **expand only**: migrate `BoardSettings` copy → rows, update

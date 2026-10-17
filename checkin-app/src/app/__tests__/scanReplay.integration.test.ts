@@ -12,6 +12,7 @@
 import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
 import { authenticateRequest } from '@/lib/auth';
+import { SCAN_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 import type { Person } from '@/generated/prisma/client';
 
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
@@ -52,6 +53,12 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
         // Keep the facility open for the whole suite: member check-ins require an
         // active keyholder, and this is testing replay, not facility-open gating.
         await prisma.visit.create({ data: { personId: keyholder.id, arrivedAt: new Date(0), arrivedVia: 'SCANNER' } });
+    });
+
+    // A close fences a replayed IN scanned before it; push other suites' recent
+    // closes out of the way so these cases test only what they set up.
+    beforeEach(async () => {
+        await prisma.facilityClose.updateMany({ where: { closedAt: { gt: new Date(Date.now() - 2 * 86_400_000) } }, data: { closedAt: new Date(0) } });
     });
 
     afterEach(async () => {
@@ -180,7 +187,7 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
         const parked = await queue();
         expect(parked).toHaveLength(1);
         expect(parked[0].reviewReason).toBe('stale_replay');
-        expect(parked[0].person.name).toBe('Replay Member');
+        expect(parked[0].person?.name).toBe('Replay Member');
         expect(parked[0].timestamp.getTime()).toBe(scannedAt.getTime());
 
         // The dismiss's guarded write, stamping both columns.
@@ -238,6 +245,64 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
         expect(rows).toHaveLength(1);
     });
 
+    // A corrupt read (two badges run together, a UPC) can never resolve to a
+    // person; it still lands in the review queue, once, keyed by what was read.
+    it('a dead-lettered unresolvable read parks with no person, surfaces for review, and dedups', async () => {
+        const scannedAt = new Date(Date.now() - 2 * 60_000);
+        const body = {
+            participantId: 1234512345123, clientEventId: 'evt-dead-unresolvable',
+            scannedAt: scannedAt.toISOString(), dead: true, deadStatus: 400,
+        };
+        try {
+            const first = await POST(scanReq(body));
+            expect(first.status).toBe(200);
+            expect((await first.json()).type).toBe('parked');
+
+            const retry = await POST(scanReq(body));
+            expect((await retry.json()).type).toBe('duplicate_ignored');
+
+            const rows = await prisma.rawBadgeLog.findMany({ where: { clientEventId: 'evt-dead-unresolvable' } });
+            expect(rows).toHaveLength(1);
+            expect(rows[0]).toMatchObject({
+                personId: null,
+                scannedValue: '1234512345123',
+                reviewReason: 'client_dead:unresolvable',
+                reviewedAt: null,
+            });
+            expect(rows[0].timestamp.getTime()).toBe(scannedAt.getTime());
+        } finally {
+            await prisma.rawBadgeLog.deleteMany({ where: { clientEventId: 'evt-dead-unresolvable' } });
+        }
+    });
+
+    // A refused replay would block the head of the kiosk's queue, so the server
+    // parks it in one hop, as the kiosk's dead-letter pass would have.
+    it('a replay naming no one parks for review instead of 404ing, and dedups', async () => {
+        const scannedAt = new Date(Date.now() - 2 * 60_000);
+        const body = {
+            participantId: 2147483000, clientEventId: 'evt-replay-unresolvable',
+            scannedAt: scannedAt.toISOString(), replay: true, intent: 'IN',
+        };
+        try {
+            const first = await POST(scanReq(body));
+            expect(first.status).toBe(200);
+            expect((await first.json()).type).toBe('parked');
+
+            const retry = await POST(scanReq(body));
+            expect((await retry.json()).type).toBe('duplicate_ignored');
+
+            const rows = await prisma.rawBadgeLog.findMany({ where: { clientEventId: 'evt-replay-unresolvable' } });
+            expect(rows).toHaveLength(1);
+            expect(rows[0]).toMatchObject({
+                personId: null,
+                scannedValue: '2147483000',
+                reviewReason: 'client_dead:unresolvable',
+            });
+        } finally {
+            await prisma.rawBadgeLog.deleteMany({ where: { clientEventId: 'evt-replay-unresolvable' } });
+        }
+    });
+
     it('rejects dead:true and replay:true together', async () => {
         const res = await POST(scanReq({
             participantId: member.id, clientEventId: 'evt-dead-and-replay',
@@ -248,7 +313,7 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
     });
 
     it('accepts a declared protocolVersion this server speaks, absent included', async () => {
-        for (const extra of [{}, { protocolVersion: 1 }, { protocolVersion: 2 }]) {
+        for (const extra of [{}, { protocolVersion: 1 }, { protocolVersion: 2 }, { protocolVersion: SCAN_PROTOCOL_VERSION }]) {
             const res = await POST(scanReq({ participantId: member.id, ...extra }));
             expect(res.status).toBe(200);
             // Toggle back so each iteration starts checked out.
@@ -257,7 +322,7 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
     });
 
     it('accepts a LIVE scan declaring a newer protocolVersion — a version race must not block the door', async () => {
-        const res = await POST(scanReq({ participantId: member.id, protocolVersion: 3 }));
+        const res = await POST(scanReq({ participantId: member.id, protocolVersion: SCAN_PROTOCOL_VERSION + 1 }));
         expect(res.status).toBe(200);
         expect(await prisma.visit.findFirst({ where: { personId: member.id } })).not.toBeNull();
         await prisma.visit.deleteMany({ where: { personId: member.id } });
@@ -266,7 +331,7 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
     it('426-bounces a replay declaring a newer protocolVersion, writing nothing', async () => {
         const res = await POST(scanReq({
             participantId: member.id, clientEventId: 'evt-too-new-replay',
-            scannedAt: new Date().toISOString(), replay: true, protocolVersion: 3,
+            scannedAt: new Date().toISOString(), replay: true, protocolVersion: SCAN_PROTOCOL_VERSION + 1,
         }));
         expect(res.status).toBe(426);
         expect((await res.json()).error).toMatch(/protocolVersion/);
@@ -277,7 +342,7 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
     it('426-bounces a dead-letter declaring a newer protocolVersion, writing nothing', async () => {
         const res = await POST(scanReq({
             participantId: member.id, clientEventId: 'evt-too-new-dead',
-            scannedAt: new Date().toISOString(), dead: true, protocolVersion: 3,
+            scannedAt: new Date().toISOString(), dead: true, protocolVersion: SCAN_PROTOCOL_VERSION + 1,
         }));
         expect(res.status).toBe(426);
         expect(await prisma.rawBadgeLog.findUnique({ where: { clientEventId: 'evt-too-new-dead' } })).toBeNull();
@@ -288,5 +353,100 @@ describe('Scan replay — clientEventId dedup and freshness window (real DB)', (
             const res = await POST(scanReq({ participantId: member.id, protocolVersion: bad }));
             expect(res.status).toBe(400);
         }
+    });
+
+    // A scan is trusted by default AND raised for review.
+    // An intent-carrying replay applies at its scan time however late; a stale,
+    // out-of-order or clock-suspect one is also flagged on the review queue.
+    describe('trusted replays carrying a displayed intent', () => {
+        const MIN = 60_000;
+        const replayOf = (id: string, at: Date, intent: 'IN' | 'OUT', extra: Record<string, unknown> = {}) =>
+            POST(scanReq({ participantId: member.id, clientEventId: id, scannedAt: at.toISOString(), replay: true, intent, protocolVersion: SCAN_PROTOCOL_VERSION, ...extra }));
+        const reasonOf = async (id: string) => (await prisma.rawBadgeLog.findUnique({ where: { clientEventId: id } }))?.reviewReason;
+
+        it('an older kiosk\'s stale IN still parks, unapplied', async () => {
+            const at = new Date(Date.now() - 40 * MIN);
+            expect((await (await replayOf('evt-t-old-kiosk', at, 'IN', { protocolVersion: 4 })).json()).type).toBe('parked');
+            expect(await prisma.visit.findFirst({ where: { personId: member.id } })).toBeNull();
+            expect(await reasonOf('evt-t-old-kiosk')).toBe('stale_replay');
+        });
+
+        it('a stale IN checks in at its scan time and is flagged stale_replay', async () => {
+            const at = new Date(Date.now() - 40 * MIN);
+            expect((await (await replayOf('evt-t-stale-in', at, 'IN')).json()).type).toBe('checkin');
+            const v = await prisma.visit.findFirstOrThrow({ where: { personId: member.id } });
+            expect(v.arrivedAt.getTime()).toBe(at.getTime());
+            expect(v.departedAt).toBeNull();
+            expect(await reasonOf('evt-t-stale-in')).toBe('stale_replay');
+        });
+
+        it('a stale OUT checks out at its scan time and is flagged stale_replay', async () => {
+            const visit = await prisma.visit.create({ data: { personId: member.id, arrivedAt: new Date(Date.now() - 90 * MIN), arrivedVia: 'SCANNER' } });
+            const at = new Date(Date.now() - 40 * MIN);
+            expect((await (await replayOf('evt-t-stale-out', at, 'OUT')).json()).type).toBe('checkout');
+            const v = await prisma.visit.findUniqueOrThrow({ where: { id: visit.id } });
+            expect(v.departedAt?.getTime()).toBe(at.getTime());
+            expect(await reasonOf('evt-t-stale-out')).toBe('stale_replay');
+        });
+
+        it('a clock-suspect IN checks in and is flagged clock_suspect', async () => {
+            const at = new Date(Date.now() - 2 * MIN);
+            expect((await (await replayOf('evt-t-clock', at, 'IN', { clockSuspect: true })).json()).type).toBe('checkin');
+            expect((await prisma.visit.findFirstOrThrow({ where: { personId: member.id } })).arrivedAt.getTime()).toBe(at.getTime());
+            expect(await reasonOf('evt-t-clock')).toBe('clock_suspect');
+        });
+
+        it('an IN stamped ahead of server now checks in at server now, flagged clock_suspect', async () => {
+            const before = Date.now();
+            expect((await (await replayOf('evt-t-ahead', new Date(before + 60 * MIN), 'IN')).json()).type).toBe('checkin');
+            const arrived = (await prisma.visit.findFirstOrThrow({ where: { personId: member.id } })).arrivedAt.getTime();
+            expect(arrived).toBeGreaterThanOrEqual(before);
+            expect(arrived).toBeLessThanOrEqual(Date.now());
+            expect(await reasonOf('evt-t-ahead')).toBe('clock_suspect');
+        });
+
+        it('an out-of-order OUT departs only the visit it fell in, pulling back the cron stamp; the later visit stays open', async () => {
+            const first = await prisma.visit.create({ data: {
+                personId: member.id, arrivedAt: new Date(Date.now() - 300 * MIN), arrivedVia: 'SCANNER',
+                departedAt: new Date(Date.now() - 120 * MIN), departedVia: 'AUTO_CLOSE',
+            } });
+            const later = await prisma.visit.create({ data: { personId: member.id, arrivedAt: new Date(Date.now() - 60 * MIN), arrivedVia: 'SCANNER' } });
+            const at = new Date(Date.now() - 200 * MIN);
+            expect((await (await replayOf('evt-t-ooo-out', at, 'OUT')).json()).type).toBe('checkout');
+
+            const f = await prisma.visit.findUniqueOrThrow({ where: { id: first.id } });
+            expect(f.departedAt?.getTime()).toBe(at.getTime());
+            expect(f.departedVia).toBe('SCANNER');
+            expect((await prisma.visit.findUniqueOrThrow({ where: { id: later.id } })).departedAt).toBeNull();
+            expect(await reasonOf('evt-t-ooo-out')).toBe('out_of_order');
+        });
+
+        it('an out-of-order OUT before a later visit\'s arrival never departs that visit', async () => {
+            const later = await prisma.visit.create({ data: { personId: member.id, arrivedAt: new Date(Date.now() - 5 * MIN), arrivedVia: 'SCANNER' } });
+            const res = await replayOf('evt-t-ooo-before', new Date(Date.now() - 8 * MIN), 'OUT');
+            expect((await res.json()).type).toBe('parked');
+            expect((await prisma.visit.findUniqueOrThrow({ where: { id: later.id } })).departedAt).toBeNull();
+            expect(await reasonOf('evt-t-ooo-before')).toBe('out_of_order');
+        });
+
+        it('an out-of-order OUT against a departure someone recorded is held, changing nothing', async () => {
+            const departed = new Date(Date.now() - 20 * MIN);
+            const v = await prisma.visit.create({ data: {
+                personId: member.id, arrivedAt: new Date(Date.now() - 90 * MIN), arrivedVia: 'SCANNER', departedAt: departed, departedVia: 'TYPED',
+            } });
+            expect((await (await replayOf('evt-t-ooo-typed', new Date(Date.now() - 40 * MIN), 'OUT')).json()).type).toBe('parked');
+            expect((await prisma.visit.findUniqueOrThrow({ where: { id: v.id } })).departedAt?.getTime()).toBe(departed.getTime());
+            expect(await reasonOf('evt-t-ooo-typed')).toBe('out_of_order');
+        });
+
+        it('an out-of-order IN is held, changing nothing', async () => {
+            const v = await prisma.visit.create({ data: {
+                personId: member.id, arrivedAt: new Date(Date.now() - 30 * MIN), arrivedVia: 'SCANNER', departedAt: new Date(Date.now() - 5 * MIN), departedVia: 'SCANNER',
+            } });
+            expect((await (await replayOf('evt-t-ooo-in', new Date(Date.now() - 60 * MIN), 'IN')).json()).type).toBe('parked');
+            expect(await prisma.visit.count({ where: { personId: member.id } })).toBe(1);
+            expect((await prisma.visit.findUniqueOrThrow({ where: { id: v.id } })).departedAt).not.toBeNull();
+            expect(await reasonOf('evt-t-ooo-in')).toBe('out_of_order');
+        });
     });
 });

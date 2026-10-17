@@ -6,6 +6,7 @@ jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } 
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
 import AdminParticipantsIndex from "../page";
+import { ModalsProvider } from "@mantine/modals";
 
 beforeEach(() => {
     resetRtl();
@@ -66,6 +67,32 @@ describe("AdminParticipantsIndex", () => {
 
         await waitFor(() => expect(screen.queryByText("Edit Person")).not.toBeInTheDocument());
         expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Person updated successfully!" }));
+    });
+
+    it("asks for confirmation before saving a lead's check that would no longer be valid", async () => {
+        const warning = "Alice A's background check covers the membership year starting 2027-08-01, and will not after this change.";
+        const puts: unknown[] = [];
+        global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = input.toString();
+            if (url.includes("/api/people/search")) return { ok: true, status: 200, json: async () => ({ people: [alice] }) } as Response;
+            const body = JSON.parse(String(init?.body));
+            puts.push(body);
+            return body.confirmBgStale
+                ? { ok: true, status: 200, json: async () => ({ participant: alice }) } as Response
+                : { ok: false, status: 409, json: async () => ({ error: warning, warning, requiresConfirmation: true }) } as Response;
+        }) as unknown as typeof fetch;
+        renderWithProviders(<ModalsProvider><AdminParticipantsIndex /></ModalsProvider>);
+
+        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "ali" } });
+        const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
+        fireEvent.click(within(aliceRow).getByRole("button", { name: "Details" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Save Details" }));
+
+        expect(await screen.findByText(warning)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Save anyway" }));
+
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Person updated successfully!" })));
+        expect(puts).toEqual([expect.objectContaining({ confirmBgStale: false }), expect.objectContaining({ confirmBgStale: true })]);
     });
 
     it("assigns a new household to a participant with none", async () => {

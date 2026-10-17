@@ -77,25 +77,38 @@ const customJestConfig = {
     moduleNameMapper: {
         '^@/(.*)$': '<rootDir>/src/$1',
         // Workspace TS package — point jest at its source so it transforms it.
-        '^@inventory/money$': '<rootDir>/../packages/money/src/index.ts',
+        '^@checkin/money$': '<rootDir>/../packages/money/src/index.ts',
+        '^@checkin/utils$': '<rootDir>/../packages/utils/src/index.ts',
+        // Checkin-hosted libraries (#1286, #1287, #1272): jest's resolver doesn't honor
+        // a package's `exports` subpaths, so map them to source. Subpath rule first (more
+        // specific), then the bare entry.
+        '^@checkin/global-catalog/(.*)$': '<rootDir>/../packages/global-catalog/src/$1',
+        '^@checkin/global-catalog$': '<rootDir>/../packages/global-catalog/src/index.ts',
+        '^@checkin/local-inventory/(.*)$': '<rootDir>/../packages/local-inventory/src/$1',
+        '^@checkin/local-inventory$': '<rootDir>/../packages/local-inventory/src/index.ts',
+        '^@checkin/bulk-donation/(.*)$': '<rootDir>/../packages/bulk-donation/src/$1',
+        '^@checkin/bulk-donation$': '<rootDir>/../packages/bulk-donation/src/index.ts',
+        '^@checkin/expense/(.*)$': '<rootDir>/../packages/expense/src/$1',
+        '^@checkin/expense$': '<rootDir>/../packages/expense/src/index.ts',
+        // The Shopify mirror's generated client (lib/shopifyRead/client.ts).
+        '^@checkin/s-ingest-core/client$': '<rootDir>/../packages/s-ingest-core/src/generated/checkin-prisma/client.ts',
+        '^@checkin/receipt/(.*)$': '<rootDir>/../packages/receipt/src/$1',
+        '^@checkin/receipt$': '<rootDir>/../packages/receipt/src/index.ts',
+        // Shared packages the libraries import; their `exports` declare only `import`.
+        '^@checkin/workflows/(.*)$': '<rootDir>/../packages/workflows/src/$1',
+        '^@checkin/workflows$': '<rootDir>/../packages/workflows/src/index.ts',
+        '^@checkin/receipt-types/(.*)$': '<rootDir>/../packages/receipt-types/src/$1',
+        '^@checkin/receipt-types$': '<rootDir>/../packages/receipt-types/src/index.ts',
+        '^@checkin/gtin$': '<rootDir>/../packages/gtin/src/index.ts',
+        '^@checkin/donations$': '<rootDir>/../packages/donations/src/index.ts',
+        '^@checkin/workflow-mapping/(.*)$': '<rootDir>/../packages/workflow-mapping/src/$1',
+        '^@checkin/workflow-mapping$': '<rootDir>/../packages/workflow-mapping/src/index.ts',
+        '^@checkin/income/(.*)$': '<rootDir>/../packages/income/src/$1',
+        '^@checkin/income$': '<rootDir>/../packages/income/src/index.ts',
+        '^@checkin/quickbooks$': '<rootDir>/../packages/quickbooks/src/index.ts',
     },
-    // The worktree ignore lives at the repo root (.claude/worktrees/), one level
-    // up now that rootDir is checkin-app/. testPathIgnorePatterns matches the
-    // absolute path, so the bare substring still works; modulePathIgnorePatterns
-    // is <rootDir>-anchored and must reach up to the repo root.
     testPathIgnorePatterns: [
         '/node_modules/',
-        // Stop the PRIMARY checkout's jest from descending into sibling worktree
-        // dirs. But when jest itself runs FROM inside a worktree, every test path
-        // contains /.claude/worktrees/ -> this ignore matches ALL of them ->
-        // "No tests found" -> exit 1 -> the pre-commit hook false-blocks every
-        // worktree commit. So only apply the ignore when our own cwd is NOT in a
-        // worktree; from within a worktree, rootDir already scopes collection to
-        // this worktree's own tests, so dropping the pattern is safe.
-        // (Detect via cwd, not an env flag: core.hooksPath points at the PRIMARY
-        // checkout's .husky, so a worktree commit runs main's pre-commit — a
-        // hook-exported flag wouldn't reach here until merged+deployed to main.)
-        ...(process.cwd().includes('/.claude/worktrees/') ? [] : ['/.claude/worktrees/']),
         '\\.integration\\.test\\.[jt]sx?$',
         // Flow tests drive a running dev server over HTTP — excluded from the
         // default/unit run; run with `npm run test:flow` (see AGENTS.md).

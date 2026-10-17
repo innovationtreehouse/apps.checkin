@@ -228,7 +228,7 @@ describe('Admin Participants API Integration Tests', () => {
             expect(membership).toBeNull();
         });
 
-        it('should grant an ACTIVE membership when alreadyMember is true', async () => {
+        it('should reject alreadyMember with 400 and create no participant or membership', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
                 user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
             });
@@ -243,16 +243,12 @@ describe('Admin Participants API Integration Tests', () => {
             });
 
             const res = await POST(req as unknown as Parameters<typeof POST>[0]);
-            expect(res.status).toBe(200);
-            const data = await res.json();
+            expect(res.status).toBe(400);
 
             const created = await prisma.person.findUnique({
-                where: { id: data.participant.id }
+                where: { email: 'new-paid-participants-test@example.com' }
             });
-            const membership = await prisma.orgMembership.findUnique({
-                where: { householdId: created!.householdId! }
-            });
-            expect(membership?.status).toBe('ACTIVE');
+            expect(created).toBeNull();
         });
 
         it('should create a child participant and auto-generate a parent and household if parentEmail does not exist', async () => {

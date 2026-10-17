@@ -175,6 +175,23 @@ describe('unsynced-scans record resolution (real DB)', () => {
         expect(await prisma.visit.count({ where: { personId: memberId, departedAt: null } })).toBe(1);
     });
 
+    it('409s recording a row that names no person, and the row can still be dismissed', async () => {
+        const row = await prisma.rawBadgeLog.create({
+            data: { personId: null, scannedValue: '1234512345', timestamp: new Date(), reviewReason: 'client_dead:unresolvable' },
+        });
+        try {
+            const res = await POST(req(row.id, { action: 'record', departedAt: new Date(Date.now() + 60_000).toISOString() }), ctx(row.id));
+            expect(res.status).toBe(409);
+            expect((await prisma.rawBadgeLog.findUnique({ where: { id: row.id } }))?.reviewedAt).toBeNull();
+
+            const dismissed = await POST(req(row.id), ctx(row.id));
+            expect(dismissed.status).toBe(200);
+            expect((await prisma.rawBadgeLog.findUnique({ where: { id: row.id } }))?.reviewedBy).toBe(keyholderId);
+        } finally {
+            await prisma.rawBadgeLog.delete({ where: { id: row.id } });
+        }
+    });
+
     it('400s a visit longer than 24 hours', async () => {
         const row = await park();
         const res = await POST(req(row.id, { action: 'record', departedAt: '2026-08-22T21:00:00.000Z' }), ctx(row.id));

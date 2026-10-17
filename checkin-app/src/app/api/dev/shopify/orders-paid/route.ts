@@ -5,6 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
+import { checkoutVariantId } from "@/lib/programs/variants";
 
 export const dynamic = "force-dynamic";
 
@@ -48,13 +49,13 @@ export const POST = withAuth({}, async (req, auth) => {
 
 // Sign the mock payload with the fixed dev secret and POST it at the REAL inbound
 // webhook, same as Shopify would. Returns the webhook's HTTP status.
-async function fireWebhook(payload: unknown): Promise<number> {
+async function fireWebhook(payload: object): Promise<number> {
     const secret = config.shopifyWebhookSecret()!;
-    const rawBody = JSON.stringify(payload);
+    const rawBody = JSON.stringify({ financial_status: "paid", ...payload });
     const signature = crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("base64");
     const res = await fetch(`${config.baseUrl()}/api/webhooks/shopify`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-shopify-hmac-sha256": signature },
+        headers: { "Content-Type": "application/json", "x-shopify-topic": "orders/paid", "x-shopify-hmac-sha256": signature },
         body: rawBody,
     });
     return res.status;
@@ -125,9 +126,9 @@ async function fireProgram(programId: number, rawParticipantIds: unknown): Promi
     // be unset.
     const program = await prisma.program.findUnique({
         where: { id: programId },
-        select: { shopifyVariantId: true },
+        select: { shopifyVariantId: true, claimantShopifyVariantId: true },
     });
-    const variantId = program?.shopifyVariantId;
+    const variantId = program ? checkoutVariantId(program) : null;
     if (!variantId) {
         return apiError("No Shopify variant configured on this program. Set one on the program in program-ops first, or the webhook leaves the participant PENDING.", 409);
     }
@@ -141,7 +142,7 @@ async function fireProgram(programId: number, rawParticipantIds: unknown): Promi
             { name: "CheckMeIn_Account_ID", value: pendingIds.join(",") },
             { name: "Program_ID", value: String(programId) },
         ],
-        line_items: [{ variant_id: variantId }],
+        line_items: [{ variant_id: variantId, quantity: pendingIds.length }],
     });
     if (status >= 400) {
         logger.error(`Dev shopify orders-paid: webhook returned ${status} for program ${programId}`);

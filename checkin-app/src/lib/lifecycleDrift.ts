@@ -20,6 +20,7 @@ import {
 import { validate as validateMembership } from "@/lib/membership/lifecycle";
 import { systemActor } from "@/lib/auditActor";
 import { adjustProgramInventory, reportShopifyFailure } from "@/lib/shopify";
+import { isSaleEnded } from "@/lib/programs/saleState";
 
 export type LifecycleModel = "ProgramParticipant" | "OrgMembershipProcess";
 
@@ -125,7 +126,7 @@ async function healEnrollmentI1(): Promise<number> {
             programId: true,
             personId: true,
             inventoryHeldAt: true,
-            program: { select: { shopifyVariantId: true } },
+            program: { select: { shopifyVariantId: true, startAt: true, offSaleAt: true, saleEndedAt: true } },
         },
     });
 
@@ -147,7 +148,9 @@ async function healEnrollmentI1(): Promise<number> {
 
             // Fire the release the webhook missed. Non-fatal: adjustProgramInventory
             // logs + emails on failure and returns false; the hold is already cleared.
-            const shopifyOk = await adjustProgramInventory(row.program, 1);
+            // Once the sale has ended the seat is not resold: no +1.
+            const saleEnded = isSaleEnded(row.program);
+            const shopifyOk = saleEnded || await adjustProgramInventory({ id: row.programId, shopifyVariantId: row.program.shopifyVariantId }, 1, "reconcile-heal");
             if (!shopifyOk) {
                 logger.error(
                     `[lifecycle-reconcile] I1 heal cleared hold for program ${row.programId} / person ${row.personId} but the +1 release failed (see Shopify error alert).`,
@@ -166,7 +169,7 @@ async function healEnrollmentI1(): Promise<number> {
                         inventoryHeldAt: row.inventoryHeldAt?.toISOString() ?? null,
                         reason: "lifecycle-reconcile: enrollment I1 (stranded hold on ACTIVE)",
                     },
-                    newData: { inventoryHeldAt: null, shopifyReleaseOk: shopifyOk },
+                    newData: { inventoryHeldAt: null, shopifyReleaseOk: shopifyOk, releaseSkippedSaleEnded: saleEnded },
                 },
             });
             healed++;
@@ -198,7 +201,7 @@ async function reportViolation(v: LifecycleViolation): Promise<void> {
 /**
  * The reconciler sweep: heal the one safe,
  * unambiguous case (enrollment I1), report every remaining violation, return a
- * summary. Complementary to the order-driven `lib/finance/reconcile.ts` — this
+ * summary. Complementary to the order-driven `lib/finance/reconcile/` — this
  * one is invariant-driven.
  */
 export async function runLifecycleReconcile(): Promise<ReconcileSummary> {

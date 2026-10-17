@@ -1,6 +1,6 @@
 /**
  * Integration: runRelay against a REAL monitoring Postgres. SNS (publishAlert) and telemetry
- * are mocked; @inventory/monitoring-db is real, so the claim→publish→mark drain, its
+ * are mocked; @checkin/monitoring-db is real, so the claim→publish→mark drain, its
  * oldest-first ordering, the SENT/PENDING persistence, and the failed-row retry semantics are
  * all exercised end to end. Skipped unless MONITORING_DATABASE_URL is set (no Docker → skip).
  */
@@ -20,7 +20,7 @@ vi.mock("../../src/sns.js", async (importActual) => {
   const actual = await importActual<typeof import("../../src/sns.js")>();
   return { ...actual, publishAlert: m.publishAlert };
 });
-vi.mock("@inventory/telemetry", () => ({
+vi.mock("@checkin/telemetry", () => ({
   logger: m.logger,
   newCorrelationId: m.newCorrelationId,
   emitMonitorHeartbeat: m.emitMonitorHeartbeat,
@@ -30,7 +30,7 @@ vi.mock("@inventory/telemetry", () => ({
 
 import { runRelay } from "../../src/relay.js";
 import { handler } from "../../src/handler.js";
-import { OutboxStatus } from "@inventory/monitoring-db";
+import { OutboxStatus } from "@checkin/monitoring-db";
 import { runIfDb, prisma, resetTables, seedAlert } from "./db.js";
 
 const cfg = {

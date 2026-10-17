@@ -1,9 +1,10 @@
 import prisma from "@/lib/prisma";
+import type { TxClient } from "@/lib/db-client";
 import { logBackendError } from "@/lib/logger";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
 import { householdBgIsFresh, nextBoundary } from "@/lib/membership/renewal";
-import { applyVolunteerStatus, clearBackgroundCheck, notifyClearanceOutcome, notifyPaymentOpenOnExistingCheck } from "@/lib/membership/review";
+import { applyVolunteerStatus, clearBackgroundCheck, notifyClearanceOutcome, notifyPaymentOpenOnExistingCheck, reviewTransaction } from "@/lib/membership/review";
 
 /**
  * A participant merge moves the newer of the two `lastBackgroundCheck` dates onto
@@ -66,6 +67,18 @@ export async function advanceHouseholdBgAfterMerge(
 
 type Provenance = { via: "merge"; sourcePersonId: number };
 
+/**
+ * Whether a board reset sent this review back. A reset asks for two new approvals,
+ * so a carried-in check never stands in for them. Read under the process lock.
+ */
+async function wasBoardReset(tx: TxClient, processId: number): Promise<boolean> {
+    const reset = await tx.auditLog.findFirst({
+        where: { tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { path: ["action"], equals: "board reset" } },
+        select: { id: true },
+    });
+    return reset !== null;
+}
+
 /** Household INITIAL/RENEWAL rows at `from` that still owe a background check. */
 function uncleared(householdId: number, from: object, extra: object = {}): Promise<Candidate[]> {
     return prisma.orgMembershipProcess.findMany({
@@ -77,8 +90,8 @@ function uncleared(householdId: number, from: object, extra: object = {}): Promi
 /**
  * Stamp `bgClearedAt` under a CAS on the from-state, and apply the volunteer
  * allowlist: the fresh-check shortcut means `clearBackgroundCheck` never runs this
- * cycle, and without it a pre-designated volunteer household gets non-volunteer
- * dues (#874). Returns false when the row moved on under us.
+ * cycle, and without it a pre-designated volunteer household gets the non-volunteer
+ * membership fee (#874). Returns false when the row moved on under us.
  *
  * One transaction, FOR UPDATE first: the attestation count only excludes a review a
  * human is mid-way through if it is read under the lock, and the stamp, its audit
@@ -90,6 +103,7 @@ async function stampBgCleared(process: Candidate, householdId: number, actorId: 
         // A review an eligible reviewer has already attested is theirs to finish; a
         // dedupe action does not complete a human's 2-of-N.
         if (await tx.backgroundCheckAttestation.count({ where: { processId: process.id } })) return false;
+        if (await wasBoardReset(tx, process.id)) return false;
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: process.id, bgClearedAt: null, ...from },
             data: { bgClearedAt: new Date() },
@@ -151,7 +165,7 @@ const HELD_STATES = [
 /**
  * Stamping `bgClearedAt` on a held row drops it out of the reviewer queue with no exit
  * but archival. So run the real clearance, which stamps and converges in one write —
- * to PENDING_PAYMENT if the dues are still owed, to ACTIVE if they are already paid.
+ * to PENDING_PAYMENT if the membership fee is still owed, to ACTIVE if it is already paid.
  * Zero attestations, re-read under the lock.
  */
 async function clearHeldRow(
@@ -162,7 +176,7 @@ async function clearHeldRow(
 ): Promise<void> {
     const { status, from } = held;
     for (const process of await uncleared(householdId, from)) {
-        const outcome = await prisma.$transaction(async (tx) => {
+        const outcome = await reviewTransaction(async (tx) => {
             // clearBackgroundCheck's contract; also serializes against a concurrent attest.
             await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${process.id} FOR UPDATE`;
             const fresh = await tx.orgMembershipProcess.findUnique({
@@ -170,10 +184,13 @@ async function clearHeldRow(
                 select: { status: true, bgClearedAt: true, _count: { select: { attestations: true } } },
             });
             if (!fresh || fresh.status !== status || fresh.bgClearedAt || fresh._count.attestations > 0) return null;
-            return clearBackgroundCheck(tx, process.id, actorId, undefined, {
-                via: "merge",
-                sourcePersonId: mergedPersonId,
-                reason: "still-valid background check carried in by participant merge; no reviewer attested",
+            if (await wasBoardReset(tx, process.id)) return null;
+            return clearBackgroundCheck(tx, process.id, actorId, { where: from }, {
+                provenance: {
+                    via: "merge",
+                    sourcePersonId: mergedPersonId,
+                    reason: "still-valid background check carried in by participant merge; no reviewer attested",
+                },
             });
         });
         if (outcome) await notifyClearanceOutcome(outcome, { paymentOpenNotice: notifyPaymentOpenOnExistingCheck });

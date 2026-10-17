@@ -11,7 +11,9 @@ with it. Three classes only a live store answers:
 
 - **Semantics we depend on.** That a fixed-amount discount is valued per unit
   rather than once per cart — the multi-child household overcharge — and that a
-  deny inventory policy actually refuses oversell.
+  deny inventory policy actually refuses oversell, and that resending a keyed
+  inventory write never applies it twice (whether the key or the
+  compare-and-set refused it is logged).
 - **API-version sunsets.** The Admin API version is pinned. Shopify retires
   versions quarterly, and a lapsed pin is silently served by a different version
   rather than refused. The canary suite turns that into a red nightly instead of

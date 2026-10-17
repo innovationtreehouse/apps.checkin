@@ -292,6 +292,11 @@ was not in the original cost.
 
 ### Model
 
+The schema part has landed (#1640): the three columns and the `Person` back-relation
+below are in `schema.prisma`. Nothing writes or reads them yet except the person
+merge, which repoints `noteAckById` to the survivor. The capture, the reviewer
+surface and the acknowledgement action are still to build.
+
 Three columns on `OrgMembershipProcess`, not a new model:
 
 ```prisma

@@ -17,10 +17,16 @@ jest.mock('@/lib/notifications', () => ({
 }));
 
 jest.mock('@/lib/shopify', () => ({
+    adjustProgramInventory: jest.fn().mockResolvedValue(true),
     createShopifySingleVariantProgram: jest.fn().mockResolvedValue({
         shopifyProductId: 'mock-product-id',
         shopifyVariantId: 'mock-variant-id',
     }),
+    createClaimantProduct: jest.fn().mockResolvedValue({
+        claimantShopifyProductId: 'mock-claimant-product-id',
+        claimantShopifyVariantId: 'mock-claimant-variant-id',
+    }),
+    syncProgramPrice: jest.fn().mockResolvedValue(true),
 }));
 
 // Mock Prisma
@@ -60,6 +66,7 @@ jest.mock('@/lib/prisma', () => {
       create: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
       deleteMany: jest.fn(),
       count: jest.fn(),
     },
@@ -87,6 +94,7 @@ const mockGetSession = require('next-auth/next').getServerSession;
 describe('Full Program Signup Integration Flow', () => {
     const sysAdminId = 1;
     const leadUserId = 2;
+    const mentorId = 4;
     const childParticipantId = 3;
     const programId = 10;
     const householdId = 100;
@@ -112,7 +120,7 @@ describe('Full Program Signup Integration Flow', () => {
                 endAt: '2026-12-31',
                 memberPrice: 50,
                 nonMemberPrice: 100,
-                leadMentorId: sysAdminId,
+                leadMentorId: mentorId,
                 maxParticipants: 50,
             }),
         });
@@ -139,13 +147,15 @@ describe('Full Program Signup Integration Flow', () => {
         expect(addEventRes.status).toBe(200);
 
         // 3. SysAdmin publishes the program via the base PATCH
+        const programDates = { startAt: new Date('2099-01-01'), endAt: new Date('2099-12-31'), minAge: null, maxAge: null };
         (prisma.program.findUnique as jest.Mock).mockResolvedValue({
             id: programId,
             leadMentorId: sysAdminId,
             phase: 'PLANNING',
+            ...programDates,
         });
         (prisma.event.count as jest.Mock).mockResolvedValue(1);
-        (prisma.program.update as jest.Mock).mockResolvedValue({ id: programId, phase: 'UPCOMING', enrollmentStatus: 'OPEN' });
+        (prisma.program.update as jest.Mock).mockResolvedValue({ id: programId, phase: 'UPCOMING', enrollmentStatus: 'OPEN', ...programDates });
 
         const publishReq = new Request(`http://localhost/api/programs/${programId}`, {
             method: 'PATCH',
@@ -203,9 +213,14 @@ describe('Full Program Signup Integration Flow', () => {
 
         // 8. Shopify Webhook call
         (prisma.programParticipant.findUnique as jest.Mock).mockResolvedValue({ programId, personId: childParticipantId, status: 'PENDING' });
-        (prisma.programParticipant.update as jest.Mock).mockResolvedValue({ programId, personId: childParticipantId, status: 'ACTIVE' });
+        // The app's checkout sells the claimant variant; a paid line on it counts as a seat.
+        (prisma.program.findUnique as jest.Mock).mockResolvedValue({ id: programId, shopifyVariantId: 'mock-variant-id', claimantShopifyVariantId: 'mock-claimant-variant-id' });
+        (prisma.programParticipant.count as jest.Mock).mockResolvedValue(1);
+        (prisma.programParticipant.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
 
         const webhookPayload = JSON.stringify({
+            financial_status: 'paid',
+            line_items: [{ variant_id: 'mock-claimant-variant-id', quantity: 1 }],
             note_attributes: [
                 { name: 'CheckMeIn_Account_ID', value: String(childParticipantId) },
                 { name: 'Program_ID', value: String(programId) },
@@ -216,18 +231,18 @@ describe('Full Program Signup Integration Flow', () => {
             method: 'POST',
             headers: {
                 'x-shopify-hmac-sha256': hmac,
+                'x-shopify-topic': 'orders/paid',
             },
             body: webhookPayload,
         });
         const webhookRes = await ShopifyWebhook(webhookReq);
         expect(webhookRes.status).toBe(200);
 
-        // 9. Final Verification - ACTIVE status
-        (prisma.programParticipant.findUnique as jest.Mock).mockResolvedValue({ programId, personId: childParticipantId, status: 'ACTIVE' });
-        const finalParticipantRecord = await prisma.programParticipant.findUnique({
-            where: { programId_personId: { programId, personId: childParticipantId } },
-        });
-        expect(finalParticipantRecord?.status).toBe('ACTIVE');
+        // 9. Final Verification - the paid order flipped the enrollment ACTIVE
+        expect(prisma.programParticipant.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ programId, personId: childParticipantId }),
+            data: expect.objectContaining({ status: 'ACTIVE' }),
+        }));
     });
 
     it('should fail to enroll if not a household lead and not self', async () => {

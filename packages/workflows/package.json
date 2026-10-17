@@ -1,5 +1,5 @@
 {
-  "name": "@inventory/workflows",
+  "name": "@checkin/workflows",
   "version": "0.0.0",
   "private": true,
   "type": "module",

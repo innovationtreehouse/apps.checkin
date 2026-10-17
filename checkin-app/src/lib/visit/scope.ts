@@ -6,7 +6,7 @@ export type VisitSubject = { id: number; isKeyholder: boolean };
 
 /**
  * Resolve who the actor may write visits for on the self-service surface
- * (design 1256_ATTENDANCE_CORRECTION_SURFACE.md §1/§3): themselves always, and
+ * (docs/rules/attendance-checkin.md): themselves always, and
  * — for a household lead — any member of their OWN household. The lead is the
  * responsible adult, so acting for a household member is self-equivalent; this
  * is the only way a minor's visit can be corrected at all.

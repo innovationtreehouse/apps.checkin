@@ -317,7 +317,7 @@ describe('Ownership-boundary authorization', () => {
     // ---- membership/payment (GET) — self-scoped (no id param), lead-only -------
     // No IDOR vector: the route derives the household from the session user, so a
     // caller can only ever reach their OWN household's process. Two boundaries:
-    // the dues figure and the live checkout link are the lead's (a non-lead member
+    // the membership fee figure and the live checkout link are the lead's (a non-lead member
     // of the paying household gets 403), and a lead of another household must NOT
     // see this household's link.
     describe('GET /api/membership/payment', () => {

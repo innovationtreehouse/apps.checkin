@@ -35,7 +35,6 @@ const SOURCE_LABELS: Record<string, string> = {
   LEAD_MARKED: "Staff-Marked",
   FACILITY_CLOSE: "Facility Close",
   AUTO_CLOSE: "Auto Close",
-  SYSTEM: "System (legacy)",
   UNSPECIFIED: "Unspecified",
 };
 

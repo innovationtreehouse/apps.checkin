@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Alert, Badge, Button, Card, Group, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { formatCents } from "@inventory/money";
+import { formatCents } from "@checkin/money";
 // Type-only imports: erased at compile time, so the server modules' prisma
 // imports never reach the client bundle — and a server-side reshape is a
 // compile error here instead of a silent drift.

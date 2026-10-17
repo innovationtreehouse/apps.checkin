@@ -35,7 +35,7 @@ enum AuditAction {
 }
 
 /// How a visit arrival/departure was recorded. Five non-overlapping meanings
-/// (docs/designs/1256_ATTENDANCE_CORRECTION_SURFACE.md, "Terminology"):
+/// (docs/rules/attendance-checkin.md, "The visit record"):
 ///   SCANNER        = physical kiosk badge — measured, exact.
 ///   TYPED          = a clock typed into a form (manual/dashboard entry) —
 ///                    asserted, not measured.
@@ -49,10 +49,10 @@ enum AuditAction {
 /// Domains: arrivedVia ∈ {SCANNER, TYPED, LEAD_MARKED};
 ///          departedVia ∈ {SCANNER, TYPED, LEAD_MARKED, FACILITY_CLOSE, AUTO_CLOSE}.
 ///
-/// SYSTEM and WEB are retired. Each is kept in the type only so the previous
-/// release can keep writing it through a rolling deploy's drain window; no
-/// current code path writes either, and their backfill migrations left no rows
-/// carrying them. Drop both in a follow-up release (contract stage).
+/// WEB is retired. It is kept in the type only so the previous release can
+/// keep writing it through a rolling deploy's drain window; no current code
+/// path writes it, and its backfill migration left no rows carrying it. Drop
+/// it in a follow-up release (contract stage).
 enum VisitSource {
   SCANNER
   WEB
@@ -60,7 +60,6 @@ enum VisitSource {
   LEAD_MARKED
   FACILITY_CLOSE
   AUTO_CLOSE
-  SYSTEM
 }
 
 enum ProgramPhase {
@@ -78,6 +77,24 @@ enum EnrollmentStatus {
 enum ProgramParticipantStatus {
   PENDING
   ACTIVE
+  WITHDRAWN
+}
+
+/// What a household asked for when they requested help with a fee. Recorded at
+/// the moment of the request, because the two asks need different conversations
+/// and the review team cannot tell them apart from the request alone — offering
+/// a comp to a family that only needed more time is the failure this prevents.
+/// The terms themselves are still settled by finance out of band
+/// (docs/rules/finance-payments.md); this is only which door they knocked on.
+enum ScholarshipRequestKind {
+  // Asking for the amount itself to be reduced or waived (a board comp).
+  SCHOLARSHIP
+  // Can pay in full, asking to pay it in installments.
+  PAYMENT_PLAN
+  // Does not know which applies — the review team opens the conversation. A real
+  // answer, not a missing one: a family owes nobody a diagnosis of their own
+  // finances to ask for help.
+  UNSURE
 }
 
 model Person {
@@ -195,6 +212,7 @@ model Person {
   bgAttestationsAsSubject BackgroundCheckAttestation[] @relation("BgAttestationSubject")
   personBgProcesses   OrgMembershipProcess[]       @relation("PersonBgSubject")
   intakeNoteAcks      OrgMembershipProcess[]       @relation("IntakeNoteReads")
+  zohoSigningRequests OrgMembershipProcess[]       @relation("ZohoSigner")
   corporationLeads    CorporationLead[]
   corporationMembers  CorporationMember[]
   programVolunteers   ProgramVolunteer[]
@@ -206,6 +224,7 @@ model Person {
   presenceEvents      PresenceEvent[]
   visits              Visit[]
   eventsConfirmedBy   Event[]                      @relation("EventAttendanceConfirmer")
+  facilityCloses      FacilityClose[]
 
   trustedAdultRecordsAsAdult TrustedAdult[]       @relation("TrustedAdultPerson")
   trustedAdultsDisclosed      TrustedAdult[]       @relation("TrustedAdultDiscloser")
@@ -230,6 +249,7 @@ enum PersonRoleKind {
   BG_REVIEWER
   OPERATIONS
   INVENTORY_MANAGER
+  FINANCE
 }
 
 /// Source of truth for role grants (expand phase of the boolean-column -> table
@@ -503,6 +523,11 @@ model OrgMembershipProcess {
   zohoEnvelopeId        String?
   /// @sensitivity:internal
   zohoActionId          String?
+  /// The lead the open Zoho request is addressed to (name + email on the request and
+  /// the PDF's printed name). Kept after signing as the record of who signed.
+  /// @sensitivity:internal
+  zohoSignerPersonId    Int?
+  zohoSigner            Person?                 @relation("ZohoSigner", fields: [zohoSignerPersonId], references: [id])
   /// @sensitivity:internal
   contractSignedAt      DateTime?
   /// @sensitivity:internal
@@ -510,7 +535,7 @@ model OrgMembershipProcess {
   /// When the background-check requirement was satisfied for this cycle — either
   /// two reviewers approved, or a still-valid prior check was detected at intake.
   /// The single source of truth for "BG cleared", independent of the payment
-  /// track; the membership only goes ACTIVE once this is set AND dues are paid.
+  /// track; the membership only goes ACTIVE once this is set AND the membership fee is paid.
   /// @sensitivity:internal
   bgClearedAt           DateTime?
   /// @sensitivity:internal
@@ -536,6 +561,11 @@ model OrgMembershipProcess {
   renewalReminderSentAt DateTime?
   /// @sensitivity:internal
   isPaymentPlanRequested Boolean @default(false)
+  /// Which of the two asks isPaymentPlanRequested stands for. Null means the
+  /// request predates this column, which is why it is nullable and never
+  /// backfilled: what a family asked for is not a value to infer on their behalf.
+  /// @sensitivity:internal
+  scholarshipRequestKind ScholarshipRequestKind?
   /// The household's intake note as submitted with this application. A snapshot, not
   /// a live read: the household may edit or clear Household.intakeNotes afterwards,
   /// and the audit question is what the applicant actually said. Disclosure-equivalent
@@ -671,7 +701,7 @@ model BoardSettings {
   /// in lib/scholarshipEmails.ts. Set on Settings → Email, same section as
   /// scholarshipNotifyEmail. @sensitivity:internal
   scholarshipAckSubject      String?
-  /// ACK body for a membership-dues request (POST /api/membership/request-payment-plan).
+  /// ACK body for a membership-fee request (POST /api/membership/request-payment-plan).
   /// Plain text: rendered by HTML-escaping then splitting into `<p>` paragraphs — never
   /// interpreted as HTML (see scholarshipAckProgramBody re: the outreach preview XSS
   /// history this deliberately avoids). NULL/blank = the default copy.
@@ -697,10 +727,6 @@ model BoardSettings {
   /// @sensitivity:internal
   shopifyOrgMembershipProductId String?
   /// @sensitivity:internal
-  shopifyNormalVariantId     String?  @ignore
-  /// @sensitivity:internal
-  shopifyVolunteerVariantId  String?  @ignore
-  /// @sensitivity:internal
   shopifyPriceSyncedAt       DateTime?
   /// High-water mark for the daily Shopify reconciler (lib/finance/reconcile.ts):
   /// the mirror `updatedAt` of the newest order it has already processed. Only
@@ -713,8 +739,34 @@ model BoardSettings {
   /// withdrawal or payment; it never auto-expires).
   /// @sensitivity:public
   scholarshipDenialGraceDays Int?
+  /// Library keys (lib/libraryRelease.ts) the board has released: their nav
+  /// entries show to everyone with access, not just board members. UI-only.
+  /// @sensitivity:public
+  releasedLibraries          String[]  @default([])
   /// @sensitivity:internal
   updatedAt                  DateTime  @updatedAt
+  /// QuickBooks company (realm) id prod may reach, set by the Board on Settings → QuickBooks.
+  /// NULL = QuickBooks is off in prod. Off prod it is refused as a target, which keeps a
+  /// prod-data copy off the real company (packages/quickbooks/src/guard.ts).
+  /// @sensitivity:internal
+  qboProductionRealmId       String?
+}
+
+/// Board-edited override of one email's copy (docs/designs/1333-EMAIL_TEMPLATES.md).
+/// A missing row means the email sends its code default.
+model EmailTemplate {
+  /// Stable email-type key, e.g. `membership.congrats`. @sensitivity:public
+  key       String   @id
+  /// Subject with `{{token}}` placeholders. @sensitivity:internal
+  subject   String
+  /// Plain text with `{{token}}` placeholders; a blank line starts a paragraph.
+  /// Never interpreted as HTML. @sensitivity:internal
+  body      String
+  /// Person who last saved the row. Plain Int like PresenceEvent.reviewedBy.
+  /// @sensitivity:internal
+  updatedBy Int?
+  /// @sensitivity:internal
+  updatedAt DateTime @updatedAt
 }
 
 /// App-wide localization config (singleton, id=1). Distinct from BoardSettings,
@@ -936,10 +988,27 @@ model Program {
   startAt                        DateTime @db.Date
   /// @sensitivity:public
   endAt                          DateTime @db.Date
+  /// Opening year of the membership year the program runs in (2026 = 2026-2027).
+  /// @sensitivity:public
+  appliesToYear                  Int?
   /// @sensitivity:public
   phase                          ProgramPhase     @default(PLANNING)
   /// @sensitivity:public
   enrollmentStatus               EnrollmentStatus @default(CLOSED)
+  /// Date the program comes off sale (store product off sale, enrollment closed).
+  /// Board-editable; null means the start date.
+  /// @sensitivity:public
+  offSaleAt                      DateTime? @db.Date
+  /// Set by the daily sale sweep once the sale has ended and Shopify is off sale.
+  /// @sensitivity:internal
+  saleEndedAt                    DateTime?
+  /// Set when the board was emailed this program's unpaid claims, a week after the sale ended.
+  /// @sensitivity:internal
+  unpaidClaimsNotifiedAt         DateTime?
+  /// Set once the sale sweep has hidden the public store product for this sale end;
+  /// cleared when the board reopens the sale.
+  /// @sensitivity:internal
+  productHiddenAt                DateTime?
   /// @sensitivity:public
   orgMemberOnly                  Boolean          @default(false)
   /// When an orgMemberOnly program is publiclyVisible, it appears in the public
@@ -974,16 +1043,48 @@ model Program {
   /// @sensitivity:public
   shopifyProductId          String?
   /// @sensitivity:public
-  shopifyOrgMemberVariantId    String?  @ignore
-  /// @sensitivity:public
-  shopifyNonOrgMemberVariantId String?  @ignore
-  /// @sensitivity:public
   shopifyVariantId          String?
+  /// @sensitivity:public
+  /// Hidden (UNLISTED, inventory-untracked) "reserved seat" product every app
+  /// checkout links to, so a family holding a claim can pay when the public
+  /// variant shows 0. The app's seat count is its only gate. docs/rules/programs.md.
+  claimantShopifyProductId  String?
+  /// @sensitivity:public
+  claimantShopifyVariantId  String?
+  /// Durable "Shopify stock needs a push" flag: set when a stock write could not
+  /// be confirmed (lib/shopify.ts adjustProgramInventory).
+  /// @sensitivity:internal
+  shopifyStockPushNeededAt  DateTime?
+  /// JSON of a stock write that may still land, under its idempotency key; the
+  /// next push resends it under that key to settle it before writing.
+  /// @sensitivity:internal
+  shopifyStockPendingWrite  String?
+  /// Stock delta the app owes Shopify but has not landed. Negative = over
+  /// capacity: Shopify is held at 0 and later positive deltas pay this down first.
+  /// @sensitivity:internal
+  shopifyStockCarry         Int       @default(0)
+  /// Lease that makes one writer per program push its stock; no DB transaction is
+  /// held across a Shopify call.
+  /// @sensitivity:internal
+  shopifyStockLeaseUntil    DateTime?
+  /// @sensitivity:internal
+  shopifyStockLeaseToken    String?
+  /// Stock change Shopify could not confirm (a write still unsettled past its key's 24 h).
+  /// Never re-sent; a person checks Shopify and settles it.
+  /// @sensitivity:internal
+  shopifyStockUnconfirmed   Int       @default(0)
+  /// Claim on the Shopify product sync: one run per program, held without a DB
+  /// transaction across the Shopify calls. A claim past its stale age may be taken over.
+  /// @sensitivity:internal
+  shopifySyncStartedAt      DateTime?
+  /// @sensitivity:internal
+  shopifySyncToken          String?
 
   volunteers   ProgramVolunteer[]
   participants ProgramParticipant[]
   events       Event[]
   instances    ProgramInstance[]
+  budgetOwners BudgetOwner[]
 }
 
 // Program → Instance → Event, PHASE 1 (additive tier + 1:1 backfill; nothing
@@ -1042,6 +1143,10 @@ model ProgramVolunteer {
   personId Int
   /// @sensitivity:internal
   isCore        Boolean @default(false)
+  /// A program treasurer; a program may have several. With the program
+  /// leader, treasurers approve within the program's BudgetOwner bucket.
+  /// @sensitivity:internal
+  isTreasurer   Boolean @default(false)
 
   program Program     @relation(fields: [programId], references: [id])
   person  Person @relation(fields: [personId], references: [id])
@@ -1058,6 +1163,17 @@ model ProgramParticipant {
   status               ProgramParticipantStatus @default(PENDING)
   /// @sensitivity:personal
   isPaymentPlanRequested Boolean                  @default(false)
+  /// Which of the two asks isPaymentPlanRequested stands for. Null means the
+  /// request predates this column; never backfilled, because what a family asked
+  /// for is not a value to infer on their behalf.
+  ///
+  /// 'internal', deliberately a tier ABOVE the flag beside it: programLeadMentor
+  /// holds their_program_participants:personal, so a 'personal' field here would
+  /// tell a program volunteer that this family asked for a fee waiver. That a
+  /// request exists is already visible to them; which door it knocked on is
+  /// board/finance-confidential, same as the request route's own gate.
+  /// @sensitivity:internal
+  scholarshipRequestKind ScholarshipRequestKind?
   /// Same tier as paymentPlanDeniedAt — workflow timestamps lead mentors need.
   /// @sensitivity:personal
   pendingSince         DateTime?                @default(now())
@@ -1071,8 +1187,8 @@ model ProgramParticipant {
   /// scholarship application takes a seat out of Shopify's pool (-1). Cleared
   /// back to null exactly once, by whichever fires first: withdrawal, a
   /// normal payment (webhook compensates the sale's auto-decrement), or
-  /// grace-period expiry (cron) — or consumed permanently by approval (no
-  /// +1). NOT NULL is the transactional guard every release path checks
+  /// grace-period expiry (cron) — or consumed by approval, which moves it to
+  /// seatTakenWithoutSaleAt. NOT NULL is the transactional guard every release path checks
   /// before adjusting Shopify.
   /// @sensitivity:internal
   inventoryHeldAt      DateTime?
@@ -1088,6 +1204,15 @@ model ProgramParticipant {
   /// on that order back to the enrollment (mirror shop_order.legacyId ↔ this).
   /// @sensitivity:internal
   shopifyOrderId       String?
+  /// Stamped when this place took its seat out of Shopify without a sale: a
+  /// confirmed admin comp whose -1 succeeded, or approval of a request whose
+  /// hold was really taken. Withdrawal returns the seat (+1) only when set.
+  /// @sensitivity:internal
+  seatTakenWithoutSaleAt DateTime?
+  /// When the person withdrew: set with status WITHDRAWN, null otherwise.
+  /// Same tier as pendingSince — a workflow timestamp lead mentors need.
+  /// @sensitivity:personal
+  endedAt              DateTime?
 
   program Program     @relation(fields: [programId], references: [id])
   person  Person @relation(fields: [personId], references: [id])
@@ -1151,8 +1276,13 @@ model RSVP {
 model RawBadgeLog {
   /// @sensitivity:internal
   id            Int      @id @default(autoincrement())
+  /// Null only for a dead-lettered kiosk read that names no person (an
+  /// unreadable or unknown badge number); `scannedValue` then holds what was read.
   /// @sensitivity:internal
-  personId Int
+  personId Int?
+  /// The raw badge value the kiosk read, kept when it resolves to no person.
+  /// @sensitivity:internal
+  scannedValue  String?
   /// @sensitivity:personal
   timestamp     DateTime @default(now())
   /// @sensitivity:personal
@@ -1171,7 +1301,7 @@ model RawBadgeLog {
   /// nothing this reads. @sensitivity:internal
   reviewedBy    Int?
 
-  person Person @relation(fields: [personId], references: [id])
+  person Person? @relation(fields: [personId], references: [id], onDelete: Restrict)
 
   @@index([personId, timestamp]) // Double-badge detection in /api/scan
 }
@@ -1231,6 +1361,11 @@ model Visit {
   arrivedVia        VisitSource?
   /// @sensitivity:public
   departedVia       VisitSource?
+  /// For a SCANNER arrival: true = live badge scan at the door (the server
+  /// stamped arrivedAt), false = replayed/queued scan (arrivedAt is the scan
+  /// time). Null = not a scan, or a row older than the column.
+  /// @sensitivity:public
+  arrivedLive       Boolean?
   /// @sensitivity:public
   associatedEventId Int?
 
@@ -1252,6 +1387,10 @@ model Visit {
   /// is by issuance, not elapsed time, so a confirm queued through an outage
   /// still closes when it lands (§5.23a). @sensitivity:internal
   forceCloseToken   String?
+  /// Who was shown the web close choice the token answers; a web confirm from
+  /// anyone else fails as if the token did not match. Null for a kiosk token.
+  /// @sensitivity:internal
+  forceCloseActorId Int?
 
   /// When the kiosk last showed this person the "the room drops below two
   /// supervising adults" warning (#1436). Its own stamp, not forceCloseWarnedAt:
@@ -1260,15 +1399,71 @@ model Visit {
   /// @sensitivity:internal
   supervisionWarnedAt DateTime?
 
-  person Person @relation(fields: [personId], references: [id])
-  event  Event?      @relation(fields: [associatedEventId], references: [id])
+  /// The facility close that stamped this visit's departure; null when no close did.
+  /// @sensitivity:internal
+  facilityCloseId   Int?
+
+  person        Person         @relation(fields: [personId], references: [id])
+  event         Event?         @relation(fields: [associatedEventId], references: [id])
+  facilityClose FacilityClose? @relation(fields: [facilityCloseId], references: [id], onDelete: Restrict)
 
   @@index([personId, departedAt]) // Active visits lookup in /api/scan
+  @@index([facilityCloseId])
   // Partial unique index "Visit_one_open_per_participant" — at most one open,
   // live visit (departedAt IS NULL AND deletedAt IS NULL) per participant.
   // Prisma's DSL can't express a partial unique index, so it lives in raw SQL
   // (recreated in 20260726120000_visit_tombstone). DB-level backstop against
   // double check-in races.
+}
+
+/// Which path closed the facility.
+enum FacilityCloseVia {
+  KIOSK
+  KIOSK_OFFLINE
+  WEB_CHECKOUT
+  WEB_DASHBOARD
+  WEB_CORRECTION
+  WEB_REMOVAL
+  NIGHTLY_SWEEP
+}
+
+/// One facility close: the moment every open visit was departed at once. Each
+/// departure it sets carries `Visit.facilityCloseId` and an AuditLog row with
+/// the before and after. An audit record — never deleted.
+model FacilityClose {
+  /// @sensitivity:internal
+  id         Int              @id @default(autoincrement())
+  /// The departure time the close stamps.
+  /// @sensitivity:internal
+  closedAt   DateTime
+  /// The person who closed. Null on a NIGHTLY_SWEEP close, which no person
+  /// made, and on any close whose person row was later deleted.
+  /// @sensitivity:internal
+  closedById Int?
+  /// @sensitivity:internal
+  via        FacilityCloseVia
+  /// The closer's own visit, whose departure is the close: correcting it to an
+  /// earlier time moves the close. Null when the closer had no visit of their own.
+  /// @sensitivity:internal
+  closerVisitId Int?
+  /// When the server recorded it; differs from closedAt on a late or offline close.
+  /// @sensitivity:internal
+  createdAt  DateTime         @default(now())
+  /// The kiosk scan that asked for this close. Null on a web or nightly close.
+  /// @sensitivity:internal
+  clientEventId String?       @unique
+  /// When the sweep ran. Null while the close is recorded but not yet carried
+  /// out; any such row is executed by the next re-drive (lib/attendance/close.ts).
+  /// The default marks a row written by code that sweeps as it records.
+  /// @sensitivity:internal
+  executedAt DateTime?        @default(now())
+
+  closedBy Person? @relation(fields: [closedById], references: [id], onDelete: SetNull)
+  visits   Visit[]
+
+  @@index([closedById])
+  @@index([closerVisitId])
+  @@index([executedAt])
 }
 
 model AuditLog {
@@ -1549,6 +1744,18 @@ enum PaymentExceptionKind {
   // (deleted in Shopify, or a mirror low-water/backfill gap). Distinct from
   // ACTIVE_WITHOUT_PAYMENT: a payment IS on record here, it just can't be verified.
   PAYMENT_UNVERIFIABLE
+  // Something reached a DENIED household after the deny (a payment, an approval,
+  // an application start). Nothing changed; the board decides.
+  DENIED_HOUSEHOLD_ACTIVITY
+  // A paid program order buys a seat for a person already enrolled — paid on
+  // another order, comped, or approved. Raised for review, never blocked.
+  DUPLICATE_PAYMENT
+  // A paid program order buys seats no pending enrollment uses (withdrawn,
+  // expired, or extra quantity). Inventory is left for the board to settle.
+  UNCLAIMED_SEATS
+  // A paid program order names children from more than one household. One order
+  // pays for one household, so nobody is activated; the board decides.
+  MIXED_HOUSEHOLDS
 }
 
 enum PaymentExceptionSeverity {
@@ -1592,9 +1799,13 @@ model PaymentException {
   /// @sensitivity:internal
   detectedAt           DateTime                 @default(now())
 
-  // Idempotent re-detection: one open row per (kind, order) across daily runs —
-  // the reconciler upserts on this key instead of duplicating each run.
-  @@unique([kind, shopifyOrderId])
+  // Idempotent re-detection: one row per (kind, order, person), so every person on
+  // a multi-person order gets their own row. Two partial unique indexes in raw SQL
+  // (20261012190000_payment_exception_per_person), since Prisma's DSL can't express
+  // them: "PaymentException_kind_order_no_person_key" on (kind, shopifyOrderId)
+  // WHERE personId IS NULL, and "PaymentException_kind_order_person_key" on
+  // (kind, shopifyOrderId, personId) WHERE personId IS NOT NULL. Not NULLS NOT
+  // DISTINCT: rows with no order must stay distinct per process/enrollment.
   @@index([status, severity])
 }
 
@@ -1652,4 +1863,45 @@ model BulkSendItem {
   error      String?
 
   @@index([bulkSendId, status])
+}
+
+/// Organization registry: one row per org (today only the Treehouse row, which
+/// the migration inserts). checkin-app injects org identity into each Inventory
+/// library; no library reads this table directly.
+model Org {
+  /// Stable well-known id, stamped as org_id on catalog rows.
+  /// @sensitivity:public
+  id   String @id
+  /// @sensitivity:public
+  name String
+}
+
+/// An accounting bucket that expense lines and bulk-donation gifts are owned by
+/// (#1280 §6). Not a Person. Approvers are derived, never stored: a program
+/// bucket's are that program's leader and treasurers (ProgramVolunteer
+/// .isTreasurer); an org-level bucket (no program — Facility is one of several)
+/// has none, because finance assigning an item to it is the approval.
+/// Buckets are archived, never deleted — libraries hold `id` as an opaque
+/// cross-database owner id, so a deleted row would orphan their references.
+/// Finance structure — all internal.
+model BudgetOwner {
+  /// @sensitivity:internal
+  id                   Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  name                 String
+  /// Null for an org-level bucket.
+  /// @sensitivity:internal
+  programId            Int?
+  /// @sensitivity:internal
+  archivedAt           DateTime?
+  /// The QuickBooks Online id of the Class this bucket is (external id, not a
+  /// checkin FK). Null until QuickBooks sync links it; one bucket per Class.
+  /// @sensitivity:internal
+  quickBooksClassId    String?   @unique
+
+  // Restrict: a program with a bucket is not deleted out from under it, and
+  // SetNull would silently turn a program bucket into an org-level one.
+  program Program? @relation(fields: [programId], references: [id], onDelete: Restrict)
+
+  @@index([programId])
 }

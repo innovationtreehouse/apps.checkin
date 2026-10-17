@@ -18,8 +18,8 @@ export function createCatalogRepository(db: PrismaClient) {
     findCategoryByLetter: (letter: string) =>
       db.category.findFirst({ where: { letter } }),
 
-    findActiveCategoryByLetter: (letter: string) =>
-      db.category.findFirst({ where: { letter, archivedAt: null } }),
+    findCategoryByLetterExcluding: (letter: string, excludeId: number) =>
+      db.category.findFirst({ where: { letter, id: { not: excludeId } } }),
 
     findActiveCategoryByName: (name: string) =>
       db.category.findFirst({ where: { name, archivedAt: null } }),
@@ -96,6 +96,17 @@ export function createCatalogRepository(db: PrismaClient) {
     findItemByName: (name: string) =>
       db.item.findFirst({ where: { name, archivedAt: null } }),
 
+    searchItemsActive: (query: string, take: number) =>
+      db.item.findMany({
+        where: {
+          archivedAt: null,
+          OR: [{ name: { contains: query, mode: "insensitive" } }, { gtin13: { contains: query } }],
+        },
+        select: { gtin13: true, name: true },
+        orderBy: { name: "asc" },
+        take,
+      }),
+
     findItemByNameExcluding: (name: string, excludeGtin13: string) =>
       db.item.findFirst({ where: { name, archivedAt: null, gtin13: { not: excludeGtin13 } } }),
 
@@ -117,6 +128,10 @@ export function createCatalogRepository(db: PrismaClient) {
     listAllItemsFlat: () =>
       db.item.findMany({ where: { archivedAt: null }, include: ITEM_INCLUDE, orderBy: { name: "asc" } }),
 
+    // One page of items. The matching total is served separately (countItems) via
+    // the count route, so the list itself never over-counts — a table-wide total
+    // can't ride checkin's model-bag response (the stripper drops non-model
+    // scalars, #1286 §7), so the paginated UI reads the count endpoint for it.
     async listItemsPaginated(params: {
       where: Prisma.ItemWhereInput;
       orderBy: Prisma.ItemOrderByWithRelationInput[];
@@ -124,18 +139,18 @@ export function createCatalogRepository(db: PrismaClient) {
       limit: number;
     }) {
       const { where, orderBy, page, limit } = params;
-      const [total, rows] = await Promise.all([
-        db.item.count({ where }),
-        db.item.findMany({
-          where,
-          include: ITEM_INCLUDE,
-          orderBy,
-          take: limit,
-          skip: (page - 1) * limit,
-        }),
-      ]);
-      return { total, rows };
+      const rows = await db.item.findMany({
+        where,
+        include: ITEM_INCLUDE,
+        orderBy,
+        take: limit,
+        skip: (page - 1) * limit,
+      });
+      return { rows };
     },
+
+    /** Count items matching the same filter the list uses (drives page count). */
+    countItems: (where: Prisma.ItemWhereInput) => db.item.count({ where }),
 
     aggregateItemMaxSequence: (categoryId: number, subcategoryId: number) =>
       db.item.aggregate({

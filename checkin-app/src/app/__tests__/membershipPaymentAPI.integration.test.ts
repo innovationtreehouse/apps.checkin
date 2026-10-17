@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Integration tests for the payment phase: dues, the Shopify checkout link
+ * Integration tests for the payment phase: membership fee, the Shopify checkout link
  * (with the volunteer discount code), the orders/paid webhook -> activate(),
  * and the board certify override.
  */
@@ -14,6 +14,7 @@ import { POST as CERTIFY } from '@/app/api/membership-ops/applications/certify-p
 import { GET as PAYMENT } from '@/app/api/membership/payment/route';
 import { ensurePaymentLink, ensurePaymentLinkForUser, activate } from '@/lib/membership/payment';
 import prisma from '@/lib/prisma';
+import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import { sendEmail } from '@/lib/email';
 
@@ -36,11 +37,11 @@ function asUser(id: number) {
     (getServerSession as jest.Mock).mockResolvedValue({ user: { id, isSysadmin: false, isBoardMember: false } });
 }
 function shopifyReq(payload: unknown, secret: string) {
-    const raw = JSON.stringify(payload);
+    const raw = JSON.stringify({ financial_status: 'paid', ...(payload as object) });
     const sig = crypto.createHmac('sha256', secret).update(raw, 'utf8').digest('base64');
     return new Request('http://localhost:4000/api/webhooks/shopify', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-shopify-hmac-sha256': sig },
+        headers: { 'content-type': 'application/json', 'x-shopify-topic': 'orders/paid', 'x-shopify-hmac-sha256': sig },
         body: raw,
     });
 }
@@ -49,11 +50,11 @@ describe('Membership payment API', () => {
     let leadId: number;
     let normalProc: number, normalMembership: number;
     let volProc: number;
-    let certProc: number;
+    let certProc: number, boardId: number;
     let gateProc: number, gateLeadId: number, gateNonLeadId: number;
     const prevWebhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET;
     const prevStoreDomain = process.env.SHOPIFY_STORE_DOMAIN;
-    let prevSettings: { standardMembershipFeeCents: number; volunteerMembershipFeeCents: number; orgMembershipVariantId: string | null; volunteerDiscountCode: string | null } | null = null;
+    let restoreBoardSettings: () => Promise<void> = async () => {};
 
     async function makeProc(label: string, isVolunteer: boolean, withLead = false) {
         const hh = await prisma.household.create({ data: { name: `${label} ${TAG}` } });
@@ -85,8 +86,7 @@ describe('Membership payment API', () => {
     beforeAll(async () => {
         process.env.SHOPIFY_WEBHOOK_SECRET = WEBHOOK_SECRET;
         process.env.SHOPIFY_STORE_DOMAIN = STORE_DOMAIN;
-        const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevSettings = existing ? { standardMembershipFeeCents: existing.standardMembershipFeeCents, volunteerMembershipFeeCents: existing.volunteerMembershipFeeCents, orgMembershipVariantId: existing.orgMembershipVariantId, volunteerDiscountCode: existing.volunteerDiscountCode } : null;
+        restoreBoardSettings = await snapshotBoardSettings();
         const settingsData = {
             standardMembershipFeeCents: 10000,
             volunteerMembershipFeeCents: 2500,
@@ -105,6 +105,8 @@ describe('Membership payment API', () => {
         normalMembership = normal.orgMembershipId;
         volProc = (await makeProc('Vol', true)).processId;
         certProc = (await makeProc('Cert', false)).processId;
+        // Only a Board member certifies a payment (certifyPaymentPlan reads the DB flag).
+        boardId = (await prisma.person.create({ data: { email: `board-${TAG}@example.com`, name: 'Board', isBoardMember: true, household: { create: { name: `Board ${TAG}` } } } })).id;
 
         // A household awaiting payment with both a lead and a non-lead member, for
         // the GET /api/membership/payment lead gate below.
@@ -119,7 +121,7 @@ describe('Membership payment API', () => {
 
     afterAll(async () => {
         await wipe();
-        if (prevSettings) await prisma.boardSettings.update({ where: { id: 1 }, data: prevSettings });
+        await restoreBoardSettings();
         if (prevWebhookSecret === undefined) delete process.env.SHOPIFY_WEBHOOK_SECRET;
         else process.env.SHOPIFY_WEBHOOK_SECRET = prevWebhookSecret;
         if (prevStoreDomain === undefined) delete process.env.SHOPIFY_STORE_DOMAIN;
@@ -145,10 +147,10 @@ describe('Membership payment API', () => {
         expect(res.amountCents).toBe(10000);
     });
 
-    // ── GET /api/membership/payment: dues + checkout are lead-only ────────────
+    // ── GET /api/membership/payment: membership fee + checkout are lead-only ────
     const paymentReq = () => new Request('http://localhost:4000/api/membership/payment') as never;
 
-    it('serves the dues amount and checkout link to a household lead', async () => {
+    it('serves the membership fee amount and checkout link to a household lead', async () => {
         asUser(gateLeadId);
         const res = await PAYMENT(paymentReq());
         expect(res.status).toBe(200);
@@ -157,7 +159,7 @@ describe('Membership payment API', () => {
         expect(body.checkoutUrl).toContain(`attributes[Membership_Process_ID]=${gateProc}`);
     });
 
-    it('refuses a non-lead household member (no dues, no checkout link)', async () => {
+    it('refuses a non-lead household member (no membership fee, no checkout link)', async () => {
         asUser(gateNonLeadId);
         const res = await PAYMENT(paymentReq());
         expect(res.status).toBe(403);
@@ -210,22 +212,22 @@ describe('Membership payment API', () => {
     });
 
     it('board certify-payment activates without a Shopify payment', async () => {
-        asBoard(leadId); // leadId is fine as an actor id; role mocked as board
+        asBoard(boardId);
         const res = await CERTIFY(new Request('http://localhost:4000/x', { method: 'POST', body: JSON.stringify({ processId: certProc, reason: 'Paid by check, deposited manually' }) }) as never);
         expect(res.status).toBe(200);
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: certProc } });
         expect(proc?.status).toBe('ACTIVE');
-        expect(proc?.manualPaymentById).toBe(leadId);
+        expect(proc?.manualPaymentById).toBe(boardId);
         expect(proc?.certificationNote).toBe('Paid by check, deposited manually');
 
         // The audit row records WHO recorded the payment — the acting board member, not SYSTEM_ACTOR.
         const audit = await prisma.auditLog.findFirst({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: certProc }, orderBy: { id: 'desc' } });
-        expect(audit?.actorId).toBe(leadId);
+        expect(audit?.actorId).toBe(boardId);
         expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'ACTIVE', certificationNote: 'Paid by check, deposited manually' });
     });
 
     it('certify without a reason is rejected (400), no state change', async () => {
-        asBoard(leadId);
+        asBoard(boardId);
         const fresh = await makeProc('CertNoReason', false);
         const res = await CERTIFY(new Request('http://localhost:4000/x', { method: 'POST', body: JSON.stringify({ processId: fresh.processId }) }) as never);
         expect(res.status).toBe(400);
@@ -238,7 +240,7 @@ describe('Membership payment API', () => {
     });
 
     it('certify on a non-PENDING_PAYMENT process is rejected (409 wrong_phase, no state change)', async () => {
-        asBoard(leadId);
+        asBoard(boardId);
         const bg = await makeProc('Bg', false);
         await prisma.orgMembershipProcess.update({ where: { id: bg.processId }, data: { status: 'PENDING_BG_REVIEW' } });
 
@@ -255,7 +257,7 @@ describe('Membership payment API', () => {
     });
 
     it('certify on a non-existent process returns 404', async () => {
-        asBoard(leadId);
+        asBoard(boardId);
         const res = await CERTIFY(new Request('http://localhost:4000/x', { method: 'POST', body: JSON.stringify({ processId: 999999999, reason: 'Board approved' }) }) as never);
         expect(res.status).toBe(404);
         expect((await res.json()).code).toBe('not_found');

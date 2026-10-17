@@ -6,7 +6,12 @@
  */
 import type { Person } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
-import { processCheckin, processCheckout } from "@/lib/scan-service";
+import { processCheckin, processCheckout, type ScanOutcome } from "@/lib/attendance/scan";
+import { toResponse } from "@/app/api/scan/scanResponse";
+
+/** A scan service's outcome as the kiosk receives it. */
+const wire = async (outcome: Promise<ScanOutcome>) => toResponse(await outcome, { signedRequest: true });
+
 
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("@/lib/notifications", () => ({
@@ -37,6 +42,7 @@ function fakeDb() {
         $executeRaw: jest.fn().mockResolvedValue(0),
         boardSettings: { findUnique: jest.fn().mockResolvedValue({ orgMembershipYearBoundary: null, bgRecheckMonths: 0 }) },
         visit: {
+            findFirst: jest.fn().mockResolvedValue(null),
             count: jest.fn().mockResolvedValue(1),
             findMany: jest.fn().mockResolvedValue([]),
             findUnique: jest.fn().mockResolvedValue({ supervisionWarnedAt: null }),
@@ -47,7 +53,7 @@ function fakeDb() {
 }
 
 const checkin = async (over: Partial<Person>) =>
-    (await processCheckin(person(over), "kiosk", fakeDb())).json();
+    (await wire(processCheckin(person(over), "kiosk", fakeDb()))).json();
 
 describe("the scan response's participant", () => {
     it("carries the nickname the person goes by", async () => {
@@ -73,7 +79,7 @@ describe("the scan response's participant", () => {
     });
 
     it("is the same DTO on the way out", async () => {
-        const res = await processCheckout(person({ nickname: "Bo" }), 42, "kiosk", fakeDb());
+        const res = await wire(processCheckout(person({ nickname: "Bo" }), 42, "kiosk", fakeDb()));
         const body = await res.json();
         expect(body.participant).toEqual({ id: 1, name: "Bo" });
         expect(JSON.stringify(body)).not.toContain("@example.com");

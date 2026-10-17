@@ -37,7 +37,7 @@ const households = [
 describe("safety/emergency-contacts page", () => {
   it("loads and renders households, pinning present ones first", async () => {
     setSession({ id: 1, isSysadmin: true });
-    mockFetchJson({ "/api/safety/emergency-contacts": { households } });
+    mockFetchJson({ "/api/safety/emergency-contacts": { households, building: { reachable: true, lastSeenAt: null } } });
     renderWithProviders(<EmergencyContactsPage />);
 
     expect(await screen.findByText("Keyholder House")).toBeInTheDocument();
@@ -48,6 +48,15 @@ describe("safety/emergency-contacts page", () => {
     expect(screen.getByText("Gary Guardian (Uncle)")).toBeInTheDocument();
     expect(screen.getByText("No designated leads found.")).toBeInTheDocument();
     expect(screen.getByText("Not Configured")).toBeInTheDocument();
+  });
+
+  it("labels presence unconfirmed when the kiosk is unreachable", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/safety/emergency-contacts": { households, building: { reachable: false, lastSeenAt: null } } });
+    renderWithProviders(<EmergencyContactsPage />);
+
+    expect(await screen.findByText("Checked in (unconfirmed)")).toBeInTheDocument();
+    expect(screen.queryByText("Present Now")).not.toBeInTheDocument();
   });
 
   it("filters households by search query", async () => {

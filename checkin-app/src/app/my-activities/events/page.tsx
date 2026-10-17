@@ -52,20 +52,21 @@ export default function ParticipantEventsDashboard() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
-  const fetchEvents = useCallback(async () => {
-    try {
-      const res = await fetch('/api/events/mine');
+  const fetchEvents = useCallback(() => fetch('/api/events/mine')
+    .then(async (res) => {
       if (res.ok) {
         setEvents(await res.json());
       } else {
         setMessage("Failed to load your events.");
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (status === "unauthenticated") {

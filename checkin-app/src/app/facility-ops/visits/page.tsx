@@ -13,7 +13,7 @@ import { useOrgTime } from '@/components/TimezoneProvider';
 import { MAX_VISIT_MS } from '@/lib/visitTimes';
 
 import { PageLoader } from "@/components/ui/PageLoader";
-type VisitSource = 'SCANNER' | 'WEB' | 'TYPED' | 'LEAD_MARKED' | 'FACILITY_CLOSE' | 'AUTO_CLOSE' | 'SYSTEM';
+type VisitSource = 'SCANNER' | 'WEB' | 'TYPED' | 'LEAD_MARKED' | 'FACILITY_CLOSE' | 'AUTO_CLOSE';
 
 type Visit = {
   id: number;
@@ -32,7 +32,6 @@ const SOURCE_META: Record<VisitSource, { Icon: typeof IconScan; label: string }>
   LEAD_MARKED: { Icon: IconUserCheck, label: 'Marked present by staff (event window, not measured)' },
   FACILITY_CLOSE: { Icon: IconLock, label: 'Building closed (stamped at the close moment)' },
   AUTO_CLOSE: { Icon: IconRobot, label: 'Nightly sweep (stamped at cron-run time — likely late)' },
-  SYSTEM: { Icon: IconRobot, label: 'Automated, pre-split (facility close or nightly — indistinguishable)' },
 };
 
 const SourceIcon = ({ via }: { via?: VisitSource | null }) => {
@@ -68,6 +67,23 @@ const sortValue = (v: Visit, key: SortKey): string | number => {
   }
 };
 
+type SortState = { key: SortKey; dir: 'asc' | 'desc' };
+
+const SortableTh = ({ k, label, sort, onSort }: { k: SortKey; label: string; sort: SortState; onSort: (key: SortKey) => void }) => {
+  const active = sort.key === k;
+  const Icon = !active ? IconSelector : sort.dir === 'asc' ? IconChevronUp : IconChevronDown;
+  return (
+    <Table.Th>
+      <UnstyledButton onClick={() => onSort(k)} style={{ font: 'inherit' }}>
+        <Group gap={4} wrap="nowrap">
+          <span>{label}</span>
+          <Icon size={14} stroke={1.5} />
+        </Group>
+      </UnstyledButton>
+    </Table.Th>
+  );
+};
+
 export default function AdminVisitsPage() {
   const { formatDateTime } = useOrgTime();
   const { ready, loading: authLoading } = useRequireRole(FACILITY_RECORD_ROLES);
@@ -91,7 +107,7 @@ export default function AdminVisitsPage() {
   const [addError, setAddError] = useState('');
   const [adding, setAdding] = useState(false);
 
-  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'arrivedAt', dir: 'desc' });
+  const [sort, setSort] = useState<SortState>({ key: 'arrivedAt', dir: 'desc' });
   const [searchTerm, setSearchTerm] = useState('');
   const [confirmEditOpened, { open: openConfirmEdit, close: closeConfirmEdit }] = useDisclosure(false);
   const [pendingEditVisit, setPendingEditVisit] = useState<Visit | null>(null);
@@ -118,36 +134,22 @@ export default function AdminVisitsPage() {
   const toggleSort = (key: SortKey) =>
     setSort((s) => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
 
-  const SortableTh = ({ k, label }: { k: SortKey; label: string }) => {
-    const active = sort.key === k;
-    const Icon = !active ? IconSelector : sort.dir === 'asc' ? IconChevronUp : IconChevronDown;
-    return (
-      <Table.Th>
-        <UnstyledButton onClick={() => toggleSort(k)} style={{ font: 'inherit' }}>
-          <Group gap={4} wrap="nowrap">
-            <span>{label}</span>
-            <Icon size={14} stroke={1.5} />
-          </Group>
-        </UnstyledButton>
-      </Table.Th>
-    );
-  };
-
-  const fetchVisits = useCallback(async () => {
-    try {
-      const res = await fetch('/api/facility/visits');
+  const fetchVisits = useCallback(() => fetch('/api/facility/visits')
+    .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
         setVisits(data.visits);
       } else {
         setMessage({ text: "Failed to load visits.", tone: "error" });
       }
-    } catch {
+    })
+    .catch(() => {
       notifications.show({ color: "red", message: "Network error loading visits.", autoClose: false });
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }),
+  []);
 
   useEffect(() => {
     if (ready) fetchVisits();
@@ -309,11 +311,11 @@ export default function AdminVisitsPage() {
         <Table verticalSpacing="sm" highlightOnHover>
           <Table.Thead>
             <Table.Tr>
-              <SortableTh k="id" label="ID" />
-              <SortableTh k="participant" label="Participant" />
-              <SortableTh k="event" label="Event" />
-              <SortableTh k="arrivedAt" label="Arrived" />
-              <SortableTh k="departedAt" label="Departed" />
+              <SortableTh sort={sort} onSort={toggleSort} k="id" label="ID" />
+              <SortableTh sort={sort} onSort={toggleSort} k="participant" label="Participant" />
+              <SortableTh sort={sort} onSort={toggleSort} k="event" label="Event" />
+              <SortableTh sort={sort} onSort={toggleSort} k="arrivedAt" label="Arrived" />
+              <SortableTh sort={sort} onSort={toggleSort} k="departedAt" label="Departed" />
               <Table.Th>Actions</Table.Th>
             </Table.Tr>
           </Table.Thead>

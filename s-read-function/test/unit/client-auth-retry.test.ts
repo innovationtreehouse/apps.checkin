@@ -11,9 +11,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createShopifyClient, REQUEST_TIMEOUT_MS } from "../../src/shopify/client.js";
 import { resetShopifyTokenCache } from "../../src/shopify/token.js";
-import type { ShopifyConfig } from "@inventory/s-ingest-core";
+import type { ShopifyConfig } from "@checkin/s-ingest-core";
 
-vi.mock("@inventory/s-ingest-core", () => ({
+vi.mock("@checkin/s-ingest-core", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 

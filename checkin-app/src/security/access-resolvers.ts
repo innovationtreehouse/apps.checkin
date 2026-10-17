@@ -13,13 +13,15 @@
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
+import crypto from 'crypto';
 import prisma from '@/lib/prisma';
 import { config, isStagingAccessAllowed } from '@/lib/config';
 import { householdLeadship } from '@/lib/household/leads';
 import type { AuthResult } from '@/types/auth';
-import type { Authorize, CtxNeeds, Role } from './core';
+import { CRON_SECRET_ENV, type Authorize, type CronSecretName, type CtxNeeds, type Role } from './core';
 import { LIVE_PERSON } from '@/lib/person/filters';
 import { LIVE_VISIT } from '@/lib/visit/filters';
+import { canSeeCatalog, isTreehouseVolunteer } from '@/lib/volunteer';
 
 export interface CallerContext {
     selfId?: number;
@@ -72,7 +74,9 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
         ledHouseholdMemberIds: new Set(),
     };
 
-    if (auth.type !== 'session') return ctx;
+    // Prisma drops an undefined `where` value, so an id-less session would match every
+    // program below; it gets the empty context instead.
+    if (auth.type !== 'session' || typeof auth.user.id !== 'number') return ctx;
 
     ctx.selfId = auth.user.id;
     ctx.householdId = auth.user.householdId;
@@ -165,16 +169,12 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
 }
 
 /**
- * Per-row scope resolver. The imperative `switch (modelName)` that used to live
- * here is now a declarative `SCOPE_BINDINGS` table interpreted by one engine
- * (scopes.ts), so the bindings can be checked in CI (field typos, forgotten
- * models, route-grant seam). Behavior is identical — proved by the S1
- * equivalence test (tests/security/scopeBindingsEquivalence.test.ts) which
- * asserted set-equality with the old switch across every persona × model × row
- * before this swap. Re-exported here so existing call sites
- * (`import { scopesHeld } from './access-resolvers'`) are unchanged.
+ * Per-row scope resolver: the declarative `SCOPE_BINDINGS` table interpreted by
+ * one engine (scopes.ts), so the bindings can be checked in CI (field typos,
+ * forgotten models, route-grant seam). Re-exported here so call sites can
+ * `import { scopesHeld } from './access-resolvers'`.
  *
- * The old `ROW_SCOPE_KEY` fail-closed map moved to scopeBindings.ts (it gates
+ * The `ROW_SCOPE_KEY` fail-closed map lives in scopeBindings.ts (it gates
  * EmergencyContact: a key-less row yields NO scopes, not even `everyones`).
  */
 export { scopesHeld } from './scopeBindings';
@@ -187,12 +187,28 @@ function isCertifier(auth: AuthResult): boolean {
     );
 }
 
+/**
+ * A session without a positive integer id (its sign-in or re-sync resolved no
+ * live Person) is unauthenticated: it admits only on `public` and selects only
+ * the `anyone`/`unauthenticated` view, whatever role flags it carries. Handlers
+ * filter by the caller's id, and Prisma drops a `where` key whose value is
+ * `undefined`, so admitting it would widen that filter to every row.
+ * authenticateRequest already downgrades a session with no numeric id; these
+ * resolvers deny it on their own so no caller depends on that.
+ */
+function isIdlessSession(auth: AuthResult): boolean {
+    if (auth.type !== 'session') return false;
+    const { id } = auth.user;
+    return !(typeof id === 'number' && Number.isInteger(id) && id > 0);
+}
+
 export function callerHoldsRole(
     role: Role,
     auth: AuthResult,
     params: Record<string, string>,
     ctx: CallerContext,
 ): boolean {
+    if (isIdlessSession(auth)) return role === 'anyone' || role === 'unauthenticated';
     switch (role) {
         case 'anyone':
             return true;
@@ -214,6 +230,8 @@ export function callerHoldsRole(
             return auth.type === 'session' && auth.user.isOperations;
         case 'isInventoryManager':
             return auth.type === 'session' && auth.user.isInventoryManager === true;
+        case 'isFinance':
+            return auth.type === 'session' && auth.user.isFinance === true;
         case 'certifier':
             return isCertifier(auth);
         case 'householdLead':
@@ -233,6 +251,21 @@ export interface ResolverContext {
     auth: AuthResult;
     params: Record<string, string>;
     callerContext: CallerContext;
+    /** The request's Authorization header; only `cronSecret` routes read it. */
+    authorization?: string | null;
+}
+
+/**
+ * `Authorization: Bearer <secret>` against the named secret's env var. Unset or
+ * empty fails closed. Both sides are hashed first so the compare is fixed-length
+ * and timing-safe without leaking the secret's length.
+ */
+function cronSecretMatches(name: CronSecretName, authorization: string | null | undefined): boolean {
+    const secret = process.env[CRON_SECRET_ENV[name]];
+    if (!secret || !authorization) return false;
+    const provided = crypto.createHash('sha256').update(authorization).digest();
+    const expected = crypto.createHash('sha256').update(`Bearer ${secret}`).digest();
+    return crypto.timingSafeEqual(provided, expected);
 }
 
 /**
@@ -259,12 +292,20 @@ export async function resolveAccess(
 ): Promise<{ allowed: boolean }> {
     const { auth, params, callerContext } = ctx;
 
+    // A machine caller: the secret alone decides, ahead of the staging gate,
+    // which keys on human session claims a scheduled job never has.
+    if (typeof authorize === 'object' && 'cronSecret' in authorize) {
+        return { allowed: cronSecretMatches(authorize.cronSecret, ctx.authorization) };
+    }
+
     if (config.isStaging()) {
         const claims = auth.type === 'session' ? auth.user : null;
         if (!isStagingAccessAllowed(claims)) {
             return { allowed: false };
         }
     }
+
+    if (isIdlessSession(auth)) return { allowed: authorize === 'public' };
 
     const isAdmin = auth.type === 'session' && (auth.user.isSysadmin || auth.user.isBoardMember);
 
@@ -286,36 +327,50 @@ export async function resolveAccess(
             }
             case 'kiosk':
                 return { allowed: auth.type === 'kiosk' };
-            case 'catalog-viewer': {
-                // #1286 §6: read admission for the global catalog. Any staff
-                // relationship suffices — role flag, program leadership, or a
-                // volunteer designation — because the catalog is non-pii
-                // reference data (writes stay INVENTORY_MANAGER-only).
-                if (auth.type !== 'session') return { allowed: false };
-                const u = auth.user;
-                if (
-                    u.isSysadmin || u.isBoardMember || u.isKeyholder ||
-                    u.isBackgroundCheckReviewer || u.isOperations || u.isInventoryManager
-                ) {
-                    return { allowed: true };
-                }
-                if ((u.programsLed?.length ?? 0) > 0) return { allowed: true };
-                // ponytail: inline admission lookup — promote to CallerContext if
-                // a per-row catalog use appears. The session carries no volunteer
-                // flag, so this one leg needs a DB read (email is @unique).
-                if (u.email) {
-                    const designation = await prisma.volunteerDesignation.findFirst({
-                        where: { email: u.email },
-                        select: { id: true },
-                    });
-                    if (designation) return { allowed: true };
-                }
-                return { allowed: false };
-            }
+            case 'catalog-viewer':
+                // The catalog audience (lib/volunteer.ts), read from session claims.
+                return { allowed: auth.type === 'session' && canSeeCatalog(auth.user) };
+            case 'receipt-submitter':
+                // An adult in an ACTIVE-membership household, or a Treehouse Volunteer
+                // (role holder or staff account) whatever their age or membership.
+                return {
+                    allowed: auth.type === 'session' &&
+                        ((auth.user.isActiveOrgMember === true && auth.user.ageBand === 'adult') ||
+                            isTreehouseVolunteer(auth.user)),
+                };
             case 'inventory-manager':
-                // #1286 §6: catalog WRITE admission — INVENTORY_MANAGER only (a
+                // Catalog WRITE admission — INVENTORY_MANAGER only (a
                 // sysadmin grants themselves the role; no admin auto-admit here).
                 return { allowed: auth.type === 'session' && auth.user.isInventoryManager === true };
+            case 'finance':
+                // FINANCE only; sysadmins are not auto-admitted
+                // (revenue.md: Finance Ops excludes sysadmins).
+                return { allowed: auth.type === 'session' && auth.user.isFinance === true };
+            case 'finance-or-board':
+                // FINANCE or BOARD; still no sysadmin.
+                return {
+                    allowed: auth.type === 'session' &&
+                        (auth.user.isFinance === true || auth.user.isBoardMember === true),
+                };
+            case 'expense-approver': {
+                // FINANCE, BOARD, or a derived bucket approver — a
+                // program leader (on the session) or a program treasurer (one DB
+                // read; the session carries no treasurer flag). Still no sysadmin.
+                if (auth.type !== 'session') return { allowed: false };
+                const u = auth.user;
+                if (u.isFinance === true || u.isBoardMember === true) return { allowed: true };
+                if ((u.programsLed?.length ?? 0) > 0) return { allowed: true };
+                const treasurer = await prisma.programVolunteer.findFirst({
+                    where: { personId: u.id, isTreasurer: true, person: LIVE_PERSON },
+                    select: { programId: true },
+                });
+                return { allowed: treasurer !== null };
+            }
+            case 'expense-signer':
+                return {
+                    allowed: (await resolveAccess('receipt-submitter', ctx)).allowed ||
+                        (await resolveAccess('expense-approver', ctx)).allowed,
+                };
             case 'certifier':
                 // Certifiers see the shop member roster; admins always may too.
                 return { allowed: isCertifier(auth) || isAdmin };
