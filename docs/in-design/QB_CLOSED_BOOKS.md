@@ -52,7 +52,7 @@ changes or deletes anything already in QuickBooks".
 
 | Lane | Derivation | Gate | Outcome when not found and too old |
 |---|---|---|---|
-| Shared | `packages/quickbooks/src/match.ts:86` `takeoverLine()`; request field `match.ts:26-27`, checked at `:57`, decided at `:75-76` | `write.ts:8` passes it through (`:69`) | `write.ts:76-81` returns `too-old` or `no-line` |
+| Shared | `packages/quickbooks/src/match.ts:86` `takeoverLine()`; request field `match.ts:26-27`, checked at `:57`, decided at `:75-76` | `write.ts:8` passes it through (`:69`) | `write.ts:77-80` returns `too-old` or `no-line` |
 | Expense | `packages/expense/src/lib/expense-qb-poster.ts:65-75` (configured `takeoverDate` or newest hand match, whichever is later); `ExpensePosting.takeoverDate` at `src/contract.ts:240`; `qbMatchInputs` repeats it at `src/services/qbMatchService.ts:39,59` | no date → `no_takeover_date` at `expense-qb-poster.ts:253-255` and `:393-395`; line computed at `:332`, passed at `:339` | `:368-369` parks `BEFORE_LINE`; `:372` leaves it waiting |
 | Income | `packages/income/src/lib/outbox.ts:54-66` (newest hand match in the audit log) | drain `:249`, post `:162`; finance retry `src/services/reconciliationService.ts:225`; reconcile matches with no line at `src/lib/reconcile.ts:227` | `outbox.ts:207-209` leaves the payout waiting; once the match window passes, reconcile opens it as `NO_DEPOSIT` (`reconcile.ts:270-274`) |
 | Donation (Benevity) | `packages/bulk-donation/src/lib/qb-match.ts:40-46,71-77` (newest `QB_MATCHED` event) | `src/lib/qb-poster.ts:304,314` | `:340-341` parks `BEFORE_LINE`; `:342-345` leaves it waiting |
@@ -246,12 +246,28 @@ then the closed and open-period checks.
 
 ### 5. Rows already parked BEFORE_LINE
 
-Expense and donation rows in `BEFORE_LINE` are rewritten to `UNBOOKED` by a
-data migration in the same PR as the code that understands `UNBOOKED`. That is
-safe against old code during the deploy: old code never posts either state, so
-the only effect is that finance's manual match on such a row is refused for the
-minutes the old code still serves. No row is re-armed to `UNMATCHED`, because an
-old drain could then create it against the old line.
+The rename from `BEFORE_LINE` to `UNBOOKED` takes two releases, because old code
+keeps writing `BEFORE_LINE` until the rolling deploy has finished. Migrations run
+before that deploy, so a rewrite in the same release can run first, and an old
+task reached by the posting cron or a finance retry during the drain then saves
+a fresh `BEFORE_LINE` row (`qb-poster.ts:340-341`). If the new code no longer
+knew that state, the row would be out of finance's queue, unable to be matched,
+retried or posted, and nothing would report it.
+
+1. **Expand, in the lane PR.** New code treats `BEFORE_LINE` exactly as
+   `UNBOOKED`: held, listed in finance's queue, with the same actions. New code
+   writes only `UNBOOKED`. No data is rewritten.
+2. **Contract, a release after the lane PR has rolled out.** A cleanup PR
+   rewrites every `BEFORE_LINE` row to `UNBOOKED`, then drops `BEFORE_LINE` from
+   the code. By then no task running old code is left to write it.
+
+Donation needs this, since its posting is bound wherever
+`QBO_DONATION_BANK_ACCOUNT_ID` is set. Expense posting is unbound today, so old
+code cannot write `BEFORE_LINE` there, but expense follows the same two steps so
+the lanes stay alike and the safety does not depend on a deploy setting.
+
+No row is re-armed to `UNMATCHED` at any point, because an old drain could then
+create it against the old line.
 
 Income has no `BEFORE_LINE`. Its waiting payouts are sorted by the next run
 under the new rules; `NO_DEPOSIT` rows already open keep their state and gain
@@ -271,18 +287,21 @@ One kind per PR. Registry entries first, each in its own PR based on `main`.
    as `closedThrough` with `mayCreate: true` (or `mayCreate: false` when it has no
    line), and maps `closed` to today's `too-old` and `needs-finance` to today's
    `no-line`, so behaviour is unchanged.
-3. **Expense:** gate wiring, `UNBOOKED` and `SKIPPED`, the `qb-resolve` route
-   and its screen, the self-set stamp, and its migration (the switch-on
-   column and the `BEFORE_LINE` rewrite).
+3. **Expense:** gate wiring, `UNBOOKED` and `SKIPPED`, `BEFORE_LINE` read as
+   `UNBOOKED` (section 5, expand), the `qb-resolve` route and its screen, the
+   self-set stamp, and its migration (the switch-on column).
 4. **Income:** gate wiring, immediate `NO_DEPOSIT`, the "book" action, the
    late-payout path (reconcile before the stamp, no window cut-off after it),
    the self-set stamp, the NEEDS_MAPPING ordering, and its switch-on column.
 5. **Donation:** gate wiring, `UNBOOKED`, the "book" action, the self-set
-   Benevity stamp, and its migration (`DonationOrgSettings` and the
-   `BEFORE_LINE` rewrite). In-kind has no posting lane yet; its column comes
+   Benevity stamp, `BEFORE_LINE` read as `UNBOOKED` (section 5, expand), and its
+   migration (`DonationOrgSettings`). In-kind has no posting lane yet; its column comes
    with that lane (#2182).
 6. **Rules:** `revenue.md` and, if it has merged, the `principles.md` line from
    #2210.
+7. **Cleanup, a release after 3 and 5 have rolled out:** the data migration
+   that rewrites `BEFORE_LINE` to `UNBOOKED` in expense and donation, and the
+   removal of `BEFORE_LINE` from both lanes' code (section 5, contract).
 
 Each lane keeps its own Prisma schema and migrations, so each lane's migration
 ships with that lane's code.
