@@ -11,7 +11,7 @@
   "name": "security-boundary",
   "paths": [
    "checkin-app/src/security/**",
-   "scripts/migrated-routes.txt"
+   "checkin-app/scripts/migrated-routes.txt"
   ],
   "instructions": "Changes to the registry, grants, scope bindings, the stripper or a field's @sensitivity tier must ship in their own PR with no app or feature code (AGENTS.md boundary isolation rule). Flag any app code in the same PR. A new route needs its registry entry already on main. Comment-only changes must stay comment-only."
  },
@@ -41,6 +41,10 @@
   "name": "kiosk-and-scan",
   "paths": [
    "checkin-app/src/lib/attendance/**",
+   "checkin-app/src/lib/attendance*.ts",
+   "checkin-app/src/lib/scan-service.ts",
+   "checkin-app/src/lib/visit/**",
+   "checkin-app/src/lib/presence/**",
    "checkin-app/src/app/api/scan/**",
    "client/**"
   ],

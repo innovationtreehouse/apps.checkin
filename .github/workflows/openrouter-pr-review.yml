@@ -65,6 +65,7 @@ jobs:
           VERDICT: ${{ steps.review.outputs.verdict }}
           REVIEW_URL: ${{ steps.review.outputs.review_url }}
       - if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
+        continue-on-error: true
         uses: FlyOverCoderKY/openrouter-pr-review-action@f0803a825cbd65f8c27ed4d551bdfdca3c03a193 # v1.3.0
         with:
           pr_number: ${{ github.event.pull_request.number }}
