@@ -139,3 +139,9 @@ jobs:
           AI_REVIEW_CFG: ${{ steps.cfg.outputs.dir }}/.github/ai-review
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      # The steps above never fail the check, so a review that posted nothing (e.g. the runner
+      # lost api.github.com) would show green. Fail here instead so it is visible and re-runnable.
+      - if: always() && steps.route.outputs.model != '' && steps.review.outputs.verdict == '' && steps.rerun.outputs.verdict == ''
+        run: |
+          echo "::error::AI review produced no verdict; re-run this job."
+          exit 1
