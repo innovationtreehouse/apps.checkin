@@ -31,14 +31,37 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: FlyOverCoderKY/openrouter-pr-review-action@f0803a825cbd65f8c27ed4d551bdfdca3c03a193 # v1.3.0
+      # Jev Router picks the review profiles and the tier; see .github/scripts/ai-review-route.py.
+      - id: route
+        run: python3 .github/scripts/ai-review-route.py
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      - id: review
+        continue-on-error: true
+        uses: FlyOverCoderKY/openrouter-pr-review-action@f0803a825cbd65f8c27ed4d551bdfdca3c03a193 # v1.3.0
         with:
           pr_number: ${{ github.event.pull_request.number }}
-          # Review tier: reads the checkout with tools and writes the findings.
-          models: nvidia/nemotron-3.5-super-vl:free
-          # Posting tier: merges and formats the findings, then posts the review.
-          judge_model: nvidia/nemotron-3.5-lightning:free
-          judge_needed: true
+          models: ${{ steps.route.outputs.model }}
+          max_tool_turns: ${{ steps.route.outputs.max_tool_turns }}
+          max_diff_kb: ${{ steps.route.outputs.max_diff_kb }}
+          custom_instructions: ${{ steps.route.outputs.instructions }}
+          path_profiles: ${{ steps.route.outputs.path_profiles }}
+          fail_on: never
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      # A failed or partial free-tier review reruns once on GLM-5.3.
+      - if: >-
+          steps.route.outputs.tier == 'free' &&
+          (steps.review.outcome == 'failure' || contains(fromJSON('["partial","error"]'), steps.review.outputs.verdict))
+        uses: FlyOverCoderKY/openrouter-pr-review-action@f0803a825cbd65f8c27ed4d551bdfdca3c03a193 # v1.3.0
+        with:
+          pr_number: ${{ github.event.pull_request.number }}
+          models: z-ai/glm-5.3
+          max_tool_turns: 30
+          custom_instructions: ${{ steps.route.outputs.instructions }}
+          path_profiles: ${{ steps.route.outputs.path_profiles }}
           fail_on: never
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}

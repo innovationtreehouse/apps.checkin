@@ -1,0 +1,65 @@
+[
+ {
+  "name": "migrations",
+  "paths": [
+   "**/prisma/migrations/**",
+   "**/schema.prisma"
+  ],
+  "instructions": "Read checkin-app/docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md. Old tasks keep running during the deploy drain, so: new columns are nullable or defaulted; no rename or drop of anything the released code still reads (check the latest release tag, not main); no backfill in the same deploy; every new migration.sql is wrapped in BEGIN; ... COMMIT; unless it carries a '-- no-transaction: <reason>' line. Enum value removal must remap rows first."
+ },
+ {
+  "name": "security-boundary",
+  "paths": [
+   "checkin-app/src/security/**",
+   "scripts/migrated-routes.txt"
+  ],
+  "instructions": "Changes to the registry, grants, scope bindings, the stripper or a field's @sensitivity tier must ship in their own PR with no app or feature code (AGENTS.md boundary isolation rule). Flag any app code in the same PR. A new route needs its registry entry already on main. Comment-only changes must stay comment-only."
+ },
+ {
+  "name": "people-and-merge",
+  "paths": [
+   "checkin-app/src/lib/person/**",
+   "checkin-app/src/app/api/**/merge/**"
+  ],
+  "instructions": "Merged people are kept, never deleted, and drop out of every live list. Queries that list people must filter merged records (the LIVE_PERSON drift guard test). Merge-chain walks must handle cycles and gaps."
+ },
+ {
+  "name": "money",
+  "paths": [
+   "packages/expense/**",
+   "packages/income/**",
+   "packages/receipt/**",
+   "packages/bulk-donation/**",
+   "packages/quickbooks/**",
+   "checkin-app/src/lib/finance/**",
+   "docs/rules/revenue.md",
+   "docs/rules/expenses.md"
+  ],
+  "instructions": "The app never changes or deletes entries in QuickBooks; drift goes back to finance as a flag. Check amounts in integer cents, idempotency of anything a cron or webhook can repeat, and that a refund or reversal path matches docs/rules/revenue.md exactly. Who may approve or authorize is set by docs/rules; compare the code to the rule."
+ },
+ {
+  "name": "kiosk-and-scan",
+  "paths": [
+   "checkin-app/src/lib/attendance/**",
+   "checkin-app/src/app/api/scan/**",
+   "client/**"
+  ],
+  "instructions": "The Raspberry Pi kiosk parses these responses. Field names, status codes and the replay/fence behaviour must not change unless client/ changes in the same PR. Lock order is person then facility."
+ },
+ {
+  "name": "mail-intake",
+  "paths": [
+   "packages/receipt/src/services/mailIntake.ts",
+   "packages/receipt/src/lib/gmail.ts"
+  ],
+  "instructions": "Mail from untrusted senders must never be auto-assigned. Authentication-Results parsing must fail closed on anything ambiguous. Check that a flood of untrusted mail cannot push a member's receipt out of the read window (per-run budgets, ledgering)."
+ },
+ {
+  "name": "rules-docs",
+  "paths": [
+   "docs/rules/**",
+   "docs/in-design/**"
+  ],
+  "instructions": "Every claim about current behaviour must match the code on main; read it. A tag change such as [Unsettled] to [Decision] needs an owner ruling recorded in the PR. Retiring a doc must not drop an open question or follow-up without a new home."
+ }
+]
