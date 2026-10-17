@@ -138,7 +138,7 @@ special-casing in this design.
 ## What is stored, and where
 
 **One nullable integer on `OrgMembershipProcess`: the membership year that
-settlement bought.** Call it `appliesToYear`, the same field name programs use.
+settlement bought.** Call it `appliesToYear`. No model carries a field by that name today.
 
 It goes on the process, not on `OrgMembership`, because the process is the record
 of a single settlement — one purchase, one grant, one renewal — and "which year

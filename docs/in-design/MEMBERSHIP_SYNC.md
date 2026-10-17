@@ -33,10 +33,13 @@ Their engine design is carried forward here largely unchanged (§2). What change
 Relevant existing machinery this design reuses rather than reinvents:
 
 - `AuditLog` (`actorId`, `action`, `tableName`, `affectedEntityId`, `oldData`, `newData`) — the app's existing audit trail. Note the `tableName` accuracy rule: a change to a `Person` column is filed under `Person`, not under whatever table the *route* is about (#1175, #1179).
-- `BoardSettings.membersGoogleGroupEmail` / `.newsletterGoogleGroupEmail` — the two org-wide list addresses.
-- `config.googleDirectoryConfigured()` — integration is OFF unless both the service-account key and the admin subject are set. Same null ⇒ off pattern as Resend and the s-read mirror.
 - `Person.emailUndeliverableAt` — the bounce-tracking stamp maintained by the Resend webhook; consulted by this design's classification guards (§3.3).
 - The announce-trigger helper pattern (#1194) — the shape for this design's immediate triggers (§8).
+
+To be built as part of this design (none exists in `main`; the closed #1156 carried them):
+
+- `BoardSettings.membersGoogleGroupEmail` / `.newsletterGoogleGroupEmail` — the two org-wide list addresses.
+- `config.googleDirectoryConfigured()` — integration is OFF unless both the service-account key and the admin subject are set. Same null ⇒ off pattern as Resend and the s-read mirror.
 
 ## 2. Core model (engine carried forward from #1156)
 
