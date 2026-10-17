@@ -140,6 +140,16 @@ describe('Membership BG review API', () => {
         expect(advance?.actorId).toBe(rev2);
     });
 
+    it('accepts the pre-rename isMarkedVolunteer key from a stale review page', async () => {
+        const proc = await makeApplicantProcess('StaleKey');
+        as(rev1, { isBackgroundCheckReviewer: true });
+        await ATTEST(req({ processId: proc.processId, result: 'APPROVE', isMarkedVolunteer: true, subjectPersonIds: [proc.leadId] }) as never);
+        as(rev2, { isBackgroundCheckReviewer: true });
+        const r2 = await ATTEST(req({ processId: proc.processId, result: 'APPROVE', subjectPersonIds: [proc.leadId] }) as never);
+        expect((await r2.json()).outcome.status).toBe('PENDING_PAYMENT');
+        expect((await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId } }))?.isVolunteerFamily).toBe(true);
+    });
+
     it('applies volunteer status from a pre-designation (Gmail dot-insensitive), without a checkbox', async () => {
         // Gmail drops dots, so vol.parent... matches the dotless designation. Non-Gmail
         // domains keep dots significant (see volunteerMatch.test.ts) — that's the fix.

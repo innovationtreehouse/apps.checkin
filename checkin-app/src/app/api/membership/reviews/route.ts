@@ -92,7 +92,7 @@ export const GET = handler("GET /api/membership/reviews", async ({ req, auth }) 
 // re-checks, and validates the subjects against the household's live leads.
 export const POST = withAuth({ roles: ["isBackgroundCheckReviewer", "isBoardMember"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
-    let body: { processId?: number; result?: "APPROVE" | "REJECT"; isMarkedVolunteerFamily?: boolean; note?: string; subjectPersonIds?: number[] };
+    let body: { processId?: number; result?: "APPROVE" | "REJECT"; isMarkedVolunteerFamily?: boolean; isMarkedVolunteer?: boolean; note?: string; subjectPersonIds?: number[] };
     try {
         body = await req.json();
     } catch {
@@ -108,7 +108,8 @@ export const POST = withAuth({ roles: ["isBackgroundCheckReviewer", "isBoardMemb
     try {
         const outcome = await attest(auth.user.id, body.processId, {
             result: body.result,
-            isMarkedVolunteerFamily: body.isMarkedVolunteerFamily,
+            // A review page loaded before the rename deploy still sends isMarkedVolunteer; drop the fallback one release later.
+            isMarkedVolunteerFamily: body.isMarkedVolunteerFamily ?? body.isMarkedVolunteer,
             note: note || undefined,
             subjectPersonIds: subjectIds(body.subjectPersonIds),
         });

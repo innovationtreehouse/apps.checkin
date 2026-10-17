@@ -35,6 +35,8 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
         }
 
         const body = await request.json();
+        // An edit modal loaded before the rename deploy still sends isVolunteer; drop the fallback one release later.
+        const isVolunteerFamily: unknown = body.isVolunteerFamily ?? body.isVolunteer;
         const data: { name?: string } & Partial<StructuredAddress> = {};
         if (body.name !== undefined) {
             if (typeof body.name !== "string" || !body.name.trim()) {
@@ -52,7 +54,7 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
         // unchanged field re-sent by the form never writes a spurious audit row.
         // Both "member since" and the volunteer-only flag live on the household's
         // Membership (1:1); fetch it once if either is being edited.
-        const editsMembership = (typeof body.memberSince === "string" && body.memberSince !== "") || typeof body.isVolunteerFamily === "boolean";
+        const editsMembership = (typeof body.memberSince === "string" && body.memberSince !== "") || typeof isVolunteerFamily === "boolean";
         const membership = editsMembership ? await prisma.orgMembership.findUnique({ where: { householdId: id } }) : null;
 
         let memberSinceChange: { orgMembershipId: number; oldValue: Date; newValue: Date } | null = null;
@@ -75,12 +77,12 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
 
         // Volunteer-only household: reduced-fee volunteer family, flagged on the membership.
         let isVolunteerFamilyChange: { orgMembershipId: number; oldValue: boolean; newValue: boolean } | null = null;
-        if (typeof body.isVolunteerFamily === "boolean") {
+        if (typeof isVolunteerFamily === "boolean") {
             if (!membership) {
                 return apiError("Household has no membership record", 400);
             }
-            if (membership.isVolunteerFamily !== body.isVolunteerFamily) {
-                isVolunteerFamilyChange = { orgMembershipId: membership.id, oldValue: membership.isVolunteerFamily, newValue: body.isVolunteerFamily };
+            if (membership.isVolunteerFamily !== isVolunteerFamily) {
+                isVolunteerFamilyChange = { orgMembershipId: membership.id, oldValue: membership.isVolunteerFamily, newValue: isVolunteerFamily };
             }
         }
 

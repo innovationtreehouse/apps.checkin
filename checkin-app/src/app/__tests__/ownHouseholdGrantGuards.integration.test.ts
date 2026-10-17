@@ -90,6 +90,12 @@ describe('own-household grant guards', () => {
             expect(res.status).toBe(200);
             expect((await prisma.orgMembership.findUnique({ where: { householdId: otherHouseholdId } }))?.isVolunteerFamily).toBe(true);
         });
+
+        it('accepts the pre-rename isVolunteer key from a stale client', async () => {
+            const res = await HOUSEHOLD_PATCH(jsonReq('PATCH', { isVolunteer: false }) as never, params(otherHouseholdId));
+            expect(res.status).toBe(200);
+            expect((await prisma.orgMembership.findUnique({ where: { householdId: otherHouseholdId } }))?.isVolunteerFamily).toBe(false);
+        });
     });
 
     describe('volunteer designation POST', () => {
