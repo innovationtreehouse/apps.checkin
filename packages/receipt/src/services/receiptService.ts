@@ -228,13 +228,15 @@ async function failOcr(id: string, actor: ReceiptPrincipal, error: string): Prom
  * A mailed file enters as an auto upload by its sender: the upload limits, duplicate check and
  * audit of a manual upload, then OCR on the sender's daily allowance. `ledger` runs inside the
  * insert, so the receipt and its mail-ledger row exist together or not at all. A file over the
- * OCR allowance lands in `ocr_failed`, where its uploader types the details.
+ * OCR allowance lands in `ocr_failed`, where its uploader types the details. `uploadLimits: false`
+ * skips the daily upload limits for this one file, for a deferred file finance releases.
  */
 export async function intakeMailedReceipt(
   actor: ReceiptPrincipal,
   file: Buffer,
   mimeType: string,
   ledger: (tx: Prisma.TransactionClient, receiptId: string) => Promise<unknown>,
+  { uploadLimits = true }: { uploadLimits?: boolean } = {},
 ): Promise<string> {
   const id = await insertReceipt({
     orgId: (await getOrg()).id,
@@ -245,7 +247,7 @@ export async function intakeMailedReceipt(
     detail: { state: "auto_upload", ocrStartedAt: new Date() },
     lines: [],
     auditAction: "mail_intake",
-    limits: limits(),
+    limits: uploadLimits ? limits() : undefined,
     afterInsert: ledger,
   });
   try {

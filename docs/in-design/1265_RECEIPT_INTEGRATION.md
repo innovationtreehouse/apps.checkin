@@ -268,12 +268,13 @@ member's receipt out of the window:
 - Each run spends at most 50 files and 50 MB on held mail; the rest wait for the
   next run. The charging rule is one function (`chargeHold`): each file downloaded
   from an unknown sender costs one file and its size, whether it is held, refused
-  by the type check, or already in the ledger, and so does each file held for a
-  known sender. Mail from an unknown sender cannot raise the run's download cost
-  past that budget.
-- At 500 held items awaiting finance, nothing more is held: finance gets one alert
-  per run while over it, and the run counts the files it did not hold. Receipts
-  from members are still read.
+  by the type check, or already in the ledger, and so does each file deferred for
+  a known sender over their upload limit. A later retry of a deferred file
+  downloads nothing and costs nothing. Mail from an unknown sender cannot raise
+  the run's download cost past that budget.
+- At 500 stored items, held and deferred together, nothing more is stored:
+  finance gets one alert per run while over it, and the run counts the files it
+  did not store. Receipts from members within their limit are still read.
 - Each run starts no new message after 2 minutes; the rest wait for the next run.
 - A file over 10 MB, the manual upload limit, is refused before download.
 
@@ -302,10 +303,21 @@ receipts in one window; widen the window or the cap if either happens.
   email, and that person must be in the submitter audience (§6). Then the
   attachment enters the **same upload pipeline** in auto mode (the daily upload
   limits, OCR on the sender's daily allowance, the duplicate check including the
-  §2 lock) with that person as uploader. A file over the sender's upload limit is
-  held; one over the OCR allowance lands in `ocr_failed`, where its uploader types
-  the details. The ledger row is written in the receipt's own insert, so a receipt
-  never exists without it.
+  §2 lock) with that person as uploader. One over the OCR allowance lands in
+  `ocr_failed`, where its uploader types the details. The ledger row is written in
+  the receipt's own insert, so a receipt never exists without it.
+- **Over the sender's daily upload limit: deferred, not held** (owner ruling
+  2026-10-16). The file is stored in the ledger as `deferred`, with its bytes, so
+  it no longer depends on the 3-day window. Each run retries deferred files first,
+  oldest first, inside the run's receipt cap, as the sender re-resolved then. The
+  upload limit is checked before OCR, so a refused retry spends no reading and no
+  cap, and that sender's other deferred files wait for the next run; one sender
+  over their limit cannot crowd out another's receipt. A sender who is no longer
+  a submitter has their deferred files held for finance. Finance sees deferred
+  files in the mail queue and can release one early: it becomes a receipt by its
+  sender now, outside the daily upload limit for that one file, with an audit row
+  naming who released it. The same conflict rule as assigning applies. Finance
+  can also assign or discard a deferred file as it would a held one.
 - **Anything else goes to a `FINANCE` queue, never dropped:** unknown sender,
   sender outside the audience, failed or missing DMARC alignment. The item keeps its file until
   finance assigns an uploader (then it enters the pipeline as above) or discards it.
