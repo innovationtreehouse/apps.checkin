@@ -78,8 +78,7 @@ def jev(state, questions):
         "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}", "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=120) as r:
         resp = json.load(r)
-    cost = resp.get("usage", {}).get("cost")
-    print(f"jev {resp.get('model')} cost={cost}")
+    print(f"jev {resp.get('model')}")
     return resp["answers"]
 
 
