@@ -491,6 +491,21 @@ hours at a time — is a normal operating mode here, not an incident.
   came from, not on its size: the sweep stamps at its own run time, so the least
   trustworthy guess is exactly the one producing the largest correction.  [Decision]
 
+- A visit records whether the building closing or the overnight sweep ended it,
+  and the two stay distinct. Neither close is audited, so the visit is the only
+  record of how it closed, and the two guesses deserve different trust: the
+  building closing is bounded by its hours, the sweep is not.  [Decision]
+
+- A correction to somebody else's visit weighs double — the same nudge that is
+  noise on your own record is worth seeing on someone else's. It doubles the
+  score rather than setting a floor, so a routine fix by a household lead still
+  does not flag, and a corrected building-close or sweep departure still adds
+  nothing.  [Decision]
+
+- Merging two people moves their visits to the surviving record without counting
+  as a correction: it changes whose attendance it is, not what happened, so it
+  does not appear among corrections for review.  [Decision]
+
 - A visit cannot run longer than 24 hours.  [Decision]
 
 - The board and sysadmins edit or delete any visit, and record one for someone

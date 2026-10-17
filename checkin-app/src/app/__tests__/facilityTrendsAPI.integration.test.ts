@@ -9,8 +9,8 @@
  * path: bucketing visits by period, the volunteer/participant split (by program
  * enrollment — ProgramParticipant, NOT age), structured (event-associated) vs
  * unstructured hours, and source-independence: every completed visit counts
- * whatever recorded it — SCANNER, WEB, LEAD_MARKED, the legacy `SYSTEM`
- * spelling, or nothing at all. The only exclusions left are structural — an
+ * whatever recorded it — SCANNER, WEB, TYPED, LEAD_MARKED, or nothing at
+ * all. The only exclusions left are structural — an
  * open visit (no duration), a soft-deleted one, and anything outside the
  * lookback window — plus the `programId` filter and the invalid-period 400.
  * Corrections and a staff walk-in insert are driven through the real routes,
@@ -123,10 +123,9 @@ describe('Facility trends API', () => {
         const synthetic = await prisma.visit.create({
             data: { personId: volunteerId, arrivedAt: arrival(2), departedAt: departure(2, 3), arrivedVia: 'LEAD_MARKED', associatedEventId: eventId },
         });
-        // The same thing in its pre-split spelling. A rolling deploy's drain window
-        // lets the previous release keep writing SYSTEM — 3h, counted the same.
-        const legacySynthetic = await prisma.visit.create({
-            data: { personId: volunteerId, arrivedAt: arrival(3), departedAt: departure(3, 3), arrivedVia: 'SYSTEM', associatedEventId: eventId },
+        // A typed-form clock on the same event — 3h, counted the same.
+        const typed = await prisma.visit.create({
+            data: { personId: volunteerId, arrivedAt: arrival(3), departedAt: departure(3, 3), arrivedVia: 'TYPED', associatedEventId: eventId },
         });
         // Still-open visit (no departedAt) — excluded (departedAt: { not: null } in the where).
         const open = await prisma.visit.create({
@@ -162,7 +161,7 @@ describe('Facility trends API', () => {
             data: { personId: adminId, arrivedAt: arrival(4), departedAt: departure(4, 7), arrivedVia: 'SCANNER', associatedEventId: untaggedEventId, deletedAt: new Date() },
         });
 
-        visitIds.push(structured.id, youthStructured.id, unstructured.id, synthetic.id, legacySynthetic.id, open.id,
+        visitIds.push(structured.id, youthStructured.id, unstructured.id, synthetic.id, typed.id, open.id,
             untagged.id, untaggedProgramSynthetic.id, openUntagged.id, softDeleted.id);
     });
 
@@ -201,7 +200,7 @@ describe('Facility trends API', () => {
         expect(thisMonth.uniqueVolunteers).toBeGreaterThanOrEqual(1);
         expect(thisMonth.uniqueParticipants).toBeGreaterThanOrEqual(1);
         // Structured (event-associated) = the 3h enrolled-adult + 2h youth visits, plus the
-        // staff-asserted and legacy-SYSTEM ones; unstructured = the 1h volunteer visit.
+        // staff-asserted and typed ones; unstructured = the 1h volunteer visit.
         // Still-open and soft-deleted visits are excluded.
         expect(thisMonth.structuredHours).toBeGreaterThanOrEqual(5);
         expect(thisMonth.unstructuredHours).toBeGreaterThanOrEqual(1);
@@ -212,7 +211,7 @@ describe('Facility trends API', () => {
         // Scope to `programId` so only this test's event-associated visits are counted
         // (deterministic — otherProgramId/global data can't leak in). Four visits qualify:
         // the enrolled adult (3h SCANNER), the non-enrolled youth (2h SCANNER), and the
-        // volunteer's staff-asserted (3h) and legacy-SYSTEM (3h) visits.
+        // volunteer's staff-asserted (3h) and typed (3h) visits.
         const res = await callAs({ id: adminId, isSysadmin: true }, `?period=month&programId=${programId}`);
         expect(res.status).toBe(200);
         const data = await res.json();
@@ -227,7 +226,7 @@ describe('Facility trends API', () => {
 
     // Issue #1676: bySource decomposes HOURS by arrivedVia, never people. This
     // program's bucket is the case that matters — `volunteerId` carries both a
-    // LEAD_MARKED (3h) and a SYSTEM (3h) visit here, so a per-source person count
+    // LEAD_MARKED (3h) and a TYPED (3h) visit here, so a per-source person count
     // would double-count them, but uniqueVolunteers must not.
     it('decomposes hours by source without decomposing unique-person counts', async () => {
         const res = await callAs({ id: adminId, isSysadmin: true }, `?period=month&programId=${programId}`);
@@ -235,8 +234,8 @@ describe('Facility trends API', () => {
         const data = await res.json();
 
         // SCANNER: enrolled adult (3h, participant) + youth (2h, volunteer).
-        // LEAD_MARKED and SYSTEM: volunteerId's two visits, 3h each.
-        expect(data.totals.bySource).toEqual({ SCANNER: 5, LEAD_MARKED: 3, SYSTEM: 3 });
+        // LEAD_MARKED and TYPED: volunteerId's two visits, 3h each.
+        expect(data.totals.bySource).toEqual({ SCANNER: 5, LEAD_MARKED: 3, TYPED: 3 });
 
         const bySourceSum = Object.values(data.totals.bySource as Record<string, number>)
             .reduce((sum: number, hours: number) => sum + hours, 0);
@@ -250,8 +249,8 @@ describe('Facility trends API', () => {
 
     // Source records how an arrival was measured; it does not decide whether the
     // visit is facility time. An untagged arrival, a scanned one, a staff roster
-    // mark and the legacy SYSTEM spelling all sum the same way.
-    it('counts every source alike — untagged, staff-marked and legacy SYSTEM', async () => {
+    // mark and a typed clock all sum the same way.
+    it('counts every source alike — untagged, staff-marked and typed', async () => {
         const res = await callAs({ id: adminId, isSysadmin: true }, `?period=month&programId=${untaggedProgramId}`);
         expect(res.status).toBe(200);
         const data = await res.json();
@@ -262,10 +261,10 @@ describe('Facility trends API', () => {
         expect(data.totals.uniqueParticipants).toBe(0);
         expect(data.totals.structuredHours).toBe(5);
 
-        // The legacy SYSTEM spelling hangs off `programId`'s event: 3h of the 8
+        // The typed visit hangs off `programId`'s event: 3h of the 8
         // volunteer hours there, alongside the 3h LEAD_MARKED and 2h SCANNER ones.
-        const legacy = await (await callAs({ id: adminId, isSysadmin: true }, `?period=month&programId=${programId}`)).json();
-        expect(legacy.totals.totalVolunteerHours).toBe(8);
+        const scoped = await (await callAs({ id: adminId, isSysadmin: true }, `?period=month&programId=${programId}`)).json();
+        expect(scoped.totals.totalVolunteerHours).toBe(8);
     });
 
     // What the route still excludes, now that source no longer gates anything:

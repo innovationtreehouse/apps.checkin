@@ -494,7 +494,7 @@ describe('Admin Visits API Integration Tests', () => {
                 where: { actorId: testAdminId, action: 'CREATE', tableName: 'Visit', affectedEntityId: visit.id },
             });
             expect(audit).not.toBeNull();
-            // actor ≠ subject is what marks this as acting-for-another (design §6.6).
+            // actor ≠ subject is what marks this as acting-for-another.
             expect(audit?.secondaryAffectedEntity).toBe(testUserId);
         });
 

@@ -11,7 +11,7 @@ export function escapeHtml(value: string): string {
         .replace(/'/g, '&#39;');
 }
 
-export type VisitSource = 'SCANNER' | 'WEB' | 'TYPED' | 'LEAD_MARKED' | 'FACILITY_CLOSE' | 'AUTO_CLOSE' | 'SYSTEM';
+export type VisitSource = 'SCANNER' | 'WEB' | 'TYPED' | 'LEAD_MARKED' | 'FACILITY_CLOSE' | 'AUTO_CLOSE';
 
 /** Human phrase for how a check-in/out was recorded, e.g. "via badge scan". */
 export function sourceLine(source?: VisitSource | null): string {
@@ -19,9 +19,9 @@ export function sourceLine(source?: VisitSource | null): string {
         : source === 'WEB' || source === 'TYPED' ? 'the web app'
         : source === 'LEAD_MARKED' ? 'a staff attendance mark'
         : source === 'FACILITY_CLOSE' ? 'the building closing'
-        // AUTO_CLOSE and legacy SYSTEM: an automatic stamp the member may want
-        // to correct, so name it plainly rather than implying it was measured.
-        : source === 'AUTO_CLOSE' || source === 'SYSTEM' ? 'the system automatically'
+        // An automatic stamp the member may want to correct, so name it plainly
+        // rather than implying it was measured.
+        : source === 'AUTO_CLOSE' ? 'the system automatically'
         : null;
     return label ? `<p style="color: #6b7280;">📍 via ${label}</p>` : '';
 }

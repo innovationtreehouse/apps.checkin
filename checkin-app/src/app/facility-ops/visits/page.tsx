@@ -13,7 +13,7 @@ import { useOrgTime } from '@/components/TimezoneProvider';
 import { MAX_VISIT_MS } from '@/lib/visitTimes';
 
 import { PageLoader } from "@/components/ui/PageLoader";
-type VisitSource = 'SCANNER' | 'WEB' | 'TYPED' | 'LEAD_MARKED' | 'FACILITY_CLOSE' | 'AUTO_CLOSE' | 'SYSTEM';
+type VisitSource = 'SCANNER' | 'WEB' | 'TYPED' | 'LEAD_MARKED' | 'FACILITY_CLOSE' | 'AUTO_CLOSE';
 
 type Visit = {
   id: number;
@@ -32,7 +32,6 @@ const SOURCE_META: Record<VisitSource, { Icon: typeof IconScan; label: string }>
   LEAD_MARKED: { Icon: IconUserCheck, label: 'Marked present by staff (event window, not measured)' },
   FACILITY_CLOSE: { Icon: IconLock, label: 'Building closed (stamped at the close moment)' },
   AUTO_CLOSE: { Icon: IconRobot, label: 'Nightly sweep (stamped at cron-run time — likely late)' },
-  SYSTEM: { Icon: IconRobot, label: 'Automated, pre-split (facility close or nightly — indistinguishable)' },
 };
 
 const SourceIcon = ({ via }: { via?: VisitSource | null }) => {

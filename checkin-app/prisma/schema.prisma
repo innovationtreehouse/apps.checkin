@@ -35,7 +35,7 @@ enum AuditAction {
 }
 
 /// How a visit arrival/departure was recorded. Five non-overlapping meanings
-/// (docs/designs/1256_ATTENDANCE_CORRECTION_SURFACE.md, "Terminology"):
+/// (docs/rules/attendance-checkin.md, "The visit record"):
 ///   SCANNER        = physical kiosk badge — measured, exact.
 ///   TYPED          = a clock typed into a form (manual/dashboard entry) —
 ///                    asserted, not measured.
@@ -49,10 +49,10 @@ enum AuditAction {
 /// Domains: arrivedVia ∈ {SCANNER, TYPED, LEAD_MARKED};
 ///          departedVia ∈ {SCANNER, TYPED, LEAD_MARKED, FACILITY_CLOSE, AUTO_CLOSE}.
 ///
-/// SYSTEM and WEB are retired. Each is kept in the type only so the previous
-/// release can keep writing it through a rolling deploy's drain window; no
-/// current code path writes either, and their backfill migrations left no rows
-/// carrying them. Drop both in a follow-up release (contract stage).
+/// WEB is retired. It is kept in the type only so the previous release can
+/// keep writing it through a rolling deploy's drain window; no current code
+/// path writes it, and its backfill migration left no rows carrying it. Drop
+/// it in a follow-up release (contract stage).
 enum VisitSource {
   SCANNER
   WEB
@@ -60,7 +60,6 @@ enum VisitSource {
   LEAD_MARKED
   FACILITY_CLOSE
   AUTO_CLOSE
-  SYSTEM
 }
 
 enum ProgramPhase {

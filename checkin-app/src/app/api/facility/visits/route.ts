@@ -118,7 +118,7 @@ export const PATCH = withAuth(
 
             // Log the manual edit in the audit trail. secondaryAffectedEntity =
             // the visit's person, so a correction review can tell self from
-            // acting-for-another by comparison alone (design §6.6). oldData/
+            // acting-for-another by comparison alone. oldData/
             // significance score against `previous` (the in-lock re-read), not
             // the pre-lock `existing` — a racing scan/close can change the row
             // between the two reads.

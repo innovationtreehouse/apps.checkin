@@ -6,7 +6,7 @@ import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
 import { LIVE_PERSON } from "@/lib/person/filters";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
-// Staff insert-for-others at an arbitrary past time (design §3): the path for a
+// Staff insert-for-others at an arbitrary past time: the path for a
 // genuine unenrolled walk-in, which the event-roster mark (program-scoped, event
 // window) and the kiosk (live, badge-driven) cannot record. Unlike the
 // self-service route the target personId IS taken from the body — that is the
