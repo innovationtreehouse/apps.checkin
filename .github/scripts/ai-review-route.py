@@ -20,8 +20,11 @@ LADDER = [
     # Medium effort keeps the free endpoint from idling out mid-reasoning.
     ("free", "nvidia/nemotron-3.5-super-vl:free", "50", "300",
      "Costs nothing. Routine changes: docs, tests, small refactors, config, renames.", "medium"),
-    ("mid", "z-ai/glm-5.3", "30", "300",
-     "Quarters a review. Real logic changes, one risky area, or a large diff. The default for anything beyond routine.", ""),
+    # Evaluating qwen3.8-max as the mid rung. glm-5.3 (2026-10-17/18) wasted half its spend: 50 of 107
+    # lanes ended without a usable review ($15.81 of $32.67), and 138 of its 154 findings were nits or
+    # risks. qwen costs ~2.4x glm on the same tokens (est. $0.71 vs $0.29 a review); judge by fixed bugs.
+    ("mid", "qwen/qwen3.8-max-0902", "30", "300",
+     "Around 75 cents a review, a little under the high tier. Real logic changes, one risky area, or a large diff. The default for anything beyond routine.", ""),
     # ponytail: per-review spend caps via tool rounds and diff size on the two costliest rungs.
     ("high", "google/gemini-4-argon", "12", "150",
      "Around a dollar a review, several times the mid tier. Only when the mid reviewer is likely to miss something serious: security-boundary or migration changes, two or more risky areas, concurrency or authorization logic.", ""),
