@@ -11,10 +11,11 @@ import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth/next";
 import prisma from "@/lib/prisma";
 import { GET } from "@/app/api/membership-ops/households/route";
+import { PATCH as settingsPATCH } from "@/app/api/household/settings/route";
 import { PATCH as householdPATCH } from "@/app/api/membership-ops/households/[id]/route";
 import { PUT as participantPUT } from "@/app/api/membership-ops/participants/[id]/route";
 import { POST as reassignPOST } from "@/app/api/membership-ops/participants/[id]/household/route";
-import { canSeeIntakeNotes } from "@/lib/household/intakeNotes";
+import { canSeeIntakeNotes, withoutIntakeNoteKeys } from "@/lib/household/intakeNotes";
 
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
@@ -39,7 +40,7 @@ jest.mock("@/lib/prisma", () => {
     return {
         __esModule: true,
         default: {
-            household: { findUnique: jest.fn(), update: jest.fn() },
+            household: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
             boardSettings: { findUnique: jest.fn().mockResolvedValue(null) },
             person: { findUnique: jest.fn() },
             auditLog: { create: jest.fn() },
@@ -54,7 +55,7 @@ const HOUSEHOLD = { id: 10, name: "Test Household", intakeNotes: NOTE, line1: nu
 const SYSADMIN_ONLY = { isSysadmin: true };
 const mockSession = getServerSession as jest.Mock;
 const db = prisma as unknown as {
-    household: { findUnique: jest.Mock; update: jest.Mock };
+    household: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
     person: { findUnique: jest.Mock };
     tx: { person: { update: jest.Mock; updateMany: jest.Mock; findUniqueOrThrow: jest.Mock } };
 };
@@ -99,6 +100,36 @@ describe("GET /api/membership-ops/households intake note", () => {
     });
 });
 
+describe("GET /api/membership-ops/households list intake notes", () => {
+    it("are null for a sysadmin, except on the household they lead", async () => {
+        signIn({ isSysadmin: true, householdLead: true, householdId: 11 });
+        db.household.findMany.mockResolvedValue([10, 11].map((id) => ({ ...HOUSEHOLD, id, householdMembers: [], orgMembership: null, emergencyContacts: [] })));
+        const res = await GET(request("http://localhost/api/membership-ops/households"));
+        expect(res.status).toBe(200);
+        const notes = Object.fromEntries((await res.json()).households.map((h: { id: number; intakeNotes: string | null }) => [h.id, h.intakeNotes]));
+        expect(notes).toEqual({ 10: null, 11: NOTE });
+    });
+});
+
+describe("PATCH /api/household/settings echo", () => {
+    const save = async (caller: { isHouseholdLead: boolean; isSysadmin: boolean }) => {
+        signIn({ isSysadmin: caller.isSysadmin });
+        db.person.findUnique.mockResolvedValue({ householdId: 10, ...caller });
+        db.household.update.mockResolvedValue(HOUSEHOLD);
+        const res = await settingsPATCH(request("http://localhost/api/household/settings", "PATCH", { notes: NOTE }));
+        expect(res.status).toBe(200);
+        return (await res.json()).household.intakeNotes;
+    };
+
+    it("nulls the note for a sysadmin who is not a lead", async () => {
+        expect(await save({ isHouseholdLead: false, isSysadmin: true })).toBeNull();
+    });
+
+    it("returns the note to a lead", async () => {
+        expect(await save({ isHouseholdLead: true, isSysadmin: false })).toBe(NOTE);
+    });
+});
+
 describe("other admin routes returning a Household row: sysadmin-only caller gets no note", () => {
     it("PATCH /api/membership-ops/households/[id]", async () => {
         signIn(SYSADMIN_ONLY);
@@ -133,6 +164,17 @@ describe("other admin routes returning a Household row: sysadmin-only caller get
         const { participant } = await res.json();
         expect(participant.household.id).toBe(10);
         expect(participant.household.intakeNotes).toBeNull();
+    });
+});
+
+describe("withoutIntakeNoteKeys", () => {
+    it("removes intake-note keys at any depth and keeps everything else", () => {
+        expect(withoutIntakeNoteKeys({
+            household: { name: "H", intakeNotes: NOTE },
+            processes: [{ id: 1, intakeNoteSnapshot: NOTE }],
+            note: "kept",
+        })).toEqual({ household: { name: "H" }, processes: [{ id: 1 }], note: "kept" });
+        expect(withoutIntakeNoteKeys(null)).toBeNull();
     });
 });
 

@@ -10,14 +10,17 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import type { Prisma } from "@/generated/prisma/client";
 import { apiError } from "@/lib/api-response";
+import { withoutIntakeNoteKeys } from "@/lib/household/intakeNotes";
 
 const PAGE_SIZE = 50;
 const ACTIONS = ["CREATE", "EDIT", "DELETE", "BECOME_ADMIN"] as const;
 
 export const GET = withAuth(
     { roles: ['isSysadmin', 'isBoardMember'] },
-    async (req: NextRequest) => {
+    async (req: NextRequest, auth) => {
         try {
+            // Snapshots can hold a household's intake note; only the Board reads it here.
+            const seesIntakeNotes = auth.type === 'session' && Boolean(auth.user.isBoardMember);
             const sp = new URL(req.url).searchParams;
 
             const page = Math.max(1, parseInt(sp.get("page") ?? "1", 10) || 1);
@@ -98,6 +101,7 @@ export const GET = withAuth(
 
             const logs = rows.map((r) => ({
                 ...r,
+                ...(!seesIntakeNotes && { oldData: withoutIntakeNoteKeys(r.oldData), newData: withoutIntakeNoteKeys(r.newData) }),
                 actorName: nameById.get(r.actorId) ?? null,
             }));
 

@@ -80,6 +80,18 @@ describe('Admin Audit API Integration Tests', () => {
                 newData: { message: 'audit-api-test system row' }
             }
         });
+
+        // A household pre-image holding an intake note, as an import merge wrote it.
+        await prisma.auditLog.create({
+            data: {
+                actorId: adminId,
+                action: 'DELETE',
+                affectedEntityId: boardId,
+                tableName: 'Household',
+                oldData: { household: { name: 'Merged HH', intakeNotes: 'audit-api-test note' }, orgMemberships: [] },
+                newData: { intakeNoteSnapshot: 'audit-api-test snapshot', mergedIntoHouseholdId: 1 },
+            }
+        });
     });
 
     afterAll(async () => {
@@ -145,6 +157,28 @@ describe('Admin Audit API Integration Tests', () => {
              const res = await GET(req as unknown as import("next/server").NextRequest);
              expect(res.status).toBe(200);
              expect(Array.isArray((await res.json()).logs)).toBe(true);
+        });
+
+        it("strips intake notes from snapshots for a sysadmin who is not on the Board", async () => {
+            const notesFor = async (user: Record<string, unknown>) => {
+                (getServerSession as jest.Mock).mockResolvedValue({ user });
+                const req = new Request(`http://localhost:4000/api/system-status/audit-log?action=DELETE&table=Household&entityId=${boardId}`, { method: 'GET' });
+                const res = await GET(req as unknown as import("next/server").NextRequest);
+                expect(res.status).toBe(200);
+                const [row] = (await res.json()).logs;
+                return row;
+            };
+
+            const sysadminRow = await notesFor({ id: adminId, isSysadmin: true });
+            expect(sysadminRow.oldData.household).toEqual({ name: 'Merged HH' });
+            expect(sysadminRow.newData).toEqual({ mergedIntoHouseholdId: 1 });
+
+            const boardRow = await notesFor({ id: boardId, isBoardMember: true });
+            expect(boardRow.oldData.household.intakeNotes).toBe('audit-api-test note');
+            expect(boardRow.newData.intakeNoteSnapshot).toBe('audit-api-test snapshot');
+
+            const bothRow = await notesFor({ id: adminId, isSysadmin: true, isBoardMember: true });
+            expect(bothRow.oldData.household.intakeNotes).toBe('audit-api-test note');
         });
 
         it('should filter by a person actor and by a named system actor', async () => {

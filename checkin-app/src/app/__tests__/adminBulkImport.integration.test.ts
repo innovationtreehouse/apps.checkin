@@ -207,6 +207,8 @@ describe('Admin Bulk Import API Integration Tests', () => {
             });
             expect(audit?.actorId).toBe(testAdminId);
             expect(audit?.oldData).toMatchObject({ household: { name: "Charlie Batch Import Test's Household" } });
+            // The audit log is readable beyond who may see an intake note, so the pre-image omits it.
+            expect((audit?.oldData as { household: Record<string, unknown> }).household).not.toHaveProperty('intakeNotes');
             expect(audit?.newData).toMatchObject({ mergedIntoHouseholdId: alice!.householdId, movedByImportOfPersonId: charlie!.id });
         });
 
