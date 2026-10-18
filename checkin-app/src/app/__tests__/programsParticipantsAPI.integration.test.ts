@@ -980,6 +980,32 @@ describe('Program Participants API Integration Tests', () => {
              })).toBeNull();
         });
 
+        it('returns 409 and keeps the place when it is paid between the read and an explicit remove', async () => {
+             await prisma.programParticipant.upsert({
+                 where: { programId_personId: { programId: freeProgramId, personId: otherId } },
+                 create: { programId: freeProgramId, personId: otherId, status: 'ACTIVE', shopifyOrderId: '9900777' },
+                 update: { status: 'ACTIVE', shopifyOrderId: '9900777', endedAt: null },
+             });
+             // The route read the place while it was still unpaid; orders/paid activated it since.
+             const read = jest.spyOn(prisma.programParticipant, 'findUnique')
+                 .mockResolvedValueOnce({ status: 'PENDING' } as Awaited<ReturnType<typeof prisma.programParticipant.findUnique>>);
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+             try {
+                 const res = await DELETE(new Request(`http://localhost:4000/api/programs/${freeProgramId}/participants`, {
+                     method: 'DELETE',
+                     body: JSON.stringify({ participantId: otherId, mode: 'remove' }),
+                 }) as unknown as import("next/server").NextRequest, createParams(freeProgramId) as unknown as never);
+                 expect(res.status).toBe(409);
+             } finally {
+                 read.mockRestore();
+             }
+             const row = await prisma.programParticipant.findUnique({
+                 where: { programId_personId: { programId: freeProgramId, personId: otherId } },
+             });
+             expect(row?.status).toBe('ACTIVE');
+             await prisma.programParticipant.delete({ where: { programId_personId: { programId: freeProgramId, personId: otherId } } });
+        });
+
         it('refuses self-withdrawal of a paid place even when the program is free now', async () => {
              // Paid while priced (order on the place), then the Board zeroed the price.
              await prisma.programParticipant.upsert({

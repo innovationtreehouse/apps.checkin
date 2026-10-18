@@ -396,11 +396,11 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
 
         // "remove" deletes a place nobody really took up; "withdraw" keeps the row
         // as history. Unchosen, a PENDING place is removed and an ACTIVE one
-        // withdrawn, pinned to the status read here so a payment landing
-        // mid-request cannot change which exit applies.
+        // withdrawn. Either exit is pinned to the status read here, so a payment
+        // landing mid-request gets a 409 instead of an exit chosen for the old status.
         const mode: 'remove' | 'withdraw' = body.mode ?? (current.status === 'ACTIVE' ? 'withdraw' : 'remove');
         const only: Prisma.ProgramParticipantWhereInput = {
-            AND: [body.mode ? {} : { status: current.status }, unpaidOnly ? unpaidWhere : {}],
+            AND: [{ status: current.status }, unpaidOnly ? unpaidWhere : {}],
         };
 
         // A seat taken out of Shopify without a payment — a scholarship hold, or

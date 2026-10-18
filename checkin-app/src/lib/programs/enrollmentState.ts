@@ -230,6 +230,9 @@ export const TRANSITIONS: readonly Transition<LifecycleState>[] = [
     { event: 'T11 remove(comp/approved)', from: 'ACTIVE', to: 'UNENROLLED', actor: 'admin', guardSite: 'capacity.ts deleteAndReleaseHold — delete(); +1 iff seatTakenWithoutSaleAt is set (a paid place returns nothing)' },
     { event: 'T12 withdraw', from: 'ACTIVE', to: 'WITHDRAWN', actor: 'admin', guardSite: 'capacity.ts withdrawParticipant — CAS status:{not:WITHDRAWN} → WITHDRAWN, endedAt = atomicity boundary; +1 iff seatTakenWithoutSaleAt is set' },
     { event: 'T13 withdraw(held)', from: 'PENDING_HELD', to: 'WITHDRAWN', actor: 'user/admin', guardSite: 'capacity.ts withdrawParticipant — same status CAS, then CAS held:{not:null}→null; +1 iff that clears a hold' },
+    { event: 'T13 withdraw(unpaid)', from: 'PENDING_UNPAID', to: 'WITHDRAWN', actor: 'user/admin', guardSite: 'capacity.ts withdrawParticipant — same status CAS; nothing held, no +1' },
+    { event: 'T13 withdraw(hold failed)', from: 'PENDING_HOLD_FAILED', to: 'WITHDRAWN', actor: 'user/admin', guardSite: 'capacity.ts withdrawParticipant — same status CAS; nothing held, no +1' },
+    { event: 'T13 withdraw(denied)', from: 'PENDING_HELD_DENIED', to: 'WITHDRAWN', actor: 'user/admin', guardSite: 'capacity.ts withdrawParticipant — same status CAS, then CAS held:{not:null}→null; +1 iff that clears a hold' },
     { event: 'T14 re-enroll(paid)', from: 'WITHDRAWN', to: 'PENDING_UNPAID', actor: 'user/admin', guardSite: 'participants/route.ts POST — FOR UPDATE capacity lock; CAS status:WITHDRAWN, resets the last stint\'s fields' },
     { event: 'T15 re-enroll(comp)', from: 'WITHDRAWN', to: 'ACTIVE', actor: 'user/admin', guardSite: 'participants/route.ts POST — CAS status:WITHDRAWN, resets the last stint\'s fields' },
 ] as const;
