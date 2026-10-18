@@ -1,8 +1,8 @@
 // Mounts an income route factory through checkin's handler(). The endpoint
 // string MUST match its src/security/registry/income.ts entry.
 import { handler } from "@/security/handler";
-import { incomeRoute } from "@/lib/income/route";
+import { componentRoute } from "@/lib/components/route";
 import { routes } from "@checkin/income";
 
-export const GET = handler("GET /api/income/qb-exclusions", incomeRoute(routes.listExclusions));
-export const POST = handler("POST /api/income/qb-exclusions", incomeRoute(routes.excludeDeposit));
+export const GET = handler("GET /api/income/qb-exclusions", componentRoute(routes.listExclusions));
+export const POST = handler("POST /api/income/qb-exclusions", componentRoute(routes.excludeDeposit));

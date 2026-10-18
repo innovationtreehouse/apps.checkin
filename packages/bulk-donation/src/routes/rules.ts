@@ -1,10 +1,11 @@
 /** Finance curation: comment rules (read + delete) and the GL account map. */
+import { mapServiceErrors, parseBody, parseId } from "@checkin/component-kit";
 import { z } from "zod";
 import { accountMapService } from "../services/accountMapService";
 import { commentRuleService } from "../services/commentRuleService";
-import { getOrgId, mapServiceErrors } from "../runtime";
+import { getOrgId } from "../runtime";
 import type { DonationRouteHandler } from "../contract";
-import { auditContext, donorReader, pageArgs, parseBody, parseId } from "./_shared";
+import { auditContext, donorReader, pageArgs } from "./_shared";
 
 async function actor(req: Request): Promise<{ userId: number; username: string; correlationId: string | null }> {
   const audit = await auditContext(req);

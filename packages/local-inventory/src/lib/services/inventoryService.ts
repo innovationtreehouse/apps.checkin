@@ -1,7 +1,7 @@
 import type { Prisma } from "../../generated/prisma/client";
 import { isRecordNotFoundError, type Db } from "../db/index";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 export type QtyChangeMeta = {
   userId: number | null;

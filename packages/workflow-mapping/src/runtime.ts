@@ -1,3 +1,4 @@
+import { httpError } from "@checkin/component-kit";
 import {
   inertCatalogEventSource,
   inertCatalogReader,
@@ -42,10 +43,6 @@ function requireRuntime(): WorkflowRuntimeConfig {
 
 export function getOrg(): Promise<OrgIdentity> {
   return requireRuntime().org();
-}
-
-export function httpError(status: number, message: string): Error {
-  return requireRuntime().httpError(status, message);
 }
 
 export function ports(): WorkflowPorts {

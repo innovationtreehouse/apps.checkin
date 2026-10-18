@@ -3,10 +3,11 @@
  * received catalog org-events. The two unbounded ones page, newest first, and
  * have a count for the numbered pager.
  */
+import { query } from "@checkin/component-kit";
 import { db } from "../lib/db";
 import { getOrgId } from "../runtime";
 import type { InventoryRouteHandler } from "../contract";
-import { pageArgs, query } from "./_shared";
+import { pageArgs } from "./_shared";
 
 const byOrg = async () => ({ orgId: await getOrgId() });
 

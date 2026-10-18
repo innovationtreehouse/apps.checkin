@@ -38,7 +38,6 @@ export {
 export { getNavCounts, type DonationNavCounts } from "./services/navCountsService";
 export { transactionService } from "./services/transactionService";
 export { uploadedFileService } from "./services/uploadedFileService";
-export { ServiceError } from "./services/serviceError";
 export { disbursementMachine, STATES } from "./workflows/disbursement.machine";
 export { sendDisbursementEvent, type AuditContext } from "./workflows/disbursement.actor";
 export { WorkflowTransitionError } from "@checkin/workflows";

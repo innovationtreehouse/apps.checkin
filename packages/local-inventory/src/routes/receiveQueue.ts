@@ -1,7 +1,7 @@
 /** Receive-queue route factories: list, cancel, and fulfill into on-hand stock. */
-import { getOrgId, getPrincipal, getServices, mapServiceErrors } from "../runtime";
+import { mapServiceErrors, parseId, query } from "@checkin/component-kit";
+import { getOrgId, getPrincipal, getServices } from "../runtime";
 import type { InventoryRouteHandler } from "../contract";
-import { parseId, query } from "./_shared";
 
 export const list: InventoryRouteHandler = async ({ req }) => ({
   ReceiveQueue: await getServices().receiveQueueService.listQueue(

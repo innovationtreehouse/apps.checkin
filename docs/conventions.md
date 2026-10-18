@@ -186,11 +186,13 @@ missed a row stored at a different time of day.
 ## A library names its failures; the host renders them
 
 - **Every expected failure in a hosted library leaves it as an HTTP status, never
-  a 500.** Its services throw `ServiceError(status)` and its `mapServiceErrors`
-  turns that into the library's HTTP error: 400 for validation, 403 for
-  forbidden, 404 for not found, 409 for a conflict or a duplicate. Anything else
-  is rethrown and the host answers an opaque 500. Each library's
-  `error-mapping.test.ts` pins this.
+  a 500.** Its services throw `ServiceError(status)` from `@checkin/component-kit`
+  and its route factories throw the kit's `httpError(status, message)`: 400 for
+  validation, 403 for forbidden, 404 for not found, 409 for a conflict or a
+  duplicate. A zod parse that fails anywhere in the call is a 400 with the first
+  issue's message. The host's `componentRoute()` (`lib/components/route.ts`)
+  renders all three as checkin's API error; anything else is rethrown and the host
+  answers an opaque 500. The kit's tests and the host wrapper's test pin this.
 
 - **A duplicate the service expects is caught by the service.** A unique-key race
   it can tolerate is caught where it happens and re-read or thrown as
@@ -203,7 +205,9 @@ missed a row stored at a different time of day.
   are memoized on `globalThis`, and the instrumentation chunk that configures a
   library and each route chunk can load separate copies of the generated client,
   so the class identity differs. The library's `isUniqueConstraintError` and
-  checkin's `isPrismaError` (`lib/prismaUniqueViolation.ts`) read the code.
+  checkin's `isPrismaError` (`lib/prismaUniqueViolation.ts`) read the code. For
+  the same reason the kit's own errors are recognised by a `Symbol.for` brand,
+  not by class.
 
 The failure shows only in a built app. In unit tests every module is loaded once,
 so `instanceof` holds; in the server, the same 409 arrives as an error from

@@ -6,7 +6,7 @@ import type { ReceiveQueueRepository } from "../repositories/receiveQueueReposit
 import { isProvisionalGtin13 } from "../gtin";
 import { applyQtyChangeIn } from "./inventoryService";
 import type { ProvisionalItemService } from "./provisionalItemService";
-import { ServiceError } from "./serviceError";
+import { isServiceError, ServiceError } from "@checkin/component-kit";
 
 export type ApplyLineItem = {
   gtin13: string;
@@ -235,7 +235,7 @@ export function createReceiptService({
         return { success: true, replayed: false, updatedItems };
       });
     } catch (err) {
-      if (err instanceof ServiceError) throw err;
+      if (isServiceError(err)) throw err;
       if (isUniqueConstraintError(err) || isRecordNotFoundError(err)) {
         const replay = await earlierResult(orgId, key, deltaJson);
         if (replay) return replay;

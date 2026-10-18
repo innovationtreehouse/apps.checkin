@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { recordDonorDataRead, recordEvent, type DonorReadContext } from "../repositories/audit";
 import type { AuditContext } from "../workflows/disbursement.actor";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 export const commentRuleService = {
   async listCommentRules(orgId: string, reader: DonorReadContext, page?: { skip: number; take: number }) {

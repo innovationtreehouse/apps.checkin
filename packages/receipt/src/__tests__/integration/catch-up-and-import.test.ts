@@ -105,7 +105,7 @@ describeDb("historical import", () => {
 
   it("caps a batch at 50 and checks each file's bytes", async () => {
     actAs(FINANCE);
-    await expect(importReceipts(Array.from({ length: 51 }, (_, i) => importRow(`b${i}`)))).rejects.toMatchObject({ statusCode: 400 });
+    await expect(importReceipts(Array.from({ length: 51 }, (_, i) => importRow(`b${i}`)))).rejects.toMatchObject({ status: 400 });
     const res = await importReceipts([importRow("bad", { mimeType: "application/pdf" })]);
     expect(res).toMatchObject({ errors: 1, processed: 0 });
   });
@@ -113,7 +113,7 @@ describeDb("historical import", () => {
   it("rejects a batch that claims reimbursement", async () => {
     actAs(FINANCE);
     for (const over of [{ needsReimbursement: true }, { reimbursementFor: "Someone" }]) {
-      await expect(importReceipts([importRow("r1", over)])).rejects.toMatchObject({ statusCode: 400 });
+      await expect(importReceipts([importRow("r1", over)])).rejects.toMatchObject({ status: 400 });
     }
     expect(await db.receipt.count()).toBe(0);
   });

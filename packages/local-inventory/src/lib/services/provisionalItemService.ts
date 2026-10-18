@@ -3,7 +3,7 @@ import type { Db } from "../db/index";
 import type { ProvisionalItemRepository } from "../repositories/provisionalItemRepository";
 import type { ProvisionalResolutionRepository } from "../repositories/provisionalResolutionRepository";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 import {
   assertProvisionalTransition,
   assertMergeConflictTransition,

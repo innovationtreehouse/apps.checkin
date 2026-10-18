@@ -7,7 +7,7 @@ import { writeAudit } from "../lib/audit";
 import { FLAG_AUDIENCE, HOLD_FLAGS, type FlagAudience, type FlagKind } from "../lib/flags";
 import { CLOSED_STATES, reimburseeUnknown } from "../lib/signoff";
 import { conflictedParties } from "../lib/signoff-facts";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 /**
  * Raises a flag; one row per expense and kind, so raising a checked-off flag reopens it.

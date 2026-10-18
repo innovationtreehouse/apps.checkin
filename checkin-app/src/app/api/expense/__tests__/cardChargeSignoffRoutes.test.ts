@@ -8,22 +8,13 @@
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import { routes, ExpenseHttpError } from '@checkin/expense';
+import { httpError } from '@checkin/component-kit';
+import { routes } from '@checkin/expense';
 import type { AuthenticatedUser } from '@/types/auth';
 import { POST as boardAuthorization } from '../expenses/[id]/board-authorization/route';
 import { POST as notEveryday } from '../expenses/[id]/not-everyday/route';
 
-jest.mock('@checkin/expense', () => {
-    class ExpenseHttpError extends Error {
-        constructor(
-            public readonly status: number,
-            message: string,
-        ) {
-            super(message);
-        }
-    }
-    return { ExpenseHttpError, routes: { expenses: { boardAuthorization: jest.fn(), notEveryday: jest.fn() } } };
-});
+jest.mock('@checkin/expense', () => ({ routes: { expenses: { boardAuthorization: jest.fn(), notEveryday: jest.fn() } } }));
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 
@@ -65,12 +56,12 @@ describe('POST /api/expense/expenses/[id]/board-authorization', () => {
     });
 
     test('blank text is refused with 400', async () => {
-        boardFactory.mockRejectedValue(new ExpenseHttpError(400, 'Say what the Board authorized'));
+        boardFactory.mockRejectedValue(httpError(400, 'Say what the Board authorized'));
         expect((await call(FINANCE, { authorization: '   ' })).status).toBe(400);
     });
 
     test('a conflicted recorder is refused with 403', async () => {
-        boardFactory.mockRejectedValue(new ExpenseHttpError(403, 'conflicted'));
+        boardFactory.mockRejectedValue(httpError(403, 'conflicted'));
         expect((await call(FINANCE)).status).toBe(403);
     });
 });

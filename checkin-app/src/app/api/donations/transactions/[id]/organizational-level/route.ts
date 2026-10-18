@@ -2,7 +2,7 @@
 // /api/donations/* through checkin's handler(). The endpoint string MUST match
 // its src/security/registry/donation.ts entry.
 import { handler } from "@/security/handler";
-import { donationRoute } from "@/lib/bulkDonation/route";
+import { componentRoute } from "@/lib/components/route";
 import { routes } from "@checkin/bulk-donation";
 
-export const PATCH = handler("PATCH /api/donations/transactions/[id]/organizational-level", donationRoute(routes.transactions.markOrganizationalLevel));
+export const PATCH = handler("PATCH /api/donations/transactions/[id]/organizational-level", componentRoute(routes.transactions.markOrganizationalLevel));

@@ -1,13 +1,13 @@
 /** Item-reference route factories (#1286). Returns ItemReference model bags. */
+import { httpError, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
 import { createItemReferenceRepository } from "../repositories/itemReference";
 import { createCatalogRepository } from "../repositories/catalog";
 import { findAutoConflict, type RefFields } from "../services/referenceMatchingService";
 import { normalizeDescription } from "../lib/normalizeDescription";
-import { getDb, getPrincipal, catalogError } from "../runtime";
+import { getDb, getPrincipal } from "../runtime";
 import type { CatalogRouteHandler } from "../contract";
-import { parseId, readJson, parseBody, query } from "./_shared";
 
 const refRepo = () => createItemReferenceRepository(getDb());
 const catalogRepo = () => createCatalogRepository(getDb());
@@ -83,16 +83,16 @@ export const list: CatalogRouteHandler = async ({ req }) => {
 };
 
 export const create: CatalogRouteHandler = async ({ req }) => {
-  const body = parseBody(createSchema, await readJson(req));
+  const body = await parseBody(req, createSchema);
   const fields: RefFields = {
     partNumber: body.partNumber,
     description: body.description,
     manufacturer: body.manufacturer,
     retailer: body.retailer,
   };
-  if (!(await catalogRepo().findItemByGtin13(body.gtin13))) throw catalogError(404, "Item not found");
+  if (!(await catalogRepo().findItemByGtin13(body.gtin13))) throw httpError(404, "Item not found");
   const conflict = await findAutoConflict(body.gtin13, fields);
-  if (conflict) throw catalogError(409, conflict);
+  if (conflict) throw httpError(409, conflict);
 
   const principal = await getPrincipal();
   const now = new Date();
@@ -119,9 +119,9 @@ export const update: CatalogRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
   const r = refRepo();
   const existing = await r.findById(id);
-  if (!existing) throw catalogError(404, "Reference not found");
+  if (!existing) throw httpError(404, "Reference not found");
 
-  const body = parseBody(updateSchema, await readJson(req));
+  const body = await parseBody(req, updateSchema);
   const fields: RefFields = {
     partNumber: body.partNumber,
     description: body.description,
@@ -129,7 +129,7 @@ export const update: CatalogRouteHandler = async ({ req, params }) => {
     retailer: body.retailer,
   };
   const conflict = await findAutoConflict(existing.gtin13, fields);
-  if (conflict) throw catalogError(409, conflict);
+  if (conflict) throw httpError(409, conflict);
 
   const principal = await getPrincipal();
   const updated = await r.updateItemReference(id, {
@@ -149,7 +149,7 @@ export const archive: CatalogRouteHandler = async ({ params }) => {
   const id = parseId(params.id);
   const r = refRepo();
   const existing = await r.findById(id);
-  if (!existing) throw catalogError(404, "Reference not found");
+  if (!existing) throw httpError(404, "Reference not found");
   const principal = await getPrincipal();
   return {
     ItemReference: await r.updateItemReference(id, {
@@ -165,14 +165,14 @@ export const unarchive: CatalogRouteHandler = async ({ params }) => {
   const id = parseId(params.id);
   const r = refRepo();
   const existing = await r.findById(id);
-  if (!existing) throw catalogError(404, "Reference not found");
+  if (!existing) throw httpError(404, "Reference not found");
   const conflict = await findAutoConflict(existing.gtin13, {
     partNumber: existing.partNumber,
     manufacturer: existing.manufacturer,
     description: existing.descriptionNormalized,
     retailer: existing.retailer,
   });
-  if (conflict) throw catalogError(409, conflict);
+  if (conflict) throw httpError(409, conflict);
   const principal = await getPrincipal();
   return {
     ItemReference: await r.updateItemReference(id, {

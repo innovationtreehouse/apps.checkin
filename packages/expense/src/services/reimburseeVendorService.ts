@@ -8,7 +8,7 @@ import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { conflictedParties } from "../lib/signoff-facts";
 import { QB_OFF } from "../lib/expense-constants";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 /** A Vendor QuickBooks already has, by id, or one found or created under the reimbursee's own name. */
 export type VendorChoice = { qbVendorId: string } | { createForReimbursee: true };

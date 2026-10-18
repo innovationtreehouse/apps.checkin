@@ -2,7 +2,7 @@ import { db, type DbOrTx } from "../db";
 import { recordDonorDataRead, recordEvent, type DonorReadContext } from "../repositories/audit";
 import { getOwnerDirectory } from "../runtime";
 import { runOwnerAssignedCycleTx, type AuditContext } from "../workflows/disbursement.actor";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 // Owner decisions return the row without donor identity, so the writes need no donor-read audit row.
 const DECISION_SELECT = {

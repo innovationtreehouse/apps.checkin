@@ -576,9 +576,9 @@ describeDb("income settings", () => {
 
   it("finance may lower a cap; raising one takes the board; each change is audited", async () => {
     await updateIncomeSettings(ORG_A, { maxCreatesPerRun: 10 }, finance);
-    await expect(updateIncomeSettings(ORG_A, { maxCreatesPerRun: 20 }, finance)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(updateIncomeSettings(ORG_A, { maxCreatesPerRun: 20 }, finance)).rejects.toMatchObject({ status: 403 });
     await expect(updateIncomeSettings(ORG_A, { maxCreatesPerRun: 20 }, board)).resolves.toMatchObject({ maxCreatesPerRun: 20 });
-    await expect(updateIncomeSettings(ORG_A, { maxCreatesPerRun: 1 }, { userId: 7, isFinance: false, isBoard: false })).rejects.toMatchObject({ statusCode: 403 });
+    await expect(updateIncomeSettings(ORG_A, { maxCreatesPerRun: 1 }, { userId: 7, isFinance: false, isBoard: false })).rejects.toMatchObject({ status: 403 });
 
     const changes = await db.incomeAuditLog.findMany({ where: { action: "settings.updated" }, orderBy: { id: "asc" } });
     expect(changes.map((c) => [c.actorUserId, c.before, c.after])).toEqual([

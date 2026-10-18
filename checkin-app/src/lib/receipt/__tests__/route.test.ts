@@ -4,40 +4,12 @@
 import type { NextRequest as NextRequestType } from "next/server";
 import { recordReceiptDonorReads } from "@checkin/bulk-donation";
 import type { Role } from "@/security/core";
-import { ApiResponseError, type HandlerContext } from "@/security/handler";
-import { accessOf, mapServiceErrors, readJsonCapped, receiptRoute } from "@/lib/receipt/route";
+import type { HandlerContext } from "@/security/handler";
+import { accessOf, readJsonCapped, receiptRoute } from "@/lib/receipt/route";
 
 jest.mock("@checkin/bulk-donation", () => ({ recordReceiptDonorReads: jest.fn() }));
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>("next/server");
-
-/** A ServiceError from another loaded copy of the library: same name and shape, different class. */
-class ForeignServiceError extends Error {
-  constructor(public readonly statusCode: number, message: string) {
-    super(message);
-    this.name = "ServiceError";
-  }
-}
-
-describe("mapServiceErrors", () => {
-  it.each([
-    [400, "validation"],
-    [403, "forbidden"],
-    [404, "not found"],
-    [409, "conflict"],
-  ])("maps a ServiceError(%i) by name and status, whatever copy of the class threw it", async (status, message) => {
-    const err = await mapServiceErrors(() => Promise.reject(new ForeignServiceError(status, message))).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ApiResponseError);
-    expect(err).toMatchObject({ status, message });
-  });
-
-  it("leaves any other error to become an opaque 500", async () => {
-    const plain = new Error("boom");
-    await expect(mapServiceErrors(() => Promise.reject(plain))).rejects.toBe(plain);
-    const noStatus = Object.assign(new Error("odd"), { name: "ServiceError", statusCode: "409" });
-    await expect(mapServiceErrors(() => Promise.reject(noStatus))).rejects.toBe(noStatus);
-  });
-});
 
 describe("accessOf", () => {
   it("acts org-wide only for the finance and board views", () => {

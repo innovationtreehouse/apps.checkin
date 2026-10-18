@@ -3,7 +3,7 @@ import { resolveNextState } from "../workflows/expense.invariants";
 import type { ExpenseEvent } from "../workflows/expense.events";
 import type { ExpenseMachineContext } from "../workflows/expense.guards";
 import { NEUTRAL_CONTEXT } from "../workflows/expense.guards";
-import { ServiceError } from "../services/serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 type Db = PrismaClient;
 

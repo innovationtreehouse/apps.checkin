@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { getIncomeConfig } from "../runtime";
 import { recordAudit } from "../lib/audit";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 import type { Actor } from "./reconciliationService";
 
 /** A variant the mirror has seen, with the org's bucket mapping (null = organization level). */

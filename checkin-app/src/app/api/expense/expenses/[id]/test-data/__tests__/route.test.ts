@@ -12,7 +12,6 @@ import { PUT } from '../route';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@checkin/expense', () => ({
-    ExpenseHttpError: class ExpenseHttpError extends Error {},
     routes: { expenses: { testData: jest.fn() } },
 }));
 

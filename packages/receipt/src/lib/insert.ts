@@ -2,8 +2,16 @@ import { createHash, randomUUID } from "node:crypto";
 import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import { audit, type Actor } from "../repositories/receipt";
-import { OrgUploadLimitError, ServiceError } from "../services/serviceError";
+import { ServiceError } from "@checkin/component-kit";
 import type { ReceiptLimits } from "./limits";
+
+/** The 429 for the org-wide daily upload limit, which refuses every uploader alike. */
+export class OrgUploadLimitError extends ServiceError {
+  constructor() {
+    super(429, "Receipt uploads have reached today's limit. Try again tomorrow.");
+    this.name = "OrgUploadLimitError";
+  }
+}
 
 export interface NewLine {
   description: string;

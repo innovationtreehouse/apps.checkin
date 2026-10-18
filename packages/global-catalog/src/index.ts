@@ -21,9 +21,6 @@ export {
   getPrincipal,
   getOrg,
   getDb,
-  catalogError,
-  mapServiceErrors,
-  CatalogHttpError,
 } from "./runtime";
 export type {
   CatalogPrincipal,

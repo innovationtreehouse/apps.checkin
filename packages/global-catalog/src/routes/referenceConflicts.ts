@@ -1,11 +1,11 @@
 /** Reference-conflict route factories (#1286). */
+import { mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";
 import { createItemReferenceRepository } from "../repositories/itemReference";
 import { conflictResolutionEnum } from "../db/schema";
 import { resolveConflict } from "../services/conflictResolutionService";
-import { getDb, getPrincipal, mapServiceErrors } from "../runtime";
+import { getDb, getPrincipal } from "../runtime";
 import type { CatalogRouteHandler } from "../contract";
-import { parseId, readJson, parseBody, query } from "./_shared";
 
 const repo = () => createItemReferenceRepository(getDb());
 const resolveSchema = z.object({ resolution: z.enum(conflictResolutionEnum) });
@@ -20,7 +20,7 @@ export const list: CatalogRouteHandler = async ({ req }) => {
 
 export const resolve: CatalogRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
-  const { resolution } = parseBody(resolveSchema, await readJson(req));
+  const { resolution } = await parseBody(req, resolveSchema);
   const principal = await getPrincipal();
   await mapServiceErrors(() => resolveConflict(id, principal.id, resolution));
   return {};

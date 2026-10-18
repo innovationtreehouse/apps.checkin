@@ -10,7 +10,6 @@ export * from "./lib/qb-deposits";
 export * from "./lib/reconcile";
 export * from "./lib/outbox";
 export * from "./services/reconciliationService";
-export * from "./services/serviceError";
 export * from "./services/settingsService";
 export * from "./services/itemCategoryService";
 // Off the main entry, not a subpath: Turbopack's Docker build resolves a package's `.` export only.

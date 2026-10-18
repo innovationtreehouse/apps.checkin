@@ -2,8 +2,8 @@
 // /api/donations/* through checkin's handler(). The endpoint string MUST match
 // its src/security/registry/donation.ts entry.
 import { handler } from "@/security/handler";
-import { donationRoute } from "@/lib/bulkDonation/route";
+import { componentRoute } from "@/lib/components/route";
 import { routes } from "@checkin/bulk-donation";
 
-export const GET = handler("GET /api/donations/account-map", donationRoute(routes.rules.listAccountMap));
-export const POST = handler("POST /api/donations/account-map", donationRoute(routes.rules.createAccountMap));
+export const GET = handler("GET /api/donations/account-map", componentRoute(routes.rules.listAccountMap));
+export const POST = handler("POST /api/donations/account-map", componentRoute(routes.rules.createAccountMap));

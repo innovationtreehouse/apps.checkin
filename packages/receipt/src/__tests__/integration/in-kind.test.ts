@@ -19,7 +19,7 @@ const badMath = () => manualDetails({ receiptTotal: "1" });
 describeDb("in-kind mark and donor (X13)", () => {
   it("requires a donor and forbids reimbursement", async () => {
     await expect(receiptService.upload(textFile(), "text/plain", { details: manualDetails(), isInKind: true })).rejects.toMatchObject({
-      statusCode: 400,
+      status: 400,
     });
     await expect(
       receiptService.upload(textFile(), "text/plain", {
@@ -28,7 +28,7 @@ describeDb("in-kind mark and donor (X13)", () => {
         donor: { self: true },
         needsReimbursement: true,
       }),
-    ).rejects.toMatchObject({ statusCode: 400 });
+    ).rejects.toMatchObject({ status: 400 });
   });
 
   it("'I am the donor' sends the uploader's names; the push carries only isInKind", async () => {

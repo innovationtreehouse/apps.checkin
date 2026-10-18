@@ -6,7 +6,8 @@ import type { ConflictResolution } from "../db/schema";
 const itemRefRepo = createItemReferenceRepository(db);
 const catalogRepo = createCatalogRepository(db);
 import type { ConflictResolutionStatus } from "../workflows/conflict-resolution.machine";
-import { ServiceError, reviewTransitionError } from "./categoryService";
+import { ServiceError } from "@checkin/component-kit";
+import { reviewTransitionError } from "./categoryService";
 import { assertConflictResolutionTransition } from "../workflows/conflict-resolution.machine";
 import { recordTransition } from "./orgEventService";
 

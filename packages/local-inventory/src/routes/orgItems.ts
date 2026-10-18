@@ -3,12 +3,13 @@
  * relations, which the host stripper recurses into. Catalog item names are not
  * here — they live in the catalog's database.
  */
+import { httpError, mapServiceErrors, parseBody, query } from "@checkin/component-kit";
 import { z } from "zod";
 import type { Prisma } from "../generated/prisma/client";
 import { db } from "../lib/db";
-import { getOrgId, getPrincipal, getServices, inventoryError, mapServiceErrors } from "../runtime";
+import { getOrgId, getPrincipal, getServices } from "../runtime";
 import type { InventoryRouteHandler } from "../contract";
-import { pageArgs, parseBody, query } from "./_shared";
+import { pageArgs } from "./_shared";
 
 const include = { location: true, backstockLocation: true } as const;
 
@@ -60,7 +61,7 @@ export const count: InventoryRouteHandler = async ({ req }) => ({
 
 export const get: InventoryRouteHandler = async ({ params }) => {
   const item = await findItem(params.gtin13);
-  if (!item) throw inventoryError(404, "Organization item not found");
+  if (!item) throw httpError(404, "Organization item not found");
   return { OrgItem: item };
 };
 

@@ -2,7 +2,7 @@
 // under /api/catalog/* through checkin's handler() (admission + stripper).
 // The endpoint string MUST match its src/security/registry.ts entry.
 import { handler } from "@/security/handler";
-import { catalogRoute } from "@/lib/catalog/route";
+import { componentRoute } from "@/lib/components/route";
 import { routes } from "@checkin/global-catalog";
 
-export const POST = handler("POST /api/catalog/proposals/item-references/[id]/approve", catalogRoute(routes.proposals.approve));
+export const POST = handler("POST /api/catalog/proposals/item-references/[id]/approve", componentRoute(routes.proposals.approve));

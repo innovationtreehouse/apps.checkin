@@ -6,7 +6,7 @@ import { getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { lockExpense } from "../lib/signoff-facts";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 const QB_INITIAL = "UNMATCHED";
 

@@ -3,8 +3,7 @@
  * under its handler(), which admits the caller and strips the returned model bag; bag keys are
  * the registry's `returns` model names.
  */
-import type { ZodType } from "zod";
-import { httpError } from "./runtime";
+import { parseBody, parseId } from "@checkin/component-kit";
 import { receiptService } from "./services/receiptService";
 import { AssociateBodySchema, ProposeBodySchema, lineItemService } from "./services/lineItemService";
 
@@ -14,24 +13,6 @@ export interface WorkflowRouteCtx {
 }
 export type WorkflowBag = Record<string, unknown>;
 export type WorkflowRouteHandler = (ctx: WorkflowRouteCtx) => Promise<WorkflowBag>;
-
-function parseId(raw: string | null | undefined, label: string): number {
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n <= 0) throw httpError(400, `Invalid ${label}`);
-  return n;
-}
-
-async function parseBody<T>(req: Request, schema: ZodType<T>): Promise<T> {
-  let json: unknown;
-  try {
-    json = await req.json();
-  } catch {
-    throw httpError(400, "Invalid JSON body");
-  }
-  const result = schema.safeParse(json);
-  if (!result.success) throw httpError(400, result.error.issues[0]?.message ?? "Invalid request body");
-  return result.data;
-}
 
 const receiptId = (params: Record<string, string>) => parseId(params.id, "receipt id");
 const lineId = (params: Record<string, string>) => parseId(params.lineStatusId, "line id");

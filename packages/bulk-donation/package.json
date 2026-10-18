@@ -30,6 +30,7 @@
   "dependencies": {
     "@checkin/donations": "*",
     "@checkin/money": "*",
+    "@checkin/component-kit": "*",
     "@checkin/pg-kit": "*",
     "@checkin/quickbooks": "*",
     "@checkin/receipt-types": "*",

@@ -190,7 +190,7 @@ describeDb("S2 intake — applied is written only after processing commits", () 
     await db.receivedExpensePayload.updateMany({ data: { status: "received" } });
     const before = await snapshot(allRecognized.receiptId);
 
-    await expect(receiveCompletedReceipt({ ...allRecognized, backfill: true })).rejects.toMatchObject({ statusCode: 409 });
+    await expect(receiveCompletedReceipt({ ...allRecognized, backfill: true })).rejects.toMatchObject({ status: 409 });
 
     expect(await snapshot(allRecognized.receiptId)).toEqual(before);
   });

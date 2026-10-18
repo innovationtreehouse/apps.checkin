@@ -2,7 +2,7 @@ import { db } from "../db";
 import { getOrgSettings } from "../lib/receipt-flow";
 import { OrgSettingsSchema } from "../lib/schemas";
 import { getOrg, requireActor } from "../runtime";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 /** The org's tax-exempt and age-limit settings (FINANCE; the host route gates). */
 export const orgSettingsService = {

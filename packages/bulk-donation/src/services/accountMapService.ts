@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { recordEvent } from "../repositories/audit";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 interface AccountMapData {
   companyName: string;

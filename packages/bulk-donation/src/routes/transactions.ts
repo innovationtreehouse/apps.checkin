@@ -1,9 +1,10 @@
 /** Gifts: the lists and detail (each audited as a donor read) and the two owner decisions. */
+import { httpError, mapServiceErrors, parseBody, parseId } from "@checkin/component-kit";
 import { z } from "zod";
 import { transactionService } from "../services/transactionService";
-import { donationError, getOrgId, mapServiceErrors } from "../runtime";
+import { getOrgId } from "../runtime";
 import type { DonationRouteHandler } from "../contract";
-import { auditContext, donorReader, pageArgs, parseBody, parseId } from "./_shared";
+import { auditContext, donorReader, pageArgs } from "./_shared";
 
 const ownerSchema = z.object({
   ownerId: z.number().int().positive("ownerId is required"),
@@ -12,7 +13,7 @@ const ownerSchema = z.object({
 
 export const list: DonationRouteHandler = async ({ req }) => {
   const raw = new URL(req.url).searchParams.get("assigned");
-  if (raw !== null && raw !== "true" && raw !== "false") throw donationError(400, "assigned must be true or false");
+  if (raw !== null && raw !== "true" && raw !== "false") throw httpError(400, "assigned must be true or false");
   const reader = await donorReader(req, "GET /api/donations/transactions");
   return { Transaction: await transactionService.listTransactions(await getOrgId(), reader, raw ?? undefined, pageArgs(req)) };
 };
@@ -26,7 +27,7 @@ export const detail: DonationRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
   const reader = await donorReader(req, "GET /api/donations/transactions/[id]");
   const row = await transactionService.getTransaction(await getOrgId(), id, reader);
-  if (!row) throw donationError(404, "Transaction not found");
+  if (!row) throw httpError(404, "Transaction not found");
   return { Transaction: row };
 };
 

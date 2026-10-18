@@ -3,7 +3,7 @@ import { db, isUniqueConstraintError } from "../db";
 import { recordEvent } from "../repositories/audit";
 import { isAutoOrganizationalLevel } from "../lib/domain-rules";
 import type { BenevityRow } from "../lib/csv-parser";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 import { getOwnerDirectory } from "../runtime";
 import { lockDisbursementTx, runOwnerAssignedCycleTx, type AuditContext } from "../workflows/disbursement.actor";
 

@@ -63,7 +63,7 @@ describeDb("reimbursee QuickBooks Vendor", () => {
 
   it("refuses an id QuickBooks does not know", async () => {
     bind();
-    await expect(linkReimburseeVendor(ORG, await reimbursement(9), { qbVendorId: "99" }, FINANCE)).rejects.toMatchObject({ statusCode: 404 });
+    await expect(linkReimburseeVendor(ORG, await reimbursement(9), { qbVendorId: "99" }, FINANCE)).rejects.toMatchObject({ status: 404 });
     expect(await db.expenseReimburseeVendor.count()).toBe(0);
   });
 
@@ -73,7 +73,7 @@ describeDb("reimbursee QuickBooks Vendor", () => {
     expect((await vendorOptions(ORG, id, "Pat", FINANCE)).map((v) => v.id)).toEqual(["55", "56"]);
     await linkReimburseeVendor(ORG, await reimbursement(7), { qbVendorId: "56" }, FINANCE);
     expect(await vendorOptions(ORG, id, "Pat", FINANCE)).toEqual([{ id: "55", displayName: "Pat Lee" }]);
-    await expect(vendorOptions(ORG, id, "Pat", principal(5, { isBoard: true }))).rejects.toMatchObject({ statusCode: 403 });
+    await expect(vendorOptions(ORG, id, "Pat", principal(5, { isBoard: true }))).rejects.toMatchObject({ status: 403 });
   });
 
   it("creates the Vendor under the name on the reimbursee's Person record", async () => {
@@ -89,7 +89,7 @@ describeDb("reimbursee QuickBooks Vendor", () => {
     bind();
     const id = await reimbursement(12);
     await expect(linkReimburseeVendor(ORG, id, { createForReimbursee: true }, FINANCE)).rejects.toMatchObject({
-      statusCode: 409,
+      status: 409,
       message: expect.stringContaining("#55"),
     });
     expect(await reimburseeVendorId(12)).toBeNull();
@@ -99,23 +99,23 @@ describeDb("reimbursee QuickBooks Vendor", () => {
 
   it("creates nothing for a reimbursee with no recorded name", async () => {
     const qb = bind();
-    await expect(linkReimburseeVendor(ORG, await reimbursement(11), { createForReimbursee: true }, FINANCE)).rejects.toMatchObject({ statusCode: 409 });
+    await expect(linkReimburseeVendor(ORG, await reimbursement(11), { createForReimbursee: true }, FINANCE)).rejects.toMatchObject({ status: 409 });
     expect(qb.findOrCreate).not.toHaveBeenCalled();
   });
 
   it("with QuickBooks off, nothing can be searched or linked", async () => {
     bind({ off: true });
     const id = await reimbursement(9);
-    await expect(vendorOptions(ORG, id, "Pat", FINANCE)).rejects.toMatchObject({ statusCode: 503, message: QB_OFF });
-    await expect(linkReimburseeVendor(ORG, id, { createForReimbursee: true }, FINANCE)).rejects.toMatchObject({ statusCode: 503, message: QB_OFF });
-    await expect(linkReimburseeVendor(ORG, id, { qbVendorId: "55" }, FINANCE)).rejects.toMatchObject({ statusCode: 503, message: QB_OFF });
+    await expect(vendorOptions(ORG, id, "Pat", FINANCE)).rejects.toMatchObject({ status: 503, message: QB_OFF });
+    await expect(linkReimburseeVendor(ORG, id, { createForReimbursee: true }, FINANCE)).rejects.toMatchObject({ status: 503, message: QB_OFF });
+    await expect(linkReimburseeVendor(ORG, id, { qbVendorId: "55" }, FINANCE)).rejects.toMatchObject({ status: 503, message: QB_OFF });
     expect(await db.expenseReimburseeVendor.count()).toBe(0);
   });
 
   it("refuses a finance member linking a reimbursee in their own household, with an audit row and no link", async () => {
     bind();
     const id = await reimbursement(7);
-    await expect(linkReimburseeVendor(ORG, id, { qbVendorId: "55" }, KIN)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(linkReimburseeVendor(ORG, id, { qbVendorId: "55" }, KIN)).rejects.toMatchObject({ status: 403 });
     expect(await refusals(id)).toHaveLength(1);
     expect(await db.expenseReimburseeVendor.count()).toBe(0);
   });
@@ -124,7 +124,7 @@ describeDb("reimbursee QuickBooks Vendor", () => {
     bind();
     const id = await reimbursement(9);
     for (const p of [principal(1, { isFinance: true }), principal(6, { isFinance: true })]) {
-      await expect(linkReimburseeVendor(ORG, id, { qbVendorId: "55" }, p)).rejects.toMatchObject({ statusCode: 403 });
+      await expect(linkReimburseeVendor(ORG, id, { qbVendorId: "55" }, p)).rejects.toMatchObject({ status: 403 });
     }
     expect(await refusals(id)).toHaveLength(2);
     expect(await db.expenseReimburseeVendor.count()).toBe(0);
@@ -135,7 +135,7 @@ describeDb("reimbursee QuickBooks Vendor", () => {
     await linkReimburseeVendor(ORG, await reimbursement(7), { qbVendorId: "70" }, FINANCE);
     const id = await reimbursement(10);
 
-    await expect(linkReimburseeVendor(ORG, id, { createForReimbursee: true }, KIN)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(linkReimburseeVendor(ORG, id, { createForReimbursee: true }, KIN)).rejects.toMatchObject({ status: 403 });
     expect(await refusals(id)).toHaveLength(1);
     expect(await reimburseeVendorId(10)).toBeNull();
   });
@@ -144,8 +144,8 @@ describeDb("reimbursee QuickBooks Vendor", () => {
     bind();
     const first = await reimbursement(7);
     await linkReimburseeVendor(ORG, first, { qbVendorId: "55" }, FINANCE);
-    await expect(linkReimburseeVendor(ORG, await reimbursement(9), { qbVendorId: "55" }, FINANCE)).rejects.toMatchObject({ statusCode: 409 });
-    await expect(linkReimburseeVendor(ORG, first, { qbVendorId: "56" }, FINANCE)).rejects.toMatchObject({ statusCode: 409 });
+    await expect(linkReimburseeVendor(ORG, await reimbursement(9), { qbVendorId: "55" }, FINANCE)).rejects.toMatchObject({ status: 409 });
+    await expect(linkReimburseeVendor(ORG, first, { qbVendorId: "56" }, FINANCE)).rejects.toMatchObject({ status: 409 });
     await expect(
       db.expenseReimburseeVendor.create({ data: { orgId: ORG, reimburseePersonId: 9, qbVendorId: "55" } }),
     ).rejects.toMatchObject({ code: "P2002" });
@@ -153,9 +153,9 @@ describeDb("reimbursee QuickBooks Vendor", () => {
 
   it("only FINANCE links, only once the reimbursee is known", async () => {
     bind();
-    await expect(linkReimburseeVendor(ORG, await reimbursement(9), { qbVendorId: "55" }, principal(5, { isBoard: true }))).rejects.toMatchObject({ statusCode: 403 });
-    await expect(linkReimburseeVendor(ORG, await reimbursement(undefined), { qbVendorId: "55" }, FINANCE)).rejects.toMatchObject({ statusCode: 409 });
-    await expect(linkReimburseeVendor(ORG, await seedExpense(), { qbVendorId: "55" }, FINANCE)).rejects.toMatchObject({ statusCode: 400 });
+    await expect(linkReimburseeVendor(ORG, await reimbursement(9), { qbVendorId: "55" }, principal(5, { isBoard: true }))).rejects.toMatchObject({ status: 403 });
+    await expect(linkReimburseeVendor(ORG, await reimbursement(undefined), { qbVendorId: "55" }, FINANCE)).rejects.toMatchObject({ status: 409 });
+    await expect(linkReimburseeVendor(ORG, await seedExpense(), { qbVendorId: "55" }, FINANCE)).rejects.toMatchObject({ status: 400 });
     expect(await db.expenseReimburseeVendor.count()).toBe(0);
   });
 });

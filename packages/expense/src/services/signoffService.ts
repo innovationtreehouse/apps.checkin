@@ -12,7 +12,7 @@ import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, lineKind, missi
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
 import { raiseFlag } from "./flagService";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 export async function signLine(principal: ExpensePrincipal, lineItemId: number, seat: Seat): Promise<void> {
   const actor = actorOf(principal);

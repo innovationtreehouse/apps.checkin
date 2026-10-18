@@ -5,7 +5,7 @@ import type { Db } from "../db";
 import type { ExpensePrincipal, ExpenseSettings } from "../contract";
 import { assertOrg } from "../runtime";
 import { actorOf } from "../lib/caller";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 /** The column defaults; a missing row reads as these. */
 export const DEFAULT_EXPENSE_SETTINGS: ExpenseSettings = {

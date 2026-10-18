@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { recordEvent } from "../repositories/audit";
 import { runDisbursementCycleTx, type AuditContext } from "../workflows/disbursement.actor";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 import type { AccountMap } from "../generated/prisma/client";
 import { z } from "zod";
 

@@ -1,9 +1,15 @@
 import type { ReceiptState } from "@checkin/receipt-types";
 import type { Prisma, Receipt, ReceiptDetail } from "../generated/prisma/client";
 import { db, type Db } from "../db";
-import { ReceiptStateConflictError } from "../services/serviceError";
 
 type Tx = Db | Prisma.TransactionClient;
+
+export class ReceiptStateConflictError extends Error {
+  constructor(expected: string, actual: string | undefined) {
+    super(`Receipt state conflict: expected '${expected}', found '${actual ?? "not_found"}'. Refresh and retry.`);
+    this.name = "ReceiptStateConflictError";
+  }
+}
 
 /** A receipt and its details, flattened, without the file. */
 export type ReceiptRow = Omit<Receipt, "fileBlob"> & Omit<ReceiptDetail, "id" | "orgId"> & { state: ReceiptState };

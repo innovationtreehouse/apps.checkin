@@ -31,15 +31,15 @@ describeDb("editing a receipt", () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     // Not yet delivered, so the state rule answers rather than the received-receipt lock.
     await db.receipt.update({ where: { id: r.id }, data: { pushedAt: null } });
-    await expect(receiptService.edit(r.id, "submitter", { retailer: "x" })).rejects.toMatchObject({ statusCode: 400 });
-    await expect(receiptService.addLine(r.id, "submitter", { description: "x" })).rejects.toMatchObject({ statusCode: 400 });
-    await expect(receiptService.resubmit(r.id, "submitter")).rejects.toMatchObject({ statusCode: 400 });
+    await expect(receiptService.edit(r.id, "submitter", { retailer: "x" })).rejects.toMatchObject({ status: 400 });
+    await expect(receiptService.addLine(r.id, "submitter", { description: "x" })).rejects.toMatchObject({ status: 400 });
+    await expect(receiptService.resubmit(r.id, "submitter")).rejects.toMatchObject({ status: 400 });
   });
 
   it("finance edits any receipt; another submitter cannot", async () => {
     const r = await invalid();
     actAs(BOB);
-    await expect(receiptService.edit(r.id, "submitter", { retailer: "x" })).rejects.toMatchObject({ statusCode: 404 });
+    await expect(receiptService.edit(r.id, "submitter", { retailer: "x" })).rejects.toMatchObject({ status: 404 });
     actAs(FINANCE);
     await receiptService.edit(r.id, "finance", { retailer: "By finance" });
     expect((await db.receiptDetail.findUniqueOrThrow({ where: { id: r.id } })).retailer).toBe("By finance");
@@ -60,14 +60,14 @@ describeDb("editing a receipt", () => {
     const a = await invalid();
     const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "26", retailer: "B" }) });
     const [bLine] = await db.receiptLineItem.findMany({ where: { receiptId: b.id } });
-    await expect(receiptService.editLine(a.id, "submitter", bLine.id, { description: "x" })).rejects.toMatchObject({ statusCode: 404 });
-    await expect(receiptService.deleteLine(a.id, "submitter", bLine.id)).rejects.toMatchObject({ statusCode: 404 });
+    await expect(receiptService.editLine(a.id, "submitter", bLine.id, { description: "x" })).rejects.toMatchObject({ status: 404 });
+    await expect(receiptService.deleteLine(a.id, "submitter", bLine.id)).rejects.toMatchObject({ status: 404 });
   });
 
   it("discard is terminal", async () => {
     const r = await invalid();
     await receiptService.discard(r.id, "submitter");
-    await expect(receiptService.discard(r.id, "submitter")).rejects.toMatchObject({ statusCode: 400 });
+    await expect(receiptService.discard(r.id, "submitter")).rejects.toMatchObject({ status: 400 });
   });
 });
 
@@ -76,6 +76,6 @@ describeDb("org settings", () => {
     actAs(FINANCE);
     expect(await orgSettingsService.get()).toMatchObject({ taxExempt: false, enforceReceiptAgeLimit: true, receiptAgeLimitDays: 90 });
     expect(await orgSettingsService.update({ receiptAgeLimitDays: 30 })).toMatchObject({ receiptAgeLimitDays: 30 });
-    await expect(orgSettingsService.update({ bogus: 1 })).rejects.toMatchObject({ statusCode: 400 });
+    await expect(orgSettingsService.update({ bogus: 1 })).rejects.toMatchObject({ status: 400 });
   });
 });

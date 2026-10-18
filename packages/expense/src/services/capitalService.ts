@@ -12,7 +12,7 @@ import { assertExpectedState, isLegalTransition } from "../workflows/expense.inv
 import { NEUTRAL_CONTEXT } from "../workflows/expense.guards";
 import { createExpenseRepository } from "../repositories/expense";
 import { requireFinance, requireLiveBuckets } from "./approvalService";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 const expenseRepo = createExpenseRepository(db);
 

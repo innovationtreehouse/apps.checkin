@@ -80,6 +80,7 @@ const customJestConfig = {
         '^@checkin/money$': '<rootDir>/../packages/money/src/index.ts',
         '^@checkin/utils$': '<rootDir>/../packages/utils/src/index.ts',
         '^@checkin/pg-kit$': '<rootDir>/../packages/pg-kit/src/index.ts',
+        '^@checkin/component-kit$': '<rootDir>/../packages/component-kit/src/index.ts',
         // Checkin-hosted libraries (#1286, #1287, #1272): jest's resolver doesn't honor
         // a package's `exports` subpaths, so map them to source. Subpath rule first (more
         // specific), then the bare entry.

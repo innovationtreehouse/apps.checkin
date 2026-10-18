@@ -12,7 +12,6 @@ import { GET } from '../route';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@checkin/bulk-donation', () => ({
-    DonationHttpError: class DonationHttpError extends Error {},
     routes: { inKind: { listQueue: jest.fn() } },
 }));
 

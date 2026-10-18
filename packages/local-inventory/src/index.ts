@@ -16,7 +16,6 @@ export * from "./lib/services/locationService";
 export * from "./lib/services/provisionalItemService";
 export * from "./lib/services/receiptService";
 export * from "./lib/services/receiveQueueService";
-export * from "./lib/services/serviceError";
 export * from "./lib/services/orgEventConsumer";
 
 export * from "./workflows/index";
@@ -29,9 +28,6 @@ export {
   getPrincipal,
   getOrg,
   getOrgId,
-  inventoryError,
-  mapServiceErrors,
-  InventoryHttpError,
 } from "./runtime";
 export type {
   InventoryPrincipal,

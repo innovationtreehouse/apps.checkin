@@ -9,7 +9,7 @@ import { lockExpense } from "../lib/signoff-facts";
 import { writeAudit } from "../lib/audit";
 import { actorOf } from "../lib/caller";
 import { requireFinance } from "./approvalService";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 /** Once the entry is (or is being) booked, a line's account is corrected in QuickBooks, not here. */
 const IN_QUICKBOOKS = new Set([POSTING, "CREATED", "MATCHED"]);

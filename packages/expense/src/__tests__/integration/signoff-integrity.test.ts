@@ -25,7 +25,7 @@ describeDb("seats follow the line's bucket", () => {
     const li = await seedLineItem(id);
     await seedApproval(id, li, { ownerId: null });
 
-    await expect(signLine(BOARD, li, "PROGRAM_APPROVER")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(signLine(BOARD, li, "PROGRAM_APPROVER")).rejects.toMatchObject({ status: 409 });
     expect(await seatsOf(li)).toEqual([]);
   });
 
@@ -43,7 +43,7 @@ describeDb("seats follow the line's bucket", () => {
     expect(await seatsOf(li)).toEqual([["SUBMITTER", 1]]);
     const voided = await db.expenseAuditLog.findMany({ where: { expenseId: id, action: "signoff_voided" } });
     expect(voided.map((a) => [a.lineItemId, a.valueBefore])).toEqual([[li, "PROGRAM_APPROVER"]]);
-    await expect(signLine(principal(2), li, "PROGRAM_APPROVER")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(signLine(principal(2), li, "PROGRAM_APPROVER")).rejects.toMatchObject({ status: 403 });
     await signLine(principal(4), li, "PROGRAM_APPROVER");
   });
 });
@@ -53,15 +53,15 @@ describeDb("a line is assigned only to a live bucket", () => {
     const id = await seedExpense({ state: "assign_ownership" });
     const li = await seedLineItem(id);
     const approvalId = await seedApproval(id, li, { ownerId: null });
-    await expect(assignOwner(FINANCE, id, approvalId, 555)).rejects.toMatchObject({ statusCode: 400 });
-    await expect(assignOwner(FINANCE, id, approvalId, 999)).rejects.toMatchObject({ statusCode: 400 });
+    await expect(assignOwner(FINANCE, id, approvalId, 555)).rejects.toMatchObject({ status: 400 });
+    await expect(assignOwner(FINANCE, id, approvalId, 999)).rejects.toMatchObject({ status: 400 });
 
     const unknown = await seedApproval(id, await seedLineItem(id), { ownerId: null, status: "unknown" });
-    await expect(resolveUnknown(FINANCE, id, unknown, 555)).rejects.toMatchObject({ statusCode: 400 });
+    await expect(resolveUnknown(FINANCE, id, unknown, 555)).rejects.toMatchObject({ status: 400 });
 
     const flow = await seedExpense({ state: "owner_approval" });
     const exception = await seedApproval(flow, await seedLineItem(flow), { ownerId: 100, status: "exception_raised" });
-    await expect(financeAssign(FINANCE, flow, exception, 999)).rejects.toMatchObject({ statusCode: 400 });
+    await expect(financeAssign(FINANCE, flow, exception, 999)).rejects.toMatchObject({ status: 400 });
 
     expect((await db.lineItemOwnerApproval.findFirst({ where: { id: approvalId } }))!.ownerId).toBeNull();
   });
@@ -77,7 +77,7 @@ describeDb("seats follow the payee", () => {
     await signLine(principal(2), li, "PROGRAM_APPROVER");
     await signLine(FINANCE, li, "TREASURER");
 
-    await expect(setReimbursee(ORG, id, 9, principal(4, { isFinance: true }))).rejects.toMatchObject({ statusCode: 409 });
+    await expect(setReimbursee(ORG, id, 9, principal(4, { isFinance: true }))).rejects.toMatchObject({ status: 409 });
 
     expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBe(7);
     expect(await seatsOf(li)).toEqual([["SUBMITTER", 1], ["PROGRAM_APPROVER", 2], ["TREASURER", 3]]);
@@ -91,7 +91,7 @@ describeDb("seats follow the payee", () => {
     const results = await Promise.allSettled([setReimbursee(ORG, id, 1, FINANCE), setReimbursee(ORG, id, 1, principal(4, { isFinance: true }))]);
 
     expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
-    expect(results.find((r) => r.status === "rejected")).toMatchObject({ reason: { statusCode: 409 } });
+    expect(results.find((r) => r.status === "rejected")).toMatchObject({ reason: { status: 409 } });
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "reimbursee_set" } })).toBe(1);
   });
 
@@ -107,7 +107,7 @@ describeDb("seats follow the payee", () => {
     await signLine(principal(1), li, "SUBMITTER");
     await signLine(principal(2), li, "PROGRAM_APPROVER");
 
-    await expect(signLine(FINANCE, li, "TREASURER")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(signLine(FINANCE, li, "TREASURER")).rejects.toMatchObject({ status: 403 });
     await signLine(principal(4, { isFinance: true }), li, "TREASURER");
     expect(await db.expenseEvent.count({ where: { expenseId: id } })).toBe(1);
   });
@@ -120,7 +120,7 @@ describeDb("seats follow the payee", () => {
 
     await setReimbursee(ORG, id, 1, FINANCE);
 
-    await expect(signLine(principal(3, { isFinance: true, isBoard: true }), li, "TREASURER")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(signLine(principal(3, { isFinance: true, isBoard: true }), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
     await signLine(BOARD, li, "TREASURER");
   });
 
@@ -144,21 +144,21 @@ describeDb("flags are checked off independently", () => {
     await raiseFlag(id, "COI", "conflict");
     const flag = (await db.expenseFlag.findFirst({ where: { expenseId: id } }))!;
 
-    await expect(checkOffFlag(principal(1, { isBoard: true }), flag.id)).rejects.toMatchObject({ statusCode: 403 });
-    await expect(checkOffFlag(principal(6, { isBoard: true }), flag.id)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(checkOffFlag(principal(1, { isBoard: true }), flag.id)).rejects.toMatchObject({ status: 403 });
+    await expect(checkOffFlag(principal(6, { isBoard: true }), flag.id)).rejects.toMatchObject({ status: 403 });
     await checkOffFlag(BOARD, flag.id);
   });
 });
 
 describeDb("threshold changes", () => {
   it("FINANCE tightens and loosens within policy; past policy, or switching review off, is the Board's", async () => {
-    await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 250_000 }, FINANCE)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 250_000 }, FINANCE)).rejects.toMatchObject({ status: 403 });
     await updateExpenseSettings(ORG, { boardReviewTotalCents: 100_000 }, FINANCE);
     await updateExpenseSettings(ORG, { boardReviewTotalCents: 200_000 }, FINANCE);
     await updateExpenseSettings(ORG, { boardReviewTotalCents: 250_000 }, BOARD);
 
     await updateExpenseSettings(ORG, { capitalTotalThresholdCents: 500_000 }, FINANCE);
-    await expect(updateExpenseSettings(ORG, { capitalTotalThresholdCents: 0 }, FINANCE)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(updateExpenseSettings(ORG, { capitalTotalThresholdCents: 0 }, FINANCE)).rejects.toMatchObject({ status: 403 });
     await updateExpenseSettings(ORG, { capitalTotalThresholdCents: 0 }, BOARD);
 
     await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 100_000_001 }, BOARD)).rejects.toThrow();

@@ -53,8 +53,8 @@ describeDb("sign-off seats", () => {
     const { li } = await heldLine();
     await signLine(principal(2), li, "PROGRAM_APPROVER");
 
-    await expect(signLine(principal(2), li, "TREASURER")).rejects.toMatchObject({ statusCode: 403 });
-    await expect(signLine(principal(8), li, "TREASURER")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(signLine(principal(2), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
+    await expect(signLine(principal(8), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
   });
 
   it("one household holds one seat on an expense: a FINANCE holder's spouse is refused, a Board member substitutes", async () => {
@@ -67,8 +67,8 @@ describeDb("sign-off seats", () => {
     await seedApproval(id, b, { ownerId: 100, status: "approved" });
 
     await signLine(FINANCE, a, "TREASURER");
-    await expect(signLine(principal(2), a, "PROGRAM_APPROVER")).rejects.toMatchObject({ statusCode: 403 });
-    await expect(signLine(principal(2), b, "PROGRAM_APPROVER")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(signLine(principal(2), a, "PROGRAM_APPROVER")).rejects.toMatchObject({ status: 403 });
+    await expect(signLine(principal(2), b, "PROGRAM_APPROVER")).rejects.toMatchObject({ status: 403 });
     await signLine(BOARD, a, "PROGRAM_APPROVER");
   });
 
@@ -80,7 +80,7 @@ describeDb("sign-off seats", () => {
 
     await signLine(principal(1), li, "SUBMITTER");
     await signLine(principal(2), li, "PROGRAM_APPROVER");
-    await expect(signLine(principal(3), li, "TREASURER")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(signLine(principal(3), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
     expect(await events(id)).toBe(0);
 
     await signLine(principal(5), li, "TREASURER");
@@ -104,8 +104,8 @@ describeDb("sign-off seats", () => {
     await financeAssign(principal(4, { isFinance: true }), id, approvalId, 101);
     expect(await db.expenseLineSignoff.count({ where: { lineItemId: li, signerUserId: 5 } })).toBe(0);
 
-    await expect(checkOffFlag(principal(5, { isBoard: true }), flag.id)).rejects.toMatchObject({ statusCode: 403 });
-    await expect(checkOffFlag(principal(9, { isBoard: true }), flag.id)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(checkOffFlag(principal(5, { isBoard: true }), flag.id)).rejects.toMatchObject({ status: 403 });
+    await expect(checkOffFlag(principal(9, { isBoard: true }), flag.id)).rejects.toMatchObject({ status: 403 });
     await checkOffFlag(principal(6, { isBoard: true }), flag.id);
   });
 
@@ -117,7 +117,7 @@ describeDb("sign-off seats", () => {
 
     await signLine(principal(1), li, "SUBMITTER");
     await signLine(principal(5), li, "PROGRAM_APPROVER");
-    await expect(signLine(principal(6), li, "TREASURER")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(signLine(principal(6), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
 
     expect(await events(id)).toBe(0);
     expect((await signoffStatus(id))[0].blocked).toEqual(["TREASURER"]);
@@ -135,8 +135,8 @@ describeDb("sign-off seats", () => {
 
     await signLine(principal(1), li, "SUBMITTER");
     await signLine(principal(6), li, "TREASURER");
-    await expect(signLine(principal(6), li, "PROGRAM_APPROVER")).rejects.toMatchObject({ statusCode: 403 });
-    await expect(signLine(principal(2), li, "PROGRAM_APPROVER")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(signLine(principal(6), li, "PROGRAM_APPROVER")).rejects.toMatchObject({ status: 403 });
+    await expect(signLine(principal(2), li, "PROGRAM_APPROVER")).rejects.toMatchObject({ status: 403 });
     expect(await events(id)).toBe(0);
 
     await signLine(principal(5), li, "PROGRAM_APPROVER");
@@ -152,7 +152,7 @@ describeDb("sign-off seats", () => {
 
     await signLine(principal(1), li, "SUBMITTER");
     await signLine(principal(7), li, "PROGRAM_APPROVER");
-    await expect(signLine(principal(3, { isFinance: true }), li, "TREASURER")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(signLine(principal(3, { isFinance: true }), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
 
     await signLine(principal(5, { isBoard: true }), li, "TREASURER");
     expect(await events(id)).toBe(1);
@@ -172,7 +172,7 @@ describeDb("sign-off seats", () => {
     await signLine(principal(2), await line({ needsReimbursement: false }), "PROGRAM_APPROVER");
 
     const nonMember = await line({ needsReimbursement: true, reimburseePersonId: 12 });
-    await expect(signLine(principal(2), nonMember, "PROGRAM_APPROVER")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(signLine(principal(2), nonMember, "PROGRAM_APPROVER")).rejects.toMatchObject({ status: 403 });
     await signLine(principal(5, { isBoard: true }), nonMember, "PROGRAM_APPROVER");
   });
 
@@ -196,14 +196,14 @@ describeDb("sign-off seats", () => {
     it("the reimbursee cannot fill any seat", async () => {
       const { li } = await reimburseeLine({ approvers: [9], finance: [9], board: [9] }, 9);
       for (const seat of ["SUBMITTER", "PROGRAM_APPROVER", "TREASURER"] as const) {
-        await expect(signLine(principal(9), li, seat)).rejects.toMatchObject({ statusCode: 403 });
+        await expect(signLine(principal(9), li, seat)).rejects.toMatchObject({ status: 403 });
       }
     });
 
     it("a member of the reimbursee's household cannot fill any seat", async () => {
       const { li } = await reimburseeLine({ approvers: [10], finance: [10], board: [10] }, 9);
       for (const seat of ["SUBMITTER", "PROGRAM_APPROVER", "TREASURER"] as const) {
-        await expect(signLine(principal(10), li, seat)).rejects.toMatchObject({ statusCode: 403 });
+        await expect(signLine(principal(10), li, seat)).rejects.toMatchObject({ status: 403 });
       }
     });
 
@@ -237,7 +237,7 @@ describeDb("sign-off seats", () => {
 
     it("nobody signs while the reimbursee is unknown; once FINANCE sets it the line is signable and drains", async () => {
       const { id, li } = await unknownReimbursee();
-      await expect(signLine(principal(1), li, "SUBMITTER")).rejects.toMatchObject({ statusCode: 409 });
+      await expect(signLine(principal(1), li, "SUBMITTER")).rejects.toMatchObject({ status: 409 });
 
       await setReimbursee(ORG, id, 1, FINANCE);
 
@@ -262,17 +262,17 @@ describeDb("sign-off seats", () => {
 
     it("only FINANCE sets the reimbursee, never to themself or their own household", async () => {
       const { id } = await unknownReimbursee({ submitterId: 9 });
-      await expect(setReimbursee(ORG, id, 9, principal(2))).rejects.toMatchObject({ statusCode: 403 });
-      await expect(setReimbursee(ORG, id, 9, principal(9, { isFinance: true }))).rejects.toMatchObject({ statusCode: 403 });
-      await expect(setReimbursee(ORG, id, 9, principal(10, { isFinance: true }))).rejects.toMatchObject({ statusCode: 403 });
+      await expect(setReimbursee(ORG, id, 9, principal(2))).rejects.toMatchObject({ status: 403 });
+      await expect(setReimbursee(ORG, id, 9, principal(9, { isFinance: true }))).rejects.toMatchObject({ status: 403 });
+      await expect(setReimbursee(ORG, id, 9, principal(10, { isFinance: true }))).rejects.toMatchObject({ status: 403 });
       await expect(setReimbursee("org-other", id, 9, FINANCE)).rejects.toThrow(/not this org/);
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
     });
 
     it("the submitter and the submitter's household cannot name the reimbursee; an outside FINANCE holder can", async () => {
       const { id } = await unknownReimbursee();
-      await expect(setReimbursee(ORG, id, 1, principal(1, { isFinance: true }))).rejects.toMatchObject({ statusCode: 403 });
-      await expect(setReimbursee(ORG, id, 1, principal(11, { isFinance: true }))).rejects.toMatchObject({ statusCode: 403 });
+      await expect(setReimbursee(ORG, id, 1, principal(1, { isFinance: true }))).rejects.toMatchObject({ status: 403 });
+      await expect(setReimbursee(ORG, id, 1, principal(11, { isFinance: true }))).rejects.toMatchObject({ status: 403 });
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
 
       await setReimbursee(ORG, id, 1, FINANCE);
@@ -282,15 +282,15 @@ describeDb("sign-off seats", () => {
     it("only the uploader is named as reimbursee, never anyone else", async () => {
       const { id } = await unknownReimbursee();
       // 7 sits outside every conflicted household; 11 shares the uploader's household.
-      await expect(setReimbursee(ORG, id, 7, FINANCE)).rejects.toMatchObject({ statusCode: 403 });
-      await expect(setReimbursee(ORG, id, 11, FINANCE)).rejects.toMatchObject({ statusCode: 403 });
+      await expect(setReimbursee(ORG, id, 7, FINANCE)).rejects.toMatchObject({ status: 403 });
+      await expect(setReimbursee(ORG, id, 11, FINANCE)).rejects.toMatchObject({ status: 403 });
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
     });
 
     it("a merged-away uploader is named through the person record they resolve to", async () => {
       const { id } = await unknownReimbursee();
       bindPorts({ signoff: directory({ finance: [3], merged: { 1: 12 } }) });
-      await expect(setReimbursee(ORG, id, 1, FINANCE)).rejects.toMatchObject({ statusCode: 404 });
+      await expect(setReimbursee(ORG, id, 1, FINANCE)).rejects.toMatchObject({ status: 404 });
       await setReimbursee(ORG, id, 12, FINANCE);
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBe(12);
     });
@@ -298,14 +298,14 @@ describeDb("sign-off seats", () => {
     it("FINANCE cannot name a reimbursee who is not a Person", async () => {
       const { id } = await unknownReimbursee();
       bindPorts({ signoff: directory({ finance: [3], unknownPeople: [42] }) });
-      await expect(setReimbursee(ORG, id, 42, FINANCE)).rejects.toMatchObject({ statusCode: 404 });
+      await expect(setReimbursee(ORG, id, 42, FINANCE)).rejects.toMatchObject({ status: 404 });
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
     });
 
     it("REIMBURSEE_UNKNOWN cannot be checked off while the hold applies; it leaves the queue once the expense is closed", async () => {
       const { id } = await unknownReimbursee();
       const [flag] = await listOpenFlags(FINANCE);
-      await expect(checkOffFlag(FINANCE, flag.id)).rejects.toMatchObject({ statusCode: 409 });
+      await expect(checkOffFlag(FINANCE, flag.id)).rejects.toMatchObject({ status: 409 });
       expect((await listOpenFlags(FINANCE)).map((f) => f.kind)).toEqual(["REIMBURSEE_UNKNOWN"]);
 
       await db.expense.update({ where: { id }, data: { state: "rejected" } });
@@ -323,9 +323,9 @@ describeDb("sign-off seats", () => {
 
     it("a card charge or a backfilled expense takes no reimbursee", async () => {
       const card = await seedExpense({ state: "qb_pending" });
-      await expect(setReimbursee(ORG, card, 7, FINANCE)).rejects.toMatchObject({ statusCode: 400 });
+      await expect(setReimbursee(ORG, card, 7, FINANCE)).rejects.toMatchObject({ status: 400 });
       const { id } = await unknownReimbursee({ backfill: true });
-      await expect(setReimbursee(ORG, id, 7, FINANCE)).rejects.toMatchObject({ statusCode: 400 });
+      await expect(setReimbursee(ORG, id, 7, FINANCE)).rejects.toMatchObject({ status: 400 });
     });
   });
 
@@ -333,7 +333,7 @@ describeDb("sign-off seats", () => {
     const id = await seedExpense({ state: "qb_pending" });
     const li = await seedLineItem(id);
     await seedApproval(id, li, { ownerId: 100, status: "approved" });
-    await expect(signLine(principal(3, { isFinance: true }), li, "TREASURER")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(signLine(principal(3, { isFinance: true }), li, "TREASURER")).rejects.toMatchObject({ status: 403 });
   });
 });
 
@@ -343,7 +343,7 @@ describeDb("capital register", () => {
     const id = await seedExpense({ state: "capital_review" });
     const li = await seedLineItem(id, { quantity: 2, unitPriceCents: 90000, description: "Lathe" });
 
-    await expect(submitCapitalReview(principal(2), id, { lineItems: [{ lineItemId: li, isCapital: true }] })).rejects.toMatchObject({ statusCode: 403 });
+    await expect(submitCapitalReview(principal(2), id, { lineItems: [{ lineItemId: li, isCapital: true }] })).rejects.toMatchObject({ status: 403 });
     await submitCapitalReview(FINANCE, id, { lineItems: [{ lineItemId: li, isCapital: true }] });
     await setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100 }] });
 
@@ -356,9 +356,9 @@ describeDb("capital register", () => {
     const id = await seedExpense({ state: "capital_review" });
     const li = await seedLineItem(id);
 
-    await expect(submitCapitalReview(FINANCE, id, { lineItems: [{ lineItemId: li, isCapital: true, capitalOwnerId: 999 }] })).rejects.toMatchObject({ statusCode: 400 });
+    await expect(submitCapitalReview(FINANCE, id, { lineItems: [{ lineItemId: li, isCapital: true, capitalOwnerId: 999 }] })).rejects.toMatchObject({ status: 400 });
     await submitCapitalReview(FINANCE, id, { lineItems: [{ lineItemId: li, isCapital: true, capitalOwnerId: 100 }] });
-    await expect(setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 12345 }] })).rejects.toMatchObject({ statusCode: 400 });
+    await expect(setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 12345 }] })).rejects.toMatchObject({ status: 400 });
     expect(await db.capitalAsset.count({ where: { sourceLineItemId: li } })).toBe(0);
   });
 
@@ -378,7 +378,7 @@ describeDb("flags", () => {
     const [flag] = await listOpenFlags(BOARD);
     expect(await listOpenFlags(FINANCE)).toEqual([]);
 
-    await expect(checkOffFlag(FINANCE, flag.id)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(checkOffFlag(FINANCE, flag.id)).rejects.toMatchObject({ status: 403 });
     await checkOffFlag(BOARD, flag.id, "seen");
 
     expect(await listOpenFlags(BOARD)).toEqual([]);
@@ -406,7 +406,7 @@ describeDb("QuickBooks match inputs", () => {
     expect((await qbMatchInputs("Purchase")).takeoverDate).toBe("2026-03-01");
 
     await excludeQbTxn(FINANCE, "qb-9", "hand-booked, no receipt");
-    await expect(excludeQbTxn(FINANCE, "qb-9", "again")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(excludeQbTxn(FINANCE, "qb-9", "again")).rejects.toMatchObject({ status: 409 });
 
     expect((await qbMatchInputs("Purchase")).skipIds.sort()).toEqual(["qb-1", "qb-2", "qb-9"]);
     expect((await qbMatchInputs("Bill")).skipIds.sort()).toEqual(["qb-3", "qb-9"]);
@@ -500,7 +500,7 @@ describeDb("QuickBooks match", () => {
     await db.expenseQbClaim.create({ data: { orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: "42" } });
     const id = await qbExpense({ purchases: ["42"] });
     expect(await qbCandidates(FINANCE, id)).toEqual([]);
-    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ status: 409 });
     expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
@@ -521,32 +521,32 @@ describeDb("QuickBooks match", () => {
 
   it("refuses an id that is not among the expense's candidates", async () => {
     const id = await qbExpense({ purchases: ["42"] });
-    await expect(matchExpenseToQb(FINANCE, id, "999")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(matchExpenseToQb(FINANCE, id, "999")).rejects.toMatchObject({ status: 409 });
     expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
   it("refuses an expense with a line missing a sign-off", async () => {
     const id = await qbExpense({ purchases: ["42"] }, { signed: false });
-    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ status: 409 });
     expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
   it("refuses the same id under another entity type", async () => {
     const id = await qbExpense({ bills: ["42"] });
-    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ status: 409 });
     expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
   it("refuses an entry whose amount is off by a cent", async () => {
     const id = await qbExpense({ purchases: [{ id: "42", totalCents: 101 }] });
-    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ status: 409 });
     expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
   it("refuses an entry dated a day outside the match window", async () => {
     const id = await qbExpense({ purchases: [{ id: "42", txnDate: "2026-05-09" }, { id: "43", txnDate: "2026-04-23" }] });
-    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ statusCode: 409 });
-    await expect(matchExpenseToQb(FINANCE, id, "43")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ status: 409 });
+    await expect(matchExpenseToQb(FINANCE, id, "43")).rejects.toMatchObject({ status: 409 });
     expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
@@ -558,20 +558,20 @@ describeDb("QuickBooks match", () => {
 
   it("refuses a Purchase booked against another payment account", async () => {
     const id = await qbExpense({ purchases: [{ id: "42", accountRef: "card-2" }] });
-    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ status: 409 });
     expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
   it("links a reimbursement to a Bill for the reimbursee's vendor, never another vendor's", async () => {
     const id = await qbExpense({ bills: ["42", { id: "43", vendorRef: "vendor-2" }] }, { reimbursement: true });
-    await expect(matchExpenseToQb(FINANCE, id, "43")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(matchExpenseToQb(FINANCE, id, "43")).rejects.toMatchObject({ status: 409 });
     await matchExpenseToQb(FINANCE, id, "42");
     expect(await linked(id)).toEqual({ qbTxnId: "42", qbTxnEntity: "Bill" });
   });
 
   it("matches nothing while the host has not bound the QuickBooks refs", async () => {
     const id = await qbExpense({ purchases: ["42"] }, { refs: false });
-    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ status: 409 });
     expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
@@ -597,16 +597,16 @@ describeDb("QuickBooks match", () => {
   it("refuses an expense already in QuickBooks, a backfill, or one held back as test data", async () => {
     const created = await qbExpense({ purchases: ["42"] });
     await db.expense.update({ where: { id: created }, data: { qbMatchState: "CREATED", qbTxnId: "7", qbTxnEntity: "Purchase" } });
-    await expect(matchExpenseToQb(FINANCE, created, "42")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(matchExpenseToQb(FINANCE, created, "42")).rejects.toMatchObject({ status: 409 });
     const backfill = await qbExpense({ purchases: ["42"] });
     await db.expense.update({ where: { id: backfill }, data: { backfill: true } });
-    await expect(matchExpenseToQb(FINANCE, backfill, "42")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(matchExpenseToQb(FINANCE, backfill, "42")).rejects.toMatchObject({ status: 409 });
     const testData = await qbExpense({ purchases: ["42"] });
     await db.expense.update({ where: { id: testData }, data: { qbMatchState: "NOT_TEST_DATA" } });
-    await expect(matchExpenseToQb(FINANCE, testData, "42")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(matchExpenseToQb(FINANCE, testData, "42")).rejects.toMatchObject({ status: 409 });
   });
 
   it("refuses an expense outside the org", async () => {
-    await expect(qbCandidates(FINANCE, "no-such-expense")).rejects.toMatchObject({ statusCode: 404 });
+    await expect(qbCandidates(FINANCE, "no-such-expense")).rejects.toMatchObject({ status: 404 });
   });
 });

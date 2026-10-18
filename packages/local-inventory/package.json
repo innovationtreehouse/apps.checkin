@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@checkin/gtin": "*",
+    "@checkin/component-kit": "*",
     "@checkin/pg-kit": "*",
     "@checkin/receipt-types": "*",
     "@checkin/workflows": "*",

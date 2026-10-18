@@ -1,9 +1,10 @@
+import { httpError } from "@checkin/component-kit";
 import { db } from "../db";
 import { receivedReceiptStateEnum, type ReceivedReceiptState } from "../db/schema";
 import { executePushAndSettle, type ApplyResult } from "../lib/apply-receipt";
 import { insertAuditEvent } from "../lib/audit";
 import { parseStoredReceipt } from "../lib/parse-receipt";
-import { getOrg, httpError, requireActor } from "../runtime";
+import { getOrg, requireActor } from "../runtime";
 import {
   areAllLinesResolved,
   assertWorkflowMappingTransition,

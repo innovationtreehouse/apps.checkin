@@ -1,3 +1,4 @@
+import { httpError } from "@checkin/component-kit";
 import {
   catalogCheckReferencesSchema,
   catalogItemReferenceProposalSchema,
@@ -9,7 +10,7 @@ import { db } from "../db";
 import { createdIdSchema, gtin13Schema, refCheckResultSchema } from "../contract";
 import { insertAuditEvent } from "../lib/audit";
 import { tryAutoProceedApply } from "../lib/auto-proceed";
-import { httpError, ports, requireActor } from "../runtime";
+import { ports, requireActor } from "../runtime";
 import { loadEditableLine, updateEditableLine } from "./receiptLookup";
 
 export const AssociateBodySchema = z.object({

@@ -131,7 +131,7 @@ describe("no-receipt in-kind entry: input bounds (rejected before any catalog or
   const line = { gtin13: "0011111111116", quantity: 1, valueCents: 100 };
   const input: ManualInKindInput = { donor: { firstName: "Jane", lastName: "Doe", companyName: null }, donationDate: "2026-10-01", lines: [line] };
   const rejects = (over: Partial<ManualInKindInput>, lineOver: Partial<typeof line> = {}) =>
-    expect(recordInKindWithoutReceipt({ ...input, ...over, lines: [{ ...line, ...lineOver }] })).rejects.toMatchObject({ statusCode: 400 });
+    expect(recordInKindWithoutReceipt({ ...input, ...over, lines: [{ ...line, ...lineOver }] })).rejects.toMatchObject({ status: 400 });
 
   it("requires a donor name", async () => {
     await rejects({ donor: { firstName: "", lastName: "Doe", companyName: null } });
@@ -154,7 +154,7 @@ describe("no-receipt in-kind entry: input bounds (rejected before any catalog or
   });
 
   it("requires at least one line", async () => {
-    await expect(recordInKindWithoutReceipt({ ...input, lines: [] })).rejects.toMatchObject({ statusCode: 400 });
+    await expect(recordInKindWithoutReceipt({ ...input, lines: [] })).rejects.toMatchObject({ status: 400 });
   });
 });
 

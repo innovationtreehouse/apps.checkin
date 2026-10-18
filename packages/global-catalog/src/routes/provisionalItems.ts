@@ -1,4 +1,5 @@
 /** Provisional-item proposal route factories (#1286). */
+import { mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";
 import { createProposalRepository } from "../repositories/proposal";
 import { createCatalogRepository } from "../repositories/catalog";
@@ -7,9 +8,8 @@ import {
   rejectProvisionalProposal,
   mapProvisionalToExisting,
 } from "../services/provisionalGtinService";
-import { getDb, getPrincipal, mapServiceErrors } from "../runtime";
+import { getDb, getPrincipal } from "../runtime";
 import type { CatalogRouteHandler } from "../contract";
-import { parseId, readJson, parseBody, query } from "./_shared";
 
 const proposalRepo = () => createProposalRepository(getDb());
 const catalogRepo = () => createCatalogRepository(getDb());
@@ -37,7 +37,7 @@ export const list: CatalogRouteHandler = async ({ req }) => {
 // client learns the new gtin13 (the source's `realGtin13`) from a real field.
 export const approve: CatalogRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
-  const overrides = parseBody(approveSchema, await readJson(req));
+  const overrides = await parseBody(req, approveSchema);
   const principal = await getPrincipal();
   const result = await mapServiceErrors(() => approveProvisionalProposal(id, principal.id, overrides));
   return { Item: await catalogRepo().findItemByGtin13WithIncludes(result.realGtin13) };
@@ -45,7 +45,7 @@ export const approve: CatalogRouteHandler = async ({ req, params }) => {
 
 export const reject: CatalogRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
-  const { rejectionReason } = parseBody(rejectSchema, await readJson(req));
+  const { rejectionReason } = await parseBody(req, rejectSchema);
   const principal = await getPrincipal();
   await mapServiceErrors(() => rejectProvisionalProposal(id, principal.id, rejectionReason));
   return {};
@@ -53,7 +53,7 @@ export const reject: CatalogRouteHandler = async ({ req, params }) => {
 
 export const mapToExisting: CatalogRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
-  const { realGtin13 } = parseBody(mapSchema, await readJson(req));
+  const { realGtin13 } = await parseBody(req, mapSchema);
   const principal = await getPrincipal();
   await mapServiceErrors(() => mapProvisionalToExisting(id, principal.id, realGtin13));
   return {};

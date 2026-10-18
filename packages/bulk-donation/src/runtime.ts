@@ -1,4 +1,3 @@
-import { ServiceError } from "./services/serviceError";
 import type {
   BulkDonationConfig,
   BulkDonationPrincipal,
@@ -77,29 +76,4 @@ export function getQbPosting(): DonationQbPosting | undefined {
 /** Deposits another lane holds; empty while that port is unbound. */
 export async function otherLaneClaimedDepositIds(orgId: string): Promise<string[]> {
   return (await requireRuntime().otherLaneClaims?.claimedDepositIds(orgId)) ?? [];
-}
-
-/** An HTTP-status error thrown by a route factory; the host translates it at the route boundary. */
-export class DonationHttpError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "DonationHttpError";
-  }
-}
-
-export function donationError(status: number, message: string): DonationHttpError {
-  return new DonationHttpError(status, message);
-}
-
-/** Run a service call, remapping its ServiceError to a host-rendered HTTP error. */
-export async function mapServiceErrors<T>(fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn();
-  } catch (err) {
-    if (err instanceof ServiceError) throw donationError(err.statusCode, err.message);
-    throw err;
-  }
 }

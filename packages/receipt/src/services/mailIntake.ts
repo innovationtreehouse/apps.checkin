@@ -2,6 +2,7 @@
 // becomes a receipt by its authenticated sender, a deferred item when that sender is over their
 // daily upload limit, or a held mail item for finance.
 import { createHash } from "node:crypto";
+import { isServiceError, ServiceError } from "@checkin/component-kit";
 import { isUniqueConstraintError } from "@checkin/pg-kit";
 import { db } from "../db";
 import type { MailboxReader, MailMessage, MailPart, ReceiptPrincipal } from "../contract";
@@ -9,7 +10,7 @@ import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { getOrg, mailbox, ports } from "../runtime";
 import { intakeMailedReceipt } from "./receiptService";
-import { OrgUploadLimitError, ServiceError } from "./serviceError";
+import { OrgUploadLimitError } from "../lib/insert";
 
 // ponytail: no stored cursor; the ledger makes re-reads free. Ceiling is a cron outage longer than the
 // window, or more than MAIL_WINDOW_DAYS × MAIL_CAP mailed receipts inside one window; widen either then.
@@ -215,7 +216,7 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): MailFile[] {
   return body ? [{ declaredType: "text/plain", size: body.body?.size ?? 0, read: read(body) }] : [];
 }
 
-const isStatus = (err: unknown, code: number) => err instanceof ServiceError && err.statusCode === code;
+const isStatus = (err: unknown, code: number) => isServiceError(err) && err.status === code;
 
 /** The statuses whose items keep their file in the ledger, awaiting finance or a later run. */
 export const STORED_STATUSES = ["held", "deferred"];

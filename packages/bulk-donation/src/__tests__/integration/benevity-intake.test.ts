@@ -11,7 +11,7 @@ import { transactionService } from "../../services/transactionService";
 import { commentRuleService } from "../../services/commentRuleService";
 import { getNavCounts } from "../../services/navCountsService";
 import { benevityTakeoverLine, QB_MATCH_STATE, recordQbMatched } from "../../lib/qb-match";
-import { ServiceError } from "../../services/serviceError";
+import { ServiceError } from "@checkin/component-kit";
 import { makeAccountMapRule, configureTestRuntime, TEST_ORG_ID } from "../helpers/factories";
 
 const orgId = TEST_ORG_ID;
@@ -125,7 +125,7 @@ describeDb("concurrent owner decisions", () => {
     for (const r of results) {
       if (r.status === "rejected") {
         expect(r.reason).toBeInstanceOf(ServiceError);
-        expect([400, 409]).toContain((r.reason as ServiceError).statusCode);
+        expect([400, 409]).toContain((r.reason as ServiceError).status);
       }
     }
     const row = await db.transaction.findUniqueOrThrow({ where: { id: t1.id } });
@@ -150,7 +150,7 @@ describeDb("gifts for an already-completed disbursement", () => {
       "D-1,2026-09-01,Acme Corp,T-9,30.00,0,0,check,standard,Bo,Kim,Robotics team",
       "D-2,2026-09-08,Acme Corp,T-10,5.00,0,0,check,standard,Al,Ng,Robotics team",
     ]);
-    await expect(late).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining("D-1") });
+    await expect(late).rejects.toMatchObject({ status: 409, message: expect.stringContaining("D-1") });
     expect(await db.transaction.count({ where: { orgId, transactionId: { in: ["T-9", "T-10"] } } })).toBe(0);
     expect(await db.uploadedFile.count({ where: { orgId } })).toBe(filesBefore);
   });
@@ -175,7 +175,7 @@ describeDb("gifts for an already-completed disbursement", () => {
       const completed = (await db.disbursementEvent.count({ where: { orgId, disbursementId: d } })) === 1;
       const stored = (await db.transaction.count({ where: { orgId, transactionId: `T-R${i}c` } })) === 1;
       if (late.status === "rejected") {
-        expect(late.reason).toMatchObject({ statusCode: 409 });
+        expect(late.reason).toMatchObject({ status: 409 });
         expect(completed && !stored).toBe(true);
       } else {
         expect(stored && !completed).toBe(true);

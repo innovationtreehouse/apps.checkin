@@ -1,3 +1,4 @@
+import { isServiceError, ServiceError } from "@checkin/component-kit";
 import type { ReceiptState } from "@checkin/receipt-types";
 import { z } from "zod";
 import { db } from "../db";
@@ -23,12 +24,11 @@ import {
   UploadInputSchema,
   type DonorInput,
 } from "../lib/schemas";
-import { audit, receiptRepo, type ReceiptRow, type ReceiptUpdate } from "../repositories/receipt";
+import { audit, ReceiptStateConflictError, receiptRepo, type ReceiptRow, type ReceiptUpdate } from "../repositories/receipt";
 import { getOrg, limits, ports, requireActor } from "../runtime";
 import { DAY_MS } from "../lib/limits";
 import { assertExpectedState, assertLegalTransition, NEUTRAL_CONTEXT, WorkflowTransitionError } from "../workflows/receipt.invariants";
 import type { ReceiptEvent } from "../workflows/receipt.events";
-import { ReceiptStateConflictError, ServiceError } from "./serviceError";
 
 /**
  * Who the route admitted. `submitter` sees and acts on only the caller's own receipts;
@@ -261,7 +261,7 @@ export async function intakeMailedReceipt(
   try {
     await reserveOcrCall(actor);
   } catch (err) {
-    if (!(err instanceof ServiceError && err.statusCode === 429)) throw err;
+    if (!(isServiceError(err) && err.status === 429)) throw err;
     await failOcr(id, actor, "daily limit reached");
     return id;
   }

@@ -9,7 +9,7 @@ import type { ReceiptPrincipal } from "../contract";
 import { getOrg, ports, requireActor } from "../runtime";
 import { intakeDeferred, STORED_STATUSES } from "./mailIntake";
 import { intakeMailedReceipt } from "./receiptService";
-import { ServiceError } from "./serviceError";
+import { ServiceError } from "@checkin/component-kit";
 
 const ITEM_FIELDS = { id: true, receivedAt: true, senderAddress: true, status: true, mimeType: true, receiptId: true } as const;
 
