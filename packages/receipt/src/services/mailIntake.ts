@@ -244,6 +244,20 @@ const isStatus = (err: unknown, code: number) => isServiceError(err) && err.stat
 /** The statuses whose items keep their file in the ledger, awaiting finance or a later run. */
 export const STORED_STATUSES = ["held", "deferred"];
 
+/** A body read beside its message's other receipts is discarded when its reading repeats one of them. */
+async function discardIfCopy(gmailMessageId: string, receiptId: string): Promise<void> {
+  const siblings = await db.receiptMailItem.findMany({
+    where: { gmailMessageId, receiptId: { not: null }, NOT: { receiptId } },
+    select: { receiptId: true },
+  });
+  try {
+    await discardBodyCopy(receiptId, siblings.flatMap((s) => (s.receiptId ? [s.receiptId] : [])));
+  } catch (err) {
+    // The body stays its own receipt; finance discards it the ordinary way.
+    console.error("[receipt] body copy check failed for one receipt:", err);
+  }
+}
+
 /**
  * Make a deferred item a receipt uploaded by its sender. The item flips to `assigned` in the
  * receipt's own insert, so a concurrent retry or release leaves no second receipt (409).
@@ -253,7 +267,7 @@ export async function intakeDeferred(
   sender: ReceiptPrincipal,
   { uploadLimits, onClaim }: { uploadLimits: boolean; onClaim?: (tx: Prisma.TransactionClient, receiptId: string) => Promise<unknown> },
 ): Promise<string> {
-  return intakeMailedReceipt(
+  const receiptId = await intakeMailedReceipt(
     sender,
     Buffer.from(item.fileBlob),
     item.mimeType,
@@ -267,6 +281,12 @@ export async function intakeDeferred(
     },
     { uploadLimits },
   );
+  // A deferred text item is a body; its message's attachments are retried first, oldest first.
+  if (item.mimeType === "text/plain") {
+    const { gmailMessageId } = await db.receiptMailItem.findUniqueOrThrow({ where: { id: item.id }, select: { gmailMessageId: true } });
+    await discardIfCopy(gmailMessageId, receiptId);
+  }
+  return receiptId;
 }
 
 export async function readMailbox(): Promise<MailIntakeResult> {
@@ -308,28 +328,14 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     return true;
   }
 
-  /** A body read beside its message's other receipts is discarded when its reading repeats one of them. */
-  async function discardIfCopy(gmailMessageId: string, receiptId: string): Promise<void> {
-    const siblings = await db.receiptMailItem.findMany({
-      where: { gmailMessageId, receiptId: { not: null }, NOT: { receiptId } },
-      select: { receiptId: true },
-    });
-    try {
-      await discardBodyCopy(receiptId, siblings.flatMap((s) => (s.receiptId ? [s.receiptId] : [])));
-    } catch (err) {
-      // The body stays its own receipt; finance discards it the ordinary way.
-      console.error("[receipt] body copy check failed for one receipt:", err);
-    }
-  }
-
   async function readMessage(msg: MailMessage, reader: MailboxReader): Promise<void> {
     const { files, ignored } = mailFiles(msg, reader);
-    counts.ignored += ignored;
     // Every file already in the ledger: nothing to download.
     if (files.length > 0 && (await db.receiptMailItem.count({ where: { gmailMessageId: msg.id } })) >= files.length) {
       counts.skipped += files.length;
       return;
     }
+    counts.ignored += ignored;
     const headers = msg.payload.headers;
     const address = fromAddress(headers);
     const sender: ReceiptPrincipal | null =
@@ -348,21 +354,23 @@ export async function readMailbox(): Promise<MailIntakeResult> {
       const bytes = await file.read();
       if (!sender) chargeHold(file, bytes);
       const key = { gmailMessageId: msg.id, attachmentHash: createHash("sha256").update(bytes).digest("hex") };
-      if (ignoredHashes.has(key.attachmentHash)) {
-        counts.ignored++;
-        continue;
-      }
-      const check = checkReceiptFile(bytes, file.declaredType);
-      if (!check.ok) {
-        counts.rejected++;
-        continue;
-      }
       if (await db.receiptMailItem.findUnique({ where: { gmailMessageId_attachmentHash: key }, select: { id: true } })) {
         counts.skipped++;
         continue;
       }
       const item = { orgId, ...key, receivedAt: new Date(Number(msg.internalDate)), senderAddress: address ?? "" };
+      const check = ignoredHashes.has(key.attachmentHash) ? null : checkReceiptFile(bytes, file.declaredType);
+      if (check && !check.ok) {
+        counts.rejected++;
+        continue;
+      }
       try {
+        // An ignored file gets a discarded ledger row, so later runs skip its message without a download.
+        if (!check) {
+          await db.receiptMailItem.create({ data: { ...item, status: "discarded" } });
+          counts.ignored++;
+          continue;
+        }
         if (sender) {
           try {
             const receiptId = await intakeMailedReceipt(sender, bytes, check.mimeType, (tx, newId) =>

@@ -15,7 +15,7 @@ import {
 import { sendDonorSync } from "../lib/donor-sync";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
-import { financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
+import { BODY_COPY_DISCARDED, financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
 import {
   AddLineItemSchema,
   EditLineItemSchema,
@@ -283,12 +283,16 @@ export async function discardBodyCopy(id: string, siblingIds: string[]): Promise
   if (!match) return false;
   try {
     assertLegalTransition(row.state, { type: "DISCARD" });
-    await receiptRepo.update(id, { detail: { state: "discarded" } }, row.state);
   } catch (e) {
     transitionError(e);
   }
-  await audit(db, id, null, { action: "discarded", valueAfter: `same as attachment ${match.id}` });
-  return true;
+  // The audit row marks the copy for checkDuplicate, so it commits with the state change.
+  return db.$transaction(async (tx) => {
+    const moved = await tx.receiptDetail.updateMany({ where: { id, state: row.state }, data: { state: "discarded" } });
+    if (moved.count !== 1) return false;
+    await audit(tx, id, null, { action: BODY_COPY_DISCARDED, valueAfter: `same as attachment ${match.id}` });
+    return true;
+  });
 }
 
 async function runFlowLogged(id: string, actor: ReceiptPrincipal): Promise<void> {

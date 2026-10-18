@@ -15,7 +15,7 @@ import {
 import { describeDb } from "../helpers/db";
 import type { ReceiptLimits } from "../../lib/limits";
 import { receiptService } from "../../services/receiptService";
-import { ALICE, BOB, clearAll, configure, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
+import { actAs, ALICE, BOB, clearAll, configure, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
 
 const GOOGLE_PASS = "mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass (p=NONE sp=NONE) header.from=example.org";
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
@@ -144,10 +144,13 @@ describeDb("mail intake", () => {
     const [[pdfId, pdfType], [bodyId, bodyType, bodyState]] = await messageReceipts();
     expect([pdfType, bodyType, bodyState]).toEqual(["application/pdf", "text/plain", "discarded"]);
     expect(await stateOf(pdfId as string)).not.toBe("discarded");
-    expect(await db.receiptAuditLog.findFirst({ where: { receiptId: bodyId as string, action: "discarded" } })).toMatchObject({
+    expect(await db.receiptAuditLog.findFirst({ where: { receiptId: bodyId as string, action: "body_copy_discarded" } })).toMatchObject({
       userId: null,
       valueAfter: `same as attachment ${pdfId}`,
     });
+    actAs(ALICE);
+    await receiptService.submitterConfirm(pdfId as string);
+    expect(await stateOf(pdfId as string)).not.toBe("duplicate_flagged");
   });
 
   it("keeps a body whose reading differs from every attachment's", async () => {
@@ -178,7 +181,7 @@ describeDb("mail intake", () => {
     expect(mail.downloads).not.toContain("logo");
   });
 
-  it("skips a file on the org's ignore list, charges it like a rejected one, and writes no ledger row", async () => {
+  it("skips a file on the org's ignore list, charges it like a rejected one, and ledgers it as discarded", async () => {
     const logo = pdf("logo");
     await db.receiptIgnoredFile.create({
       data: { orgId: TEST_ORG_ID, fileHash: createHash("sha256").update(logo).digest("hex"), reason: "newsletter logo", addedByUserId: 1 },
@@ -186,7 +189,11 @@ describeDb("mail intake", () => {
     for (let i = 0; i < MAIL_HELD_CAP + 1; i++) send(`n${i}`, { from: [`news${i}@example.org`], parts: [attachment(`att-n${i}`, logo)] });
     send("member", { parts: [attachment("logo-from-alice", logo), attachment("real", pdf("real"))] });
     expect(await readMailbox()).toMatchObject({ receipts: 1, held: 0, ignored: MAIL_HELD_CAP + 1, deferred: 1 });
-    expect(await db.receiptMailItem.count()).toBe(1);
+    expect(await db.receiptMailItem.count({ where: { status: "discarded", fileBlob: null } })).toBe(MAIL_HELD_CAP + 1);
+
+    mail.downloads.length = 0;
+    expect(await readMailbox()).toMatchObject({ receipts: 0, ignored: 1, skipped: MAIL_HELD_CAP + 2 });
+    expect(mail.downloads).toEqual([`att-n${MAIL_HELD_CAP}`]);
   });
 
   it("refuses a file whose content does not match its type", async () => {
@@ -400,6 +407,18 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     expect(item).toMatchObject({ status: "assigned", fileBlob: null });
     const receipt = await db.receipt.findUniqueOrThrow({ where: { id: item.receiptId ?? "" } });
     expect(receipt).toMatchObject({ uploadedByUserId: ALICE.id, intakeSource: "email" });
+  });
+
+  it("discards a deferred body that repeats its message's attachment once it is retried", async () => {
+    withLimits({ mailUploadsPerPersonPerDay: 1 });
+    send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64("Order total 5.00") } }, attachment("a", pdf("a"))] });
+    expect(await readMailbox()).toMatchObject({ receipts: 1, overLimit: 1 });
+
+    withLimits({ mailUploadsPerPersonPerDay: 30 });
+    mail.messages.clear();
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    const body = await db.receiptMailItem.findFirstOrThrow({ where: { gmailMessageId: "m1" }, orderBy: { id: "desc" } });
+    expect(await stateOf(body.receiptId ?? "")).toBe("discarded");
   });
 
   it("spends no cap and no reading on a refused retry, and skips that sender's other deferred files for the run", async () => {
