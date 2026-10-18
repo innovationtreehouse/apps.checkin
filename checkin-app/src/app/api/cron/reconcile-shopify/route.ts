@@ -8,7 +8,7 @@ import { getOrg } from "@/lib/catalog/configure";
 import { runExpenseCatchUp } from "@checkin/expense";
 import { healProgramStock } from "@/lib/shopify";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@checkin/local-inventory";
-import { catchUpOrgEvents as catchUpWorkflowEvents } from "@checkin/workflow-mapping";
+import { catchUpOrgEvents as catchUpWorkflowEvents, sweepStuckApplying } from "@checkin/workflow-mapping";
 import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } from "@checkin/receipt";
 
 /**
@@ -49,6 +49,9 @@ import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } fro
  *
  * Then replays catalog events that local-inventory and workflow-mapping missed (a consumer that
  * threw during the catalog's post-commit call-out). Each step is isolated; counts only.
+ *
+ * Then re-pushes workflow-mapping receipts left `applying` with no live push (sweepStuckApplying).
+ * Isolated the same way; counts only.
  *
  * Then the receipt library's catch-up step moves receipts stranded mid-OCR to
  * `ocr_failed`. Isolated the same way; the response carries its count only.
@@ -107,6 +110,14 @@ export const GET = withCron(async () => {
         workflowEvents = { status: "error" };
     }
     logger.info(`[reconcile] workflow-mapping events ${JSON.stringify(workflowEvents)}`);
+    let receivingApply: Awaited<ReturnType<typeof sweepStuckApplying>> | { status: "error" };
+    try {
+        receivingApply = await sweepStuckApplying();
+    } catch (err) {
+        logger.error("[reconcile] workflow-mapping stuck-apply sweep failed:", err);
+        receivingApply = { status: "error" };
+    }
+    logger.info(`[reconcile] workflow-mapping stuck applies ${JSON.stringify(receivingApply)}`);
     let receipt: Awaited<ReturnType<typeof sweepInterruptedOcr>> | { status: "error" };
     try {
         receipt = await sweepInterruptedOcr();
@@ -139,5 +150,5 @@ export const GET = withCron(async () => {
         receiptMail = { status: "error" };
     }
     logger.info(`[reconcile] receipt mail ${JSON.stringify(receiptMail)}`);
-    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receipt, receiptPush, donorSync, receiptMail });
+    return NextResponse.json({ success: true, ...result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptPush, donorSync, receiptMail });
 });
