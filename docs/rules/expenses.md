@@ -6,49 +6,9 @@ Income and donation rules are in `revenue.md`.
 
 ## Policy
 
-### Spending sign-off
-
-- A reimbursement is signed in writing by the submitter; by the program's
-  leader or treasurer, or outside a program budget by a board member who is
-  not the Treasurer and has no conflict with the submitter; and by the
-  Treasurer. A conflicted Treasurer adds one more board member without a
-  conflict, and a Treasurer conflicted on both the submitter's side and the
-  program's side adds two. — *Financial Policy, Art. IX §IX.3*
-
-- A Treehouse Card charge is approved by the program's leader or treasurer
-  when it is in a program budget, and by the Treasurer. A charge that is not
-  Everyday and was not board-authorised in writing also needs a board member
-  without a conflict. When the Treasurer made the purchase, another board
-  member without a conflict takes the Treasurer's place, and two are needed for
-  a charge that is not Everyday and not board-authorised in writing.
-  — *Financial Policy, Art. XII §XII.4*
-
-- Reimbursing someone who is not a member needs board approval. — *Financial
-  Policy, Art. IX §IX.2*
-
-- A program leader designates program treasurers in the board-approved program
-  budget, and they approve expenses on the leader's behalf. — *Sponsored
-  Program Policy, Art. VI §VI.1*
-
-- The same person does not authorise, execute and monitor a transaction.
-  — *Financial Policy, Art. III*
-
-### Everyday purchases
-
-- A purchase is Everyday when its total is below $500 and no single item is
-  over $250. — *Procurement Policy, Art. IV §IV.1*
-
-- A purchase from a vendor on the board's written list of approved
-  single-source vendors is treated as Everyday for purchase procedures.
-  — *Procurement Policy, Art. IV §IV.3*
-
-### Cards and records
-
-- Any card opened on the Treehouse's EIN is a Treehouse Card. — *Financial
-  Policy, Art. II*
-
-- Reimbursement amounts are shared only on a need-to-know basis. — *Records
-  Policy, Art. IV*
+- Spending sign-off is governed by the *Financial Policy, Arts. IX and XII*,
+  the *Procurement Policy, Art. IV* and the *Sponsored Program Policy,
+  Art. VI*; each Procedure rule below cites the article it expresses.
 
 ---
 
