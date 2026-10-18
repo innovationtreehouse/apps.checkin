@@ -67,6 +67,8 @@ jobs:
         continue-on-error: true
         uses: innovationtreehouse/openrouter-pr-review-action@1c2b06d89491a197ea0ebb9b619e07dddd6b2123 # fork: upstream 26f990a + Gemini 4 fixes (fork #1, #2) + re-review compaction (fork #3, #4) + opt-in approve (fork #5, off)
         with:
+          # AGENTS.md: the AI review never submits an approval. Keep off unless that rule changes.
+          approve: "off"
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.route.outputs.model }}
           max_tool_turns: ${{ steps.route.outputs.max_tool_turns }}
@@ -102,6 +104,8 @@ jobs:
         continue-on-error: true
         uses: innovationtreehouse/openrouter-pr-review-action@1c2b06d89491a197ea0ebb9b619e07dddd6b2123 # fork: upstream 26f990a + Gemini 4 fixes (fork #1, #2) + re-review compaction (fork #3, #4) + opt-in approve (fork #5, off)
         with:
+          # AGENTS.md: the AI review never submits an approval. Keep off unless that rule changes.
+          approve: "off"
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.judge.outputs.model }}
           max_tool_turns: ${{ steps.judge.outputs.max_tool_turns }}
