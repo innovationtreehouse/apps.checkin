@@ -96,6 +96,7 @@ export const classifications = {
         shopifyInvoiceUrl: 'personal',
         shopifyOrderId: 'internal',
         paidAt: 'internal',
+        appliesToYear: 'public',
         manualPaymentById: 'internal',
         certificationNote: 'internal',
         renewalReminderSentAt: 'internal',
@@ -104,6 +105,11 @@ export const classifications = {
         intakeNoteSnapshot: 'pii',
         noteAckById: 'internal',
         noteAckAt: 'internal',
+    },
+    MembershipYearVariant: {
+        membershipYear: 'public',
+        shopifyVariantId: 'internal',
+        productUrl: 'internal',
     },
     BackgroundCheckAttestation: {
         id: 'public',
@@ -554,6 +560,8 @@ export const relations = {
         zohoSigner: { model: 'Person', isList: false },
         noteAckBy: { model: 'Person', isList: false },
         attestations: { model: 'BackgroundCheckAttestation', isList: true },
+    },
+    MembershipYearVariant: {
     },
     BackgroundCheckAttestation: {
         process: { model: 'OrgMembershipProcess', isList: false },
