@@ -4,6 +4,7 @@ import { DisbursementPayloadV1 } from "@checkin/donations";
 import { dollarsToCents, sumCents } from "@checkin/money";
 import { appKeyOf, findOrCreate, qbKey, type FindOrCreateResult, type QboDeposit, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, type PrismaTransactionClient } from "../db";
+import type { DonationQbPosting } from "../contract";
 import type { DisbursementEvent } from "../generated/prisma/client";
 import { recordEvent } from "../repositories/audit";
 import { assertOrg, getOwnerDirectory, getQbPosting, otherLaneClaimedDepositIds } from "../runtime";
@@ -632,10 +633,15 @@ function settleDriftCheck(id: number, qbTxnId: string, booked: Booked, deposit: 
 /**
  * The daily orphan sweep. Reads every Deposit created since the oldest create attempt in the last
  * SWEEP_DAYS days, one page, and finds the record each app key belongs to. An app Deposit its
- * record does not hold gets a note for finance to void or link it; a full page or a key with no
- * record is logged. QuickBooks is only read. A record mid-post is skipped; the next sweep sees it.
+ * record does not hold gets a note for finance to void or link it; a full page alerts finance, and
+ * a key with no record is logged. QuickBooks is only read. A record mid-post is skipped; the next sweep sees it.
  */
-export async function sweepDonationQbStrays(orgId: string, client: QuickBooksClient, now = new Date()): Promise<SweepCounts> {
+export async function sweepDonationQbStrays(
+  orgId: string,
+  client: QuickBooksClient,
+  sweepIncomplete: DonationQbPosting["sweepIncomplete"],
+  now = new Date(),
+): Promise<SweepCounts> {
   const oldest = await db.disbursementEvent.findFirst({
     where: { orgId, qbCreateAttemptedAt: { gte: new Date(now.getTime() - SWEEP_DAYS * 86_400_000) } },
     orderBy: { qbCreateAttemptedAt: "asc" },
@@ -649,7 +655,13 @@ export async function sweepDonationQbStrays(orgId: string, client: QuickBooksCli
     console.warn("[bulk-donation] QuickBooks orphan sweep read failed", err);
     return { failed: true };
   }
-  if (read.full) console.warn("[bulk-donation] QuickBooks orphan sweep read a full page; some Deposits were not checked");
+  if (read.full) {
+    try {
+      await sweepIncomplete({ orgId, since: oldest.qbCreateAttemptedAt });
+    } catch (err) {
+      console.warn("[bulk-donation] QuickBooks orphan sweep read a full page, and the finance alert failed", err);
+    }
+  }
   const attempted = await db.disbursementEvent.findMany({
     where: { orgId, qbCreateAttemptedAt: { not: null } },
     select: { id: true, orgId: true, disbursementId: true },
@@ -691,7 +703,7 @@ export async function runDonationQbPosting(orgId: string, now = new Date()): Pro
   const close = await readCloseDate(client);
   if (!close.ok) console.warn(`[bulk-donation] books closing date read failed; this run creates nothing: ${close.error}`);
   const drift = await checkDonationQbDrift(orgId, client, posting.bankAccountId, now);
-  const sweep = await sweepDonationQbStrays(orgId, client, now);
+  const sweep = await sweepDonationQbStrays(orgId, client, posting.sweepIncomplete, now);
   const due = await db.disbursementEvent.findMany({
     where: { orgId, qbTxnId: null, qbMatchState: { in: [...POSTABLE, QB_MATCH_STATE.POSTING] } },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],

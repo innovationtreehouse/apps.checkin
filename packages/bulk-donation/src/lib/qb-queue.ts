@@ -95,7 +95,7 @@ async function linkOwnFirst(e: DisbursementEvent, actor: AuditContext): Promise<
   try {
     return await db.$transaction(async (tx) => {
       const current = await lockedEvent(tx, e.id);
-      if (current.qbTxnId) throw new ServiceError(409, "Already resolved");
+      if (current.qbTxnId || !isState(QB_HELD_STATES, current.qbMatchState)) throw new ServiceError(409, "Already resolved");
       const saved = await tx.disbursementEvent.update({
         where: { id: e.id },
         data: { qbMatchState: QB_MATCH_STATE.CREATED, qbTxnId, qbDepositTotalCents: payloadNetCents(e.payload), qbDepositTxnDate: disbursementDate(e), ...NO_DRIFT },

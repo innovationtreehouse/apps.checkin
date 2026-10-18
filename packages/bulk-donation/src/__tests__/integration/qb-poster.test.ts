@@ -51,6 +51,8 @@ class FakeQbo {
   createTimes = new Map<string, Date>();
   /** Runs after QuickBooks applies a create, before it answers. */
   onCreate: (() => Promise<void>) | null = null;
+  /** Runs when a created-since read arrives, before it answers. */
+  onCreatedSince: (() => Promise<void>) | null = null;
   private nextId = 7000;
 
   handle = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -71,6 +73,7 @@ class FakeQbo {
       const since = /FROM Deposit WHERE MetaData\.CreateTime >= '([^']+)'/.exec(query);
       if (since) {
         if (this.createdSinceDown) return json({ Fault: { Error: [{ code: "3100" }] } }, 503);
+        await this.onCreatedSince?.();
         const at = Date.parse(since[1]);
         const list = this.deposits.filter((d) => (this.createTimes.get(d.Id)?.getTime() ?? 0) >= at);
         return json({ QueryResponse: list.length ? { Deposit: list } : {} });
@@ -96,6 +99,7 @@ class FakeQbo {
 
 let qbo: FakeQbo;
 let foreignClaims: string[];
+let sweepAlerts: { orgId: string; since: Date }[];
 
 function bind(opts: { prod?: boolean; qb?: "on" | "off" | "unbound" } = {}) {
   const client = new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" });
@@ -103,7 +107,15 @@ function bind(opts: { prod?: boolean; qb?: "on" | "off" | "unbound" } = {}) {
     auth: { getPrincipal: async () => ({ id: 1, name: "testfinance" }) },
     org: async () => ({ id: orgId, name: "Test Org" }),
     owners: { list: async () => OWNERS },
-    qb: opts.qb === "unbound" ? undefined : { client: async () => (opts.qb === "off" ? null : client), bankAccountId: BANK, prod: opts.prod ?? false },
+    qb:
+      opts.qb === "unbound"
+        ? undefined
+        : {
+            client: async () => (opts.qb === "off" ? null : client),
+            bankAccountId: BANK,
+            prod: opts.prod ?? false,
+            sweepIncomplete: async (event) => void sweepAlerts.push(event),
+          },
     otherLaneClaims: { claimedDepositIds: async () => foreignClaims },
   });
 }
@@ -160,6 +172,7 @@ beforeEach(async () => {
   await db.donationOrgSettings.deleteMany({});
   qbo = new FakeQbo();
   foreignClaims = [];
+  sweepAlerts = [];
   vi.stubGlobal("fetch", vi.fn(qbo.handle));
   bind();
 });
@@ -922,6 +935,15 @@ describeDb("donation QuickBooks finance queue: attempted records look first", ()
     expect((await stateOf(e.id)).qbMatchState).toBe("POST_FAILED");
   });
 
+  it("refuses to link when the record left its held state during the lookup", async () => {
+    const { e } = await landed();
+    qbo.onCreatedSince = async () => {
+      await db.disbursementEvent.update({ where: { id: e.id }, data: { qbMatchState: QB_MATCH_STATE.DISMISSED } });
+    };
+    await expect(resolve("TEST-A", { action: "dismiss", reason: "booked by hand" })).rejects.toMatchObject({ status: 409 });
+    expect(await stateOf(e.id)).toEqual({ qbMatchState: "DISMISSED", qbTxnId: null });
+  });
+
   it("goes ahead when nothing carries the key", async () => {
     await live();
     const e = await completed("TEST-A", "2026-09-10");
@@ -961,6 +983,20 @@ describeDb("donation QuickBooks orphan sweep", () => {
     const [cleared] = await eventsOf("TEST-A", QB_EVENT.NOTE_CLEARED);
     expect(cleared.actorUserId).toBe(1);
     await expect(resolve("TEST-A", { action: "clear", reason: "again" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("alerts finance when the read fills a page, since some Deposits went unchecked", async () => {
+    await live();
+    const e = await completed("TEST-A", "2026-09-10");
+    await postDisbursementToQb(e.id);
+    const attempted = (await rowOf(e.id)).qbCreateAttemptedAt;
+    for (let i = 0; i < 1000; i++) {
+      qbo.deposits.push(handDeposit(`h${i}`, "2026-10-01", 100 + i, "99"));
+      qbo.createTimes.set(`h${i}`, new Date());
+    }
+
+    expect(await runDonationQbPosting(orgId)).toMatchObject({ sweep: { full: true } });
+    expect(sweepAlerts).toEqual([{ orgId, since: attempted }]);
   });
 
   it("reads nothing while no record was attempted in the window, and leaves linked Deposits alone", async () => {
