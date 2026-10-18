@@ -17,6 +17,7 @@ type AnnouncedProgram = AnnounceState & {
     name: string;
     startAt: Date;
     endAt: Date;
+    appliesToYear: number | null;
 };
 
 /**

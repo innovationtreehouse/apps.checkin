@@ -13,11 +13,12 @@ jest.mock("@/lib/prisma", () => ({
     default: {
         program: { findUnique: jest.fn() },
         programParticipant: { findMany: jest.fn() },
+        boardSettings: { findUnique: jest.fn() },
     },
 }));
 jest.mock("@/lib/orgMembership", () => ({
     isMembershipFeeSettledThrough: jest.fn(),
-    programCoverageDate: (p: { startAt: Date | null; endAt: Date | null }) => p.endAt ?? p.startAt ?? null,
+    programCoverageDate: jest.requireActual("@/lib/orgMembership").programCoverageDate,
 }));
 
 import prisma from "@/lib/prisma";
@@ -73,6 +74,18 @@ describe("usesProgramMemberCode", () => {
 });
 
 describe("unentitledMemberCodeUse", () => {
+    it("judges a crossing program stated as the earlier year against that year's closing boundary", async () => {
+        findUnique.mockImplementation(({ select }: { select: Record<string, boolean> }) =>
+            Promise.resolve(select.appliesToYear
+                ? { startAt: new Date("2027-06-01"), endAt: new Date("2027-10-01"), appliesToYear: 2026 }
+                : { startAt: new Date("2027-06-01"), endAt: new Date("2027-10-01") }),
+        );
+        (prisma.boardSettings.findUnique as jest.Mock).mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) });
+        settledThrough.mockResolvedValue(true);
+        expect(await unentitledMemberCodeUse(42, [1], ["PRG42-ABCD1234"], "ord-1")).toBe(false);
+        expect(settledThrough).toHaveBeenCalledWith(1, new Date(Date.UTC(2027, 8, 1)));
+    });
+
     it("flags when the order carries the program's code and no enrollee is fee-settled", async () => {
         settledThrough.mockResolvedValue(false);
         expect(await unentitledMemberCodeUse(42, [1, 2], ["PRG42-ABCD1234"], "ord-1")).toBe(true);
