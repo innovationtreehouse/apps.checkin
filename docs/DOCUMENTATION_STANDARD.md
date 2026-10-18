@@ -123,12 +123,18 @@ to be policy-backed is a Policy line, which carries more weight.
 
 ### 3.4 What does not belong in the register at all
 
-Two classes look like rules and are not:
+Three classes look like rules and are not:
 
 **How we build** goes in `docs/conventions.md`. The server recomputing anything
 that affects price or access, the interface gating on the same rule the server
 enforces — true, load-bearing, and containing no domain content. A reviewer
 checking a membership change should not read past them.
+
+**A term's meaning** goes in `checkin-app/docs/VOCABULARY.md`, the dictionary.
+Where a term is also a constraint (two deep, member family, youth, the tool
+levels), both the dictionary and the register keep a complete statement: the
+dictionary the definition with its constraint, the register the rule. **A change
+to such a term in either one edits both in the same PR.**
 
 **States left by a data load** go in `docs/ops/legacy-cleanup.md`: imported rows
 missing fields the app now requires, a superseded model still carried by old

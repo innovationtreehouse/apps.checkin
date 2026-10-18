@@ -208,3 +208,17 @@ missed a row stored at a different time of day.
 The failure shows only in a built app. In unit tests every module is loaded once,
 so `instanceof` holds; in the server, the same 409 arrives as an error from
 another copy of the class and the caller sees a 500.
+
+## The dictionary's word is the code's word
+
+- **Identifiers, comments and prose use the canonical term** from
+  `checkin-app/docs/VOCABULARY.md`. No `minor`, no loose `dependent`, no bare
+  `member`, in identifiers or in comments. `child` is allowed: it names a
+  relationship (offspring), and `youth` names the under-18 age.
+
+- **A serialized API key is a contract, not a free rename.** A request or
+  response key changes only in the change that owns that contract, with every
+  consumer moved together. Surrounding variables rename freely; the key waits.
+
+- **Age is derived from `dateOfBirth` through `isYouth`**, never by an inline
+  age check.
