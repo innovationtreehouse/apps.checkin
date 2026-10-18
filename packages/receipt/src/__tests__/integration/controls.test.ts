@@ -164,6 +164,22 @@ describeDb("the tax and date fields", () => {
     expect(await stateOf(r.id)).toBe("receipt_finalized");
   });
 
+  it("zeroing the tax on a tax-exempt org keeps the tax reason, so approval still needs a note", async () => {
+    actAs(FINANCE);
+    await orgSettingsService.update({ taxExempt: true });
+    actAs(ALICE);
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ tax: "5.00" }) });
+    expect(r.state).toBe("validation_failed");
+    await receiptService.edit(r.id, "submitter", { tax: 0 });
+    await receiptService.resubmit(r.id, "submitter");
+    expect(await stateOf(r.id)).toBe("financial_review");
+    actAs(FINANCE);
+    expect((await receiptService.get(r.id, "finance")).financialReviewReasons).toEqual(["tax", "submitter_correction"]);
+    await expect(receiptService.approveFinancial(r.id)).rejects.toMatchObject({ status: 400 });
+    await receiptService.approveFinancial(r.id, "Vendor charged tax; submitter removed it to match the lines");
+    expect(await stateOf(r.id)).toBe("receipt_finalized");
+  });
+
   it("a finance correction alone does not send the receipt to financial_review", async () => {
     actAs(ALICE);
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ tax: "1.00" }) });

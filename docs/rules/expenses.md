@@ -37,8 +37,9 @@ Income and donation rules are in `revenue.md`.
 ### Receipts
 
 - Nobody makes a finance decision on a receipt that they or their household
-  uploaded or is reimbursed for. Tax and the receipt date drive financial
-  review, so only an independent finance person changes them.
+  uploaded or is reimbursed for. Until a receipt is finalized, its submitter
+  may correct its tax and date; a receipt whose tax or date its submitter
+  corrected goes to finance review.
   [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 ### Budget buckets

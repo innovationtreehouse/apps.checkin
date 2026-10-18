@@ -38,31 +38,40 @@ export type FinancialReviewReason = "tax" | "old_date" | "future_date" | "submit
 /** Receipt fields that drive financial review; a submitter's change to one sends the receipt to finance. */
 export const SUBMITTER_CORRECTION_FIELDS: readonly string[] = ["taxCents", "receiptDate"];
 
-/** Whether the submitter changed the tax or date, read from the receipt's audited field edits. */
-export async function submitterCorrected(row: ReceiptRow): Promise<boolean> {
-  const edits = await db.receiptAuditLog.count({
+/**
+ * The review flags for a receipt. Tax and age also check the values its submitter corrected away,
+ * read from the audited field edits, so a correction never drops a reason the original raised.
+ */
+async function reviewFlags(row: ReceiptRow, settings: ReceiptOrgSettings) {
+  const edits = await db.receiptAuditLog.findMany({
     where: {
       receiptId: row.id,
       action: "field_edit",
       userId: row.uploadedByUserId,
       fieldChanged: { in: [...SUBMITTER_CORRECTION_FIELDS] },
     },
+    select: { fieldChanged: true, valueBefore: true },
   });
-  return edits > 0;
+  const before = (field: string) =>
+    edits.flatMap((e) => (e.fieldChanged === field && e.valueBefore !== null ? [e.valueBefore] : []));
+  const date = row.receiptDate ?? "";
+  const flags = (taxCents: number, receiptDate: string) => computeFinancialReviewFlags(settings, taxCents, receiptDate, row.isInKind);
+  const current = flags(row.taxCents, date);
+  return {
+    ...current,
+    taxReview: current.taxReview || before("taxCents").some((t) => flags(Number(t), date).taxReview),
+    ageReview: current.ageReview || before("receiptDate").some((d) => flags(row.taxCents, d).ageReview),
+    corrected: edits.length > 0,
+  };
 }
 
 export async function financialReviewReasons(row: ReceiptRow, settings: ReceiptOrgSettings): Promise<FinancialReviewReason[]> {
-  const { taxReview, ageReview, futureReview } = computeFinancialReviewFlags(
-    settings,
-    row.taxCents,
-    row.receiptDate ?? "",
-    row.isInKind,
-  );
+  const { taxReview, ageReview, futureReview, corrected } = await reviewFlags(row, settings);
   const reasons: FinancialReviewReason[] = [];
   if (taxReview) reasons.push("tax");
   if (ageReview && !row.qbTxnId) reasons.push("old_date");
   if (futureReview) reasons.push("future_date");
-  if (await submitterCorrected(row)) reasons.push("submitter_correction");
+  if (corrected) reasons.push("submitter_correction");
   return reasons;
 }
 
@@ -183,17 +192,11 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
   const dupId = await checkDuplicate(row);
   const settings = await getOrgSettings(orgId);
   const valid = validateLineItemMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, row.receiptTotalCents);
-  const { taxReview, ageReview, futureReview, ageLimitDays, diffDays } = computeFinancialReviewFlags(
-    settings,
-    row.taxCents,
-    row.receiptDate,
-    row.isInKind,
-  );
+  const { taxReview, ageReview, futureReview, corrected, ageLimitDays, diffDays } = await reviewFlags(row, settings);
 
   // QB-linked backfill is already reconciled in QuickBooks: the submitter step is implied and the
   // age gate is waived (historical by definition). Tax, future-dated, math and dedup still apply.
   const isQbLinked = !!row.qbTxnId;
-  const corrected = await submitterCorrected(row);
 
   const context: ReceiptMachineContext = {
     isDuplicate: !!dupId,
