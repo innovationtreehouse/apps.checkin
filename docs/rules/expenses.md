@@ -6,9 +6,10 @@ Income and donation rules are in `revenue.md`.
 
 ## Policy
 
-- Spending sign-off is governed by the *Financial Policy, Arts. IX and XII*,
-  the *Procurement Policy, Art. IV* and the *Sponsored Program Policy,
-  Art. VI*; each Procedure rule below cites the article it expresses.
+- Spending sign-off is governed by the *Financial Policy, Arts. IX and XII*
+  and the *Procurement Policy, Art. IV*. A Procedure rule that expresses one
+  of them names the article in its tag; a rule tagged otherwise is not
+  policy-backed.
 
 ---
 
@@ -65,7 +66,7 @@ Income and donation rules are in `revenue.md`.
   board-approved program budget. Nobody sets it on themself or anyone in their
   own household. Treasurers are adult-only by corporate policy, and the app does
   not check that.
-  [Decision — *Policy: Sponsored Program Policy, Art. VI §VI.1; Ethics Policy, Art. III §III.5*]
+  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 ### Expenses
 
