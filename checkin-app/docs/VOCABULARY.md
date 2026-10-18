@@ -67,7 +67,7 @@ Program roles (all Treehouse Volunteers):
 | Role | Meaning | Code | Notes |
 |---|---|---|---|
 | **Program Leader** | the person responsible for a program | `programLeaderId` *(rename pending from `leadMentorId`)* | policy term; **retire "lead mentor"** |
-| **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | |
+| **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | Core's authority is set by the organisation ([../../docs/rules/programs.md](../../docs/rules/programs.md), Assumptions) |
 | **Program Treasurer** | a Program Volunteer who keeps the program's money; a program may have several. With the Program Leader, approves within the program's budget-owner bucket | `ProgramVolunteer.isTreasurer` | policy term (*Sponsored Program Policy, Art. III §III.7*) |
 
 **Retired words (do not use):** `staff` / "program staff" (→ Treehouse Volunteers), `mentor` and `lead mentor` (→ Program Leader / Program Volunteer; program-specific "mentor" language is external), "program instructor" (→ `instructor` is **tool-only**, see Shop & Certification), "dues" (→ **membership fee**; Treehouse is not a membership organization under the law, so what a household pays is a fee, the word used outside the software too).
@@ -173,7 +173,7 @@ One activity, a pipeline of distinct stages — name each; keep the scoped verbs
 ## Supervision terms (safety vocabulary)
 
 - **Tripod** — the presence of **3 Members, each ≥ 9 years old**, in an area that is **Observable and Interruptible**; lets a Certified (Green) work solo. *(policy term; not modeled in code)*
-- **Two Deep** — two unrelated, non-Student adult Treehouse Volunteers from different households. *(the attendance keyholder/volunteer buckets implement this)*
+- **Two Deep** — two unrelated, non-Student adult Treehouse Volunteers from different households. *(the supervising-adult test implements this, not the attendance count buckets — see [../../docs/rules/attendance-checkin.md](../../docs/rules/attendance-checkin.md), Procedure › Supervision)*
 - **Observable and Interruptible** — no locked doors; another adult can see or hear and could enter. *(not modeled)*
 - **"dedicated" (DOF/Instructor)** — "actively watching you use the tool" (not wandering). **Not software-enforceable — ignore in code.**
 
