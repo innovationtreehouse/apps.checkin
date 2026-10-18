@@ -20,7 +20,9 @@ jest.mock('@/lib/notifications', () => ({
     sendNotification: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.mock('@/lib/shopify', () => ({
+jest.mock('@/lib/shopify/products', () => ({
+}));
+jest.mock('@/lib/shopify/stock', () => ({
 }));
 
 jest.mock('@/lib/logger', () => ({

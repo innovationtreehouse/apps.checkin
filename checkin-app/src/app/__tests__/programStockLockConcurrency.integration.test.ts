@@ -8,7 +8,7 @@
  * CHECKIN_ENV=local Shopify mock (no network) against a real Postgres.
  */
 import prisma from '@/lib/prisma';
-import { adjustProgramInventory, programStockTiming } from '@/lib/shopify';
+import { adjustProgramInventory, programStockTiming } from '@/lib/shopify/stock';
 
 const TAG = 'program-stock-lock-concurrency-test';
 

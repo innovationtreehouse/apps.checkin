@@ -1,5 +1,5 @@
 import { ApiResponseError, badRequest, handler, notFound, unauthorized } from "@/security/handler";
-import { settleUnconfirmedStock, type UnconfirmedStockChoice } from "@/lib/shopify";
+import { settleUnconfirmedStock, type UnconfirmedStockChoice } from "@/lib/shopify/stock";
 
 const CHOICES: readonly UnconfirmedStockChoice[] = ["landed", "notLanded"];
 

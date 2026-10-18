@@ -7,7 +7,7 @@ import type { PaymentExceptionKind } from "@/lib/finance/reconcile/exceptions";
 import { raiseReversalByOrderId, type RestockedLine } from "@/lib/finance/reconcile/reversals";
 import { recordShopifyWebhookReceipt } from "@/lib/shopifyWebhookReceipt";
 import prisma from "@/lib/prisma";
-import { nudgeProgramStock } from "@/lib/shopify";
+import { nudgeProgramStock } from "@/lib/shopify/stock";
 
 /**
  * Fast-path Shopify reversal webhooks — the low-latency complement to the daily

@@ -53,7 +53,7 @@ jobs:
         working-directory: .
         run: npm ci
 
-      # lib/shopify.ts imports the generated Prisma client. Generating needs only
+      # lib/shopify/ imports the generated Prisma client. Generating needs only
       # a syntactically valid DATABASE_URL; it never connects.
       - name: Generate Prisma Client
         env:

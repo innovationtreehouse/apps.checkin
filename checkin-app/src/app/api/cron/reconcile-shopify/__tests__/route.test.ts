@@ -12,7 +12,7 @@ import { runReconcile as runIncomeReconcile } from '@checkin/income';
 import { readMailbox, repushUnpushed, resendDonorSync, sweepInterruptedOcr } from '@checkin/receipt';
 import { runReconcile } from '@/lib/finance/reconcile';
 import { runSaleSweep } from '@/lib/programs/saleSweep';
-import { healProgramStock } from '@/lib/shopify';
+import { healProgramStock } from '@/lib/shopify/stock';
 import prisma from '@/lib/prisma';
 import { GET } from '../route';
 
@@ -23,7 +23,7 @@ jest.mock('@checkin/local-inventory', () => ({ catchUpOrgEvents: jest.fn() }));
 jest.mock('@checkin/workflow-mapping', () => ({ catchUpOrgEvents: jest.fn(), sweepStuckApplying: jest.fn() }));
 jest.mock('@checkin/receipt', () => ({ sweepInterruptedOcr: jest.fn(), repushUnpushed: jest.fn(), resendDonorSync: jest.fn(), readMailbox: jest.fn() }));
 jest.mock('@/lib/programs/saleSweep', () => ({ runSaleSweep: jest.fn() }));
-jest.mock('@/lib/shopify', () => ({ healProgramStock: jest.fn() }));
+jest.mock('@/lib/shopify/stock', () => ({ healProgramStock: jest.fn() }));
 jest.mock('@/lib/catalog/configure', () => ({ getOrg: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Org' }) }));
 
 const SECRET = 'cron-secret-under-test';

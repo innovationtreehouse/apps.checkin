@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { adjustProgramInventory } from "@/lib/shopify";
+import { adjustProgramInventory } from "@/lib/shopify/stock";
 import { isOrderReversed, raisePaymentException, recordReversal } from "@/lib/finance/reconcile/exceptions";
 import { takeBackRestockedSeats } from "@/lib/finance/reconcile/reversals";
 import { activateProgramEnrollment, publicStockDelta } from "../activateEnrollment";
@@ -12,7 +12,7 @@ jest.mock("@/lib/prisma", () => ({
     },
 }));
 
-jest.mock("@/lib/shopify", () => ({
+jest.mock("@/lib/shopify/stock", () => ({
     adjustProgramInventory: jest.fn().mockResolvedValue(true),
 }));
 

@@ -1,7 +1,7 @@
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { maybeAnnounceOnOpen } from "@/lib/programAnnounce";
-import { adjustProgramInventory, setProgramInventory, STOCK_BOOKKEEPING_RESET, syncProgramPrice } from "@/lib/shopify";
+import { adjustProgramInventory, setProgramInventory, STOCK_BOOKKEEPING_RESET, syncProgramPrice } from "@/lib/shopify/stock";
 import { dollarsToCentsOrNull } from "@checkin/money";
 import { LIVE_PERSON, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { validateProgramAgeBounds, isLeaderAgeEligible, checkProgramAge } from "@/lib/programAge";

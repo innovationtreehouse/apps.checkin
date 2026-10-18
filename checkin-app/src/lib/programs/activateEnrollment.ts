@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
-import { adjustProgramInventory } from "@/lib/shopify";
+import { adjustProgramInventory } from "@/lib/shopify/stock";
 import { fromWhere } from "@/lib/programs/enrollmentState";
 import { saleStockDelta } from "@/lib/programs/saleState";
 import { isOrderReversed, raisePaymentException, recordReversal } from "@/lib/finance/reconcile/exceptions";

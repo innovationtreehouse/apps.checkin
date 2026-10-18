@@ -20,12 +20,12 @@ import { POST as RefusePost } from '@/app/api/finance-ops/payment-plans/refuse/r
 import { activateProgramEnrollment } from '@/lib/programs/activateEnrollment';
 import { withdrawAndReleaseHold } from '@/lib/program/capacity';
 import prisma from '@/lib/prisma';
-import * as shopify from '@/lib/shopify';
+import * as shopify from '@/lib/shopify/stock';
 
 // Wrap only changeProgramStock (call-through) so one test can force a −1 that
 // could not be recorded; SWC exports are non-configurable getters, so no spyOn.
-jest.mock('@/lib/shopify', () => {
-    const actual = jest.requireActual('@/lib/shopify');
+jest.mock('@/lib/shopify/stock', () => {
+    const actual = jest.requireActual('@/lib/shopify/stock');
     return { ...actual, changeProgramStock: jest.fn(actual.changeProgramStock) };
 });
 import { classify, validate, toRow, type EnrollmentStateName } from '@/lib/programs/enrollmentState';

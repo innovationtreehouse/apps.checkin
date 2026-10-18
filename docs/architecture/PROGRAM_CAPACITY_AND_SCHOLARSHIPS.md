@@ -18,7 +18,7 @@ delta, because Shopify decrements `available` itself as seats sell and the app d
 need to know that running total to stay in sync.
 
 Every app-initiated stock change goes through ONE writer, `adjustProgramInventory`
-(`lib/shopify.ts`):
+(`lib/shopify/stock.ts`):
 
 - **Owed first, then pushed.** The caller's delta is added to `Program.shopifyStockCarry`
   (what the app owes Shopify), then a push lands the whole carry.
@@ -75,7 +75,7 @@ Each program has **one** Shopify variant, priced at the base (non-member) rate
 capacity — there is no second, member-priced pool to keep numerically consistent.
 
 Members pay less at the same variant via a **server-minted, single-use discount code**
-(`mintMemberDiscountCode`, `lib/shopify.ts`), minted per checkout by
+(`mintMemberDiscountCode`, `lib/shopify/discounts.ts`), minted per checkout by
 `POST /api/programs/[id]/discount-code` after recomputing the caller's membership status
 server-side (never trusting a client flag). A failed mint degrades to an undiscounted link
 — checkout is never blocked.

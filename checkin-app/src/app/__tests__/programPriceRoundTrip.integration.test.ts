@@ -24,8 +24,10 @@ jest.mock('@/lib/notifications', () => ({
     sendNotification: jest.fn(),
 }));
 // Avoid hitting the real Shopify API; the route tolerates a null result.
-jest.mock('@/lib/shopify', () => ({
+jest.mock('@/lib/shopify/products', () => ({
     createShopifySingleVariantProgram: jest.fn().mockResolvedValue(null),
+}));
+jest.mock('@/lib/shopify/stock', () => ({
     syncProgramPrice: jest.fn().mockResolvedValue(true),
 }));
 

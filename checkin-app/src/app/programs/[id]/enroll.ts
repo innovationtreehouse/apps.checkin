@@ -51,7 +51,7 @@ export function aggregateEnrollOutcomes(outcomes: EnrollOutcome[]): {
  * household = one membership tier = one variant.
  *
  * `discountCode` (single-pool model only — see mintMemberDiscountCode in
- * lib/shopify.ts) is prepended as `discount=<code>`, mirroring
+ * lib/shopify/discounts.ts) is prepended as `discount=<code>`, mirroring
  * buildMembershipCheckoutUrl's existing discount-code convention.
  */
 export function buildShopifyCheckoutUrl(

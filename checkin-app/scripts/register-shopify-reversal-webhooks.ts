@@ -18,7 +18,7 @@
  * decision logic (see register-shopify-webhook.ts) only if that becomes a problem.
  */
 import * as dotenv from "dotenv";
-import { getAccessToken, shopifyFetch, SHOPIFY_API_VERSION } from "../src/lib/shopify";
+import { getAccessToken, shopifyFetch, SHOPIFY_API_VERSION } from "../src/lib/shopify/client";
 import { config } from "../src/lib/config";
 
 dotenv.config();

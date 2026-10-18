@@ -4,7 +4,7 @@ import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
 import { isKnownAdult } from "@/lib/programAge";
-import { changeProgramStock } from "@/lib/shopify";
+import { changeProgramStock } from "@/lib/shopify/stock";
 import { fromWhere } from "@/lib/programs/enrollmentState";
 import { ScholarshipRequestKind } from "@/generated/prisma/client";
 import { scholarshipRequestKindLabel } from "@/lib/scholarshipRequestKind";

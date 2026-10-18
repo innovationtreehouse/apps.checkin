@@ -35,11 +35,11 @@ jest.mock("@/lib/shopifyRead/client", () => ({
     orderLines: jest.fn(async () => [] as { variantId: string; quantity: number }[]),
 }));
 import * as mirror from "@/lib/shopifyRead/client";
-jest.mock("@/lib/shopify", () => ({
-    ...jest.requireActual("@/lib/shopify"),
+jest.mock("@/lib/shopify/stock", () => ({
+    ...jest.requireActual("@/lib/shopify/stock"),
     adjustProgramInventory: jest.fn(async () => true),
 }));
-import { adjustProgramInventory } from "@/lib/shopify";
+import { adjustProgramInventory } from "@/lib/shopify/stock";
 
 const TAG = "reconcile-matrix-test";
 // A membership variant id the board has configured; #1048 mirrors it onto order lines.

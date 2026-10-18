@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * LIVE canary: the pinned Admin API version (lib/shopify.ts SHOPIFY_API_VERSION)
+ * LIVE canary: the pinned Admin API version (lib/shopify/client.ts SHOPIFY_API_VERSION)
  * is still served as requested and not deprecation-flagged. Shopify sunsets
  * versions quarterly; when the pin lapses, requests get silently served by the
  * oldest supported version — this turns that into a red nightly instead of a
@@ -11,7 +11,7 @@
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {} }));
 jest.mock("@/lib/email", () => ({ sendEmail: jest.fn() }));
 
-import { getAccessToken, shopifyFetch, SHOPIFY_API_VERSION } from "@/lib/shopify";
+import { getAccessToken, shopifyFetch, SHOPIFY_API_VERSION } from "@/lib/shopify/client";
 import { ensureLiveStore, adminUrl } from "./helpers";
 
 describe("live: pinned API version canary", () => {

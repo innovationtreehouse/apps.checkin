@@ -10,7 +10,7 @@ import { FINANCE_TOOL_ROLES } from '@/lib/nav/sections/revenueOps';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { PageLoader } from "@/components/ui/PageLoader";
 
-// Shopify stock writes that could not be confirmed (lib/shopify.ts parks each one
+// Shopify stock writes that could not be confirmed (lib/shopify/stock.ts parks each one
 // and never re-sends it), one row per write. The board checks the program in
 // Shopify and settles each one: the write landed, or it didn't and is owed again.
 type Row = {

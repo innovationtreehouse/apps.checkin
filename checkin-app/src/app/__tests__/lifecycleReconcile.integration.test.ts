@@ -19,7 +19,8 @@
  * + reportShopifyFailure from @/lib/shopify, so replacing the whole module with two
  * jest.fn()s is sufficient (SWC's non-configurable exports block jest.spyOn).
  */
-import { adjustProgramInventory, reportShopifyFailure } from '@/lib/shopify';
+import { reportShopifyFailure } from '@/lib/shopify/client';
+import { adjustProgramInventory } from '@/lib/shopify/stock';
 import { runLifecycleReconcile, scanLifecycleViolations } from '@/lib/lifecycleDrift';
 import { GET as LIFECYCLE_GET } from '@/app/api/system-status/lifecycle/route';
 import prisma from '@/lib/prisma';
@@ -27,9 +28,12 @@ import { toRow, validate } from '@/lib/programs/enrollmentState';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
-jest.mock('@/lib/shopify', () => ({
+jest.mock('@/lib/shopify/stock', () => ({
     __esModule: true,
     adjustProgramInventory: jest.fn(),
+}));
+jest.mock('@/lib/shopify/client', () => ({
+    __esModule: true,
     reportShopifyFailure: jest.fn(),
 }));
 

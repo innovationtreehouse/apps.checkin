@@ -19,7 +19,8 @@ import {
 } from "@/lib/programs/enrollmentState";
 import { validate as validateMembership } from "@/lib/membership/lifecycle";
 import { systemActor } from "@/lib/auditActor";
-import { adjustProgramInventory, reportShopifyFailure } from "@/lib/shopify";
+import { reportShopifyFailure } from "@/lib/shopify/client";
+import { adjustProgramInventory } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
 
 export type LifecycleModel = "ProgramParticipant" | "OrgMembershipProcess";
