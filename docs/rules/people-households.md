@@ -166,9 +166,8 @@ Things the app takes as true because they are handled outside it.
 - A Google account must have a verified email before it is first linked to a
   person record; an account already linked keeps signing in unchanged.  [Decision]
 
-- A first Google sign-in attaches to the one person whose email matches the
-  address signed in with, or creates a new person in a household of their own.
-  It never attaches by any other link: a name, a household, a former address.  [Decision — *Principle: identity is not authorisation*]
+- A first Google sign-in links to the person whose email matches, or creates a
+  new person. After that, the linked account signs in, not the address.  [Decision — *Principle: identity is not authorisation*]
 
 - Changing a person's email unlinks their Google accounts.  [Decision — *Principle: fail closed*]
 
