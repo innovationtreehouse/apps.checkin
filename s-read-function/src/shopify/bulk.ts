@@ -1,9 +1,10 @@
 /**
  * Shopify Bulk Operation lifecycle for the orders backfill.
  *
- * Bulk operations run asynchronously on Shopify's side: start one, then poll
- * `currentBulkOperation` on later invocations until COMPLETED, then download the JSONL
- * result. The reassembly of that JSONL into nested order nodes — and its durable, verbatim
+ * Bulk operations run asynchronously on Shopify's side: start one, then poll it by id with
+ * `bulkOperation(id:)` on later invocations until COMPLETED, then download the JSONL result.
+ * Starting a second export while one runs is refused by Shopify as a `bulkOperationRunQuery`
+ * userError, which startOrdersBackfill throws. The reassembly of that JSONL into nested order nodes — and its durable, verbatim
  * pre-transform capture — lives in @checkin/s-ingest-core so the same code path can also
  * drive recovery (reingestBulkExports). `reassembleOrders` / `parseBulkJsonl` are re-exported
  * here for callers and tests that import them from this module.
@@ -17,7 +18,7 @@ import type { ShopifyClient } from "./client.js";
 import { jitteredBackoffMs } from "./client.js";
 import {
   BULK_OPERATION_RUN_MUTATION,
-  CURRENT_BULK_OPERATION_QUERY,
+  BULK_OPERATION_QUERY,
   buildOrdersBulkQuery,
 } from "./queries.js";
 
@@ -31,7 +32,7 @@ export const BULK_DOWNLOAD_MAX_ATTEMPTS = 4;
 /**
  * Hosts a Shopify bulk-operation result URL is allowed to point at. Shopify serves the
  * JSONL as a Google Cloud Storage signed URL on storage.googleapis.com. The URL comes
- * from the GraphQL `currentBulkOperation.url` response, so it is attacker-influenced if
+ * from the GraphQL `bulkOperation.url` response, so it is attacker-influenced if
  * that response is ever spoofed/compromised — restricting the host stops the download
  * from being turned into SSRF against internal endpoints or the cloud metadata service.
  */
@@ -82,9 +83,10 @@ export async function startOrdersBackfill(client: ShopifyClient, cutoverIso: str
   return bulkOperation;
 }
 
-export async function getCurrentBulkOperation(client: ShopifyClient): Promise<BulkOperation | null> {
-  const data = await client.request<{ currentBulkOperation: BulkOperation | null }>(CURRENT_BULK_OPERATION_QUERY);
-  return data.currentBulkOperation;
+/** Null when Shopify no longer knows the id. */
+export async function getBulkOperation(client: ShopifyClient, id: string): Promise<BulkOperation | null> {
+  const data = await client.request<{ bulkOperation: BulkOperation | null }>(BULK_OPERATION_QUERY, { id });
+  return data.bulkOperation;
 }
 
 /**

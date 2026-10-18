@@ -1,7 +1,7 @@
 /**
- * GraphQL query/mutation strings. Field selections target the pinned 2025-07 Admin schema.
+ * GraphQL query/mutation strings. Field selections target the pinned 2026-04 Admin schema.
  *
- * VERIFIED against 2025-07: the balance-transaction fields (`transactionDate`,
+ * Present in 2026-04: the balance-transaction fields (`transactionDate`,
  * `associatedOrder`, `sourceOrderTransactionId`, `associatedPayout`) and the `processed_at`
  * search filter all exist.
  *
@@ -211,7 +211,7 @@ const BALANCE_TXN_FIELDS = `
 
 /**
  * Paginated balance transactions. The incremental `query` filter uses `processed_at` — a
- * documented search field on the 2025-07 balanceTransactions connection — which is the SAME
+ * documented search field on the 2026-04 balanceTransactions connection — which is the SAME
  * instant the node exposes as `transactionDate`, the field the watermark advances on. So the
  * filter axis equals the watermark axis: no skipped rows, no silent full re-pull. `sortKey` is
  * deliberately omitted so the connection uses its default (PROCESSED_AT, ascending), which the
@@ -238,9 +238,10 @@ export const BULK_OPERATION_RUN_MUTATION = `
   }
 `;
 
-export const CURRENT_BULK_OPERATION_QUERY = `
-  query CurrentBulkOperation {
-    currentBulkOperation {
+/** Poll one bulk operation by the id bulkOperationRunQuery returned. */
+export const BULK_OPERATION_QUERY = `
+  query BulkOperation($id: ID!) {
+    bulkOperation(id: $id) {
       id
       status
       errorCode
